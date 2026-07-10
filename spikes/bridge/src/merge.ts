@@ -16,14 +16,18 @@ export const BRIDGE_ORIGIN = 'bridge-merge'
  * Yjs's own CRDT merge performs the 3-way positional reconciliation.
  * Never blind-replace (D2/D25).
  */
-export function applyAgentTurn(live: Y.Doc, baseState: Uint8Array, fileText: string): void {
+export function applyAgentTurn(
+  live: Y.Doc,
+  baseState: Uint8Array,
+  fileText: string,
+): { agentState: Uint8Array } {
   const shadow = new Y.Doc()
   Y.applyUpdate(shadow, baseState)
   const shadowText = shadow.getText('content')
   const baseText = shadowText.toString()
   if (baseText === fileText) {
     shadow.destroy()
-    return
+    return { agentState: baseState }
   }
 
   const diffs = dmp.diff_main(baseText, fileText)
@@ -45,5 +49,9 @@ export function applyAgentTurn(live: Y.Doc, baseState: Uint8Array, fileText: str
 
   const patch = Y.encodeStateAsUpdate(shadow, Y.encodeStateVector(live))
   Y.applyUpdate(live, patch, BRIDGE_ORIGIN)
+  // The shadow's post-op state IS the agent's file lineage (base + agent ops) —
+  // the caller needs it as the next frozen base if the agent is still writing.
+  const agentState = Y.encodeStateAsUpdate(shadow)
   shadow.destroy()
+  return { agentState }
 }
