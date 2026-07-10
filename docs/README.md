@@ -33,6 +33,11 @@ Planning docs for the Holi rebuild. Read top-to-bottom for the full picture.
 | [prd/_phase2-google-mail-calendar.md](prd/_phase2-google-mail-calendar.md) | @syv.ai Gmail + Calendar on Google APIs (Mailspring is dead) |
 | [prd/_phase2-typst-export.md](prd/_phase2-typst-export.md) | Render docs into branded syv.ai Typst templates |
 
+## Spikes
+| Doc | What it is |
+|---|---|
+| [spikes/2026-07-10-bridge-turn-protocol.md](spikes/2026-07-10-bridge-turn-protocol.md) | Spike 1 findings: the D25 frozen-base turn protocol under concurrent hammering — **verdict: holds** |
+
 ## Reading tips
 - A choice looks arbitrary? Its **D#** is in [decisions.md](decisions.md).
 - A term is ambiguous? [glossary.md](glossary.md) wins.
