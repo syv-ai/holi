@@ -44,10 +44,14 @@ export interface RelatedRef {
   id: string
 }
 
+export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type RecurrenceWeekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
 export interface Recurrence {
-  frequency: 'daily' | 'weekly' | 'monthly'
+  frequency: RecurrenceFrequency
   interval: number
-  weekdays?: number[]
+  weekdays?: RecurrenceWeekday[]
+  /** YYYY-MM-DD — occurrences after this date stop the roll-forward. */
   endDate?: string
 }
 
