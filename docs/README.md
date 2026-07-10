@@ -7,7 +7,7 @@ Planning docs for the Holi rebuild. Read top-to-bottom for the full picture.
 |---|---|
 | [vision.md](vision.md) | Why we're rebuilding, what Holi is, product principles |
 | [architecture.md](architecture.md) | The whole system: CRDT sync, client/server split, agent, data model, security |
-| [decisions.md](decisions.md) | Every load-bearing decision (D1–D30) with rationale + rejected alternatives |
+| [decisions.md](decisions.md) | Every load-bearing decision (D1–D31) with rationale + rejected alternatives |
 | [glossary.md](glossary.md) | Canonical terms (vault, area, doc, persona, tier…) |
 
 ## PRDs (v1 pillars)
@@ -20,6 +20,11 @@ Planning docs for the Holi rebuild. Read top-to-bottom for the full picture.
 | [prd/agent.md](prd/agent.md) | Interactive Claude xterm drawer, CC-native config layering (D6), per-turn hook, minimal MCP, history via native `--resume` (D9) |
 | [prd/server-data.md](prd/server-data.md) | **The server hub** — Hocuspocus + tRPC + Postgres schema + API surface |
 | [prd/daily-notes.md](prd/daily-notes.md) | Idempotent daily notes, personal-vault-only (D24), archiving |
+
+## PRDs (post-v1, designed)
+| PRD | Owns |
+|---|---|
+| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: app tabs, `holi.*` bridge, Yjs-multiplayer app state (D31) |
 
 ## PRDs (phase 2 stubs)
 | Stub | |

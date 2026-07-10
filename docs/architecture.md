@@ -170,7 +170,7 @@ Object storage (Hetzner): archived original binaries from import conversion (D28
 - **State:** Jotai single-store, action atoms for multi-atom side effects, hooks mounted once in the app shell. Ports directly (renderer-only).
 - **IPC seam:** the old app funneled all IPC through two files (`_invoke.ts`, `events.ts`). Same discipline here: one **preload/contextBridge** module wraps `ipcRenderer.invoke`/events; tRPC client for server calls. Swappable seam, untouched call sites.
 - **UI system:** the `tone`/`variant`/`shape`/`size` cva primitives, `tokens.css` typography tiers, `cn()`/tailwind-merge — port verbatim (platform-agnostic React).
-- **App shell:** single-window, atom-driven view model (board ↔ editor), drawers/dialogs as summoned modals, hosts at root. Decompose the old 647-line `App.tsx`.
+- **App shell:** single-window, atom-driven view model (board ↔ editor), drawers/dialogs as summoned modals, hosts at root. Decompose the old 647-line `App.tsx`. **One forward-looking constraint:** the pane/tab system must not assume tabs are notes — post-v1 **vault apps** (D31, [`prd/vault-apps.md`](prd/vault-apps.md)) open as first-class app tabs (sandboxed webviews with a `holi.*` bridge and Yjs-backed multiplayer state).
 
 ---
 

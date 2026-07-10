@@ -88,6 +88,12 @@ Claude Code's **native session resume**: the drawer relaunches `claude --resume`
 ### Awareness / Presence
 The Yjs channel carrying live per-user state: **cursors/selections** in the editor and **doc-viewer avatars** ("who's here").
 
+### Vault app *(post-v1)*
+An agent-authored interactive app living at `.holi/apps/<name>/` (manifest + `index.html` + optional `server.mjs`), synced as vault content, opened as a first-class tab in a sandboxed webview. State = a shared Yjs doc on the relay → live-multiplayer by default (D31).
+
+### holi bridge
+The scoped postMessage API a vault app gets: `holi.data` (the app's shared Yjs doc), `holi.tasks`/`holi.docs` (membership-gated vault access), `holi.awareness`, `holi.open`, `holi.theme` (D31).
+
 ### Typst export *(phase 2)*
 Rendering a markdown doc into a branded **syv.ai Typst template** to produce a company-styled document.
 

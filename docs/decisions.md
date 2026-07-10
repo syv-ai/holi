@@ -137,7 +137,8 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 **Decided.**
 - **v1 core:** multiplayer notes + editor (CodeMirror + Yjs), stripped task board, Claude xterm drawer (history via native `--resume`, D9), shared + personal vaults with Google SSO + presence, **daily notes**.
 - **Phase 2 (in order):** import conversion + attachment-original viewing (PDF/docx → markdown on entry, originals archived — D28) → **Google Gmail + Calendar** sync (on Google APIs, under the same OAuth) → **Typst export** (render a markdown doc into a branded syv.ai Typst template).
-- **Deferred:** agent-authored HTML apps/widgets; self-improvement loop.
+- **Post-v1, designed:** **vault apps** (agent-authored in-vault apps, D31) — supersedes the old "agent-authored HTML apps/widgets" deferral with a full design.
+- **Deferred:** self-improvement loop; note-embedded app widgets (D31 keeps apps out of the editor).
 - **Killed:** **Mailspring** (only ever chosen for OSS/extensibility; being abandoned) — replaced by Google APIs.
 
 ## D22 — Editor rollback: keep simple live-preview, cut the animation layer
@@ -202,6 +203,18 @@ Standing assumptions (they dissolved several risks outright):
 - **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability.
 - **CC is already installed and authenticated** on every machine (each employee's own account, native auth). Holi does no provisioning, metering, or credential management; the old login-PTY flow is at most an edge-case fallback.
 - Applications of the principle this round: D9 reversed (native `--resume`), D6 simplified (native config layering), D8 kept (hooks are native), D29 (settings-seeded permissions, not machinery).
+
+## D31 — Vault apps: agent-authored, in-vault, multiplayer via the existing relay *(post-v1, designed)*
+**Decided (design locked; ships post-v1).** The vault assistant can create **just-in-time interactive apps** that live in the vault and open inside Holi. Full design in [`prd/vault-apps.md`](prd/vault-apps.md).
+
+- **No shipped runtime:** Chromium (sandboxed webview) renders app UIs; an app that declares a backend gets an Electron **`utilityProcess`** — the Node already bundled. "Each vault ships with Node" is satisfied with zero installs.
+- **Anatomy:** an app = a directory `.holi/apps/<name>/` with `manifest.json` + `index.html` (+ assets, + optional `server.mjs`). Synced as vault content — every member gets every app. The agent authors apps with native `Write` (D30); the contract is documented by a skill in the vault's `.claude/`.
+- **Surface:** apps open as **first-class tabs** in the pane system; launched from the command palette, a sidebar Apps section, or by the agent. **Note-embedding stays deferred** (keeps the editor lean, D22).
+- **`holi.*` bridge** (postMessage): `holi.data` — the app's **shared Yjs doc** on the existing relay, making **every app live-multiplayer, offline-capable, and snapshot-covered (D26) for free**; `holi.tasks`/`holi.docs` (read/write/subscribe, membership-gated server-side); `holi.awareness` (presence in the app); `holi.open` (navigate Holi); theme tokens injected.
+- **Trust:** manifest capabilities are transparency, not gates — full employee trust (D29); backends get Node as-is. Revisit if external code ever enters vaults.
+- **Reuse:** copy the directory; an org-wide "apps" shared vault as convention. No registry/versioning machinery.
+- **Agent inspection:** app state optionally materializes as read-only `data.json` so the assistant can `Read` and act on it (e.g. summarize a retro board into a note).
+- **Rejected:** *Deno/Bun sidecar runtime* (a second runtime to ship; Electron's built-ins suffice). *single-file apps first* (chose dir+manifest for uniform contract and room to grow). *note-embedded apps in v1 of the feature* (editor complexity, D22). *server KV / vault-text-file app state* (worse than the Yjs doc we already have).
 
 ---
 
