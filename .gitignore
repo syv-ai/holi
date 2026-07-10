@@ -1,4 +1,8 @@
 .DS_Store
 node_modules/
 dist/
+out/
 *.log
+.env
+*.local
+.tmp/
