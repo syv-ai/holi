@@ -26,6 +26,7 @@ export class BridgeClient {
   private turnActive = false
   private turnTimer: ReturnType<typeof setTimeout> | null = null
   private materializeTimer: ReturnType<typeof setTimeout> | null = null
+  private recheckTimer: ReturnType<typeof setTimeout> | null = null
   private watcher: FSWatcher | null = null
   private readonly opts: BridgeOpts
 
@@ -61,7 +62,25 @@ export class BridgeClient {
   async stop(): Promise<void> {
     if (this.turnTimer) clearTimeout(this.turnTimer)
     if (this.materializeTimer) clearTimeout(this.materializeTimer)
+    if (this.recheckTimer) clearTimeout(this.recheckTimer)
     await this.watcher?.close()
+  }
+
+  /**
+   * Watcher events are advisory: fsevents can coalesce a foreign write into
+   * the echo of our own materialization (observed on macOS — the agent write
+   * produced NO second event). After any write we make or ignore, re-verify
+   * disk against base once the dust settles.
+   */
+  private scheduleDiskRecheck(): void {
+    if (this.recheckTimer) clearTimeout(this.recheckTimer)
+    this.recheckTimer = setTimeout(() => {
+      void (async () => {
+        if (this.turnActive) return // turn timer already owns the file
+        const onDisk = await readFile(this.filePath, 'utf8').catch(() => null)
+        if (onDisk !== null && onDisk !== this.base.text) void this.onFileEvent()
+      })()
+    }, 100)
   }
 
   private scheduleMaterialize(): void {
@@ -86,12 +105,18 @@ export class BridgeClient {
     const text = this.text.toString()
     this.base = { text, state: Y.encodeStateAsUpdate(this.doc) }
     if (onDisk !== text) await writeFile(this.filePath, text, 'utf8')
+    this.scheduleDiskRecheck()
   }
 
   private async onFileEvent(): Promise<void> {
     const content = await readFile(this.filePath, 'utf8').catch(() => null)
     if (content === null) return
-    if (content === this.base.text) return // echo of our own materialization / no-op
+    if (content === this.base.text) {
+      // Echo of our own materialization / no-op — but a foreign write may have
+      // been coalesced into this very event; verify shortly.
+      this.scheduleDiskRecheck()
+      return
+    }
     if (!this.turnActive) this.turnActive = true // soft lock engaged
     if (this.turnTimer) clearTimeout(this.turnTimer)
     this.turnTimer = setTimeout(() => void this.endTurn(), this.opts.turnIdleMs)
@@ -109,6 +134,7 @@ export class BridgeClient {
       this.base = { text: merged, state: Y.encodeStateAsUpdate(this.doc) }
       if (merged !== fileText) await writeFile(this.filePath, merged, 'utf8')
       this.turnActive = false
+      this.scheduleDiskRecheck()
     } else {
       // The agent wrote again while we merged. Its new content is derived from
       // fileText (its lineage), NOT from the merge result — so the next diff
