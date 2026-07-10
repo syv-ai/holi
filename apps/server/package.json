@@ -1,0 +1,20 @@
+{
+  "name": "@holi/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^2.15.3",
+    "@holi/shared": "workspace:*",
+    "@trpc/server": "^11.18.0",
+    "yjs": "^13.6.31"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.3"
+  }
+}
