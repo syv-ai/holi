@@ -149,3 +149,65 @@ describe('D25 acceptance', () => {
     }
   })
 })
+
+describe('D25 acceptance — watcher coalescing (e)', () => {
+  it('rapid Write+Edit+Edit within the idle window coalesce into ONE turn; separate bursts land as separate turns', async () => {
+    const seed = 'title\nbody\nfooter\n'
+    const s = await setupScenario('accept-e', seed, { turnIdleMs: 400 })
+    try {
+      await waitUntil(async () => (await readFile(s.filePath, 'utf8')) === seed)
+
+      // Burst 1: three rapid ops, all inside one idle window
+      await s.agent.write('title v2\nbody\nfooter\n')
+      await s.agent.edit('body', 'body v2')
+      await s.agent.edit('footer', 'footer v2')
+      const file1 = await s.settle(1)
+      expect(s.bridge.turns).toBe(1) // coalesced — not three turns
+      expect(file1).toBe('title v2\nbody v2\nfooter v2\n')
+
+      // Burst 2 after idle: a distinct second turn, nothing dropped
+      await s.agent.edit('title v2', 'title v3')
+      const file2 = await s.settle(2)
+      expect(s.bridge.turns).toBe(2)
+      expect(file2).toBe('title v3\nbody v2\nfooter v2\n')
+      expect(converged([...s.all(), file2])).toBe(true)
+    } finally {
+      await s.teardown()
+    }
+  })
+})
+
+describe('documented residual risk — stale agent writes (why CC read-before-edit is load-bearing)', () => {
+  it('a Write derived from a stale Read silently reverts a remote edit — the exact case CC refuses natively', async () => {
+    const seed = 'alpha\nAGENT:\n'
+    const s = await setupScenario('stale-write', seed)
+    try {
+      await waitUntil(async () => (await readFile(s.filePath, 'utf8')) === seed)
+
+      const staleRead = await s.agent.read() // agent "Read" now…
+
+      // …then a human edit lands and re-materializes:
+      s.h1.insertAfter('alpha', ' h1#')
+      await waitUntil(
+        async () => (await readFile(s.filePath, 'utf8')).includes('h1#'),
+        10_000,
+        'human edit re-materialized',
+      )
+
+      // Agent writes content derived from the STALE read (bypassing the guard
+      // Claude Code enforces: Write/Edit fail if the file changed since Read):
+      await s.agent.write(staleRead.replace('AGENT:', 'AGENT: a1#'))
+      const file = await s.settle(1)
+
+      // Convergent, but the human edit is gone — diff(base-with-h1#, stale file)
+      // legitimately reads as "agent deleted h1#". This is NOT a bridge bug:
+      // the bridge cannot distinguish stale-revert from intentional delete.
+      // Defense: CC's native modification-detection (D2) + D26 safety net.
+      expect(file).toContain('a1#')
+      expect(file).not.toContain('h1#')
+      expect(converged([...s.all(), file])).toBe(true)
+    } finally {
+      await s.teardown()
+    }
+  })
+})
