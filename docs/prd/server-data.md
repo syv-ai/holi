@@ -348,7 +348,7 @@ The security- and correctness-critical domain, imported verbatim by **both** ser
 
 - **Snapshot growth vs restore fidelity** — too-sparse snapshots lose granular history; too-dense bloats storage. Policy is *open*. (The D26 auto-labeled snapshots add rows only at risky-op boundaries, so they don't move the growth needle much — but the 3-way reconcile depends on the pre-op snapshot existing, so risky-op snapshotting must be unconditional.)
 - **`link_index` drift** — if incremental updates miss an edit, backrefs/rename under-match. Mitigate with a periodic reconcile scan; correctness fallback is full-text scan of CRDT state.
-- **Rename vs concurrent edit of a link span** — if a user is mid-typing exactly over a `[[link]]` while rename rewrites it, CRDT last-writer applies (acceptable, same as any co-edit; D2/D12) — with the D26 overlap flag + snapshot restore as the net.
+- **Rename vs concurrent edit of a link span** — if a user is mid-typing exactly over a `[[link]]` while rename rewrites it, the CRDT converges with both edits surviving adjacently (acceptable, same as any co-edit; D2/D12, spike-verified) — with the D26 overlap flag + snapshot restore as the net.
 - **Reminder timezone anchoring** — the 09:00 anchor and absolute local times must resolve against a consistent tz; server must know the user/vault timezone (*open* — likely per-user in `per_user_state`).
 - **Task last-writer-wins** — two members editing the same task field concurrently: last write wins per field (accepted for small structured records, D4); no CRDT merge for tasks.
 - **Offline reminders** — a client offline at fire time gets the event on reconnect via the subscription replay of `fired`-but-unacked events (*open*: ack/dedup semantics).

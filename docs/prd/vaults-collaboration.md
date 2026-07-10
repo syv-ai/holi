@@ -81,7 +81,7 @@ This replaces the old model wholesale: **no git sync, no local SQLite vault regi
   2. The agent edits the stable file freely — Claude Code's read-before-edit guard stays satisfied because the file doesn't move under it.
   3. On turn end/idle: compute `diff(base, file)` and apply the patch as **positioned Yjs ops** onto the *live* CRDT (which may now contain buffered remote edits) — a 3-way merge, like git. **Never blind-replace**; a full-document agent `Write` becomes a diff-merge.
   4. New base = merge result; re-materialize; release the lock.
-- **Overlaps:** soft turn-taking makes human-vs-agent same-region collisions rare; when they do overlap, character-level last-writer resolves them (like two Google-Docs cursors), with the merge safety net (D26) as backstop.
+- **Overlaps:** soft turn-taking makes human-vs-agent same-region collisions rare; when they do overlap, the CRDT converges with both texts surviving adjacently (deterministic order; spike-verified, [../spikes/2026-07-10-bridge-turn-protocol.md](../spikes/2026-07-10-bridge-turn-protocol.md)), with the merge safety net (D26) as backstop.
 - **De-risk:** the bridge is the **only genuinely novel component in the plan → Spike 1**, built and hammered (two clients + an agent on one doc) before any other code (D25).
 
 ### Offline
@@ -135,7 +135,7 @@ Server tables (see **server-data** PRD): `vaults`, `memberships`, `docs`, `yjs_d
 3. Editor binds to the Doc; awareness shows co-viewers' avatars and cursors.
 4. Sync-status indicator reflects connection state.
 
-**Concurrent edit.** Two members type in the same doc → CRDT merges character-level; non-overlapping edits merge cleanly, overlapping same-character edits resolve last-writer (like two Google-Docs cursors, D2). No dialog — an overlapping-range merge at most raises the non-blocking *"let Claude reconcile?"* flag (D26).
+**Concurrent edit.** Two members type in the same doc → CRDT merges character-level; non-overlapping edits merge cleanly, overlapping same-character edits converge with both texts surviving adjacently (deterministic order; spike-verified, D2). No dialog — an overlapping-range merge at most raises the non-blocking *"let Claude reconcile?"* flag (D26).
 
 **Agent edit.** Agent starts writing → bridge takes the soft lock (presence shows *"Claude is editing…"*, CRDT→file re-materialization pauses, base freezes) → agent `Read`s/`Edit`s the stable file → on turn end the bridge applies `diff(base, file)` as positioned Yjs ops onto the live CRDT → relay fans out to other clients → new base, lock released. Other members' concurrent edits to other regions survive (D2, D25).
 
@@ -169,7 +169,7 @@ Server tables (see **server-data** PRD): `vaults`, `memberships`, `docs`, `yjs_d
 ## Edge cases & risks
 
 - **Cold offline start.** Signed-in but no local cache and no network → can't hydrate a vault. Show an explicit "can't reach Syv, no cached copy" state, not an empty/broken tree. (D13: offline works *via cache* — first-touch of a doc requires having synced it once.)
-- **Bridge race: agent write vs incoming remote update.** Subsumed by the D25 turn protocol — the frozen base + paused CRDT→file re-materialization *is* the mitigation. Remote edits arriving mid-turn buffer in the live CRDT and merge when the turn-end `diff(base, file)` lands as positioned ops; no watcher-event-ordering gymnastics. The residual risk is a same-region human+agent overlap, which resolves character-level last-writer with the merge safety net (D26) as backstop. Because the bridge is the only genuinely novel component in the plan, it's **Spike 1** — proven before other code.
+- **Bridge race: agent write vs incoming remote update.** Subsumed by the D25 turn protocol — the frozen base + paused CRDT→file re-materialization *is* the mitigation. Remote edits arriving mid-turn buffer in the live CRDT and merge when the turn-end `diff(base, file)` lands as positioned ops; no watcher-event-ordering gymnastics. The residual risk is a same-region human+agent overlap, which converges with both texts surviving adjacently (spike-verified) with the merge safety net (D26) as backstop. Because the bridge is the only genuinely novel component in the plan, it's **Spike 1** — proven before other code (**done, holds**: [../spikes/2026-07-10-bridge-turn-protocol.md](../spikes/2026-07-10-bridge-turn-protocol.md)).
 - **Full-document `Write`.** Handled by the same protocol: `diff(base, file)` against the frozen base means even a whole-file `Write` lands as a minimal positioned patch — "what the agent changed" and nothing more. **Never blind-replace** stays load-bearing (D2, D25).
 - **Live-preview under a remote-edit stream.** With the animation morph removed (**D22**), this is no longer a risk: a remote `docChanged` just re-decorates, and the active-line reveal follows the `yCollab`-mapped caret. No origin-sensitive animation path to guard (owned by notes-editor PRD).
 - **Non-member connection.** A non-member's Yjs connection and tRPC calls must be rejected server-side, not just hidden in the UI; the agent's write ops fail server-side for non-members (D7, D10).
