@@ -35,7 +35,7 @@ A concrete list against the old system (files cited from `~/repos/holi`). This i
 | **The `area` phantom** | `area` was derived at read time from `source_file`'s parent folder (`task_repository::area_from_source_file`); any `area:` in YAML was ignored; you couldn't set it. | Reborn as a settable folder ref (D4a). |
 | **Cross-lane drop no-op** | `KanbanView.handleCardMove` early-returned on any cross-lane drop because `area` was tied to the source note — "moving" an area meant re-pointing the note. | Drag-between-lanes now re-sets `area` (D4a). |
 | **`source_file`-as-home** | Every task carried a `source_file`; it drove area derivation, daily-note badge counts, file-tree badges, mention chips. | Replaced by ordinary membership in `related[]` (D4). No task "lives inside" a note anymore. |
-| **Orphan rescue** | `OrphanRescueHost` / `OrphanRescueDialog` caught tasks whose `source_file` note was deleted and forced the user to re-point or delete them (`useDetectOrphans`, `App.tsx`). | With no `source_file`-as-home, deleting a note can't orphan a task — it just drops one `related[]` entry. Entire subsystem deleted. |
+| **Orphan rescue** | `OrphanRescueHost` / `OrphanRescueDialog` caught tasks whose `source_file` note was deleted and forced the user to re-point or delete them (`useDetectOrphans`, `App.tsx`). | With no `source_file`-as-home, deleting a note can't orphan a task — the dangling `related[]` ref just renders as a tombstone (D27). Entire subsystem deleted. |
 | **Four separate relation arrays** | `related_tasks`, `related_nodes`, `related_emails` (`RelatedEmail`), `related_events` (`RelatedEvent`) + the special `source_file` (`models/task.rs`). | Collapsed to one unified `related[]` (D4). |
 | **Dual roll-forward persistence paths** | Synchronous rollover in `save_task` *and* a watcher sweep `roll_forward_completed_recurring` (fired via `FileChanged` → `reload_vault`) to catch direct `Edit`/`Write`/git-pull edits that bypassed `save_task` (`task_service.rs`). | Records have one write path (tRPC mutation) — roll-forward runs once, server-side on completion. |
 | **Full-vault file scans** | `task_repository::scan` walked `.holi/tasks/` on load and on every task-file `FileChanged`; `verify_parse` re-parse guard; `scan_warnings` for unparseable files. | Records are queried from Postgres — no disk walk, no parse failures to surface. |
@@ -56,7 +56,7 @@ A concrete list against the old system (files cited from `~/repos/holi`). This i
 - I set a recurring task (weekly, Mon/Wed/Fri); when I complete it, the server rolls it to the next occurrence and it reappears in Todo.
 - I set a reminder "1d" on a due-dated task; the server fires a native notification the day before at 09:00, even if my app was closed at the moment.
 - I ask the agent "make me a task to review the Q2 doc, due Friday, high priority"; it creates the record and it appears on my board.
-- As a viewer, my agent can list tasks but cannot create or mutate them (role-gated, D10).
+- As a member, I can create and mutate tasks; the agent can too on my behalf (role-gated to members/owners, D10). There is no read-only role (D7).
 
 ## Data & types
 
@@ -72,7 +72,7 @@ type Task = {
   vaultId: string
   title: string                                       // was `name`
   status: TaskStatus
-  area?: string          // vault folder path, settable — drives swim lanes (D4a)
+  area?: string          // stable folder ID (D27), displayed as the folder path — drives swim lanes (D4a)
   due?: string           // YYYY-MM-DD
   priority?: Priority
   tags: string[]
@@ -93,7 +93,7 @@ type Recurrence = {
 type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 
 type RelatedRef =
-  | { kind: 'note';  path: string }                              // vault-relative [[path]]
+  | { kind: 'note';  docId: string }                             // stable doc ID (D27), rendered as the current path
   | { kind: 'task';  taskId: string }
   | { kind: 'email'; accountId: string; threadId: string; subject: string }
   | { kind: 'event'; accountId: string; calendarId: string; eventId: string; title: string; startUnix: number }
@@ -102,8 +102,8 @@ type RelatedRef =
 Notes on the shape:
 
 - **`title`/`description`.** The old `description` was the markdown body of the task file. Records have no file body; a task is its structured fields. A short optional free-text `notes`/`description` string may be kept as a plain column if the detail view needs it — but it is *not* a markdown document and has no wiki-link semantics. (Open question below.)
-- **`related[]` is one list** (D4). The four old arrays + `source_file` collapse into it. `RelatedRef` is a tagged union; the email/event variants keep the same cached `subject`/`title` fields the old `RelatedEmail`/`RelatedEvent` carried (for offline-bridge rendering) — email/event linking is **phase 2** (Gmail/Calendar, D17) but the variants are reserved now so the board and ops don't reshape later.
-- **`area` is optional and settable.** Empty/absent = the root lane ("no area"). It's a plain vault folder path string; the vault's real folder hierarchy (needed for wiki-links and the file tree anyway, architecture §6) is what it references. Nothing derives it.
+- **`related[]` is one list** (D4). The four old arrays + `source_file` collapse into it. `RelatedRef` is a tagged union; every variant references its target by **stable ID** (D27) — doc ID for notes, task ID, account/thread/event IDs for email/event — with the UI resolving to the current path/title at render time. Note renames therefore never touch task records. The email/event variants keep the same cached `subject`/`title` fields the old `RelatedEmail`/`RelatedEvent` carried (for offline rendering) — email/event linking is **phase 2** (Gmail/Calendar, D17) but the variants are reserved now so the board and ops don't reshape later.
+- **`area` is optional and settable.** Empty/absent = the root lane ("no area"). It stores a **stable folder ID** (D27), displayed as the folder's path; the vault's real folder hierarchy (needed for wiki-links and the file tree anyway, architecture §6) is what it references. Folder renames cascade to lane labels automatically — no task record is touched. Nothing derives it.
 - **`remindedAt` is server-written** and re-armable — see reminders.
 
 ## Board UX
@@ -115,7 +115,7 @@ Default and only board layout in v1 (D4b).
 - **Filter bar:** a **simple** bar — text search, tag filter, and a done/hide toggle at minimum. It deliberately excludes the old `overdueOnly` / `highPriorityOnly` / `recurrenceWindow` / time-bucket-selection controls unless a specific one earns its place; the bar is a search-and-narrow aid, not a second configuration surface.
 - **Drag semantics (both axes are now real writes):**
   - **Vertical (between columns):** drag sets `status` (`todo`↔`doing`↔`done`). Dropping into Done triggers completion (recurrence roll-forward, server-side).
-  - **Horizontal (between lanes):** drag **re-sets `area`** to the target lane's folder path (D4a). This is the headline fix — in the old board this was a silent no-op.
+  - **Horizontal (between lanes):** drag **re-sets `area`** to the target lane's folder (its stable ID, D27) (D4a). This is the headline fix — in the old board this was a silent no-op.
 - **No "N excluded" band-aid.** Because v1 doesn't hide tasks into unselected buckets, the board shows what's there; the empty state distinguishes "no tasks yet" from "nothing matches your filters."
 - **Live:** the board subscribes to server task pushes for the active vault, so a teammate's drag/create/complete reflows lanes and columns in real time (D4).
 
@@ -133,7 +133,7 @@ Default and only board layout in v1 (D4b).
 
 **Complete:** setting `status = done`. If the task is recurring, the server rolls it forward instead of persisting `done` (see below) and it returns to Todo at its next occurrence.
 
-**Delete:** removes the record. No orphan cascade — a deleted task simply disappears from any note's backref view; a deleted *note* just drops its `related[]` entry from tasks (no orphan rescue).
+**Delete:** removes the record. No orphan cascade — a deleted task simply disappears from any note's backref view; a deleted *note* leaves its `related[]` entry dangling, rendered as a tombstone ("[deleted note]", D27) — no cascade, no orphan rescue.
 
 **Drag:** covered under [Board UX](#board-ux) — status change (vertical) and area change (horizontal), both real mutations.
 
@@ -161,14 +161,14 @@ The agent manipulates tasks through **typed MCP ops** (D10) served by the local 
 - **`task_list`** — role-gated read; filter by status / priority / due window / tags; default excludes `done` (the agent overwhelmingly wants open work); a slim projection that drops empty fields to protect context.
 - **`task_set`** — update fields; empty-string clears; add/remove arrays mutate `tags` and `related[]`. Re-setting a reminder clears `remindedAt`.
 - **`task_complete`** — convenience for `status = done` (triggers server-side roll-forward for recurring tasks).
-- **`task_link`** — unified linker: add a `RelatedRef` (note path / task id / — phase 2 — email/event) to `related[]`, replacing the old separate `task_link` / `task_link_email` / `task_unlink_email`.
+- **`task_link`** — unified linker: add a `RelatedRef` (note — stored by stable doc ID per D27, the op accepts a path and resolves it / task id / — phase 2 — email/event) to `related[]`, replacing the old separate `task_link` / `task_link_email` / `task_unlink_email`.
 
-**Role gating (D10):** all task ops are gated **server-side by vault role** — viewer = read (`task_list` only), member = write, owner = all. This is the authoritative boundary; the old per-op `REQUIRES_POWER_USER` flags and the safe/power_user permission mode are **dropped**. The client can't grant itself more than the signed-in user's role (architecture §3, §9).
+**Role gating (D10):** all task ops are gated **server-side by vault membership** — any **member** (or owner) can read and write tasks; a non-member is rejected. There is **no viewer/read-only role** (D7). This is the authoritative boundary; the old per-op `REQUIRES_POWER_USER` flags and the safe/power_user permission mode are **dropped**. The client can't grant the agent access the signed-in user doesn't have (architecture §3, §9).
 
 ## Edge cases & risks
 
-- **Deleting a note that a task links to:** drops the `related[]` note entry; the task survives (no orphan rescue). Backrefs are a server query over the link index / task records, not a full scan.
-- **`area` pointing at a folder that no longer exists** (folder renamed/deleted): the lane still renders by its stored path; the task isn't lost. `note_rename`'s atomic link rewrite (D12) should also update task `area` values and `related` note paths under the renamed prefix — specify this in the notes-editor PRD's rename op.
+- **Deleting a note that a task links to:** the `related[]` entry goes dangling and renders as a tombstone ("[deleted note]", D27); the task survives (no cascade, no orphan rescue). Backrefs are a server query over the link index / task records, not a full scan.
+- **Folder renamed or deleted:** `area` stores a stable folder ID (D27), so a rename cascades to the lane label automatically — no task record is touched, and `note_rename` is a docs-only operation that never rewrites task refs. A *deleted* folder's lane renders by its last-known path (tombstone-style); the task isn't lost.
 - **Offline task edits:** unlike notes (CRDT auto-merge), tasks are last-writer-wins per field over tRPC. Two members editing the *same* field of the *same* task while one is offline → last write wins on reconnect; different fields/tasks don't collide. No conflict UI (consistent with D21's philosophy, though tasks aren't CRDTs).
 - **Reminder fires while all clients offline:** server records the fire (`remindedAt`) and pushes the missed reminder on next connect; no client-side missed-pass needed. Decide whether a flood of missed reminders collapses to a summary (the old >5 rule) — server-side now.
 - **Recurrence math parity:** client and server both import the shared rules, but only the **server** rolls forward on completion — the client must not also roll forward optimistically (double-advance risk). Keep roll-forward server-authoritative; the client just shows the returned record.
@@ -178,7 +178,7 @@ The agent manipulates tasks through **typed MCP ops** (D10) served by the local 
 ## Dependencies
 
 - **[`server-data.md`](server-data.md)** — the `tasks` and `reminders` tables, the tRPC task router (create/list/set/complete/link + the push/subscription channel), and role checks. Task sync + reminder evaluation live here.
-- **[`notes-editor.md`](notes-editor.md)** — vault folder hierarchy (what `area` references), `[[wiki-link]]` grammar for note `related[]` entries, and `note_rename`'s atomic rewrite extending to task `area`/`related` paths (D12).
+- **[`notes-editor.md`](notes-editor.md)** — vault folder hierarchy (what `area`'s folder IDs resolve against) and the `[[wiki-link]]` grammar for prose note links. `note_rename` is **docs-only** (D27) — it never touches task records.
 - **[`agent.md`](agent.md)** — the MCP ops server, per-run bearer token, and role gating that the task ops plug into (D10).
 - **[`vaults-collaboration.md`](vaults-collaboration.md)** — membership/roles that gate every task mutation and the presence/live-update expectation for shared boards (D7, D4).
 

@@ -10,7 +10,7 @@ A collaborative container of documents + tasks + agent config, owned by the Syv 
 A vault has a **folder hierarchy** (paths), a **task collection**, a **theme**, and an agent **persona** + shared config. Identity is server-assigned (not client-minted).
 
 ### Membership / Role
-The access-control list on a shared vault. Roles: **owner** (full control + membership management), **member** (read + write), **viewer** (read-only). Enforced server-side, including on agent MCP ops.
+The access-control list on a shared vault. Two roles: **member** (read + write all content) and **owner** (member + vault administration: manage membership, transfer, delete, edit theme/settings). **No viewer/read-only role.** Enforced server-side, including on agent MCP ops.
 
 ### Document (Doc)
 A single note. Internally a **Yjs CRDT**; the source of truth lives on the server. On each client it is **materialized** as a plain `.md` **working copy** on disk so the agent and editor can use it. Has a vault-relative **path** (e.g. `projects/q2/roadmap.md`).
@@ -19,7 +19,10 @@ A single note. Internally a **Yjs CRDT**; the source of truth lives on the serve
 The on-disk `.md` file that materializes a Doc on one client. Bridged bidirectionally to the CRDT (D2). Not authoritative, not version-controlled.
 
 ### File↔CRDT bridge
-The per-client component that keeps a working copy and its Doc in sync: file change → diff → CRDT ops; CRDT change → re-materialize file. Must **diff**, never blind-replace.
+The per-client component that reconciles **agent** file writes with a Doc's CRDT (human↔human editing is pure Yjs and never touches it). Turn protocol (D25): soft lock + frozen **base** while the agent writes → `diff(base, file)` applied as positioned Yjs ops → re-materialize. Must **diff**, never blind-replace.
+
+### Base
+The last-materialized text of a Doc's working copy, frozen for the duration of an agent turn (D25). The diff `base → file` is what the bridge merges into the live CRDT.
 
 ### Relay
 The Syv-hosted Yjs sync server (Hocuspocus). Holds durable CRDT truth, fans out updates, and carries the **awareness** (presence) channel.
@@ -55,29 +58,32 @@ A path-based reference between docs: **`[[folder/note.md]]`** (optional `[[path|
 The in-app **Claude Code** instance. Runs **client-side** as an interactive `claude` process in a **PTY**, shown in the **xterm drawer**. Operates on the local working copies with its native tools.
 
 ### xterm drawer
-The popup terminal drawer in the client that renders the live interactive `claude` session. The **live** chat surface (vs the reconstructed **history** view).
+The popup terminal drawer in the client that renders the live interactive `claude` session — the chat surface, including history (via native `--resume`, D9).
 
 ### Persona
 The shared vault-assistant identity: **SOUL.md** / **IDENTITY.md** + shared **AGENTS.md** (the user's "System") + shared skills. Tier-1 (D6).
 
-### Config tiers
-1. **Shared** — synced to all vault members (persona, skills, AGENTS.md, MEMORY.md, theme, notes, tasks).
-2. **Per-user** — synced to one user across their devices, invisible to the team (personal tweaks, personal skills, USER.md, chat history, UI prefs).
-3. **Local** — one machine (working-copy cache, offline queue).
+### Config layering
+Claude Code's native layering, unmodified (D6/D30):
+1. **Shared** — the vault working dir's `.claude/`, `AGENTS.md`, `MEMORY.md`: sync because vault content syncs. CC picks them up from the cwd.
+2. **Personal** — the user's own `~/.claude` + `CLAUDE.local.md` + `USER.md`: machine-local, never touched or synced by Holi.
+3. **Holi app settings** — `.holi/settings.json` (vault-wide, synced) + `.holi/settings.local.json` (machine-local override) — the same shared/local convention CC itself uses.
+
+Chat history and the working-copy cache are also machine-local, never synced.
 
 ### USER.md / MEMORY.md / AGENTS.md
-- **AGENTS.md** — the user-authored "System" instructions for the vault assistant. Shared (tier-1).
-- **MEMORY.md** — the vault's shared scratchpad memory. Shared (tier-1).
-- **USER.md** — the agent's model of an individual user. **Per-user** (tier-2).
+- **AGENTS.md** — the user-authored "System" instructions for the vault assistant. Shared (vault content).
+- **MEMORY.md** — the vault's shared scratchpad memory. Shared (vault content).
+- **USER.md** — the agent's model of an individual user. **Personal, machine-local** (never synced — D6).
 
 ### MCP op
-A typed tool the agent calls over the in-app MCP server for things that aren't plain files: **tasks, calendar, mail, note_rename, history search** (D10). Everything else is native Claude tools.
+A typed tool the agent calls over the in-app MCP server for things that aren't plain files. v1: **tasks + note_rename**; phase 2 adds **calendar + mail** (D10). Everything else is native Claude tools.
 
 ### Per-turn context
 The fresh context (active note, linked tasks, memory fill-state) injected into every agent turn via a **`UserPromptSubmit` hook** (D8).
 
 ### History (chat)
-The browsable, searchable record of past agent conversations, **reconstructed** from Claude's session JSONLs with AI **summaries**. Per-user (D9). Distinct from the live xterm drawer.
+Claude Code's **native session resume**: the drawer relaunches `claude --resume`, CC's own session picker, replaying the full transcript in the terminal (D9). No custom reconstruction, no summaries, no sync — history lives on the machine that ran it, inside the terminal.
 
 ### Awareness / Presence
 The Yjs channel carrying live per-user state: **cursors/selections** in the editor and **doc-viewer avatars** ("who's here").

@@ -35,7 +35,9 @@ The rebuild is aggressive about the backend and the plumbing, and **conservative
 4. **Simple by default, powerful on demand.** One obvious way to do the common thing (create a task, open a note, ask the assistant). Advanced configuration exists but never blocks the path.
 5. **Personal privacy inside shared spaces.** Your assistant's model of *you*, your chat history, and your personal tweaks follow *you* and stay invisible to the team — even in a vault everyone shares.
 6. **Open-source, self-hosted, no lock-in.** Company knowledge lives on infrastructure Syv controls, built on OSS (Yjs, Hocuspocus, Postgres).
-7. **Don't fight the grain.** Lean on Claude Code's native behavior, on CRDT auto-merge, on the platform — rather than reimplementing them behind bespoke layers.
+7. **Don't fight the grain.** Lean on Claude Code's native behavior, on CRDT auto-merge, on the platform — rather than reimplementing them behind bespoke layers. Build only what Claude Code doesn't already do (D30); the old vault assistant's overcomplication is the cautionary tale.
+
+**Standing assumptions:** every Syv employee is a developer (the terminal is a natural interface, not a liability), and Claude Code is already installed and authenticated on their machines with their own accounts — Holi provisions nothing.
 
 ## The shape of v1
 

@@ -55,27 +55,31 @@ Each note is a **Yjs document**. The **Syv relay** (Hocuspocus) is the durable s
 - **Offline:** each client persists the Yjs doc to a local store (e.g. `y-indexeddb` in the renderer, or a leveldb-backed store in main). Edits made offline are standard Yjs updates that replay and auto-merge on reconnect (D21). UI shows only a **sync-status indicator** — never a conflict dialog.
 - **Backup:** Postgres snapshots + object storage. No git (D3).
 
-### Working copies and the file↔CRDT bridge (D2)
-The agent uses **native file tools**, so every Doc a client cares about is **materialized** as a `.md` **working copy** on disk (under a per-vault working dir the agent's `claude` process is pointed at).
+### Working copies and the file↔CRDT bridge (D2, D25)
+The agent uses **native file tools**, so every Doc is **materialized** as a `.md` **working copy** on disk (under a per-vault working dir the agent's `claude` process is pointed at).
 
-The **bridge** (in Electron main) runs both directions:
-- **CRDT → file:** on remote update, re-materialize the working copy (debounced; skip if the agent has an in-flight write).
-- **file → CRDT:** watch working copies (chokidar). On change, **diff** the new file text against the current CRDT text and apply the minimal set of Yjs ops. **Never blind-replace** — that's what preserves concurrent edits to other regions.
+The **bridge** (in Electron main) mediates **agent↔CRDT only** — human↔human editing is pure Yjs and never touches the filesystem. Turn protocol (**D25**):
+1. Agent starts writing a doc → **soft lock**: presence shows *"Claude is editing…"* and **CRDT→file re-materialization pauses** for that doc, freezing the **base**.
+2. Agent edits the stable file freely (CC's read-before-edit guard is satisfied).
+3. On turn end: `diff(base, file)` applies as **positioned Yjs ops** onto the live CRDT (3-way merge). **Never blind-replace.**
+4. New base = merge result; re-materialize; release.
 
-Staleness is handled by Claude Code itself: its `Edit`/`Write` require a prior `Read` and fail if the file changed since — so an agent write can't silently clobber a fresh remote edit; Claude re-reads and retries.
+Staleness is handled by Claude Code itself: its `Edit`/`Write` require a prior `Read` and fail if the file changed since.
+
+**Merge safety net (D26):** no conflict dialogs (D21) — instead, auto-labeled snapshots before risky operations (agent bulk-writes, long-offline reconciles), Yjs **overlap detection** flagging risky merges, and a non-blocking **"let Claude reconcile?"** that hands base/mine/theirs to the local agent for a semantic repair written back through the bridge.
 
 > **Tasks are NOT documents.** They're structured records (D4), synced via tRPC + server push, not Yjs. Only prose notes are CRDTs.
 
 ### Materialization scope
-A client materializes working copies lazily (open docs + recently-touched + anything the agent is pointed at), not the whole vault, to keep disk and watchers bounded. The file tree itself is driven by server metadata (paths), not by scanning disk.
+A client materializes the **whole active vault** to disk as working copies (D23), so the agent's native `Grep`/`Glob`/`Read` see every doc — not just opened ones — and the file tree reflects real files. This holds permanently because the vault is **text by construction** (**D28**): PDFs/docx convert to markdown on entry; original binaries archive to object storage (Hetzner) and fetch on demand — never eagerly synced. **Lazy/partial materialization is a deferred optimization** for very large vaults. The file tree is still driven by server metadata (paths) as the authority; the working copies are the agent's substrate.
 
 ---
 
 ## 3. Identity, auth, access (D7)
 
 - **Sign-in:** Google Workspace SSO (OAuth). Identity = Google account. The desktop app obtains a session token used for tRPC and to authenticate the Yjs WebSocket (Hocuspocus `onAuthenticate`).
-- **Vaults & membership:** a vault has an owner and a membership list with roles **owner / member / viewer**. Personal vaults have a single member (the owner).
-- **Authorization is server-side and total:** every tRPC call and every Yjs connection is checked against membership + role. Read-only viewers get read-only Yjs connections. The **agent's MCP ops are gated by the same role** (D10) — the client can't grant itself more than the user has.
+- **Vaults & membership:** a vault has a membership list with **two roles — owner and member** (D7). **member** = read + write all content; **owner** = member + vault admin (membership, transfer, delete, theme/settings). **No viewer/read-only role.** Personal vaults have a single member (the owner).
+- **Authorization is server-side and total:** every tRPC call and every Yjs connection is checked against membership. Non-members are rejected; owner-only actions (membership, delete, theme) are gated to owners. The **agent's MCP ops are gated by the same membership** (D10) — the client can't grant itself access the user doesn't have.
 
 ---
 
@@ -84,27 +88,23 @@ A client materializes working copies lazily (open docs + recently-touched + anyt
 ### Runtime: interactive Claude in a PTY
 Electron main spawns **`claude`** in a **node-pty** PTY, pointed at the vault's working-copy dir with the user's own Claude auth. Bytes stream to an **xterm.js** drawer in the renderer (write/resize/kill over IPC). This is the **live** surface — native Claude UX at full fidelity. (The old `login_pty` flow is the working template.)
 
-### Config layering (D6)
-The `claude` process sees a composed config directory:
-- **Shared (tier-1):** the vault's `.claude/` (persona SOUL/IDENTITY, shared skills, shared commands), `AGENTS.md` (→ imported by a managed `CLAUDE.md` shim), `MEMORY.md`, theme.
-- **Per-user (tier-2):** the user's personal overrides (`CLAUDE.local.md`-style), personal skills, `USER.md`.
-- **Local (tier-3):** working-copy cache, offline queue.
-
-Tiers 1 and 2 are **synced** (server-scoped: shared to the vault, or private to the user); tier 3 is machine-local. The client composes them into the config dir the PTY is launched with.
+### Config layering (D6, D30)
+**Pure CC-native layering — Holi composes nothing and syncs no personal config:**
+- **Shared:** the vault working dir carries `.claude/` (persona SOUL/IDENTITY, shared skills/commands, `settings.json` with seeded permission defaults — D29), `AGENTS.md` (→ imported by a managed `CLAUDE.md` shim), and `MEMORY.md`. They sync because vault content syncs; CC picks them up from the cwd natively.
+- **Personal (machine-local, untouched):** the user's own `~/.claude` + `CLAUDE.local.md` + `USER.md`. Holi never reads, writes, or syncs these.
+- **Holi app settings:** `.holi/settings.json` (vault-wide, synced) + `.holi/settings.local.json` (machine-local override) — mirroring CC's own shared/local convention.
 
 ### Per-turn context (D8)
-A **`UserPromptSubmit` hook** (configured in the composed `.claude/settings`) runs on every prompt and emits Holi's fresh context — active note, linked tasks, `USER.md`/`MEMORY.md` fill indicators. Claude appends it to context automatically. The base system prompt ships once via `--append-system-prompt` at launch. (Ports the old `build_system_prompt` / `build_per_turn_prefix` content.)
+A **`UserPromptSubmit` hook** (configured in the vault's `.claude/settings`) runs on every prompt and emits Holi's fresh context — active note, linked tasks, `USER.md`/`MEMORY.md` fill indicators. Claude appends it to context automatically. The base system prompt ships once via `--append-system-prompt` at launch. (Ports the old `build_system_prompt` / `build_per_turn_prefix` content. Hooks are a supported CC mechanism — this passes the D30 filter.)
 
 ### MCP ops (D10)
-A **local MCP server in Electron main** exposes only the non-file ops: **tasks, calendar, mail, `note_rename`, conversation/session search**. Per-run bearer token (as before); structured ops proxy to the Syv tRPC API. Everything else is Claude's native `Read/Write/Edit/Bash/Glob/Grep` on working copies.
+A **local MCP server in Electron main** exposes only the non-file ops — in v1 just **tasks** and **`note_rename`** (calendar/mail join in phase 2). Per-run bearer token (as before); ops proxy to the Syv tRPC API. Everything else is Claude's native `Read/Write/Edit/Bash/Glob/Grep` on working copies.
 
-- **Permissions:** Claude's native interactive prompts for file/bash + **server-side role gating** on MCP ops. No bespoke safe/power_user modes.
-- **`note_rename`** is an op (not a native `mv`) because a rename must (a) preserve the CRDT Doc identity and (b) atomically rewrite `[[links]]` across affected docs — a server operation (D12).
+- **Permissions:** Claude's native interactive prompts for file/bash + **server-side membership gating** on MCP ops (D29: never skip-permissions; vault `settings.json` seeds defaults like gated network egress). No bespoke safe/power_user modes.
+- **`note_rename`** is an op (not a native `mv`) because a rename must (a) preserve the CRDT Doc identity and (b) atomically rewrite `[[links]]` across affected docs — a server operation (D12, D27).
 
-### History (D9)
-Two surfaces:
-- **Live** = the xterm drawer.
-- **History** = a structured, browsable, searchable view **reconstructed from Claude's session JSONLs**, with summaries from a **headless summarizer job**. Stored per-user (tier-2). The reconstruction parser and the JSONL-format coupling are re-implemented in TS and isolated behind one module (it's the most brittle dependency — contain it).
+### History (D9 — native)
+No custom history system. The drawer's history affordance relaunches **`claude --resume`** — CC's own session picker, replaying the full transcript in the terminal at perfect fidelity. No JSONL parsing, no reconstruction, no summarizer, no sync. Conversations stay on the machine that ran them.
 
 ---
 
@@ -118,13 +118,13 @@ type Task = {
   vaultId: string
   title: string
   status: 'todo' | 'doing' | 'done'
-  area?: string            // vault folder path (drives swim lanes) — settable
+  area?: string            // stable folder ID (drives swim lanes) — settable; shown as path (D27)
   due?: string             // YYYY-MM-DD
   priority?: 'low' | 'medium' | 'high'
   tags: string[]
   reminder?: string        // Nd | Nw | YYYY-MM-DDTHH:MM
   recurrence?: Recurrence
-  related: RelatedRef[]    // unified: note | task | email | event
+  related: RelatedRef[]    // unified: note | task | email | event — by STABLE ID, shown as path (D27)
   createdAt: string; updatedAt: string
 }
 ```
@@ -140,8 +140,8 @@ type Task = {
 
 - **Editor:** CodeMirror 6 with **simple live-preview** (reveal-raw-on-caret, **no animation** — the View-Transition morph and its frozen-caret/gap-mark machinery are cut, **D22**), plus a **`y-codemirror.next`** binding to the Doc's Yjs text and **remote cursors** from awareness. Keeps formatting hotkeys, wiki/markdown links, `@`-mentions, and the table widget + package. Cutting the morph erases the old "morph-vs-remote-edits" risk entirely — a remote edit just re-decorates.
 - **Wiki-links:** path-based `[[folder/note.md]]`. One parser in `packages/shared` (ports `vaultRefs.ts`); thin renderers in editor/chat.
-- **Rename:** `note_rename` op → server rewrites the path + all referencing `[[links]]` in one atomic pass over the affected CRDT docs (D12). Backrefs and delete-with-references surfacing are server queries over doc content + the link index.
-- **Folder hierarchy:** vaults have real paths/folders (needed for links, the file tree, and task `area`). Folder structure is server metadata.
+- **Rename:** `note_rename` op → server rewrites the path + all referencing `[[links]]` in one atomic pass over the affected CRDT docs (D12) — a **docs-only** operation: task records reference docs by stable ID (D27), so they need no rewrite. Backrefs and delete-with-references surfacing are server queries over doc content + the link index. Deletes render **tombstones** on dangling refs, no cascades (D27).
+- **Folder hierarchy:** vaults have real paths/folders (needed for links, the file tree, and task `area`). Folder structure is server metadata; folders carry stable IDs (D27).
 
 ---
 
@@ -156,11 +156,12 @@ Indicative tables (detailed in [`prd/server-data.md`](prd/server-data.md)):
 - `yjs_docs` / `yjs_snapshots` — Yjs binary state + history timeline.
 - `tasks` — the Task record (§5).
 - `reminders` — derived/scheduled fire times for server-side evaluation.
-- `per_user_state` — (user, vault, key) → value: USER.md, personal skills index, chat-history pointers, UI prefs (tier-2).
-- `history_summaries` — per-user conversation summaries.
+- `per_user_state` — (user, vault, key) → value: **UI prefs only** (personal agent config — USER.md, personal skills — is machine-local, never synced, D6).
 - `link_index` *(optional/derived)* — for fast backrefs/rename without full scans.
 
-Object storage: attachments, doc snapshots/backups.
+*(No conversation store: chat history is local/per-machine, D9 — never in Postgres.)*
+
+Object storage (Hetzner): archived original binaries from import conversion (D28), doc snapshots/backups.
 
 ---
 
@@ -177,25 +178,27 @@ Object storage: attachments, doc snapshots/backups.
 
 - **Path safety** (`packages/shared`): reimplement the `resolve_relative` / `VaultPath` containment logic **test-first** — reject `..`/absolute/NUL, canonicalize through the closest existing ancestor, reassert containment. Guards the file bridge and any path from the agent/renderer. Security-critical; treat as a first-class module, not an afterthought.
 - **Renderer isolation:** `contextIsolation: true`, no `nodeIntegration`; the renderer reaches main only through the preload bridge.
-- **Agent sandbox:** `claude` runs pointed at the vault working-copy dir; MCP ops are role-gated server-side (the authoritative boundary). The composed config dir isolates the agent from the user's global `~/.claude`.
+- **Agent posture (D29):** trust boundary = vault membership. CC's native permission prompts stay on (never skip-permissions); the vault's shared `.claude/settings.json` seeds permission defaults (network-egress commands gated); MCP ops are membership-gated server-side (the authoritative boundary); snapshots/history (D26) are the recovery story. Prompt injection via shared content is a documented residual risk — no bespoke sandboxing in v1.
 - **Theme injection:** if per-vault theme CSS is injected into a privileged context, validate it (parse, not substring-blocklist) or inject into a sandboxed context — the old substring validator was the weak point.
-- **Server authz:** every tRPC + Yjs connection checked against membership/role; viewers get read-only Yjs.
+- **Server authz:** every tRPC + Yjs connection checked against membership; non-members rejected, owner-only actions gated to owners. No read-only role — every member connection is read-write (D7).
 
 ---
 
 ## 10. What's gone vs the old app
 
-Deleted wholesale: git sync (auto-commit/push/pull, `.gitignore` sync-filter, GitHub repo creation), the local SQLite vault registry, client-minted vault UUIDs, the headless agent stream pipeline (`AgentStreamEvent`/delta reducer/`applyDelta`/`agents:message` IPC), file-based tasks (+ `area` phantom, orphan rescue, `source_file`), the 44-op MCP surface (→ ~5 ops), safe/power_user modes, the self-improvement/curator loop (+ `activity.jsonl`, review counters, threat scanner), the Mailspring bridge, and ts-rs codegen.
+Deleted wholesale: git sync (auto-commit/push/pull, `.gitignore` sync-filter, GitHub repo creation), the local SQLite vault registry, client-minted vault UUIDs, the headless agent stream pipeline (`AgentStreamEvent`/delta reducer/`applyDelta`/`agents:message` IPC), file-based tasks (+ `area` phantom, orphan rescue, `source_file`), the 44-op MCP surface (→ **2 ops in v1**, D10), safe/power_user modes, the self-improvement/curator loop (+ `activity.jsonl`, review counters, threat scanner), the Mailspring bridge, and ts-rs codegen.
 
-Also cut: the editor's View-Transition morph + frozen-caret/gap-mark/VT-naming machinery (D22).
+Also cut this rebuild's own early over-designs (D30): the structured chat-history reconstruction + summarizer (D9 → native `--resume`), the composed config dir + per-user config sync (D6 → CC-native layering), and the editor's View-Transition morph + frozen-caret/gap-mark/VT-naming machinery (D22).
 
 Kept (ported to TS): the CodeMirror editor + **simplified** live-preview (no morph, D22), the UI primitive system + tokens, the Jotai patterns, path-safety, the wiki-link grammar, prompt content + memory budgets, recurrence/reminder rules, the daily-note stub heuristic, the PTY/xterm template.
+
+**The only genuinely novel component remaining is the file↔CRDT bridge (D25) — it is Spike 1, before any other code.** Everything else is standard practice (stock Hocuspocus + Postgres, Electron + node-pty + xterm, tRPC CRUD).
 
 ---
 
 ## 11. Build & deploy (indicative)
 
 - **Client:** Electron + Vite + React; packaged with electron-builder (dmg/nsis/AppImage).
-- **Server:** Node/TS service (Hocuspocus + tRPC + Postgres), Syv-hosted (containerized).
+- **Server:** Node/TS service (Hocuspocus + tRPC + Postgres), Syv-hosted on **Hetzner** (containerized; Hetzner object storage for archives/backups, D28).
 - **Shared:** `packages/shared` consumed by both; no codegen — types are the source.
 - **Dev:** `pnpm dev` runs the server + the desktop app; one install for the workspace.

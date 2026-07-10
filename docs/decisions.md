@@ -17,7 +17,7 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 **Decided.** The Claude agent keeps its **native `Read`/`Edit`/`Write`** tools. The on-disk `.md` is a **bidirectional working copy**; a per-client **file↔CRDT bridge** reconciles: agent writes → diff old→new → apply as CRDT ops (so other people's edits to other regions survive); CRDT changes → re-materialize the file. We rely on **Claude Code's read-before-edit + modification-detection** guard for staleness.
 
 - **Why:** The rebuild runs Claude Code interactively (D5). Forcing every note write through an MCP gateway ("never use Edit, call `note_write`") fights the grain of the interactive agent and is exactly the prompt-bolting we avoid. An agent write is functionally no different from a human typing; Claude's `Edit` already fails if the file changed since it was read, so it can't silently clobber.
-- **Rule:** the bridge must **diff**, never blind-replace the CRDT. A full-document `Write` becomes a diff-merge; overlapping simultaneous edits to the same characters resolve last-writer (same as two Google-Docs cursors), non-overlapping edits merge cleanly.
+- **Rule:** the bridge must **diff**, never blind-replace the CRDT. A full-document `Write` becomes a diff-merge; overlapping simultaneous edits to the same characters resolve last-writer (same as two Google-Docs cursors), non-overlapping edits merge cleanly. *(The full turn protocol — frozen base + soft turn-taking — is **D25**.)*
 - **Rejected:** *CRDT-is-truth, agent edits only via gateway ops* (loses native tools, fights the model). *Files-are-truth, CRDT ephemeral* (races between agent file-writes and live sessions; fragile presence).
 
 ## D3 — Git is dropped as the sync mechanism
@@ -55,22 +55,25 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 - **Consequences:** deletes the entire headless pipeline — `AgentStreamEvent`/delta reducer/`applyDelta`, most of the runtime, the `agents:message:<run_id>` IPC. See D8/D9 for what replaces the features that pipeline provided.
 - **Rejected:** *server-side agent* (contradicts the interactive-drawer decision; remote TTY streaming; mixes per-user actions).
 
-## D6 — Layered agent config: three tiers
-**Decided.** Agent config/state has three tiers:
+## D6 — Agent config: pure Claude-Code-native layering *(simplified — supersedes the composed three-tier design)*
+**Decided.** Holi builds **no config composition and no per-user config sync**. The layering is exactly Claude Code's own:
 
-1. **Shared** (synced to everyone in the vault): notes, tasks, vault-assistant **persona** (SOUL/IDENTITY), shared **skills**, shared instructions (**AGENTS.md**), shared memory (**MEMORY.md**), **theme**.
-2. **Per-user, synced** (just you, across your devices, invisible to the team): personal tweaks, personal skills, **USER.md** (the agent's model of you), **chat history**, your UI prefs.
-3. **Local** (one machine): materialized file cache, offline queue.
+1. **Shared** (syncs because vault content syncs): the vault working dir carries `.claude/` (persona SOUL/IDENTITY, shared skills/commands, `settings.json` with seeded permission defaults — D29), `AGENTS.md` (via the managed `CLAUDE.md` shim), and `MEMORY.md`. CC picks these up from the cwd natively — **zero extra machinery**.
+2. **Personal** (machine-local, untouched by Holi): the user's own **`~/.claude`** (global config, personal skills) and **`CLAUDE.local.md`** in the vault working dir — CC's native personal-per-project layer. **USER.md** (the agent's model of you) is personal and machine-local too. Holi never syncs any of this; your setup travels the way every developer's does.
+3. **Holi app settings** (same shared/local convention, mirroring CC's own): **`.holi/settings.json`** — vault-wide settings, synced as vault content — plus **`.holi/settings.local.json`** — machine-local override, never synced.
 
-- **Why:** the user wants both a **configurable shared vault-assistant persona** and **personal overrides that don't propagate to the team** (the old "gitignored" layer). Maps cleanly onto Claude Code's existing layering (project `.claude/` + `CLAUDE.md` = shared; user-level + `CLAUDE.local.md` = personal).
-- **Consequence:** requires per-user identity + server-side scoping (D7).
+- **Why:** the earlier design had Holi *composing* a config dir per launch and running a per-user config-sync subsystem (tier-2). Under **D30** ("cater to CC's natural strengths"), both are machinery CC already provides. The original ask — a configurable shared persona + "gitignored" personal tweaks — is satisfied natively.
+- **Cost accepted:** personal agent config does **not** follow you across devices (the assistant's model of *you* is per-machine). Deliberate — same trade as D9.
+- **Superseded:** the composed three-tier config dir; the tier-2 per-user config-sync subsystem. `per_user_state` on the server shrinks to UI prefs.
 
 ## D7 — Auth: Google Workspace SSO + per-vault membership
-**Decided.** Employees sign in with their **Syv Google Workspace** account (identity = Google account). Each shared vault has an explicit **membership list with roles** (owner / member / viewer). Personal vaults are owned solely by their user.
+**Decided.** Employees sign in with their **Syv Google Workspace** account (identity = Google account). Each shared vault has an explicit **membership list with two roles: owner and member.** Personal vaults are owned solely by their user.
 
+- **Roles:** **member** = read + write all content (notes, tasks); **owner** = member + vault administration (manage membership, transfer ownership, delete vault, edit theme/settings). **No viewer/read-only role** — everyone with access can edit. (This removes a whole class of complexity: the agent's native file writes can't be role-blocked cleanly, so a read-only role was an awkward fit.)
+- **Offline session:** a short-lived access token is refreshed silently while online; the cached session permits offline work for **~30 days since last successful server contact**, then re-auth is required. Sign-in is required at least once (D13).
 - **Why:** Syv is a Google shop (already uses Google Drive); low-friction, standard company SSO. The per-user tier (D6) needs a real identity to scope to.
 - **Note:** this is entirely new surface — the old app had zero auth.
-- **Rejected:** *Syv-native accounts* (build/maintain auth; another login). *Defer auth* (undercuts the per-user tier).
+- **Rejected:** *a viewer/read-only role* (awkward vs the agent's native file writes; not wanted). *Syv-native accounts* (build/maintain auth; another login). *Defer auth* (undercuts the per-user tier).
 
 ## D8 — Per-turn context injection via a UserPromptSubmit hook
 **Decided.** Holi's fresh per-turn context (active note, linked tasks, memory fill-state) is injected through a **Claude Code `UserPromptSubmit` hook** configured in the vault's `.claude/settings`. The base **system prompt** ships once via `--append-system-prompt` at PTY launch.
@@ -78,20 +81,19 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 - **Why:** you can't transparently prepend a `<system>` block to what a user types into an interactive TUI. The `UserPromptSubmit` hook is the native mechanism — it runs on every prompt and Claude appends its output to context. Exactly matches the old `build_per_turn_prefix`.
 - **Rejected:** *system-prompt-only* (goes stale within a session as the user switches notes — loses "fresh focus every turn"). *MCP resource pulled on demand* (not guaranteed present; model may forget).
 
-## D9 — Chat history: full structured history, reconstructed
-**Decided.** Keep the **full structured chat-history system**. Two distinct surfaces:
-- **Live** = the xterm drawer (native Claude TUI, full fidelity).
-- **History** = a browsable, searchable structured view **reconstructed from Claude's session JSONLs**, with AI **summaries** generated by a headless job. Per-user (tier-2, D6).
+## D9 — Chat history: native `--resume` IS the history *(reversed — was: full structured reconstruction)*
+**Decided.** No custom history system. The drawer's history affordance relaunches `claude --resume`: **Claude Code's own session picker**, and picking a session replays the full transcript **in the terminal itself**, at perfect fidelity, for free. Conversations remain local to the machine that ran them and are never synced.
 
-- **Why:** the user explicitly wants the browsable/searchable history + summaries + conversation recall. Terminal scrollback alone is ephemeral.
-- **Cost accepted (flagged):** re-inherits the **JSONL-format coupling** (the most brittle part of the old codebase; lossy on attachment chips; breaks if Anthropic changes the format) and some duplication vs the live drawer. Conscious trade.
-- **Rejected:** *native resume + session picker only* (drops the structured history the user wants). *summaries+search but no live reconstruction* (partial).
+- **Deleted outright:** the JSONL parser, the transcript-reconstruction module, the local headless summarizer job, `conversations.jsonl`, and the `conversation_search`/`session_search` MCP ops. There is no server-side conversation store either.
+- **Why:** this was the **single most brittle subsystem** in the plan (undocumented JSONL-format coupling — flagged as the top strategic risk) and it duplicated what CC does natively. Under **D30**, it's the standout violation: cut it and the brittleest coupling in the whole architecture disappears.
+- **Cost accepted:** no rich browse/search view outside the terminal — history lives where the chat lives. No cross-device history (unchanged; conversations were already local-only).
+- **Rejected:** *full structured reconstruction* (the earlier decision — brittle, duplicative). *A thin Holi-rendered session list reading session-file metadata* (still a coupling touchpoint; native picker suffices).
 
 ## D10 — MCP surface: minimal, native-first
-**Decided.** The MCP ops server exists **only** for what isn't a plain file: **task ops**, **calendar**, **mail**, **`note_rename`** (vault-wide link rewrite + CRDT identity), and **conversation/session search**. Everything else — notes, memory, skills, theme, daily notes, imports, asking the user — uses **Claude's native tools** + Holi's bridge/watchers.
+**Decided.** The MCP ops server exists **only** for what isn't a plain file. In v1 that is just **task ops** and **`note_rename`** (vault-wide link rewrite + CRDT identity); **calendar** and **mail** ops join in phase 2 with the Google integration. Everything else — notes, memory, skills, theme, daily notes, imports, asking the user — uses **Claude's native tools** + Holi's bridge/watchers. *(The conversation/session-search ops were deleted with the custom history system, D9.)*
 
 - **Where:** the MCP server runs in **Electron main** (per-run bearer token, as before); structured ops proxy to the **Syv API**.
-- **Permissions:** Claude's **native** interactive prompts for file/bash + **server-side MCP gating by vault role** (viewer = read, member = write, owner = all). The bespoke **safe/power_user** modes are **dropped**.
+- **Permissions:** Claude's **native** interactive prompts for file/bash + **server-side MCP gating by vault role** (member = read + write; owner = + vault admin). No viewer role (D7), so there's no read-only agent case. The bespoke **safe/power_user** modes are **dropped**.
 - **Why:** an interactive Claude Code already has `Read/Write/Edit/Bash/Glob/Grep`, so any vault action that's "just a file op" needs no custom tool. The old 44-op surface collapses ~80%. This is the "single largest surviving piece" — now small.
 - **Rejected:** *keep broad op surface for audit* (fights native grain, re-bloats). *rename via bridge heuristic instead of an op* (content-similarity rename detection can misfire) — kept as a possible later optimization.
 
@@ -133,8 +135,8 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 
 ## D17 — v1 scope & roadmap
 **Decided.**
-- **v1 core:** multiplayer notes + editor (CodeMirror + Yjs), stripped task board, Claude xterm drawer, shared + personal vaults with Google SSO + presence, structured chat history, **daily notes**.
-- **Phase 2 (in order):** PDF/docx preview → **Google Gmail + Calendar** sync (on Google APIs, under the same OAuth) → **Typst export** (render a markdown doc into a branded syv.ai Typst template).
+- **v1 core:** multiplayer notes + editor (CodeMirror + Yjs), stripped task board, Claude xterm drawer (history via native `--resume`, D9), shared + personal vaults with Google SSO + presence, **daily notes**.
+- **Phase 2 (in order):** import conversion + attachment-original viewing (PDF/docx → markdown on entry, originals archived — D28) → **Google Gmail + Calendar** sync (on Google APIs, under the same OAuth) → **Typst export** (render a markdown doc into a branded syv.ai Typst template).
 - **Deferred:** agent-authored HTML apps/widgets; self-improvement loop.
 - **Killed:** **Mailspring** (only ever chosen for OSS/extensibility; being abandoned) — replaced by Google APIs.
 
@@ -146,11 +148,68 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 - **Why:** the animation layer was fragile and heavy, and animating CM decorations pegs CodeMirror's measure loop on the main thread (a lesson already learned — [[feedback_codemirror_layout_animations]]). Cutting it also **erases the biggest risk in the plan**: the morph-vs-remote-edits interaction under multiplayer simply ceases to exist (a remote edit just re-decorates; there's no animation path to guard).
 - **Rejected:** *keep live-preview AND the morph, hardened* (re-inherits the exact fragility we're removing). *Go fully conventional source↔rendered toggle* (loses the reveal-raw-on-caret feel the user wants to keep).
 
+## D25 — Bridge protocol: 3-way merge vs frozen base + soft turn-taking
+**Decided.** The file↔CRDT bridge (D2) reconciles agent writes with this turn protocol. Human↔human editing is **pure Yjs and never touches the bridge** — the bridge only mediates agent↔CRDT, which shrinks the race surface to one rare case.
+
+1. When the agent starts writing a doc, the bridge takes a **soft lock**: the agent appears in presence as *"Claude is editing…"*, and **CRDT→file re-materialization is paused for that doc**, freezing the **base** (the last-materialized text) so remote edits arriving mid-turn can't poison the diff.
+2. The agent edits the stable file freely (CC's read-before-edit guard is satisfied — the file doesn't move under it).
+3. On turn end/idle: compute `diff(base, file)` and apply the patch as **positioned Yjs ops** onto the *live* CRDT (which may now contain buffered remote edits) — a 3-way merge, like git. **Never blind-replace.**
+4. New base = merge result; re-materialize; release the lock.
+
+- **Why:** a blind whole-file replace would revert teammates' concurrent edits; diffing against a *frozen* base is what makes the patch mean "what the agent changed" and nothing more. Soft turn-taking makes human-vs-agent same-region collisions rare in practice; when they do overlap, character-level last-writer resolves it (same as two Google-Docs cursors) with D26 as the safety net.
+- **De-risk:** the bridge is the **only genuinely novel component left in the plan → Spike 1**, before any other code (two clients + an agent hammering one doc).
+- **Rejected:** *intercept CC's `Edit` via PreToolUse to capture intent* (couples to tool internals; `Write` still needs the diff fallback). *Hard per-doc checkout locks* (blocks simultaneous human+agent editing entirely).
+
+## D26 — Merge safety net: history + auto-snapshots + one-click agent reconcile
+**Decided.** D21 stands — **no conflict dialogs, ever** (the Google Docs model). Convergence-but-garbled merges are handled by recoverability plus semantic repair:
+
+- **Auto-labeled snapshots** before risky operations: an agent bulk-write, or reconciling a long-offline session ("before Claude edited", "before your offline changes merged"). One-click restore from the Yjs snapshot timeline (D3).
+- **Overlap detection:** when Yjs merges two concurrent edits that touched **overlapping ranges** (or reconciles a long-offline session), the doc gets a **non-blocking** flag — *"this merge may need a look — let Claude reconcile?"*
+- **One-click agent reconcile:** accepting hands a git-style 3-way (**base / mine / theirs**, reconstructed from snapshots) to the user's **local** agent, which writes a clean reconciled version back through the bridge (with its own pre-snapshot).
+
+- **Why:** CRDTs guarantee *same* text, not *sensible* text. Git surfaced conflicts explicitly and let an intelligent resolver fix them — this recreates that at the semantic layer, using the in-vault LLM. A differentiator no plain-CRDT app (Google Docs, Notion) has. User-triggered, so no spooky silent rewrites and no token spend without opt-in.
+- **Rejected:** *auto-run reconciliation on every overlap* (unattended rewrites; tokens per collision; per-user divergence). *A real conflict-resolution UI* (large build; fights the CRDT's point; undoes D21).
+
+## D27 — Cross-references: stable IDs for machines, paths for prose
+**Decided.** The docs-are-CRDT / tasks-are-records seam is kept honest by one principle: **machine references use stable IDs; human prose uses paths.**
+
+- Task `related[]` note-refs and task `area` store **stable IDs** (doc id / folder id), resolved to the current path only for display. `[[task:<id>]]` chips are already ID-based (D22).
+- Prose wiki-links stay path-based `[[folder/note.md]]` — D12 unchanged.
+- **Consequence:** `note_rename` becomes a **docs-only** operation (rewrite prose links inside CRDT docs); task records need **no rewrite** — the scary cross-subsystem atomic transaction evaporates. Folder renames cascade `area` display automatically (IDs don't change).
+- Deletes render **tombstones** ("[deleted note]") on dangling refs instead of atomic cascades.
+- **Rejected:** *paths everywhere + a saga/outbox coordinator across Yjs + SQL* (distributed-transaction machinery — the exact fragile seam). *paths + background reconciler* (transient dangling refs).
+
+## D28 — Markdown-first ingestion; binary originals to object storage
+**Decided.** The vault is **text by construction**: PDFs / Word files / other documents are **converted to markdown on entry** (the import pipeline). The **original binary is archived to object storage** (Hetzner) and fetchable on demand — an archival escape hatch, not a working format. Actual binaries in vaults are expected to be rare.
+
+- **Why:** this is what makes D23 (full materialization) hold permanently — the working set is always small text. It also fits the product: a DMS where everything is editable, linkable, agent-readable markdown rather than opaque blobs.
+- **Consequence:** phase-2 "PDF/docx preview" reframes as *import conversion + viewing archived originals*. Hosting note: the server stack (D14) targets **Hetzner** (+ its object storage).
+- **Rejected:** *sync all binaries to every disk* (GB-scale vaults hurt everyone). *eager/lazy threshold mechanics now* (phase-2 detail, premature).
+
+## D29 — Agent security posture: trust the team + CC-native guardrails
+**Decided.** The trust boundary is **vault membership** (a small all-developer company; members are trusted colleagues — and a member's agent has no authority the member lacks).
+
+- CC's **native permission prompts** stay on — Holi never launches with skip-permissions.
+- The vault's shared **`.claude/settings.json` seeds permission defaults** (e.g. network-egress commands like `curl` gated behind approval) — configuration, not machinery; editable per vault.
+- **Snapshots/history (D26)** are the recovery story for destructive edits; server truth means local wreckage always re-materializes.
+- **Prompt injection via shared vault content** (a doc steering a member's agent) is a documented, accepted **residual risk** for v1 — no bespoke sandboxing.
+- **Rejected:** *sandboxed-bash by default* (friction on legit dev tasks; gets turned off). *treat shared vaults as hostile input* (heavy machinery against a threat the team shape doesn't have).
+
+## D30 — Operating principle & assumptions: cater to Claude Code as-is
+**Decided.** The old vault assistant was vastly overcomplicated. The rebuild's standing principle: **build only what Claude Code doesn't already do; work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward.
+
+Standing assumptions (they dissolved several risks outright):
+- **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability.
+- **CC is already installed and authenticated** on every machine (each employee's own account, native auth). Holi does no provisioning, metering, or credential management; the old login-PTY flow is at most an edge-case fallback.
+- Applications of the principle this round: D9 reversed (native `--resume`), D6 simplified (native config layering), D8 kept (hooks are native), D29 (settings-seeded permissions, not machinery).
+
 ---
 
 ## Smaller decisions (author's call, flagged for review)
 
-- **D18 — Theme is a shared (tier-1) vault property.** One vault-wide brand/theme everyone sees; agent theme-proposal deferred. **Light/dark mode** is a per-user local preference. *Open to per-user theme overrides later.*
+- **D18 — Theme is a shared (tier-1) vault property, owner-only edit.** One vault-wide brand/theme everyone sees; **only the owner can edit it** (members can't restyle the team's vault). Agent theme-proposal deferred. **Light/dark mode** is a per-user local preference. *Open to per-user theme overrides later.*
+- **D23 — Full active-vault materialization (v1).** A client materializes the **whole active vault** to disk as working copies, so the agent's native `Grep`/`Glob`/`Read` see every doc and the file tree is real. Holds permanently because the vault is text by construction (**D28** — binaries convert to markdown on entry; originals live in object storage, never eagerly synced). **Lazy/partial materialization is a deferred optimization** for very large vaults.
+- **D24 — Daily notes are personal-vault-only.** The daily note is a personal-journaling feature: auto-created only in your **personal** vault, never in shared vaults. This sidesteps shared-vault duplicate-creation, cross-timezone "today" disagreement, and visibility entirely. "Today's note" is always yours. (Refines D17.)
 - **D19 — Reminders evaluate server-side.** Since tasks are server records, the server evaluates pending reminders and **pushes** fire events to clients, which raise native Electron notifications. Removes the client-side scheduler loop. (Recurrence/reminder *rules* — the pure `Nd`/`Nw`/absolute grammar and roll-forward math — port to `packages/shared`.)
 - **D20 — Presence = Yjs awareness.** Remote **cursors/selections** in the editor + **doc-viewer avatars** ("who's here"). Standard Hocuspocus awareness channel.
 - **D21 — Offline = CRDT auto-merge, no manual conflict UI.** Offline edits queue locally and replay on reconnect; CRDT merges automatically. UI shows only a **sync-status indicator** (synced / offline / syncing), never a conflict-resolution dialog.
