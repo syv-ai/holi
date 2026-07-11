@@ -1,5 +1,7 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
+import { registerIpc } from './ipc'
+import { electronSessionStore } from './session'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -20,7 +22,7 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  ipcMain.handle('holi:ping', () => 'pong')
+  registerIpc({ store: electronSessionStore() })
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
