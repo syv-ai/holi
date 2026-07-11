@@ -1,5 +1,7 @@
+import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertWorkspace, upsertGoogleUser } from '../src/auth/google'
+import { users } from '../src/db/schema'
 import { resolveSession } from '../src/auth/sessions'
 import { authRouter } from '../src/routers/auth'
 import { createTestDb, type TestDb } from '../src/test/db'
@@ -21,6 +23,14 @@ describe('auth', () => {
     const b = await upsertGoogleUser(t.db, { sub: 'g1', email: 'x@syv.ai', name: 'X Renamed' })
     expect(b.id).toBe(a.id)
     expect(b.name).toBe('X Renamed')
+  })
+
+  it('first sign-in claims an invited stub user by email', async () => {
+    await t.db.insert(users).values({ googleSub: 'pending:new@syv.ai', email: 'new@syv.ai' })
+    const user = await upsertGoogleUser(t.db, { sub: 'g-real', email: 'new@syv.ai', name: 'New' })
+    expect(user.googleSub).toBe('g-real')
+    const all = await t.db.select().from(users).where(eq(users.email, 'new@syv.ai'))
+    expect(all).toHaveLength(1)
   })
 
   it('assertWorkspace passes matching hd and is a no-op when unrestricted', () => {

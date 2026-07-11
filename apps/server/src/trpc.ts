@@ -1,5 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server'
 import type { IncomingMessage } from 'node:http'
+import { z } from 'zod'
+import { resolveVaultRole } from './auth/membership'
 import { resolveSession, type SessionUser } from './auth/sessions'
 import type { Bus } from './bus'
 import type { Db } from './db/client'
@@ -34,4 +36,19 @@ export const publicProcedure = t.procedure
 export const authedProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' })
   return next({ ctx: { ...ctx, user: ctx.user } })
+})
+
+const vaultInput = z.object({ vaultId: z.string().uuid() })
+
+/** Every vault-scoped procedure funnels through this middleware — the role in
+ * ctx comes from the DB, never from the client (PRD §Authorization). */
+export const vaultProcedure = authedProcedure.input(vaultInput).use(async ({ ctx, input, next }) => {
+  const role = await resolveVaultRole(ctx.db, input.vaultId, ctx.user.id)
+  if (!role) throw new TRPCError({ code: 'FORBIDDEN', message: 'not a member of this vault' })
+  return next({ ctx: { ...ctx, vaultId: input.vaultId, role } })
+})
+
+export const ownerProcedure = vaultProcedure.use(({ ctx, next }) => {
+  if (ctx.role !== 'owner') throw new TRPCError({ code: 'FORBIDDEN', message: 'owner role required' })
+  return next()
 })

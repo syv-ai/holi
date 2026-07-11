@@ -3,6 +3,7 @@
  * The `hd` param on the auth URL is a UI hint only — the ID token's `hd`
  * claim is the authoritative check (assertWorkspace).
  */
+import { and, eq, like } from 'drizzle-orm'
 import { OAuth2Client, type TokenPayload } from 'google-auth-library'
 import { config } from '../config'
 import type { Db } from '../db/client'
@@ -52,8 +53,20 @@ export async function exchangeGoogleCode(code: string): Promise<GoogleProfile> {
   return { sub: payload.sub, email: payload.email, name: payload.name, avatarUrl: payload.picture }
 }
 
-/** Upsert by google_sub — profile fields refresh on every sign-in. */
+/** Upsert by google_sub — profile fields refresh on every sign-in. First
+ * sign-in claims an invited stub row (`pending:<email>`) by email. */
 export async function upsertGoogleUser(db: Db, profile: GoogleProfile) {
+  const [claimed] = await db
+    .update(users)
+    .set({
+      googleSub: profile.sub,
+      name: profile.name,
+      avatarUrl: profile.avatarUrl,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(users.email, profile.email), like(users.googleSub, 'pending:%')))
+    .returning()
+  if (claimed) return claimed
   const [user] = await db
     .insert(users)
     .values({
