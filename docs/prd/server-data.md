@@ -365,11 +365,11 @@ This PRD is the reference; the key downstream dependencies:
 
 ## Open questions
 
-- **Snapshot retention/pruning** policy (dense-recent, thin-old vs fixed cadence; how long labeled risky-op snapshots outlive interval ones).
+- **Snapshot retention/pruning** policy (dense-recent, thin-old vs fixed cadence; how long labeled risky-op snapshots outlive interval ones). *Partially stubbed 2026-07-11:* interval policy = one snapshot per 10 min of active editing (`SNAPSHOT_INTERVAL_MS`); pruning still open (plan `2026-07-11-server-persistence.md`).
 - **Overlap detection placement** (D26) — does the server detect overlapping-range concurrent merges during Yjs merge, or does the client flag them? Implementation open.
 - **WebSocket horizontal scaling** — Redis pub/sub extension vs room-affinity LB; when to build (post-v1 likely).
-- **Timezone source** for reminder anchoring — per-user vs per-vault, stored where.
+- **Timezone source** for reminder anchoring — per-user vs per-vault, stored where. *Stubbed 2026-07-11:* server-wide `HOLI_TZ` (default Europe/Copenhagen); per-user later (plan `2026-07-11-server-persistence.md`).
 - **Archived-original lifecycle** (D28, phase 2) — import upload path, GC of unreferenced objects, size limits.
 - **Offline reminder delivery** — ack/dedup so a client offline across a fire doesn't miss or double-fire.
 - **`link_index` as source of truth vs pure derived cache** — do we ever trust it without a reconcile pass?
-- **Session-token lifetime / refresh** and revocation on membership removal (immediate vs TTL).
+- **Session-token lifetime / refresh** and revocation on membership removal (immediate vs TTL). *Stubbed 2026-07-11:* opaque DB tokens, 30-day sliding TTL, revocation by row delete (plan `2026-07-11-server-persistence.md`).

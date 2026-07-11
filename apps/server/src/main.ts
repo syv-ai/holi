@@ -1,14 +1,49 @@
 import { Hocuspocus } from '@hocuspocus/server'
 import { createHTTPServer } from '@trpc/server/adapters/standalone'
-import { appRouter } from './router'
+import { createBus } from './bus'
+import { config } from './config'
+import { createDb } from './db/client'
+import { runMigrations } from './db/migrate'
+import { createReminderEvaluator } from './reminders/evaluator'
+import { appRouter } from './routers'
+import { makeCreateContext } from './trpc'
+import { makeHooks } from './yjs/hooks'
 
-const RELAY_PORT = 4444
-const API_PORT = 4000
+async function main(): Promise<void> {
+  await runMigrations()
+  const { db } = createDb()
+  const bus = createBus()
 
-const relay = new Hocuspocus({ port: RELAY_PORT })
-void relay.listen().then(() => {
-  console.log(`[relay] Hocuspocus listening on ws://127.0.0.1:${RELAY_PORT}`)
+  const hooks = makeHooks({ db, bus })
+  const relay = new Hocuspocus({
+    port: config.relayPort,
+    // built-in store debouncing — do not hand-roll (PRD: debounced onStoreDocument)
+    debounce: 2000,
+    maxDebounce: 10_000,
+    onAuthenticate: (data) => hooks.onAuthenticate(data),
+    onLoadDocument: (data) => hooks.onLoadDocument(data),
+    onStoreDocument: (data) =>
+      hooks.onStoreDocument({
+        documentName: data.documentName,
+        document: data.document,
+        context: data.context,
+      }),
+  })
+  await relay.listen()
+  console.log(`[relay] Hocuspocus listening on ws://127.0.0.1:${config.relayPort}`)
+
+  const getLiveDoc = (docId: string) => relay.documents.get(docId) ?? null
+  createHTTPServer({
+    router: appRouter,
+    createContext: makeCreateContext({ db, bus, getLiveDoc }),
+  }).listen(config.apiPort)
+  console.log(`[api] tRPC listening on http://127.0.0.1:${config.apiPort}`)
+
+  createReminderEvaluator({ db, bus }).start()
+  console.log('[reminders] evaluator started')
+}
+
+void main().catch((err) => {
+  console.error(err)
+  process.exit(1)
 })
-
-createHTTPServer({ router: appRouter }).listen(API_PORT)
-console.log(`[api] tRPC listening on http://127.0.0.1:${API_PORT}`)

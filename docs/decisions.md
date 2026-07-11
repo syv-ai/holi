@@ -120,6 +120,7 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 
 - **Why:** all-TypeScript with a shared types package (no codegen), full control, no vendor lock-in, aligns with the OSS preference.
 - **Rejected:** *managed CRDT platform* (Liveblocks/PartyKit — vendor holds core company doc data; some closed-source; against OSS preference).
+- **Addendum (2026-07-11, Nicolai):** the no-codegen rule is relaxed for the server's *internal* DB layer — Drizzle ORM defines the Postgres schema in TS and drizzle-kit autogenerates SQL migrations. `packages/shared` remains the only client↔server type seam; there is still no API/type codegen across that seam.
 
 ## D15 — Repo: fresh pnpm monorepo
 **Decided.** New repo, pnpm workspace: `apps/desktop` (Electron + React), `apps/server` (Hocuspocus + tRPC), `packages/shared` (domain types, task model, wiki-link grammar, path-safety — the security-critical bits shared by both). Clean break from the Tauri repo.
