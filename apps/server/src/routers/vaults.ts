@@ -22,7 +22,7 @@ export const vaultsRouter = router({
   }),
 
   create: authedProcedure
-    .input(z.object({ name: z.string().min(1), kind: z.enum(['personal', 'shared']) }))
+    .input(z.object({ name: z.string().min(1), kind: z.enum(['shared']).default('shared') }))
     .mutation(async ({ ctx, input }) => {
       return ctx.db.transaction(async (tx) => {
         const [vault] = await tx

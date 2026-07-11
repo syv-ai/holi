@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "vaults_personal_owner_idx" ON "vaults" USING btree ("owner_id") WHERE "vaults"."kind" = 'personal';

@@ -51,16 +51,25 @@ export const sessions = pgTable(
   (t) => [index('sessions_user_idx').on(t.userId)],
 )
 
-export const vaults = pgTable('vaults', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  name: text('name').notNull(),
-  kind: text('kind', { enum: ['personal', 'shared'] }).notNull(),
-  ownerId: uuid('owner_id')
-    .notNull()
-    .references(() => users.id),
-  theme: jsonb('theme'),
-  ...timestamps,
-})
+export const vaults = pgTable(
+  'vaults',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    kind: text('kind', { enum: ['personal', 'shared'] }).notNull(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => users.id),
+    theme: jsonb('theme'),
+    ...timestamps,
+  },
+  (t) => [
+    /** FR-7: at most one personal vault per user — provisioning race guard. */
+    uniqueIndex('vaults_personal_owner_idx')
+      .on(t.ownerId)
+      .where(sql`${t.kind} = 'personal'`),
+  ],
+)
 
 export const memberships = pgTable(
   'memberships',

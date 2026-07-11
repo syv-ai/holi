@@ -1,16 +1,35 @@
 import { z } from 'zod'
 import { exchangeGoogleCode, googleAuthUrl, upsertGoogleUser } from '../auth/google'
+import { provisionPersonalVault } from '../auth/provision'
 import { mintSession, revokeSession } from '../auth/sessions'
+import { config } from '../config'
 import { authedProcedure, publicProcedure, router } from '../trpc'
 
 export const authRouter = router({
   beginGoogle: publicProcedure.query(() => ({ url: googleAuthUrl() })),
 
+  /** Public OAuth client config for the desktop's system-browser flow.
+   * The clientId is public by design; the secret never leaves the server. */
+  oauthConfig: publicProcedure.query(() => ({
+    clientId: config.google.clientId ?? null,
+    workspaceDomain: config.google.workspaceDomain ?? null,
+  })),
+
   completeGoogle: publicProcedure
-    .input(z.object({ code: z.string().min(1) }))
+    .input(
+      z.object({
+        code: z.string().min(1),
+        codeVerifier: z.string().optional(),
+        redirectUri: z.string().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
-      const profile = await exchangeGoogleCode(input.code)
+      const profile = await exchangeGoogleCode(input.code, {
+        codeVerifier: input.codeVerifier,
+        redirectUri: input.redirectUri,
+      })
       const user = await upsertGoogleUser(ctx.db, profile)
+      await provisionPersonalVault(ctx.db, user.id)
       const token = await mintSession(ctx.db, user.id)
       return { token, user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } }
     }),

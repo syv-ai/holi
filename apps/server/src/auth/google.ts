@@ -39,9 +39,18 @@ export function assertWorkspace(payload: Pick<TokenPayload, 'hd'>): void {
   }
 }
 
-export async function exchangeGoogleCode(code: string): Promise<GoogleProfile> {
+export interface ExchangeOpts {
+  codeVerifier?: string
+  redirectUri?: string
+}
+
+export async function exchangeGoogleCode(code: string, opts: ExchangeOpts = {}): Promise<GoogleProfile> {
   const client = oauthClient()
-  const { tokens } = await client.getToken(code)
+  const { tokens } = await client.getToken({
+    code,
+    codeVerifier: opts.codeVerifier,
+    redirect_uri: opts.redirectUri ?? config.google.redirectUri,
+  })
   if (!tokens.id_token) throw new Error('Google token exchange returned no id_token')
   const ticket = await client.verifyIdToken({
     idToken: tokens.id_token,
