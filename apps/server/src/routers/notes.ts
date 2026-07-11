@@ -6,6 +6,7 @@ import { toDocMeta } from '../db/mappers'
 import { docs, linkIndex, yjsDocs } from '../db/schema'
 import { ensureAncestorFolders, safePath } from '../paths'
 import { router, vaultProcedure } from '../trpc'
+import { renameFolder, renameNote } from '../yjs/rename'
 
 export const notesRouter = router({
   create: vaultProcedure
@@ -38,6 +39,28 @@ export const notesRouter = router({
         .returning()
       if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
       ctx.bus.emitDocs(ctx.vaultId, { type: 'deleted', doc: toDocMeta(row) })
+      return { ok: true }
+    }),
+
+  rename: vaultProcedure
+    .input(z.object({ docId: z.string().uuid(), newPath: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const newPath = safePath(input.newPath)
+      await renameNote(
+        { db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc },
+        { vaultId: ctx.vaultId, docId: input.docId, newPath, authorId: ctx.user.id },
+      )
+      return { ok: true }
+    }),
+
+  renameFolder: vaultProcedure
+    .input(z.object({ folderId: z.string().uuid(), newPath: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const newPath = safePath(input.newPath)
+      await renameFolder(
+        { db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc },
+        { vaultId: ctx.vaultId, folderId: input.folderId, newPath, authorId: ctx.user.id },
+      )
       return { ok: true }
     }),
 
