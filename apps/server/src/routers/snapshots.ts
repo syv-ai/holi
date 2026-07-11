@@ -1,0 +1,57 @@
+import { desc, eq } from 'drizzle-orm'
+import { TRPCError } from '@trpc/server'
+import { z } from 'zod'
+import { requireDocAccess } from '../auth/membership'
+import { yjsSnapshots } from '../db/schema'
+import { authedProcedure, router } from '../trpc'
+import { docFromState, docText } from '../yjs/doc-store'
+import { editDocText, replaceAllText } from '../yjs/edit'
+import { refreshLinkIndex } from '../yjs/link-index'
+import { takeSnapshot } from '../yjs/snapshots'
+
+export const snapshotsRouter = router({
+  /** The timeline — labels surface the D26 auto-snapshot restore points. */
+  list: authedProcedure
+    .input(z.object({ docId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await requireDocAccess(ctx.db, input.docId, ctx.user.id)
+      return ctx.db
+        .select({
+          id: yjsSnapshots.id,
+          takenAt: yjsSnapshots.takenAt,
+          reason: yjsSnapshots.reason,
+          label: yjsSnapshots.label,
+          authorId: yjsSnapshots.authorId,
+        })
+        .from(yjsSnapshots)
+        .where(eq(yjsSnapshots.docId, input.docId))
+        .orderBy(desc(yjsSnapshots.takenAt))
+    }),
+
+  /** D26 one-click restore: pre-restore snapshot, then rewrite text to the
+   * snapshot's text as normal ops (merges/propagates, no hard overwrite). */
+  restore: authedProcedure
+    .input(z.object({ docId: z.string().uuid(), snapshotId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const { vaultId } = await requireDocAccess(ctx.db, input.docId, ctx.user.id)
+      const [snap] = await ctx.db
+        .select()
+        .from(yjsSnapshots)
+        .where(eq(yjsSnapshots.id, input.snapshotId))
+      if (!snap || snap.docId !== input.docId) throw new TRPCError({ code: 'NOT_FOUND' })
+      const targetText = docText(docFromState(snap.state))
+
+      const { before, after } = await editDocText(ctx.db, ctx.getLiveDoc, input.docId, (text) =>
+        replaceAllText(text, targetText),
+      )
+      await takeSnapshot(ctx.db, {
+        docId: input.docId,
+        state: before,
+        reason: 'pre-restore',
+        label: 'before restoring an older version',
+        authorId: ctx.user.id,
+      })
+      await refreshLinkIndex(ctx.db, vaultId, input.docId, targetText)
+      return { ok: true, restoredState: after.length }
+    }),
+})

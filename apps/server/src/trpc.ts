@@ -1,14 +1,19 @@
 import { initTRPC, TRPCError } from '@trpc/server'
 import type { IncomingMessage } from 'node:http'
+import type * as Y from 'yjs'
 import { z } from 'zod'
 import { resolveVaultRole } from './auth/membership'
 import { resolveSession, type SessionUser } from './auth/sessions'
 import type { Bus } from './bus'
 import type { Db } from './db/client'
 
+/** Look up an open Hocuspocus room's live doc (null when no room is open). */
+export type GetLiveDoc = (docId: string) => Y.Doc | null
+
 export interface Context {
   db: Db
   bus: Bus
+  getLiveDoc: GetLiveDoc
   user: SessionUser | null
   token: string | null
 }
@@ -19,8 +24,8 @@ export function bearerToken(req: Pick<IncomingMessage, 'headers'>): string | nul
   return header.slice('Bearer '.length) || null
 }
 
-/** Adapter-facing factory: main.ts partially applies { db, bus }. */
-export function makeCreateContext(deps: { db: Db; bus: Bus }) {
+/** Adapter-facing factory: main.ts partially applies { db, bus, getLiveDoc }. */
+export function makeCreateContext(deps: { db: Db; bus: Bus; getLiveDoc: GetLiveDoc }) {
   return async ({ req }: { req: IncomingMessage }): Promise<Context> => {
     const token = bearerToken(req)
     const user = token ? await resolveSession(deps.db, token) : null
