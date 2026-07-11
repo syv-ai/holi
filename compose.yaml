@@ -1,0 +1,22 @@
+services:
+  postgres:
+    # 17.9 pinned: the local containerd store has a corrupt arm64 layer for the
+    # 17-alpine tag (exec format error) that survives rmi+prune; 17.9's layer
+    # digests differ, bypassing it.
+    image: postgres:17.9-alpine
+    ports:
+      - '5433:5432'
+    environment:
+      POSTGRES_USER: holi
+      POSTGRES_PASSWORD: holi
+      POSTGRES_DB: holi
+    volumes:
+      - holi-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U holi']
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+volumes:
+  holi-pgdata:
