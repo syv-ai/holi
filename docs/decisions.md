@@ -25,6 +25,7 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 
 - **Why:** Git's sync role is the exact thing that caused multi-user pain. With the server as truth, git is redundant and its whole apparatus (auto-commit, never-pull, `.gitignore` sync-filter, GitHub repo creation, whole-vault link-rewrite-as-commit) disappears.
 - **Cost accepted:** lose GitHub-as-backup and plain-git portability. (A git *export* mirror could return later; not v1.)
+- **Amended 2026-07-13 by D32:** the deferred export mirror ships, extended to a server-side mirror **+ remote-edit ingress** so Claude Code cloud sessions can operate on vaults. Git-as-sync-between-clients stays dead; client working copies still carry no `.git`. See D32.
 
 ## D4 — Tasks are structured server records, not files
 **Decided.** Tasks become first-class **structured records on the Syv server** (queryable, shareable, real-time). No `.md` task files.
@@ -74,6 +75,7 @@ Status legend: **Decided** (locked for v1) · **Deferred** (post-v1) · **Open**
 - **Why:** Syv is a Google shop (already uses Google Drive); low-friction, standard company SSO. The per-user tier (D6) needs a real identity to scope to.
 - **Note:** this is entirely new surface — the old app had zero auth.
 - **Rejected:** *a viewer/read-only role* (awkward vs the agent's native file writes; not wanted). *Syv-native accounts* (build/maintain auth; another login). *Defer auth* (undercuts the per-user tier).
+- **Addendum 2026-07-13 (D32):** sign-in remains Google-only. A user may additionally **link a GitHub account** (OAuth) — required only for vault owners enabling the git mirror (D32). Rejected: *switching sign-in to GitHub* (loses Workspace-managed offboarding; Gmail/Calendar phase 2 needs Google OAuth anyway).
 
 ## D8 — Per-turn context injection via a UserPromptSubmit hook
 **Decided.** Holi's fresh per-turn context (active note, linked tasks, memory fill-state) is injected through a **Claude Code `UserPromptSubmit` hook** configured in the vault's `.claude/settings`. The base **system prompt** ships once via `--append-system-prompt` at PTY launch.
@@ -216,6 +218,14 @@ Standing assumptions (they dissolved several risks outright):
 - **Reuse:** copy the directory; an org-wide "apps" shared vault as convention. No registry/versioning machinery.
 - **Agent inspection:** app state optionally materializes as read-only `data.json` so the assistant can `Read` and act on it (e.g. summarize a retro board into a note).
 - **Rejected:** *Deno/Bun sidecar runtime* (a second runtime to ship; Electron's built-ins suffice). *single-file apps first* (chose dir+manifest for uniform contract and room to grow). *note-embedded apps in v1 of the feature* (editor complexity, D22). *server KV / vault-text-file app state* (worse than the Yjs doc we already have).
+
+## D32 — Vault git mirror + remote-edit ingress *(amends D3; addends D7)*
+**Decided (2026-07-13).** A vault can be connected to an **owner-provided GitHub repository**. The relay maintains a **server-side mirror clone** and is the **only git writer**: it exports vault content (debounced continuous commits to the default branch) and **ingests foreign commits** (webhook-driven) by diffing each changed file against the last-exported base and applying the patch as **positioned Yjs ops** — the D25 spike-proven shape, run server-side, guarded by D26 pre-snapshots and overlap flags. Purpose: **Claude Code web/cloud sessions** operate on GitHub repos via the Claude GitHub App; a vault-as-repo lets employees run remote sessions against vault content. Full design: [specs/2026-07-13-vault-git-mirror-design.md](specs/2026-07-13-vault-git-mirror-design.md).
+
+- **Boundaries:** D1 untouched (relay stays truth; git is never client↔client sync); client working copies still have no `.git`; tasks (D4) don't appear in the repo — remote sessions can't see/edit tasks in v1, accepted. Exported: docs + `.claude/**` + `.holi/settings.json`. Ingest: default branch only; binaries ignored (D28); renames = identity-preserving path moves, no auto link-rewrite; force-push → paused, owner resolves; every ingested path through `VaultPath`.
+- **Auth:** sign-in stays Google (D7). Owner links a GitHub account (OAuth) once; their token wires the repo (write **deploy key** + push **webhook** via API) and is never used for background operations — day-to-day runs on the deploy key.
+- **Why one writer:** the old app's git failure modes (N clients auto-pushing, whole-vault link-rewrite commits colliding) are structurally excluded when the relay serializes all git I/O per vault behind one lock.
+- **Rejected:** *full git-as-sync* (re-litigates D1/D3). *Holi auto-creating repos in a Syv org* (owner-provided URL chosen — minimal GitHub surface, explicit opt-in). *explicit pull-from-git instead of auto-ingest* (repo and vault drift). *task file round-trip* (re-opens the file↔record complexity D4 killed). *switching sign-in to GitHub* (see D7 addendum).
 
 ---
 

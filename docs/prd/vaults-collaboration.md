@@ -8,7 +8,7 @@ Owns the vault as a collaborative container: what it is, its lifecycle, the fold
 
 A **vault** is a server-owned container of documents, tasks, and agent config (glossary). Every vault — **personal** or **shared** — is backed by the same Syv relay + Postgres (D13); there is no local-only vault kind. Notes are **Yjs CRDTs** synced through a Hocuspocus relay (D1); tasks are structured server records synced via tRPC (D4, owned by server-data PRD). Clients hold a local Yjs cache for **offline** work that auto-merges on reconnect (D21). The agent edits **materialized `.md` working copies** on disk, reconciled to the CRDT through a **file↔CRDT bridge** running a frozen-base **turn protocol** (D2, D25). **Presence** (remote cursors + doc-viewer avatars) rides the Yjs awareness channel (D20). History is a **Yjs snapshot timeline** with restore; backup is Postgres + object storage (D3). Garbled-but-converged merges are covered by the **merge safety net** — auto-labeled snapshots + one-click agent reconcile (D26).
 
-This replaces the old model wholesale: **no git sync, no local SQLite vault registry, no client-minted UUIDs, no whole-vault link-rewrite conflicts** (D3, §10 architecture). Sign-in is required to use Holi; offline is served from cache (D13).
+This replaces the old model wholesale: **no client-side git sync, no local SQLite vault registry, no client-minted UUIDs, no whole-vault link-rewrite conflicts** (D3, §10 architecture). Sign-in is required to use Holi; offline is served from cache (D13). Git exists only as an opt-in, relay-owned **server-side mirror + remote-edit ingress** so Claude Code cloud sessions can work a vault as a GitHub repo (D32) — never as part of client↔client sync.
 
 ---
 
@@ -29,7 +29,7 @@ This replaces the old model wholesale: **no git sync, no local SQLite vault regi
 - Task records, task sync, reminders, board — **server-data** PRD.
 - The agent runtime, PTY, MCP ops, chat history — **agent** PRD.
 - Content **import/migration** — none in v1 (D16); a "import a markdown folder" path is deferred. When import lands (phase 2), it follows **markdown-first ingestion** (D28): binaries convert to markdown on entry, originals archive to object storage.
-- A git *export* mirror (D3, deferred).
+- The git mirror + remote-edit ingress (**D32**) — a separate server-side feature, designed in [../specs/2026-07-13-vault-git-mirror-design.md](../specs/2026-07-13-vault-git-mirror-design.md); not part of this PRD's sync engine.
 - Per-user theme overrides; agent theme proposals (D18, deferred).
 
 ---
@@ -71,7 +71,7 @@ This replaces the old model wholesale: **no git sync, no local SQLite vault regi
 - Each note is a **Yjs Doc** with a vault-relative path (glossary). Server is the durable source of truth.
 - A client **materializes** Docs as plain `.md` **working copies** on disk under a per-vault working dir the agent's `claude` process is pointed at (§2 architecture).
 - Materialization is **full for v1**: the client materializes the **whole active vault** to disk so the agent's native `Grep`/`Glob`/`Read` see every doc and the file tree reflects real files (D23). This holds **permanently** because the vault is **text by construction** (D28): binaries (PDF/docx) convert to markdown on entry, and the original binaries archive to Hetzner object storage — fetched on demand, **never eagerly synced or materialized**. Markdown vaults are tiny (MBs), so this is cheap. **Lazy/partial materialization** (open docs + recently-touched + agent-pointed only) is a **deferred optimization** for very large vaults.
-- Working copies are **not authoritative and not version-controlled** (glossary). No `.git`, no `.gitignore` sync-filter.
+- Working copies are **not authoritative and not version-controlled** (glossary). No `.git`, no `.gitignore` sync-filter. (The only git surface anywhere is the relay's server-side mirror clone, D32 — never the client.)
 
 ### Real-time collaboration
 - Clients connect to the relay over WebSocket, authenticated with the session token (Hocuspocus `onAuthenticate`), and exchange Yjs updates for the docs they have open (D1).
@@ -179,7 +179,7 @@ Server tables (see **server-data** PRD): `vaults`, `memberships`, `docs`, `yjs_d
 - **Path-safety regressions.** Any path from the agent/renderer flows through the bridge; a containment bug is a vault-escape. Treat `packages/shared` path-safety as first-class, test-first (§9 architecture).
 
 ## What's explicitly deleted from the old model
-- **Git sync** entirely: `git_sync.rs` auto-commit (30 s) / auto-push (5 min) / never-pull, `.gitignore` sync-filter, `gh repo create`, `gitInit`/`gitSetRemote`/`gitCreateGithubRepo`/`gitSyncStart` in `useVaults.createVault` (D3).
+- **Client-side git sync** entirely: `git_sync.rs` auto-commit (30 s) / auto-push (5 min) / never-pull, `.gitignore` sync-filter, `gh repo create`, `gitInit`/`gitSetRemote`/`gitCreateGithubRepo`/`gitSyncStart` in `useVaults.createVault` (D3). (D32's server-side mirror is a different animal: one relay-owned writer, not N clients.)
 - **Local SQLite vault registry** and the local `getVaults`/`saveVault` path — vault list is now a server query.
 - **Client-minted vault UUIDs** (`crypto.randomUUID()` in `useVaults.ts`) — ids are server-assigned.
 - **Whole-vault link-rewrite conflicts** — rename is one atomic server-side pass over affected CRDT docs (D12), not N git clients colliding — and it's **docs-only**: task refs are stable IDs untouched by rename (D27).

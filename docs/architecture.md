@@ -53,7 +53,7 @@ Each note is a **Yjs document**. The **Syv relay** (Hocuspocus) is the durable s
 
 - **Persistence:** Hocuspocus's `onStoreDocument` writes Yjs state (and periodic **snapshots** for the history timeline) to Postgres. `onLoadDocument` hydrates.
 - **Offline:** each client persists the Yjs doc to a local store (e.g. `y-indexeddb` in the renderer, or a leveldb-backed store in main). Edits made offline are standard Yjs updates that replay and auto-merge on reconnect (D21). UI shows only a **sync-status indicator** — never a conflict dialog.
-- **Backup:** Postgres snapshots + object storage. No git (D3).
+- **Backup:** Postgres snapshots + object storage. Git is not part of backup or client sync (D3) — but a vault can opt into a server-side **git mirror** for remote sessions (D32, below).
 
 ### Working copies and the file↔CRDT bridge (D2, D25)
 The agent uses **native file tools**, so every Doc is **materialized** as a `.md` **working copy** on disk (under a per-vault working dir the agent's `claude` process is pointed at).
@@ -72,6 +72,9 @@ Staleness is handled by Claude Code itself: its `Edit`/`Write` require a prior `
 
 ### Materialization scope
 A client materializes the **whole active vault** to disk as working copies (D23), so the agent's native `Grep`/`Glob`/`Read` see every doc — not just opened ones — and the file tree reflects real files. This holds permanently because the vault is **text by construction** (**D28**): PDFs/docx convert to markdown on entry; original binaries archive to object storage (Hetzner) and fetch on demand — never eagerly synced. **Lazy/partial materialization is a deferred optimization** for very large vaults. The file tree is still driven by server metadata (paths) as the authority; the working copies are the agent's substrate.
+
+### Git mirror + remote-edit ingress (D32)
+A vault owner can connect an **owner-provided GitHub repo**; the relay then maintains a **server-side mirror clone** and is the **only git writer** (clients still have no `.git`). Outbound, an **exporter** debounces vault edits and commits docs + `.claude/**` + `.holi/settings.json` to the default branch (bot-authored). Inbound, a webhook-driven **ingester** applies foreign commits (e.g. from **Claude Code cloud sessions** working the repo via the Claude GitHub App) by diffing each changed file against the **last-exported base** and applying the patch as positioned Yjs ops — the same D25 shape as the local bridge, guarded by a D26 pre-snapshot + overlap flags. Wiring uses the owner's linked GitHub OAuth once (installs a write deploy key + webhook); background operations run on the deploy key. Tasks never appear in the repo (D4). Full design: [specs/2026-07-13-vault-git-mirror-design.md](specs/2026-07-13-vault-git-mirror-design.md).
 
 ---
 
@@ -186,7 +189,7 @@ Object storage (Hetzner): archived original binaries from import conversion (D28
 
 ## 10. What's gone vs the old app
 
-Deleted wholesale: git sync (auto-commit/push/pull, `.gitignore` sync-filter, GitHub repo creation), the local SQLite vault registry, client-minted vault UUIDs, the headless agent stream pipeline (`AgentStreamEvent`/delta reducer/`applyDelta`/`agents:message` IPC), file-based tasks (+ `area` phantom, orphan rescue, `source_file`), the 44-op MCP surface (→ **2 ops in v1**, D10), safe/power_user modes, the self-improvement/curator loop (+ `activity.jsonl`, review counters, threat scanner), the Mailspring bridge, and ts-rs codegen.
+Deleted wholesale: **client-side** git sync (auto-commit/push/pull, `.gitignore` sync-filter, GitHub repo creation) — git returns only as a relay-owned server-side mirror/ingress for remote sessions (D32, §2), the local SQLite vault registry, client-minted vault UUIDs, the headless agent stream pipeline (`AgentStreamEvent`/delta reducer/`applyDelta`/`agents:message` IPC), file-based tasks (+ `area` phantom, orphan rescue, `source_file`), the 44-op MCP surface (→ **2 ops in v1**, D10), safe/power_user modes, the self-improvement/curator loop (+ `activity.jsonl`, review counters, threat scanner), the Mailspring bridge, and ts-rs codegen.
 
 Also cut this rebuild's own early over-designs (D30): the structured chat-history reconstruction + summarizer (D9 → native `--resume`), the composed config dir + per-user config sync (D6 → CC-native layering), and the editor's View-Transition morph + frozen-caret/gap-mark/VT-naming machinery (D22).
 

@@ -45,6 +45,10 @@ A signed-in employee opens Holi and sees their vaults. They open a shared vault,
 
 That's v1. It proves the two hard things — **CRDT collaboration** and the **interactive vault assistant** — on top of a real product.
 
+## Vaults as repos: work from anywhere
+
+A vault can be connected to a **GitHub repository** (owner-provided, opt-in). The server keeps the repo mirrored and ingests what lands on it — which means an employee can spin up a **Claude Code cloud session** on the vault's repo from the Claude desktop or web app and edit vault content **without their machine and without Holi**: the session works the repo, the merged result flows back into the live vault like a teammate's edits. Git is not how Holi syncs (that lesson is learned — D3); it's a **door into the vault for remote agents**, owned entirely by the server (D32).
+
 ## Beyond v1
 
 - **Phase 2:** PDF/docx preview → **Google Gmail + Calendar** sync (native to a Google-Workspace company) → **Typst export** (turn any doc into a branded syv.ai document).
