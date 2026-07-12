@@ -1,29 +1,27 @@
 # PRD — Vault Apps *(post-v1, designed)*
 
-Just-in-time interactive apps the vault assistant creates on demand: small, reusable tools that live **in the vault**, sync to every member, and open **inside Holi** as first-class tabs. Decision: **D31**. Ships **post-v1** (depends on the relay, the pane system, and the bridge existing) — designed now so v1 forecloses nothing.
+Just-in-time interactive apps the vault assistant creates on demand: small, reusable tools that live **in the vault**, sync to every member, and open **inside Holi** as first-class tabs. Design locked; ships **post-v1** (depends on the relay, the pane system, and the bridge existing) — designed now so v1 forecloses nothing.
 
 ---
 
 ## Summary
 
-A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown chart over the vault's tasks — and the agent **writes an app** into `.holi/apps/<name>/` with its native tools (D30), then opens it. The app renders in a sandboxed webview as a tab, talks to Holi through a scoped **`holi.*` bridge**, and — the differentiator — gets a **shared Yjs document as its state store**, riding the exact relay that syncs notes (D1). Every vault app is therefore **live-multiplayer, offline-capable, and snapshot-covered (D26) by default**: two teammates drag cards on the same retro board and watch each other do it. No runtime ships with Holi or the vault — Chromium renders UIs, and apps that declare a backend get an Electron **`utilityProcess`** (the bundled Node).
-
-Prior art: old Holi's `.app.html` + `app_bridge` + theme-injected sandboxed iframes proved the model single-player; this design makes it multiplayer and first-class.
+A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown chart over the vault's tasks — and the agent **writes an app** into `.holi/apps/<name>/` with its native tools (no custom authoring machinery), then opens it. The app renders in a sandboxed webview as a tab, talks to Holi through a scoped **`holi.*` bridge**, and — the differentiator — gets a **shared Yjs document as its state store**, riding the exact relay that syncs notes. Every vault app is therefore **live-multiplayer, offline-capable, and snapshot-covered by default**: two teammates drag cards on the same retro board and watch each other do it. **No runtime ships** with Holi or the vault — Chromium renders UIs, and apps that declare a backend get an Electron **`utilityProcess`**, the Node already bundled, so "each vault ships with Node" is satisfied with zero installs. Rejected: a Deno/Bun sidecar runtime — a second runtime to ship when Electron's built-ins suffice.
 
 ## Goals / Non-goals
 
 **Goals**
 - The agent can create, edit, and open an app **within one conversation** — no toolchain, no build step required for the common case.
-- Apps are **vault content**: synced to all members (D1), visible in a dedicated Apps surface, reusable by copying the directory.
-- **Live multiplayer app state** via a per-app shared Yjs doc on the existing relay (D26 snapshots included).
-- Apps can read/write **vault tasks and docs** (membership-gated server-side, D7/D10) and look **native** (theme tokens injected).
-- Optional **backend** per app via `utilityProcess` — no separate runtime shipped (D31).
+- Apps are **vault content**: synced to all members, visible in a dedicated Apps surface, reusable by copying the directory.
+- **Live multiplayer app state** via a per-app shared Yjs doc on the existing relay (snapshots included).
+- Apps can read/write **vault tasks and docs** (membership-gated server-side) and look **native** (theme tokens injected).
+- Optional **backend** per app via `utilityProcess` — no separate runtime shipped.
 
 **Non-goals**
-- Note-embedded app widgets (the old `html-widget` fences) — deferred; keeps the editor lean (D22).
-- An app store/registry, versioning, or permission-approval UX — trust is vault membership (D29/D31).
-- Sandboxing against malicious teammates — full employee trust; revisit if external code enters vaults.
-- npm dependency trees inside vaults — apps needing libraries get bundled to files by the agent (vault stays text-first, D28-adjacent).
+- Note-embedded app widgets — deferred; keeps the editor lean. (Rejected for the feature's first cut precisely to avoid editor complexity.)
+- An app store/registry, versioning, or permission-approval UX — trust is vault membership; manifest capabilities are transparency, not gates.
+- Sandboxing against malicious teammates — full employee trust (a member's agent has no authority the member lacks); revisit if external code ever enters vaults.
+- npm dependency trees inside vaults — apps needing libraries get bundled to files by the agent (the vault stays text-first).
 
 ## User stories
 
@@ -43,15 +41,16 @@ Prior art: old Holi's `.app.html` + `app_bridge` + theme-injected sandboxed ifra
   server.mjs           ← optional backend (utilityProcess)
 ```
 
-- `manifest.json`: `{ name, icon, description, capabilities: ["data","tasks","docs","awareness","open"], backend?: "server.mjs" }`. Capabilities are **informational** (surfaced in the Apps list), not gates (D31).
+- `manifest.json`: `{ name, icon, description, capabilities: ["data","tasks","docs","awareness","open"], backend?: "server.mjs" }`. Capabilities are **informational** (surfaced in the Apps list), not gates — full employee trust.
+- **Why a directory + manifest** (rejected: single-file apps): a uniform contract for every app and room to grow — split-out assets, an optional backend — without a format change.
 - The directory syncs like any vault content; `.holi/apps/` is hidden from the file tree by default (managed content) but surfaced through the Apps UI.
-- The authoring contract (this section + bridge API) is documented by a **skill in the vault's `.claude/`** so the agent scaffolds correctly without prompt-bolting (D30).
+- The authoring contract (this section + bridge API) is documented by a **skill in the vault's `.claude/`** so the agent scaffolds correctly without prompt-bolting.
 
 ## Runtime & surfaces
 
-- **UI:** `index.html` loads in a **sandboxed webview** (null-origin — the proven old-htmlBlock isolation), with the vault's **theme tokens injected** so apps look native, kept live via the theme postMessage channel.
+- **UI:** `index.html` loads in a **sandboxed webview** (null-origin — port the isolation model from the old htmlBlock sandbox), with the vault's **theme tokens injected** so apps look native, kept live via the theme postMessage channel.
 - **Tabs:** an app opens as a tab in the pane system — split-screen with notes, same tab chrome. Launchers: **command palette**, a **sidebar Apps section** (from `.holi/apps/` metadata), and an **agent action** ("opening it now") — the pane system must accept non-note tab kinds (the one v1 accommodation this PRD asks for).
-- **Backend (optional):** if the manifest declares one, Holi spawns `server.mjs` in an Electron **`utilityProcess`** while the app is open (lifecycle: spawn on open, kill on last tab close), wired to the frontend via the bridge. Node as-is — no permission flags (D31 trust).
+- **Backend (optional):** if the manifest declares one, Holi spawns `server.mjs` in an Electron **`utilityProcess`** while the app is open (lifecycle: spawn on open, kill on last tab close), wired to the frontend via the bridge. Node as-is — no permission flags (full employee trust).
 
 ## The `holi.*` bridge
 
@@ -59,38 +58,39 @@ postMessage RPC between the webview and Electron main (a preload-style shim insi
 
 | API | What it does |
 |---|---|
-| `holi.data` | The app's **shared Yjs doc** (Y.Map/Y.Array via a provider proxied over the bridge to the relay). Live-multiplayer state, offline queue, D26 snapshots. Doc identity: `(vaultId, app:<name>)`. |
-| `holi.tasks` | list / create / update / subscribe — proxied to the Syv tRPC API, gated by the **user's** membership (D7/D10). |
+| `holi.data` | The app's **shared Yjs doc** (Y.Map/Y.Array via a provider proxied over the bridge to the relay). Live-multiplayer state, offline queue, snapshot coverage. Doc identity: `(vaultId, app:<name>)`. |
+| `holi.tasks` | list / create / update / subscribe — proxied to the Syv tRPC API, gated by the **user's** membership. |
 | `holi.docs` | read / write / list vault docs — same gating; writes flow through the same server authority as everything else. |
-| `holi.awareness` | presence in the app (who has it open, ephemeral cursors/selections) — the relay's awareness channel scoped to the app doc (D20). |
+| `holi.awareness` | presence in the app (who has it open, ephemeral cursors/selections) — the relay's awareness channel scoped to the app doc. |
 | `holi.open` | navigate Holi: open a note, task, or another app. |
 | `holi.theme` | current resolved theme tokens + change events (also auto-injected as CSS vars). |
 
-- **Agent inspection:** `holi.data` optionally materializes as a read-only `data.json` in the app dir (debounced), so the assistant can `Read` app state with native tools — apps and agent compose (D30).
+- **Why a shared Yjs doc for app state** (rejected: server-side KV, state in a vault text file): the relay already provides live sync, offline queueing, and snapshot history — a bespoke state store would be strictly worse than the machinery notes already ride.
+- **Agent inspection:** `holi.data` optionally materializes as a read-only `data.json` in the app dir (debounced), so the assistant can `Read` app state with native tools — apps and agent compose.
 - Backend processes get the same bridge over IPC.
 
 ## Reuse
 
-An app is a directory: **reuse = copy it** (the agent can, across vaults the user is a member of). Convention: an org-wide **"apps" shared vault** acts as the library. No registry, no versioning machinery — if two vaults' copies drift, that's fine; they're independent (D31).
+An app is a directory: **reuse = copy it** (the agent can, across vaults the user is a member of). Convention: an org-wide **"apps" shared vault** acts as the library. No registry, no versioning machinery — if two vaults' copies drift, that's fine; they're independent.
 
 ## Lifecycle & flows
 
 - **Create:** user asks → agent `Write`s the dir (scaffold from the skill) → agent calls open-app → tab appears; other members see the app in their Apps section on sync.
 - **Iterate:** agent (or user) edits files → Holi hot-reloads the open webview on file change (working-copy watcher already exists for the bridge).
 - **Open:** palette / sidebar / agent → new tab; backend spawns if declared.
-- **Delete:** remove the directory (file-tree or agent); open tabs close with a tombstone message; the app's Yjs data doc is archived with the vault's snapshot retention (D26), not silently destroyed.
+- **Delete:** remove the directory (file-tree or agent); open tabs close with a tombstone message; the app's Yjs data doc is archived with the vault's snapshot retention, not silently destroyed.
 
 ## Edge cases & risks
 
 - **Concurrent app-code edits while open:** the app's *files* are synced content — a teammate's edit hot-reloads your open tab. Acceptable (same trust as the code itself); debounce reloads.
 - **Backend runaway:** a `utilityProcess` that spins — cap lifetime to tab-open, surface CPU in the Apps section, kill on close. No orphaned processes.
-- **App data growth:** app Yjs docs are unbounded by design (like notes); snapshot retention (D26/server-data) applies. Flag per-app doc size in the Apps section if it becomes real.
+- **App data growth:** app Yjs docs are unbounded by design (like notes); snapshot retention (server-data) applies. Flag per-app doc size in the Apps section if it becomes real.
 - **Schema drift:** app code evolves but old `holi.data` state persists — apps own their migrations (document the pattern in the skill); Holi guarantees only the doc, not its shape.
 - **v1 accommodation (the only one):** the pane/tab system must not assume tabs are notes; the bridge API design should keep app-scoped docs addressable (`app:<name>` doc ids in the docs table or a sibling kind).
 
 ## Dependencies
 
-- **vaults-collaboration** — the relay, app-scoped Yjs docs, offline cache, snapshots (D26).
+- **vaults-collaboration** — the relay, app-scoped Yjs docs, offline cache, snapshots.
 - **server-data** — doc kinds (`app-data`), membership gating on bridge-proxied tRPC calls, snapshot retention.
 - **agent** — authoring skill in `.claude/`, the open-app action, `data.json` inspection.
 - **notes-editor / app shell** — the pane system accepting app tabs; palette + sidebar launchers.
