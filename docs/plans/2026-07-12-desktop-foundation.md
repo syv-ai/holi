@@ -1727,7 +1727,7 @@ export function toggleInline(state: EditorState, marker: string): TransactionSpe
   return {
     changes: [
       { from, insert: marker },
-      { to, insert: marker },
+      { from: to, insert: marker },
     ],
     selection: { anchor: from + len, head: to + len },
   }
