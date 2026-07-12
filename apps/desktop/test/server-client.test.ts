@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { callProcedure, toEnvelope } from '../src/main/server-client'
 
 describe('callProcedure', () => {
-  const fakeClient = {
-    vaults: {
-      list: { query: async (input: unknown) => ['v1', input] },
-      create: { mutate: async (input: unknown) => ({ made: input }) },
-    },
-  }
+  // tRPC proxy nodes are functions with properties — the fake must match
+  const listNode = Object.assign(() => {}, { query: async (input: unknown) => ['v1', input] })
+  const createNode = Object.assign(() => {}, { mutate: async (input: unknown) => ({ made: input }) })
+  const fakeClient = Object.assign(() => {}, {
+    vaults: Object.assign(() => {}, { list: listNode, create: createNode }),
+  })
 
   it('resolves nested query paths', async () => {
     await expect(callProcedure(fakeClient, { path: 'vaults.list', type: 'query', input: 7 })).resolves.toEqual([

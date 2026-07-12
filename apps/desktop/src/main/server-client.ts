@@ -39,8 +39,9 @@ export async function callProcedure(client: unknown, op: TrpcOp): Promise<unknow
   if (op.type === 'subscription') {
     throw new Error('subscriptions are not supported over the IPC link (plan decision #5)')
   }
+  // tRPC's proxy nodes are typeof 'function' — the walk must allow both
   const node = op.path.split('.').reduce<unknown>((acc, key) => {
-    if (acc == null || typeof acc !== 'object') return undefined
+    if (acc == null || (typeof acc !== 'object' && typeof acc !== 'function')) return undefined
     return (acc as Record<string, unknown>)[key]
   }, client)
   const method = op.type === 'query' ? 'query' : 'mutate'

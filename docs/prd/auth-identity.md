@@ -159,6 +159,8 @@ Google refresh/access tokens (needed for Phase-2 Gmail/Calendar) are stored **se
 
 > **Why loopback + system browser, not embedded:** Google blocks OAuth in embedded webviews; the system browser reuses the user's existing Google session (true SSO) and keeps credentials out of the app's renderer. Loopback (RFC 8252 native-app pattern) needs no custom URL-scheme registration and no client secret on the device (PKCE replaces it). The **code exchange happens on the server**, so the confidential `client_secret` and the Google refresh token stay off every desktop machine.
 
+> **Implementation note (2026-07-12, desktop-foundation plan):** the canonical session token lives only in Electron main (`safeStorage`); tRPC ops cross IPC token-free. The Yjs `HocuspocusProvider` runs in the renderer, which fetches `{url, token}` from main per connection and holds it in memory only — a pragmatic deviation from the letter of step 6, chosen over mirroring Y.Docs across IPC (D30). Revisit if the renderer threat model hardens.
+
 ### Token refresh / session renewal
 - The Syv session token is **short-lived**; main **silently refreshes** it via a tRPC `auth.refresh` before expiry while online, and each refresh re-anchors the offline window (updates `lastSeenAt`/`cachedAt`). The cached session stays valid for **offline** work for **~30 days since last successful server contact** (D7); past that, re-auth is required. (Exact access-token TTL is an implementation detail; the 30-day offline ceiling is the decided user-facing bound.)
 - Google refresh (for Phase-2 APIs) is entirely **server-side**; the desktop app never participates.

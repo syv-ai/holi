@@ -735,12 +735,12 @@ import { describe, expect, it } from 'vitest'
 import { callProcedure, toEnvelope } from '../src/main/server-client'
 
 describe('callProcedure', () => {
-  const fakeClient = {
-    vaults: {
-      list: { query: async (input: unknown) => ['v1', input] },
-      create: { mutate: async (input: unknown) => ({ made: input }) },
-    },
-  }
+  // tRPC proxy nodes are functions with properties — the fake must match
+  const listNode = Object.assign(() => {}, { query: async (input: unknown) => ['v1', input] })
+  const createNode = Object.assign(() => {}, { mutate: async (input: unknown) => ({ made: input }) })
+  const fakeClient = Object.assign(() => {}, {
+    vaults: Object.assign(() => {}, { list: listNode, create: createNode }),
+  })
 
   it('resolves nested query paths', async () => {
     await expect(callProcedure(fakeClient, { path: 'vaults.list', type: 'query', input: 7 })).resolves.toEqual([
@@ -822,8 +822,9 @@ export type TrpcEnvelope = { ok: true; data: unknown } | { ok: false; message: s
 /** Execute an IPC op against the (proxy) client: walk the path, call query/mutate. */
 export async function callProcedure(client: unknown, op: TrpcOp): Promise<unknown> {
   if (op.type === 'subscription') throw new Error('subscriptions are not supported over the IPC link (plan decision #5)')
+  // tRPC's proxy nodes are typeof 'function' — the walk must allow both
   const node = op.path.split('.').reduce<unknown>((acc, key) => {
-    if (acc == null || typeof acc !== 'object') return undefined
+    if (acc == null || (typeof acc !== 'object' && typeof acc !== 'function')) return undefined
     return (acc as Record<string, unknown>)[key]
   }, client)
   const method = op.type === 'query' ? 'query' : 'mutate'
