@@ -1,7 +1,9 @@
 import type { HealthStatus } from '@holi/shared'
+import type { GithubApi } from '../git/github-api'
 import type { GithubOAuth } from '../git/oauth'
 import { publicProcedure, router } from '../trpc'
 import { authRouter } from './auth'
+import { makeGitRouter } from './git'
 import { makeGithubRouter } from './github'
 import { membershipRouter } from './membership'
 import { notesRouter } from './notes'
@@ -11,7 +13,19 @@ import { tasksRouter } from './tasks'
 import { userStateRouter } from './user-state'
 import { vaultsRouter } from './vaults'
 
-export function makeAppRouter(opts: { githubOAuth: GithubOAuth | null }) {
+/** Wiring endpoints fail cleanly when the GitHub OAuth app isn't configured;
+ * git.status/syncNow never touch the API. */
+const unconfiguredGithubApi: GithubApi = new Proxy({} as GithubApi, {
+  get: () => () => {
+    throw new Error('GitHub OAuth app is not configured on the server (GITHUB_CLIENT_ID/SECRET)')
+  },
+})
+
+export function makeAppRouter(opts: {
+  githubOAuth: GithubOAuth | null
+  githubApi: GithubApi | null
+  publicBaseUrl: string
+}) {
   return router({
     health: publicProcedure.query(
       (): HealthStatus => ({ ok: true, service: 'holi-server', time: new Date().toISOString() }),
@@ -25,6 +39,10 @@ export function makeAppRouter(opts: { githubOAuth: GithubOAuth | null }) {
     reminders: remindersRouter,
     userState: userStateRouter,
     github: makeGithubRouter(opts.githubOAuth),
+    git: makeGitRouter({
+      api: opts.githubApi ?? unconfiguredGithubApi,
+      publicBaseUrl: opts.publicBaseUrl,
+    }),
   })
 }
 

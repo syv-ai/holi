@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     : null
 
   createHTTPServer({
-    router: makeAppRouter({ githubOAuth }),
+    router: makeAppRouter({ githubOAuth, githubApi, publicBaseUrl: config.publicBaseUrl }),
     createContext: makeCreateContext({ db, bus, getLiveDoc }),
   }).listen(config.apiPort)
   console.log(`[api] tRPC listening on http://127.0.0.1:${config.apiPort}`)
