@@ -15,6 +15,13 @@
       "when": 1783809845526,
       "tag": "0001_breezy_ken_ellis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783924319058,
+      "tag": "0002_flowery_lady_deathstrike",
+      "breakpoints": true
     }
   ]
 }

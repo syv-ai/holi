@@ -5,6 +5,7 @@
  */
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   customType,
   date,
@@ -212,3 +213,53 @@ export const linkIndex = pgTable(
     index('link_index_target_idx').on(t.vaultId, t.targetPath),
   ],
 )
+
+/** A non-fatal git-sync incident surfaced in vault settings. */
+export interface GitWarning {
+  at: string // ISO timestamp
+  kind: 'binary-skipped' | 'unsafe-path' | 'local-file-skipped' | 'rename-target-occupied' | 'diverged-ingest'
+  path: string
+  detail?: string
+}
+
+/** Per-user GitHub account link (auth-identity PRD §Linked accounts). */
+export const githubConnections = pgTable('github_connections', {
+  userId: uuid('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  githubUserId: bigint('github_user_id', { mode: 'number' }).notNull(),
+  githubLogin: text('github_login').notNull(),
+  /** OAuth token, AES-256-GCM sealed (src/crypto.ts). Used only at repo wiring/un-wiring time. */
+  tokenCiphertext: bytea('token_ciphertext').notNull(),
+  ...timestamps,
+})
+
+/** Git mirror wiring, one row per git-enabled vault (design spec 2026-07-13). */
+export const vaultGit = pgTable('vault_git', {
+  vaultId: uuid('vault_id')
+    .primaryKey()
+    .references(() => vaults.id, { onDelete: 'cascade' }),
+  /** As the owner entered it (github.com HTTPS or SSH form). */
+  repoUrl: text('repo_url').notNull(),
+  /** What the mirror clone actually fetches/pushes (SSH in prod; a filesystem path in tests). */
+  remote: text('remote').notNull(),
+  defaultBranch: text('default_branch').notNull().default('main'),
+  deployKeyCiphertext: bytea('deploy_key_ciphertext').notNull(),
+  deployKeyPublic: text('deploy_key_public').notNull(),
+  /** GitHub resource ids so disconnect can delete them (null when not API-managed, e.g. tests). */
+  deployKeyId: bigint('deploy_key_id', { mode: 'number' }),
+  webhookId: bigint('webhook_id', { mode: 'number' }),
+  webhookSecretCiphertext: bytea('webhook_secret_ciphertext').notNull(),
+  /** The sync base: last commit exported OR ingested — the diff base for both directions. */
+  baseCommit: text('base_commit'),
+  status: text('status', { enum: ['ok', 'paused', 'attention'] }).notNull().default('ok'),
+  statusDetail: text('status_detail'),
+  warnings: jsonb('warnings').$type<GitWarning[]>().notNull().default(sql`'[]'::jsonb`),
+  enabledBy: uuid('enabled_by')
+    .notNull()
+    .references(() => users.id),
+  lastExportAt: timestamp('last_export_at', { withTimezone: true }),
+  lastIngestAt: timestamp('last_ingest_at', { withTimezone: true }),
+  lastFetchAt: timestamp('last_fetch_at', { withTimezone: true }),
+  ...timestamps,
+})
