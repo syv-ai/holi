@@ -59,7 +59,7 @@
 - Create: `apps/server/src/crypto.ts`
 - Test: `apps/server/test/crypto.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/crypto.test.ts
@@ -87,12 +87,12 @@ describe('crypto', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/crypto.test.ts`
 Expected: FAIL — `Cannot find module '../src/crypto'`
 
-- [ ] **Step 3: Implement config additions + crypto**
+- [x] **Step 3: Implement config additions + crypto**
 
 Append to the `config` object in `apps/server/src/config.ts` (inside the object literal, after `google`):
 
@@ -159,12 +159,12 @@ export function openSealed(sealed: Uint8Array, key: Buffer): string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/crypto.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/config.ts apps/server/src/crypto.ts apps/server/test/crypto.test.ts
@@ -180,7 +180,7 @@ git commit -m "feat(server): git-mirror config + AES-256-GCM at-rest crypto"
 - Create: generated migration under `apps/server/drizzle/`
 - Test: `apps/server/test/git-schema.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/git-schema.test.ts
@@ -242,12 +242,12 @@ describe('git schema', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-schema.test.ts`
 Expected: FAIL — `githubConnections` not exported
 
-- [ ] **Step 3: Add the tables**
+- [x] **Step 3: Add the tables**
 
 Append to `apps/server/src/db/schema.ts` (add `bigint` to the existing `drizzle-orm/pg-core` import list):
 
@@ -303,22 +303,22 @@ export const vaultGit = pgTable('vault_git', {
 })
 ```
 
-- [ ] **Step 4: Generate the migration**
+- [x] **Step 4: Generate the migration**
 
 Run: `pnpm --filter @holi/server db:generate`
 Expected: a new `apps/server/drizzle/00XX_*.sql` creating both tables. Inspect it — it must contain `create table "github_connections"` and `create table "vault_git"` and nothing destructive.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-schema.test.ts`
 Expected: PASS (2 tests — `createTestDb` runs migrations, picking up the new one)
 
-- [ ] **Step 6: Run the full server suite (migration must not break anything)**
+- [x] **Step 6: Run the full server suite (migration must not break anything)**
 
 Run: `pnpm --filter @holi/server test`
 Expected: all existing tests still PASS
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/server/src/db/schema.ts apps/server/drizzle apps/server/test/git-schema.test.ts
@@ -333,7 +333,7 @@ git commit -m "feat(server): github_connections + vault_git tables"
 - Create: `apps/server/src/git/repo-url.ts`
 - Test: `apps/server/test/repo-url.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/repo-url.test.ts
@@ -370,12 +370,12 @@ describe('sshRemote', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/repo-url.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/server/src/git/repo-url.ts
@@ -416,12 +416,12 @@ export function sshRemote({ owner, repo }: GithubRepo): string {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/repo-url.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/repo-url.ts apps/server/test/repo-url.test.ts
@@ -437,7 +437,7 @@ git commit -m "feat(server): GitHub repo URL parsing"
 - Create: `apps/server/src/test/git.ts`
 - Test: `apps/server/test/git-cli.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/git-cli.test.ts
@@ -521,12 +521,12 @@ describe('git wrapper', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-cli.test.ts`
 Expected: FAIL — modules not found
 
-- [ ] **Step 3: Implement the wrapper**
+- [x] **Step 3: Implement the wrapper**
 
 ```ts
 // apps/server/src/git/git.ts
@@ -616,7 +616,7 @@ export function parseNameStatusZ(out: string): NameStatusEntry[] {
 }
 ```
 
-- [ ] **Step 4: Implement the test helpers**
+- [x] **Step 4: Implement the test helpers**
 
 ```ts
 // apps/server/src/test/git.ts
@@ -703,12 +703,12 @@ export interface GithubApi {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-cli.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/server/src/git/git.ts apps/server/src/git/github-api.ts apps/server/src/test/git.ts apps/server/test/git-cli.test.ts
@@ -723,7 +723,7 @@ git commit -m "feat(server): git CLI wrapper + local-repo test helpers"
 - Modify: `apps/server/src/git/github-api.ts` (replace the placeholder)
 - Test: `apps/server/test/github-api.test.ts`
 
-- [ ] **Step 1: Write the failing test** (a local HTTP server plays GitHub)
+- [x] **Step 1: Write the failing test** (a local HTTP server plays GitHub)
 
 ```ts
 // apps/server/test/github-api.test.ts
@@ -794,12 +794,12 @@ describe('createGithubApi', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/github-api.test.ts`
 Expected: FAIL — `createGithubApi` not exported
 
-- [ ] **Step 3: Implement (replace the whole placeholder file)**
+- [x] **Step 3: Implement (replace the whole placeholder file)**
 
 ```ts
 // apps/server/src/git/github-api.ts
@@ -896,12 +896,12 @@ export function createGithubApi(opts: GithubApiOptions): GithubApi {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/github-api.test.ts`
 Expected: PASS (2 tests). Also run `pnpm --filter @holi/server exec vitest run test/git-cli.test.ts` — the fake in `src/test/git.ts` must still satisfy the interface.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/github-api.ts apps/server/test/github-api.test.ts
@@ -918,7 +918,7 @@ git commit -m "feat(server): GitHub REST client behind an injectable interface"
 - Modify: `apps/server/src/routers/index.ts`
 - Test: `apps/server/test/github-oauth.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/github-oauth.test.ts
@@ -995,12 +995,12 @@ describe('github oauth linking', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/github-oauth.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement the OAuth service**
+- [x] **Step 3: Implement the OAuth service**
 
 ```ts
 // apps/server/src/git/oauth.ts
@@ -1067,7 +1067,7 @@ export function createGithubOAuth(deps: GithubOAuthDeps) {
 export type GithubOAuth = ReturnType<typeof createGithubOAuth>
 ```
 
-- [ ] **Step 4: Implement the user-level router and register it**
+- [x] **Step 4: Implement the user-level router and register it**
 
 ```ts
 // apps/server/src/routers/github.ts
@@ -1124,17 +1124,17 @@ export type AppRouter = ReturnType<typeof makeAppRouter>
 
 If the file currently exports `appRouter` as a value used by `main.ts` and tests, update those call sites: `main.ts` builds `makeAppRouter({ githubOAuth })` (Task 12), and any test importing `appRouter` switches to `makeAppRouter({ githubOAuth: null })`. Check with `grep -rn "appRouter" apps --include='*.ts' | grep -v node_modules` and update every hit; the desktop's `AppRouter` **type** import keeps working.
 
-- [ ] **Step 5: Run tests + typecheck**
+- [x] **Step 5: Run tests + typecheck**
 
 Run: `pnpm --filter @holi/server exec vitest run test/github-oauth.test.ts && pnpm --filter @holi/server typecheck && pnpm --filter @holi/desktop typecheck`
 Expected: PASS / clean — desktop typecheck confirms the `AppRouter` type seam survived
 
-- [ ] **Step 6: Run the full server suite**
+- [x] **Step 6: Run the full server suite**
 
 Run: `pnpm --filter @holi/server test`
 Expected: PASS (call-site updates didn't break router tests)
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/server/src/git/oauth.ts apps/server/src/routers/github.ts apps/server/src/routers/index.ts apps/server/test/github-oauth.test.ts
@@ -1151,7 +1151,7 @@ git commit -m "feat(server): GitHub account linking (OAuth) + github router"
 
 The exporter materializes the **full** doc tree into the clone on every export (tiny markdown vaults — architecture §Materialization) and lets git compute the delta. `*.local.*` paths never export; tasks aren't docs so they're excluded by construction.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/exporter.test.ts
@@ -1233,12 +1233,12 @@ describe('exporter', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/exporter.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/server/src/git/exporter.ts
@@ -1316,12 +1316,12 @@ export async function exportCommit(db: Db, vaultId: string, cloneDir: string): P
 
 (`--allow-empty` only matters for the unborn-branch first commit of an empty vault; the `status === '' && headExists` guard prevents empty commits otherwise.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/exporter.test.ts`
 Expected: PASS (3 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/exporter.ts apps/server/test/exporter.test.ts
@@ -1338,12 +1338,12 @@ git commit -m "feat(server): git exporter — full-tree materialization + bot co
 - Modify: `apps/server/src/yjs/snapshots.ts` (add `'pre-git-ingest'` reason)
 - Test: `apps/server/test/apply-diff.test.ts`
 
-- [ ] **Step 1: Add the dependency**
+- [x] **Step 1: Add the dependency**
 
 Run: `pnpm --filter @holi/server add fast-diff`
 Expected: `fast-diff` (^1.x) in `apps/server/package.json` dependencies (ships its own types).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // apps/server/test/apply-diff.test.ts
@@ -1397,12 +1397,12 @@ describe('applyTextDiff', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/apply-diff.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```ts
 // apps/server/src/git/apply-diff.ts
@@ -1449,12 +1449,12 @@ export type SnapshotReason =
   | 'pre-git-ingest'
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/apply-diff.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/server/package.json pnpm-lock.yaml apps/server/src/git/apply-diff.ts apps/server/src/yjs/snapshots.ts apps/server/test/apply-diff.test.ts
@@ -1471,7 +1471,7 @@ git commit -m "feat(server): fast-diff → positioned Y.Text ops (server-side D2
 
 Edge policy (design spec): create/edit/delete map to doc ops; renames are identity-preserving path moves with **no** link rewrite (`renameNote` is deliberately NOT used — the remote commit carries its own link edits); binaries and unsafe paths are skipped with warnings; `*.local.*` is skipped with a warning.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/ingester.test.ts
@@ -1623,12 +1623,12 @@ describe('ingestRange', () => {
   })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/ingester.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/server/src/git/ingester.ts
@@ -1825,12 +1825,12 @@ export async function ingestRange(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/ingester.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/ingester.ts apps/server/test/ingester.test.ts
@@ -1845,7 +1845,7 @@ git commit -m "feat(server): git ingester — foreign commits to positioned doc 
 - Create: `apps/server/src/git/sync.ts`
 - Test: `apps/server/test/git-sync.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/git-sync.test.ts
@@ -2052,12 +2052,12 @@ describe('withVaultLock', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-sync.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/server/src/git/sync.ts
@@ -2258,12 +2258,12 @@ export function syncVault(deps: SyncDeps, vaultId: string): Promise<void> {
 
 **Implementation note on `hash-object -t tree /dev/null`:** this yields git's empty-tree sha (`4b825dc6…`) portably, so `ingestRange(emptyTree, head, { skipExisting: true })` lists every repo file as an add while leaving paths that already have a doc untouched — the vault-wins collision policy. The test asserts the outcome that matters: `repo-only.md` ingested, `both.md` = vault version on the remote.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-sync.test.ts`
 Expected: PASS (6 tests). These are the load-bearing tests of the whole feature — if the non-FF or force-push cases fail, fix the orchestrator, do not weaken the assertions.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/sync.ts apps/server/test/git-sync.test.ts
@@ -2279,7 +2279,7 @@ git commit -m "feat(server): git sync orchestrator — one locked writer per vau
 - Modify: `apps/server/src/routers/index.ts`
 - Test: `apps/server/test/git-wiring.test.ts`
 
-- [ ] **Step 1: Write the failing test** (drives the router's service functions directly — router glue is thin)
+- [x] **Step 1: Write the failing test** (drives the router's service functions directly — router glue is thin)
 
 ```ts
 // apps/server/test/git-wiring.test.ts
@@ -2394,12 +2394,12 @@ describe('disconnectRepo', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-wiring.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement service functions + router**
+- [x] **Step 3: Implement service functions + router**
 
 ```ts
 // apps/server/src/routers/git.ts
@@ -2591,12 +2591,12 @@ const unconfiguredGithubApi: GithubApi = new Proxy({} as GithubApi, {
 
 Update every `makeAppRouter` call site again (tests from Task 6 gain `githubApi: null, publicBaseUrl: 'http://test'`).
 
-- [ ] **Step 4: Run tests + typecheck**
+- [x] **Step 4: Run tests + typecheck**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-wiring.test.ts && pnpm --filter @holi/server typecheck`
 Expected: PASS / clean. Note: this test shells out to `ssh-keygen` — present on macOS/Linux dev machines and the Hetzner target by default.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/routers/git.ts apps/server/src/routers/index.ts apps/server/test/git-wiring.test.ts
@@ -2612,7 +2612,7 @@ git commit -m "feat(server): vault git wiring — connect/disconnect/status/sync
 - Modify: `apps/server/src/main.ts`
 - Test: `apps/server/test/webhook.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/webhook.test.ts
@@ -2717,12 +2717,12 @@ describe('github webhook', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/webhook.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement the handler**
+- [x] **Step 3: Implement the handler**
 
 ```ts
 // apps/server/src/git/webhook.ts
@@ -2798,7 +2798,7 @@ export function makeGithubWebhookHandler(deps: WebhookDeps) {
 }
 ```
 
-- [ ] **Step 4: Assemble main.ts**
+- [x] **Step 4: Assemble main.ts**
 
 Replace the tRPC server block in `apps/server/src/main.ts` (keep relay + migrations + reminder evaluator exactly as they are):
 
@@ -2864,12 +2864,12 @@ import { makeAppRouter } from './routers'
 
 `createGitScheduler` doesn't exist yet — Task 13 creates it; to keep this task compilable, add the scheduler stub there first OR do Tasks 12–13 in one sitting and typecheck at the end of 13. Recommended: implement Task 13's scheduler file before running this task's typecheck.
 
-- [ ] **Step 5: Run test**
+- [x] **Step 5: Run test**
 
 Run: `pnpm --filter @holi/server exec vitest run test/webhook.test.ts`
 Expected: PASS (4 tests)
 
-- [ ] **Step 6: Commit** (fold into Task 13's commit if you deferred the typecheck)
+- [x] **Step 6: Commit** (fold into Task 13's commit if you deferred the typecheck)
 
 ```bash
 git add apps/server/src/git/webhook.ts apps/server/src/main.ts apps/server/test/webhook.test.ts
@@ -2884,7 +2884,7 @@ git commit -m "feat(server): GitHub webhook endpoint + http route assembly"
 - Create: `apps/server/src/git/scheduler.ts`
 - Test: `apps/server/test/git-scheduler.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/git-scheduler.test.ts
@@ -2973,12 +2973,12 @@ describe('tick wiring', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-scheduler.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/server/src/git/scheduler.ts
@@ -3065,12 +3065,12 @@ export function createGitScheduler(deps: {
 }
 ```
 
-- [ ] **Step 4: Run tests + full suite + typecheck**
+- [x] **Step 4: Run tests + full suite + typecheck**
 
 Run: `pnpm --filter @holi/server exec vitest run test/git-scheduler.test.ts && pnpm --filter @holi/server test && pnpm --filter @holi/server typecheck`
 Expected: all PASS (main.ts from Task 12 now compiles)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/git/scheduler.ts apps/server/test/git-scheduler.test.ts
@@ -3089,7 +3089,7 @@ git commit -m "feat(server): git mirror scheduler — quiet-window export + fetc
 - Modify: `apps/desktop/src/renderer/src/components/Shell.tsx`
 - Test: `apps/desktop/test/git-state.test.ts` (if the desktop tests live elsewhere, follow the existing `vitest` config — check `apps/desktop/vitest.config.ts` / existing test locations first and match them)
 
-- [ ] **Step 1: Add the openExternal IPC**
+- [x] **Step 1: Add the openExternal IPC**
 
 In `apps/desktop/src/main/ipc.ts`, inside `registerIpc` (shell is already imported):
 
@@ -3108,7 +3108,7 @@ In `apps/desktop/src/preload/index.ts`, add to the exposed object:
 
 and mirror it in the renderer's `global.d.ts` `window.holi` type (match the existing declarations style).
 
-- [ ] **Step 2: Write the failing state test**
+- [x] **Step 2: Write the failing state test**
 
 ```ts
 // apps/desktop/test/git-state.test.ts  (match existing desktop test dir/style)
@@ -3148,7 +3148,7 @@ describe('describeGitStatus', () => {
 })
 ```
 
-- [ ] **Step 3: Implement state + pane**
+- [x] **Step 3: Implement state + pane**
 
 ```ts
 // apps/desktop/src/renderer/src/state/git.ts
@@ -3355,12 +3355,12 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
 
 Wire into `Shell.tsx`: add a `⚙` button next to the vault `+` button and a `showSettings` `useState`; when true, render `<VaultSettings onClose={() => setShowSettings(false)} />` in place of `<EditorPane …>` (same slot). Owner-gating is server-side; the pane simply surfaces the server error if a non-owner tries.
 
-- [ ] **Step 4: Run tests + typecheck**
+- [x] **Step 4: Run tests + typecheck**
 
 Run: `pnpm --filter @holi/desktop test && pnpm --filter @holi/desktop typecheck`
 Expected: PASS / clean
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src
@@ -3376,12 +3376,12 @@ git commit -m "feat(desktop): vault settings pane — GitHub link + git mirror c
 - Modify: `docs/prd/vaults-collaboration.md` (record the two documented deviations from the header of this plan)
 - Modify: this plan file (tick boxes, note deviations inline)
 
-- [ ] **Step 1: Full suites + typecheck**
+- [x] **Step 1: Full suites + typecheck**
 
 Run: `pnpm test && pnpm typecheck`
 Expected: all packages green (shared 6 files, server ~24 files incl. the 10 new ones, desktop incl. the new state test)
 
-- [ ] **Step 2: Live dev-loop smoke (no GitHub needed)**
+- [x] **Step 2: Live dev-loop smoke (no GitHub needed)**
 
 ```bash
 pnpm db:up
@@ -3396,11 +3396,11 @@ Then, with a dev token (`pnpm --filter @holi/server exec tsx scripts/seed-dev.ts
 
 Expected: both directions round-trip; `vault_git.base_commit` advances.
 
-- [ ] **Step 3: Record deviations + update PRD**
+- [x] **Step 3: Record deviations + update PRD**
 
 Add to `docs/prd/vaults-collaboration.md` §Git mirror & remote-edit ingress, matching what was built: (a) divergent ingests record a `diverged-ingest` warning in vault settings instead of the merge-safety-net flag (which doesn't exist yet — it takes over when that feature ships); (b) ingest-driven deletes take no pre-snapshot (snapshots cascade with the doc — same recovery gap as any doc delete today). Note anything else that deviated during execution at the bottom of this plan.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs
@@ -3408,6 +3408,13 @@ git commit -m "docs: git mirror — record implementation deviations in PRD + pl
 ```
 
 ---
+
+## Execution deviations (2026-07-13, all tasks complete)
+
+- **Task 9:** the plan's ingester snippet imported `docFromState`/`docText` without using them — dropped (typecheck would reject unused imports). No behavior change.
+- **Task 12/13 done in one sitting** as the plan itself recommended; committed separately.
+- **Task 15 smoke ran deeper than written:** instead of a manual psql insert, one-off tsx helpers (deleted after) wired the `vault_git` row; the live server ran with `GIT_QUIET_MS=3000 GIT_TICK_MS=2000`. Verified: scheduler export landed `holi sync:` commits on the bare remote; a foreign commit + `git.syncNow` ingested into the CRDTs (`base_commit` advanced, status `ok`, no warnings); and a second foreign commit appeared **live** in an open desktop editor via CDP (marker observed in `.cm-content` without reload) — the live-room ingest path works end-to-end.
+- Everything else was implemented exactly as written; no test assertions were weakened.
 
 ## Self-review notes (already applied)
 
