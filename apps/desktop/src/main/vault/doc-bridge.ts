@@ -99,6 +99,17 @@ export class DocBridge {
     this.turnTimer = setTimeout(() => void this.endTurn(), this.turnIdleMs)
   }
 
+  /** PreToolUse-hook seam: engage the soft lock BEFORE the agent's write lands,
+   * so the pre-write snapshot and presence marker precede the edit. Idle still
+   * closes it if the write never arrives (or the Stop hook is lost). */
+  signalTurnOpen(): void {
+    if (this.stopped || this.turnActive) return
+    this.turnActive = true
+    this.deps.onTurnState(true)
+    if (this.turnTimer) clearTimeout(this.turnTimer)
+    this.turnTimer = setTimeout(() => void this.endTurn(), this.turnIdleMs)
+  }
+
   /** Slice-2 Stop-hook seam: end the open turn now instead of waiting for idle. */
   signalTurnEnd(): void {
     if (!this.turnActive) return

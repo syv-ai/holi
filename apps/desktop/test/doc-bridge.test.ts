@@ -131,6 +131,46 @@ describe('DocBridge turn protocol', () => {
     await r.destroy()
   })
 
+  it('signalTurnOpen() engages the soft lock before the write lands (the PreToolUse seam)', async () => {
+    const human = new SimClient(URL, 'db-open')
+    human.text.insert(0, 'alpha\nomega\n')
+    const r = await rig('db-open')
+    await waitUntil(() => r.doc.getText(YDOC_TEXT_KEY).toString() === 'alpha\nomega\n')
+    await r.bridge.start()
+
+    r.bridge.signalTurnOpen() // hook fires BEFORE the agent's Write tool runs
+    expect(r.bridge.isTurnActive).toBe(true)
+    human.insertAfter('alpha', ' (human)') // human edit lands mid-turn
+    await sleep(60)
+    await writeFile(r.filePath, 'alpha\nomega (agent)\n', 'utf8')
+    r.bridge.signalTurnEnd()
+
+    await waitUntil(() => !r.bridge.isTurnActive && r.bridge.turns === 1, 5000, 'turn done')
+    await waitUntil(() => human.toString() === 'alpha (human)\nomega (agent)\n', 5000, 'both survive')
+    expect(await readFile(r.filePath, 'utf8')).toBe('alpha (human)\nomega (agent)\n')
+    expect(r.turnStates).toEqual([true, false])
+    human.destroy()
+    await r.destroy()
+  })
+
+  it('signalTurnOpen() with no agent write releases as a clean no-op', async () => {
+    const r = await rig('db-open-noop')
+    r.doc.getText(YDOC_TEXT_KEY).insert(0, 'unchanged\n')
+    await r.bridge.start()
+    await waitUntil(async () => (await readFile(r.filePath, 'utf8')) === 'unchanged\n', 5000)
+    const before = Y.encodeStateVector(r.doc)
+
+    r.bridge.signalTurnOpen()
+    expect(r.bridge.isTurnActive).toBe(true)
+    r.bridge.signalTurnOpen() // idempotent while active
+    await waitUntil(() => !r.bridge.isTurnActive, 5000, 'idle release')
+
+    expect(r.doc.getText(YDOC_TEXT_KEY).toString()).toBe('unchanged\n')
+    expect(Y.encodeStateVector(r.doc)).toEqual(before)
+    expect(r.turnStates).toEqual([true, false])
+    await r.destroy()
+  })
+
   it('crash recovery: persisted base + diverged disk reconciles as a turn on start', async () => {
     const room = 'db-crash'
     const human = new SimClient(URL, room)

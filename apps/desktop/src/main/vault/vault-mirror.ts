@@ -54,6 +54,10 @@ export interface VaultMirrorDeps {
   turnIdleMs?: number
   lifecycleDebounceMs?: number
   log?: (msg: string) => void
+  /** Agent seams (slice 2): live count of docs with an open turn, and every
+   * CRDT→disk write (used to spot synced agent-config changes mid-session). */
+  onTurnActivity?(activeTurns: number): void
+  onMaterialize?(rel: string): void
 }
 
 interface DocEntry {
@@ -68,6 +72,7 @@ interface DocEntry {
 export class VaultMirror {
   private readonly entries = new Map<string, DocEntry>() // by docId
   private readonly byPath = new Map<string, DocEntry>() // by rel
+  private readonly activeTurns = new Set<string>() // docIds mid-turn
   private readonly pendingLifecycle = new Map<string, ReturnType<typeof setTimeout>>() // by rel
   private readonly bases: BaseStore
   private socket: HocuspocusProviderWebsocket | null = null
@@ -126,6 +131,33 @@ export class VaultMirror {
     await this.adoptUnknownFiles()
   }
 
+  docIdForPath(rel: string): string | null {
+    return this.byPath.get(rel)?.docId ?? null
+  }
+
+  pathForDocId(docId: string): string | null {
+    return this.entries.get(docId)?.rel ?? null
+  }
+
+  /** Every doc the mirror knows about (server truth + adopted files). */
+  knownPaths(): string[] {
+    return [...this.byPath.keys()]
+  }
+
+  /** Started entries only — a bridge that hasn't synced yet can't take signals. */
+  bridgeForPath(rel: string): DocBridge | null {
+    const entry = this.byPath.get(rel)
+    return entry?.started ? entry.bridge : null
+  }
+
+  /** The Stop hook carries no path, so end every open turn. The watcher-idle
+   * fallback still closes turns the hook never signals. */
+  endOpenTurns(): void {
+    for (const entry of this.entries.values()) {
+      if (entry.started) entry.bridge.signalTurnEnd()
+    }
+  }
+
   handleDocsEvent(event: DocsEvent): void {
     void this.applyDocsEvent(event).catch((err) => this.log(`docs event failed: ${err}`))
   }
@@ -161,7 +193,10 @@ export class VaultMirror {
     entry.bridge = new DocBridge({
       doc,
       readFile: () => readFile(absPathFor(this.deps.workRoot, entry.rel), 'utf8').catch(() => null),
-      writeFile: (text) => writeAtomic(this.deps.workRoot, entry.rel, text),
+      writeFile: async (text) => {
+        await writeAtomic(this.deps.workRoot, entry.rel, text)
+        this.deps.onMaterialize?.(entry.rel)
+      },
       loadBase: () => this.bases.load(entry.docId),
       saveBase: (b) => this.bases.save(entry.docId, b),
       onTurnState: (active) => this.onTurnState(entry, active),
@@ -181,6 +216,7 @@ export class VaultMirror {
   private async closeEntry(entry: DocEntry, opts: { removeFromDisk: boolean }): Promise<void> {
     this.entries.delete(entry.docId)
     this.byPath.delete(entry.rel)
+    if (this.activeTurns.delete(entry.docId)) this.deps.onTurnActivity?.(this.activeTurns.size)
     await entry.bridge.stop()
     entry.provider.destroy()
     entry.doc.destroy()
@@ -209,6 +245,9 @@ export class VaultMirror {
 
   private onTurnState(entry: DocEntry, active: boolean): void {
     entry.provider.setAwarenessField('agentEditing', active ? true : null)
+    const changed = active ? !this.activeTurns.has(entry.docId) : this.activeTurns.delete(entry.docId)
+    if (active) this.activeTurns.add(entry.docId)
+    if (changed) this.deps.onTurnActivity?.(this.activeTurns.size)
     if (active) {
       void this.deps.api
         .takeSnapshot(entry.docId, 'before Claude edited')
