@@ -19,6 +19,7 @@ declare global {
         signOut(): Promise<{ ok: boolean }>
       }
       collabAuth(): Promise<{ url: string; token: string } | null>
+      openExternal(url: string): Promise<void>
     }
   }
 }

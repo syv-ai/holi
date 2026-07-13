@@ -2,6 +2,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
+import { VaultSettings } from './VaultSettings'
 import { sessionAtom, signOutAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
 import {
@@ -25,6 +26,7 @@ export function Shell() {
   const loadDocs = useSetAtom(loadDocsAtom)
   const createVault = useSetAtom(createVaultAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
+  const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     void loadVaults()
@@ -57,6 +59,13 @@ export function Shell() {
             >
               +
             </button>
+            <button
+              className="rounded bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-700"
+              title="vault settings"
+              onClick={() => setShowSettings((v) => !v)}
+            >
+              ⚙
+            </button>
           </div>
           {newVaultName !== null && (
             <form
@@ -82,12 +91,18 @@ export function Shell() {
           <FileTree />
         </aside>
         <main className="flex min-w-0 flex-1 flex-col">
-          {activeDoc && (
-            <div className="truncate border-b border-neutral-900 px-4 py-2 text-xs text-neutral-400">
-              {activeDoc.path}
-            </div>
+          {showSettings ? (
+            <VaultSettings onClose={() => setShowSettings(false)} />
+          ) : (
+            <>
+              {activeDoc && (
+                <div className="truncate border-b border-neutral-900 px-4 py-2 text-xs text-neutral-400">
+                  {activeDoc.path}
+                </div>
+              )}
+              <EditorPane />
+            </>
           )}
-          <EditorPane />
         </main>
       </div>
       <footer className="flex items-center justify-between border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">

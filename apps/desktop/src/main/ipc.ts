@@ -68,6 +68,11 @@ export function registerIpc(deps: { store: SessionStore }): void {
     const s = store.load()
     return s ? { url: RELAY_URL, token: s.token } : null
   })
+
+  ipcMain.handle('holi:openExternal', (_e, url: string) => {
+    if (!/^https:\/\//.test(url)) throw new Error('only https URLs can be opened')
+    return shell.openExternal(url)
+  })
 }
 
 async function signInWithGoogle(client: ServerClient, store: SessionStore): Promise<PublicUser> {
