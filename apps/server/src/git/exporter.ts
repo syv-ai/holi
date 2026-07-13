@@ -7,14 +7,9 @@ import { eq } from 'drizzle-orm'
 import { config } from '../config'
 import type { Db } from '../db/client'
 import { docs, yjsDocs } from '../db/schema'
+import { isLocalOnlyPath } from '@holi/shared'
 import { docFromState, docText } from '../yjs/doc-store'
 import { git, tryGit } from './git'
-
-/** `*.local.*` anywhere in the basename is machine-local — never exported. */
-export function isLocalOnlyPath(path: string): boolean {
-  const base = path.split('/').at(-1) ?? path
-  return /\.local\./.test(base)
-}
 
 export async function buildExportFiles(db: Db, vaultId: string): Promise<Map<string, string>> {
   const rows = await db

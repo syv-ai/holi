@@ -1,7 +1,6 @@
 import * as Y from 'yjs'
-import { YDOC_TEXT_KEY } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
-import { applyTextDiff } from '../src/git/apply-diff'
+import { applyTextDiff, YDOC_TEXT_KEY } from '../src'
 
 function textDoc(initial: string): { ydoc: Y.Doc; text: Y.Text } {
   const ydoc = new Y.Doc()

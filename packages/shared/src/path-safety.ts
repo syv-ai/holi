@@ -41,3 +41,13 @@ export function vaultRelPath(raw: string): VaultRelPath {
   }
   return segments.join('/') as VaultRelPath
 }
+
+/** Machine-local paths that sync/mirror/export layers must never treat as
+ * vault content: `*.local.*` basenames (`.holi/settings.local.json`,
+ * `CLAUDE.local.md`, `.holi/context.local.json`) and the personal root
+ * `USER.md` (agent PRD §Config layering). */
+export function isLocalOnlyPath(path: string): boolean {
+  if (path === 'USER.md') return true
+  const base = path.split('/').at(-1) ?? path
+  return /\.local\./.test(base)
+}

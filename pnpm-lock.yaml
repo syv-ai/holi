@@ -117,9 +117,6 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
-      fast-diff:
-        specifier: ^1.3.0
-        version: 1.3.0
       google-auth-library:
         specifier: ^10.9.0
         version: 10.9.0
@@ -156,6 +153,13 @@ importers:
         version: 8.21.0
 
   packages/shared:
+    dependencies:
+      fast-diff:
+        specifier: ^1.3.0
+        version: 1.3.0
+      yjs:
+        specifier: ^13.6.31
+        version: 13.6.31
     devDependencies:
       typescript:
         specifier: ^5.9.3

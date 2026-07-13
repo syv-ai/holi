@@ -3,7 +3,7 @@
  * like a teammate's. Design: docs/specs/2026-07-13-vault-git-mirror-design.md. */
 import { and, eq } from 'drizzle-orm'
 import * as Y from 'yjs'
-import { vaultRelPath, YDOC_TEXT_KEY } from '@holi/shared'
+import { applyTextDiff, isLocalOnlyPath, vaultRelPath, YDOC_TEXT_KEY } from '@holi/shared'
 import type { Db } from '../db/client'
 import { docs, yjsDocs, type GitWarning } from '../db/schema'
 import { ensureAncestorFolders } from '../paths'
@@ -12,8 +12,6 @@ import { loadDocState } from '../yjs/doc-store'
 import { editDocText } from '../yjs/edit'
 import { refreshLinkIndex } from '../yjs/link-index'
 import { takeSnapshot } from '../yjs/snapshots'
-import { applyTextDiff } from './apply-diff'
-import { isLocalOnlyPath } from './exporter'
 import { git, gitBuffer, parseNameStatusZ, type NameStatusEntry } from './git'
 
 export interface IngestDeps {
