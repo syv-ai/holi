@@ -1,11 +1,15 @@
+import { createServer } from 'node:http'
 import { Hocuspocus } from '@hocuspocus/server'
-import { createHTTPServer } from '@trpc/server/adapters/standalone'
+import { createHTTPHandler } from '@trpc/server/adapters/standalone'
 import { createBus } from './bus'
 import { config } from './config'
 import { createDb } from './db/client'
 import { runMigrations } from './db/migrate'
 import { createGithubApi } from './git/github-api'
 import { createGithubOAuth } from './git/oauth'
+import { createGitScheduler } from './git/scheduler'
+import { syncVault } from './git/sync'
+import { makeGithubWebhookHandler } from './git/webhook'
 import { createReminderEvaluator } from './reminders/evaluator'
 import { makeAppRouter } from './routers'
 import { makeCreateContext } from './trpc'
@@ -44,14 +48,46 @@ async function main(): Promise<void> {
     ? createGithubOAuth({ db, api: githubApi, clientId: config.github.clientId!, publicBaseUrl: config.publicBaseUrl })
     : null
 
-  createHTTPServer({
+  const trpcHandler = createHTTPHandler({
     router: makeAppRouter({ githubOAuth, githubApi, publicBaseUrl: config.publicBaseUrl }),
     createContext: makeCreateContext({ db, bus, getLiveDoc }),
+  })
+  const webhookHandler = makeGithubWebhookHandler({
+    db,
+    triggerSync: (vaultId) => syncVault({ db, getLiveDoc }, vaultId),
+  })
+
+  createServer((req, res) => {
+    if (req.method === 'POST' && req.url === '/webhooks/github') return void webhookHandler(req, res)
+    if (req.method === 'GET' && req.url?.startsWith('/github/oauth/callback')) {
+      const url = new URL(req.url, config.publicBaseUrl)
+      const code = url.searchParams.get('code')
+      const state = url.searchParams.get('state')
+      if (!githubOAuth || !code || !state) {
+        res.statusCode = 400
+        return void res.end('bad request')
+      }
+      void githubOAuth
+        .handleCallback({ code, state })
+        .then((html) => {
+          res.setHeader('content-type', 'text/html; charset=utf-8')
+          res.end(html)
+        })
+        .catch((err) => {
+          res.statusCode = 400
+          res.end(`GitHub connection failed: ${err instanceof Error ? err.message : err}`)
+        })
+      return
+    }
+    trpcHandler(req, res)
   }).listen(config.apiPort)
-  console.log(`[api] tRPC listening on http://127.0.0.1:${config.apiPort}`)
+  console.log(`[api] tRPC + git endpoints listening on http://127.0.0.1:${config.apiPort}`)
 
   createReminderEvaluator({ db, bus }).start()
   console.log('[reminders] evaluator started')
+
+  createGitScheduler({ db, getLiveDoc }).start()
+  console.log('[git] mirror scheduler started')
 }
 
 void main().catch((err) => {
