@@ -11,6 +11,7 @@ export type SnapshotReason =
   | 'pre-offline-merge'
   | 'pre-reconcile'
   | 'pre-restore'
+  | 'pre-git-ingest'
 
 export interface SnapshotArgs {
   docId: string
