@@ -17,4 +17,29 @@ export const config = {
     /** Workspace hosted-domain restriction (D7). Unset ⇒ any Google account (dev only). */
     workspaceDomain: process.env.GOOGLE_WORKSPACE_DOMAIN,
   },
+  /** 32-byte hex key for at-rest encryption of GitHub tokens + deploy keys.
+   * The dev default is PUBLIC — set HOLI_ENCRYPTION_KEY in any real deployment. */
+  encryptionKeyHex:
+    process.env.HOLI_ENCRYPTION_KEY ??
+    '00000000000000000000000000000000000000000000000000000000000000ff',
+  /** Base URL GitHub can reach for webhooks + the OAuth callback (prod: public HTTPS; dev needs a tunnel for real webhook delivery). */
+  publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'http://127.0.0.1:4000',
+  github: {
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+  },
+  git: {
+    /** Mirror clones live here, one subdir per vault id. Derived state — safe to delete. */
+    mirrorDir: process.env.GIT_MIRROR_DIR ?? './data/git-mirrors',
+    botName: 'Holi',
+    botEmail: 'holi-relay@syv.ai',
+    /** Export when a vault has been quiet this long… */
+    quietMs: Number(process.env.GIT_QUIET_MS ?? 45_000),
+    /** …or unconditionally when it's been dirty longer than this. */
+    maxQuietMs: Number(process.env.GIT_MAX_QUIET_MS ?? 5 * 60_000),
+    /** Scheduler poll interval. */
+    tickMs: Number(process.env.GIT_TICK_MS ?? 15_000),
+    /** Webhook-miss backstop: fetch at least this often. */
+    fetchBackstopMs: Number(process.env.GIT_FETCH_BACKSTOP_MS ?? 60 * 60_000),
+  },
 }
