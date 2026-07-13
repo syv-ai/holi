@@ -112,3 +112,19 @@ Two natural plan-sized slices with a clean seam: **(1) foundations** — SSE end
 - Per-turn dedup marker — measure before porting.
 - Bridge diff cost on very large docs — measure at build time; vaults are small text by construction.
 - Persistent post-turn attribution marker — fast follow if post-turn "who changed this" confuses.
+
+## Slice-1 implementation deviations (2026-07-13)
+
+Recorded during `docs/plans/2026-07-13-agent-drawer-foundations.md` execution:
+
+1. **One diff engine.** `applyAgentTurn` was promoted onto fast-diff (the server's existing dep), not the spike's diff-match-patch; the spike acceptance tests re-ran green against it in `packages/shared`.
+2. **`isLocalOnlyPath` lives in shared** and now also matches root `USER.md` (machine-local per this spec); the git exporter and the mirror share one definition.
+3. **Turn signals are watcher-mode in slice 1**; `DocBridge.signalTurnEnd()` is the seam the slice-2 Stop-hook route calls.
+4. **No-base recovery:** a known doc path on disk with no persisted base takes server truth (nothing to diff against); unknown files are adopted as agent creations (startup scan + SSE-reconnect refresh).
+5. **Lifecycle propagation failures self-heal via `refresh()`** on SSE reconnect instead of a bespoke retry queue.
+
+Discovered while executing (not pre-decided):
+
+6. **fast-diff needs its semantic-cleanup flag** (`diff(base, next, undefined, true)`): without it, fragmented ops (a kept common char inside a rewritten word) break the overlapping-rewrite acceptance test — the spike's `diff_cleanupSemantic` call was load-bearing, not cosmetic.
+7. **`VaultMirror.start()` awaits chokidar `ready`**: with `ignoreInitial`, files written before the initial scan completes are silently swallowed; reporting started earlier made the create/delete lifecycle tests flake. Its provider WebSocket also pre-attaches a no-op `error` listener (destroy-mid-handshake emits an unlistened error).
+8. **`@holi/shared` is bundled into the Electron main build** (`externalizeDepsPlugin({ exclude: ['@holi/shared'] })`): main now imports shared, which ships raw TS that Node can't load externally at runtime.

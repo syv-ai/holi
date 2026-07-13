@@ -70,7 +70,7 @@
 - Delete: `apps/server/src/git/apply-diff.ts`
 - Test: `packages/shared/test/agent-merge.test.ts`; move `apps/server/test/apply-diff.test.ts` → `packages/shared/test/apply-text-diff.test.ts`
 
-- [ ] **Step 1: Add deps to shared**
+- [x] **Step 1: Add deps to shared**
 
 In `packages/shared/package.json`, add to `dependencies` (create the block if absent — currently the package has none):
 
@@ -84,7 +84,7 @@ In `packages/shared/package.json`, add to `dependencies` (create the block if ab
 Run: `pnpm install`
 Expected: lockfile updates, exit 0.
 
-- [ ] **Step 2: Write the failing test (spike acceptance, adapted to fast-diff + YDOC_TEXT_KEY)**
+- [x] **Step 2: Write the failing test (spike acceptance, adapted to fast-diff + YDOC_TEXT_KEY)**
 
 ```ts
 // packages/shared/test/agent-merge.test.ts
@@ -190,12 +190,12 @@ describe('isLocalOnlyPath (shared)', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/shared exec vitest run test/agent-merge.test.ts`
 Expected: FAIL — `applyAgentTurn` not exported
 
-- [ ] **Step 4: Implement `agent-merge.ts` and the `isLocalOnlyPath` move**
+- [x] **Step 4: Implement `agent-merge.ts` and the `isLocalOnlyPath` move**
 
 ```ts
 // packages/shared/src/agent-merge.ts
@@ -288,12 +288,12 @@ Add to `packages/shared/src/index.ts`:
 export * from './agent-merge'
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/shared test`
 Expected: PASS (new file + all existing shared tests)
 
-- [ ] **Step 6: Repoint the server at shared and delete the old module**
+- [x] **Step 6: Repoint the server at shared and delete the old module**
 
 1. Delete `apps/server/src/git/apply-diff.ts`.
 2. In `apps/server/src/git/ingester.ts`: replace `import { applyTextDiff } from './apply-diff'` with adding `applyTextDiff` to the existing `@holi/shared` import, and replace `import { isLocalOnlyPath } from './exporter'` with adding `isLocalOnlyPath` to the same `@holi/shared` import.
@@ -301,12 +301,12 @@ Expected: PASS (new file + all existing shared tests)
 4. Move the diff tests: `git mv apps/server/test/apply-diff.test.ts packages/shared/test/apply-text-diff.test.ts`, then change its import from `../src/git/apply-diff` to `../src` (every test case stays as-is).
 5. In `apps/server/package.json`: remove `"fast-diff"` from dependencies, then verify nothing else imports it: `grep -rn "fast-diff" apps/server/src` → expect no hits. Run `pnpm install`.
 
-- [ ] **Step 7: Run both suites + typecheck**
+- [x] **Step 7: Run both suites + typecheck**
 
 Run: `pnpm --filter @holi/shared test && pnpm --filter @holi/server test && pnpm -r typecheck`
 Expected: all PASS / clean (server suite needs `pnpm db:up` first)
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add packages/shared apps/server pnpm-lock.yaml
@@ -321,7 +321,7 @@ git commit -m "feat(shared): promote turn-protocol merge core + isLocalOnlyPath 
 - Modify: `apps/server/src/routers/snapshots.ts`
 - Test: `apps/server/test/snapshots.test.ts` (extend)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append inside the existing `describe('snapshots', …)` block in `apps/server/test/snapshots.test.ts` (it already has `t`, `userId`, `docId`, `ctxFor`, and imports for `snapshotsRouter`, `yjsSnapshots`, `eq`, `editDocText`, `replaceAllText`, `seedUser`):
 
@@ -352,12 +352,12 @@ Append inside the existing `describe('snapshots', …)` block in `apps/server/te
   })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/snapshots.test.ts`
 Expected: FAIL — `take` is not a procedure
 
-- [ ] **Step 3: Implement the mutation**
+- [x] **Step 3: Implement the mutation**
 
 In `apps/server/src/routers/snapshots.ts`, add `import * as Y from 'yjs'` and `loadDocState` to the existing `../yjs/doc-store` import, then add to the router (after `list`):
 
@@ -384,12 +384,12 @@ In `apps/server/src/routers/snapshots.ts`, add `import * as Y from 'yjs'` and `l
 
 (`pre-agent-write` already exists in `SnapshotReason` — no schema change.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/server exec vitest run test/snapshots.test.ts`
 Expected: PASS (existing + 3 new)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/server/src/routers/snapshots.ts apps/server/test/snapshots.test.ts
@@ -405,7 +405,7 @@ git commit -m "feat(server): snapshots.take — pre-agent-write snapshot op"
 - Modify: `apps/server/src/main.ts`
 - Test: `apps/server/test/events-sse.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/server/test/events-sse.test.ts
@@ -508,12 +508,12 @@ describe('GET /events/<vaultId>', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/server exec vitest run test/events-sse.test.ts`
 Expected: FAIL — `../src/events` not found
 
-- [ ] **Step 3: Implement the handler**
+- [x] **Step 3: Implement the handler**
 
 ```ts
 // apps/server/src/events.ts
@@ -565,7 +565,7 @@ export function makeEventsHandler(deps: { db: Db; bus: Bus }) {
 }
 ```
 
-- [ ] **Step 4: Route it in `main.ts`**
+- [x] **Step 4: Route it in `main.ts`**
 
 In `apps/server/src/main.ts`: add `import { makeEventsHandler } from './events'`; before `createServer(...)` add `const eventsHandler = makeEventsHandler({ db, bus })`; and as the FIRST branch inside the `createServer` callback add:
 
@@ -574,12 +574,12 @@ In `apps/server/src/main.ts`: add `import { makeEventsHandler } from './events'`
     if (eventsMatch) return void eventsHandler(req, res, eventsMatch[1]!)
 ```
 
-- [ ] **Step 5: Run test + full server suite**
+- [x] **Step 5: Run test + full server suite**
 
 Run: `pnpm --filter @holi/server exec vitest run test/events-sse.test.ts && pnpm --filter @holi/server test && pnpm --filter @holi/server typecheck`
 Expected: PASS / clean
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/server/src/events.ts apps/server/src/main.ts apps/server/test/events-sse.test.ts
@@ -595,11 +595,11 @@ git commit -m "feat(server): per-vault SSE event stream off the bus"
 - Create: `apps/desktop/src/main/vault/sse-client.ts`
 - Test: `apps/desktop/test/sse-client.test.ts`
 
-- [ ] **Step 1: Add deps**
+- [x] **Step 1: Add deps**
 
 In `apps/desktop/package.json` add to `dependencies`: `"chokidar": "^5.0.0"`, `"ws": "^8.18.0"`; to `devDependencies`: `"@hocuspocus/server": "^2.15.3"`, `"@types/ws": "^8.5.13"`. Run `pnpm install` (exit 0; chokidar 5 and ws are pure JS — no `onlyBuiltDependencies` change needed).
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 ```ts
 // apps/desktop/test/sse-client.test.ts
@@ -685,12 +685,12 @@ describe('SseClient', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/sse-client.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 4: Implement**
+- [x] **Step 4: Implement**
 
 ```ts
 // apps/desktop/src/main/vault/sse-client.ts
@@ -783,12 +783,12 @@ export class SseClient {
 }
 ```
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/sse-client.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/package.json pnpm-lock.yaml apps/desktop/src/main/vault/sse-client.ts apps/desktop/test/sse-client.test.ts
@@ -803,7 +803,7 @@ git commit -m "feat(desktop): SSE client for the vault event stream"
 - Create: `apps/desktop/src/main/vault/vault-files.ts`
 - Test: `apps/desktop/test/vault-files.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/desktop/test/vault-files.test.ts
@@ -876,12 +876,12 @@ describe('vault-files', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-files.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/desktop/src/main/vault/vault-files.ts
@@ -948,12 +948,12 @@ export async function listFiles(root: string, prefix = ''): Promise<string[]> {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-files.test.ts`
 Expected: PASS (5 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/main/vault/vault-files.ts apps/desktop/test/vault-files.test.ts
@@ -968,7 +968,7 @@ git commit -m "feat(desktop): atomic working-copy file utilities"
 - Create: `apps/desktop/src/main/vault/base-store.ts`
 - Test: `apps/desktop/test/base-store.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/desktop/test/base-store.test.ts
@@ -1009,12 +1009,12 @@ describe('BaseStore', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/base-store.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```ts
 // apps/desktop/src/main/vault/base-store.ts
@@ -1064,12 +1064,12 @@ export class BaseStore {
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/base-store.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/main/vault/base-store.ts apps/desktop/test/base-store.test.ts
@@ -1087,7 +1087,7 @@ git commit -m "feat(desktop): persisted per-doc frozen-base store"
 
 This is the spike's `BridgeClient` productionized: no own watcher (the vault-level watcher feeds `onFileEvent`), disk I/O injected, base persisted at every advancement, `onTurnState` for presence/snapshot wiring, `signalTurnEnd()` as the slice-2 Stop-hook seam. All three spike invariants carried: atomic base capture at materialization, base-advances-before-release, agent-lineage continuation, plus the one-shot disk-recheck (spike findings 2–3).
 
-- [ ] **Step 1: Write the test-relay helper (spike harness port)**
+- [x] **Step 1: Write the test-relay helper (spike harness port)**
 
 ```ts
 // apps/desktop/test/helpers/relay.ts
@@ -1180,7 +1180,7 @@ export const converged = (texts: string[]) => texts.every((t) => t === texts[0])
 export const countOccurrences = (haystack: string, needle: string) => haystack.split(needle).length - 1
 ```
 
-- [ ] **Step 2: Write the failing DocBridge test**
+- [x] **Step 2: Write the failing DocBridge test**
 
 ```ts
 // apps/desktop/test/doc-bridge.test.ts
@@ -1365,12 +1365,12 @@ describe('DocBridge turn protocol', () => {
 })
 ```
 
-- [ ] **Step 3: Run test to verify it fails**
+- [x] **Step 3: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/doc-bridge.test.ts`
 Expected: FAIL — `doc-bridge` module not found
 
-- [ ] **Step 4: Implement `DocBridge`**
+- [x] **Step 4: Implement `DocBridge`**
 
 ```ts
 // apps/desktop/src/main/vault/doc-bridge.ts
@@ -1552,12 +1552,12 @@ export class DocBridge {
 
 Note the one deliberate difference from the spike's `materialize`: the disk-divergence-means-turn guard only fires when a real base exists (`state.length > 0`) — a fresh doc with no base takes the server-truth path (deviation #4).
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/doc-bridge.test.ts`
 Expected: PASS (6 tests)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/main/vault/doc-bridge.ts apps/desktop/test/helpers/relay.ts apps/desktop/test/doc-bridge.test.ts
@@ -1572,7 +1572,7 @@ git commit -m "feat(desktop): per-doc file<->CRDT bridge with persisted crash-sa
 - Create: `apps/desktop/src/main/vault/vault-mirror.ts`
 - Test: `apps/desktop/test/vault-mirror.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // apps/desktop/test/vault-mirror.test.ts
@@ -1796,12 +1796,12 @@ describe('VaultMirror', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-mirror.test.ts`
 Expected: FAIL — module not found
 
-- [ ] **Step 3: Implement `VaultMirror`**
+- [x] **Step 3: Implement `VaultMirror`**
 
 ```ts
 // apps/desktop/src/main/vault/vault-mirror.ts
@@ -2085,17 +2085,17 @@ export class VaultMirror {
 
 Note: `seedText` insertion uses `BRIDGE_ORIGIN` so the entry's own bridge — not yet started — never treats its own seed as a remote update to re-materialize.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-mirror.test.ts`
 Expected: PASS (8 tests). Chokidar timing on CI-grade machines can make the lifecycle tests take a few seconds — the `waitUntil` timeouts allow it.
 
-- [ ] **Step 5: Run the whole desktop suite**
+- [x] **Step 5: Run the whole desktop suite**
 
 Run: `pnpm --filter @holi/desktop test`
 Expected: all PASS (new + the existing 32)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/main/vault/vault-mirror.ts apps/desktop/test/vault-mirror.test.ts
@@ -2111,7 +2111,7 @@ git commit -m "feat(desktop): VaultMirror — full-vault live materialization + 
 
 The spike's acceptance (d) — no lost updates under uncoordinated concurrency — re-run against the production `VaultMirror`+`DocBridge` stack instead of the spike harness.
 
-- [ ] **Step 1: Write the test**
+- [x] **Step 1: Write the test**
 
 ```ts
 // apps/desktop/test/vault-hammer.test.ts
@@ -2231,17 +2231,17 @@ describe('acceptance (d) against the real mirror: no lost updates', () => {
 })
 ```
 
-- [ ] **Step 2: Run it (this test validates existing code — it should pass immediately; if it fails, the bridge has a real bug: debug, don't loosen the test)**
+- [x] **Step 2: Run it (this test validates existing code — it should pass immediately; if it fails, the bridge has a real bug: debug, don't loosen the test)**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-hammer.test.ts`
 Expected: PASS, `0 missing, 0 duplicated` in the log
 
-- [ ] **Step 3: Run it three more times for flake confidence**
+- [x] **Step 3: Run it three more times for flake confidence**
 
 Run: `pnpm --filter @holi/desktop exec vitest run test/vault-hammer.test.ts && pnpm --filter @holi/desktop exec vitest run test/vault-hammer.test.ts && pnpm --filter @holi/desktop exec vitest run test/vault-hammer.test.ts`
 Expected: PASS every run
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/desktop/test/vault-hammer.test.ts
@@ -2258,7 +2258,7 @@ git commit -m "test(desktop): randomized hammer — no lost updates through the 
 
 No new unit tests here — every part is a thin composition of tested pieces; verification is typecheck + the live smoke below.
 
-- [ ] **Step 1: Implement `mirror-api.ts`**
+- [x] **Step 1: Implement `mirror-api.ts`**
 
 ```ts
 // apps/desktop/src/main/vault/mirror-api.ts
@@ -2281,7 +2281,7 @@ export function makeMirrorApi(client: ServerClient, vaultId: string): MirrorApi 
 }
 ```
 
-- [ ] **Step 2: Implement `vault-manager.ts`**
+- [x] **Step 2: Implement `vault-manager.ts`**
 
 ```ts
 // apps/desktop/src/main/vault/vault-manager.ts
@@ -2351,7 +2351,7 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
 }
 ```
 
-- [ ] **Step 3: Wire IPC, preload, global.d.ts, index.ts**
+- [x] **Step 3: Wire IPC, preload, global.d.ts, index.ts**
 
 `apps/desktop/src/main/ipc.ts` — extend the deps and add the handler:
 
@@ -2406,12 +2406,12 @@ app.whenReady().then(() => {
     if (activeVaultId) void window.holi.vault.activate(activeVaultId)
 ```
 
-- [ ] **Step 4: Typecheck + full desktop suite**
+- [x] **Step 4: Typecheck + full desktop suite**
 
 Run: `pnpm --filter @holi/desktop typecheck && pnpm --filter @holi/desktop test && pnpm --filter @holi/server typecheck`
 Expected: clean / PASS
 
-- [ ] **Step 5: Live smoke (manual, per the dev-loop quirks)**
+- [x] **Step 5: Live smoke (manual, per the dev-loop quirks)**
 
 1. `pnpm db:up`, then `pnpm --filter @holi/server dev` (relay :4444, API :4000); seed a token via `pnpm --filter @holi/server exec tsx scripts/seed-dev.ts`.
 2. `pnpm --filter @holi/desktop dev`, sign in with the dev token, open a vault, create a note with some text.
@@ -2423,7 +2423,7 @@ Expected: clean / PASS
 
 Expected: all seven behaviors hold. If 5–7 work, slice 1's core promise (drawer-less agent edits) is real.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/desktop/src/main apps/desktop/src/preload apps/desktop/src/renderer
@@ -2438,12 +2438,12 @@ git commit -m "feat(desktop): vault activation wiring — mirror + SSE behind ho
 - Modify: `docs/specs/2026-07-13-agent-drawer-design.md` (deviations section at the bottom)
 - Modify: `docs/plans/2026-07-13-agent-drawer-foundations.md` (check off tasks)
 
-- [ ] **Step 1: Run everything**
+- [x] **Step 1: Run everything**
 
 Run: `pnpm -r test && pnpm -r typecheck`
 Expected: every package PASS / clean (server needs `pnpm db:up`)
 
-- [ ] **Step 2: Append a deviations section to the spec**
+- [x] **Step 2: Append a deviations section to the spec**
 
 Append to `docs/specs/2026-07-13-agent-drawer-design.md`:
 
@@ -2459,9 +2459,9 @@ Recorded during `docs/plans/2026-07-13-agent-drawer-foundations.md` execution:
 5. **Lifecycle propagation failures self-heal via `refresh()`** on SSE reconnect instead of a bespoke retry queue.
 ```
 
-- [ ] **Step 3: Update memory of test counts if MEMORY.md tracks them** — skip if not applicable.
+- [x] **Step 3: Update memory of test counts if MEMORY.md tracks them** — skip if not applicable.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/specs/2026-07-13-agent-drawer-design.md docs/plans/2026-07-13-agent-drawer-foundations.md
