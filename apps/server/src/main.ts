@@ -4,8 +4,10 @@ import { createBus } from './bus'
 import { config } from './config'
 import { createDb } from './db/client'
 import { runMigrations } from './db/migrate'
+import { createGithubApi } from './git/github-api'
+import { createGithubOAuth } from './git/oauth'
 import { createReminderEvaluator } from './reminders/evaluator'
-import { appRouter } from './routers'
+import { makeAppRouter } from './routers'
 import { makeCreateContext } from './trpc'
 import { makeHooks } from './yjs/hooks'
 
@@ -33,8 +35,17 @@ async function main(): Promise<void> {
   console.log(`[relay] Hocuspocus listening on ws://127.0.0.1:${config.relayPort}`)
 
   const getLiveDoc = (docId: string) => relay.documents.get(docId) ?? null
+
+  const githubApi =
+    config.github.clientId && config.github.clientSecret
+      ? createGithubApi({ clientId: config.github.clientId, clientSecret: config.github.clientSecret })
+      : null
+  const githubOAuth = githubApi
+    ? createGithubOAuth({ db, api: githubApi, clientId: config.github.clientId!, publicBaseUrl: config.publicBaseUrl })
+    : null
+
   createHTTPServer({
-    router: appRouter,
+    router: makeAppRouter({ githubOAuth }),
     createContext: makeCreateContext({ db, bus, getLiveDoc }),
   }).listen(config.apiPort)
   console.log(`[api] tRPC listening on http://127.0.0.1:${config.apiPort}`)
