@@ -1,8 +1,10 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
+import { AgentPanel } from './AgentPanel'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
+import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
 import { sessionAtom, signOutAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
 import {
@@ -27,6 +29,10 @@ export function Shell() {
   const createVault = useSetAtom(createVaultAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const agentStatus = useAtomValue(agentStatusAtom)
+  /** A vault switch mid-turn kills the session — hold the choice until confirmed. */
+  const [pendingVaultId, setPendingVaultId] = useState<string | null>(null)
 
   useEffect(() => {
     void loadVaults()
@@ -37,6 +43,31 @@ export function Shell() {
     void loadDocs()
   }, [activeVaultId, loadDocs, setActiveDoc])
 
+  // ⌘J / Ctrl-J toggles the agent drawer (the app's first shortcut)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        setAgentOpen((open) => !open)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setAgentOpen])
+
+  // the agent's per-turn context follows what the user is looking at
+  useEffect(() => {
+    void window.holi.agent.setFocus({
+      focusedPath: activeDoc?.path ?? null,
+      openPaths: activeDoc ? [activeDoc.path] : [],
+    })
+  }, [activeDoc])
+
+  const selectVault = (vaultId: string) => {
+    if (agentStatus.working) setPendingVaultId(vaultId) // Claude is mid-edit
+    else setActiveVaultId(vaultId)
+  }
+
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <div className="flex min-h-0 flex-1">
@@ -45,7 +76,7 @@ export function Shell() {
             <select
               className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm"
               value={activeVaultId ?? ''}
-              onChange={(e) => setActiveVaultId(e.target.value)}
+              onChange={(e) => selectVault(e.target.value)}
             >
               {vaults.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -68,6 +99,28 @@ export function Shell() {
               ⚙
             </button>
           </div>
+          {pendingVaultId !== null && (
+            <div className="mx-2 mb-2 rounded border border-amber-900/60 bg-amber-950/40 p-2 text-xs text-amber-100">
+              <p>Claude is mid-edit — switching vaults kills the session.</p>
+              <div className="mt-1.5 flex gap-2">
+                <button
+                  className="rounded bg-amber-800 px-2 py-0.5 hover:bg-amber-700"
+                  onClick={() => {
+                    setActiveVaultId(pendingVaultId)
+                    setPendingVaultId(null)
+                  }}
+                >
+                  switch anyway
+                </button>
+                <button
+                  className="rounded bg-neutral-800 px-2 py-0.5 hover:bg-neutral-700"
+                  onClick={() => setPendingVaultId(null)}
+                >
+                  stay
+                </button>
+              </div>
+            </div>
+          )}
           {newVaultName !== null && (
             <form
               className="px-2 pb-2"
@@ -105,6 +158,7 @@ export function Shell() {
             </>
           )}
         </main>
+        <AgentPanel />
       </div>
       <footer className="flex items-center justify-between border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">
         <span>
