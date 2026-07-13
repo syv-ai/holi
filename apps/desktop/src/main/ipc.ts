@@ -11,6 +11,7 @@ import {
   type ServerClient,
   type TrpcOp,
 } from './server-client'
+import type { AgentManager } from './agent/agent-manager'
 import type { SessionStore } from './session'
 import type { VaultManager } from './vault/vault-manager'
 
@@ -20,8 +21,12 @@ export interface PublicUser {
   name: string | null
 }
 
-export function registerIpc(deps: { store: SessionStore; vaultManager: VaultManager }): void {
-  const { store, vaultManager } = deps
+export function registerIpc(deps: {
+  store: SessionStore
+  vaultManager: VaultManager
+  agentManager: AgentManager
+}): void {
+  const { store, vaultManager, agentManager } = deps
   const client: ServerClient = createServerClient(() => store.load()?.token ?? null)
 
   ipcMain.handle('holi:trpc', (_e, op: TrpcOp) => toEnvelope(callProcedure(client, op)))
@@ -72,6 +77,24 @@ export function registerIpc(deps: { store: SessionStore; vaultManager: VaultMana
 
   ipcMain.handle('holi:vault:activate', (_e, vaultId: string) =>
     toEnvelope(vaultManager.activate(String(vaultId))),
+  )
+
+  // Agent drawer (spec §AgentRuntime). PTY bytes flow back on the push
+  // channels 'agent-pty:data' / 'agent-pty:exit'; status on 'agent:status'.
+  ipcMain.handle('agent-pty:start', (_e, args: { vaultId: string; resume?: boolean }) =>
+    toEnvelope(agentManager.start({ vaultId: String(args.vaultId), resume: args.resume === true })),
+  )
+  ipcMain.handle('agent-pty:write', (_e, data: string) => agentManager.write(String(data)))
+  ipcMain.handle('agent-pty:resize', (_e, size: { cols: number; rows: number }) =>
+    agentManager.resize(Number(size.cols), Number(size.rows)),
+  )
+  ipcMain.handle('agent-pty:kill', () => toEnvelope(agentManager.kill()))
+  ipcMain.handle('holi:agent:status', () => agentManager.status())
+  ipcMain.handle('holi:agent:focus', (_e, focus: { focusedPath: string | null; openPaths: string[] }) =>
+    agentManager.setFocus({
+      focusedPath: focus.focusedPath ?? null,
+      openPaths: Array.isArray(focus.openPaths) ? focus.openPaths.map(String) : [],
+    }),
   )
 
   ipcMain.handle('holi:openExternal', (_e, url: string) => {
