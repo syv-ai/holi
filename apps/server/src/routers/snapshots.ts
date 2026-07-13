@@ -1,10 +1,11 @@
 import { desc, eq } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
+import * as Y from 'yjs'
 import { z } from 'zod'
 import { requireDocAccess } from '../auth/membership'
 import { yjsSnapshots } from '../db/schema'
 import { authedProcedure, router } from '../trpc'
-import { docFromState, docText } from '../yjs/doc-store'
+import { docFromState, docText, loadDocState } from '../yjs/doc-store'
 import { editDocText, replaceAllText } from '../yjs/edit'
 import { refreshLinkIndex } from '../yjs/link-index'
 import { takeSnapshot } from '../yjs/snapshots'
@@ -26,6 +27,25 @@ export const snapshotsRouter = router({
         .from(yjsSnapshots)
         .where(eq(yjsSnapshots.docId, input.docId))
         .orderBy(desc(yjsSnapshots.takenAt))
+    }),
+
+  /** Pre-agent-write snapshot — the bridge calls this at turn open (agent PRD
+   * §Merge safety net). Live relay state when the doc has an open room. */
+  take: authedProcedure
+    .input(z.object({ docId: z.string().uuid(), label: z.string().max(200).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireDocAccess(ctx.db, input.docId, ctx.user.id)
+      const live = ctx.getLiveDoc(input.docId)
+      const state = live ? Y.encodeStateAsUpdate(live) : await loadDocState(ctx.db, input.docId)
+      if (!state) throw new TRPCError({ code: 'NOT_FOUND' })
+      await takeSnapshot(ctx.db, {
+        docId: input.docId,
+        state,
+        reason: 'pre-agent-write',
+        label: input.label ?? 'before Claude edited',
+        authorId: ctx.user.id,
+      })
+      return { ok: true }
     }),
 
   /** D26 one-click restore: pre-restore snapshot, then rewrite text to the

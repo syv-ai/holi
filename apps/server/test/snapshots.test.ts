@@ -64,4 +64,29 @@ describe('snapshots', () => {
     ).map((s) => s.reason)
     expect(reasons).toContain('pre-restore')
   })
+
+  it('take stores a pre-agent-write snapshot of the current stored state', async () => {
+    await editDocText(t.db, () => null, docId, (text) => replaceAllText(text, 'pre-agent content'))
+    await snapshotsRouter.createCaller(ctxFor(t, userId)).take({ docId })
+    const rows = await t.db.select().from(yjsSnapshots).where(eq(yjsSnapshots.docId, docId))
+    const snap = rows.find((r) => r.reason === 'pre-agent-write')
+    expect(snap).toBeDefined()
+    expect(snap!.label).toBe('before Claude edited')
+    expect(snap!.authorId).toBe(userId)
+    expect(docText(docFromState(snap!.state))).toBe('pre-agent content')
+  })
+
+  it('take prefers the live relay doc over the stored state', async () => {
+    const live = docFromState(await loadDocState(t.db, docId))
+    live.getText('content').insert(0, 'LIVE ')
+    await snapshotsRouter.createCaller({ ...ctxFor(t, userId), getLiveDoc: () => live }).take({ docId })
+    const rows = await t.db.select().from(yjsSnapshots).where(eq(yjsSnapshots.docId, docId))
+    const latest = rows.filter((r) => r.reason === 'pre-agent-write').at(-1)!
+    expect(docText(docFromState(latest.state))).toContain('LIVE ')
+  })
+
+  it('take is membership-gated', async () => {
+    const outsider = await seedUser(t.db)
+    await expect(snapshotsRouter.createCaller(ctxFor(t, outsider.id)).take({ docId })).rejects.toThrow(/FORBIDDEN|forbidden/)
+  })
 })
