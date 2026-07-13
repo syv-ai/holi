@@ -12,6 +12,7 @@ import {
   type TrpcOp,
 } from './server-client'
 import type { SessionStore } from './session'
+import type { VaultManager } from './vault/vault-manager'
 
 export interface PublicUser {
   userId: string
@@ -19,8 +20,8 @@ export interface PublicUser {
   name: string | null
 }
 
-export function registerIpc(deps: { store: SessionStore }): void {
-  const { store } = deps
+export function registerIpc(deps: { store: SessionStore; vaultManager: VaultManager }): void {
+  const { store, vaultManager } = deps
   const client: ServerClient = createServerClient(() => store.load()?.token ?? null)
 
   ipcMain.handle('holi:trpc', (_e, op: TrpcOp) => toEnvelope(callProcedure(client, op)))
@@ -68,6 +69,10 @@ export function registerIpc(deps: { store: SessionStore }): void {
     const s = store.load()
     return s ? { url: RELAY_URL, token: s.token } : null
   })
+
+  ipcMain.handle('holi:vault:activate', (_e, vaultId: string) =>
+    toEnvelope(vaultManager.activate(String(vaultId))),
+  )
 
   ipcMain.handle('holi:openExternal', (_e, url: string) => {
     if (!/^https:\/\//.test(url)) throw new Error('only https URLs can be opened')

@@ -19,6 +19,9 @@ declare global {
         signOut(): Promise<{ ok: boolean }>
       }
       collabAuth(): Promise<{ url: string; token: string } | null>
+      vault: {
+        activate(vaultId: string): Promise<TrpcEnvelope>
+      }
       openExternal(url: string): Promise<void>
     }
   }

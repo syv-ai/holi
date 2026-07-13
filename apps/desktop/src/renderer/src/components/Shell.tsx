@@ -32,6 +32,7 @@ export function Shell() {
     void loadVaults()
   }, [loadVaults])
   useEffect(() => {
+    if (activeVaultId) void window.holi.vault.activate(activeVaultId)
     setActiveDoc(null)
     void loadDocs()
   }, [activeVaultId, loadDocs, setActiveDoc])

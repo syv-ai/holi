@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { registerIpc } from './ipc'
 import { electronSessionStore } from './session'
+import { createVaultManager } from './vault/vault-manager'
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -22,7 +23,10 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
-  registerIpc({ store: electronSessionStore() })
+  const store = electronSessionStore()
+  const vaultManager = createVaultManager({ store })
+  registerIpc({ store, vaultManager })
+  app.on('before-quit', () => void vaultManager.deactivate())
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

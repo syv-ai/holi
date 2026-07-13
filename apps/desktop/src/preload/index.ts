@@ -10,5 +10,8 @@ contextBridge.exposeInMainWorld('holi', {
     signOut: () => ipcRenderer.invoke('holi:auth:signOut'),
   },
   collabAuth: () => ipcRenderer.invoke('holi:collab:auth'),
+  vault: {
+    activate: (vaultId: string) => ipcRenderer.invoke('holi:vault:activate', vaultId),
+  },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
 })
