@@ -5,6 +5,7 @@ import { createBus } from './bus'
 import { config } from './config'
 import { createDb } from './db/client'
 import { runMigrations } from './db/migrate'
+import { makeEventsHandler } from './events'
 import { createGithubApi } from './git/github-api'
 import { createGithubOAuth } from './git/oauth'
 import { createGitScheduler } from './git/scheduler'
@@ -56,8 +57,11 @@ async function main(): Promise<void> {
     db,
     triggerSync: (vaultId) => syncVault({ db, getLiveDoc }, vaultId),
   })
+  const eventsHandler = makeEventsHandler({ db, bus })
 
   createServer((req, res) => {
+    const eventsMatch = req.method === 'GET' ? /^\/events\/([0-9a-f-]{36})$/.exec(req.url ?? '') : null
+    if (eventsMatch) return void eventsHandler(req, res, eventsMatch[1]!)
     if (req.method === 'POST' && req.url === '/webhooks/github') return void webhookHandler(req, res)
     if (req.method === 'GET' && req.url?.startsWith('/github/oauth/callback')) {
       const url = new URL(req.url, config.publicBaseUrl)
