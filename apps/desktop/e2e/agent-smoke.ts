@@ -14,7 +14,14 @@ const TOKEN = process.env.HOLI_DEV_TOKEN
 const DOC = 'e2e-drawer.md'
 const FIRST_LINE = 'hello from fake claude'
 const SECOND_LINE = 'second line while open'
-const TASK_TITLE = 'E2E drawer task'
+/** Unique per run: the dev vault is persistent, so a fixed title would let the
+ * task assertions pass on a record an earlier run left behind (it did). */
+const RUN = Date.now().toString(36).slice(-5)
+const TASK_TITLE = `E2E task ${RUN}`
+const RENAMED_TITLE = `E2E renamed ${RUN}`
+
+const slug = (title: string) =>
+  title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'task'
 
 let ws: WebSocket
 let nextId = 1
@@ -137,16 +144,55 @@ async function main(): Promise<void> {
   )
   pass('5. second agent edit appeared live in the open editor')
 
-  // 6. an MCP op reaches the server with the user's identity
-  await evaluate(`window.holi.agent.write(${JSON.stringify(`task ${TASK_TITLE}\r`)})`)
-  await waitUntil(
-    () =>
-      evaluate<boolean>(
-        `${trpc('tasks.list', 'query', { vaultId, filter: {} })}.then(ts => ts.some(t => t.title === ${JSON.stringify(TASK_TITLE)}))`,
-      ),
-    'the MCP-created task to exist',
+  // 6. the agent creates a task by WRITING A FILE — no op. The projection makes
+  //    the record. (The title is unique per run: the dev vault is persistent, and
+  //    a fixed title would let this pass on a task left behind by an earlier run.)
+  const listTasks = `${trpc('tasks.list', 'query', { vaultId, filter: {} })}`
+  const findTask = (title: string) =>
+    `${listTasks}.then(ts => ts.find(t => t.title === ${JSON.stringify(title)}) ?? null)`
+
+  await evaluate(`window.holi.agent.write(${JSON.stringify(`taskfile ${TASK_TITLE}\r`)})`)
+  const created = await waitUntil(
+    () => evaluate<{ id: string; version: number } | null>(findTask(TASK_TITLE)),
+    'the task file to become a record',
   )
-  pass('6. task created through the bearer-gated MCP server')
+  pass(`6. agent wrote tasks/*.md → record created (no op), id ${created.id.slice(0, 8)}`)
+
+  // The projection rewrites the agent's `tasks/<slug>.md` at the canonical,
+  // id-suffixed path. 6d reads that exact path, so if the rewrite had not
+  // happened, 6d would time out — no separate assertion needed.
+  const canonical = `tasks/${slug(TASK_TITLE)}-${created.id}.md`
+
+  // 6c. NO SPURIOUS TURN. Task files are not CRDT docs: the write above must not
+  //     have created a doc, taken a snapshot, or opened a bridge turn. This is
+  //     the whole point of the mirror exclusion.
+  const leaked = await evaluate<string[]>(
+    `${trpc('vaults.listDocs', 'query', { vaultId })}.then(r => r.docs.filter(d => d.path.startsWith('tasks/')).map(d => d.path))`,
+  )
+  if (leaked.length > 0) {
+    throw new Error(`task files leaked into the doc store as CRDT notes: ${leaked.join(', ')}`)
+  }
+  pass('6c. no task file became a CRDT doc (mirror exclusion holds)')
+
+  // 6d. file → record: an Edit of the title is a per-field patch, and the file
+  //     moves to the new slug.
+  await evaluate(`window.holi.agent.write(${JSON.stringify(`settitle ${canonical} ${RENAMED_TITLE}\r`)})`)
+  const renamed = await waitUntil(
+    () => evaluate<{ id: string; version: number } | null>(findTask(RENAMED_TITLE)),
+    'the title edit to patch the record',
+  )
+  if (renamed.id !== created.id) throw new Error('title edit created a new task instead of patching')
+  if (renamed.version <= created.version) throw new Error('version did not advance on the patch')
+  pass(`6d. file edit → per-field patch (version ${created.version} → ${renamed.version})`)
+
+  // 6e. rm on a task file deletes the record — the note symmetry, for records.
+  const renamedRel = `tasks/${slug(RENAMED_TITLE)}-${created.id}.md`
+  await evaluate(`window.holi.agent.write(${JSON.stringify(`rm ${renamedRel}\r`)})`)
+  await waitUntil(
+    () => evaluate<boolean>(`${findTask(RENAMED_TITLE)}.then(t => t === null)`),
+    'rm to delete the record',
+  )
+  pass('6e. rm tasks/*.md → record deleted')
 
   // 7. kill tears the session down
   await evaluate('window.holi.agent.kill()')
@@ -156,7 +202,7 @@ async function main(): Promise<void> {
   )
   pass('7. session killed')
 
-  console.log(`\n${checks.length}/7 checkpoints passed`)
+  console.log(`\n${checks.length} checkpoints passed`)
   ws.close()
 }
 

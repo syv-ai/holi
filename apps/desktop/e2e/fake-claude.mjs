@@ -5,10 +5,16 @@
 //
 //   edit <rel> <text…>   what a Write tool call looks like from Holi's side:
 //                        PreToolUse hook → file write → Stop hook
-//   task <title…>        an MCP tools/call to task_new
+//   taskfile <title…>    create a task the way the agent now does: by writing
+//                        tasks/<slug>.md. No op — the projection makes the record.
+//   settitle <rel> <t…>  edit a task file's title in place (an `Edit` tool call)
+//   corrupt <rel>        write malformed frontmatter — the model does this
+//   rm <rel>             delete a file (rm on a task file deletes the record)
+//   cat <rel>            print a file, so the harness can see what the agent sees
+//   task_set <id> <st>   the surviving op — completion, which a file cannot express
 //   exit [code]
 
-import { appendFile, mkdir } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, rm as rmFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 
 const endpoint = process.env.HOLI_AGENT_ENDPOINT
@@ -48,6 +54,19 @@ async function edit(rel, text) {
   out(`wrote ${rel}`)
 }
 
+/** A whole-file Write, hooks included — the shape of a real Write tool call. */
+async function write(rel, text) {
+  const abs = resolve(join(cwd, rel))
+  await hook('/hook/pre-tool-use', { filePath: abs })
+  await mkdir(dirname(abs), { recursive: true })
+  await writeFile(abs, text, 'utf8')
+  await hook('/hook/stop')
+  out(`wrote ${rel}`)
+}
+
+const slug = (title) =>
+  title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'task'
+
 async function run(line) {
   const [command, ...rest] = line.trim().split(/\s+/)
   if (!command) return
@@ -55,9 +74,29 @@ async function run(line) {
     if (command === 'edit') {
       const [rel, ...words] = rest
       await edit(rel, words.join(' '))
-    } else if (command === 'task') {
-      const result = await mcp('task_new', { title: rest.join(' ') })
-      out(`task: ${JSON.stringify(result.result?.content?.[0]?.text ?? result)}`)
+    } else if (command === 'taskfile') {
+      // The agent creates a task by writing a file. There is no op for this.
+      const title = rest.join(' ')
+      const rel = `tasks/${slug(title)}.md`
+      await write(rel, `---\ntitle: ${title}\nstatus: todo\n---\n\nWritten by the agent.\n`)
+    } else if (command === 'settitle') {
+      const [rel, ...words] = rest
+      const current = await readFile(resolve(join(cwd, rel)), 'utf8')
+      await write(rel, current.replace(/^title: .*$/m, `title: ${words.join(' ')}`))
+    } else if (command === 'corrupt') {
+      await write(rest[0], '---\ntitle: "unterminated\nstatus: nonsense\n---\n')
+    } else if (command === 'rm') {
+      const abs = resolve(join(cwd, rest[0]))
+      await hook('/hook/pre-tool-use', { filePath: abs })
+      await rmFile(abs, { force: true })
+      await hook('/hook/stop')
+      out(`removed ${rest[0]}`)
+    } else if (command === 'cat') {
+      const text = await readFile(resolve(join(cwd, rest[0])), 'utf8').catch(() => null)
+      out(`cat ${rest[0]}: ${text === null ? 'ENOENT' : JSON.stringify(text)}`)
+    } else if (command === 'task_set') {
+      const result = await mcp('task_set', { task_id: rest[0], status: rest[1] })
+      out(`task_set: ${JSON.stringify(result.result?.content?.[0]?.text ?? result)}`)
     } else if (command === 'exit') {
       out('bye')
       process.exit(Number(rest[0] ?? 0))
