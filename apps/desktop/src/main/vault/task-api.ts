@@ -18,5 +18,8 @@ export function makeTaskApi(client: ServerClient, vaultId: string): TaskProjecto
     deleteTask: async (taskId, version) => {
       await client.tasks.delete.mutate({ vaultId, taskId, version })
     },
+    heartbeat: async (taskId) => {
+      await client.tasks.heartbeat.mutate({ vaultId, taskId })
+    },
   }
 }

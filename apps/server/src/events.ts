@@ -6,7 +6,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { resolveVaultRole } from './auth/membership'
 import { resolveSession } from './auth/sessions'
-import type { Bus, DocsEvent, RemindersEvent, TasksEvent } from './bus'
+import type { Bus, DocsEvent, PresenceEvent, RemindersEvent, TasksEvent } from './bus'
 import type { Db } from './db/client'
 import { bearerToken } from './trpc'
 
@@ -32,15 +32,20 @@ export function makeEventsHandler(deps: { db: Db; bus: Bus }) {
     const onDocs = (e: DocsEvent) => void send('docs', e)
     const onTasks = (e: TasksEvent) => void send('tasks', e)
     const onReminders = (e: RemindersEvent) => void send('reminders', e)
+    const onPresence = (e: PresenceEvent) => void send('presence', e)
     deps.bus.on(`docs:${vaultId}`, onDocs)
     deps.bus.on(`tasks:${vaultId}`, onTasks)
     deps.bus.on(`reminders:${vaultId}`, onReminders)
+    deps.bus.on(`presence:${vaultId}`, onPresence)
     const heartbeat = setInterval(() => res.write(':hb\n\n'), HEARTBEAT_MS)
     req.on('close', () => {
       clearInterval(heartbeat)
       deps.bus.off(`docs:${vaultId}`, onDocs)
       deps.bus.off(`tasks:${vaultId}`, onTasks)
       deps.bus.off(`reminders:${vaultId}`, onReminders)
+      // easy to add the `on` and forget the `off` — the leak is invisible until a
+      // long-lived server is holding thousands of dead listeners
+      deps.bus.off(`presence:${vaultId}`, onPresence)
     })
   }
 }

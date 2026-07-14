@@ -8,12 +8,36 @@ export type TasksEvent = { type: 'upserted'; task: Task } | { type: 'deleted'; t
 export type ReminderFire = { taskId: string; title: string; fireAt: string }
 export type RemindersEvent = { fires: ReminderFire[]; coalesced: boolean }
 
+/**
+ * "Nicolai is editing this task" (prd/tasks.md §Concurrency: presence, not locks).
+ *
+ * Its own channel, deliberately NOT a third `TasksEvent` variant: the desktop's
+ * TaskProjector reads that union as `if (upserted) … else remove(event.taskId)`, so a
+ * new variant would fall into the `else` and **delete the task's file**. It rides the
+ * same per-vault SSE connection, which is what the PRD is actually asking for.
+ *
+ * Fire-and-forget and server-stateless: we stamp an expiry and emit, storing nothing.
+ * That is the whole reason locks were rejected — there is no acquire, no release, no
+ * TTL sweep, no stale holder from a crashed client, and no steal path. A heartbeat
+ * that stops arriving *is* the release.
+ */
+export type PresenceEvent = {
+  taskId: string
+  userId: string
+  name: string
+  /** ISO. Clients drop the entry when it passes; nobody has to send a "stopped". */
+  expiresAt: string
+}
+
 export class Bus extends EventEmitter {
   emitDocs(vaultId: string, event: DocsEvent): void {
     this.emit(`docs:${vaultId}`, event)
   }
   emitTasks(vaultId: string, event: TasksEvent): void {
     this.emit(`tasks:${vaultId}`, event)
+  }
+  emitPresence(vaultId: string, event: PresenceEvent): void {
+    this.emit(`presence:${vaultId}`, event)
   }
   emitReminders(vaultId: string, event: RemindersEvent): void {
     this.emit(`reminders:${vaultId}`, event)

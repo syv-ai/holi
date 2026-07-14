@@ -53,6 +53,7 @@ async function rig(tasks: Task[] = []) {
   // (server paths.ts) and move on rename, with no SSE channel of their own.
   const folders: Folder[] = [folder(AREA, 'projects/q2')]
   const calls: string[] = []
+  const heartbeats: string[] = []
   let nextId = 1
 
   const bump = (t: Task, patch: Partial<Task>): Task => {
@@ -102,6 +103,9 @@ async function rig(tasks: Task[] = []) {
       calls.push('delete')
       live.delete(id)
     },
+    heartbeat: async (id) => {
+      heartbeats.push(id)
+    },
   }
 
   const store = new ProjectionStore(join(dir, 'projection'))
@@ -129,6 +133,7 @@ async function rig(tasks: Task[] = []) {
     exists,
     edit,
     calls,
+    heartbeats,
     live,
     /** A folder appearing mid-session — the agent made a note under a new path. */
     addFolder: (id: string, path: string) => folders.push(folder(id, path)),
@@ -432,6 +437,35 @@ describe('TaskProjector — file -> record', () => {
     const canonical = `tasks/written-by-the-agent-${created.id}.md`
     expect(parseTaskFile(await r.read(canonical)).id).toBe(created.id)
     expect(created.description).toBe('The body.')
+  })
+})
+
+describe('TaskProjector — presence', () => {
+  it('a foreign write announces "someone is editing this task"', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    await r.edit(REL, (await r.read(REL)).replace('title: Review the Q2 doc', 'title: Agent edit'))
+    await r.projector.onTaskFileEvent('change', REL as never)
+
+    expect(r.heartbeats).toEqual([T1])
+  })
+
+  /** The projector's own writes come back through the watcher. If those beat a
+   * heartbeat, every board drag would light up "Claude is editing" on the very board
+   * that made the change — presence announcing the user to themselves. */
+  it('our own rewrite does NOT announce presence', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    // the board moved the card: server -> file, which the watcher echoes back to us
+    await r.projector.applyTasksEvent({
+      type: 'upserted',
+      task: task({ status: 'doing', version: 2 }),
+    })
+    await r.projector.onTaskFileEvent('change', REL as never)
+
+    expect(r.heartbeats).toEqual([])
   })
 })
 

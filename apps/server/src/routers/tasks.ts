@@ -17,6 +17,10 @@ import {
 } from '../tasks/mutations'
 import { router, vaultProcedure } from '../trpc'
 
+/** Short enough that a crashed client's presence disappears on its own, long enough
+ * that a heartbeat every few seconds keeps it alive without churn. */
+const PRESENCE_TTL_MS = 10_000
+
 const relatedRef = z.object({ kind: z.enum(['note', 'task', 'email', 'event']), id: z.string() })
 const recurrence = z.object({
   frequency: z.enum(['daily', 'weekly', 'monthly', 'yearly']),
@@ -88,6 +92,30 @@ export const tasksRouter = router({
     .input(z.object({ taskId: z.string().uuid(), version: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
       await deleteTask(ctx, ctx.vaultId, input.taskId, input.version)
+      return { ok: true }
+    }),
+
+  /**
+   * "Nicolai is editing this task" — the answer to two writers and no lock
+   * (prd/tasks.md §Concurrency: presence, not locks).
+   *
+   * A mutation that touches **no row**: it resolves the caller, stamps an expiry, and
+   * emits. Nothing is stored, so there is no lock lifecycle to get wrong. In
+   * particular it must never bump `version` — a heartbeat that did would rewrite every
+   * task file it touched, and with the mirror on, commit it.
+   *
+   * Callers: the board while a task editor has focus, and the desktop when the agent
+   * writes a task file.
+   */
+  heartbeat: vaultProcedure
+    .input(z.object({ taskId: z.string().uuid() }))
+    .mutation(({ ctx, input }) => {
+      ctx.bus.emitPresence(ctx.vaultId, {
+        taskId: input.taskId,
+        userId: ctx.user.id,
+        name: ctx.user.name ?? ctx.user.email,
+        expiresAt: new Date(Date.now() + PRESENCE_TTL_MS).toISOString(),
+      })
       return { ok: true }
     }),
 

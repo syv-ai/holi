@@ -66,6 +66,8 @@ export interface TaskProjectorApi {
   updateTask(taskId: string, patch: TaskWrite, version: number): Promise<Task>
   completeTask(taskId: string, version: number): Promise<Task>
   deleteTask(taskId: string, version: number): Promise<void>
+  /** "Someone is editing this task" — fire-and-forget, touches no record. */
+  heartbeat(taskId: string): Promise<void>
 }
 
 export interface TaskProjectorDeps {
@@ -229,6 +231,13 @@ export class TaskProjector {
 
     const entry = this.byRel(rel)
     if (entry && entry[1].text === text) return // our own write, echoed by the watcher
+
+    // Past the echo guard, so this is a *foreign* write — the agent or the user, not us
+    // rewriting from truth. That is exactly the moment other members should see "Claude
+    // is editing this task" (prd/tasks.md §Concurrency: presence, not locks). Fired
+    // before the patch lands so the warning precedes the change, and never awaited into
+    // the write path: presence failing must not cost the user an edit.
+    if (entry) void this.deps.api.heartbeat(entry[0]).catch(() => {})
 
     let parsed: ReturnType<typeof parseTaskFile>
     try {
