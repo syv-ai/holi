@@ -97,7 +97,9 @@ export interface TaskFileFields {
 export interface ParsedTaskFile {
   /** Absent = the writer created this file by hand; the caller creates a record. */
   id?: string
-  /** The optimistic-concurrency token. Absent on a hand-written create. */
+  /** Only ever set by a file written before D8, when the token still lived in the
+   * frontmatter. Parsed so those files stay readable; nothing consumes it. The
+   * concurrency token is carried out-of-band now — see `serializeTaskFile`. */
   version?: number
   fields: TaskFileFields
   /** The markdown body. This *is* the task's description. */
@@ -117,7 +119,6 @@ export interface TaskFileSource {
   recurrence?: Recurrence
   related?: RelatedRef[]
   description?: string
-  version?: number
 }
 
 /** `Review the Q2 doc` -> `review-the-q2-doc`. Never empty, never edge-dashed. */
@@ -162,7 +163,12 @@ export function serializeTaskFile(task: TaskFileSource, resolvers: TaskFileResol
   if (task.related?.length) {
     front.related = task.related.map((ref) => refToFile(ref, resolvers.notePathFor))
   }
-  if (task.version !== undefined) front.version = task.version
+  // `version` is deliberately NOT written (D8). It bumps on every mutation, so in
+  // the frontmatter a reminder firing would rewrite the file to change one integer
+  // — and with the git mirror on, the bot would *commit* that, forever, on an
+  // otherwise idle vault. It is also a machine token the agent must never hand-edit.
+  // The desktop keeps it in the ProjectionStore, which already stores it per task;
+  // git ingest diffs against the commit's own base blob and needs no token at all.
 
   const body = (task.description ?? '').trim()
   const yaml = stringifyYaml(front)

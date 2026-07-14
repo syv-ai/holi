@@ -28,7 +28,6 @@ const full: TaskFileSource = {
   recurrence: { frequency: 'weekly', interval: 1, weekdays: ['mon', 'wed'] },
   related: [{ kind: 'note', id: NOTE_ID }],
   description: 'First paragraph.\n\nSecond paragraph with a [[wiki-link]].',
-  version: 7,
 }
 
 const notePathFor = (docId: string) =>
@@ -46,7 +45,6 @@ describe('serializeTaskFile / parseTaskFile', () => {
     const parsed = parseTaskFile(serializeTaskFile(full, resolvers))
 
     expect(parsed.id).toBe(ID)
-    expect(parsed.version).toBe(7)
     expect(parsed.description).toBe(full.description)
     expect(parsed.fields).toEqual({
       title: 'Review the Q2 doc',
@@ -80,7 +78,25 @@ describe('serializeTaskFile / parseTaskFile', () => {
     const parsed = parseTaskFile(`---\nid: ${ID}\ntitle: T\n---\n`)
     expect('due' in parsed.fields).toBe(false)
     expect('status' in parsed.fields).toBe(false)
-    expect(parsed.version).toBeUndefined()
+  })
+
+  /** D8 — the concurrency token is NOT in the file.
+   *
+   * It bumps on every mutation, so with it in the frontmatter a reminder firing
+   * rewrites the task file to change one integer — and once the git mirror is on,
+   * the bot *commits* that. It is also a machine token the agent must never touch.
+   * The desktop carries it out-of-band in the ProjectionStore; git ingest diffs
+   * against the commit's own base blob and needs no token at all. */
+  it('never serializes `version` — the token is carried out-of-band', () => {
+    const text = serializeTaskFile({ ...full, version: 7 } as TaskFileSource, resolvers)
+    expect(text).not.toMatch(/^version:/m)
+    expect(parseTaskFile(text).version).toBeUndefined()
+  })
+
+  it('still *parses* a version — files written before D8 must not become unparseable', () => {
+    const parsed = parseTaskFile(`---\nid: ${ID}\ntitle: T\nversion: 7\n---\n`)
+    expect(parsed.version).toBe(7)
+    expect(parsed.fields.title).toBe('T')
   })
 
   it('the body is the description, verbatim, multi-paragraph', () => {

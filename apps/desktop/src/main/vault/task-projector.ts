@@ -253,7 +253,7 @@ export class TaskProjector {
       await this.inboundCreate(rel, parsed.fields, parsed.description)
       return
     }
-    await this.inboundPatch(rel, parsed.id, parsed.version, parsed.fields, parsed.description)
+    await this.inboundPatch(rel, parsed.id, parsed.fields, parsed.description)
   }
 
   /** A well-formed file with no `id` creates a task, then moves to its canonical
@@ -283,18 +283,22 @@ export class TaskProjector {
   private async inboundPatch(
     rel: VaultRelPath,
     taskId: string,
-    version: number | undefined,
     fields: TaskFileFields,
     description: string,
   ): Promise<void> {
     const previous = this.projected.get(taskId)
-    if (!previous || version === undefined) {
-      // We never wrote this file, or it carries no concurrency token: we cannot
+    if (!previous) {
+      // We never wrote this file, so we have nothing to diff it against: we cannot
       // tell which fields the writer touched, and a whole-record overwrite would
       // destroy anyone else's concurrent change. Truth wins.
       await this.rewriteFromTruth(rel, taskId, 'no known projection to diff against')
       return
     }
+    // The concurrency token comes from the store, not the file (D8). Same guarantee
+    // — it is the version of the record the file on disk was rendered from — but the
+    // agent never sees it, and a version bump no longer rewrites (and, once mirrored,
+    // commits) the file.
+    const version = previous.version
 
     await this.refreshFoldersIfUnknown(fields.area)
 
