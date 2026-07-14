@@ -1,26 +1,58 @@
 /** Vault → mirror-clone materialization. Full-tree every time: write all doc
  * texts, delete anything else, `git add -A` — git computes the real delta, so
- * unchanged content produces no commit. */
+ * unchanged content produces no commit.
+ *
+ * Two sources, not one. Docs carry their own `path` and their text lives in Yjs;
+ * **tasks are a separate table with no path at all**, so they are absent from the
+ * mirror by construction rather than by a filter, and getting them in is a second
+ * query rather than a tweak. Their path is derived (`taskFilePath`) and their bytes
+ * are rendered by the same `serializeTaskFile` the desktop projector uses. */
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { eq } from 'drizzle-orm'
+import { isLocalOnlyPath, serializeTaskFile, taskFilePath } from '@holi/shared'
 import { config } from '../config'
 import type { Db } from '../db/client'
-import { docs, yjsDocs } from '../db/schema'
-import { isLocalOnlyPath } from '@holi/shared'
+import { docs, folders, tasks, yjsDocs } from '../db/schema'
+import { toTask } from '../db/mappers'
 import { docFromState, docText } from '../yjs/doc-store'
 import { git, tryGit } from './git'
 
 export async function buildExportFiles(db: Db, vaultId: string): Promise<Map<string, string>> {
-  const rows = await db
-    .select({ path: docs.path, state: yjsDocs.state })
-    .from(docs)
-    .innerJoin(yjsDocs, eq(yjsDocs.docId, docs.id))
-    .where(eq(docs.vaultId, vaultId))
+  const [contentRows, docRows, taskRows, folderRows] = await Promise.all([
+    db
+      .select({ path: docs.path, state: yjsDocs.state })
+      .from(docs)
+      .innerJoin(yjsDocs, eq(yjsDocs.docId, docs.id))
+      .where(eq(docs.vaultId, vaultId)),
+    // Every doc, NOT just the ones with Yjs state: a `related[]` note ref must render
+    // as a path even for a doc that has no content row yet, or the inner join above
+    // would quietly turn it into an id-tombstone — a real ref, rendered as a dead one.
+    db.select({ id: docs.id, path: docs.path }).from(docs).where(eq(docs.vaultId, vaultId)),
+    db.select().from(tasks).where(eq(tasks.vaultId, vaultId)),
+    db.select().from(folders).where(eq(folders.vaultId, vaultId)),
+  ])
+
   const files = new Map<string, string>()
-  for (const row of rows) {
+  for (const row of contentRows) {
     if (isLocalOnlyPath(row.path)) continue
     files.set(row.path, docText(docFromState(row.state)))
+  }
+
+  // The record stores stable ids; the file renders paths — so renaming a note or a
+  // folder never rewrites a task record, and the agent can name things it can see.
+  const notePaths = new Map(docRows.map((d) => [d.id, d.path]))
+  const folderPaths = new Map(folderRows.map((f) => [f.id, f.path]))
+  const resolvers = {
+    notePathFor: (docId: string) => notePaths.get(docId),
+    folderPathFor: (folderId: string) => folderPaths.get(folderId),
+  }
+
+  // Tasks are written last: they win a path collision with a doc that somehow sits
+  // under tasks/ (the desktop mirror cannot create one, but a commit predating this
+  // feature could have). The ingester keeps new ones from appearing.
+  for (const row of taskRows) {
+    files.set(taskFilePath(row), serializeTaskFile(toTask(row), resolvers))
   }
   return files
 }
