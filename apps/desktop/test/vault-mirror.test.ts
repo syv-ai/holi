@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Hocuspocus } from '@hocuspocus/server'
 import type { DocMeta } from '@holi/shared'
-import { VaultMirror, type MirrorApi } from '../src/main/vault/vault-mirror'
+import { VaultMirror, type MirrorApi, type VaultMirrorDeps } from '../src/main/vault/vault-mirror'
 import { SimClient, sleep, startRelay, waitUntil } from './helpers/relay'
 
 const PORT = 5612
@@ -68,7 +68,10 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn()
 })
 
-async function makeMirror(fake: Fake): Promise<{ mirror: VaultMirror; root: string }> {
+async function makeMirror(
+  fake: Fake,
+  extra: Partial<VaultMirrorDeps> = {},
+): Promise<{ mirror: VaultMirror; root: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-vm-'))
   const root = join(dir, 'work')
   const mirror = new VaultMirror({
@@ -80,6 +83,7 @@ async function makeMirror(fake: Fake): Promise<{ mirror: VaultMirror; root: stri
     api: fake.api,
     turnIdleMs: 200,
     lifecycleDebounceMs: 150,
+    ...extra,
   })
   cleanups.push(async () => {
     await mirror.stop()
@@ -155,6 +159,51 @@ describe('VaultMirror', { timeout: 15_000 }, () => {
     await writeFile(join(root, '.DS_Store'), 'junk', 'utf8')
     await sleep(600) // > lifecycleDebounceMs — nothing should happen
     expect(fake.created).toEqual([])
+  })
+
+  it('task files are never adopted as docs — they are records, not CRDT docs', async () => {
+    // Without this exclusion the agent writing tasks/foo.md turns it into a CRDT
+    // note, and a server-driven rewrite (a recurrence roll landing the instant
+    // the agent marks something done) arrives as a foreign write that opens a
+    // spurious turn — mid-turn. The mirror must see task files and do nothing.
+    const fake = fakeApi([])
+    const taskEvents: Array<{ kind: string; rel: string }> = []
+    const { mirror, root } = await makeMirror(fake, {
+      onTaskFileEvent: (kind, rel) => void taskEvents.push({ kind, rel }),
+    })
+    await mirror.start()
+
+    await mkdir(join(root, 'tasks'), { recursive: true })
+    const rel = 'tasks/review-the-q2-doc-aaaaaaaa-1111-4111-8111-111111111111.md'
+    await writeFile(join(root, rel), '---\ntitle: Review\n---\n\nBody.\n', 'utf8')
+
+    // the projector still hears about it — it just is not the doc machinery's business
+    await waitUntil(() => taskEvents.some((e) => e.rel === rel), 8000, 'projector notified')
+    await sleep(600) // > lifecycleDebounceMs — adoption would have fired by now
+
+    expect(fake.created).toEqual([]) // no notes.create
+    expect(fake.snapshots).toEqual([]) // no pre-turn snapshot
+    expect(mirror.docIdForPath(rel)).toBeNull() // no doc
+    expect(mirror.bridgeForPath(rel)).toBeNull() // no bridge, so no base/turn/merge
+    expect(mirror.knownPaths()).not.toContain(rel)
+  })
+
+  it('a task file deleted on disk reaches the projector, not notes.delete', async () => {
+    const fake = fakeApi([])
+    const taskEvents: Array<{ kind: string; rel: string }> = []
+    const { mirror, root } = await makeMirror(fake, {
+      onTaskFileEvent: (kind, rel) => void taskEvents.push({ kind, rel }),
+    })
+    await mirror.start()
+
+    await mkdir(join(root, 'tasks'), { recursive: true })
+    const rel = 'tasks/gone-bbbbbbbb-2222-4222-8222-222222222222.md'
+    await writeFile(join(root, rel), '---\ntitle: Gone\n---\n', 'utf8')
+    await waitUntil(() => taskEvents.some((e) => e.kind !== 'unlink'), 8000, 'add seen')
+    await unlink(join(root, rel))
+
+    await waitUntil(() => taskEvents.some((e) => e.kind === 'unlink'), 8000, 'unlink seen')
+    expect(fake.deleted).toEqual([]) // rm on a task file is a task delete, not a doc delete
   })
 
   it('agent rm deletes the doc server-side', async () => {

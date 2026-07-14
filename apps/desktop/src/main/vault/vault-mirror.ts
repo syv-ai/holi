@@ -9,7 +9,14 @@ import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/pro
 import { watch, type FSWatcher } from 'chokidar'
 import WebSocket from 'ws'
 import * as Y from 'yjs'
-import { BRIDGE_ORIGIN, YDOC_TEXT_KEY, vaultRelPath, type DocMeta, type VaultRelPath } from '@holi/shared'
+import {
+  BRIDGE_ORIGIN,
+  YDOC_TEXT_KEY,
+  isTaskFilePath,
+  vaultRelPath,
+  type DocMeta,
+  type VaultRelPath,
+} from '@holi/shared'
 import { BaseStore } from './base-store'
 import { DocBridge } from './doc-bridge'
 import {
@@ -58,6 +65,14 @@ export interface VaultMirrorDeps {
    * CRDT→disk write (used to spot synced agent-config changes mid-session). */
   onTurnActivity?(activeTurns: number): void
   onMaterialize?(rel: string): void
+  /** Task files are records, not CRDT docs (prd/tasks.md §Task file projection).
+   * The mirror sees them but keeps them out of the doc machinery entirely — no
+   * adoption, no bridge, no base, no turn, no merge, no snapshot — and hands the
+   * disk event to the TaskProjector instead. Without this, a task file becomes a
+   * CRDT note and a server-driven rewrite (a recurrence roll landing the instant
+   * the agent marks something done) arrives as a foreign write that opens a
+   * spurious turn, mid-turn. */
+  onTaskFileEvent?(kind: 'add' | 'change' | 'unlink', rel: VaultRelPath): void
 }
 
 interface DocEntry {
@@ -259,6 +274,16 @@ export class VaultMirror {
     if (this.stopped) return
     const rel = toVaultRel(this.deps.workRoot, absPath)
     if (!rel || isIgnoredPath(rel)) return
+
+    // Task files are not docs. Hand them to the projector and stop — no entry
+    // lookup, no bridge, no adoption, no delete propagation. (Same shape as the
+    // isLocalOnlyPath exclusion, on a different axis: local-only files are not
+    // vault content at all, task files are vault content that is not a CRDT doc.)
+    if (isTaskFilePath(rel)) {
+      this.deps.onTaskFileEvent?.(kind, rel)
+      return
+    }
+
     const entry = this.byPath.get(rel)
     if (kind === 'unlink') {
       if (!entry) {
@@ -314,6 +339,8 @@ export class VaultMirror {
 
   private async adoptUnknownFiles(): Promise<void> {
     for (const rel of await listFiles(this.deps.workRoot)) {
+      // task files are the projector's, never adopted as docs
+      if (isTaskFilePath(rel)) continue
       if (isIgnoredPath(rel) || this.byPath.has(rel) || this.pendingLifecycle.has(rel)) continue
       let safe: VaultRelPath
       try {
