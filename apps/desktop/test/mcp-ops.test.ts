@@ -21,6 +21,7 @@ function fakeTask(over: Partial<Task> = {}): Task {
     status: 'todo',
     tags: [],
     related: [],
+    version: 1,
     createdAt: '2026-07-13T00:00:00.000Z',
     updatedAt: '2026-07-13T00:00:00.000Z',
     ...over,
@@ -61,7 +62,9 @@ function ops(client: ServerClient): Map<string, AgentOp> {
 }
 
 describe('buildOps', () => {
-  it('exposes exactly the 7 ops, sorted by name', () => {
+  it('exposes exactly the 3 ops that a file write cannot express', () => {
+    // task_new / task_get / task_link / task_delete are retired: they are plain
+    // file operations on tasks/<slug>-<id>.md now.
     const { client } = fakeClient()
     const names = buildOps({
       client,
@@ -69,15 +72,7 @@ describe('buildOps', () => {
       docIdForPath: () => null,
       pathForDocId: () => null,
     }).map((o) => o.name)
-    expect(names).toEqual([
-      'note_rename',
-      'task_delete',
-      'task_get',
-      'task_link',
-      'task_list',
-      'task_new',
-      'task_set',
-    ])
+    expect(names).toEqual(['note_rename', 'task_list', 'task_set'])
   })
 
   it('every op declares a description and an object input schema', () => {
@@ -86,41 +81,6 @@ describe('buildOps', () => {
       expect(op.description.length).toBeGreaterThan(10)
       expect(op.inputSchema.type).toBe('object')
     }
-  })
-
-  it('task_new injects vaultId and resolves note refs from paths to docIds', async () => {
-    const { client, calls } = fakeClient()
-    await ops(client).get('task_new')!.run({
-      title: 'Draft proposal',
-      due: '2026-07-20',
-      related: [{ kind: 'note', id: NOTE_PATH }],
-    })
-    expect(calls).toHaveLength(1)
-    expect(calls[0]!.path).toBe('tasks.create')
-    expect(calls[0]!.input).toEqual({
-      vaultId: VAULT,
-      title: 'Draft proposal',
-      due: '2026-07-20',
-      related: [{ kind: 'note', id: NOTE_ID }],
-    })
-  })
-
-  it('task_new passes an explicit status through to create', async () => {
-    const { client, calls } = fakeClient()
-    await ops(client).get('task_new')!.run({ title: 'In flight', status: 'doing', tags: ['q2'] })
-    expect(calls[0]!.input).toEqual({ vaultId: VAULT, title: 'In flight', status: 'doing', tags: ['q2'] })
-  })
-
-  it('task_new rejects an unknown note path', async () => {
-    const { client } = fakeClient()
-    await expect(
-      ops(client).get('task_new')!.run({ title: 'x', related: [{ kind: 'note', id: 'nope.md' }] }),
-    ).rejects.toThrow('unknown note path: nope.md')
-  })
-
-  it('task_new requires a title', async () => {
-    const { client } = fakeClient()
-    await expect(ops(client).get('task_new')!.run({})).rejects.toThrow('title is required')
   })
 
   it('task_list passes the status filter through and enriches note refs with paths', async () => {
@@ -138,39 +98,11 @@ describe('buildOps', () => {
     expect(calls[0]!.input).toEqual({ vaultId: VAULT, filter: {} })
   })
 
-  it('task_get requires a task_id and enriches the result', async () => {
-    const { client, calls } = fakeClient(fakeTask({ related: [{ kind: 'note', id: NOTE_ID }] }))
-    const out = (await ops(client).get('task_get')!.run({ task_id: TASK_ID })) as {
-      related: Array<{ path?: string }>
-    }
-    expect(calls[0]).toEqual({ path: 'tasks.get', input: { vaultId: VAULT, taskId: TASK_ID } })
-    expect(out.related[0]!.path).toBe(NOTE_PATH)
-    await expect(ops(fakeClient().client).get('task_get')!.run({})).rejects.toThrow('task_id is required')
-  })
-
   it('task_set with status done routes through tasks.complete (recurrence rolls server-side)', async () => {
     const { client, calls } = fakeClient()
     await ops(client).get('task_set')!.run({ task_id: TASK_ID, status: 'done' })
     expect(calls.map((c) => c.path)).toEqual(['tasks.complete'])
     expect(calls[0]!.input).toEqual({ vaultId: VAULT, taskId: TASK_ID })
-  })
-
-  it('task_set with only patch fields routes through tasks.update', async () => {
-    const { client, calls } = fakeClient()
-    await ops(client).get('task_set')!.run({ task_id: TASK_ID, title: 'New title', priority: 'high' })
-    expect(calls.map((c) => c.path)).toEqual(['tasks.update'])
-    expect(calls[0]!.input).toEqual({
-      vaultId: VAULT,
-      taskId: TASK_ID,
-      patch: { title: 'New title', priority: 'high' },
-    })
-  })
-
-  it('task_set with done AND patch fields completes then updates', async () => {
-    const { client, calls } = fakeClient()
-    await ops(client).get('task_set')!.run({ task_id: TASK_ID, status: 'done', priority: 'low' })
-    expect(calls.map((c) => c.path)).toEqual(['tasks.complete', 'tasks.update'])
-    expect(calls[1]!.input).toEqual({ vaultId: VAULT, taskId: TASK_ID, patch: { priority: 'low' } })
   })
 
   it('task_set with a non-done status is a plain update', async () => {
@@ -180,26 +112,14 @@ describe('buildOps', () => {
     expect(calls[0]!.input).toEqual({ vaultId: VAULT, taskId: TASK_ID, patch: { status: 'doing' } })
   })
 
-  it('task_link links by default and unlinks with remove:true, resolving note paths', async () => {
-    const { client, calls } = fakeClient()
-    const link = ops(client).get('task_link')!
-    await link.run({ task_id: TASK_ID, related: { kind: 'note', id: NOTE_PATH } })
-    await link.run({ task_id: TASK_ID, related: { kind: 'note', id: NOTE_PATH }, remove: true })
-    expect(calls.map((c) => c.path)).toEqual(['tasks.link', 'tasks.unlink'])
-    for (const call of calls) {
-      expect(call.input).toEqual({
-        vaultId: VAULT,
-        taskId: TASK_ID,
-        related: { kind: 'note', id: NOTE_ID },
-      })
-    }
-  })
-
-  it('task_delete returns { ok: true }', async () => {
-    const { client, calls } = fakeClient({ ok: true })
-    const out = await ops(client).get('task_delete')!.run({ task_id: TASK_ID })
-    expect(calls[0]).toEqual({ path: 'tasks.delete', input: { vaultId: VAULT, taskId: TASK_ID } })
-    expect(out).toEqual({ ok: true })
+  it('task_set requires a task_id and a status — every other field is a file edit', async () => {
+    const { client } = fakeClient()
+    await expect(ops(client).get('task_set')!.run({ status: 'done' })).rejects.toThrow(
+      'task_id is required',
+    )
+    await expect(ops(client).get('task_set')!.run({ task_id: TASK_ID })).rejects.toThrow(
+      'status is required',
+    )
   })
 
   it('note_rename resolves from_path to a docId and passes the new path', async () => {

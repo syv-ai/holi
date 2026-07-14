@@ -74,13 +74,33 @@ describe('buildSystemPrompt', () => {
     expect(out).not.toContain('## Apps')
   })
 
-  it('retargets guidance to the 7 ops + native tools', () => {
+  it('retargets guidance to the 3 ops + native tools', () => {
     const out = buildSystemPrompt(fixture)
     expect(out).toContain('mcp__holi__note_rename')
     expect(out).toContain('mcp__holi__task_list')
+    expect(out).toContain('mcp__holi__task_set')
     expect(out).toContain('AskUserQuestion')
     expect(out).toContain(`${USER_MD_BUDGET.toLocaleString('en-US')}`)
     expect(out).toContain(`${MEMORY_MD_BUDGET.toLocaleString('en-US')}`)
+  })
+
+  it('names the retired ops nowhere — they are file operations now', () => {
+    const out = buildSystemPrompt(fixture)
+    for (const retired of ['task_new', 'task_get', 'task_link', 'task_delete']) {
+      expect(out).not.toContain(retired)
+    }
+  })
+
+  it('tells the agent tasks ARE files — the old prompt said the opposite', () => {
+    const out = buildSystemPrompt(fixture)
+    expect(out).toContain('tasks/<slug>-<id>.md')
+    // the two claims that became false when the projection landed. A prompt that
+    // still said these would steer the agent away from the whole feature.
+    expect(out).not.toContain('There is nothing to `Read` or `Edit` for a task')
+    expect(out).not.toContain('they have no path')
+    // and it must still route completion through the op, because a file cannot
+    // say whether a recurring task rolls forward or ends
+    expect(out).toContain('task_set')
   })
 
   it('joins top-level blocks with the *** separator', () => {

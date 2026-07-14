@@ -201,7 +201,7 @@ describe('AgentManager', () => {
     expect(prompt.indexOf('# SOUL')).toBeGreaterThan(prompt.indexOf('# IDENTITY'))
   })
 
-  it('serves the 7 ops over the live MCP server, bearer-gated', async () => {
+  it('serves the 3 ops over the live MCP server, bearer-gated', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
     const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
@@ -212,23 +212,19 @@ describe('AgentManager', () => {
     const listed = await mcpCall(endpoint!, token!, 'tools/list')
     expect(listed.result.tools.map((t: any) => t.name)).toEqual([
       'note_rename',
-      'task_delete',
-      'task_get',
-      'task_link',
       'task_list',
-      'task_new',
       'task_set',
     ])
 
     // an op reaches the server client with the vault injected
     const called = await mcpCall(endpoint!, token!, 'tools/call', {
-      name: 'task_new',
-      arguments: { title: 'From the agent' },
+      name: 'task_set',
+      arguments: { task_id: 't1', status: 'done' },
     })
     expect(called.result.isError).toBeUndefined()
     expect(r.calls).toContainEqual({
-      path: 'tasks.create',
-      input: { vaultId: VAULT, title: 'From the agent' },
+      path: 'tasks.complete',
+      input: { vaultId: VAULT, taskId: 't1' },
     })
   })
 

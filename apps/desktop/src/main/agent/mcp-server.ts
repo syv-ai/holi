@@ -17,8 +17,10 @@ const DEFAULT_PROTOCOL_VERSION = '2025-06-18'
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 
 const INSTRUCTIONS =
-  'Holi vault ops. Tasks are server records — create and change them only through these tools. ' +
-  'Note references take vault-relative paths, never ids. Rename notes with note_rename (it rewrites [[links]]), never with mv.'
+  'Holi vault ops. Tasks are files: tasks/<slug>-<id>.md, created/edited/deleted with the native file tools. ' +
+  'These three tools are only for what a file write cannot express — task_set (complete a task: a file cannot say ' +
+  'whether a recurring task should roll forward or end), task_list (query tasks; never glob the tasks/ folder), and ' +
+  'note_rename (it rewrites [[links]]; never use mv). Notes and folders are named by vault-relative path, never by id.'
 
 export interface McpServerDeps {
   token: string

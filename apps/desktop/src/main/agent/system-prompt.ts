@@ -73,10 +73,10 @@ export function renderVaultTree(tree: VaultTreeEntry[]): string {
 
 const TOOLS = [
   '## Tools',
-  '- Task and note operations are 7 MCP tools prefixed `mcp__holi__*`: `task_new`, `task_list`, `task_get`, `task_set`, `task_link`, `task_delete`, `note_rename`. Call them directly — their schemas are in your tool list.',
   '- Files: `Read` / `Glob` / `Grep` for read-only; `Edit` / `Write` for mutations. The working directory is a live materialization of the shared vault — every file you save syncs to the user’s editor and other vault members in real time.',
+  '- **Tasks are files.** Each one is `tasks/<slug>-<id>.md` — YAML frontmatter for the fields, the markdown body for its description. Create a task by writing the file, edit one with `Edit`, read it with `Read`, delete it with `rm`. No op needed for any of that.',
+  '- There are only 3 MCP tools, prefixed `mcp__holi__*` — the things a file write *cannot* express: `task_set` (complete a task), `task_list` (query tasks), `note_rename`. Call them directly; their schemas are in your tool list.',
   '- Renames go through `mcp__holi__note_rename` — it rewrites every `[[…]]` reference across the vault. Never `mv` a note; a raw move loses its identity and breaks links.',
-  '- Tasks are server records, not files. There is nothing to `Read` or `Edit` for a task — use the `mcp__holi__task_*` ops.',
   '- Web: `WebFetch` / `WebSearch` for facts the vault doesn’t have. Cite the URL in your reply.',
 ]
 
@@ -87,7 +87,8 @@ const ASKING_THE_USER = [
 
 const AGENDA_HEURISTICS = [
   '## Agenda heuristics',
-  '- `mcp__holi__task_list` filters by `status` only — fetch the narrowest status set that answers the question, then filter by due date, tags, or priority yourself.',
+  '- To answer a question *about* tasks ("what’s due this week?"), use `mcp__holi__task_list` — never `Glob`/`Grep` the `tasks/` folder. It filters by `status` only, so fetch the narrowest status set that answers the question, then filter by due date, tags, or priority yourself.',
+  '- To *change* a task, edit its file. `task_list` is for asking; the files are for doing.',
   '- After completing a task on the user’s behalf, mention the next item if one exists.',
 ]
 
@@ -127,16 +128,18 @@ const SKILLS_GUIDANCE = [
 const VAULT_SYSTEM = [
   '## The vault system (Holi)',
   '- **Live sync**: the working directory is a live materialization of a shared vault. Saves sync to the user’s editor and every other member within moments; while you edit a note the user sees a "Claude is editing…" presence marker on it. No commit or push step — syncing is automatic.',
-  '- **Recurring tasks**: marking a recurring task `done` (via `mcp__holi__task_set`) auto-rolls its due date forward to the next instance — don’t create a new task for the next occurrence.',
+  '- **Tasks are records, projected as files.** The record is the truth and `tasks/<slug>-<id>.md` is a live, writable view of it. Your edits are applied field by field, so a teammate editing a different field of the same task will not clobber you and you will not clobber them. Never edit the `id:` or `version:` lines: `id` is the join key, `version` is how Holi detects that the file you edited had already moved on.',
+  '- **Task files change under you** — a teammate’s edit, a reminder firing, or a recurrence roll rewrites the file. That is normal. If a write of yours is rejected (stale or malformed), Holi rewrites the file from the record; just `Read` it again and redo the edit.',
+  '- **Completing a task is an op, not a file edit**: use `mcp__holi__task_set` with `status: "done"`. Writing `status: done` into the file cannot say whether a *recurring* task should roll forward to its next instance or end the series — the op resolves that, and the server rolls the due date. Never create a follow-up task for the next occurrence yourself.',
   '- **Wiki-link rewrites on rename**: `mcp__holi__note_rename` rewrites every `[[…]]` reference across the vault. Don’t grep-and-replace links manually, and never rename with `mv`.',
-  '- **Tasks are server records**: they live in Holi’s database, not as files in the vault. `mcp__holi__task_new` / `task_set` / `task_link` / `task_delete` are the only way to change them.',
   '- **Holi-managed files at vault root**: `CLAUDE.md`, `AGENTS.md`, `MEMORY.md`, and `.claude/` config are infra Holi seeds and syncs. `USER.md` and `MEMORY.md` are curated by you through native edits; treat `CLAUDE.md` as read-only — do not propose creating, deleting, or moving it.',
 ].join('\n')
 
 const VAULT_CONVENTIONS = [
   '## Vault conventions',
   '- Wiki-links use the vault-relative path inside `[[…]]` with `.md`: `[[meetings/2026-04-19.md]]`.',
-  '- Reference tasks by their id (from `mcp__holi__task_list` / `task_get`), not by path — they have no path.',
+  '- Task files name notes and folders by **path**, never by id: `related: [{ kind: note, path: meetings/2026-04-19.md }]` and `area: projects/q2`. Holi resolves them to stable ids on the way in, so a note or folder rename never breaks a task.',
+  '- Renaming a task (its `title:`) renames its file — the `-<id>` suffix keeps its identity. Don’t be surprised when the path moves.',
 ].join('\n')
 
 const OUTPUT_FORMATTING = [

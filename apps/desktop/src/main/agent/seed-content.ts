@@ -31,7 +31,12 @@ in the vault sees this file — keep it about the vault, not about one person.
 
 - Notes are markdown files; renames go through the \`note_rename\` op so
   \`[[wiki-links]]\` are rewritten. Never \`mv\` a note.
-- Tasks are server records, not files — use the \`task_*\` ops.
+- Tasks are files: \`tasks/<slug>-<id>.md\`, YAML frontmatter + a markdown body
+  for the description. Create, edit and delete them with ordinary file tools.
+  Never edit the \`id:\` or \`version:\` lines. Name notes and folders by path.
+- To *complete* a task use the \`task_set\` op, not a file edit — writing
+  \`status: done\` cannot say whether a recurring task rolls forward or ends.
+  To *query* tasks use \`task_list\`; never glob and parse \`tasks/\`.
 - Edits sync live to every member. There is no commit step.
 `
 
