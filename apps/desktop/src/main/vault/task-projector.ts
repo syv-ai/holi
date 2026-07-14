@@ -194,7 +194,7 @@ export class TaskProjector {
 
   /** `rm tasks/….md` deletes the task — the note symmetry the mirror already has
    * (agent rm -> doc delete), applied to records. */
-  private async inboundDelete(rel: string): Promise<void> {
+  private async inboundDelete(rel: VaultRelPath): Promise<void> {
     const entry = this.byRel(rel)
     if (!entry) return // our own rename, or a file we never wrote
     // The file coming back means this was a rewrite, not a delete. (chokidar can
@@ -204,9 +204,22 @@ export class TaskProjector {
     if (existsSync(join(this.deps.workRoot, rel))) return
 
     const [taskId, previous] = entry
+    try {
+      await this.deps.api.deleteTask(taskId, previous.version)
+    } catch (err) {
+      if (!isConflict(err)) throw err
+      // A stale delete loses exactly as a stale field write does: the record moved
+      // on under the `rm` (a reminder fired, a teammate edited) and the writer was
+      // acting on a file that no longer described it. The record is still alive, so
+      // its file has to come back — dropping the projection and leaving disk empty
+      // would strand a live task with no file and nothing to restore it.
+      await this.rewriteFromTruth(rel, taskId, 'stale version — delete rejected')
+      return
+    }
+    // Only once the record is actually gone. Forgetting the task before the
+    // mutation lands means a rejected delete has nothing left to rewrite from.
     this.projected.delete(taskId)
     await this.deps.store.save(this.projected)
-    await this.deps.api.deleteTask(taskId, previous.version)
     this.log(`deleted task ${taskId} — ${rel} removed`)
   }
 
@@ -223,7 +236,16 @@ export class TaskProjector {
     } catch (err) {
       // Unparseable writes lose. The model *will* write bad frontmatter, so the
       // projection is resilient by construction rather than by prompting.
-      await this.rewriteFromTruth(rel, entry?.[0], `unparseable: ${(err as Error).message}`)
+      if (!entry) {
+        // ...but there is no record behind a file we never projected, and
+        // "rewrite from truth" with no truth means *deleting the file*. That would
+        // destroy the agent's brand-new task over a stray colon in the title — a
+        // silent deletion of work, with nothing left to read and correct. Leave it
+        // on disk; the writer's next save comes straight back through here.
+        this.log(`unparseable ${rel} has no record behind it — left alone: ${(err as Error).message}`)
+        return
+      }
+      await this.rewriteFromTruth(rel, entry[0], `unparseable: ${(err as Error).message}`)
       return
     }
 
@@ -241,6 +263,7 @@ export class TaskProjector {
     fields: TaskFileFields,
     description: string,
   ): Promise<void> {
+    await this.refreshFoldersIfUnknown(fields.area)
     let write: TaskWrite
     try {
       write = this.toRecord(fields, description)
@@ -273,6 +296,8 @@ export class TaskProjector {
       return
     }
 
+    await this.refreshFoldersIfUnknown(fields.area)
+
     const before = parseTaskFile(previous.text)
     const patch: TaskWrite = {}
     let changed = false
@@ -293,19 +318,25 @@ export class TaskProjector {
       patch.description = description === '' ? null : description
     }
 
-    if (!changed) {
-      // The bytes differ but nothing meaningful did — a cosmetic reformat.
-      // Normalize the file back to canonical form rather than round-tripping a
-      // no-op mutation through the server.
-      await this.rewriteFromTruth(rel, taskId, 'no effective change')
-      return
-    }
-
     // `status: done` cannot express "roll the recurrence" vs "end the series" —
     // that ambiguity is exactly why task_set survives as an op. From a file we
     // take the only safe reading: complete it, and let the server roll.
     const completing = patch.status === 'done'
     if (completing) delete patch.status
+
+    if (Object.keys(patch).length === 0 && !completing) {
+      // Nothing to send. Either the bytes moved but nothing meaningful did (a
+      // cosmetic reformat), or the writer's only change was one the record cannot
+      // express: deleting `status:`, which is NOT NULL on the record just like
+      // `title`, so `assign` has no null form to send for it.
+      //
+      // Both end the same way — canonical truth goes back on disk. Returning here
+      // instead would be the one outcome this projection does not permit: a write
+      // that is neither applied nor undone, leaving the file describing a record
+      // that does not exist and nothing that would ever put it right.
+      await this.rewriteFromTruth(rel, taskId, changed ? 'no expressible change' : 'no effective change')
+      return
+    }
 
     try {
       let current =
@@ -403,6 +434,24 @@ export class TaskProjector {
     const folders = await this.deps.api.listFolders()
     this.folderPaths = new Map(folders.map((f) => [f.id, f.path]))
     this.folderIds = new Map(folders.map((f) => [f.path, f.id]))
+  }
+
+  /** The folder map is a snapshot, and folders move under it: the server creates
+   * one as a side effect of a note's path (paths.ts) and the rename machinery
+   * repaths them, neither of which emits an event we subscribe to. So an `area`
+   * we cannot resolve is just as likely to be *new* as bogus.
+   *
+   * Refresh before letting `areaFromFile` reject it. Without this, the agent makes
+   * a note under a new folder, sets `area:` to that folder, and the write is thrown
+   * out as unresolvable — along with every other field it edited in the same pass —
+   * and keeps being thrown out for the rest of the session, identically on retry.
+   * The "reject the whole file" rule is only defensible while it fires on genuinely
+   * bogus paths. */
+  private async refreshFoldersIfUnknown(area: string | undefined): Promise<void> {
+    if (area === undefined) return
+    // known as a path, or as the raw id a deleted folder serializes to
+    if (this.folderIds.has(area) || this.folderPaths.has(area)) return
+    await this.refreshFolders()
   }
 
   /** Record -> file. A title edit re-derives the slug, so the file moves; the

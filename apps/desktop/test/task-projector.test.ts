@@ -33,7 +33,8 @@ function task(over: Partial<Task> = {}): Task {
   }
 }
 
-const FOLDERS: Folder[] = [{ id: AREA, vaultId: VAULT, path: 'projects/q2' }]
+const FOLDER2 = 'ffffffff-5555-4555-8555-555555555555'
+const folder = (id: string, path: string): Folder => ({ id, vaultId: VAULT, path })
 
 class Conflict extends Error {
   code = 'CONFLICT'
@@ -48,6 +49,9 @@ async function rig(tasks: Task[] = []) {
   // A tiny stand-in for the server: records live here, versions bump on write,
   // and a stale version is rejected exactly as the tRPC router rejects it.
   const live = new Map(tasks.map((t) => [t.id, { ...t }]))
+  // Folders are not static: they appear as a side effect of note paths
+  // (server paths.ts) and move on rename, with no SSE channel of their own.
+  const folders: Folder[] = [folder(AREA, 'projects/q2')]
   const calls: string[] = []
   let nextId = 1
 
@@ -62,7 +66,7 @@ async function rig(tasks: Task[] = []) {
 
   const api: TaskProjectorApi = {
     listTasks: async () => [...live.values()],
-    listFolders: async () => FOLDERS,
+    listFolders: async () => [...folders],
     getTask: async (id) => live.get(id) ?? null,
     createTask: async (input) => {
       const created: Task = {
@@ -126,6 +130,8 @@ async function rig(tasks: Task[] = []) {
     edit,
     calls,
     live,
+    /** A folder appearing mid-session — the agent made a note under a new path. */
+    addFolder: (id: string, path: string) => folders.push(folder(id, path)),
     setLive: (next: Task[]) => {
       live.clear()
       for (const t of next) live.set(t.id, t)
@@ -426,6 +432,77 @@ describe('TaskProjector — file -> record', () => {
     const canonical = `tasks/written-by-the-agent-${created.id}.md`
     expect(parseTaskFile(await r.read(canonical)).id).toBe(created.id)
     expect(created.description).toBe('The body.')
+  })
+})
+
+/** The invariant: an inbound write ends in a mutation or a rewrite-from-truth.
+ * Never in neither — a file left in a state the record does not describe is a
+ * silent divergence nothing later corrects. Each of these found a third outcome. */
+describe('TaskProjector — no inbound write ends in silence', () => {
+  it('deleting `status:` is a clear the patch cannot carry — so truth is rewritten', async () => {
+    const r = await rig([task({ status: 'doing' })])
+    await r.projector.start()
+
+    // status has no null form on the record (it is NOT NULL, like title), so the
+    // diff sees a change it cannot express. Dropping it on the floor would leave
+    // the file with no `status:` line and nothing to ever put it back.
+    await r.edit(REL, (await r.read(REL)).replace('status: doing\n', ''))
+    await r.projector.onTaskFileEvent('change', REL as never)
+
+    expect(r.live.get(T1)!.status).toBe('doing')
+    expect(parseTaskFile(await r.read(REL)).fields.status).toBe('doing')
+  })
+
+  it('an rm whose delete goes stale rewrites the file back, it does not vanish', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    // the record moves server-side (a reminder fire, a teammate) and the SSE
+    // event has not reached us yet — so our stored version is stale
+    const stale = r.live.get(T1)!
+    r.live.set(T1, { ...stale, version: stale.version + 1 })
+
+    await rm(join(r.workRoot, REL))
+    await r.projector.onTaskFileEvent('unlink', REL as never)
+
+    // the delete lost. The record is alive, so its file must be too.
+    expect(r.live.has(T1)).toBe(true)
+    expect(r.exists(REL)).toBe(true)
+    expect((await r.store.load()).has(T1)).toBe(true)
+  })
+
+  it('a malformed file we never projected is left alone, not deleted', async () => {
+    const r = await rig([])
+    await r.projector.start()
+
+    // An unquoted colon in the title — invalid YAML, and exactly what the model
+    // writes. There is no record behind this file, so "rewrite from truth" would
+    // mean deleting it: the agent's new task would vanish with nothing to fix.
+    await r.edit('tasks/scratch.md', '---\ntitle: Review: the Q2 doc\nstatus: todo\n---\n\nBody\n')
+    await r.projector.onTaskFileEvent('add', 'tasks/scratch.md' as never)
+
+    expect(r.exists('tasks/scratch.md')).toBe(true)
+    expect(r.calls.filter((c) => c.startsWith('create'))).toEqual([])
+  })
+
+  it('an area naming a folder created since start() resolves — it does not reject', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    // the agent made a note under a new path, so the server created the folder.
+    // The projector's folder map was snapshotted at start() and knows nothing.
+    r.addFolder(FOLDER2, 'projects/newthing')
+
+    const text = (await r.read(REL)).replace(
+      'status: todo',
+      'status: doing\narea: projects/newthing',
+    )
+    await r.edit(REL, text)
+    await r.projector.onTaskFileEvent('change', REL as never)
+
+    const rec = r.live.get(T1)!
+    expect(rec.area).toBe(FOLDER2)
+    expect(rec.status).toBe('doing') // the co-edited field survived too
   })
 })
 
