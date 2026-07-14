@@ -49,6 +49,32 @@ function touch() {
   return { updatedAt: new Date(), version: sql`${tasks.version} + 1` }
 }
 
+/** The optimistic-concurrency guard for task-file writes.
+ *
+ * `version` is **optional** on purpose: the board sends none and keeps its plain
+ * last-writer-wins behavior. Only a *file*-originated write carries one, because
+ * only it can be based on a stale snapshot of the record (the file on disk).
+ *
+ * Folded into the WHERE clause rather than checked beforehand, so the guard is
+ * atomic — a read-then-write check would leave a window in which a write that
+ * went stale in between still lands, which is the exact thing `version` exists
+ * to prevent. Zero rows updated ⇒ the version moved ⇒ CONFLICT.
+ *
+ * A stale write loses with no partial apply: the caller discards it and rewrites
+ * the file from the record. There is no conflict dialog and nothing to resolve. */
+function atVersion(taskId: string, version: number | undefined) {
+  return version === undefined
+    ? eq(tasks.id, taskId)
+    : and(eq(tasks.id, taskId), eq(tasks.version, version))
+}
+
+function staleConflict(version: number | undefined, row: TaskRow): never {
+  throw new TRPCError({
+    code: 'CONFLICT',
+    message: `stale task write: file is at version ${version}, record is at ${row.version}`,
+  })
+}
+
 /** Persist → recompute projection → emit → wake evaluator: every mutation
  * funnels through here so nothing forgets a step. */
 async function finishMutation(ctx: { db: Db; bus: Bus }, row: TaskRow): Promise<Task> {
@@ -83,22 +109,30 @@ export const tasksRouter = router({
       return finishMutation(ctx, row!)
     }),
 
-  /** Last-writer-wins per field (D4 — tasks are not CRDTs). */
+  /** Last-writer-wins per field (D4 — tasks are not CRDTs), with an optional
+   * version guard for task-file writes. */
   update: vaultProcedure
-    .input(z.object({ taskId: z.string().uuid(), patch: z.object(taskFields).partial() }))
+    .input(
+      z.object({
+        taskId: z.string().uuid(),
+        patch: z.object(taskFields).partial(),
+        version: z.number().int().optional(),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
-      await taskInVault(ctx.db, ctx.vaultId, input.taskId)
+      const current = await taskInVault(ctx.db, ctx.vaultId, input.taskId) // 404s if absent
       const [row] = await ctx.db
         .update(tasks)
         .set({ ...input.patch, ...touch() })
-        .where(eq(tasks.id, input.taskId))
+        .where(atVersion(input.taskId, input.version))
         .returning()
-      return finishMutation(ctx, row!)
+      if (!row) staleConflict(input.version, current)
+      return finishMutation(ctx, row)
     }),
 
   /** Transition to done + server-side recurrence roll-forward (D19). */
   complete: vaultProcedure
-    .input(z.object({ taskId: z.string().uuid() }))
+    .input(z.object({ taskId: z.string().uuid(), version: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
       const row = await taskInVault(ctx.db, ctx.vaultId, input.taskId)
       const now = new Date()
@@ -119,8 +153,13 @@ export const tasksRouter = router({
             ...touch(),
           }
         : { status: 'done' as const, completedAt: now, ...touch() }
-      const [updated] = await ctx.db.update(tasks).set(patch).where(eq(tasks.id, row.id)).returning()
-      return finishMutation(ctx, updated!)
+      const [updated] = await ctx.db
+        .update(tasks)
+        .set(patch)
+        .where(atVersion(row.id, input.version))
+        .returning()
+      if (!updated) staleConflict(input.version, row)
+      return finishMutation(ctx, updated)
     }),
 
   link: vaultProcedure
@@ -152,10 +191,12 @@ export const tasksRouter = router({
     }),
 
   delete: vaultProcedure
-    .input(z.object({ taskId: z.string().uuid() }))
+    .input(z.object({ taskId: z.string().uuid(), version: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
       const row = await taskInVault(ctx.db, ctx.vaultId, input.taskId)
-      await ctx.db.delete(tasks).where(eq(tasks.id, row.id)) // reminders row cascades
+      // reminders row cascades
+      const gone = await ctx.db.delete(tasks).where(atVersion(row.id, input.version)).returning()
+      if (gone.length === 0) staleConflict(input.version, row)
       ctx.bus.emitTasks(ctx.vaultId, { type: 'deleted', taskId: row.id })
       return { ok: true }
     }),

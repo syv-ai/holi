@@ -121,6 +121,63 @@ describe('tasks', () => {
     expect(events.at(-1)).toMatchObject({ type: 'upserted', task: { version: 5 } })
   })
 
+  it('a stale version loses — CONFLICT, and the record is left untouched', async () => {
+    const caller = tasksRouter.createCaller(ctxFor(t, userId))
+    const task = await caller.create({ vaultId, title: 'contested' })
+
+    // someone else moves the record on (a board drag, a teammate, a reminder fire)
+    await caller.update({ vaultId, taskId: task.id, patch: { status: 'doing' } })
+
+    // the file writer is still holding version 1
+    await expect(
+      caller.update({
+        vaultId,
+        taskId: task.id,
+        patch: { title: 'written from a stale file' },
+        version: task.version,
+      }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+
+    // a partial apply here is the bug that silently diverges disk from truth
+    const fresh = await caller.get({ vaultId, taskId: task.id })
+    expect(fresh.title).toBe('contested')
+    expect(fresh.status).toBe('doing')
+    expect(fresh.version).toBe(2)
+  })
+
+  it('a current version wins, and the board (which sends none) is unaffected', async () => {
+    const caller = tasksRouter.createCaller(ctxFor(t, userId))
+    const task = await caller.create({ vaultId, title: 'fresh' })
+
+    const ok = await caller.update({
+      vaultId,
+      taskId: task.id,
+      patch: { title: 'written from a current file' },
+      version: task.version,
+    })
+    expect(ok.title).toBe('written from a current file')
+
+    // no version = plain last-writer-wins, the board's existing behavior
+    const boardWrite = await caller.update({ vaultId, taskId: task.id, patch: { priority: 'low' } })
+    expect(boardWrite.priority).toBe('low')
+  })
+
+  it('the guard covers complete and delete too, not just update', async () => {
+    const caller = tasksRouter.createCaller(ctxFor(t, userId))
+    const task = await caller.create({ vaultId, title: 'guarded' })
+    await caller.update({ vaultId, taskId: task.id, patch: { status: 'doing' } })
+
+    await expect(
+      caller.complete({ vaultId, taskId: task.id, version: task.version }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+    await expect(
+      caller.delete({ vaultId, taskId: task.id, version: task.version }),
+    ).rejects.toMatchObject({ code: 'CONFLICT' })
+
+    // still there, still not done
+    expect((await caller.get({ vaultId, taskId: task.id })).status).toBe('doing')
+  })
+
   it('watch: mutations emit tasks events on the vault channel', async () => {
     const ctx = ctxFor(t, userId)
     const events: unknown[] = []
