@@ -164,9 +164,17 @@ export function serializeTaskFile(task: TaskFileSource, resolvers: TaskFileResol
   const front: Record<string, unknown> = { id: task.id, title: task.title, status: task.status }
 
   if (task.area !== undefined) {
-    // Path when we can resolve it; the raw folder id as a tombstone when the
-    // folder is gone. Omitting it would silently clear the area on the next
-    // inbound write.
+    // A path when we can resolve it, the raw folder id when we cannot.
+    //
+    // The fallback is NOT a tombstone for a deleted folder — a deleted folder sets its
+    // tasks' `area` to null (schema.ts), so a task never points at one that is gone.
+    // It fires when the *resolver* is stale: the desktop snapshots the folder map, and
+    // a folder created since then is unknown to it.
+    //
+    // Emitting the id rather than omitting the key is what makes that harmless. An
+    // absent `area:` reads as "cleared" to the inbound diff, so omitting it would let a
+    // stale map silently unfile the task. The id round-trips back through areaFromFile
+    // untouched, so a stale render costs nothing but an ugly line the next write fixes.
     front.area = resolvers.folderPathFor(task.area) ?? task.area
   }
   if (task.due !== undefined) front.due = task.due
@@ -368,9 +376,10 @@ function refToFile(
 /**
  * The inbound half of the area seam: a folder path -> the stable folder id.
  *
- * A raw folder id passes through untouched — that is the tombstone a deleted
- * folder serialized as, and re-resolving it would fail for no reason. An
- * unresolvable *path* rejects the write, same rule as a bogus note path.
+ * A raw folder id passes through untouched. That is what a *stale* serializer wrote
+ * when it could not resolve the folder (see `serializeTaskFile`), and re-resolving it
+ * would fail for no reason — it is already the answer. An unresolvable *path* rejects
+ * the write, same rule as a bogus note path.
  */
 export function areaFromFile(
   area: string,

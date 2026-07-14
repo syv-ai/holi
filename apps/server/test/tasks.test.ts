@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createBus } from '../src/bus'
-import { reminders, tasks } from '../src/db/schema'
+import { folders, reminders, tasks } from '../src/db/schema'
 import { tasksRouter } from '../src/routers/tasks'
 import { createTestDb, type TestDb } from '../src/test/db'
 import { seedUser, seedVault } from '../src/test/fixtures'
@@ -189,5 +189,22 @@ describe('tasks', () => {
       expect.objectContaining({ type: 'upserted' }),
       expect.objectContaining({ type: 'deleted', taskId: task.id }),
     ])
+  })
+  /** A task outlives its folder. The un-cascaded FK this replaces made Postgres REFUSE
+   * to delete any folder a task pointed at — a policy nobody chose, which silently made
+   * folders undeletable and contradicted the PRD's promise that the task isn't lost.
+   * An unfiled task is a first-class state: that is what the "(no area)" lane is. */
+  it('deleting a folder unfiles its tasks — it does not fail, and it does not lose them', async () => {
+    const caller = tasksRouter.createCaller(ctxFor(t, userId))
+    const [f] = await t.db.insert(folders).values({ vaultId, path: 'projects/doomed' }).returning()
+    const task = await caller.create({ vaultId, title: 'Filed under a doomed folder', area: f!.id })
+    expect(task.area).toBe(f!.id)
+
+    await t.db.delete(folders).where(eq(folders.id, f!.id)) // must not throw
+
+    const [row] = await t.db.select().from(tasks).where(eq(tasks.id, task.id))
+    expect(row).toBeDefined()      // the task survived its folder
+    expect(row!.area).toBeNull()   // and fell into "(no area)"
+    expect(row!.title).toBe('Filed under a doomed folder')
   })
 })

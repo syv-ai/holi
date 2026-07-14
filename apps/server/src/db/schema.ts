@@ -148,7 +148,15 @@ export const tasks = pgTable(
       .references(() => vaults.id, { onDelete: 'cascade' }),
     title: text('title').notNull(),
     status: text('status', { enum: ['todo', 'doing', 'done'] }).notNull().default('todo'),
-    area: uuid('area').references(() => folders.id),
+    /** The folder this task is filed under, or null for the "(no area)" lane.
+     *
+     * `set null` on delete, deliberately: a task outlives its folder. The un-cascaded
+     * FK this replaces made Postgres *refuse* to delete any folder a task pointed at,
+     * which is not a policy anyone chose — it silently made folders undeletable and
+     * contradicted the PRD's promise that the task isn't lost. An unfiled task is a
+     * first-class state (that is what the "(no area)" lane is), so falling into it is
+     * the right answer and needs no tombstone. */
+    area: uuid('area').references(() => folders.id, { onDelete: 'set null' }),
     due: date('due', { mode: 'string' }),
     priority: text('priority', { enum: ['low', 'medium', 'high'] }),
     tags: text('tags').array().notNull().default(sql`'{}'::text[]`),

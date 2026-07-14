@@ -138,11 +138,19 @@ describe('git mirror — task files are exported', () => {
     expect(parsed.fields.related).toEqual([{ kind: 'note', path: 'meetings/kickoff.md' }])
   })
 
-  // NOTE: there is deliberately no "deleted folder exports a tombstone" test here.
-  // `tasks.area` has an un-cascaded FK to `folders`, so a folder a task points at
-  // cannot be deleted at all — the tombstone branch in serializeTaskFile is
-  // unreachable from the server, and only ever fires against the desktop's folder
-  // map, which can go stale. It is unit-tested in packages/shared, where it lives.
+  it('a deleted folder unfiles its tasks — the export drops `area`, it does not tombstone', async () => {
+    const { vault, bare, mirrorDir } = await gitVault()
+    const [folder] = await t.db.insert(folders).values({ vaultId: vault.id, path: 'doomed' }).returning()
+    const task = await seedTask(vault.id, { area: folder!.id })
+    await t.db.delete(folders).where(eq(folders.id, folder!.id)) // ON DELETE SET NULL
+
+    await syncVault(deps(mirrorDir), vault.id)
+
+    // the task outlived its folder and fell into "(no area)" — there is nothing to
+    // tombstone, because it no longer points at anything
+    expect((await taskById(task.id))!.area).toBeNull()
+    expect(parseTaskFile((await remoteFile(bare, taskFilePath(task)))!).fields.area).toBeUndefined()
+  })
 
   /** The one that keeps the bot from talking to itself forever. If serialize does not
    * round-trip byte-exactly through parse + Postgres, the export re-materializes bytes
