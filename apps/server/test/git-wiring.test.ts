@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createBus } from '../src/bus'
 import { encryptionKey, seal } from '../src/crypto'
 import { githubConnections, vaultGit } from '../src/db/schema'
 import { connectRepo, disconnectRepo } from '../src/routers/git'
@@ -45,7 +46,7 @@ describe('connectRepo', () => {
     const api = fakeGithubApi()
 
     await connectRepo(
-      { db: t.db, getLiveDoc: () => null, api, publicBaseUrl: 'https://holi.syv.ai', mirrorDir: join(dir, 'm') },
+      { db: t.db, bus: createBus(), getLiveDoc: () => null, api, publicBaseUrl: 'https://holi.syv.ai', mirrorDir: join(dir, 'm') },
       { vaultId: vault.id, userId: user.id, repoUrl: 'https://github.com/syv-ai/vault-x', makeRemote: () => bare },
     )
 
@@ -96,7 +97,7 @@ describe('disconnectRepo', () => {
     const dir = await scratch()
     const bare = await initBareRepo(join(dir, 'remote.git'))
     const api = fakeGithubApi()
-    const deps = { db: t.db, getLiveDoc: () => null, api, publicBaseUrl: 'https://x', mirrorDir: join(dir, 'm') }
+    const deps = { db: t.db, bus: createBus(), getLiveDoc: () => null, api, publicBaseUrl: 'https://x', mirrorDir: join(dir, 'm') }
     await connectRepo(deps, { vaultId: vault.id, userId: user.id, repoUrl: 'https://github.com/o/r', makeRemote: () => bare })
 
     await disconnectRepo(deps, { vaultId: vault.id, userId: user.id })

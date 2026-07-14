@@ -144,6 +144,20 @@ export function isTaskFilePath(rel: string): boolean {
   return rel.startsWith(`${TASKS_DIR}/`) && rel.endsWith('.md')
 }
 
+/**
+ * The task id out of `tasks/<slug>-<id>.md`, or undefined when the name carries
+ * none (a hand-written file — that is a create).
+ *
+ * The **filename** is the identity, not the frontmatter: a git delete has no blob
+ * left to read an id out of, and a rename has to be recognised as the same task
+ * before either blob is parsed. Anchored to the end so a slug that happens to
+ * contain something uuid-shaped cannot shadow the real suffix.
+ */
+export function taskIdFromPath(rel: string): string | undefined {
+  const match = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.md$/i.exec(rel)
+  return match?.[1]
+}
+
 export function serializeTaskFile(task: TaskFileSource, resolvers: TaskFileResolvers): string {
   // Key order is fixed so an unchanged record always serializes byte-identically —
   // the projector's echo guard and the git mirror both compare on text.

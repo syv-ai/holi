@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { eq, sql } from 'drizzle-orm'
+import type { Bus } from '../bus'
 import { config } from '../config'
 import { encryptionKey, openSealed } from '../crypto'
 import type { Db } from '../db/client'
@@ -20,6 +21,8 @@ const MAX_WARNINGS_KEPT = 50
 export interface SyncDeps {
   db: Db
   getLiveDoc: GetLiveDoc
+  /** Task ingest mutates records, and every task mutation emits on the bus. */
+  bus: Bus
   /** Override for tests; defaults to config.git.mirrorDir. */
   mirrorDir?: string
 }

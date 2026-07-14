@@ -3,7 +3,8 @@
  * like a teammate's. Design: docs/specs/2026-07-13-vault-git-mirror-design.md. */
 import { and, eq } from 'drizzle-orm'
 import * as Y from 'yjs'
-import { applyTextDiff, isLocalOnlyPath, vaultRelPath, YDOC_TEXT_KEY } from '@holi/shared'
+import { applyTextDiff, isLocalOnlyPath, isTaskFilePath, vaultRelPath, YDOC_TEXT_KEY } from '@holi/shared'
+import type { Bus } from '../bus'
 import type { Db } from '../db/client'
 import { docs, yjsDocs, type GitWarning } from '../db/schema'
 import { ensureAncestorFolders } from '../paths'
@@ -13,10 +14,14 @@ import { editDocText } from '../yjs/edit'
 import { refreshLinkIndex } from '../yjs/link-index'
 import { takeSnapshot } from '../yjs/snapshots'
 import { git, gitBuffer, parseNameStatusZ, type NameStatusEntry } from './git'
+import { ingestTaskEntry } from './task-ingest'
 
 export interface IngestDeps {
   db: Db
   getLiveDoc: GetLiveDoc
+  /** Task ingest mutates records, and every task mutation emits on the bus — that SSE
+   * is what makes a connected desktop rewrite the file. */
+  bus: Bus
 }
 
 /** Validate a repo path for vault use; null when hostile/invalid. */
@@ -106,6 +111,28 @@ async function ingestEntry(
   const path = safeIngestPath(entry.path)
   if (!path) return void warnings.push(warning('unsafe-path', entry.path))
   if (isLocalOnlyPath(path)) return void warnings.push(warning('local-file-skipped', path))
+
+  // Tasks are records, not CRDT docs — they ingest against the `tasks` table.
+  //
+  // This branch sits BEFORE the A/M/D/R dispatch, not inside it, and that placement is
+  // the whole point: `createDoc` below hardcodes `kind: 'note'`, and A, M, and
+  // R-treated-as-A each reach it by a different route. A task file that fell through
+  // any one of them would become a CRDT note — the exact failure the desktop mirror
+  // spent all of slice 1 preventing, arriving through the other door.
+  if (isTaskFilePath(path)) {
+    await ingestTaskEntry(
+      { db: deps.db, bus: deps.bus },
+      vaultId,
+      cloneDir,
+      base,
+      head,
+      { ...entry, path },
+      warnings,
+      opts,
+    )
+    return
+  }
+
   if (opts.skipExisting && (await findDoc(deps.db, vaultId, path))) return
 
   if (entry.status === 'D') {

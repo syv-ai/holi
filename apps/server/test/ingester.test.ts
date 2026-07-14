@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import * as Y from 'yjs'
 import { YDOC_TEXT_KEY } from '@holi/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createBus } from '../src/bus'
 import { docs, yjsDocs, yjsSnapshots } from '../src/db/schema'
 import { ingestRange } from '../src/git/ingester'
 import { createTestDb, type TestDb } from '../src/test/db'
@@ -22,7 +23,7 @@ afterAll(async () => {
   for (const d of cleanups) await rm(d, { recursive: true, force: true })
 })
 
-const deps = () => ({ db: t.db, getLiveDoc: () => null })
+const deps = () => ({ db: t.db, bus: createBus(), getLiveDoc: () => null })
 
 async function seedDoc(vaultId: string, path: string, text: string): Promise<string> {
   const [row] = await t.db.insert(docs).values({ vaultId, path, kind: 'note' }).returning()

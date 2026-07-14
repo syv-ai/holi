@@ -2,6 +2,7 @@
  * dirty-and-quiet (or dirty too long), and fetch on the hourly backstop even
  * when idle — webhooks are latency, this loop is correctness. */
 import { eq, max } from 'drizzle-orm'
+import type { Bus } from '../bus'
 import { config } from '../config'
 import type { Db } from '../db/client'
 import { docs, vaultGit } from '../db/schema'
@@ -35,6 +36,8 @@ export function shouldSync(
 export function createGitScheduler(deps: {
   db: Db
   getLiveDoc: GetLiveDoc
+  /** Task ingest mutates records, and every task mutation emits on the bus. */
+  bus: Bus
   mirrorDir?: string
   /** Test seam. */
   syncImpl?: (deps: SyncDeps, vaultId: string) => Promise<void>
@@ -55,7 +58,10 @@ export function createGitScheduler(deps: {
         .where(eq(docs.vaultId, row.vaultId))
       if (shouldSync(row, agg?.latest ?? null, now)) {
         try {
-          await sync({ db: deps.db, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir }, row.vaultId)
+          await sync(
+            { db: deps.db, bus: deps.bus, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir },
+            row.vaultId,
+          )
         } catch (err) {
           console.error(`[git] sync failed for vault ${row.vaultId}`, err)
         }

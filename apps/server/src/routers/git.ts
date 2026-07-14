@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { eq } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+import type { Bus } from '../bus'
 import { encryptionKey, openSealed, seal } from '../crypto'
 import type { Db } from '../db/client'
 import { githubConnections, vaultGit } from '../db/schema'
@@ -24,6 +25,8 @@ const run = promisify(execFile)
 export interface GitWiringDeps {
   db: Db
   getLiveDoc: GetLiveDoc
+  /** Task ingest mutates records, and every task mutation emits on the bus. */
+  bus: Bus
   api: GithubApi
   publicBaseUrl: string
   /** Test override — production uses config.git.mirrorDir via sync.ts default. */
@@ -90,7 +93,7 @@ export async function connectRepo(
     enabledBy: args.userId,
   })
 
-  await syncVault({ db, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir }, args.vaultId)
+  await syncVault({ db, bus: deps.bus, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir }, args.vaultId)
   const [row] = await db.select().from(vaultGit).where(eq(vaultGit.vaultId, args.vaultId))
   if (row?.status === 'attention') {
     throw new TRPCError({ code: 'BAD_REQUEST', message: `connected, but the first sync failed: ${row.statusDetail}` })
@@ -112,14 +115,14 @@ export async function disconnectRepo(deps: GitWiringDeps, args: { vaultId: strin
   }
   await withVaultLock(args.vaultId, async () => {
     await db.delete(vaultGit).where(eq(vaultGit.vaultId, args.vaultId))
-    await rm(cloneDirFor({ db, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir }, args.vaultId), {
+    await rm(cloneDirFor({ db, bus: deps.bus, getLiveDoc: deps.getLiveDoc, mirrorDir: deps.mirrorDir }, args.vaultId), {
       recursive: true,
       force: true,
     })
   })
 }
 
-export function makeGitRouter(deps: Omit<GitWiringDeps, 'db' | 'getLiveDoc'>) {
+export function makeGitRouter(deps: Omit<GitWiringDeps, 'db' | 'getLiveDoc' | 'bus'>) {
   return router({
     status: vaultProcedure.query(async ({ ctx }) => {
       const [row] = await ctx.db.select().from(vaultGit).where(eq(vaultGit.vaultId, ctx.vaultId))
@@ -137,17 +140,20 @@ export function makeGitRouter(deps: Omit<GitWiringDeps, 'db' | 'getLiveDoc'>) {
 
     connectRepo: ownerProcedure.input(z.object({ repoUrl: z.string() })).mutation(({ ctx, input }) =>
       connectRepo(
-        { ...deps, db: ctx.db, getLiveDoc: ctx.getLiveDoc },
+        { ...deps, db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc },
         { vaultId: ctx.vaultId, userId: ctx.user.id, repoUrl: input.repoUrl },
       ),
     ),
 
     disconnectRepo: ownerProcedure.mutation(({ ctx }) =>
-      disconnectRepo({ ...deps, db: ctx.db, getLiveDoc: ctx.getLiveDoc }, { vaultId: ctx.vaultId, userId: ctx.user.id }),
+      disconnectRepo(
+        { ...deps, db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc },
+        { vaultId: ctx.vaultId, userId: ctx.user.id },
+      ),
     ),
 
     syncNow: vaultProcedure.mutation(async ({ ctx }) => {
-      await syncVault({ db: ctx.db, getLiveDoc: ctx.getLiveDoc, mirrorDir: deps.mirrorDir }, ctx.vaultId)
+      await syncVault({ db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc, mirrorDir: deps.mirrorDir }, ctx.vaultId)
       return { ok: true }
     }),
   })

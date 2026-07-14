@@ -5,6 +5,7 @@ import { and, eq } from 'drizzle-orm'
 import * as Y from 'yjs'
 import { YDOC_TEXT_KEY } from '@holi/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createBus } from '../src/bus'
 import { encryptionKey, seal } from '../src/crypto'
 import { docs, vaultGit, yjsDocs } from '../src/db/schema'
 import { git } from '../src/git/git'
@@ -59,7 +60,7 @@ async function gitVault() {
 }
 
 function deps(mirrorDir: string) {
-  return { db: t.db, getLiveDoc: () => null, mirrorDir }
+  return { db: t.db, bus: createBus(), getLiveDoc: () => null, mirrorDir }
 }
 
 /** Read a path's content from the bare remote's main branch via a throwaway clone. */

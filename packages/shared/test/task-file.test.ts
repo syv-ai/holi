@@ -6,6 +6,7 @@ import {
   parseTaskFile,
   relatedFromFile,
   serializeTaskFile,
+  taskIdFromPath,
   taskFilePath,
   taskSlug,
   type TaskFileResolvers,
@@ -263,5 +264,22 @@ describe('taskSlug / taskFilePath / isTaskFilePath', () => {
     expect(isTaskFilePath('tasks/notes.txt')).toBe(false)
     expect(isTaskFilePath('tasks')).toBe(false)
     expect(isTaskFilePath('tasksy/x.md')).toBe(false)
+  })
+
+  /** The filename is the identity for git ingest: a delete has no blob left to read
+   * an id out of, and a rename must be recognised as the same task before either
+   * blob is parsed. */
+  it('reads the task id back out of the path', () => {
+    expect(taskIdFromPath(taskFilePath({ id: ID, title: 'Review the Q2 doc' }))).toBe(ID)
+    expect(taskIdFromPath(`tasks/${ID}.md`)).toBeUndefined() // no `-` separator
+    expect(taskIdFromPath('tasks/hand-written.md')).toBeUndefined()
+    expect(taskIdFromPath('tasks/x.md')).toBeUndefined()
+  })
+
+  it('a slug containing a uuid does not shadow the real suffix', () => {
+    const other = 'b2c3d4e5-2222-4333-8444-555566667777'
+    // a title that slugs to something uuid-shaped, followed by the *real* id
+    const rel = `tasks/ticket-${other}-${ID}.md`
+    expect(taskIdFromPath(rel)).toBe(ID)
   })
 })

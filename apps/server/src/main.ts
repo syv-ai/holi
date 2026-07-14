@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   })
   const webhookHandler = makeGithubWebhookHandler({
     db,
-    triggerSync: (vaultId) => syncVault({ db, getLiveDoc }, vaultId),
+    triggerSync: (vaultId) => syncVault({ db, bus, getLiveDoc }, vaultId),
   })
   const eventsHandler = makeEventsHandler({ db, bus })
 
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   createReminderEvaluator({ db, bus }).start()
   console.log('[reminders] evaluator started')
 
-  createGitScheduler({ db, getLiveDoc }).start()
+  createGitScheduler({ db, bus, getLiveDoc }).start()
   console.log('[git] mirror scheduler started')
 }
 

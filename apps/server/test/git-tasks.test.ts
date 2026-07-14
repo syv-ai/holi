@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path'
 import { and, eq } from 'drizzle-orm'
 import { parseTaskFile, taskFilePath } from '@holi/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createBus } from '../src/bus'
 import { encryptionKey, seal } from '../src/crypto'
 import { docs, folders, tasks, vaultGit } from '../src/db/schema'
 import { git } from '../src/git/git'
@@ -53,7 +54,7 @@ async function gitVault() {
   return { vault, bare, mirrorDir: join(dir, 'mirrors'), user }
 }
 
-const deps = (mirrorDir: string) => ({ db: t.db, getLiveDoc: () => null, mirrorDir })
+const deps = (mirrorDir: string) => ({ db: t.db, bus: createBus(), getLiveDoc: () => null, mirrorDir })
 
 async function seedTask(vaultId: string, over: Partial<typeof tasks.$inferInsert> = {}) {
   const [row] = await t.db

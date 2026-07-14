@@ -225,7 +225,20 @@ export const linkIndex = pgTable(
 /** A non-fatal git-sync incident surfaced in vault settings. */
 export interface GitWarning {
   at: string // ISO timestamp
-  kind: 'binary-skipped' | 'unsafe-path' | 'local-file-skipped' | 'rename-target-occupied' | 'diverged-ingest'
+  kind:
+    | 'binary-skipped'
+    | 'unsafe-path'
+    | 'local-file-skipped'
+    | 'rename-target-occupied'
+    | 'diverged-ingest'
+    /** A committed task file whose frontmatter does not parse. It changes nothing
+     * and is overwritten by the next export — but nobody is watching the remote
+     * session's shell, so the warning is the only way the user learns of it. */
+    | 'task-file-unparseable'
+    /** A committed task file naming a folder or note that does not exist. Unlike the
+     * desktop, we drop the ref and keep the rest: the commit already happened and
+     * there is no writer left to correct a rejected file. */
+    | 'task-ref-unresolved'
   path: string
   detail?: string
 }
