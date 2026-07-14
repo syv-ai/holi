@@ -390,7 +390,7 @@ describe('AgentManager', () => {
     await new Promise((res) => setTimeout(res, 300))
     const before = r.calls.filter((c) => c.path === 'tasks.list').length
 
-    r.manager.observer.onTasksEvent()
+    r.manager.observer.onTasksEvent({ type: 'deleted', taskId: 'gone' })
     await new Promise((res) => setTimeout(res, 300))
     expect(r.calls.filter((c) => c.path === 'tasks.list').length).toBe(before + 1)
   })

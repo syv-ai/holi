@@ -3,6 +3,7 @@
  * copies live under userData/working-copies/<vaultId>; frozen bases under
  * userData/vault-bases/<vaultId>. */
 import { join } from 'node:path'
+import type { Task } from '@holi/shared'
 import { app } from 'electron'
 import { ensureSeeded } from '../agent/seed-content'
 import { API_URL, RELAY_URL, createServerClient } from '../server-client'
@@ -10,6 +11,11 @@ import type { SessionStore } from '../session'
 import { makeMirrorApi } from './mirror-api'
 import { SseClient } from './sse-client'
 import { VaultMirror, type DocsEvent } from './vault-mirror'
+
+/** Mirrors the server bus's TasksEvent shape (apps/server/src/bus.ts). */
+export type TasksEvent =
+  | { type: 'upserted'; task: Task }
+  | { type: 'deleted'; taskId: string }
 
 /**
  * The agent's window into the vault lifecycle (slice 2). Implemented by
@@ -22,7 +28,9 @@ export interface VaultObserver {
   onDeactivating(vaultId: string): void | Promise<void>
   onTurnActivity(activeTurns: number): void
   onMaterialize(rel: string): void
-  onTasksEvent(): void
+  /** Carries the payload: the task file projection materializes from it, so it
+   * is no longer just an invalidation ping. */
+  onTasksEvent(event: TasksEvent): void
 }
 
 export interface VaultManager {
@@ -74,7 +82,7 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
       getToken: () => deps.store.load()?.token ?? null,
       onEvent: (channel, data) => {
         if (channel === 'docs') mirror.handleDocsEvent(data as DocsEvent)
-        else if (channel === 'tasks') observer?.onTasksEvent()
+        else if (channel === 'tasks') observer?.onTasksEvent(data as TasksEvent)
       },
       onReconnect: () => void mirror.refresh().catch((err) => console.error('[mirror] refresh failed:', err)),
     })

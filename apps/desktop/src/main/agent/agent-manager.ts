@@ -14,7 +14,7 @@ import type { Task } from '@holi/shared'
 import type { ServerClient } from '../server-client'
 import { toVaultRel } from '../vault/vault-files'
 import type { VaultMirror } from '../vault/vault-mirror'
-import type { VaultManager, VaultObserver } from '../vault/vault-manager'
+import type { TasksEvent, VaultManager, VaultObserver } from '../vault/vault-manager'
 import {
   AgentRuntime,
   buildAgentArgs,
@@ -257,7 +257,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       configStale = true
       pushStatus()
     },
-    onTasksEvent() {
+    onTasksEvent(_event: TasksEvent) {
+      // ContextSnapshot only needs to know *that* tasks moved — it re-reads the
+      // related-task list from the server. The task file projection is what
+      // consumes the payload (see TaskProjector).
       snapshot?.onTasksEvent()
     },
   }
