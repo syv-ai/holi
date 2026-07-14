@@ -21,7 +21,7 @@ export type RemindersEvent = { fires: ReminderFire[]; coalesced: boolean }
  * TTL sweep, no stale holder from a crashed client, and no steal path. A heartbeat
  * that stops arriving *is* the release.
  *
- * D14 — **a user and their agent are ONE identity.** There is deliberately no
+ * D37 — **a user and their agent are ONE identity.** There is deliberately no
  * `actor: 'user' | 'agent'` here, and adding one would be a mistake. The agent runs on
  * the user's token, on the user's behalf, because the user set it going: "Nicolai is
  * editing this task" is *true* when Nicolai's Claude is editing it. (The drawer's

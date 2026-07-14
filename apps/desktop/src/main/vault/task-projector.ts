@@ -303,7 +303,7 @@ export class TaskProjector {
       await this.rewriteFromTruth(rel, taskId, 'no known projection to diff against')
       return
     }
-    // The concurrency token comes from the store, not the file (D8). Same guarantee
+    // The concurrency token comes from the store, not the file (D33). Same guarantee
     // — it is the version of the record the file on disk was rendered from — but the
     // agent never sees it, and a version bump no longer rewrites (and, once mirrored,
     // commits) the file.

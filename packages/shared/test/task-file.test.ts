@@ -81,7 +81,7 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect('status' in parsed.fields).toBe(false)
   })
 
-  /** D8 — the concurrency token is NOT in the file.
+  /** D33 — the concurrency token is NOT in the file.
    *
    * It bumps on every mutation, so with it in the frontmatter a reminder firing
    * rewrites the task file to change one integer — and once the git mirror is on,
@@ -94,7 +94,7 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parseTaskFile(text).version).toBeUndefined()
   })
 
-  it('still *parses* a version — files written before D8 must not become unparseable', () => {
+  it('still *parses* a version — files written before D33 must not become unparseable', () => {
     const parsed = parseTaskFile(`---\nid: ${ID}\ntitle: T\nversion: 7\n---\n`)
     expect(parsed.version).toBe(7)
     expect(parsed.fields.title).toBe('T')

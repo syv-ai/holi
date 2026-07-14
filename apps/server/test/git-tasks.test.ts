@@ -214,7 +214,7 @@ describe('git mirror — task files ingest as records, never as docs', () => {
     expect(await remoteFile(bare, taskFilePath(created!))).not.toBeNull()
   })
 
-  /** D9 — the commit's own base blob is the diff base, so the patch is exact and a
+  /** D34 — the commit's own base blob is the diff base, so the patch is exact and a
    * field the remote writer never touched survives a concurrent local change to it. */
   it('a remote edit lands as a per-field patch — an untouched field survives', async () => {
     const { vault, bare, mirrorDir } = await gitVault()

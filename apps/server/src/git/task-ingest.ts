@@ -1,5 +1,5 @@
 /**
- * The `tasks/**.md` branch of git ingestion (plan 2026-07-14-task-file-git-mirror, D9).
+ * The `tasks/**.md` branch of git ingestion (D34).
  *
  * A remote Claude Code session has a clone and nothing else — no MCP, no ops. Tasks
  * reach it as files, so its edits reach us as commits, and this is where a commit
@@ -148,7 +148,7 @@ function buildCreate(
   return write as unknown as TaskPatch & { title: string }
 }
 
-/** Diff base-blob against head-blob, per field. The exactness of this is D9. */
+/** Diff base-blob against head-blob, per field. The exactness of this is D34. */
 function buildPatch(
   before: TaskFileFields,
   beforeDescription: string,
@@ -204,7 +204,7 @@ export async function ingestTaskEntry(
     const taskId = taskIdFromPath(path)
     if (!taskId) return // a hand-written file that never became a record
     if (!(await findTask(db, vaultId, taskId))) return // already gone — not an error
-    await deleteTask(ctx, vaultId, taskId) // no version (D9)
+    await deleteTask(ctx, vaultId, taskId) // no version (D34)
     return
   }
 
@@ -243,7 +243,7 @@ export async function ingestTaskEntry(
   }
   if (opts.skipExisting) return // initial connect: vault wins, the export overwrites
 
-  // --- the base blob is the diff base (D9). A rename reads its base at the OLD path:
+  // --- the base blob is the diff base (D34). A rename reads its base at the OLD path:
   // the id suffix is stable, so a rename is just a title edit that re-derived the slug.
   const basePath = entry.status === 'R' && entry.oldPath && oldPathId === pathId ? entry.oldPath : path
   const beforeText = base ? await blobText(cloneDir, base, basePath) : null

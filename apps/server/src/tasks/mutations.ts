@@ -68,7 +68,7 @@ function touch() {
  *
  * `version` is **optional**: the board sends none and keeps plain last-writer-wins,
  * and git ingest sends none either (a commit carries its own base blob, so its diff
- * is already exact — see the slice-2 plan, D9). Only a *desktop file* write carries
+ * is already exact — see D34). Only a *desktop file* write carries
  * one, because only it is based on a snapshot of the record that may have moved.
  *
  * `vaultId` is in here too, so the tenancy check is atomic with the version check

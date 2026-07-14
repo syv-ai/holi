@@ -97,7 +97,7 @@ export interface TaskFileFields {
 export interface ParsedTaskFile {
   /** Absent = the writer created this file by hand; the caller creates a record. */
   id?: string
-  /** Only ever set by a file written before D8, when the token still lived in the
+  /** Only ever set by a file written before D33, when the token still lived in the
    * frontmatter. Parsed so those files stay readable; nothing consumes it. The
    * concurrency token is carried out-of-band now — see `serializeTaskFile`. */
   version?: number
@@ -185,7 +185,7 @@ export function serializeTaskFile(task: TaskFileSource, resolvers: TaskFileResol
   if (task.related?.length) {
     front.related = task.related.map((ref) => refToFile(ref, resolvers.notePathFor))
   }
-  // `version` is deliberately NOT written (D8). It bumps on every mutation, so in
+  // `version` is deliberately NOT written (D33). It bumps on every mutation, so in
   // the frontmatter a reminder firing would rewrite the file to change one integer
   // — and with the git mirror on, the bot would *commit* that, forever, on an
   // otherwise idle vault. It is also a machine token the agent must never hand-edit.
