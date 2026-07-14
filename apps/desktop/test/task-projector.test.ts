@@ -61,15 +61,33 @@ async function rig(tasks: Task[] = []) {
     live.set(t.id, next)
     return next
   }
-  const guard = (t: Task, version: number) => {
-    if (t.version !== version) throw new Conflict(`stale: ${version} vs ${t.version}`)
+  /** The app is running but cannot reach the server. Mutations fail the way a dead
+   * socket fails — NOT with a CONFLICT, which is the server disagreeing rather than
+   * being absent. The projector must tell those two apart. */
+  let offline = false
+  const online = () => {
+    if (offline) throw new Error('fetch failed: ECONNREFUSED')
+  }
+  /** Mirrors the router's `atVersion`: an absent version drops the predicate entirely,
+   * so the write is unguarded. That is the contract the reconcile path relies on (D39)
+   * and the one git ingress already uses (D34) — not a leniency in the fake. */
+  const guard = (t: Task, version: number | undefined) => {
+    if (version !== undefined && t.version !== version)
+      throw new Conflict(`stale: ${version} vs ${t.version}`)
   }
 
   const api: TaskProjectorApi = {
-    listTasks: async () => [...live.values()],
-    listFolders: async () => [...folders],
+    listTasks: async () => {
+      online()
+      return [...live.values()]
+    },
+    listFolders: async () => {
+      online()
+      return [...folders]
+    },
     getTask: async (id) => live.get(id) ?? null,
     createTask: async (input) => {
+      online()
       const created: Task = {
         ...task({ id: `eeeeeeee-0000-4000-8000-00000000000${nextId++}` }),
         ...(input as Partial<Task>),
@@ -82,6 +100,7 @@ async function rig(tasks: Task[] = []) {
     updateTask: async (id, patch, version) => {
       // recorded before the guard, so a test can see what was *attempted*
       calls.push(`update:${Object.keys(patch).sort().join(',')}`)
+      online()
       const t = live.get(id)!
       guard(t, version)
       const clean = Object.fromEntries(
@@ -90,6 +109,7 @@ async function rig(tasks: Task[] = []) {
       return bump(t, clean as Partial<Task>)
     },
     completeTask: async (id, version) => {
+      online()
       const t = live.get(id)!
       guard(t, version)
       calls.push('complete')
@@ -99,6 +119,7 @@ async function rig(tasks: Task[] = []) {
         : bump(t, { status: 'done' })
     },
     deleteTask: async (id, version) => {
+      online()
       guard(live.get(id)!, version)
       calls.push('delete')
       live.delete(id)
@@ -135,6 +156,10 @@ async function rig(tasks: Task[] = []) {
     calls,
     heartbeats,
     live,
+    /** The app keeps running; the server becomes unreachable. */
+    setOffline: (v: boolean) => {
+      offline = v
+    },
     /** A folder appearing mid-session — the agent made a note under a new path. */
     addFolder: (id: string, path: string) => folders.push(folder(id, path)),
     setLive: (next: Task[]) => {
@@ -567,6 +592,116 @@ describe('TaskProjector — the restart case (why the store is persisted)', () =
     await r.edit('tasks/offline.md', '---\ntitle: Made offline\n---\n')
 
     await r.restart().start()
+    expect(r.calls).toContain('create:Made offline')
+  })
+})
+
+/** The app is RUNNING but disconnected — the gap prd/tasks.md marked as the one real
+ * hole. The edit is not queued anywhere: it is on disk, and the store holds the bytes
+ * it was edited against. That is the queue, and it is why no second one is needed. */
+describe('TaskProjector — reconcile after a disconnection (D39, D40)', () => {
+  it('an edit made while disconnected lands on reconnect — and survives an unrelated version bump', async () => {
+    const r = await rig([task({ priority: 'low' })])
+    await r.projector.start()
+    const before = await r.read(REL)
+
+    r.setOffline(true)
+    await r.edit(REL, before.replace('title: Review the Q2 doc', 'title: Edited offline'))
+    await r.projector.onTaskFileEvent('change', REL as never)
+    expect(r.live.get(T1)!.title).toBe('Review the Q2 doc') // it did not reach the server
+
+    // While we were away the record moved for a reason no human caused and the writer
+    // could not have seen — a reminder fires server-side and bumps `version`. Under a
+    // version guard this is what destroys the edit: nobody touched `title`, and the
+    // write is thrown out anyway. That is exactly what D39 exists to prevent.
+    r.live.set(T1, { ...r.live.get(T1)!, due: '2030-03-01', version: 9 })
+
+    r.setOffline(false)
+    await r.projector.reconcile()
+
+    const rec = r.live.get(T1)!
+    expect(rec.title).toBe('Edited offline') // the edit landed
+    expect(rec.due).toBe('2030-03-01') // ...and the server's concurrent change survived
+    expect(rec.priority).toBe('low') // a field nobody touched is never sent
+    // disk agrees with the record — no rewrite-from-truth undid the edit
+    expect(parseTaskFile(await r.read(`tasks/edited-offline-${T1}.md`)).fields.title).toBe(
+      'Edited offline',
+    )
+  })
+
+  it('the LIVE path stays version-guarded — a stale write still loses', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+    const before = await r.read(REL)
+
+    r.live.set(T1, { ...r.live.get(T1)!, title: 'Moved on', version: 9 })
+    await r.edit(REL, before.replace('title: Review the Q2 doc', 'title: Stale edit'))
+    await r.projector.onTaskFileEvent('change', REL as never) // live event: guarded
+
+    expect(r.live.get(T1)!.title).toBe('Moved on') // the guard held
+  })
+
+  it('a delete made while disconnected is retried, not resurrected (D40)', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    r.setOffline(true)
+    await rm(join(r.workRoot, REL))
+    await r.projector.onTaskFileEvent('unlink', REL as never)
+    expect(r.live.has(T1)).toBe(true) // the delete never reached the server
+
+    r.setOffline(false)
+    await r.projector.reconcile()
+
+    // Without the pending-delete retry, reconcile's write() re-materializes the file
+    // from a record that should be gone — silently undoing the rm.
+    expect(r.live.has(T1)).toBe(false)
+    expect(r.exists(REL)).toBe(false)
+  })
+
+  it('a task file restored before reconnect cancels the pending delete', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+    const text = await r.read(REL)
+
+    r.setOffline(true)
+    await rm(join(r.workRoot, REL))
+    await r.projector.onTaskFileEvent('unlink', REL as never)
+    await r.edit(REL, text) // the writer changes their mind / restores it from git
+
+    r.setOffline(false)
+    await r.projector.reconcile()
+
+    expect(r.live.has(T1)).toBe(true) // the rm is off — the record survives
+    expect(r.exists(REL)).toBe(true)
+  })
+
+  it('events missed during the gap are recovered on reconnect', async () => {
+    const r = await rig([task()])
+    await r.projector.start()
+
+    // the SSE stream is down: a teammate creates one task and deletes another, and we
+    // hear about neither. Nothing else re-reads tasks, so without reconcile these stay
+    // wrong until the app restarts.
+    r.setLive([task({ id: T2, title: 'Call the vendor' })])
+    await r.projector.reconcile()
+
+    expect(r.exists(`tasks/call-the-vendor-${T2}.md`)).toBe(true) // missed upsert
+    expect(r.exists(REL)).toBe(false) // missed delete
+  })
+
+  it('a task created while disconnected is adopted on reconnect', async () => {
+    const r = await rig([])
+    await r.projector.start()
+
+    r.setOffline(true)
+    await r.edit('tasks/made-offline.md', '---\ntitle: Made offline\nstatus: todo\n---\n')
+    await r.projector.onTaskFileEvent('add', 'tasks/made-offline.md' as never)
+    expect(r.calls).not.toContain('create:Made offline')
+
+    r.setOffline(false)
+    await r.projector.reconcile()
+
     expect(r.calls).toContain('create:Made offline')
   })
 })

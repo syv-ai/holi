@@ -62,9 +62,11 @@ export interface TaskProjectorApi {
   listFolders(): Promise<Folder[]>
   getTask(taskId: string): Promise<Task | null>
   createTask(input: TaskWrite & { title: string }): Promise<Task>
-  /** Throws CONFLICT when `version` is stale. */
-  updateTask(taskId: string, patch: TaskWrite, version: number): Promise<Task>
-  completeTask(taskId: string, version: number): Promise<Task>
+  /** Throws CONFLICT when `version` is stale. Omitting it is deliberate, not a
+   * shortcut: the reconcile path holds the real base it diffed against, so its
+   * patch is exact and needs no guard (D39) — the same rule git ingress uses. */
+  updateTask(taskId: string, patch: TaskWrite, version?: number): Promise<Task>
+  completeTask(taskId: string, version?: number): Promise<Task>
   deleteTask(taskId: string, version: number): Promise<void>
   /** "Someone is editing this task" — fire-and-forget, touches no record. */
   heartbeat(taskId: string): Promise<void>
@@ -109,6 +111,18 @@ export class TaskProjector {
   private projected = new Map<string, ProjectedTask>()
   private folderPaths = new Map<string, string>() // folderId -> path
   private folderIds = new Map<string, string>() // path -> folderId
+  /** The single in-flight reconcile, so two callers join instead of racing. */
+  private reconciling: Promise<void> | null = null
+  /** Deletes whose mutation failed while we were offline (D40).
+   *
+   * The record outlives the `rm`, so reconcile's `write()` would re-materialize the
+   * file and silently undo it. Retried on reconnect instead.
+   *
+   * Deliberately **in-memory**: dropped on restart, at which point the older, equally
+   * deliberate rule takes over — a file missing at `start()` is *re-materialized*, not
+   * read as a delete. A delete is never *inferred* from an absent file, because a
+   * half-synced working copy would then destroy records. */
+  private pendingDeletes = new Set<string>()
 
   constructor(deps: TaskProjectorDeps) {
     this.deps = deps
@@ -129,7 +143,32 @@ export class TaskProjector {
    */
   async start(): Promise<void> {
     this.projected = await this.deps.store.load()
+    await this.reconcile()
+  }
+
+  /** The same reconcile, run again whenever we have been out of touch with the
+   * server — at launch, and on every SSE **reconnect**.
+   *
+   * On reconnect we do NOT reload the store: the in-memory map is authoritative
+   * and fresher (it is saved after every change). Only `start()` loads it, once.
+   *
+   * Everything this drives is applied **unguarded** (D39): we hold the real base
+   * the writer edited against, so the per-field patch is exact, and a version
+   * check would only reject a legitimate offline edit whose record moved for an
+   * unrelated reason — a reminder firing, say, which bumps `version` with no
+   * human involved. */
+  async reconcile(): Promise<void> {
+    // Never interleave with ourselves or with a live event. One in-flight run is
+    // enough; a second caller joins it rather than racing a half-applied pass.
+    this.reconciling ??= this.runReconcile().finally(() => {
+      this.reconciling = null
+    })
+    await this.reconciling
+  }
+
+  private async runReconcile(): Promise<void> {
     await this.refreshFolders()
+    await this.retryPendingDeletes()
 
     const tasks = await this.deps.api.listTasks()
     for (const task of tasks) {
@@ -139,10 +178,11 @@ export class TaskProjector {
         : null
 
       if (previous && onDisk !== null && onDisk !== previous.text) {
-        // Edited while we were closed. Overwriting from truth here would discard
-        // it; a whole-record overwrite would destroy a teammate's concurrent
-        // change. Diff it against what we last wrote — that is the whole point.
-        await this.onTaskFileEvent('change', vaultRelPath(previous.rel))
+        // Edited while we were away — closed, or merely disconnected. Overwriting
+        // from truth here would discard it; a whole-record overwrite would destroy
+        // a teammate's concurrent change. Diff it against what we last wrote —
+        // that is the whole point, and it is why the store is persisted.
+        await this.onTaskFileEvent('change', vaultRelPath(previous.rel), false)
         continue
       }
       await this.write(task)
@@ -185,10 +225,17 @@ export class TaskProjector {
    *
    * Every path ends in either a tRPC mutation or a rewrite-from-truth. There is
    * no third outcome and no conflict UI. */
-  async onTaskFileEvent(kind: 'add' | 'change' | 'unlink', rel: VaultRelPath): Promise<void> {
+  async onTaskFileEvent(
+    kind: 'add' | 'change' | 'unlink',
+    rel: VaultRelPath,
+    /** A *live* watcher event is version-guarded: the store's token is current, so a
+     * stale write means the record genuinely moved under the writer. A *reconcile*
+     * write is not (D39) — see `reconcile()`. */
+    guard = true,
+  ): Promise<void> {
     try {
       if (kind === 'unlink') await this.inboundDelete(rel)
-      else await this.inboundWrite(rel)
+      else await this.inboundWrite(rel, guard)
     } catch (err) {
       this.log(`inbound ${kind} failed for ${rel}: ${err}`)
     }
@@ -209,7 +256,14 @@ export class TaskProjector {
     try {
       await this.deps.api.deleteTask(taskId, previous.version)
     } catch (err) {
-      if (!isConflict(err)) throw err
+      if (!isConflict(err)) {
+        // The server is unreachable, not disagreeing. The record outlives the `rm`,
+        // so the next reconcile would re-materialize the file and silently undo it.
+        // Remember the intent and retry on reconnect (D40).
+        this.pendingDeletes.add(taskId)
+        this.log(`delete of ${taskId} did not reach the server — queued for reconnect`)
+        throw err
+      }
       // A stale delete loses exactly as a stale field write does: the record moved
       // on under the `rm` (a reminder fired, a teammate edited) and the writer was
       // acting on a file that no longer described it. The record is still alive, so
@@ -220,12 +274,33 @@ export class TaskProjector {
     }
     // Only once the record is actually gone. Forgetting the task before the
     // mutation lands means a rejected delete has nothing left to rewrite from.
+    this.pendingDeletes.delete(taskId)
     this.projected.delete(taskId)
     await this.deps.store.save(this.projected)
     this.log(`deleted task ${taskId} — ${rel} removed`)
   }
 
-  private async inboundWrite(rel: VaultRelPath): Promise<void> {
+  /** Deletes that never reached the server (D40). Retried before the main loop, so
+   * the record is gone by the time `write()` would have put its file back.
+   *
+   * Only while the file is still absent: if it came back — the writer undid the `rm`,
+   * or restored it from git — the delete is no longer what they want. */
+  private async retryPendingDeletes(): Promise<void> {
+    for (const taskId of [...this.pendingDeletes]) {
+      const previous = this.projected.get(taskId)
+      if (!previous) {
+        this.pendingDeletes.delete(taskId)
+        continue
+      }
+      if (existsSync(join(this.deps.workRoot, previous.rel))) {
+        this.pendingDeletes.delete(taskId) // the file is back — the rm is off
+        continue
+      }
+      await this.onTaskFileEvent('unlink', vaultRelPath(previous.rel))
+    }
+  }
+
+  private async inboundWrite(rel: VaultRelPath, guard: boolean): Promise<void> {
     const text = await readFile(join(this.deps.workRoot, rel), 'utf8').catch(() => null)
     if (text === null) return // vanished again
 
@@ -262,7 +337,7 @@ export class TaskProjector {
       await this.inboundCreate(rel, parsed.fields, parsed.description)
       return
     }
-    await this.inboundPatch(rel, parsed.id, parsed.fields, parsed.description)
+    await this.inboundPatch(rel, parsed.id, parsed.fields, parsed.description, guard)
   }
 
   /** A well-formed file with no `id` creates a task, then moves to its canonical
@@ -294,6 +369,7 @@ export class TaskProjector {
     taskId: string,
     fields: TaskFileFields,
     description: string,
+    guard: boolean,
   ): Promise<void> {
     const previous = this.projected.get(taskId)
     if (!previous) {
@@ -307,7 +383,13 @@ export class TaskProjector {
     // — it is the version of the record the file on disk was rendered from — but the
     // agent never sees it, and a version bump no longer rewrites (and, once mirrored,
     // commits) the file.
-    const version = previous.version
+    //
+    // Unless we are reconciling (D39), in which case we send none. The diff base below
+    // is the same `previous.text` either way — the real bytes the writer edited — so
+    // the patch is exact and the guard protects nothing. What it *would* do is throw
+    // away an offline edit because the record moved for a reason the writer had no
+    // part in and could not have seen: a reminder firing bumps `version` on its own.
+    const version = guard ? previous.version : undefined
 
     await this.refreshFoldersIfUnknown(fields.area)
 

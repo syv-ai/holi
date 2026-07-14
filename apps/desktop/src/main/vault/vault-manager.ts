@@ -114,7 +114,15 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
           observer?.onTasksEvent(event)
         }
       },
-      onReconnect: () => void mirror.refresh().catch((err) => console.error('[mirror] refresh failed:', err)),
+      // A gap in the stream means we missed events, and tasks are not self-healing:
+      // nothing else re-reads them, so without this a reconnected app shows stale task
+      // files (missed upserts, deletes, recurrence rolls) until it is restarted — and a
+      // task file edited while we were disconnected never reaches the record. Both
+      // halves reconcile independently; a failure in one must not take out the other.
+      onReconnect: () => {
+        void mirror.refresh().catch((err) => console.error('[mirror] refresh failed:', err))
+        void projector.reconcile().catch((err) => console.error('[tasks] reconcile failed:', err))
+      },
     })
     await mirror.start()
     // after the mirror, so note paths resolve for related[] / area rendering
