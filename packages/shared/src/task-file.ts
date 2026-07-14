@@ -67,12 +67,24 @@ export interface TaskFileRef {
   id?: string
 }
 
+/** Resolvers for the two reference seams. The record stores stable IDs; the
+ * file renders paths — so a note or folder rename never rewrites a task. */
+export interface TaskFileResolvers {
+  notePathFor: (docId: string) => string | undefined
+  folderPathFor: (folderId: string) => string | undefined
+}
+
 /** The fields the frontmatter can carry. Only keys actually present are set —
  * the inbound diff reads presence, so "absent" and "cleared" must stay
- * distinguishable. */
+ * distinguishable.
+ *
+ * `area` and `related` are in their *file* form (paths). Resolve them to record
+ * form with `areaFromFile` / `relatedFromFile`. */
 export interface TaskFileFields {
   title?: string
   status?: TaskStatus
+  /** A folder path (`projects/q2`), or the raw folder id as a tombstone when
+   * the folder is gone. */
   area?: string
   due?: string
   priority?: Priority
@@ -131,21 +143,25 @@ export function isTaskFilePath(rel: string): boolean {
   return rel.startsWith(`${TASKS_DIR}/`) && rel.endsWith('.md')
 }
 
-export function serializeTaskFile(
-  task: TaskFileSource,
-  notePathFor: (docId: string) => string | undefined,
-): string {
+export function serializeTaskFile(task: TaskFileSource, resolvers: TaskFileResolvers): string {
   // Key order is fixed so an unchanged record always serializes byte-identically —
   // the projector's echo guard and the git mirror both compare on text.
   const front: Record<string, unknown> = { id: task.id, title: task.title, status: task.status }
 
-  if (task.area !== undefined) front.area = task.area
+  if (task.area !== undefined) {
+    // Path when we can resolve it; the raw folder id as a tombstone when the
+    // folder is gone. Omitting it would silently clear the area on the next
+    // inbound write.
+    front.area = resolvers.folderPathFor(task.area) ?? task.area
+  }
   if (task.due !== undefined) front.due = task.due
   if (task.priority !== undefined) front.priority = task.priority
   if (task.tags?.length) front.tags = task.tags
   if (task.reminder !== undefined) front.reminder = task.reminder
   if (task.recurrence !== undefined) front.recurrence = compactRecurrence(task.recurrence)
-  if (task.related?.length) front.related = task.related.map((ref) => refToFile(ref, notePathFor))
+  if (task.related?.length) {
+    front.related = task.related.map((ref) => refToFile(ref, resolvers.notePathFor))
+  }
   if (task.version !== undefined) front.version = task.version
 
   const body = (task.description ?? '').trim()
@@ -194,10 +210,13 @@ export function parseTaskFile(text: string): ParsedTaskFile {
     parsed.fields.status = enumOf(front.status, STATUSES, 'status')
   }
   if (front.area !== undefined) {
-    if (typeof front.area !== 'string' || !UUID_RE.test(front.area)) {
-      throw new TaskFileError(`area must be a folder uuid, got: ${JSON.stringify(front.area)}`)
+    // A folder path — resolved to the stable folder id by `areaFromFile`. Not
+    // validated as a uuid here: the whole point is that the agent can write a
+    // path it can actually see (it has no way to discover a folder id).
+    if (typeof front.area !== 'string' || front.area.trim() === '') {
+      throw new TaskFileError(`area must be a folder path, got: ${JSON.stringify(front.area)}`)
     }
-    parsed.fields.area = front.area
+    parsed.fields.area = front.area.trim()
   }
   if (front.due !== undefined) {
     if (typeof front.due !== 'string' || !DATE_RE.test(front.due)) {
@@ -324,6 +343,25 @@ function refToFile(
   // No path = the note is gone. Emit the docId as a tombstone; do NOT drop the
   // ref, or the next inbound write would delete the link.
   return path === undefined ? { kind: 'note', id: ref.id } : { kind: 'note', path }
+}
+
+/**
+ * The inbound half of the area seam: a folder path -> the stable folder id.
+ *
+ * A raw folder id passes through untouched — that is the tombstone a deleted
+ * folder serialized as, and re-resolving it would fail for no reason. An
+ * unresolvable *path* rejects the write, same rule as a bogus note path.
+ */
+export function areaFromFile(
+  area: string,
+  folderIdForPath: (path: string) => string | undefined,
+): string {
+  if (UUID_RE.test(area)) return area
+  const folderId = folderIdForPath(area)
+  if (folderId === undefined) {
+    throw new TaskFileError(`area references an unknown folder: ${area}`)
+  }
+  return folderId
 }
 
 /**

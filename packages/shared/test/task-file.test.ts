@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   TaskFileError,
+  areaFromFile,
   isTaskFilePath,
   parseTaskFile,
   relatedFromFile,
   serializeTaskFile,
   taskFilePath,
   taskSlug,
+  type TaskFileResolvers,
   type TaskFileSource,
 } from '../src/task-file'
 
@@ -31,10 +33,17 @@ const full: TaskFileSource = {
 
 const notePathFor = (docId: string) =>
   docId === NOTE_ID ? 'meetings/2026-07-13.md' : undefined
+const folderPathFor = (folderId: string) => (folderId === AREA_ID ? 'projects/q2' : undefined)
+
+const resolvers: TaskFileResolvers = { notePathFor, folderPathFor }
+const noResolvers: TaskFileResolvers = {
+  notePathFor: () => undefined,
+  folderPathFor: () => undefined,
+}
 
 describe('serializeTaskFile / parseTaskFile', () => {
   it('round-trips every field', () => {
-    const parsed = parseTaskFile(serializeTaskFile(full, notePathFor))
+    const parsed = parseTaskFile(serializeTaskFile(full, resolvers))
 
     expect(parsed.id).toBe(ID)
     expect(parsed.version).toBe(7)
@@ -42,7 +51,9 @@ describe('serializeTaskFile / parseTaskFile', () => {
     expect(parsed.fields).toEqual({
       title: 'Review the Q2 doc',
       status: 'todo',
-      area: full.area,
+      // the folder renders as a path too — the agent has no way to discover a
+      // folder id, so a uuid here would make `area` unsettable from the file
+      area: 'projects/q2',
       due: '2026-07-20',
       priority: 'high',
       tags: ['finance', 'q2'],
@@ -55,7 +66,7 @@ describe('serializeTaskFile / parseTaskFile', () => {
 
   it('round-trips a minimal task, omitting absent fields rather than emitting nulls', () => {
     const min: TaskFileSource = { id: ID, title: 'Call the vendor', status: 'todo' }
-    const text = serializeTaskFile(min, notePathFor)
+    const text = serializeTaskFile(min, resolvers)
 
     expect(text).not.toMatch(/null/)
     expect(text).not.toMatch(/^(due|area|priority|reminder|recurrence|tags|related):/m)
@@ -74,26 +85,26 @@ describe('serializeTaskFile / parseTaskFile', () => {
 
   it('the body is the description, verbatim, multi-paragraph', () => {
     const body = 'Line one.\n\n- a bullet\n- another\n\nClosing line.'
-    const parsed = parseTaskFile(serializeTaskFile({ ...full, description: body }, notePathFor))
+    const parsed = parseTaskFile(serializeTaskFile({ ...full, description: body }, resolvers))
     expect(parsed.description).toBe(body)
   })
 
   it('survives a title with a colon, a hash and unicode', () => {
     const title = 'Ship: the #1 thing — æøå 🚀'
-    const parsed = parseTaskFile(serializeTaskFile({ ...full, title }, notePathFor))
+    const parsed = parseTaskFile(serializeTaskFile({ ...full, title }, resolvers))
     expect(parsed.fields.title).toBe(title)
   })
 
   it('a note whose doc is gone round-trips as an id tombstone, never dropped', () => {
     // Dropping the ref would silently delete the link on the next inbound write.
-    const text = serializeTaskFile(full, () => undefined)
+    const text = serializeTaskFile(full, noResolvers)
     const parsed = parseTaskFile(text)
     expect(parsed.fields.related).toEqual([{ kind: 'note', id: NOTE_ID }])
   })
 
   it('non-note refs keep their ids', () => {
     const src: TaskFileSource = { ...full, related: [{ kind: 'task', id: ID }] }
-    const parsed = parseTaskFile(serializeTaskFile(src, notePathFor))
+    const parsed = parseTaskFile(serializeTaskFile(src, resolvers))
     expect(parsed.fields.related).toEqual([{ kind: 'task', id: ID }])
   })
 
@@ -136,6 +147,34 @@ describe('parseTaskFile — writes that lose', () => {
   }
 })
 
+describe('areaFromFile — the inbound folder seam', () => {
+  const folderIdForPath = (path: string) => (path === 'projects/q2' ? AREA_ID : undefined)
+
+  it('resolves a folder path to its stable folder id', () => {
+    expect(areaFromFile('projects/q2', folderIdForPath)).toBe(AREA_ID)
+  })
+
+  it('passes a raw folder id through — that is the deleted-folder tombstone', () => {
+    expect(areaFromFile(AREA_ID, () => undefined)).toBe(AREA_ID)
+  })
+
+  it('rejects the write on an unknown folder path', () => {
+    expect(() => areaFromFile('projects/nope', folderIdForPath)).toThrow(TaskFileError)
+  })
+
+  it('a deleted folder round-trips as an id tombstone, never dropped', () => {
+    // Omitting it would silently clear the task's area on the next inbound write.
+    const parsed = parseTaskFile(serializeTaskFile(full, noResolvers))
+    expect(parsed.fields.area).toBe(AREA_ID)
+    expect(areaFromFile(parsed.fields.area!, folderIdForPath)).toBe(AREA_ID)
+  })
+
+  it('survives the full round-trip: record -> file -> record', () => {
+    const parsed = parseTaskFile(serializeTaskFile(full, resolvers))
+    expect(areaFromFile(parsed.fields.area!, folderIdForPath)).toBe(AREA_ID)
+  })
+})
+
 describe('relatedFromFile — the inbound path -> docId seam', () => {
   const docIdForPath = (path: string) =>
     path === 'meetings/2026-07-13.md' ? NOTE_ID : undefined
@@ -168,7 +207,7 @@ describe('relatedFromFile — the inbound path -> docId seam', () => {
   })
 
   it('survives the full file round-trip: record -> file -> record', () => {
-    const parsed = parseTaskFile(serializeTaskFile(full, notePathFor))
+    const parsed = parseTaskFile(serializeTaskFile(full, resolvers))
     expect(relatedFromFile(parsed.fields.related ?? [], docIdForPath)).toEqual(full.related)
   })
 })
