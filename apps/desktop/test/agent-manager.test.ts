@@ -266,9 +266,44 @@ describe('AgentManager', () => {
     expect(r.mirror.endOpenTurnsCalls).toBe(1)
   })
 
+  it('holds PTY output in the mirror until a renderer attaches, then streams', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+
+    // nothing is attached yet: output must not be streamed at a window that
+    // cannot show it — but it must not be lost either
+    r.pty().emit('before the panel mounted\r\n')
+    expect(r.sent.filter((s) => s.channel === 'agent-pty:data')).toEqual([])
+
+    const replayed = await r.manager.attach()
+    expect(replayed).toContain('before the panel mounted')
+
+    // and from here it streams live, without re-sending what was replayed
+    r.pty().emit('after attach')
+    expect(r.sent.filter((s) => s.channel === 'agent-pty:data')).toEqual([
+      { channel: 'agent-pty:data', payload: 'after attach' },
+    ])
+  })
+
+  it('attach on a dead session is empty, and a restart starts a fresh mirror', async () => {
+    const r = await rig()
+    expect(await r.manager.attach()).toBe('')
+
+    await r.manager.start({ vaultId: VAULT })
+    r.pty().emit('first session\r\n')
+    expect(await r.manager.attach()).toContain('first session')
+
+    await r.manager.start({ vaultId: VAULT }) // restart
+    r.pty().emit('second session\r\n')
+    const replayed = await r.manager.attach()
+    expect(replayed).toContain('second session')
+    expect(replayed).not.toContain('first session') // the old mirror died with the PTY
+  })
+
   it('forwards PTY data and exit to the renderer, and tears the MCP server down on exit', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
+    await r.manager.attach()
     const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
 
     r.pty().emit('hello from claude')

@@ -27,6 +27,7 @@ import { ContextSnapshot } from './context-snapshot'
 import { buildOps } from './mcp-ops'
 import { McpServer } from './mcp-server'
 import { buildSystemPrompt, readVaultTree } from './system-prompt'
+import { TerminalMirror } from './terminal-mirror'
 
 /** Agent config the whole vault shares — a synced change to any of it means the
  * running session is working from a stale prompt/hook set. */
@@ -34,6 +35,10 @@ const CONFIG_PATHS = ['.claude/', 'CLAUDE.md', 'AGENTS.md']
 
 /** Let the last write's watcher event land before we merge the turn. */
 const DEFAULT_SETTLE_MS = 300
+
+/** The panel fits and resizes immediately after start; this is just the seed. */
+const SPAWN_COLS = 80
+const SPAWN_ROWS = 24
 
 export interface AgentStatus {
   running: boolean
@@ -59,6 +64,8 @@ export interface AgentManager {
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(): Promise<{ ok: true }>
+  /** Renderer (re)attach: replayable terminal state, and open the data tap. */
+  attach(): Promise<string>
   setFocus(focus: { focusedPath: string | null; openPaths: string[] }): void
   status(): AgentStatus
   dispose(): Promise<void>
@@ -68,6 +75,7 @@ interface Session {
   vaultId: string
   runtime: AgentRuntime
   mcp: McpServer
+  mirror: TerminalMirror
 }
 
 export function createAgentManager(deps: AgentManagerDeps): AgentManager {
@@ -81,6 +89,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   let working = false
   let configStale = false
   let stopTimer: ReturnType<typeof setTimeout> | null = null
+  /** False until a renderer has taken the terminal state: PTY output goes to
+   * the mirror only, so nothing is streamed to a window that can't show it —
+   * and nothing arrives twice on attach. */
+  let attached = false
 
   const send = (channel: string, payload: unknown) => {
     deps.getWindow()?.webContents.send(channel, payload)
@@ -100,12 +112,14 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     if (!current) return
     session = null // guard the double-stop: PTY exit also tears the MCP server down
     working = false
+    attached = false
     if (stopTimer) {
       clearTimeout(stopTimer)
       stopTimer = null
     }
     await current.runtime.kill()
     await current.mcp.stop()
+    current.mirror.dispose()
   }
 
   async function start({ vaultId, resume }: { vaultId: string; resume?: boolean }): Promise<{ ok: true }> {
@@ -147,8 +161,12 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     })
     const port = await mcp.start()
 
+    const terminal = new TerminalMirror(SPAWN_COLS, SPAWN_ROWS)
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
-    runtime.onData((data) => send('agent-pty:data', data))
+    runtime.onData((data) => {
+      terminal.write(data) // the mirror is the record; the renderer is a view
+      if (attached) send('agent-pty:data', data)
+    })
     runtime.onExit((e) => {
       log(`session exited (code ${e.exitCode})`)
       send('agent-pty:exit', { code: e.exitCode })
@@ -161,16 +179,31 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         args: buildAgentArgs({ systemPrompt, mcpConfig: mcp.mcpConfig(), resume }),
         cwd: workRoot,
         env: buildAgentEnv(process.env, { endpoint: `http://127.0.0.1:${port}`, token }),
+        cols: SPAWN_COLS,
+        rows: SPAWN_ROWS,
       })
     } catch (err) {
       await mcp.stop() // never leak a bearer-gated port for a session that isn't there
+      terminal.dispose()
       throw err
     }
 
-    session = { vaultId, runtime, mcp }
+    session = { vaultId, runtime, mcp, mirror: terminal }
     configStale = false
     pushStatus()
     return { ok: true }
+  }
+
+  /**
+   * A renderer is taking over the terminal. Serialize BEFORE opening the tap:
+   * a chunk that lands mid-serialize goes to the mirror only and repaints on
+   * the next output — it is never both replayed and streamed.
+   */
+  async function attach(): Promise<string> {
+    if (!session) return ''
+    const state = await session.mirror.serialize()
+    attached = true
+    return state
   }
 
   /** PreToolUse: the write hasn't landed yet — open the turn so the pre-agent
@@ -232,8 +265,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   return {
     observer,
     start,
+    attach,
     write: (data) => session?.runtime.write(data),
-    resize: (cols, rows) => session?.runtime.resize(cols, rows),
+    resize: (cols, rows) => {
+      if (!session) return
+      session.runtime.resize(cols, rows)
+      session.mirror.resize(cols, rows) // the record reflows with the view
+    },
     kill: async () => {
       await teardown()
       pushStatus()

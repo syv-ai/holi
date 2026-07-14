@@ -28,6 +28,8 @@ declare global {
         write(data: string): Promise<void>
         resize(cols: number, rows: number): Promise<void>
         kill(): Promise<TrpcEnvelope>
+        /** Serialized terminal state from main; write it into a fresh xterm. */
+        attach(): Promise<string>
         status(): Promise<AgentStatus>
         setFocus(focus: { focusedPath: string | null; openPaths: string[] }): Promise<void>
         /** Each returns its unsubscribe closure. */

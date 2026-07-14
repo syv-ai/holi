@@ -89,6 +89,8 @@ export function registerIpc(deps: {
     agentManager.resize(Number(size.cols), Number(size.rows)),
   )
   ipcMain.handle('agent-pty:kill', () => toEnvelope(agentManager.kill()))
+  /** Replay the terminal as main saw it — scrollback survives a renderer reload. */
+  ipcMain.handle('agent-pty:attach', () => agentManager.attach())
   ipcMain.handle('holi:agent:status', () => agentManager.status())
   ipcMain.handle('holi:agent:focus', (_e, focus: { focusedPath: string | null; openPaths: string[] }) =>
     agentManager.setFocus({

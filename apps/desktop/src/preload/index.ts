@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('holi', {
     write: (data: string) => ipcRenderer.invoke('agent-pty:write', data),
     resize: (cols: number, rows: number) => ipcRenderer.invoke('agent-pty:resize', { cols, rows }),
     kill: () => ipcRenderer.invoke('agent-pty:kill'),
+    attach: () => ipcRenderer.invoke('agent-pty:attach'),
     status: () => ipcRenderer.invoke('holi:agent:status'),
     setFocus: (focus: { focusedPath: string | null; openPaths: string[] }) =>
       ipcRenderer.invoke('holi:agent:focus', focus),
