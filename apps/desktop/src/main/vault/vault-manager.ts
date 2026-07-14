@@ -15,10 +15,25 @@ import { makeTaskApi } from './task-api'
 import { TaskProjector } from './task-projector'
 import { VaultMirror, type DocsEvent } from './vault-mirror'
 
-/** Mirrors the server bus's TasksEvent shape (apps/server/src/bus.ts). */
+/** Mirrors the server bus's TasksEvent shape (apps/server/src/bus.ts).
+ *
+ * Do NOT widen this union — not for presence, not for anything (D36). It is read as
+ * `if (upserted) … else remove(taskId)`, so a third variant falls into the `else` and
+ * deletes the task's FILE. Presence is a sibling channel for exactly that reason. */
 export type TasksEvent =
   | { type: 'upserted'; task: Task }
   | { type: 'deleted'; taskId: string }
+
+/** The `presence` SSE frame (apps/server/src/bus.ts). A short-TTL heartbeat: the entry
+ * expires on its own and there is no "stopped editing" event — a heartbeat that stops
+ * arriving *is* the release. There is deliberately no `actor` field: a user and their
+ * agent are one identity (D37). */
+export type PresenceEvent = {
+  taskId: string
+  userId: string
+  name: string
+  expiresAt: string
+}
 
 /**
  * The agent's window into the vault lifecycle (slice 2). Implemented by
@@ -46,7 +61,13 @@ export interface VaultManager {
   activeMirror(): VaultMirror | null
 }
 
-export function createVaultManager(deps: { store: SessionStore; dataDir?: string }): VaultManager {
+export function createVaultManager(deps: {
+  store: SessionStore
+  dataDir?: string
+  /** Push to the renderer. The SSE connection lives HERE, in main — one per vault —
+   * and the board is fed from it. The renderer must never open a second stream. */
+  send?: (channel: string, payload: unknown) => void
+}): VaultManager {
   let current: {
     vaultId: string
     mirror: VaultMirror
@@ -112,6 +133,13 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
             .applyTasksEvent(event)
             .catch((err) => console.error('[tasks] projection failed:', err))
           observer?.onTasksEvent(event)
+          deps.send?.('tasks:event', event) // the board
+        } else if (channel === 'presence') {
+          // Until the board existed this frame arrived and was dropped on the floor.
+          // Nothing in main wants it: presence is a UI concern end to end. It is
+          // forwarded verbatim — main does not reshape it, and does not track it
+          // (the server is stateless about presence and so are we; the entry expires).
+          deps.send?.('tasks:presence', data as PresenceEvent)
         }
       },
       // A gap in the stream means we missed events, and tasks are not self-healing:

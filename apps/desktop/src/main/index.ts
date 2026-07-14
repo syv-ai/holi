@@ -33,7 +33,12 @@ function createWindow(): void {
 app.whenReady().then(() => {
   const store = electronSessionStore()
   const client = createServerClient(() => store.load()?.token ?? null)
-  const vaultManager = createVaultManager({ store })
+  const vaultManager = createVaultManager({
+    store,
+    // The board is fed from the SSE stream main already owns — one connection per
+    // vault. The renderer never opens a second one.
+    send: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+  })
   const agentManager = createAgentManager({
     client,
     vaultManager,

@@ -1,5 +1,6 @@
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 import type { AgentStatus } from './state/agent'
+import type { PresenceEvent, TasksEvent } from './state/tasks'
 
 export interface PublicUser {
   userId: string
@@ -22,6 +23,11 @@ declare global {
       collabAuth(): Promise<{ url: string; token: string } | null>
       vault: {
         activate(vaultId: string): Promise<TrpcEnvelope>
+      }
+      tasks: {
+        /** Each returns its unsubscribe closure. Both ride main's single SSE stream. */
+        onEvent(cb: (e: TasksEvent) => void): () => void
+        onPresence(cb: (e: PresenceEvent) => void): () => void
       }
       agent: {
         start(args: { vaultId: string; resume?: boolean }): Promise<TrpcEnvelope>

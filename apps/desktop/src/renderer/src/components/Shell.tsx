@@ -1,6 +1,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { AgentPanel } from './AgentPanel'
+import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
@@ -29,6 +30,7 @@ export function Shell() {
   const createVault = useSetAtom(createVaultAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
+  const [view, setView] = useState<'notes' | 'board'>('notes')
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const agentStatus = useAtomValue(agentStatusAtom)
   /** A vault switch mid-turn kills the session — hold the choice until confirmed. */
@@ -149,12 +151,25 @@ export function Shell() {
             <VaultSettings onClose={() => setShowSettings(false)} />
           ) : (
             <>
-              {activeDoc && (
-                <div className="truncate border-b border-neutral-900 px-4 py-2 text-xs text-neutral-400">
-                  {activeDoc.path}
-                </div>
-              )}
-              <EditorPane />
+              <div className="flex items-center gap-1 border-b border-neutral-900 px-3 py-1.5">
+                {(['notes', 'board'] as const).map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setView(v)}
+                    className={`rounded px-2 py-0.5 text-xs capitalize ${
+                      view === v
+                        ? 'bg-neutral-800 text-neutral-100'
+                        : 'text-neutral-500 hover:text-neutral-300'
+                    }`}
+                  >
+                    {v}
+                  </button>
+                ))}
+                {view === 'notes' && activeDoc && (
+                  <span className="ml-2 truncate text-xs text-neutral-500">{activeDoc.path}</span>
+                )}
+              </div>
+              {view === 'board' ? <BoardView /> : <EditorPane />}
             </>
           )}
         </main>

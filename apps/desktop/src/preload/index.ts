@@ -17,6 +17,9 @@ function pushChannel<T>(channel: string) {
 const onAgentData = pushChannel<string>('agent-pty:data')
 const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
 const onAgentStatus = pushChannel<unknown>('agent:status')
+/** The board's feed. Both ride the ONE per-vault SSE connection that main owns. */
+const onTasksEvent = pushChannel<unknown>('tasks:event')
+const onTaskPresence = pushChannel<unknown>('tasks:presence')
 
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
@@ -30,6 +33,10 @@ contextBridge.exposeInMainWorld('holi', {
   collabAuth: () => ipcRenderer.invoke('holi:collab:auth'),
   vault: {
     activate: (vaultId: string) => ipcRenderer.invoke('holi:vault:activate', vaultId),
+  },
+  tasks: {
+    onEvent: onTasksEvent,
+    onPresence: onTaskPresence,
   },
   agent: {
     start: (args: { vaultId: string; resume?: boolean }) => ipcRenderer.invoke('agent-pty:start', args),
