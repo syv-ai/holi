@@ -19,18 +19,24 @@ const recurrence = z.object({
   weekdays: z.array(z.enum(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'])).optional(),
   endDate: z.string().optional(),
 })
+/** The nullable fields accept an explicit `null` to **clear** them.
+ *
+ * This is what lets a task file delete a field: removing `due:` from the
+ * frontmatter has to reach the record as "clear it", and an `undefined` in the
+ * patch is indistinguishable from "not mentioned" — Drizzle would drop it and
+ * the due date would silently survive its own deletion. */
 const taskFields = {
   title: z.string().min(1),
   status: z.enum(['todo', 'doing', 'done']).optional(),
-  area: z.string().uuid().optional(),
-  due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  priority: z.enum(['low', 'medium', 'high']).optional(),
+  area: z.string().uuid().nullable().optional(),
+  due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  priority: z.enum(['low', 'medium', 'high']).nullable().optional(),
   tags: z.array(z.string()).optional(),
-  reminder: z.string().optional(),
-  recurrence: recurrence.optional(),
+  reminder: z.string().nullable().optional(),
+  recurrence: recurrence.nullable().optional(),
   related: z.array(relatedRef).optional(),
   /** The task file's markdown body. */
-  description: z.string().optional(),
+  description: z.string().nullable().optional(),
 }
 
 type TaskRow = typeof tasks.$inferSelect

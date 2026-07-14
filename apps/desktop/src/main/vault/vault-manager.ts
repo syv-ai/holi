@@ -9,7 +9,10 @@ import { ensureSeeded } from '../agent/seed-content'
 import { API_URL, RELAY_URL, createServerClient } from '../server-client'
 import type { SessionStore } from '../session'
 import { makeMirrorApi } from './mirror-api'
+import { ProjectionStore } from './projection-store'
 import { SseClient } from './sse-client'
+import { makeTaskApi } from './task-api'
+import { TaskProjector } from './task-projector'
 import { VaultMirror, type DocsEvent } from './vault-mirror'
 
 /** Mirrors the server bus's TasksEvent shape (apps/server/src/bus.ts). */
@@ -44,7 +47,12 @@ export interface VaultManager {
 }
 
 export function createVaultManager(deps: { store: SessionStore; dataDir?: string }): VaultManager {
-  let current: { vaultId: string; mirror: VaultMirror; events: SseClient } | null = null
+  let current: {
+    vaultId: string
+    mirror: VaultMirror
+    events: SseClient
+    projector: TaskProjector
+  } | null = null
   let observer: VaultObserver | null = null
 
   const dataDir = () => deps.dataDir ?? app.getPath('userData')
@@ -67,6 +75,18 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
     if (!session) throw new Error('not signed in')
     const client = createServerClient(() => deps.store.load()?.token ?? null)
     const workRoot = workRootFor(vaultId)
+
+    // Tasks are records, not CRDT docs: the projector owns tasks/**, fed from
+    // tasks.list + the SSE tasks channel rather than the relay, and the mirror
+    // hands it every task-file disk event instead of adopting them as docs.
+    const projector = new TaskProjector({
+      workRoot,
+      store: new ProjectionStore(join(dataDir(), 'task-projections', vaultId)),
+      api: makeTaskApi(client, vaultId),
+      notePathFor: (docId) => mirror.pathForDocId(docId) ?? undefined,
+      docIdForPath: (path) => mirror.docIdForPath(path) ?? undefined,
+    })
+
     const mirror = new VaultMirror({
       vaultId,
       workRoot,
@@ -76,19 +96,31 @@ export function createVaultManager(deps: { store: SessionStore; dataDir?: string
       api: makeMirrorApi(client, vaultId),
       onTurnActivity: (n) => observer?.onTurnActivity(n),
       onMaterialize: (rel) => observer?.onMaterialize(rel),
+      onTaskFileEvent: (kind, rel) =>
+        void projector
+          .onTaskFileEvent(kind, rel)
+          .catch((err) => console.error('[tasks] inbound failed:', err)),
     })
     const events = new SseClient({
       url: `${API_URL}/events/${vaultId}`,
       getToken: () => deps.store.load()?.token ?? null,
       onEvent: (channel, data) => {
         if (channel === 'docs') mirror.handleDocsEvent(data as DocsEvent)
-        else if (channel === 'tasks') observer?.onTasksEvent(data as TasksEvent)
+        else if (channel === 'tasks') {
+          const event = data as TasksEvent
+          void projector
+            .applyTasksEvent(event)
+            .catch((err) => console.error('[tasks] projection failed:', err))
+          observer?.onTasksEvent(event)
+        }
       },
       onReconnect: () => void mirror.refresh().catch((err) => console.error('[mirror] refresh failed:', err)),
     })
     await mirror.start()
+    // after the mirror, so note paths resolve for related[] / area rendering
+    await projector.start().catch((err) => console.error('[tasks] projection failed:', err))
     events.start()
-    current = { vaultId, mirror, events }
+    current = { vaultId, mirror, events, projector }
 
     // managed files ride the adoption path: write what's missing, let the
     // watcher turn it into vault docs. Never fatal — the vault opens regardless.
