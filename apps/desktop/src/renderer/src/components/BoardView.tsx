@@ -10,6 +10,8 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
+import { FilterBar } from './FilterBar'
+import { TaskDetailPanel } from './TaskDetail'
 import {
   NO_AREA,
   applyPresence,
@@ -20,9 +22,12 @@ import {
   laneFor,
   laneOrder,
   loadTasksAtom,
+  filterAtom,
+  matchesFilter,
   moveTaskAtom,
   presenceAtom,
   pruneExpired,
+  selectedTaskIdAtom,
   tasksAtom,
   todayAtom,
 } from '../state/tasks'
@@ -76,6 +81,7 @@ function Card({ task }: { task: Task }): React.JSX.Element {
   const today = useAtomValue(todayAtom)
   const presence = useAtomValue(presenceAtom)
   const complete = useSetAtom(completeTaskAtom)
+  const select = useSetAtom(selectedTaskIdAtom)
 
   const labels = virtualLabels(task, today)
   const watching = presence.get(task.id) ?? []
@@ -89,6 +95,7 @@ function Card({ task }: { task: Task }): React.JSX.Element {
       // the two events — true in a browser, but a dependency on frame timing for what is
       // really just a payload. dataTransfer IS the payload.
       onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
+      onClick={() => select(task.id)}
       className="cursor-grab rounded border border-neutral-800 bg-neutral-900 p-2 text-xs active:cursor-grabbing"
     >
       <div className="flex items-start gap-2">
@@ -165,11 +172,26 @@ function QuickAdd({ status, area }: { status: TaskStatus; area: string | null })
 
 export function BoardView(): React.JSX.Element {
   useTaskFeed()
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <FilterBar />
+      <div className="flex min-h-0 flex-1">
+        <Grid />
+        <TaskDetailPanel />
+      </div>
+    </div>
+  )
+}
+
+function Grid(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
   const folders = useAtomValue(foldersAtom)
   const move = useSetAtom(moveTaskAtom)
+  const filter = useAtomValue(filterAtom)
+  const today = useAtomValue(todayAtom)
 
-  const all = [...tasks.values()]
+  const everything = [...tasks.values()]
+  const all = everything.filter((t) => matchesFilter(t, filter, today))
   // Lane ids by path, so a drop can turn a lane back into the folder id the record stores.
   const folderIdByPath = new Map([...folders].map(([id, path]) => [path, id]))
   const lanes = laneOrder(all.map((t) => laneFor(t, folders)))
@@ -221,8 +243,13 @@ export function BoardView(): React.JSX.Element {
       </div>
 
       {all.length === 0 && (
+        // The empty state distinguishes "no tasks yet" from "nothing matches your
+        // filters" — there is no "N excluded" count anywhere, because nothing is hidden
+        // into unselected buckets.
         <p className="mt-6 text-center text-xs text-neutral-600">
-          No tasks yet. Add one above — or ask Claude to.
+          {everything.length === 0
+            ? 'No tasks yet. Add one above — or ask Claude to.'
+            : 'Nothing matches your filters.'}
         </p>
       )}
     </div>

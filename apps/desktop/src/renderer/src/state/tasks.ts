@@ -9,6 +9,7 @@
  * other query; the file projection is one-directional and is never an index.
  */
 import type { Task } from '@holi/shared'
+import { allLabels } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { activeVaultIdAtom, docsAtom } from './vaults'
@@ -94,6 +95,49 @@ export function laneOrder(lanes: Iterable<string>): string[] {
   return [NO_AREA, ...rest]
 }
 
+// ------------------------------------------------------------------- filter
+
+export type Filter = {
+  search: string
+  /** Matched against virtual labels AND real tags alike — one vocabulary (D41). */
+  tags: string[]
+  hideDone: boolean
+}
+
+export const EMPTY_FILTER: Filter = { search: '', tags: [], hideDone: false }
+export const filterAtom = atom<Filter>(EMPTY_FILTER)
+
+/** The board's only narrowing. Three controls, deliberately (prd/tasks.md §Board UX) —
+ * the bar is a search-and-narrow aid, not a second configuration surface.
+ *
+ * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing
+ * the labels (D41) is what makes "show me the overdue p1s" a tag query rather than two
+ * bespoke controls. Selected tags are ANDed, as an issue tracker does.
+ */
+export function matchesFilter(task: Task, filter: Filter, today: string): boolean {
+  if (filter.hideDone && task.status === 'done') return false
+
+  const needle = filter.search.trim().toLowerCase()
+  if (needle) {
+    const hay = `${task.title}\n${task.description ?? ''}`.toLowerCase()
+    if (!hay.includes(needle)) return false
+  }
+
+  if (filter.tags.length > 0) {
+    const labels = new Set(allLabels(task, today))
+    if (!filter.tags.every((t) => labels.has(t))) return false
+  }
+  return true
+}
+
+/** Every label in play, for the bar's tag picker — virtual ones included, so they are
+ * selectable exactly like tags. */
+export function availableLabels(tasks: Iterable<Task>, today: string): string[] {
+  const all = new Set<string>()
+  for (const t of tasks) for (const l of allLabels(t, today)) all.add(l)
+  return [...all].sort((a, b) => a.localeCompare(b))
+}
+
 // ------------------------------------------------------------------- writes
 // Optimistic: patch the atom, roll back on failure. The server push stays the ONE
 // authoritative update — we do not treat a mutation's return value as truth by
@@ -160,3 +204,50 @@ export const createTaskAtom = atom(
     // moments away
   },
 )
+
+/** The task open in the detail view. */
+export const selectedTaskIdAtom = atom<string | null>(null)
+
+/** A field edit from the detail view.
+ *
+ * **No `version`.** The board is plain last-writer-wins per field, exactly as the PRD
+ * specifies — the concurrency token belongs to the *file* path, where the writer edited
+ * a snapshot of a record that may have moved under them. Here the user is looking at
+ * the live record.
+ */
+export const patchTaskAtom = atom(
+  null,
+  async (get, set, taskId: string, patch: Record<string, unknown>) => {
+    const vaultId = get(activeVaultIdAtom)
+    const before = get(tasksAtom).get(taskId)
+    if (!vaultId || !before) return
+
+    set(tasksAtom, applyTasksEvent(get(tasksAtom), {
+      type: 'upserted',
+      task: { ...before, ...(patch as Partial<Task>) },
+    }))
+    try {
+      await trpc.tasks.update.mutate({ vaultId, taskId, patch })
+    } catch {
+      set(tasksAtom, applyTasksEvent(get(tasksAtom), { type: 'upserted', task: before }))
+    }
+  },
+)
+
+export const deleteTaskAtom = atom(null, async (get, set, taskId: string) => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return
+  set(selectedTaskIdAtom, null)
+  await trpc.tasks.delete.mutate({ vaultId, taskId })
+})
+
+/** "Nicolai is editing this task" — the renderer half of presence.
+ *
+ * Fire-and-forget, and never awaited into a write path: presence failing must not cost
+ * the user an edit. It touches no row and must never bump `version` — one that did
+ * would rewrite every task file and, with the mirror on, commit it. */
+export const heartbeatAtom = atom(null, (get, _set, taskId: string) => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return
+  void trpc.tasks.heartbeat.mutate({ vaultId, taskId }).catch(() => {})
+})
