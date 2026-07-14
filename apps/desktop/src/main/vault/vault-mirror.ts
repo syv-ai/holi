@@ -108,14 +108,32 @@ export class VaultMirror {
       url: this.deps.relayUrl,
       WebSocketPolyfill: QuietWebSocket as never,
     })
-    await this.refresh()
+
+    // The watcher goes up — and finishes its initial scan — BEFORE anything
+    // writes into the working copy. Order is load-bearing, not tidiness:
+    //
+    // `refresh()` fires `openEntry` off unawaited, so a doc materializes to disk
+    // whenever its relay sync happens to land. If that write hits *during*
+    // chokidar's initial scan — after it has listed the directory but before the
+    // scan completes — chokidar never learns the file exists, and `ignoreInitial`
+    // suppresses the `add` that would have told it. chokidar only emits `unlink`
+    // for paths it tracks, so from then on the file is invisible to the watcher:
+    // deleting it emits nothing, and the agent's `rm` never reaches the server.
+    // (This is what made the mirror suite flaky — the event was never late, it
+    // was never sent.)
+    //
+    // Starting the watcher first makes every mirror write land after the scan, so
+    // it arrives as a normal `add`. Those are harmless: `openEntry` registers the
+    // path in `byPath` synchronously, before its first await, so an `add` for a
+    // file we materialized always finds its entry and is treated as an echo —
+    // never adopted as a new doc.
     this.watcher = watch(this.deps.workRoot, { ignoreInitial: true })
     this.watcher.on('add', (p) => this.onDiskEvent('add', p))
     this.watcher.on('change', (p) => this.onDiskEvent('change', p))
     this.watcher.on('unlink', (p) => this.onDiskEvent('unlink', p))
-    // ignoreInitial swallows anything written before the initial scan ends —
-    // don't report started until events are reliable
     await new Promise<void>((resolve) => this.watcher!.once('ready', resolve))
+
+    await this.refresh()
   }
 
   /** Working copies stay on disk — persisted bases make the next activate
@@ -292,6 +310,10 @@ export class VaultMirror {
         this.pendingLifecycle.delete(rel)
         return
       }
+      // Freeze disk writes NOW, synchronously: a remote update landing before the
+      // debounced propagateDelete would re-materialize the file we are about to
+      // delete, and propagateDelete would then see it back and bail.
+      entry.bridge.suspend()
       this.scheduleLifecycle(rel, () => this.propagateDelete(entry))
     } else {
       if (entry) {
@@ -318,7 +340,10 @@ export class VaultMirror {
    * re-materializes from server truth on the next refresh — logged, accepted. */
   private async propagateDelete(entry: DocEntry): Promise<void> {
     const onDisk = await readFile(absPathFor(this.deps.workRoot, entry.rel), 'utf8').catch(() => null)
-    if (onDisk !== null) return // file came back (rename/rewrite) — not a delete
+    if (onDisk !== null) {
+      entry.bridge.resume() // file came back (rename/rewrite) — not a delete
+      return
+    }
     if (this.entries.get(entry.docId) !== entry) return // already closed by a docs event
     await this.closeEntry(entry, { removeFromDisk: false })
     await this.deps.api.deleteNote(entry.docId)

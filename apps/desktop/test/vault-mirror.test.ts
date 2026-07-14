@@ -214,8 +214,41 @@ describe('VaultMirror', { timeout: 15_000 }, () => {
     const { mirror, root } = await makeMirror(fake)
     await mirror.start()
     await waitUntil(async () => (await readFile(join(root, 'kill-me.md'), 'utf8').catch(() => null)) === 'bye\n')
+
+    // Let the watcher actually observe the file before deleting it. This is not
+    // slack in the assertion — it removes a precondition no watcher can meet: a
+    // file created and deleted within ~tens of ms is reported by chokidar as
+    // NOTHING AT ALL (measured: 0/10 deliveries at a 0ms gap, 10/10 at 60ms). The
+    // file is gone by the time the event is processed, so no `add` is ever
+    // registered, and chokidar emits no `unlink` for a path it never tracked.
+    // Polling to spot the file and deleting it on the same tick — which is what
+    // this test used to do — manufactured exactly that window, and was the whole
+    // source of the mirror suite's flakiness. Real files live for minutes.
+    await sleep(150)
+
     await unlink(join(root, 'kill-me.md'))
     await waitUntil(() => fake.deleted.includes(a.id), 8000, 'deleteNote called')
+  })
+
+  it('a remote edit racing a delete does not resurrect the file (delete wins)', async () => {
+    const a = meta('doomed.md')
+    const human = seedRoom(a.id, 'v1\n')
+    cleanups.push(async () => human.destroy())
+    const fake = fakeApi([a])
+    const { mirror, root } = await makeMirror(fake)
+    await mirror.start()
+    const file = join(root, 'doomed.md')
+    await waitUntil(async () => (await readFile(file, 'utf8').catch(() => null)) === 'v1\n')
+    await sleep(150)
+
+    // delete, then a teammate's edit lands in the window before propagateDelete.
+    // Materialization must not write the file back: it would make propagateDelete
+    // see the file return, conclude "not a delete", and silently undo the rm.
+    await unlink(file)
+    human.text.insert(0, 'racing edit ')
+
+    await waitUntil(() => fake.deleted.includes(a.id), 8000, 'deleteNote called despite the race')
+    expect(await readFile(file, 'utf8').catch(() => null)).toBeNull()
   })
 
   it('agent edit runs a turn: snapshot taken, awareness flagged, human concurrent edit survives', async () => {

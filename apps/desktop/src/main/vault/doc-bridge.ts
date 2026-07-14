@@ -34,6 +34,12 @@ export class DocBridge {
   private base: DocBase = { text: '', state: new Uint8Array() }
   private turnActive = false
   private stopped = false
+  /** Disk writes are off: a delete of this file is being propagated. */
+  private suspended = false
+  /** start() has run: the file has been reconciled with the doc at least once,
+   * so from here on an ABSENT file means someone deleted it — not that it has
+   * yet to be written. */
+  private live = false
   private turnTimer: ReturnType<typeof setTimeout> | null = null
   private materializeTimer: ReturnType<typeof setTimeout> | null = null
   private recheckTimer: ReturnType<typeof setTimeout> | null = null
@@ -70,6 +76,7 @@ export class DocBridge {
     }
     // no base (fresh doc): server truth wins — we cannot diff without a base
     await this.materialize()
+    this.live = true
   }
 
   async stop(): Promise<void> {
@@ -82,7 +89,7 @@ export class DocBridge {
 
   /** Fed by the vault-level watcher (and the disk-recheck defense). */
   async onFileEvent(): Promise<void> {
-    if (this.stopped) return
+    if (this.stopped || this.suspended) return
     const content = await this.deps.readFile()
     if (content === null) return // deletion is the mirror's business
     if (content === this.base.text) {
@@ -117,6 +124,30 @@ export class DocBridge {
     void this.endTurn()
   }
 
+  /**
+   * Stop writing to disk: the file has been deleted and the mirror is about to
+   * propagate that as a doc delete.
+   *
+   * Without this, a remote update arriving in the window between the `unlink`
+   * and the debounced `propagateDelete` schedules a `materialize()`, which sees
+   * no file on disk, decides it diverges from the doc, and **writes the deleted
+   * file back**. `propagateDelete` then re-reads disk, finds the file returned,
+   * concludes "not a delete after all" and bails — so the doc survives and the
+   * file resurrects. The user's delete is silently undone.
+   */
+  suspend(): void {
+    this.suspended = true
+    if (this.materializeTimer) clearTimeout(this.materializeTimer)
+    if (this.recheckTimer) clearTimeout(this.recheckTimer)
+  }
+
+  /** The file came back — it was a rewrite or a rename, not a delete. */
+  resume(): void {
+    if (!this.suspended) return
+    this.suspended = false
+    this.scheduleMaterialize()
+  }
+
   private scheduleDiskRecheck(): void {
     if (this.recheckTimer) clearTimeout(this.recheckTimer)
     this.recheckTimer = setTimeout(() => {
@@ -129,15 +160,24 @@ export class DocBridge {
   }
 
   private scheduleMaterialize(): void {
-    if (this.turnActive) return // soft lock: paused during agent turn
+    if (this.turnActive || this.suspended) return // soft lock / pending delete
     if (this.materializeTimer) clearTimeout(this.materializeTimer)
     this.materializeTimer = setTimeout(() => void this.materialize(), this.materializeDebounceMs)
   }
 
   /** CRDT → file. Captures + persists the new base atomically with the write. */
   private async materialize(): Promise<void> {
-    if (this.stopped || this.turnActive) return
+    if (this.stopped || this.turnActive || this.suspended) return
     const onDisk = await this.deps.readFile()
+    // The file we materialized has been deleted. Do NOT write it back: a remote
+    // update landing next to an `rm` would otherwise resurrect the file, and the
+    // mirror's propagateDelete — which re-reads disk — would see it return,
+    // conclude "not a delete after all", and silently undo the deletion. Worse,
+    // chokidar coalesces the delete+recreate into a single `change`, so the
+    // `unlink` never arrives and no guard keyed on that event can help.
+    // The delete propagates on the unlink (or, if that was coalesced away, on the
+    // next refresh); either way, resurrecting the file is never right.
+    if (onDisk === null && this.live && this.base.state.length > 0) return
     if (onDisk !== null && onDisk !== this.base.text && this.base.state.length > 0) {
       // disk already diverged from a real base: an agent turn is underway that
       // the watcher hasn't delivered yet — don't clobber, treat as turn event
