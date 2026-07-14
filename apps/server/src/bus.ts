@@ -20,6 +20,14 @@ export type RemindersEvent = { fires: ReminderFire[]; coalesced: boolean }
  * That is the whole reason locks were rejected — there is no acquire, no release, no
  * TTL sweep, no stale holder from a crashed client, and no steal path. A heartbeat
  * that stops arriving *is* the release.
+ *
+ * D14 — **a user and their agent are ONE identity.** There is deliberately no
+ * `actor: 'user' | 'agent'` here, and adding one would be a mistake. The agent runs on
+ * the user's token, on the user's behalf, because the user set it going: "Nicolai is
+ * editing this task" is *true* when Nicolai's Claude is editing it. (The drawer's
+ * "Claude is editing…" answers a different question — it tells YOU what YOUR OWN agent
+ * is doing to a doc in front of you. Presence tells SOMEONE ELSE that a task is in
+ * motion, and for that the distinction is noise.)
  */
 export type PresenceEvent = {
   taskId: string
