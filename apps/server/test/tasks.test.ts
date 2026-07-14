@@ -90,6 +90,37 @@ describe('tasks', () => {
     expect((await caller.get({ vaultId, taskId: task.id })).related).toEqual([])
   })
 
+  it('every mutation bumps version — the token the task file round-trips', async () => {
+    const ctx = ctxFor(t, userId)
+    const events: Array<{ type: string; task?: { version: number } }> = []
+    ctx.bus.on(`tasks:${vaultId}`, (e) => events.push(e))
+    const caller = tasksRouter.createCaller(ctx)
+
+    const created = await caller.create({ vaultId, title: 'versioned', description: 'the body' })
+    expect(created.version).toBe(1)
+    expect(created.description).toBe('the body')
+
+    const once = await caller.update({ vaultId, taskId: created.id, patch: { title: 'v2' } })
+    expect(once.version).toBe(2)
+
+    const twice = await caller.update({ vaultId, taskId: created.id, patch: { priority: 'high' } })
+    expect(twice.version).toBe(3)
+
+    // link/unlink and complete are mutations too — a path that forgot to bump
+    // would let a stale file write win.
+    const linked = await caller.link({
+      vaultId,
+      taskId: created.id,
+      related: { kind: 'task', id: created.id },
+    })
+    expect(linked.version).toBe(4)
+    const completed = await caller.complete({ vaultId, taskId: created.id })
+    expect(completed.version).toBe(5)
+
+    // the bumped version rides the push, so the projector rewrites with it
+    expect(events.at(-1)).toMatchObject({ type: 'upserted', task: { version: 5 } })
+  })
+
   it('watch: mutations emit tasks events on the vault channel', async () => {
     const ctx = ctxFor(t, userId)
     const events: unknown[] = []

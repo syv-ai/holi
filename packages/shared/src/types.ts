@@ -70,6 +70,12 @@ export interface Task {
   reminder?: string
   recurrence?: Recurrence
   related: RelatedRef[]
+  /** The markdown body of the task file. A plain column, not a CRDT doc. */
+  description?: string
+  /** Optimistic-concurrency token, bumped on every mutation. An inbound task-file
+   * write carrying a stale version is discarded and the file rewritten from the
+   * record (prd/tasks.md §Task file projection). */
+  version: number
   createdAt: string
   updatedAt: string
 }

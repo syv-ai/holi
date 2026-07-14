@@ -22,6 +22,13 @@
       "when": 1783924319058,
       "tag": "0002_flowery_lady_deathstrike",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1784029315594,
+      "tag": "0003_gifted_molten_man",
+      "breakpoints": true
     }
   ]
 }

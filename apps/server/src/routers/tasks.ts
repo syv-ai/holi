@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 import { on } from 'node:events'
 import { z } from 'zod'
@@ -29,6 +29,8 @@ const taskFields = {
   reminder: z.string().optional(),
   recurrence: recurrence.optional(),
   related: z.array(relatedRef).optional(),
+  /** The task file's markdown body. */
+  description: z.string().optional(),
 }
 
 type TaskRow = typeof tasks.$inferSelect
@@ -38,6 +40,13 @@ async function taskInVault(db: Db, vaultId: string, taskId: string): Promise<Tas
   const [row] = await db.select().from(tasks).where(and(eq(tasks.id, taskId), eq(tasks.vaultId, vaultId)))
   if (!row) throw new TRPCError({ code: 'NOT_FOUND' })
   return row
+}
+
+/** Spread into every mutation's SET clause. Bumping `version` here rather than
+ * at each call site is what makes the task file's optimistic-concurrency token
+ * trustworthy: a mutation that forgot to bump would let a stale file write win. */
+function touch() {
+  return { updatedAt: new Date(), version: sql`${tasks.version} + 1` }
 }
 
 /** Persist → recompute projection → emit → wake evaluator: every mutation
@@ -81,7 +90,7 @@ export const tasksRouter = router({
       await taskInVault(ctx.db, ctx.vaultId, input.taskId)
       const [row] = await ctx.db
         .update(tasks)
-        .set({ ...input.patch, updatedAt: new Date() })
+        .set({ ...input.patch, ...touch() })
         .where(eq(tasks.id, input.taskId))
         .returning()
       return finishMutation(ctx, row!)
@@ -107,9 +116,9 @@ export const tasksRouter = router({
                 : row.reminder,
             remindedAt: null,
             completedAt: now,
-            updatedAt: now,
+            ...touch(),
           }
-        : { status: 'done' as const, completedAt: now, updatedAt: now }
+        : { status: 'done' as const, completedAt: now, ...touch() }
       const [updated] = await ctx.db.update(tasks).set(patch).where(eq(tasks.id, row.id)).returning()
       return finishMutation(ctx, updated!)
     }),
@@ -123,7 +132,7 @@ export const tasksRouter = router({
         : [...row.related, input.related]
       const [updated] = await ctx.db
         .update(tasks)
-        .set({ related: next, updatedAt: new Date() })
+        .set({ related: next, ...touch() })
         .where(eq(tasks.id, row.id))
         .returning()
       return finishMutation(ctx, updated!)
@@ -136,7 +145,7 @@ export const tasksRouter = router({
       const next = row.related.filter((r) => !(r.kind === input.related.kind && r.id === input.related.id))
       const [updated] = await ctx.db
         .update(tasks)
-        .set({ related: next, updatedAt: new Date() })
+        .set({ related: next, ...touch() })
         .where(eq(tasks.id, row.id))
         .returning()
       return finishMutation(ctx, updated!)

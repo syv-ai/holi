@@ -18,6 +18,7 @@ describe('shared domain types', () => {
       status: 'doing',
       tags: ['spike'],
       related: [{ kind: 'note', id: 'd1' }],
+      version: 1,
       createdAt: '2026-07-10T00:00:00Z',
       updatedAt: '2026-07-10T00:00:00Z',
     }

@@ -157,6 +157,14 @@ export const tasks = pgTable(
     recurrence: jsonb('recurrence').$type<Recurrence>(),
     related: jsonb('related').$type<RelatedRef[]>().notNull().default(sql`'[]'::jsonb`),
     completedAt: timestamp('completed_at', { withTimezone: true }),
+    /** The task file's markdown body (prd/tasks.md §Task file projection). A
+     * plain column, deliberately not a CRDT doc — a merged YAML frontmatter can
+     * converge on invalid syntax with no writer to reject it. */
+    description: text('description'),
+    /** Optimistic-concurrency token, bumped on every mutation and round-tripped
+     * through the file's frontmatter. An inbound file write carrying a stale
+     * version is discarded and the file rewritten from the record. */
+    version: integer('version').notNull().default(1),
     ...timestamps,
   },
   (t) => [index('tasks_board_idx').on(t.vaultId, t.status), index('tasks_area_idx').on(t.vaultId, t.area)],

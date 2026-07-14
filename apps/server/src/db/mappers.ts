@@ -41,6 +41,8 @@ export function toTask(row: typeof tasks.$inferSelect): Task {
     reminder: row.reminder ?? undefined,
     recurrence: row.recurrence ?? undefined,
     related: row.related,
+    description: row.description ?? undefined,
+    version: row.version,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
