@@ -3,6 +3,7 @@ import {
   TaskFileError,
   isTaskFilePath,
   parseTaskFile,
+  relatedFromFile,
   serializeTaskFile,
   taskFilePath,
   taskSlug,
@@ -133,6 +134,43 @@ describe('parseTaskFile — writes that lose', () => {
       expect(() => parseTaskFile(text)).toThrow(TaskFileError)
     })
   }
+})
+
+describe('relatedFromFile — the inbound path -> docId seam', () => {
+  const docIdForPath = (path: string) =>
+    path === 'meetings/2026-07-13.md' ? NOTE_ID : undefined
+
+  it('resolves a note path back to its stable docId', () => {
+    const refs = relatedFromFile(
+      [{ kind: 'note', path: 'meetings/2026-07-13.md' }],
+      docIdForPath,
+    )
+    expect(refs).toEqual([{ kind: 'note', id: NOTE_ID }])
+  })
+
+  it('round-trips an id tombstone without a lookup — a deleted note keeps its link', () => {
+    const refs = relatedFromFile([{ kind: 'note', id: NOTE_ID }], () => undefined)
+    expect(refs).toEqual([{ kind: 'note', id: NOTE_ID }])
+  })
+
+  it('passes non-note kinds through untouched', () => {
+    const refs = relatedFromFile([{ kind: 'task', id: ID }], docIdForPath)
+    expect(refs).toEqual([{ kind: 'task', id: ID }])
+  })
+
+  it('rejects the whole write on an unresolvable note path', () => {
+    // Deliberately harsh: dropping just the bad ref would be invisible data
+    // loss. Rejecting is visible and self-healing — the file is rewritten from
+    // truth and the agent re-reads it.
+    expect(() =>
+      relatedFromFile([{ kind: 'note', path: 'ghosts/nope.md' }], docIdForPath),
+    ).toThrow(TaskFileError)
+  })
+
+  it('survives the full file round-trip: record -> file -> record', () => {
+    const parsed = parseTaskFile(serializeTaskFile(full, notePathFor))
+    expect(relatedFromFile(parsed.fields.related ?? [], docIdForPath)).toEqual(full.related)
+  })
 })
 
 describe('taskSlug / taskFilePath / isTaskFilePath', () => {

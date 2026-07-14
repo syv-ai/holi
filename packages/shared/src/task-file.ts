@@ -326,6 +326,36 @@ function refToFile(
   return path === undefined ? { kind: 'note', id: ref.id } : { kind: 'note', path }
 }
 
+/**
+ * The inbound half of the path<->docId seam: file refs -> record refs.
+ *
+ * A note path that resolves to no doc **rejects the whole write** (the caller
+ * discards it and rewrites the file from the record). The harsh option is the
+ * right one: dropping just the bad ref and applying the rest is silent data
+ * loss the user cannot see, whereas rejection is visible and self-healing — the
+ * agent re-reads the corrected file on its next turn. A *legitimately* deleted
+ * note is the id-tombstone case below, which resolves without a lookup, so this
+ * only fires on a genuinely bogus path.
+ */
+export function relatedFromFile(
+  refs: TaskFileRef[],
+  docIdForPath: (path: string) => string | undefined,
+): RelatedRef[] {
+  return refs.map((ref) => {
+    if (ref.kind === 'note' && ref.path !== undefined) {
+      const docId = docIdForPath(ref.path)
+      if (docId === undefined) {
+        throw new TaskFileError(`related[] references an unknown note path: ${ref.path}`)
+      }
+      return { kind: 'note', id: docId }
+    }
+    if (ref.id === undefined) {
+      throw new TaskFileError(`related[] ${ref.kind} ref has no id`)
+    }
+    return { kind: ref.kind, id: ref.id }
+  })
+}
+
 /** Drop a defaulted `interval: 1` so an unchanged record keeps serializing the
  * same bytes whether or not the writer spelled it out. */
 function compactRecurrence(rec: Recurrence): Record<string, unknown> {
