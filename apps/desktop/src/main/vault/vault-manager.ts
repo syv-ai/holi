@@ -81,11 +81,12 @@ export function createVaultManager(deps: {
 
   async function deactivate(): Promise<void> {
     if (!current) return
-    const { vaultId, mirror, events } = current
+    const { vaultId, mirror, events, projector } = current
     // the agent dies first: its open turns merge through a mirror that's still up
     await observer?.onDeactivating(vaultId)
     current = null
     events.stop()
+    projector.stop() // halt its periodic reconcile before the mirror goes down
     await mirror.stop()
   }
 

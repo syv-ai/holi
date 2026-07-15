@@ -79,6 +79,10 @@ export interface TaskProjectorDeps {
   /** From the VaultMirror: notes render in the file as paths, not docIds. */
   notePathFor(docId: string): string | undefined
   docIdForPath(path: string): string | undefined
+  /** Backstop cadence for the periodic reconcile that recovers a dropped task-file
+   * event (the mirror's chokidar can drop an `add` under load — measured). Defaults
+   * to 10s; tests drive it fast. */
+  reconcileIntervalMs?: number
   log?: (msg: string) => void
 }
 
@@ -123,10 +127,20 @@ export class TaskProjector {
    * read as a delete. A delete is never *inferred* from an absent file, because a
    * half-synced working copy would then destroy records. */
   private pendingDeletes = new Set<string>()
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null
+  private readonly reconcileIntervalMs: number
 
   constructor(deps: TaskProjectorDeps) {
     this.deps = deps
+    this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 10_000
     this.log = deps.log ?? ((msg) => console.log(`[tasks] ${msg}`))
+  }
+
+  /** Stop the periodic backstop. Mirrors VaultMirror.stop(): the vault manager
+   * calls it on deactivate so a switched-away projector's timer does not linger. */
+  stop(): void {
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer)
+    this.reconcileTimer = null
   }
 
   /**
@@ -144,6 +158,18 @@ export class TaskProjector {
   async start(): Promise<void> {
     this.projected = await this.deps.store.load()
     await this.reconcile()
+
+    // The projector has no watcher of its own — the mirror's chokidar is its only
+    // event source, and fsevents drops an `add` under load (measured). A dropped
+    // task-file create would strand the record until the next SSE reconnect; this
+    // backstop re-runs the same reconcile on a timer so it self-heals. (Only the
+    // add is recoverable this way — a dropped `unlink` cannot be, on purpose: this
+    // projector never infers a delete from an absent file, or a half-synced working
+    // copy would destroy live records. See pendingDeletes / pruneDeleted.)
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcile().catch((err) => this.log(`periodic reconcile failed: ${err}`))
+    }, this.reconcileIntervalMs)
+    this.reconcileTimer.unref?.()
   }
 
   /** The same reconcile, run again whenever we have been out of touch with the

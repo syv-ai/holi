@@ -5,7 +5,15 @@ import { join } from 'node:path'
 import { parseTaskFile, type Folder, type Task } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { ProjectionStore } from '../src/main/vault/projection-store'
-import { TaskProjector, type TaskProjectorApi } from '../src/main/vault/task-projector'
+import { TaskProjector, type TaskProjectorApi, type TaskProjectorDeps } from '../src/main/vault/task-projector'
+
+const until = async (cond: () => boolean, ms = 3000, label = 'condition'): Promise<void> => {
+  const t0 = Date.now()
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error(`timeout waiting for: ${label}`)
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}
 
 const VAULT = '11111111-1111-4111-8111-111111111111'
 const T1 = 'aaaaaaaa-1111-4111-8111-111111111111'
@@ -130,7 +138,7 @@ async function rig(tasks: Task[] = []) {
   }
 
   const store = new ProjectionStore(join(dir, 'projection'))
-  const make = () =>
+  const make = (over: Partial<TaskProjectorDeps> = {}) =>
     new TaskProjector({
       workRoot,
       store,
@@ -138,6 +146,7 @@ async function rig(tasks: Task[] = []) {
       notePathFor: (docId) => (docId === NOTE ? 'meetings/kickoff.md' : undefined),
       docIdForPath: (path) => (path === 'meetings/kickoff.md' ? NOTE : undefined),
       log: () => {},
+      ...over,
     })
 
   const read = (rel: string) => readFile(join(workRoot, rel), 'utf8')
@@ -149,6 +158,7 @@ async function rig(tasks: Task[] = []) {
   return {
     workRoot,
     store,
+    make,
     projector: make(),
     read,
     exists,
@@ -703,5 +713,25 @@ describe('TaskProjector — reconcile after a disconnection (D39, D40)', () => {
     await r.projector.reconcile()
 
     expect(r.calls).toContain('create:Made offline')
+  })
+
+  // The mirror's chokidar is the projector's only event source, and fsevents drops
+  // an add under load (measured). A dropped task-file add would otherwise strand the
+  // task record until the next SSE reconnect. The periodic reconcile backstop has to
+  // self-heal it — proven here by never delivering the event at all.
+  it('recovers a dropped task-file add: a create never forwarded is adopted by the periodic reconcile', async () => {
+    const r = await rig([])
+    const projector = r.make({ reconcileIntervalMs: 100 })
+    cleanups.push(() => projector.stop()) // safety net if the wait below throws
+    await projector.start()
+
+    // the file lands on disk but the mirror never calls onTaskFileEvent (dropped add)
+    await r.edit('tasks/orphan.md', '---\ntitle: Orphaned by a dropped event\nstatus: todo\n---\n')
+    await until(() => r.calls.includes('create:Orphaned by a dropped event'), 3000, 'reconcile adopted the dropped task file')
+
+    // Settle before teardown: stop the timer, then drain any in-flight pass so the
+    // afterEach rm() cannot race a reconcile's store.save (ENOTEMPTY otherwise).
+    projector.stop()
+    await projector.reconcile()
   })
 })
