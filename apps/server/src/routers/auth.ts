@@ -1,4 +1,6 @@
+import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+import { ensureDevUser } from '../auth/dev'
 import { exchangeGoogleCode, googleAuthUrl, upsertGoogleUser } from '../auth/google'
 import { provisionPersonalVault } from '../auth/provision'
 import { mintSession, revokeSession } from '../auth/sessions'
@@ -33,6 +35,16 @@ export const authRouter = router({
       const token = await mintSession(ctx.db, user.id)
       return { token, user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } }
     }),
+
+  /** Dev-only bootstrap: provision the local dev user + personal vault and mint a
+   * session, no OAuth. This is what makes `pnpm dev` land on a vault instead of an
+   * empty sign-in screen. Gated off in production — it mints a session for anyone. */
+  devSession: publicProcedure.mutation(async ({ ctx }) => {
+    if (!config.enableDevAuth) throw new TRPCError({ code: 'NOT_FOUND' })
+    const user = await ensureDevUser(ctx.db)
+    const token = await mintSession(ctx.db, user.id)
+    return { token, user: { id: user.id, email: user.email, name: user.name, avatarUrl: null } }
+  }),
 
   session: authedProcedure.query(({ ctx }) => ctx.user),
 

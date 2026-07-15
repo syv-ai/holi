@@ -1,7 +1,8 @@
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertWorkspace, upsertGoogleUser } from '../src/auth/google'
-import { users } from '../src/db/schema'
+import { config } from '../src/config'
+import { users, vaults } from '../src/db/schema'
 import { resolveSession } from '../src/auth/sessions'
 import { authRouter } from '../src/routers/auth'
 import { createTestDb, type TestDb } from '../src/test/db'
@@ -55,5 +56,40 @@ describe('auth', () => {
     const { token: fresh } = await caller.refresh()
     expect(await resolveSession(t.db, token)).toBeNull()
     expect((await resolveSession(t.db, fresh))?.id).toBe(user.id)
+  })
+
+  it('devSession provisions the dev user + personal vault and returns a resolvable token', async () => {
+    const caller = authRouter.createCaller(ctxFor(t, null, null)) // public, unauthenticated
+    const { token, user } = await caller.devSession()
+    expect(user.email).toBe('dev@syv.ai')
+    expect((await resolveSession(t.db, token))?.id).toBe(user.id)
+    const personal = await t.db
+      .select()
+      .from(vaults)
+      .where(and(eq(vaults.ownerId, user.id), eq(vaults.kind, 'personal')))
+    expect(personal).toHaveLength(1)
+  })
+
+  it('devSession is idempotent — one dev user and one personal vault across calls', async () => {
+    const caller = authRouter.createCaller(ctxFor(t, null, null))
+    const a = await caller.devSession()
+    const b = await caller.devSession()
+    expect(b.user.id).toBe(a.user.id)
+    const personal = await t.db
+      .select()
+      .from(vaults)
+      .where(and(eq(vaults.ownerId, a.user.id), eq(vaults.kind, 'personal')))
+    expect(personal).toHaveLength(1)
+  })
+
+  it('devSession is disabled when the server is not a dev server', async () => {
+    const prev = config.enableDevAuth
+    config.enableDevAuth = false
+    try {
+      const caller = authRouter.createCaller(ctxFor(t, null, null))
+      await expect(caller.devSession()).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    } finally {
+      config.enableDevAuth = prev
+    }
   })
 })

@@ -2,11 +2,39 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { createAgentManager } from './agent/agent-manager'
 import { registerIpc } from './ipc'
-import { createServerClient } from './server-client'
-import { electronSessionStore } from './session'
+import { createServerClient, type ServerClient } from './server-client'
+import { electronSessionStore, type SessionStore } from './session'
 import { createVaultManager } from './vault/vault-manager'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * Dev-only: land on a vault instead of the empty sign-in screen. If there's no
+ * cached session, mint one from the server's `auth.devSession` bootstrap and
+ * save it, so the renderer's first `auth.get` is already signed in. Bounded
+ * retry because the server may still be booting under `pnpm dev`. Never runs in
+ * a packaged build; a failure just falls back to the manual dev-token field.
+ */
+async function maybeDevSignIn(store: SessionStore, client: ServerClient): Promise<void> {
+  if (app.isPackaged || store.load()) return
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      const { token, user } = await client.auth.devSession.mutate()
+      store.save({
+        token,
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        cachedAt: new Date().toISOString(),
+      })
+      console.log(`[dev] auto-signed in as ${user.email}`)
+      return
+    } catch {
+      await new Promise((r) => setTimeout(r, 800)) // server still coming up
+    }
+  }
+  console.warn('[dev] auto sign-in failed (server unreachable) — use the dev-token field')
+}
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -30,9 +58,10 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const store = electronSessionStore()
   const client = createServerClient(() => store.load()?.token ?? null)
+  await maybeDevSignIn(store, client)
   const vaultManager = createVaultManager({
     store,
     // The board is fed from the SSE stream main already owns — one connection per

@@ -9,6 +9,10 @@ export const config = {
   snapshotIntervalMs: Number(process.env.SNAPSHOT_INTERVAL_MS ?? 10 * 60_000),
   /** Sliding session lifetime (matches D7's ~30-day offline window). */
   sessionTtlMs: Number(process.env.SESSION_TTL_MS ?? 30 * 24 * 3_600_000),
+  /** Enables the dev-only `auth.devSession` bootstrap (auto sign-in a local dev
+   * user + personal vault). Off in production — never mint sessions unauthenticated
+   * there. Defaults on unless NODE_ENV=production. */
+  enableDevAuth: process.env.NODE_ENV !== 'production',
   google: {
     clientId: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
