@@ -149,6 +149,44 @@ describe('VaultMirror', { timeout: 15_000 }, () => {
     await waitUntil(() => observer.toString() === 'agent wrote this\n', 8000, 'content synced')
   })
 
+  // fsevents drops an add/unlink under cross-process contention (measured: the raw
+  // chokidar event simply never fires). Correctness must not depend on catching
+  // every event — a periodic disk reconcile has to self-heal a missed one. These
+  // two prove it by killing the watcher outright (the extreme of a dropped event)
+  // and asserting the mirror still reconciles disk↔doc from the reconcile alone.
+  async function killWatcher(mirror: VaultMirror): Promise<void> {
+    await (mirror as unknown as { watcher: { close(): Promise<void> } }).watcher.close()
+  }
+
+  it('recovers a dropped add: a file the watcher never reported still becomes a doc', async () => {
+    const fake = fakeApi([])
+    const { mirror, root } = await makeMirror(fake, { reconcileIntervalMs: 100 })
+    await mirror.start()
+    await killWatcher(mirror) // no disk event will ever fire again
+    await mkdir(join(root, 'notes'), { recursive: true })
+    await writeFile(join(root, 'notes/dropped.md'), 'agent wrote this\n', 'utf8')
+    await waitUntil(() => fake.created.includes('notes/dropped.md'), 4000, 'reconcile adopted the dropped file')
+    // let the adopted doc finish syncing before teardown — createNote fires mid
+    // openEntry, so ending here would race the doc's first materialize/base write
+    const created = fake.docs.find((d) => d.path === 'notes/dropped.md')!
+    const observer = new SimClient(URL, created.id)
+    cleanups.push(async () => observer.destroy())
+    await waitUntil(() => observer.toString() === 'agent wrote this\n', 4000, 'dropped file synced')
+  })
+
+  it('recovers a dropped unlink: a doc whose file vanished is deleted server-side', async () => {
+    const a = meta('vanished.md')
+    const seed = seedRoom(a.id, 'bye\n')
+    cleanups.push(async () => seed.destroy())
+    const fake = fakeApi([a])
+    const { mirror, root } = await makeMirror(fake, { reconcileIntervalMs: 100 })
+    await mirror.start()
+    await waitUntil(async () => (await readFile(join(root, 'vanished.md'), 'utf8').catch(() => null)) === 'bye\n')
+    await killWatcher(mirror) // the unlink below will never reach the mirror as an event
+    await unlink(join(root, 'vanished.md'))
+    await waitUntil(() => fake.deleted.includes(a.id), 4000, 'reconcile propagated the dropped delete')
+  })
+
   it('local-only and junk files are never adopted', async () => {
     const fake = fakeApi([])
     const { mirror, root } = await makeMirror(fake)

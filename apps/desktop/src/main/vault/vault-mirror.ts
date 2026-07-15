@@ -60,6 +60,10 @@ export interface VaultMirrorDeps {
   api: MirrorApi
   turnIdleMs?: number
   lifecycleDebounceMs?: number
+  /** Backstop cadence for the periodic disk reconcile that recovers dropped
+   * fsevents events (spec: chokidar events are a latency optimization, not
+   * correctness). Defaults to 10s; tests drive it fast. */
+  reconcileIntervalMs?: number
   log?: (msg: string) => void
   /** Agent seams (slice 2): live count of docs with an open turn, and every
    * CRDT→disk write (used to spot synced agent-config changes mid-session). */
@@ -92,13 +96,16 @@ export class VaultMirror {
   private readonly bases: BaseStore
   private socket: HocuspocusProviderWebsocket | null = null
   private watcher: FSWatcher | null = null
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
   private readonly lifecycleDebounceMs: number
+  private readonly reconcileIntervalMs: number
   private readonly log: (msg: string) => void
 
   constructor(private readonly deps: VaultMirrorDeps) {
     this.bases = new BaseStore(deps.baseDir)
     this.lifecycleDebounceMs = deps.lifecycleDebounceMs ?? 400
+    this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 10_000
     this.log = deps.log ?? ((msg) => console.log(`[mirror:${deps.vaultId}] ${msg}`))
   }
 
@@ -134,12 +141,25 @@ export class VaultMirror {
     await new Promise<void>((resolve) => this.watcher!.once('ready', resolve))
 
     await this.refresh()
+
+    // Chokidar events are a latency optimization, not correctness. Under
+    // cross-process fsevents contention the macOS backend silently drops an
+    // `add`/`unlink` (measured: the raw event never fires), which would strand an
+    // agent-created file unsynced or leave an agent-deleted doc alive until the
+    // next SSE reconnect. This backstop re-reconciles disk↔doc on a timer so a
+    // missed event self-heals — the same stance the git ingester takes toward a
+    // missed webhook (spec §vault-git-mirror, "webhooks are latency optimization").
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcileFromDisk().catch((err) => this.log(`periodic reconcile failed: ${err}`))
+    }, this.reconcileIntervalMs)
+    this.reconcileTimer.unref?.() // never keep the process (or a test) alive for it
   }
 
   /** Working copies stay on disk — persisted bases make the next activate
    * reconcile any divergence instead of clobbering. */
   async stop(): Promise<void> {
     this.stopped = true
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer)
     for (const timer of this.pendingLifecycle.values()) clearTimeout(timer)
     this.pendingLifecycle.clear()
     await this.watcher?.close()
@@ -360,6 +380,31 @@ export class VaultMirror {
     }
     const meta = await this.deps.api.createNote(rel)
     await this.openEntry(meta, text)
+  }
+
+  /** The dropped-event backstop (see the setInterval in start()). Two halves,
+   * mirroring the two events fsevents can drop:
+   *
+   * - dropped `add`: a file sits on disk that no entry knows about → adopt it,
+   *   exactly as a real `add` would have (idempotent: skips known/pending paths).
+   * - dropped `unlink`: a started, materialized doc whose file is gone from disk.
+   *   `refresh()` cannot recover this — server truth still lists the doc, so a
+   *   refresh would re-materialize it (resurrecting a delete the agent meant). We
+   *   route it through the same suspend → debounced `propagateDelete` the real
+   *   `unlink` uses, whose re-read guard resumes the bridge if the file comes back
+   *   (a rename/rewrite, not a delete). Skips paths already mid-lifecycle so a
+   *   real event in flight wins the race. */
+  private async reconcileFromDisk(): Promise<void> {
+    if (this.stopped) return
+    await this.adoptUnknownFiles()
+    for (const entry of [...this.entries.values()]) {
+      if (!entry.started || this.pendingLifecycle.has(entry.rel)) continue
+      const onDisk = await readFile(absPathFor(this.deps.workRoot, entry.rel), 'utf8').catch(() => null)
+      if (onDisk === null) {
+        entry.bridge.suspend()
+        this.scheduleLifecycle(entry.rel, () => this.propagateDelete(entry))
+      }
+    }
   }
 
   private async adoptUnknownFiles(): Promise<void> {

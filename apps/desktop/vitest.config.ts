@@ -24,6 +24,11 @@ export default defineConfig({
     // parallel the whole time; that is what made the flake "come back". spikes/bridge
     // already uses fileParallelism: false — keep them in step.
     //
+    // This keeps the *tests* deterministic. The matching *production* fix is the
+    // periodic disk reconcile in vault-mirror.ts: fsevents can genuinely drop an
+    // add/unlink (measured — the raw event never fires), so the mirror self-heals a
+    // missed event on a timer rather than trusting event delivery for correctness.
+    //
     // Do NOT "fix" a future flake here by widening the waits. Measure first: both
     // chokidar theories in this repo that looked obvious were wrong (4b023b4 — a file
     // that lives for milliseconds is delivered as NOTHING AT ALL, and usePolling makes
