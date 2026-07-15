@@ -5,19 +5,37 @@ import { useEffect, useRef } from 'react'
 import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { openDoc, presenceColor } from '../collab/provider'
+import type { MentionData } from '../editor/mentions'
 import { baseEditorExtensions } from '../editor/extensions'
+import { trpc } from '../lib/trpc'
 import { sessionAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
-import { activeDocAtom, docsAtom } from '../state/vaults'
+import { tasksAtom } from '../state/tasks'
+import { activeDocAtom, activeVaultIdAtom, docsAtom } from '../state/vaults'
 
 export function EditorPane() {
   const activeDoc = useAtomValue(activeDocAtom)
   const session = useAtomValue(sessionAtom)
   const { docs } = useAtomValue(docsAtom)
+  const tasks = useAtomValue(tasksAtom)
+  const vaultId = useAtomValue(activeVaultIdAtom)
   const setSyncStatus = useSetAtom(syncStatusAtom)
   const hostRef = useRef<HTMLDivElement>(null)
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(docs.map((d) => d.path))
+
+  // Live mention data + link target, kept fresh each render and read on demand by
+  // the pull-based completion source (the editor is built once per open doc).
+  const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
+  mentionRef.current = {
+    notes: docs.map((d) => ({ path: d.path })),
+    tasks: [...tasks.values()].map((t) => ({ id: t.id, title: t.title, status: t.status })),
+  }
+  const linkRef = useRef<{ vaultId: string | null; docId: string | null }>({
+    vaultId: null,
+    docId: null,
+  })
+  linkRef.current = { vaultId, docId: activeDoc?.id ?? null }
 
   useEffect(() => {
     if (!activeDoc || !hostRef.current || !session) return
@@ -40,7 +58,18 @@ export function EditorPane() {
         state: EditorState.create({
           doc: handle.text.toString(),
           extensions: [
-            ...baseEditorExtensions((path) => docPaths.current.has(path)),
+            ...baseEditorExtensions({
+              docExists: (path) => docPaths.current.has(path),
+              mentionData: () => mentionRef.current,
+              onTaskMention: (taskId) => {
+                const { vaultId: vid, docId } = linkRef.current
+                if (!vid || !docId) return
+                // Idempotent server-side (D27: note linked by stable doc id, not path).
+                void trpc.tasks.link
+                  .mutate({ vaultId: vid, taskId, related: { kind: 'note', id: docId } })
+                  .catch(() => {})
+              },
+            }),
             // provider.awareness is typed nullable in v2 but always set with a document
             yCollab(handle.text, handle.provider.awareness!, { undoManager }),
           ],
