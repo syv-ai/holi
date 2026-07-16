@@ -17,9 +17,20 @@ function pushChannel<T>(channel: string) {
 const onAgentData = pushChannel<string>('agent-pty:data')
 const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
 const onAgentStatus = pushChannel<unknown>('agent:status')
-/** The board's feed. Both ride the ONE per-vault SSE connection that main owns. */
+/** The board's feed. Both ride the ONE SSE connection main owns — one per signed-in
+ * user now, not per vault (D50). Main filters them to the active vault, so they stay
+ * bare payloads with no envelope to unwrap. */
 const onTasksEvent = pushChannel<unknown>('tasks:event')
 const onTaskPresence = pushChannel<unknown>('tasks:presence')
+/** The file tree's feed. Until now this frame reached main and fed only the on-disk
+ * mirror — the renderer never saw it, which is why the tree went stale. */
+const onDocsEvent = pushChannel<unknown>('docs:event')
+/** You joined or left a vault. The one thing a per-vault stream could never tell you,
+ * and the reason the switcher needed a restart (D51). */
+const onVaultsEvent = pushChannel<unknown>('vaults:event')
+/** The stream reconnected after a gap. There is no resume cursor on the wire, so
+ * anything without a reconcile of its own has to refetch. */
+const onStreamResync = pushChannel<unknown>('stream:resync')
 /** A clicked reminder notification — main raises it, the renderer opens the task. */
 const onReminderOpen = pushChannel<unknown>('reminders:open')
 
@@ -35,6 +46,15 @@ contextBridge.exposeInMainWorld('holi', {
   collabAuth: () => ipcRenderer.invoke('holi:collab:auth'),
   vault: {
     activate: (vaultId: string) => ipcRenderer.invoke('holi:vault:activate', vaultId),
+  },
+  vaults: {
+    onEvent: onVaultsEvent,
+  },
+  docs: {
+    onEvent: onDocsEvent,
+  },
+  stream: {
+    onResync: onStreamResync,
   },
   reminders: {
     onOpen: onReminderOpen,

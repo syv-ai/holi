@@ -14,6 +14,7 @@ import { viewAtom } from '../state/view'
 import {
   activeDocAtom,
   activeVaultIdAtom,
+  applyDocsEventAtom,
   createVaultAtom,
   loadDocsAtom,
   loadVaultsAtom,
@@ -33,6 +34,7 @@ export function Shell() {
   const openTodaysDailyNote = useSetAtom(openTodaysDailyNoteAtom)
   const sweepDailyNotes = useSetAtom(sweepDailyNotesAtom)
   const setSelectedTaskId = useSetAtom(selectedTaskIdAtom)
+  const applyDocsEvent = useSetAtom(applyDocsEventAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [view, setView] = useAtom(viewAtom)
@@ -61,11 +63,45 @@ export function Shell() {
   // not in BoardView: the board may well not be on screen when the notification fires —
   // that is the whole point of a reminder.
   useEffect(() => {
-    return window.holi.reminders.onOpen(({ taskId }) => {
+    return window.holi.reminders.onOpen(({ vaultId, taskId }) => {
+      // The fire may be for a vault you do not have open — that is what the user-scoped
+      // stream bought (D48/D52), and without switching, the click would select a task id
+      // against the wrong board and appear to do nothing. Jotai bails on an unchanged
+      // value, so this is a no-op when it is already the active vault; when it is not,
+      // the activation effect above does the rest.
+      //
+      // Deliberately not routed through selectVault's mid-edit guard: clicking a
+      // reminder is an explicit instruction to go to that task, where the guard exists to
+      // catch an accidental switch from the dropdown.
+      setActiveVaultId(vaultId)
       setView('board')
-      setSelectedTaskId(taskId)
+      // A coalesced summary speaks for several tasks and carries no id — landing you on
+      // the right board is the whole action.
+      if (taskId) setSelectedTaskId(taskId)
     })
-  }, [setView, setSelectedTaskId])
+  }, [setView, setSelectedTaskId, setActiveVaultId])
+
+  // The tree, the switcher, and recovery after a gap. Mounted here rather than in
+  // FileTree: main pushes these whether or not the tree is rendered, and a listener that
+  // only exists while a component is mounted would drop them.
+  useEffect(() => {
+    const offDocs = window.holi.docs.onEvent((e) => applyDocsEvent(e))
+    // You were invited somewhere, or removed. Refetch rather than patch a Vault in: on
+    // `left` you can no longer read the vault, so there is nothing to patch (D51).
+    const offVaults = window.holi.vaults.onEvent(() => void loadVaults())
+    // There is no resume cursor on the wire, so a gap is the one moment the tree and the
+    // switcher can silently go stale on exactly the path this all exists to fix. Main's
+    // mirror and projector reconcile themselves; these two have nothing but a refetch.
+    const offResync = window.holi.stream.onResync(() => {
+      void loadVaults()
+      void loadDocs()
+    })
+    return () => {
+      offDocs()
+      offVaults()
+      offResync()
+    }
+  }, [applyDocsEvent, loadVaults, loadDocs])
 
   // ⌘J / Ctrl-J toggles the agent drawer (the app's first shortcut)
   useEffect(() => {

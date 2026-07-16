@@ -24,9 +24,27 @@ declare global {
       vault: {
         activate(vaultId: string): Promise<TrpcEnvelope>
       }
+      vaults: {
+        /** Returns its unsubscribe closure. You joined or left a vault — refetch the
+         * list. A per-vault stream had no channel for this, which is why the switcher
+         * needed a restart (D51). */
+        onEvent(cb: (e: { vaultId: string; type: 'joined' | 'left' }) => void): () => void
+      }
+      docs: {
+        /** Returns its unsubscribe closure. Rides main's single SSE stream, already
+         * filtered to the active vault — so no vaultId to check. */
+        onEvent(cb: (e: DocsEvent) => void): () => void
+      }
+      stream: {
+        /** Returns its unsubscribe closure. The stream reconnected after a gap; there is
+         * no resume cursor, so refetch anything without a reconcile of its own. */
+        onResync(cb: () => void): () => void
+      }
       reminders: {
-        /** A reminder notification was clicked — open that task. */
-        onOpen(cb: (e: { taskId: string }) => void): () => void
+        /** A reminder notification was clicked — open that task, in that vault. The
+         * vault may not be the active one (D52), and a coalesced summary speaks for
+         * several tasks so it carries no taskId. */
+        onOpen(cb: (e: { vaultId: string; taskId: string | null }) => void): () => void
       }
       tasks: {
         /** Each returns its unsubscribe closure. Both ride main's single SSE stream. */
