@@ -1,10 +1,10 @@
 /** IPC surface — the ONLY seam between renderer and main (architecture §8). */
 import { ipcMain, shell } from 'electron'
 import { randomBytes } from 'node:crypto'
+import type { YjsLink } from '@holi/shared'
 import { createLoopbackServer, googleAuthorizeUrl, pkcePair } from './oauth'
 import {
   API_URL,
-  RELAY_URL,
   callProcedure,
   createServerClient,
   toEnvelope,
@@ -30,6 +30,8 @@ export function registerIpc(deps: {
    * vault's (D50). Every route in has to start it, or that route gets a dead app: no
    * live tree, no switcher updates, no reminders. */
   userStream: UserStream
+  /** Push to the renderer — the same seam the SSE feeds use (main/index.ts). */
+  send: (channel: string, payload: unknown) => void
 }): void {
   const { store, vaultManager, agentManager, userStream } = deps
   const client: ServerClient = createServerClient(() => store.load()?.token ?? null)
@@ -78,14 +80,68 @@ export function registerIpc(deps: {
     ),
   )
 
-  /** Transient collab credentials for the renderer's HocuspocusProvider (plan decision #1). */
-  ipcMain.handle('holi:collab:auth', () => {
-    const s = store.load()
-    return s ? { url: RELAY_URL, token: s.token } : null
+  /**
+   * Collab (D59) — the renderer binds its Y.Doc to main's rather than dialling the relay
+   * itself. Main already holds a Y.Doc + provider for every doc, so the renderer becomes
+   * just another writer into it: the DocBridge materializes it to disk and the provider
+   * carries it upstream, both already wired.
+   *
+   * This replaced `holi:collab:auth`, which handed the renderer the raw session token so
+   * it could open its own relay connection — the one documented exception to "the token
+   * lives only in main" (session.ts). The exception is gone with it.
+   *
+   * Updates cross as `Uint8Array`. This is the app's first binary IPC — everything else
+   * here is JSON — and structured clone carries typed arrays intact in both directions.
+   */
+  const links = new Map<string, YjsLink>()
+  const unlink = (docId: string): void => {
+    links.get(docId)?.destroy()
+    links.delete(docId)
+  }
+
+  ipcMain.handle('holi:collab:open', (_e, docId: string) =>
+    toEnvelope(
+      (async () => {
+        const id = String(docId)
+        unlink(id) // a reload re-opens without closing; never stack two links on one doc
+        const mirror = vaultManager.activeMirror()
+        if (!mirror) throw new Error('no active vault')
+        const bound = mirror.linkRenderer(id, {
+          sendUpdate: (update) => deps.send('collab:update', { docId: id, update }),
+          sendAwareness: (update) => deps.send('collab:awareness', { docId: id, update }),
+        })
+        // The mirror skips docs it cannot safely hold (an unsafe path). Failing loudly
+        // beats handing back an empty doc the user can type into and lose.
+        if (!bound) throw new Error(`doc ${id} is not held by the active vault`)
+        links.set(id, bound.link)
+        return {
+          state: bound.link.stateAsUpdate(),
+          awareness: bound.link.awarenessAsUpdate(),
+          status: bound.status,
+        }
+      })(),
+    ),
+  )
+
+  ipcMain.handle('holi:collab:update', (_e, msg: { docId: string; update: Uint8Array }) => {
+    links.get(String(msg.docId))?.applyUpdate(new Uint8Array(msg.update))
   })
 
+  ipcMain.handle('holi:collab:awareness', (_e, msg: { docId: string; update: Uint8Array }) => {
+    links.get(String(msg.docId))?.applyAwareness(new Uint8Array(msg.update))
+  })
+
+  ipcMain.handle('holi:collab:close', (_e, docId: string) => unlink(String(docId)))
+
   ipcMain.handle('holi:vault:activate', (_e, vaultId: string) =>
-    toEnvelope(vaultManager.activate(String(vaultId))),
+    toEnvelope(
+      (async () => {
+        // Links point at the outgoing vault's docs; the mirror behind them is about to be
+        // stopped and its Y.Docs destroyed.
+        for (const id of [...links.keys()]) unlink(id)
+        return vaultManager.activate(String(vaultId))
+      })(),
+    ),
   )
 
   // Agent drawer (spec §AgentRuntime). PTY bytes flow back on the push

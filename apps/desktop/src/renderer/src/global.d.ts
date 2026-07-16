@@ -1,3 +1,4 @@
+import type { SyncStatus } from '@holi/shared'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 import type { AgentStatus } from './state/agent'
 import type { PresenceEvent, TasksEvent } from './state/tasks'
@@ -20,7 +21,23 @@ declare global {
         devSignIn(token: string): Promise<AuthEnvelope>
         signOut(): Promise<{ ok: boolean }>
       }
-      collabAuth(): Promise<{ url: string; token: string } | null>
+      /** Collab (D59). Main owns the Y.Doc and the one relay connection; the renderer
+       * binds to main's doc rather than dialling the relay itself. Every push payload
+       * carries `docId` — the channels are unaddressed broadcasts, so the renderer
+       * filters for the doc it has open. */
+      collab: {
+        /** Envelope data: `{ state, awareness, status }` — main's doc as one update, the
+         * awareness that predates the link (awareness only emits on change), and the
+         * current relay status. Fails if the active vault does not hold this doc. */
+        open(docId: string): Promise<TrpcEnvelope>
+        update(docId: string, update: Uint8Array): Promise<void>
+        awareness(docId: string, update: Uint8Array): Promise<void>
+        close(docId: string): Promise<void>
+        /** Each returns its unsubscribe closure. */
+        onUpdate(cb: (e: { docId: string; update: Uint8Array }) => void): () => void
+        onAwareness(cb: (e: { docId: string; update: Uint8Array }) => void): () => void
+        onStatus(cb: (e: { docId: string; status: SyncStatus }) => void): () => void
+      }
       vault: {
         activate(vaultId: string): Promise<TrpcEnvelope>
       }

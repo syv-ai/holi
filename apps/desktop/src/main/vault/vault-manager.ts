@@ -191,6 +191,8 @@ export function createVaultManager(deps: {
       api: makeMirrorApi(client, vaultId),
       onTurnActivity: (n) => observer?.onTurnActivity(n),
       onMaterialize: (rel) => observer?.onMaterialize(rel),
+      // The renderer has no relay connection of its own to read status from (D59).
+      onDocStatus: (docId, status) => deps.send?.('collab:status', { docId, status }),
       onTaskFileEvent: (kind, rel) =>
         void projector
           .onTaskFileEvent(kind, rel)

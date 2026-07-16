@@ -92,7 +92,7 @@ app.whenReady().then(async () => {
     getWindow: () => mainWindow,
   })
   vaultManager.setObserver(agentManager.observer)
-  registerIpc({ store, vaultManager, agentManager, userStream })
+  registerIpc({ store, vaultManager, agentManager, userStream, send })
   // A cached session or a dev auto-sign-in means we are already signed in; the other
   // routes in (Google, a pasted dev token) start it from `registerIpc`.
   if (store.load()) userStream.start()

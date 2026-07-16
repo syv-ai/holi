@@ -12,10 +12,13 @@ import * as Y from 'yjs'
 import {
   BRIDGE_ORIGIN,
   YDOC_TEXT_KEY,
+  YjsLink,
   isTaskFilePath,
   vaultRelPath,
   type DocMeta,
+  type SyncStatus,
   type VaultRelPath,
+  type YjsLinkTransport,
 } from '@holi/shared'
 import { BaseStore } from './base-store'
 import { DocBridge } from './doc-bridge'
@@ -77,6 +80,10 @@ export interface VaultMirrorDeps {
    * the agent marks something done) arrives as a foreign write that opens a
    * spurious turn, mid-turn. */
   onTaskFileEvent?(kind: 'add' | 'change' | 'unlink', rel: VaultRelPath): void
+  /** Relay connectivity for one doc (D59). The renderer no longer talks to the relay, so
+   * it can no longer see this for itself — main is the only thing that knows, and the
+   * sync indicator is only honest if this reaches it. */
+  onDocStatus?(docId: string, status: SyncStatus): void
 }
 
 interface DocEntry {
@@ -86,6 +93,9 @@ interface DocEntry {
   provider: HocuspocusProvider
   bridge: DocBridge
   started: boolean
+  /** Last relay status pushed for this doc — replayed to a renderer that links after the
+   * fact, since the provider only fires these on transition. */
+  status: SyncStatus
 }
 
 export class VaultMirror {
@@ -203,6 +213,37 @@ export class VaultMirror {
     return entry?.started ? entry.bridge : null
   }
 
+  /**
+   * Bind a renderer to a doc this mirror already holds (D59) — the seam that makes main
+   * the machine's sync hub. The renderer's edits enter `entry.doc` like any other update,
+   * so they reach disk through the DocBridge and the relay through the provider, both
+   * already wired. Nothing new has to know about the renderer.
+   *
+   * **Deliberately not gated on `started`** (unlike `bridgeForPath` above): an entry is
+   * registered before `await synced` (see `openEntry`), and the renderer's editor has
+   * always opened against an unsynced doc and filled in as updates land. Waiting here
+   * would leave the editor blank whenever the relay is slow — and, come slice 2, whenever
+   * it is absent, which is the whole point of the change.
+   *
+   * Returns null for a doc this mirror has no entry for — an unsafe path it skipped, or a
+   * docId from another vault. The caller must surface that rather than hand back an empty
+   * doc the user can type into and lose.
+   */
+  linkRenderer(docId: string, transport: YjsLinkTransport): { link: YjsLink; status: SyncStatus } | null {
+    const entry = this.entries.get(docId)
+    if (!entry) return null
+    return {
+      link: new YjsLink(entry.doc, entry.provider.awareness ?? null, transport),
+      status: entry.status,
+    }
+  }
+
+  private setDocStatus(docId: string, status: SyncStatus): void {
+    const entry = this.entries.get(docId)
+    if (entry) entry.status = status
+    this.deps.onDocStatus?.(docId, status)
+  }
+
   /** The Stop hook carries no path, so end every open turn. The watcher-idle
    * fallback still closes turns the hook never signals. */
   endOpenTurns(): void {
@@ -240,9 +281,27 @@ export class VaultMirror {
       name: meta.id,
       document: doc,
       token: this.deps.token,
-      onSynced: () => resolveSynced(),
+      onSynced: () => {
+        resolveSynced()
+        this.setDocStatus(meta.id, 'synced')
+      },
+      // The renderer used to read these off its own provider (collab/provider.ts). It has
+      // no provider now, so main reports them — mapped identically, or the indicator's
+      // meaning drifts from what shipped.
+      onDisconnect: () => this.setDocStatus(meta.id, 'offline'),
+      onStatus: ({ status }) => {
+        if (status === 'connecting') this.setDocStatus(meta.id, 'syncing')
+      },
     })
-    const entry: DocEntry = { docId: meta.id, rel, doc, provider, bridge: null as unknown as DocBridge, started: false }
+    const entry: DocEntry = {
+      docId: meta.id,
+      rel,
+      doc,
+      provider,
+      bridge: null as unknown as DocBridge,
+      started: false,
+      status: 'syncing',
+    }
     entry.bridge = new DocBridge({
       doc,
       readFile: () => readFile(absPathFor(this.deps.workRoot, entry.rel), 'utf8').catch(() => null),

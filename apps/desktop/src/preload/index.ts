@@ -33,6 +33,13 @@ const onVaultsEvent = pushChannel<unknown>('vaults:event')
 const onStreamResync = pushChannel<unknown>('stream:resync')
 /** A clicked reminder notification — main raises it, the renderer opens the task. */
 const onReminderOpen = pushChannel<unknown>('reminders:open')
+/** Collab (D59): main owns the Y.Doc and the relay connection; the renderer binds to it
+ * over these. Payloads carry `docId` because push channels are unaddressed broadcasts —
+ * the renderer filters. `update` is a Uint8Array: the first binary IPC in the app, which
+ * structured clone carries intact. */
+const onCollabUpdate = pushChannel<{ docId: string; update: Uint8Array }>('collab:update')
+const onCollabAwareness = pushChannel<{ docId: string; update: Uint8Array }>('collab:awareness')
+const onCollabStatus = pushChannel<{ docId: string; status: string }>('collab:status')
 
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
@@ -43,7 +50,17 @@ contextBridge.exposeInMainWorld('holi', {
     devSignIn: (token: string) => ipcRenderer.invoke('holi:auth:devSignIn', token),
     signOut: () => ipcRenderer.invoke('holi:auth:signOut'),
   },
-  collabAuth: () => ipcRenderer.invoke('holi:collab:auth'),
+  collab: {
+    open: (docId: string): Promise<unknown> => ipcRenderer.invoke('holi:collab:open', docId),
+    update: (docId: string, update: Uint8Array) =>
+      ipcRenderer.invoke('holi:collab:update', { docId, update }),
+    awareness: (docId: string, update: Uint8Array) =>
+      ipcRenderer.invoke('holi:collab:awareness', { docId, update }),
+    close: (docId: string) => ipcRenderer.invoke('holi:collab:close', docId),
+    onUpdate: onCollabUpdate,
+    onAwareness: onCollabAwareness,
+    onStatus: onCollabStatus,
+  },
   vault: {
     activate: (vaultId: string) => ipcRenderer.invoke('holi:vault:activate', vaultId),
   },

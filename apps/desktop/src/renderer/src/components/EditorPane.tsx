@@ -80,15 +80,15 @@ export function EditorPane() {
         return
       }
       sessionHandle = handle
-      handle.provider.setAwarenessField('user', {
+      handle.setUser({
         name: session.name ?? session.email,
         color: presenceColor(session.userId),
       })
 
-      // Main stamps `agentEditing` on its own provider for this same room while a turn
-      // writes to this doc (D37). Read it off awareness rather than inventing a second
-      // channel — the signal already crosses the wire, it just had no consumer.
-      const awareness = handle.provider.awareness!
+      // Main stamps `agentEditing` on its own awareness while a turn writes to this doc
+      // (D37); it reaches us across the link (D59). Read it off awareness rather than
+      // inventing a second channel — the signal already crosses, it just had no consumer.
+      const { awareness } = handle
       const readAgentEditing = (): void =>
         setAgentEditing(agentEditingIn(awareness.getStates(), awareness.clientID))
       awareness.on('change', readAgentEditing)
@@ -120,8 +120,7 @@ export function EditorPane() {
               },
               nav: () => navRef.current,
             }),
-            // provider.awareness is typed nullable in v2 but always set with a document
-            yCollab(handle.text, handle.provider.awareness!, { undoManager }),
+            yCollab(handle.text, handle.awareness, { undoManager }),
           ],
         }),
         parent: hostRef.current!,
