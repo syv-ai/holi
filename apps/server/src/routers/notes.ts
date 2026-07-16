@@ -7,6 +7,7 @@ import { docs, linkIndex, yjsDocs } from '../db/schema'
 import { ensureAncestorFolders, safePath } from '../paths'
 import { router, vaultProcedure } from '../trpc'
 import { renameFolder, renameNote } from '../yjs/rename'
+import { getOrCreateDaily, sweepDaily } from '../daily/service'
 
 export const notesRouter = router({
   create: vaultProcedure
@@ -28,6 +29,25 @@ export const notesRouter = router({
       ctx.bus.emitDocs(ctx.vaultId, { type: 'created', doc: meta })
       return meta
     }),
+
+  /** Today's daily note, idempotently (D44/D45). `localDate` is the caller's — the
+   * server never computes "today" for a device it cannot locate. */
+  getOrCreateDaily: vaultProcedure
+    .input(z.object({ localDate: z.string() }))
+    .mutation(async ({ ctx, input }) =>
+      getOrCreateDaily({ db: ctx.db, bus: ctx.bus }, { vaultId: ctx.vaultId, localDate: input.localDate }),
+    ),
+
+  /** Archive prior-day dailies into `journal/`, GC untouched unreferenced stubs.
+   * Idempotent — the client kicks it on every activation. */
+  sweepDaily: vaultProcedure
+    .input(z.object({ localDate: z.string() }))
+    .mutation(async ({ ctx, input }) =>
+      sweepDaily(
+        { db: ctx.db, bus: ctx.bus, getLiveDoc: ctx.getLiveDoc },
+        { vaultId: ctx.vaultId, localDate: input.localDate, authorId: ctx.user.id },
+      ),
+    ),
 
   /** No ref cascades — dangling related[] ids render tombstones client-side (D27). */
   delete: vaultProcedure
