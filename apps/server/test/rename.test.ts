@@ -100,4 +100,83 @@ describe('atomic rename', () => {
     const text = docText(docFromState(await loadDocState(t.db, outside.id)))
     expect(text).toBe('see [[archive/q2/plan.md]]')
   })
+
+  /**
+   * `renameNote` has rejected a taken path since it was written; `renameFolder` checked
+   * NOTHING. It was unreachable — nothing called it outside these tests — and becomes
+   * data loss the moment there is a button.
+   *
+   * There is no transaction to lean on, and there cannot be one: `rewriteReferences`
+   * edits CRDT docs through the live relay, which no database transaction can roll back.
+   * So the only defence is to reject before touching anything.
+   */
+  describe('renameFolder rejects a collision before it moves anything', () => {
+    const folderIdFor = async (path: string) =>
+      (await t.db.select().from(folders).where(eq(folders.path, path)))[0]!.id
+
+    it('rejects renaming onto an existing folder rather than silently merging', async () => {
+      const caller = notesRouter.createCaller(ctxFor(t, userId))
+      await caller.create({ vaultId, path: 'a/one.md', kind: 'note' })
+      await caller.create({ vaultId, path: 'b/two.md', kind: 'note' })
+
+      await expect(
+        caller.renameFolder({ vaultId, folderId: await folderIdFor('a'), newPath: 'b' }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' })
+    })
+
+    // The partial-move case: the collision used to be found MID-LOOP, by the docs unique
+    // constraint, after earlier docs had already been moved and their links rewritten.
+    it('leaves every doc where it was when it rejects', async () => {
+      const caller = notesRouter.createCaller(ctxFor(t, userId))
+      const first = await caller.create({ vaultId, path: 'src/aaa.md', kind: 'note' })
+      const clash = await caller.create({ vaultId, path: 'src/zzz.md', kind: 'note' })
+      // dst/zzz.md already exists, so moving src → dst collides on the SECOND doc
+      await caller.create({ vaultId, path: 'dst/zzz.md', kind: 'note' })
+
+      await expect(
+        caller.renameFolder({ vaultId, folderId: await folderIdFor('src'), newPath: 'dst' }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' })
+
+      // aaa.md sorts first and would have been moved already under the old code
+      expect((await t.db.select().from(docs).where(eq(docs.id, first.id)))[0]?.path).toBe('src/aaa.md')
+      expect((await t.db.select().from(docs).where(eq(docs.id, clash.id)))[0]?.path).toBe('src/zzz.md')
+      expect((await t.db.select().from(folders).where(eq(folders.path, 'src')))[0]).toBeDefined()
+    })
+
+    // Positive control: without it, a check that rejects EVERYTHING passes the two above.
+    it('still renames a folder when the destination is free', async () => {
+      const caller = notesRouter.createCaller(ctxFor(t, userId))
+      const doc = await caller.create({ vaultId, path: 'from/note.md', kind: 'note' })
+      await caller.renameFolder({ vaultId, folderId: await folderIdFor('from'), newPath: 'to' })
+      expect((await t.db.select().from(docs).where(eq(docs.id, doc.id)))[0]?.path).toBe('to/note.md')
+    })
+
+    /**
+     * The doc-destination half of the guard, reached on purpose.
+     *
+     * Every path this codebase can currently reach has a folder row — all three `docs`
+     * writers call `ensureAncestorFolders`, and the daily-note archive moves through
+     * `renameNote`, which does too — so the folder-row check catches every collision
+     * that can happen today, and this half is the belt to its braces. Mutation-testing
+     * found that out: deleting the doc check failed nothing, because the earlier tests
+     * were all being caught by the folder row.
+     *
+     * So the state is built by hand: a doc under `y/` whose folder row is gone. That
+     * makes the folder check miss, and without the doc check the `docs` unique
+     * constraint fires **mid-loop** — a half-moved folder. It is what stops a fourth
+     * `docs` writer that forgets `ensureAncestorFolders` from resurrecting the bug.
+     */
+    it('rejects on a taken doc destination even when the folder row is missing', async () => {
+      const caller = notesRouter.createCaller(ctxFor(t, userId))
+      await caller.create({ vaultId, path: 'x/dup.md', kind: 'note' })
+      await caller.create({ vaultId, path: 'y/dup.md', kind: 'note' })
+      // the degenerate state: the docs exist, the folder row does not
+      await t.db.delete(folders).where(eq(folders.path, 'y'))
+
+      await expect(
+        caller.renameFolder({ vaultId, folderId: await folderIdFor('x'), newPath: 'y' }),
+      ).rejects.toMatchObject({ code: 'CONFLICT' })
+      expect((await t.db.select().from(docs).where(eq(docs.path, 'x/dup.md')))[0]).toBeDefined()
+    })
+  })
 })

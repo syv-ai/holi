@@ -1,10 +1,16 @@
 /**
- * Atomic rename (D12, docs-only per D27). All SQL runs in one transaction;
- * CRDT link spans are rewritten as targeted Y.Text ops via the shared
- * grammar. Live rooms receive the rewrite through the normal relay path
- * (editDocText goes through the live doc when one is open).
+ * Atomic rename (D12, docs-only per D27). CRDT link spans are rewritten as targeted
+ * Y.Text ops via the shared grammar. Live rooms receive the rewrite through the normal
+ * relay path (editDocText goes through the live doc when one is open).
+ *
+ * "Atomic" here means *from the reader's point of view* — a link never points at a path
+ * that does not exist. It does NOT mean a transaction: there is none, and there cannot
+ * be one, because the rewrite goes through the live relay and no database transaction
+ * can roll back a Yjs op. (This header used to claim "all SQL runs in one transaction",
+ * which was never true of either function here.) What stands in for it is checking every
+ * destination BEFORE moving anything — see assertFolderDestinationFree.
  */
-import { and, eq, like } from 'drizzle-orm'
+import { and, eq, inArray, like } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
 import type * as Y from 'yjs'
 import { formatWikiLink, parseWikiLinks, type VaultRelPath } from '@holi/shared'
@@ -97,6 +103,40 @@ export async function renameNote(
   deps.bus.emitDocs(args.vaultId, { type: 'renamed', doc: toDocMeta(moved!) })
 }
 
+/**
+ * Every path a folder rename is about to claim, checked before it claims any of them.
+ *
+ * Both halves are needed. The **folder row** at the destination catches "rename `a` onto
+ * `b`" — but a destination that exists only as a *prefix* of doc paths may have no folder
+ * row at all, so the **doc destinations** must be checked too, or the `docs` unique
+ * constraint fires mid-loop and we are back to the partial move.
+ */
+async function assertFolderDestinationFree(
+  db: Db,
+  vaultId: string,
+  oldPrefix: string,
+  newPath: string,
+  contained: Array<{ id: string; path: string }>,
+): Promise<void> {
+  if (newPath === oldPrefix) return
+  const [occupiedFolder] = await db
+    .select({ id: folders.id })
+    .from(folders)
+    .where(and(eq(folders.vaultId, vaultId), eq(folders.path, newPath)))
+  if (occupiedFolder) throw new TRPCError({ code: 'CONFLICT', message: `${newPath} is taken` })
+
+  const destinations = contained.map((doc) => `${newPath}/${doc.path.slice(oldPrefix.length + 1)}`)
+  if (destinations.length === 0) return
+  const moving = new Set(contained.map((doc) => doc.id))
+  const clashes = await db
+    .select({ id: docs.id, path: docs.path })
+    .from(docs)
+    .where(and(eq(docs.vaultId, vaultId), inArray(docs.path, destinations)))
+  // A doc that is itself moving cannot collide with its own destination.
+  const blocking = clashes.find((row) => !moving.has(row.id))
+  if (blocking) throw new TRPCError({ code: 'CONFLICT', message: `${blocking.path} is taken` })
+}
+
 export async function renameFolder(
   deps: RenameDeps,
   args: { vaultId: string; folderId: string; newPath: VaultRelPath; authorId: string },
@@ -109,12 +149,25 @@ export async function renameFolder(
   if (!folder) throw new TRPCError({ code: 'NOT_FOUND' })
   const oldPrefix = folder.path
 
-  // move contained docs one by one through the same machinery (links rewrite,
-  // snapshots, link_index) — tasks.area follows automatically via folder id (D27)
   const contained = await db
     .select()
     .from(docs)
     .where(and(eq(docs.vaultId, args.vaultId), like(docs.path, `${oldPrefix}/%`)))
+
+  // Reject before touching anything. `renameNote` has always checked its one destination
+  // (line ~86); this checked NOTHING, so renaming `a` onto an existing `b` silently
+  // MERGED them, and a contained-doc collision surfaced only when the `docs` unique
+  // constraint fired **mid-loop** — after earlier docs had already been moved and their
+  // links rewritten. A half-moved folder, and no way back.
+  //
+  // Up-front is the only defence available: there is no transaction here and there
+  // cannot be one, because `rewriteReferences` edits CRDT docs through the live relay
+  // and no database transaction can roll that back. Checking first means the loop only
+  // ever runs when it is going to finish.
+  await assertFolderDestinationFree(db, args.vaultId, oldPrefix, args.newPath, contained)
+
+  // move contained docs one by one through the same machinery (links rewrite,
+  // snapshots, link_index) — tasks.area follows automatically via folder id (D27)
   for (const doc of contained) {
     const newDocPath = `${args.newPath}/${doc.path.slice(oldPrefix.length + 1)}` as VaultRelPath
     await rewriteReferences(deps, args.vaultId, doc.path, newDocPath, args.authorId, [doc.id])
