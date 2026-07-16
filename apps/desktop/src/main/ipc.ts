@@ -12,6 +12,7 @@ import {
   type TrpcOp,
 } from './server-client'
 import type { AgentManager } from './agent/agent-manager'
+import type { UserStream } from './events/user-stream'
 import type { SessionStore } from './session'
 import type { VaultManager } from './vault/vault-manager'
 
@@ -25,8 +26,12 @@ export function registerIpc(deps: {
   store: SessionStore
   vaultManager: VaultManager
   agentManager: AgentManager
+  /** Started on sign-in, stopped on sign-out — its lifetime is the session's, not any
+   * vault's (D50). Every route in has to start it, or that route gets a dead app: no
+   * live tree, no switcher updates, no reminders. */
+  userStream: UserStream
 }): void {
-  const { store, vaultManager, agentManager } = deps
+  const { store, vaultManager, agentManager, userStream } = deps
   const client: ServerClient = createServerClient(() => store.load()?.token ?? null)
 
   ipcMain.handle('holi:trpc', (_e, op: TrpcOp) => toEnvelope(callProcedure(client, op)))
@@ -36,7 +41,9 @@ export function registerIpc(deps: {
     return s ? { userId: s.userId, email: s.email, name: s.name } : null
   })
 
-  ipcMain.handle('holi:auth:signIn', () => toEnvelope(signInWithGoogle(client, store)))
+  ipcMain.handle('holi:auth:signIn', () =>
+    toEnvelope(signInWithGoogle(client, store).then((user) => (userStream.start(), user))),
+  )
 
   ipcMain.handle('holi:auth:devSignIn', (_e, token: string) =>
     toEnvelope(
@@ -51,6 +58,7 @@ export function registerIpc(deps: {
           name: user.name,
           cachedAt: new Date().toISOString(),
         })
+        userStream.start()
         return { userId: user.id, email: user.email, name: user.name } satisfies PublicUser
       })(),
     ),
@@ -59,6 +67,7 @@ export function registerIpc(deps: {
   ipcMain.handle('holi:auth:signOut', () =>
     toEnvelope(
       (async () => {
+        userStream.stop() // before the token goes: it authenticates with it
         try {
           await client.auth.signOut.mutate()
         } finally {

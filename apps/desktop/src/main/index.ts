@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { createAgentManager } from './agent/agent-manager'
+import { createUserStream } from './events/user-stream'
 import { registerIpc } from './ipc'
 import { createReminderNotifier } from './reminders/notifier'
 import { createServerClient, type ServerClient } from './server-client'
@@ -68,10 +69,22 @@ app.whenReady().then(async () => {
   const reminderNotifier = createReminderNotifier({ getWindow: () => mainWindow, send })
   const vaultManager = createVaultManager({
     store,
-    // The board is fed from the SSE stream main already owns — one connection per
-    // vault. The renderer never opens a second one.
+    // The board and the tree are fed from the one SSE stream main owns — one connection
+    // per signed-in user (D50). The renderer never opens its own.
     send,
-    onReminders: (event) => reminderNotifier.raise(event),
+    onReminders: (vaultId, event) => reminderNotifier.raise(vaultId, event),
+  })
+  const userStream = createUserStream({
+    getToken: () => store.load()?.token ?? null,
+    client,
+    onEnvelope: (channel, vaultId, event) => vaultManager.handleEnvelope(channel, vaultId, event),
+    onReconnect: () => {
+      vaultManager.handleReconnect()
+      // The renderer's tree and switcher have no reconcile of their own, and there is no
+      // resume cursor on the wire — so a gap is the one moment they can silently go
+      // stale on exactly the path this slice exists to fix. Refetch both.
+      send('stream:resync', {})
+    },
   })
   const agentManager = createAgentManager({
     client,
@@ -79,8 +92,12 @@ app.whenReady().then(async () => {
     getWindow: () => mainWindow,
   })
   vaultManager.setObserver(agentManager.observer)
-  registerIpc({ store, vaultManager, agentManager })
+  registerIpc({ store, vaultManager, agentManager, userStream })
+  // A cached session or a dev auto-sign-in means we are already signed in; the other
+  // routes in (Google, a pasted dev token) start it from `registerIpc`.
+  if (store.load()) userStream.start()
   app.on('before-quit', () => {
+    userStream.stop()
     void agentManager.dispose().then(() => vaultManager.deactivate())
   })
   createWindow()
