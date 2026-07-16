@@ -24,6 +24,10 @@ declare global {
       vault: {
         activate(vaultId: string): Promise<TrpcEnvelope>
       }
+      reminders: {
+        /** A reminder notification was clicked — open that task. */
+        onOpen(cb: (e: { taskId: string }) => void): () => void
+      }
       tasks: {
         /** Each returns its unsubscribe closure. Both ride main's single SSE stream. */
         onEvent(cb: (e: TasksEvent) => void): () => void

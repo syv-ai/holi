@@ -9,6 +9,7 @@ import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
 import { openTodaysDailyNoteAtom, sweepDailyNotesAtom } from '../state/daily'
 import { sessionAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
+import { selectedTaskIdAtom } from '../state/tasks'
 import { viewAtom } from '../state/view'
 import {
   activeDocAtom,
@@ -31,6 +32,7 @@ export function Shell() {
   const createVault = useSetAtom(createVaultAtom)
   const openTodaysDailyNote = useSetAtom(openTodaysDailyNoteAtom)
   const sweepDailyNotes = useSetAtom(sweepDailyNotesAtom)
+  const setSelectedTaskId = useSetAtom(selectedTaskIdAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [view, setView] = useAtom(viewAtom)
@@ -54,6 +56,16 @@ export function Shell() {
       void sweepDailyNotes()
     })()
   }, [activeVaultId, loadDocs, setActiveDoc, openTodaysDailyNote, sweepDailyNotes])
+
+  // A clicked reminder notification lands you on the task it was about. Mounted here,
+  // not in BoardView: the board may well not be on screen when the notification fires —
+  // that is the whole point of a reminder.
+  useEffect(() => {
+    return window.holi.reminders.onOpen(({ taskId }) => {
+      setView('board')
+      setSelectedTaskId(taskId)
+    })
+  }, [setView, setSelectedTaskId])
 
   // ⌘J / Ctrl-J toggles the agent drawer (the app's first shortcut)
   useEffect(() => {

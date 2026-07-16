@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { createAgentManager } from './agent/agent-manager'
 import { registerIpc } from './ipc'
+import { createReminderNotifier } from './reminders/notifier'
 import { createServerClient, type ServerClient } from './server-client'
 import { electronSessionStore, type SessionStore } from './session'
 import { createVaultManager } from './vault/vault-manager'
@@ -62,11 +63,15 @@ app.whenReady().then(async () => {
   const store = electronSessionStore()
   const client = createServerClient(() => store.load()?.token ?? null)
   await maybeDevSignIn(store, client)
+  const send = (channel: string, payload: unknown) =>
+    mainWindow?.webContents.send(channel, payload)
+  const reminderNotifier = createReminderNotifier({ getWindow: () => mainWindow, send })
   const vaultManager = createVaultManager({
     store,
     // The board is fed from the SSE stream main already owns — one connection per
     // vault. The renderer never opens a second one.
-    send: (channel, payload) => mainWindow?.webContents.send(channel, payload),
+    send,
+    onReminders: (event) => reminderNotifier.raise(event),
   })
   const agentManager = createAgentManager({
     client,

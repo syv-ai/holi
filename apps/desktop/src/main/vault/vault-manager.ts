@@ -14,6 +14,7 @@ import { SseClient } from './sse-client'
 import { makeTaskApi } from './task-api'
 import { TaskProjector } from './task-projector'
 import { VaultMirror, type DocsEvent } from './vault-mirror'
+import type { RemindersEvent } from '../reminders/types'
 
 /** Mirrors the server bus's TasksEvent shape (apps/server/src/bus.ts).
  *
@@ -67,6 +68,9 @@ export function createVaultManager(deps: {
   /** Push to the renderer. The SSE connection lives HERE, in main — one per vault —
    * and the board is fed from it. The renderer must never open a second stream. */
   send?: (channel: string, payload: unknown) => void
+  /** Raise fired reminders. Injected so this module stays free of `Notification`
+   * (the `getWindow` pattern — it has to load under vitest). */
+  onReminders?: (event: RemindersEvent) => void
 }): VaultManager {
   let current: {
     vaultId: string
@@ -135,6 +139,11 @@ export function createVaultManager(deps: {
             .catch((err) => console.error('[tasks] projection failed:', err))
           observer?.onTasksEvent(event)
           deps.send?.('tasks:event', event) // the board
+        } else if (channel === 'reminders') {
+          // Until now this frame arrived and was dropped on the floor — the same bug
+          // the comment below records for presence, and the reason a reminder you set
+          // never reached you. The server owns scheduling; main only raises it.
+          deps.onReminders?.(data as RemindersEvent)
         } else if (channel === 'presence') {
           // Until the board existed this frame arrived and was dropped on the floor.
           // Nothing in main wants it: presence is a UI concern end to end. It is
@@ -151,12 +160,30 @@ export function createVaultManager(deps: {
       onReconnect: () => {
         void mirror.refresh().catch((err) => console.error('[mirror] refresh failed:', err))
         void projector.reconcile().catch((err) => console.error('[tasks] reconcile failed:', err))
+        void catchUpReminders()
       },
     })
+
+    /** Raise fires that landed while we weren't listening. Joins the self-healing the
+     * mirror and projector already do on a stream gap — a reminder missed during the
+     * gap is exactly as lost as a missed task upsert, and the server has kept it. */
+    const catchUpReminders = async () => {
+      try {
+        const missed = await client.reminders.catchUp.mutate({ vaultId })
+        if (missed) deps.onReminders?.(missed)
+      } catch (err) {
+        console.error('[reminders] catch-up failed:', err)
+      }
+    }
     await mirror.start()
     // after the mirror, so note paths resolve for related[] / area rendering
     await projector.start().catch((err) => console.error('[tasks] projection failed:', err))
     events.start()
+    // After the stream is up, never before: a fire landing in the gap would be missed by
+    // a catch-up that already ran and by a stream not yet listening. This order can at
+    // worst show one twice — and the server advances the watermark on live sends, so in
+    // practice it won't. Duplicates beat silence.
+    void catchUpReminders()
     current = { vaultId, mirror, events, projector }
 
     // managed files ride the adoption path: write what's missing, let the

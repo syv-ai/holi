@@ -20,6 +20,8 @@ const onAgentStatus = pushChannel<unknown>('agent:status')
 /** The board's feed. Both ride the ONE per-vault SSE connection that main owns. */
 const onTasksEvent = pushChannel<unknown>('tasks:event')
 const onTaskPresence = pushChannel<unknown>('tasks:presence')
+/** A clicked reminder notification — main raises it, the renderer opens the task. */
+const onReminderOpen = pushChannel<unknown>('reminders:open')
 
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
@@ -33,6 +35,9 @@ contextBridge.exposeInMainWorld('holi', {
   collabAuth: () => ipcRenderer.invoke('holi:collab:auth'),
   vault: {
     activate: (vaultId: string) => ipcRenderer.invoke('holi:vault:activate', vaultId),
+  },
+  reminders: {
+    onOpen: onReminderOpen,
   },
   tasks: {
     onEvent: onTasksEvent,
