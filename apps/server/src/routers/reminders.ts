@@ -2,6 +2,7 @@ import { on } from 'node:events'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { RemindersEvent } from '../bus'
 import { reminders } from '../db/schema'
+import { catchUpDeliveries } from '../reminders/delivery'
 import { router, vaultProcedure } from '../trpc'
 
 export const remindersRouter = router({
@@ -12,6 +13,11 @@ export const remindersRouter = router({
       .from(reminders)
       .where(and(eq(reminders.vaultId, ctx.vaultId), isNull(reminders.firedAt))),
   ),
+
+  /** Fires this member missed while disconnected, raised on connect and after a stream
+   * gap (D47). A mutation, not a query: it advances the delivery watermark. Not a client
+   * missed-pass — the server owns the ledger and answers the question. */
+  catchUp: vaultProcedure.mutation(({ ctx }) => catchUpDeliveries(ctx.db, ctx.vaultId, ctx.user.id)),
 
   /** (S) Fire events → client raises the native notification (D19). */
   subscribe: vaultProcedure.subscription(async function* ({ ctx, signal }) {

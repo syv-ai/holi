@@ -8,6 +8,7 @@ import { resolveVaultRole } from './auth/membership'
 import { resolveSession } from './auth/sessions'
 import type { Bus, DocsEvent, PresenceEvent, RemindersEvent, TasksEvent } from './bus'
 import type { Db } from './db/client'
+import { markDelivered } from './reminders/delivery'
 import { bearerToken } from './trpc'
 
 const HEARTBEAT_MS = 25_000
@@ -17,7 +18,7 @@ export function makeEventsHandler(deps: { db: Db; bus: Bus }) {
     const token = bearerToken(req)
     const user = token ? await resolveSession(deps.db, token) : null
     const role = user ? await resolveVaultRole(deps.db, vaultId, user.id) : null
-    if (!role) {
+    if (!user || !role) {
       res.statusCode = user ? 403 : 401
       return void res.end()
     }
@@ -31,7 +32,14 @@ export function makeEventsHandler(deps: { db: Db; bus: Bus }) {
       res.write(`event: ${channel}\ndata: ${JSON.stringify(event)}\n\n`)
     const onDocs = (e: DocsEvent) => void send('docs', e)
     const onTasks = (e: TasksEvent) => void send('tasks', e)
-    const onReminders = (e: RemindersEvent) => void send('reminders', e)
+    // Sending *is* delivering, so the watermark advances here too (D47) — otherwise the
+    // next catch-up would replay every fire this connection already showed the user.
+    const onReminders = (e: RemindersEvent) => {
+      send('reminders', e)
+      void markDelivered(deps.db, vaultId, user.id, e.firedAt).catch((err) =>
+        console.error('[reminders] watermark advance failed:', err),
+      )
+    }
     const onPresence = (e: PresenceEvent) => void send('presence', e)
     deps.bus.on(`docs:${vaultId}`, onDocs)
     deps.bus.on(`tasks:${vaultId}`, onTasks)
