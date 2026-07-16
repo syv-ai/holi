@@ -66,12 +66,59 @@ Agent-authored apps/widgets (see [`prd/vault-apps.md`](vault-apps.md) — apps s
 6. **Wiki-links.** Parse `[[folder/note.md]]` (and `[[path|Label]]`) with the shared grammar. Render note chips (exists/missing, click-to-open, `data-wiki-*` for the hover-preview host), task chips, file chips; hover previews; cursor-inside reveals raw source.
 7. **Markdown links.** Standard `[text](url)` links render with a styled `data-href` anchor (not a live `href` — the app must not navigate away); click opens externally / resolves internally.
 8. **@-mention autocomplete.** Typing `@` opens completion over notes/files/tasks; selecting inserts the corresponding `[[…]]` link. Task mention adds the current note to the task's `related[]` ([`prd/tasks.md`](tasks.md)).
-9. **Slash commands.** `/` opens the command menu (task creation, subtask checkbox, table insert); extensible via the provider registry.
+9. **Slash commands.** `/` opens the command menu (task creation, `/todo` checkbox, table insert); extensible via the provider registry. **Not "subtask":** this editor only ever opens **notes** — a task's description is a plain textarea, not CodeMirror — so a checkbox here has no parent task to be a subtask *of*. It inserts a markdown checkbox and is named for one. (`/task`, real task creation, remains deferred until the create-from-editor UX is settled.)
 10. **Tables.** Keep `codemirror-markdown-tables` (the package) and its nested in-cell editing + paste-table normalization. Verify it composes with `yCollab` transactions.
-11. **Rename.** `note_rename` MCP op renames a Doc's path and rewrites every referencing `[[link]]` atomically server-side. It is **docs-only**: task records reference notes by stable ID and need no rewrite.
-12. **Backrefs & delete.** Before deleting a note, surface referencing notes + tasks from a server query. After delete, dangling refs render as tombstones ("[deleted note]") — no cascade, no orphan machinery (tasks are server records with stable-ID refs — [`prd/tasks.md`](tasks.md)).
-13. **File tree & folders.** Driven by server metadata (Doc paths), not disk scans. Create/rename/move/delete notes and folders through server ops.
+11. **Rename.** `notes.rename` renames a Doc's path and rewrites every referencing `[[link]]` atomically server-side. It is **docs-only**: task records reference notes by stable ID and need no rewrite. Reachable **from the file tree** (shipped 2026-07-16) and, as the `note_rename` MCP op, from the agent — the same server op either way, which is the point: the agent could do this from the day the drawer shipped while the obvious affordance in the tree did not exist. **Rename is also move** — a new path with a different folder prefix relocates the note, and the server creates the destination folders. No drag-and-drop: rename-to-path covers the semantics.
+12. **Backrefs & delete.** Before deleting a note, surface referencing notes + tasks from a server query. **The warning shipped 2026-07-16**: the delete confirm names each linking note and its occurrence count, from `notes.backrefs` (built, and uncalled until then). No cascade, no orphan machinery — the dangling refs survive on purpose (tasks are server records with stable-ID refs — [`prd/tasks.md`](tasks.md)).
+    - **The tombstone half is deferred**, and it is not a small addition. Dangling refs are meant to render as `[deleted note]`, but they live in `related[]`, and **`related[]` has no surface in the renderer at all** — `TaskDetail` has no relations row, and the strings `tombstone`/`[deleted note]` do not exist in the codebase. "Render tombstones" is really "build the relations surface", a separate known gap, and it must not be smuggled in behind a delete button. Shipping the warning without it is not half a feature: it is the *preventive* half, and strictly better than a tree that could not delete at all and so warned about nothing.
+13. **File tree & folders.** Driven by server metadata (Doc paths), not disk scans. Create/rename/move/delete notes, and rename folders, through server ops — all reachable from the tree as of 2026-07-16.
+    - **Folders stay implicit, and there is no create-folder or delete-folder.** You make a folder by naming a path; `ensureAncestorFolders` writes the rows. Explicit folder ops would be a new server surface and are not built.
+    - **An empty folder is always vestigial, so the tree hides it.** Deleting the last note in a folder leaves an orphan `folders` row — a problem that could not exist before delete shipped. The tree drops it from the *display* only: deleting the row would silently unfile every task pointing at that folder as its `area` ([`prd/tasks.md`](tasks.md) — `ON DELETE SET NULL`), because a folder with no docs can legitimately still be a board lane full of tasks. Docs and tasks are different populations over the same folders.
+    - **The tree is live**: it rides the `docs` frame on the one user-scoped SSE stream main owns, so a note created, renamed or deleted by a teammate, by your agent, or in another window appears without a refetch. (It was refetch-only-on-vault-activation until 2026-07-16 — the tree simply lied until you switched vaults. Closing that is what the user-scoped stream was for; see `architecture.md` §5.)
 14. **Note creation.** Create a Doc at a path (validated via `packages/shared/path`); server assigns identity; client materializes a working copy; editor opens it.
+15. **Panes & tabs.** The shell holds more than one open doc at a time, VS Code's preview-vs-pinned model — see §Panes & tabs.
+16. **Frontmatter reveal control.** Frontmatter is hidden by default (FR-2) with an explicit control to edit it — see §Panes & tabs.
+
+---
+
+## Panes & tabs
+
+**Status: designed here, not built.** The shell today shows **one** doc at a time (`activeDocAtom`) with a `notes ↔ board` toggle. This section is the missing owner for the shell chrome: `architecture.md` already constrains the pane system ("the pane/tab system must not assume tabs are notes"), [`prd/vault-apps.md`](vault-apps.md) §Tabs *depends* on it ("the pane system must accept non-note tab kinds — the one v1 accommodation this PRD asks for"), and [`prd/daily-notes.md`](daily-notes.md) assumes it ("if the panes ever reach zero tabs"). Three docs pointed at a surface no doc specified. This is that doc.
+
+### Tabs — preview vs pinned
+
+Port VS Code's two-state model, which the old repo also used:
+- **Preview tab** (italic title): a single-click in the file tree opens the doc **in the existing preview tab, replacing it**. Browsing a vault therefore costs one tab, not twenty.
+- **Pinned tab**: a **double-click** in the tree, a **double-click on the tab**, or **editing the doc** promotes the preview tab to pinned — it stops being replaced. Editing promoting a tab is the rule that matters: it means you can never lose your place by clicking away from something you were typing in.
+- Tabs are closeable and reorderable; the tab strip lives in the header bar the `notes/board` toggle occupies today.
+
+**The forward constraint (from `architecture.md`, load-bearing):** a tab is **not** a note. Model a tab as a discriminated union (`{kind: 'note'} | {kind: 'board'} | {kind: 'app', …}`) from the first commit. `board` becomes a tab kind rather than a toggle, and post-v1 vault apps slot in as a third kind without reopening the model. A `Map<docId, …>` tab store forecloses both.
+
+**Open questions:** does each pane keep its own preview tab (VS Code) or is there one per window? Do tabs survive a restart (and if so, where is the strip persisted — `user_state`)? Does the board tab pin automatically, being unique?
+
+### Split panes
+
+Deferred behind tabs, but do not design them out: the state shape should be `panes[] → tabs[]`, not a flat `tabs[]`, so a split is a second pane rather than a rewrite. vault-apps expects "split-screen with notes".
+
+### Frontmatter reveal control
+
+FR-2 hides frontmatter by default (block widget + atomic range). Hiding it with no way back is not shippable, so it needs an explicit control, and the reveal-on-caret rule the rest of live-preview uses is **not** enough on its own here — frontmatter is a structured header, not prose, and a caret wandering into it is as likely to be an accident as an intent.
+
+**Shape:** a right-aligned **button group** in the header bar holding a **"show frontmatter"** toggle. Toggled on, frontmatter opens in a **separate, simpler editor** above the note body — a plain key/value surface, not the full markdown stack — so editing `type:` or `date:` never involves the live-preview machinery. The body editor keeps frontmatter hidden either way.
+
+**Why a separate editor rather than just un-hiding the range:** frontmatter is YAML, and the note editor is a markdown editor — the live-preview decorations, slash menu, wiki-link chips and formatting hotkeys are all wrong inside it, and an errant `⌘B` writing `**bold**` into a YAML key produces a file the task/daily parsers reject. Separating the surfaces means the markdown stack never has to special-case a region it cannot handle.
+
+**Implementation note (the real cost):** the `EditorView` is currently trapped inside `EditorPane`'s effect closure and is never lifted to a ref or atom, so *nothing outside the pane can command the editor*. A header button that toggles a decoration needs that seam first. That, not the widget, is the work.
+
+### Presence in the file tree
+
+Extends FR-5 (presence avatars in the note header) to the tree: a small round avatar with initials on any doc **open or active for another member**, so you can see where the vault is busy without opening anything. Same awareness channel as the header avatars and the same expiry rule — a heartbeat that stops arriving *is* the release (D36/D37); there is no "closed it" event and there must not be one.
+
+**The blocker to size first:** header avatars come from the **per-doc Yjs awareness channel**, which only exists for a doc you have **open** — a tree showing every doc cannot open a Hocuspocus room per row to find out who's there. So this needs a **vault-scoped** presence source (the SSE `presence` frame the board already rides, D36) carrying doc-level entries, not the per-doc awareness channel. The stream itself is user-scoped now, but `presence` is filtered to the active vault before it reaches the renderer, so the source you want is exactly the frame the board reads. Decide that before building the avatars, or the tree will open N rooms and quietly melt.
+
+### Vault dropdown
+
+The vault `<select>` is a native element and cannot hold the "new vault" `+` button that currently sits beside it, nor the settings gear. Replace with a custom dropdown whose list ends in a **"+ New vault…"** row, folding the header's three controls into one. Grouped here because it is the same header bar the tab strip lands in — design the shell chrome once.
 
 ---
 
@@ -121,7 +168,7 @@ Port `vaultRefs.ts` from the old repo as the **single source of truth** for the 
 - **Server** (rename, `link_index`) — same `parseWikiLinks` for exact-range rewrites and link extraction. One parser, thin consumers — greedy-vs-lazy drift between parsers cannot occur. (No chat renderer: chat is the raw terminal, history via native `--resume`.)
 
 ### Task links
-Tasks are structured server **records**, not files ([`prd/tasks.md`](tasks.md)). Note prose carries a stable **`[[task:<id>]]`** textual token — agent-readable and -authorable, resolved against the task collection (no file need exist). It renders as a task chip (status orb + title, click-to-open); the grammar's task-detection helper matches `task:<id>`. This keeps task↔note links visible and editable in the markdown itself (the same readability rationale as path-based wiki-links), *in addition to* the structured `related[]` field. It also applies the system-wide cross-reference principle — **machine references use stable IDs; human prose uses paths** — in prose: the token never encodes a path, so task chips survive any rename untouched.
+Tasks are structured server **records** ([`prd/tasks.md`](tasks.md)); their file projection is a view of the record, and note prose never links to it by path. Note prose carries a stable **`[[task:<id>]]`** textual token — agent-readable and -authorable, resolved against the task collection (no file need exist). It renders as a task chip (status orb + title, click-to-open); the grammar's task-detection helper matches `task:<id>`. This keeps task↔note links visible and editable in the markdown itself (the same readability rationale as path-based wiki-links), *in addition to* the structured `related[]` field. It also applies the system-wide cross-reference principle — **machine references use stable IDs; human prose uses paths** — in prose: the token never encodes a path, so task chips survive any rename untouched.
 
 ### Rename — atomic server-side
 `note_rename` is an **MCP op** (see [`prd/agent.md`](agent.md)), not a native `mv`, because rename must preserve CRDT Doc identity **and** rewrite links atomically. The **server** (the relay is truth): (a) updates the Doc's `path` (identity/`docs` row stable, only `path` changes); (b) finds affected docs from the `link_index`; (c) applies the `[[link]]` rewrite as **Yjs ops on each affected Doc**, using `parseWikiLinks` to locate exact ranges (never blind substring replace). That is the whole op — `note_rename` is **docs-only**: task `related[]` refs and task `area` store stable IDs and need no rewrite, so no cross-subsystem atomic transaction exists. Merge-safe with concurrent edits to unaffected regions. **Why central:** rename conflicts are a product of *distributed* rewriting — N clients each rewriting every file on disk and racing; one server rewriting only the linked docs' CRDTs atomically excludes that failure mode structurally. **Rejected:** stable-ID links in prose to avoid rewrites entirely (opaque markdown, hostile to the agent); rename detection via bridge content-similarity heuristics (can misfire; kept only as a possible later optimization).
@@ -132,7 +179,7 @@ Tasks are structured server **records**, not files ([`prd/tasks.md`](tasks.md)).
 - **`packages/shared/wiki-link`** — the grammar (`WikiLinkMatch`, `parseWikiLinks`, `wikiLinkRegex`), imported by the editor and server rename/link-index (no chat consumer).
 - **`packages/shared/path`** — path-safety (`VaultPath` / `resolve_relative`, implemented **test-first**; see [`../architecture.md`](../architecture.md) §9). All note/rename/creation paths validate through it. Security-critical.
 - **`link_index`** (server; see [`prd/server-data.md`](server-data.md)) — derived `docId → outbound [[targets]]` (+ inverse), maintained on Doc store. Backs rename, backrefs, delete-surfacing without disk scans.
-- **Task chip resolution** consumes the task collection (records — [`prd/tasks.md`](tasks.md)), not a file index; the editor's task index facet is fed from the tasks store.
+- **Task chip resolution** consumes the task collection (records — [`prd/tasks.md`](tasks.md)), **not the task file projection**; the editor's task index facet is fed from the tasks store. Nothing in the editor parses `tasks/`.
 
 ---
 

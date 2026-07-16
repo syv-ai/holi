@@ -2,7 +2,7 @@
 
 The in-app Claude Code instance. This PRD covers its runtime, config, context injection, tool surface, permissions, collaboration behaviour, and history. The system spine is [`../architecture.md`](../architecture.md) §4.
 
-**Standing principle: build only what Claude Code doesn't already do, and work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Native Claude Code already provides the interactive UX, the file tools, the config layering, and the history; every subsystem below exists only because it clears that bar. What Holi builds is the **prompt content**, the **PTY runtime**, a **7-op MCP surface** (tasks + `note_rename`), and the **file↔CRDT bridge** that makes the agent a real collaborator.
+**Standing principle: build only what Claude Code doesn't already do, and work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Native Claude Code already provides the interactive UX, the file tools, the config layering, and the history; every subsystem below exists only because it clears that bar. What Holi builds is the **prompt content**, the **PTY runtime**, a **3-op MCP surface** (`task_set`, `task_list`, `note_rename`), and the **file↔CRDT bridge** that makes the agent a real collaborator.
 
 ---
 
@@ -26,7 +26,7 @@ These are load-bearing — they dissolved several risks outright:
 - The agent edits shared documents through the same CRDT path as a human, showing up in presence as that user — including a *"Claude is editing…"* presence state during its turn.
 - The agent is the **semantic merge repair tool**: one click hands a garbled concurrent merge to the local agent to reconcile.
 - Port the old prompt content (the `agent_context` strings), memory budgets, and fill-indicator UX.
-- Keep the MCP surface minimal — 7 ops (tasks + `note_rename`) — by leaning on native file tools for everything that is a plain file.
+- Keep the MCP surface minimal — **3 ops** (`task_set`, `task_list`, `note_rename`) — by leaning on native file tools for everything that is a plain file. Tasks are a writable **file projection**, so creating, reading, editing, linking and deleting them needs no op at all.
 - Zero config machinery: CC's own layering does shared-vs-personal.
 
 **Non-goals (v1)**
@@ -132,15 +132,19 @@ Two prompt payloads, both porting `services/agent_context.rs` content (hooks are
 
 **Why the surface is minimal.** An interactive Claude Code already has `Read/Write/Edit/Bash/Glob/Grep`, so any vault action that is "just a file op" needs **no custom tool**. The MCP server exists only for what is genuinely **not a plain file**: structured server records and one operation that must be atomic + identity-preserving. **Rejected:** a broad op surface kept for auditability — it fights the native grain and re-bloats the machinery the minimal surface removes.
 
-**The v1 surface — task ops + `note_rename`, nothing else.**
-| Op family | Why it can't be native | Notes |
+**The v1 surface — `task_set`, `task_list`, `note_rename`. Nothing else.** (Revised 2026-07-14: tasks gained a writable **file projection** — [`tasks.md`](tasks.md) — so the agent creates, reads, edits, links and deletes tasks with its *native* file tools. Only the two things a file write cannot express stay ops.)
+
+| Op | Why it can't be native | Notes |
 |---|---|---|
-| **Tasks** — `task_new` / `task_list` / `task_get` / `task_set` / `task_link` / `task_delete` | Tasks are structured **server records**, not `.md` files. | Email links go through the unified `related[]` — there are no separate link/unlink-email ops. |
+| **`task_set`** | `status: done` written into a task file is **ambiguous for a recurring task** — it cannot distinguish "this instance is done, roll it forward" from "end the series". The op states the intent, and is the single completion path (server-side roll-forward). | Also the sanctioned way to clear a field or mutate `related[]`/`tags` without rewriting the whole file. |
+| **`task_list`** | Answering "what's due this week" from files means globbing and parsing every task in the vault. Filtering is a server query; **no full-vault scans** is a design property, not an optimization. | Role-gated read, `status` filter, slim projection that drops empty fields to protect context. |
 | **`note_rename`** | Must (a) preserve the CRDT **Doc identity** and (b) atomically rewrite `[[links]]` across affected docs — a **server** operation. A native `mv` would orphan the CRDT and the links. | **Rejected:** detecting renames in the bridge by content similarity instead of an explicit op — it can misfire; kept only as a possible later optimization. |
+
+**Retired ops:** `task_new`, `task_get`, `task_link`, `task_delete` — all now plain file operations against `tasks/<slug>-<id>.md` (write / read / edit `related:` / `rm`). The note-path↔docId translation these carried moves into the projection's parser, so the agent still never sees a note UUID.
 
 **Phase 2 (with the Google integration):** calendar ops (`calendar_list` / `calendar_events`) and mail ops (read/search/compose on Gmail APIs) — external Google data, not vault files. Not stubbed in v1.
 
-**Everything else is native or lives elsewhere:** note read/write/append/open/backrefs → native `Read/Write/Edit/Grep`; memory → native edits on `USER.md`/`MEMORY.md`; skills → native edits on skill files; asking the user → native `AskUserQuestion`; daily-note archiving → server-side automation; imports → a later import path; theme → user-edited (agent theme proposals deferred); conversation recall → `claude --resume` (no history-search ops).
+**Everything else is native or lives elsewhere:** note read/write/append/open/backrefs → native `Read/Write/Edit/Grep`; **task create/read/edit/link/delete → native file ops on the task projection**; memory → native edits on `USER.md`/`MEMORY.md`; skills → native edits on skill files; asking the user → native `AskUserQuestion`; daily-note archiving → server-side automation; imports → a later import path; theme → user-edited (agent theme proposals deferred); conversation recall → `claude --resume` (no history-search ops).
 
 **The proxy.** The MCP server runs in **Electron main** (architecture §1) with a **per-run bearer token** — ported from `mcp_server.rs` / `mcp_handshake.rs`: mint a token bound to the run, embed it in the `--mcp-config` blob's `Authorization: Bearer` header, keep `--strict-mcp-config` so Holi is authoritative and Claude never reads any other MCP config, and keep `alwaysLoad: true` so the ops load up front (no `ToolSearch` deferral race). The ops themselves **proxy to the Syv tRPC API** (tasks, rename) rather than touching a local DB; the token/vault binding scopes every call to one vault.
 
@@ -163,12 +167,14 @@ The agent is a **first-class collaborator**, not a special writer. It keeps its 
 Soft turn-taking makes human-vs-agent same-region collisions rare; when they do overlap, the CRDT converges with both texts surviving adjacently (deterministic order; spike-verified — see [../spikes/2026-07-10-bridge-turn-protocol.md](../spikes/2026-07-10-bridge-turn-protocol.md)), with the safety net below. **Staleness** within a turn is handled by Claude Code itself: `Edit`/`Write` require a prior `Read` and fail if the file changed since. The bridge is the **only genuinely novel component** in the system; it was de-risked before any other code — Spike 1 (two clients + an agent hammering one doc) **holds**, with hardening findings the real bridge must carry (atomic base advancement at turn end, disk-recheck against watcher coalescing, agent-side turn signals preferred) in the same report. **Rejected:** intercepting CC's `Edit` via a PreToolUse hook to capture intent (couples to tool internals; `Write` still needs the diff fallback), and hard per-doc checkout locks (block simultaneous human+agent editing entirely).
 
 **Merge safety net.** No conflict dialogs, ever — the Google Docs model. Instead:
-- **Auto-labeled snapshots** before risky operations — an agent bulk-write ("before Claude edited"), or reconciling a long-offline session. One-click restore from the Yjs snapshot timeline. Snapshots are also the recovery story for destructive agent edits generally.
+- **Auto-labeled snapshots** before risky operations — an agent bulk-write ("before Claude edited"), or reconciling a long-offline session. One-click restore from the Yjs snapshot timeline, **which you can now actually open**: the snapshot was always taken faithfully, but until 2026-07-16 there was no UI for it, so the net this section promises was one no human could reach. The timeline lives in a history drawer beside the editor; you can read a version before restoring it, and a restore leaves its own undo behind. Snapshots are also the recovery story for destructive agent edits generally.
 - **Overlap detection:** when Yjs merges concurrent edits that touched **overlapping ranges**, the doc gets a **non-blocking** flag — *"this merge may need a look — let Claude reconcile?"*
 
 **Agent reconcile.** Accepting the flag hands a git-style 3-way (**base / mine / theirs**, reconstructed from snapshots) to the user's **local** agent, which writes a clean reconciled version back **through the bridge** (with its own pre-snapshot). CRDTs guarantee *same* text, not *sensible* text; this puts an intelligent resolver at the semantic layer, using the in-vault LLM — a differentiator no plain-CRDT app has. **User-triggered only** — no unattended rewrites, no token spend without opt-in. **Rejected:** auto-running reconciliation on every overlap (unattended rewrites; tokens per collision; per-user divergence), and a real conflict-resolution UI (a large build that fights the CRDT's point).
 
 **Presence.** Because the agent runs under **the user's** auth and session, its edits land in the CRDT as **that user's** changes and appear in Yjs **awareness** as that user — plus the *"Claude is editing…"* state during a turn. `note_rename` is the one exception that goes through the server (atomic link rewrite), still attributed to the user.
+
+**Task presence is the same principle on a different channel.** When the agent edits a *task file*, the desktop emits a task-presence heartbeat under **the user's** identity — "Nicolai is editing this task" is true when Nicolai's Claude is editing it, because Nicolai set it going. There is deliberately no `actor: 'user' | 'agent'` field. That is not the same question this section's *"Claude is editing…"* answers: the drawer tells **you** what **your own** agent is doing to a doc in front of you; task presence tells **someone else** that a task is in motion, and for that the user/agent distinction is noise. Task presence rides a `presence` frame on the vault's SSE stream, not Yjs awareness — see [`tasks.md`](tasks.md) §Task file projection.
 
 ## Security posture
 

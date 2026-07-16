@@ -29,7 +29,7 @@ The client is not thin and the server is not thin: the server owns truth, auth, 
 
 **Non-goals**
 - Git is never a client↔client sync mechanism and never the backup story — no auto-commit, no `.gitignore` sync-filter, no `.git` in client working copies. The server-side **git mirror** (tables below) is an export mirror + remote-edit ingress for Claude Code cloud sessions, with the relay as the only git writer — not sync, not backup.
-- No file-based tasks — tasks are structured server records, never `.md` files; `area` is a settable folder reference, never derived from a task's source note; there is no `source_file` field or orphan-rescue machinery.
+- No file-based task *truth* — tasks are structured server records; their `.md` projection is a view the server rewrites, never an index the server reads. `area` is a settable folder reference, never derived from a task's source note; there is no `source_file` field or orphan-rescue machinery (that coupling, not files as such, was the old complexity).
 - No self-improvement/curator loop in v1 — memory and skills change only when the user or agent edits them explicitly in a normal turn.
 - No content migration/import in v1 (a generic "import a markdown folder" path is deferred).
 - No bundled mail client — Gmail/Calendar integration arrives in phase 2 on Google APIs.
@@ -157,7 +157,17 @@ Index on `(doc_id, taken_at DESC)` for timeline reads and restore.
 **Auto-labeled snapshots:** before risky operations — an agent bulk-write, reconciling a long-offline session, an agent reconcile itself — the server appends a snapshot with `reason` + `label` set, so the timeline offers one-click restore points at exactly the moments merges can garble. These snapshots are also what the **agent-reconcile 3-way is reconstructed from**: base / mine / theirs for the one-click reconcile flow come from the snapshot timeline, not from any separate merge store.
 
 ### `tasks`
-The full Task record — the authoritative shape mirrors `packages/shared`'s `Task`. Tasks are first-class **structured server records** (queryable, shareable, real-time), never `.md` files. **Why:** tasks are inherently structured, the agent manipulates them via ops rather than file edits, and server records make shared task boards and live updates trivial. **Rejected:** markdown-file tasks (the file representation is where task complexity breeds), and structured records kept in sync with inline note checkboxes (reintroduces note↔task coupling). The deep task model and board behavior live in [`tasks.md`](tasks.md); this PRD owns the table, records, and sync.
+The full Task record — the authoritative shape mirrors `packages/shared`'s `Task`. Tasks are first-class **structured server records** (queryable, shareable, real-time) and are **projected into the vault as files** (`tasks/<slug>-<id>.md`; [`tasks.md`](tasks.md) §Task file projection). **The record is the truth:** reminders fire while every client is closed, recurrence rolls server-side, and the board queries across members — none of which a file can do. The projection is a view: record → file is a rewrite, file → record is a per-field patch.
+
+The table therefore gains a **`version` integer** (bumped on every mutation) — the optimistic-concurrency token — and a **`description` text** column, which is the task file's markdown body. `description` is a **plain column, not a CRDT doc**: it syncs last-writer-wins per field like everything else on the record.
+
+**The token is carried out-of-band, not in the file** (revised 2026-07-14). The desktop keeps the version each file was rendered from in its `ProjectionStore`; an inbound *desktop* write carrying a stale `version` is discarded and the file rewritten from the record. An inbound *git* write carries no version and needs none — the commit's own base blob is the diff base, so the per-field patch is exact by construction. **Why it left the frontmatter:** `version` bumps on every mutation, so a reminder firing would rewrite the file to change one integer, and with the git mirror on the bot would *commit* that on an otherwise idle vault, forever.
+
+Parse/serialize is a single pair of pure functions over the `Task` shape (`packages/shared/src/task-file.ts`). The **serializer** runs on every outbound render (the desktop's file rewrite *and* the git export); the **parser** runs only on an inbound write (the desktop projector *and* the git ingester). The invariant is not "one call site" — it is that **the parser never answers a question**. **Nothing queries the files.**
+
+**Exactly one place a task changes: `src/tasks/mutations.ts`.** Every mutation — from the tRPC router, or from the git ingester — goes through it, and each ends in `finishMutation` (`recomputeReminder` + `bus.emitTasks` + `wakeEvaluator`). Writing the `tasks` table directly would skip all three: no reminder would fire, and **no SSE would reach the desktop, so no client would rewrite the file**. This module *is* the enforcement of the "one write path" rule; before it existed, the router was that place only by accident of being the only caller.
+
+**Rejected:** files as the source of truth (the server would have to parse and mutate markdown to evaluate reminders — the same record, plus a parser); structured records kept in sync with inline note checkboxes (reintroduces note↔task coupling). The deep task model, projection contract, and board behavior live in [`tasks.md`](tasks.md); this PRD owns the table, records, and sync.
 
 | column | type | notes |
 |---|---|---|
@@ -165,7 +175,7 @@ The full Task record — the authoritative shape mirrors `packages/shared`'s `Ta
 | `vault_id` | uuid NOT NULL → `vaults(id)` | |
 | `title` | text NOT NULL | |
 | `status` | text NOT NULL | `'todo' \| 'doing' \| 'done'` |
-| `area` | uuid → `folders(id)` | **stable folder id** — settable, drives swim lanes; rendered as the folder's current path client-side |
+| `area` | uuid → `folders(id) ON DELETE SET NULL` | **stable folder id** — settable, drives swim lanes; rendered as the folder's current path client-side. Nullable = the "(no area)" lane |
 | `due` | date | `YYYY-MM-DD` |
 | `priority` | text | `'low' \| 'medium' \| 'high'` |
 | `tags` | text[] | |
@@ -173,10 +183,14 @@ The full Task record — the authoritative shape mirrors `packages/shared`'s `Ta
 | `reminded_at` | timestamptz | server-written; last fire time (re-arm bookkeeping) |
 | `recurrence` | jsonb | `Recurrence` rule (`frequency, interval, weekdays[], endDate`) |
 | `related` | jsonb | `RelatedRef[]` — unified `note \| task \| email \| event`, each holding a **stable id** (doc id / task id / email id / event id), never a path; rendered as the current path/title client-side |
+| `description` | text | nullable — the task file's markdown body. A **plain column, not a CRDT doc** |
+| `version` | integer NOT NULL default 1 | optimistic-concurrency token, bumped on every mutation. Carried **out-of-band**, never in the file |
 | `completed_at` | timestamptz | set on transition to `done` (drives roll-forward) |
 | `created_at` / `updated_at` | timestamptz | |
 
 Indexes: `(vault_id, status)` for the board; `(vault_id, area)` for swim lanes. `related` is **one unified list** across all four ref kinds — there are no per-kind relation arrays and no `source_file` field. Because `area` and `related[]` hold stable IDs, **renames never touch task rows** (display just re-resolves), and **deletes never cascade through refs** — a dangling id renders as a tombstone ("[deleted note]") client-side.
+
+**A deleted folder unfiles its tasks** — `area` is `ON DELETE SET NULL` (migration `drizzle/0004_fresh_james_howlett.sql`, 2026-07-14), so the tasks fall into the "(no area)" lane rather than blocking the delete. The FK was originally un-cascaded, which meant Postgres **refused** to delete any folder a task pointed at — folders were silently undeletable, and the "renders by its last-known path" folder tombstone the PRDs described was unreachable code. A task is allowed to exist without an area (that is what the "(no area)" lane *is*), so the folder delete wins and the task falls into it. **There is no folder tombstone.** *Folder rename* still cascades to the lane label with zero task-row writes, as before.
 
 ### `reminders`
 Derived/scheduled fire times the server-side evaluator consumes. Kept as a materialized projection of `tasks.reminder` so the scheduler queries a small, indexed table instead of scanning tasks.
@@ -235,7 +249,9 @@ Per-user GitHub account link, part of the **vault git mirror** — the server-si
 | `created_at` / `updated_at` | timestamptz | |
 
 ### `vault_git` *(git-mirror feature)*
-Per-vault repo connection state. The relay is the **only git writer** for a vault — day-to-day operations run on the deploy key, client working copies never carry `.git`, and tasks never appear in the repo (remote sessions can't see or edit tasks in v1; accepted).
+Per-vault repo connection state. The relay is the **only git writer** for a vault — day-to-day operations run on the deploy key, and client working copies never carry `.git`.
+
+**Tasks *do* appear in the repo** (revised 2026-07-14 — this reverses the earlier "tasks never appear in the repo; remote sessions can't see or edit tasks in v1" limitation, which the [task file projection](tasks.md#task-file-projection) removed). The exporter has **two sources** — the `docs` ⋈ `yjs_docs` join *and* the `tasks` table — and writes each task to `tasks/<slug>-<id>.md`. Inbound, the ingester **branches before its A/M/D/R dispatch**: a `tasks/**.md` path routes to the record path (`src/git/task-ingest.ts`) and **never** reaches `createDoc`, which hardcodes `kind: 'note'` and would otherwise turn every remotely-edited task file into a CRDT note. A remote Claude Code session on a clone therefore reads, edits, creates and deletes tasks as files.
 
 | column | type | notes |
 |---|---|---|
@@ -268,7 +284,7 @@ Grouped into routers. **(S)** marks subscriptions (live server push); everything
 - `vaults.setTheme({ vaultId, theme })` — owner; vault-wide shared theme.
 - `vaults.delete({ vaultId })` — owner; cascades.
 - `vaults.listDocs({ vaultId })` → doc + folder metadata (the file tree source; folders are identity rows).
-- **(S)** `vaults.watchDocs({ vaultId })` → live doc-metadata changes (create/rename/delete) so the file tree updates without polling.
+- **(S)** Live doc-metadata changes (create/rename/delete) arrive on the **`docs`** channel of the user-scoped SSE stream (below), so the file tree updates without polling. *(There was a `vaults.watchDocs` tRPC subscription here. It was deleted 2026-07-16: no client could reach it — there is no WS link and the IPC link throws on subscriptions — so it advertised a transport that does not exist. Plain SSE is the transport, chosen so the client can authenticate with a normal `Authorization` header over fetch.)*
 
 ### `membership`
 - `membership.list({ vaultId })`.
@@ -286,13 +302,17 @@ Grouped into routers. **(S)** marks subscriptions (live server push); everything
 - `tasks.complete({ taskId })` — transitions to `done`, triggers server-side recurrence roll-forward.
 - `tasks.link({ taskId, related })` / `tasks.unlink(...)` — mutate the unified `related[]`.
 - `tasks.delete({ taskId })`.
-- **(S)** `tasks.watch({ vaultId })` → live task upserts/deletes to every member so boards stay live (architecture §5).
+- `tasks.heartbeat({ taskId })` — **presence**. A mutation that **touches no row**: it stamps an `expiresAt` (10s TTL), emits, and returns. It must never bump `version` — a heartbeat that did would rewrite every task file, and with the git mirror on, commit it.
+- **(S)** Live task upserts/deletes reach every member on the **`tasks`** channel of the user-scoped SSE stream, so boards stay live (architecture §5). *(A `tasks.watch` subscription was deleted 2026-07-16 — same reason as `vaults.watchDocs`.)*
 
-The agent's MCP task ops (create/list/set/complete/link) proxy directly to these procedures, role-gated. Together with `notes.rename`, they are the **entire v1 MCP op surface**; calendar/mail ops join in phase 2 with the Google integration. There are no conversation/session-search procedures anywhere — conversation history has no server surface.
+Every one of these mutations goes through `src/tasks/mutations.ts` (above), as does the git ingester — the router is input validation plus a call.
+
+The agent's MCP surface is **3 ops** — `task_set`, `task_list`, `note_rename` — and they proxy to these procedures, role-gated. `task_new` / `task_get` / `task_link` / `task_delete` are **retired**: the agent does all of that with native file tools against the projection. (The tRPC procedures above survive regardless — the *board* calls them.) Calendar/mail ops join in phase 2 with the Google integration. There are no conversation/session-search procedures anywhere — conversation history has no server surface.
 
 ### `reminders`
 - `reminders.listPending({ vaultId })` — introspection/debug.
-- **(S)** `reminders.subscribe({ vaultId })` → **fire events pushed** to the client, which raises a native Electron notification. There is no client-side scheduler loop.
+- **(S)** **Fire events are pushed** on the **`reminders`** channel of the user-scoped SSE stream; the client raises a native Electron notification. There is no client-side scheduler loop. Fires arrive for **every vault you are in**, not only the one on screen. *(A `reminders.subscribe` subscription was deleted 2026-07-16 — same reason as `vaults.watchDocs`.)*
+- `reminders.catchUpAll()` → fires you missed while disconnected, across every vault, grouped as `{ vaultId, event }`. A mutation, not a query: it advances the per-`(vault, user)` delivery watermark. Replaced a per-vault `catchUp` whose only caller knew its vault because the stream was per-vault.
 
 ### `notes` / `docs` (metadata; content is Yjs)
 - `notes.create({ vaultId, path, kind })` → creates the `docs` row + an empty `yjs_doc`. Content editing happens over Hocuspocus, not here.
@@ -333,7 +353,7 @@ Hocuspocus wires four hooks into this server:
 **Evaluation loop** (port the loop semantics from the old `reminder_scheduler.rs`):
 1. On any task mutation touching `reminder`/`due`/`status`/`recurrence`, recompute that task's next `fire_at` and upsert/clear its `reminders` row.
 2. A single loop sleeps until the earliest `fire_at WHERE NOT fired` across all vaults (indexed query), woken early by a change signal on mutation.
-3. On fire: mark `fired`, write `tasks.reminded_at`, and **push** a fire event to that vault's members via `reminders.subscribe` (S). Clients raise the native notification.
+3. On fire: stamp `fired_at`, write `tasks.reminded_at`, and **push** a fire event to that vault's members on the SSE `reminders` channel (S). Clients raise the native notification.
 4. First iteration doubles as the missed-reminder pass on boot (fire times already past → coalesced; a backlog of more than 5 missed reminders collapses into one summary event).
 5. Invalid/due-less-relative reminders are inert, never errors.
 
@@ -395,7 +415,7 @@ The security- and correctness-critical domain, imported verbatim by **both** ser
 
 This PRD is the reference; the key downstream dependencies:
 
-- **Tasks / board PRD** → `tasks` table (stable-ID `area`/`related[]`), `folders` for lane identity, `tasks.*` procedures + `tasks.watch` (S), reminders/recurrence eval.
+- **Tasks / board PRD** → `tasks` table (stable-ID `area`/`related[]`), `folders` for lane identity, `tasks.*` procedures + the SSE `tasks` channel (S), reminders/recurrence eval.
 - **Editor / notes PRD** → `docs`/`folders`/`yjs_docs`/`yjs_snapshots` (+ labels), Hocuspocus hooks + awareness, `notes.rename`/`notes.renameFolder` atomicity, `snapshots.list`/`restore`, the overlap-detection flag + agent reconcile, `link_index`, wiki-link grammar.
 - **Agent PRD** → MCP ops proxying to `tasks`/`notes.rename` (the whole v1 surface), role gating, per-turn context content, the agent-reconcile flow. `per_user_state` is UI prefs only — USER.md/personal skills are machine-local; conversation history is native `--resume`, client-local, no server table or search ops.
 - **Client shell / sync PRD** → `auth`/`session`, `vaults`/`membership`, the WebSocket + tRPC transports, sync-status semantics, offline replay.

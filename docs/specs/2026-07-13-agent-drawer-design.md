@@ -62,7 +62,7 @@ Port of the old `login_pty.rs` shape to node-pty:
 
 Localhost HTTP server, port picked at spawn, **per-run bearer token** embedded in the `--mcp-config` blob (`alwaysLoad: true`). Two jobs:
 
-1. **7 MCP ops** — `task_new/list/get/set/link/delete` + `note_rename` — proxied through the existing main-process ServerClient with the **user's session token**, so membership gating stays server-side and the agent can never outrank the user.
+1. **MCP ops** — proxied through the existing main-process ServerClient with the **user's session token**, so membership gating stays server-side and the agent can never outrank the user. *Originally built (slice 2) as 7 ops — `task_new/list/get/set/link/delete` + `note_rename`. **Now 3, as built and as specified:** `task_set`, `task_list`, `note_rename`; the other four retired into native file operations on the task file projection (see [Superseded by the task file projection](#superseded-by-the-task-file-projection-2026-07-14)).*
 2. **Hook-signal routes** — `/hook/pre-tool-use`, `/hook/stop` — same bearer, feeding the Bridge's turn boundaries.
 
 The PTY env carries `HOLI_AGENT_ENDPOINT` + `HOLI_AGENT_TOKEN` for the hook scripts.
@@ -80,6 +80,8 @@ Right-docked panel in the shell; xterm.js + fit addon over the `agent-pty:*` IPC
 ### Server: SSE endpoint
 
 `GET /events/<vaultId>` on the existing HTTP server — bearer-authenticated, membership-checked, streaming the bus's `docs`/`tasks`/`reminders` events per vault (the subscription surface the bus was built for). Consumed by VaultMirror (docs) and ContextSnapshot (tasks); later by the task board. Reconnect triggers a full doc-list refetch to resync structure.
+
+**Correction (2026-07-16): the stream is now `GET /events` — one per signed-in *user*, carrying every vault they are in.** The per-vault shape described here shipped and worked, but its identity *was* a vaultId, which turned out to be the shared cause of three bugs rather than a detail: the file tree went stale (the `docs` frame fed only the mirror), the vault switcher needed a restart ("you were added to a vault" is not about a vault you are already listening to, so it had nowhere to arrive), and a reminder for a non-active vault could not be delivered at all. Every frame is now an envelope `{ vaultId, event }`; a fifth `membership` channel re-keys the live connection; auth drops the role check (membership is a subscription set, so 401 is the only rejection). Main still owns the one connection and filters `docs`/`tasks`/`presence` to the active vault, so this section's consumers are unchanged. See `architecture.md` §5.
 
 ## Error handling
 
@@ -128,3 +130,36 @@ Discovered while executing (not pre-decided):
 6. **fast-diff needs its semantic-cleanup flag** (`diff(base, next, undefined, true)`): without it, fragmented ops (a kept common char inside a rewritten word) break the overlapping-rewrite acceptance test — the spike's `diff_cleanupSemantic` call was load-bearing, not cosmetic.
 7. **`VaultMirror.start()` awaits chokidar `ready`**: with `ignoreInitial`, files written before the initial scan completes are silently swallowed; reporting started earlier made the create/delete lifecycle tests flake. Its provider WebSocket also pre-attaches a no-op `error` listener (destroy-mid-handshake emits an unlistened error).
 8. **`@holi/shared` is bundled into the Electron main build** (`externalizeDepsPlugin({ exclude: ['@holi/shared'] })`): main now imports shared, which ships raw TS that Node can't load externally at runtime.
+
+## Superseded by the task file projection (2026-07-14)
+
+`prd/tasks.md` now specifies tasks as server records **projected into the vault as files**. That changes this spec's MCP section, and the drawer as built (slice 2) does not yet reflect it:
+
+- **The 7-op surface collapses to 3** — `task_set`, `task_list`, `note_rename`. `task_new` / `task_get` / `task_link` / `task_delete` become native file operations on `tasks/<slug>-<id>.md`. **Done (2026-07-14):** `mcp-ops.ts` now implements exactly those 3; the four are retired. The McpServer, bearer gating, and hook routes were unaffected, as predicted.
+- **Task files must be excluded from the DocBridge turn path.** They are records, not CRDT docs: the mirror materializes them, but they carry no base, no turn, and no merge. Without this, a server-driven rewrite (a recurrence roll landing the moment the agent marks something done) arrives as a foreign write and opens a spurious agent turn.
+- **The pre-turn snapshot and `agentEditing` presence** do not apply to task files either.
+
+Nothing already built is invalidated — the PTY, MCP server, hook protocol, context injection, seeding, and panel are unchanged.
+
+**Correction (2026-07-14): task presence is *not* on the `tasks` channel.** This section originally said it was a short-TTL heartbeat on the `tasks` SSE channel. As built it is a **sibling `presence` frame on the same per-vault SSE connection** — a separate channel, not a `TasksEvent` variant. It cannot be one: the desktop's `TaskProjector.applyTasksEvent` reads that union as `if (upserted) … else remove(event.taskId)`, so a third variant falls into the `else` and **deletes the task's file**. The intent ("rides the existing per-vault event channel" = same connection, no new plumbing) is satisfied; the union is not widened. See `prd/tasks.md` §Task file projection.
+
+## Slice-2 implementation deviations (2026-07-13)
+
+Decided in `docs/plans/2026-07-13-agent-drawer-slice2.md` and executed as written:
+
+1. **No login-PTY port.** Interactive CC handles `/login` in the same terminal, so the spec's "login-PTY fallback flow" is dropped. The auth probe (non-null `oauthAccount` in `~/.claude.json`, fallback `~/.claude/.claude.json` — the user's own config per the PRD, not a Holi-owned config dir) only powers a header hint.
+2. **The MCP server is hand-rolled** streamable-HTTP JSON-RPC on `node:http` (POST-only `/mcp`, plain JSON responses, GET → 405), not an SDK: 7 tools + 2 hook routes don't justify the dependency, and it matches the repo's hand-rolled SSE. Op failures come back as in-band `isError: true` results, never JSON-RPC errors.
+3. **The 7 ops stay 7 by folding:** `task_set` with `status:'done'` routes through `tasks.complete` (the server rolls recurrence), and `task_link` takes `remove: true` for unlink. The ops translate note paths↔docIds in both directions — the agent never sees a note UUID.
+4. **Seeding rides the adoption path:** managed files are written into the working dir after `mirror.start()`, and the watcher adopts them as vault docs exactly like agent-created files (verified in the e2e: all 7 managed files became synced docs). Idempotent via doc-list + on-disk checks; never overwrites.
+5. **PTY data crosses IPC as strings**, not the spec's `Uint8Array` — that's node-pty's native chunk type and xterm accepts it directly.
+6. **node-pty loads lazily** inside the real spawn path only; every test injects a fake PTY (system-node vitest cannot load an Electron-ABI native). Hook scripts are real `.mjs` files imported `?raw` into the seed table, so they stay lintable and directly testable.
+7. **Seam growth:** `DocBridge.signalTurnOpen()` (the PreToolUse counterpart to `signalTurnEnd()`); `VaultMirror` gained `docIdForPath`/`pathForDocId`/`knownPaths`/`bridgeForPath`/`endOpenTurns` plus `onTurnActivity`/`onMaterialize` deps; `VaultManager` gained a `VaultObserver` contract with `activeVaultId()`/`activeMirror()`.
+8. **Bare `--resume`** relaunch uses CC's native picker inside xterm — **settled 2026-07-14: this is the design, not a stopgap.** The ⟲ button kills the session and relaunches with a bare `--resume`, and the user drives CC's own picker in the terminal. Rejected: resolving the newest-mtime session jsonl in `~/.claude/projects/<encoded-cwd>/` and passing `--resume <id>` (what Dash does, to keep its own UI and the resumed session deterministically in sync). We have no session list of our own to keep in sync, so that would buy nothing and couple us to CC's on-disk layout. Closes the spec's open item.
+
+Discovered while executing (not pre-decided):
+
+9. **`node-pty` 1.1.0 installs from prebuilds** and `@electron/rebuild -f -w node-pty` rebuilt it against the Electron ABI without a fight — the `@lydell/node-pty` fallback was not needed. `apps/desktop/scripts/check-node-pty.cjs` run under `ELECTRON_RUN_AS_NODE=1` is the ABI guard.
+10. **The group-kill fallback is any-error, not ESRCH-only.** `process.kill(-pid, sig)` can fail for reasons other than "no such group" (a child that never led one); falling back to `pty.kill()` on any throw is strictly safer, and it's what makes the escalation path observable in tests.
+11. **Renderer verification is typecheck + build + the e2e** — there is no jsdom harness in this repo. Only the panel's width math is extracted into a tested pure helper (`clampPanelWidth`); on a viewport too narrow for both panes, the terminal's 80-column minimum deliberately wins over the editor's.
+12. **Preload push channels fan out from one `ipcRenderer.on` per channel** into a subscriber `Set`, with the `on*` methods returning unsubscribe closures (these survive `contextBridge` on modern Electron — verified live in the e2e).
+13. **The vault-switch confirm is an inline panel, not a dialog** — Electron renderers have no usable native `confirm`, and a blocking dialog would freeze the very session it is asking about.

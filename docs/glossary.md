@@ -31,10 +31,19 @@ The Syv-hosted Yjs sync server (Hocuspocus). Holds durable CRDT truth, fans out 
 A server-side point-in-time state of a Doc's CRDT, forming its **history** timeline.
 
 ### Git mirror
-The opt-in, server-side git clone of a vault, pushed to an **owner-provided GitHub repo** so Claude Code cloud sessions can work the vault remotely. The relay is the **only git writer**: it exports vault content and **ingests** foreign commits back into the CRDTs. Clients never carry `.git`.
+The opt-in, server-side git clone of a vault, pushed to an **owner-provided GitHub repo** so Claude Code cloud sessions can work the vault remotely. The relay is the **only git writer**. It exports from **two sources** — notes (CRDT docs) and **tasks** (records) — and **ingests** foreign commits back, routing each path to the right store: a note becomes CRDT ops, a `tasks/**.md` file becomes a per-field patch on the record. Clients never carry `.git`.
 
 ### Task
-A **structured server record** (not a file): `title, status, due, priority, tags, reminder, recurrence, related[], area`. Lives in a vault's task collection.
+A **structured server record** — `title, status, due, priority, tags, reminder, recurrence, related[], area` — living in a vault's task collection, and **projected into the vault as a file** (`tasks/<slug>-<id>.md`: YAML frontmatter + a markdown body that is the description). The record is the truth; the file is a live, writable view of it. See [`prd/tasks.md`](prd/tasks.md).
+
+### Task file projection
+The mechanism that makes a task look like a file. Record → file is a **rewrite** (the server rewrites the file on any change to the record, whoever caused it — so a task file *changes under you*, by design); file → record is a **per-field patch** (the same mutation the board calls). The file is never queried: nothing walks or parses `tasks/` to answer a question. Task files are **not CRDTs** — they are excluded from the doc path, because character-merging YAML can converge on invalid syntax with no writer able to reject it.
+
+### ProjectionStore
+The desktop's per-task record of *what it last rendered to disk* — the fields, and the **version token** of the record they came from. It is what an inbound file write is diffed against to produce a per-field patch, and it is where the concurrency token lives now that it is out of the file.
+
+### Version token
+A task's optimistic-concurrency integer, bumped on every mutation. It is **carried out-of-band, never in the file**: the desktop reads it from the [ProjectionStore](#projectionstore), and git ingress needs none at all (a commit carries its own base blob, which *is* its diff base). A stale token on a desktop file write means the write loses and the file is rewritten from truth. In the frontmatter it would have made every reminder fire rewrite — and, once mirrored, **commit** — a file just to change one integer.
 
 ### Status
 A task's state: **todo | doing | done**.
@@ -88,8 +97,13 @@ The fresh context (active note, linked tasks, memory fill-state) injected into e
 ### History (chat)
 Claude Code's **native session resume**: the drawer relaunches `claude --resume`, CC's own session picker, replaying the full transcript in the terminal. No custom reconstruction, no summaries, no sync — history lives on the machine that ran it, inside the terminal.
 
-### Awareness / Presence
-The Yjs channel carrying live per-user state: **cursors/selections** in the editor and **doc-viewer avatars** ("who's here").
+### Awareness *(notes)*
+The **Yjs** channel carrying live per-user state on a CRDT doc: **cursors/selections** in the editor and **doc-viewer avatars** ("who's here").
+
+### Presence *(tasks)*
+A different mechanism for a different question: **"Nicolai is editing this task."** Tasks are records, not CRDTs, so they have no Yjs awareness. Presence is a short-TTL (10s) heartbeat delivered as a **`presence` frame on the vault's SSE connection** — a sibling of `docs`/`tasks`/`reminders`, deliberately **not** a `TasksEvent` variant (a third variant would fall into `TaskProjector`'s `else` branch and *delete the task's file*).
+
+It is **fire-and-forget**: the server stores nothing, and **a heartbeat that stops arriving *is* the release** — which is exactly why tasks need no locks (no acquire, no TTL sweep, no stale holder, no steal path). **A user and their agent are one identity** — there is no `actor` field, because "Nicolai is editing this task" is true when Nicolai's Claude is editing it. (Contrast the drawer's *"Claude is editing…"*, which tells **you** what **your own** agent is doing to a doc in front of you; presence tells **someone else** that a task is in motion.)
 
 ### Vault app *(post-v1)*
 An agent-authored interactive app living at `.holi/apps/<name>/` (manifest + `index.html` + optional `server.mjs`), synced as vault content, opened as a first-class tab in a sandboxed webview. State = a shared Yjs doc on the relay → live-multiplayer by default.

@@ -15,7 +15,7 @@ This returns git to the architecture **only** in the role D3 explicitly left ope
 | D1 (CRDT relay is truth) | **Untouched.** The relay remains the single durable source of truth. |
 | D3 (git dropped) | **Amended, not reversed.** Git-as-sync stays dead. The deferred "export mirror" ships, extended to a bidirectional mirror/ingress with exactly one git writer: the relay. History is still Yjs snapshots; backup is still Postgres; client working copies still have no `.git`. |
 | D7 (Google SSO) | **Addendum.** Sign-in stays Google Workspace SSO. A user may additionally link a GitHub account (OAuth); only vault owners enabling git need it. |
-| D4 (tasks are records) | **Untouched.** Tasks do not appear in the repo. Remote sessions cannot see or edit tasks in v1 — accepted and documented. |
+| D4 (tasks are records) | ~~**Untouched.** Tasks do not appear in the repo. Remote sessions cannot see or edit tasks in v1 — accepted and documented.~~ **REVERSED 2026-07-14** — tasks are still records, but they now ride the repo in both directions. See [Superseded by the task file projection](#superseded-by-the-task-file-projection-2026-07-14). |
 | D25/D26 (bridge protocol, merge safety net) | **Reused.** Ingest applies foreign commits with the exact spike-proven diff-against-frozen-base → positioned-Yjs-ops shape, guarded by D26 auto-snapshots and overlap flags. |
 | D23 (full materialization), D28 (text by construction) | **Load-bearing.** They are what make "the whole vault fits in a repo" true. |
 
@@ -24,7 +24,7 @@ This returns git to the architecture **only** in the role D3 explicitly left ope
 ## Scope
 
 - **In:** per-user GitHub account linking; per-vault owner-driven repo connection (user-provided GitHub repo URL); server-side mirror clone; debounced continuous export; webhook-driven auto-ingest of foreign commits on the default branch; sync status surface; disconnect flow.
-- **Out (v1):** task visibility in repos; non-GitHub hosts; local `.git` in client working copies; ingesting from non-default branches; per-user commit attribution; any PR/branch/history UI inside Holi (GitHub is the UI for git things).
+- **Out (v1):** ~~task visibility in repos~~ *(reversed 2026-07-14 — tasks are read/write in the repo; see §Superseded)*; non-GitHub hosts; local `.git` in client working copies; ingesting from non-default branches; per-user commit attribution; any PR/branch/history UI inside Holi (GitHub is the UI for git things).
 
 ## Architecture
 
@@ -53,7 +53,7 @@ Remote sessions themselves are the employee's business: they install the Claude 
 - Subscribes to doc changes on git-enabled vaults; debounces ~30–60 s of quiet per vault.
 - Materializes changed docs into the mirror clone, commits as the **Holi bot identity** (message lists changed paths), pushes to the default branch.
 - **Exported:** all docs with folder tree preserved, `.claude/**`, `.holi/settings.json`.
-- **Never exported:** tasks, `*.local.*` files, Yjs/internal state.
+- **Never exported:** ~~tasks~~ *(reversed 2026-07-14 — tasks ARE exported; see §Superseded)*, `*.local.*` files, Yjs/internal state.
 - **Non-fast-forward push** (a remote commit landed first): fetch, hand foreign commits to the ingester, regenerate the export on the new head, push. The per-vault lock makes this a sequential loop, not a race.
 
 ### Ingester (repo → vault)
@@ -92,6 +92,24 @@ One async lock per vault serializes exporter and ingester work. Mirror-clone sta
 
 ## Open follow-ups (post-v1 candidates)
 
-- Read-only task export (`.holi/tasks.json`) so remote sessions can at least see tasks.
+- ~~Read-only task export (`.holi/tasks.json`) so remote sessions can at least see tasks.~~ **Obsolete 2026-07-14** — remote sessions get the real thing: read *and* write, as ordinary task files. See §Superseded.
 - Ingest from named branches / PR-review surface inside Holi.
 - Commit attribution mapping vault members to co-authors.
+
+## Superseded by the task file projection (2026-07-14)
+
+This spec was written when tasks were records **and nothing else**, so it excluded them from the mirror on purpose. `prd/tasks.md` then made tasks a writable **file projection** — the record is still the truth, but a task is also `tasks/<slug>-<id>.md` in the working copy. That removed the reason for the exclusion: the parser, serializer, per-field patch and conflict rule a "task-file round-trip" would have needed **already exist**, because the local agent needs them. Extending them to git was additive.
+
+**Reversed by that change:**
+
+- **"D4 — tasks do not appear in the repo"** → they do, in both directions.
+- **"Out (v1): task visibility in repos"** (§Scope) → in, and read/write, not just visible.
+- **"Never exported: tasks"** (§Exporter) → the exporter now has **two sources**: the `docs` ⋈ `yjs_docs` join **and** the `tasks` table. It writes each task with the same `serializeTaskFile` the desktop uses, with a **fixed key order** — because the export loop and the ingest loop are the same loop, and bytes that differ from what the commit contained would make the bot commit a "correction" to itself on every sync, forever, on an idle vault.
+- **"export-set filtering (tasks absent)"** (§Testing) → the test that matters now is the opposite: export → ingest the bot's own commit → export again produces **no second commit**.
+- **Open follow-up "read-only task export (`.holi/tasks.json`) so remote sessions can at least see tasks"** → **obsolete.** Remote sessions get the real thing: read *and* write, as ordinary files.
+
+**The one genuinely new piece — the ingress branch.** `createDoc` hardcodes `kind: 'note'`, and every inbound path that isn't explicitly routed elsewhere ends up there. So the instant the mirror carried `tasks/`, a foreign commit touching a task file would have made it a **CRDT note** — precisely the outcome the projection exists to prevent, arriving through the other door. The branch therefore sits in `ingestEntry` **before** the A/M/D/R dispatch (not inside it), because `A`, `M` and `R`-treated-as-`A` each reach `createDoc` by a different route. A `tasks/**.md` path goes to `src/git/task-ingest.ts` and never reaches the doc path; an unparseable task file warns (`task-file-unparseable`) and is skipped, rather than falling through.
+
+**Inbound tasks carry no version token.** The commit's own **base blob** is the diff base — git hands us "what the writer edited against" for free — so the per-field patch is exact by construction and no concurrency token is needed or sent. This is the identical rule notes already ingest under, so tasks and notes get the same conflict story.
+
+**One deliberate asymmetry with the desktop.** An unresolvable `area` or `related[]` path in a *remote* commit **warns and drops that ref, keeping the rest** — it does not reject the write. The desktop can reject and rewrite the file from truth, because the agent will re-read it; a git commit has already happened and there is nobody to correct.
