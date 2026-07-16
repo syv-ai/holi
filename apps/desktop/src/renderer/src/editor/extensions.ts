@@ -8,7 +8,7 @@ import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
-import { docExistsFacet, livePreview } from './livePreview'
+import { docExistsFacet, livePreview, taskInfoFacet, type TaskChipInfo } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
 import { editorTheme } from './theme'
@@ -17,6 +17,8 @@ import { editorTheme } from './theme'
  * over the renderer's atoms, read when the user triggers `@`, never baked in). */
 export interface EditorDeps {
   docExists: (path: string) => boolean
+  /** Title + tombstone for a `[[task:<id>]]` chip (D27). */
+  taskInfo: (id: string) => TaskChipInfo
   /** Notes + tasks for `@`-mention completion (FR-8). */
   mentionData: () => MentionData
   /** A picked task mention links the current note into the task's `related[]`. */
@@ -41,6 +43,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // grammar in the tree; plain markdown() defaults to CommonMark (no tables).
     markdown({ base: markdownLanguage }),
     docExistsFacet.of(deps.docExists),
+    taskInfoFacet.of(deps.taskInfo),
     livePreview,
     linkClickHandler(deps.nav),
     // Nested in-cell editors mutate the same doc — verify live that these

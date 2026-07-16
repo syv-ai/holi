@@ -12,6 +12,7 @@
  */
 import { atom } from 'jotai'
 import type { DocMeta } from '@holi/shared'
+import { selectedTaskIdAtom } from './tasks'
 import { activeDocAtom } from './vaults'
 
 export type MainView = 'notes' | 'board'
@@ -24,4 +25,12 @@ export const viewAtom = atom<MainView>('notes')
 export const openDocAtom = atom(null, (_get, set, doc: DocMeta) => {
   set(activeDocAtom, doc)
   set(viewAtom, 'notes')
+})
+
+/** Open a task, wherever you are — `openDocAtom`'s twin, and for the same reason. The
+ * detail panel is mounted inside `BoardView`, so selecting a task from the notes editor
+ * (a `[[task:<id>]]` chip) without moving the pane would set state nothing renders. */
+export const openTaskAtom = atom(null, (_get, set, taskId: string) => {
+  set(selectedTaskIdAtom, taskId)
+  set(viewAtom, 'board')
 })

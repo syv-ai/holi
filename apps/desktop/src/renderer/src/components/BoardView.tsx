@@ -9,29 +9,24 @@
 import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
 import {
   NO_AREA,
-  applyPresence,
-  applyTasksEvent,
   completeTaskAtom,
   createTaskAtom,
   foldersAtom,
   laneFor,
   laneOrder,
-  loadTasksAtom,
   filterAtom,
   matchesFilter,
   moveTaskAtom,
   presenceAtom,
-  pruneExpired,
   selectedTaskIdAtom,
   tasksAtom,
   todayAtom,
 } from '../state/tasks'
-import { activeVaultIdAtom } from '../state/vaults'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'todo', label: 'Todo' },
@@ -46,35 +41,6 @@ const CHIP: Record<string, string> = {
   p1: 'bg-orange-950 text-orange-300 border-orange-900',
   p2: 'bg-amber-950/70 text-amber-300 border-amber-900',
   p3: 'bg-neutral-800 text-neutral-400 border-neutral-700',
-}
-
-/** The board's feed. Tasks and presence are PUSHED from main, which owns the one SSE
- * connection per vault; the renderer never opens a second stream. */
-function useTaskFeed(): void {
-  const vaultId = useAtomValue(activeVaultIdAtom)
-  const loadTasks = useSetAtom(loadTasksAtom)
-  const setTasks = useSetAtom(tasksAtom)
-  const setPresence = useSetAtom(presenceAtom)
-
-  useEffect(() => {
-    if (!vaultId) return
-    void loadTasks()
-    const offEvent = window.holi.tasks.onEvent((e) => setTasks((prev) => applyTasksEvent(prev, e)))
-    const offPresence = window.holi.tasks.onPresence((e) =>
-      setPresence((prev) => applyPresence(prev, e)),
-    )
-    // Entries expire on their own — a heartbeat that stops arriving IS the release, so
-    // there is nothing to unsubscribe from and no "stopped editing" event to wait for.
-    const tick = setInterval(
-      () => setPresence((prev) => pruneExpired(prev, new Date().toISOString())),
-      2000,
-    )
-    return () => {
-      offEvent()
-      offPresence()
-      clearInterval(tick)
-    }
-  }, [vaultId, loadTasks, setTasks, setPresence])
 }
 
 function Card({ task }: { task: Task }): React.JSX.Element {
@@ -171,7 +137,8 @@ function QuickAdd({ status, area }: { status: TaskStatus; area: string | null })
 }
 
 export function BoardView(): React.JSX.Element {
-  useTaskFeed()
+  // The feed is Shell's now (state/task-feed.ts): the notes editor needs tasks too, and
+  // the board is not always mounted.
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <FilterBar />

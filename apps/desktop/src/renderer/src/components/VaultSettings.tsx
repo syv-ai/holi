@@ -109,7 +109,8 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
         {!githubLogin && !status && (
           <p className="text-xs text-neutral-500">
             Connecting a repo installs a deploy key + webhook on it (your GitHub account authorizes this once; day-to-day
-            sync uses the deploy key). Docs, .claude/ and .holi/settings.json are mirrored; tasks are not.
+            sync uses the deploy key). Notes, tasks, .claude/ and .holi/settings.json are all mirrored — everything except
+            your machine-local files (USER.md and any *.local.* file).
           </p>
         )}
         {status && status.warnings.length > 0 && (

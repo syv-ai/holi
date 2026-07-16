@@ -10,7 +10,8 @@ import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
 import { historyOpenAtom } from '../state/history'
 import { openTodaysDailyNoteAtom, sweepDailyNotesAtom } from '../state/daily'
 import { sessionAtom } from '../state/session'
-import { syncStatusAtom } from '../state/sync'
+import { agentEditingAtom, syncStatusAtom } from '../state/sync'
+import { useTaskFeed } from '../state/task-feed'
 import { selectedTaskIdAtom } from '../state/tasks'
 import { viewAtom } from '../state/view'
 import {
@@ -30,6 +31,11 @@ export function Shell() {
   const activeDoc = useAtomValue(activeDocAtom)
   const setActiveDoc = useSetAtom(activeDocAtom)
   const syncStatus = useAtomValue(syncStatusAtom)
+  const agentEditing = useAtomValue(agentEditingAtom)
+  // Tasks live at the shell, beside the docs feed below: the board renders them, but so
+  // does the notes editor (task chips, `@`-mention), and it must not depend on the board
+  // having been opened first.
+  useTaskFeed()
   const loadVaults = useSetAtom(loadVaultsAtom)
   const loadDocs = useSetAtom(loadDocsAtom)
   const createVault = useSetAtom(createVaultAtom)
@@ -236,6 +242,14 @@ export function Shell() {
                       </span>
                     )}
                     {activeDoc.path.slice(activeDoc.path.lastIndexOf('/') + 1)}
+                  </span>
+                )}
+                {/* D37's marker, finally rendered — the agent's system prompt has always
+                  * told it this was on screen. It sits on the note's name because that is
+                  * what it is about: an agent is writing to THIS doc, right now. */}
+                {view === 'notes' && activeDoc && agentEditing && (
+                  <span className="ml-2 shrink-0 animate-pulse text-xs text-amber-400">
+                    Claude is editing…
                   </span>
                 )}
                 {/* History is about the open note, so it belongs beside its name. */}

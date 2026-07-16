@@ -22,6 +22,24 @@ export const docExistsFacet = Facet.define<(path: string) => boolean, (path: str
   combine: (values) => values[0] ?? (() => true),
 })
 
+/** What a `[[task:<id>]]` chip should say, and whether its target is gone (D27's
+ * tombstone). Resolved by the renderer against `tasksAtom` — the editor never joins. */
+export interface TaskChipInfo {
+  label: string
+  missing: boolean
+}
+
+/** Task id → title lookup for chips, the sibling of `docExistsFacet`.
+ *
+ * The unwired default shows the raw id and claims **nothing** about existence: a chip
+ * that says "[deleted task]" because a facet was never provided would be a fresh lie of
+ * exactly the kind this change exists to remove. */
+export const taskInfoFacet = Facet.define<(id: string) => TaskChipInfo, (id: string) => TaskChipInfo>(
+  {
+    combine: (values) => values[0] ?? ((id) => ({ label: id, missing: false })),
+  },
+)
+
 const conceal = Decoration.replace({})
 const strong = Decoration.mark({ class: 'cm-strong' })
 const emphasis = Decoration.mark({ class: 'cm-emphasis' })
@@ -152,17 +170,23 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
+  const taskInfo = state.facet(taskInfoFacet)
   const visible = state.sliceDoc(from, to)
   for (const link of parseWikiLinks(visible)) {
-    if (link.kind !== 'note') continue
     const start = from + link.start
     const end = from + link.end
     if (isActive(start)) continue
-    ranges.push({
-      from: start,
-      to: end,
-      deco: Decoration.replace({ widget: new WikiLinkChip(link.target, link.label, docExists(link.target)) }),
-    })
+    // Both kinds get a chip. Task links used to fall out here, which meant the app's own
+    // `@`-mention wrote `[[task:<id>]]` that its own editor rendered as raw text.
+    let chip: WikiLinkChip
+    if (link.kind === 'task') {
+      const info = taskInfo(link.target)
+      // An explicit `|Label` wins over the live title — the author asked for those words.
+      chip = new WikiLinkChip('task', link.target, link.label ?? info.label, !info.missing)
+    } else {
+      chip = new WikiLinkChip('note', link.target, link.label ?? link.target, docExists(link.target))
+    }
+    ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }
 
   ranges.sort(

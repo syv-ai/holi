@@ -4,11 +4,23 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area. The full historical ADR log (D1–D32 and their consolidation) lives in git history.
 
-*Inbox is currently empty. Last consolidation: 2026-07-14.*
+## D58 — The renderer's task store is vault-scoped, not board-scoped
+
+**Context.** `useTaskFeed` (initial load + the `tasks`/`presence` push subscriptions) lived inside `BoardView`, so `tasksAtom` was populated only while the board was mounted. That was invisible while the board was the only thing reading it. It stopped being invisible the moment the notes editor grew `[[task:<id>]]` chips: a chip resolves its title against `tasksAtom`, an empty map means "no such task", and the tombstone is indistinguishable from the truth — so **every live task in a note rendered as "[deleted task]" until the user happened to visit the board**. The `@`-mention's task list was empty in the same window, and had been since it shipped.
+
+**Decision.** The feed is mounted in `Shell` (`state/task-feed.ts`), with the same lifetime as the active vault, beside the docs feed that already lives there. Two surfaces in different subtrees consume `tasksAtom`; neither owns it.
+
+**Why.** "Whoever renders it, loads it" works exactly until a second consumer appears, and then it fails *silently and confidently* — the second consumer cannot tell an unloaded store from an empty one. Docs were already shell-scoped for this reason; tasks being board-scoped was the asymmetry, not this fix. The cost is one `tasks.list` per vault activation for a user who never opens the board — the same trade the docs feed already makes.
+
+**Rejected.** *Load tasks in `EditorPane` too* — two owners of one atom, racing on vault switch. *Make the chip render "unknown" when the store is empty* — treats a fixable staleness as a permanent condition, and leaves the `@`-mention broken.
+
+**Consolidates into:** `architecture.md` §Server push (the "main owns the one connection, the renderer never opens its own" bullet — this is that rule's renderer-side half).
+
+*Last consolidation: 2026-07-14.*
 
 ---
 
-## Number allocation — **next free is D58**
+## Number allocation — **next free is D59**
 
 Living docs carry decisions as **prose, never as numbers** (grep confirms: zero D-refs across all of `docs/`). D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 

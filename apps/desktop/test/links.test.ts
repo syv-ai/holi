@@ -50,6 +50,21 @@ describe('resolveLinkClick (FR-6 wiki-links, FR-7 markdown links)', () => {
     })
   })
 
+  // A task chip carries a stable id (D27), not a path, and opens the board's detail
+  // panel — so it must route by its own dataset key and never reach openNote.
+  it('opens a task chip on a plain click', () => {
+    expect(resolveLinkClick({ taskTarget: 'task-123', modifier: false })).toEqual({
+      kind: 'task',
+      id: 'task-123',
+    })
+  })
+
+  it('prefers a task chip over an enclosing markdown link', () => {
+    expect(
+      resolveLinkClick({ taskTarget: 'task-123', href: 'https://example.com', modifier: true }),
+    ).toEqual({ kind: 'task', id: 'task-123' })
+  })
+
   it('ignores a click on ordinary text', () => {
     expect(resolveLinkClick({ modifier: false })).toBeNull()
     expect(resolveLinkClick({ modifier: true })).toBeNull()

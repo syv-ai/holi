@@ -43,6 +43,10 @@ export const editorTheme = EditorView.baseTheme({
     padding: '0 4px',
     cursor: 'pointer',
   },
+  // A task chip is a different destination (the board, not a note), so it reads as a
+  // different thing — same shape, its own hue, and the board's own amber.
+  '.cm-wikilink-task': { background: 'rgba(251,191,36,0.12)', color: '#fbbf24' },
+  // Last: a missing target outranks the kind tint, for a note and a task alike.
   '.cm-wikilink-missing': { color: '#f0abfc', background: 'rgba(240,171,252,0.10)' },
 
   // remote cursors (y-codemirror.next)
