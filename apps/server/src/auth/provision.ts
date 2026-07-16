@@ -2,21 +2,28 @@
  * scaffold, AGENTS/MEMORY) is a documented stub — lands with the
  * daily-notes/agent phases. */
 import { and, eq } from 'drizzle-orm'
+import type { Bus } from '../bus'
 import type { Db } from '../db/client'
-import { memberships, vaults } from '../db/schema'
+import { vaults } from '../db/schema'
+import { insertMembershipRow } from '../membership/service'
 
-export async function provisionPersonalVault(db: Db, userId: string): Promise<string> {
+export async function provisionPersonalVault(db: Db, bus: Bus, userId: string): Promise<string> {
   const existing = await findPersonal(db, userId)
   if (existing) return existing
   try {
-    return await db.transaction(async (tx) => {
+    const { vaultId, joined } = await db.transaction(async (tx) => {
       const [vault] = await tx
         .insert(vaults)
         .values({ name: 'Personal', kind: 'personal', ownerId: userId })
         .returning()
-      await tx.insert(memberships).values({ vaultId: vault!.id, userId, role: 'owner' })
-      return vault!.id
+      const joined = await insertMembershipRow(tx, { vaultId: vault!.id, userId, role: 'owner' })
+      return { vaultId: vault!.id, joined }
     })
+    // Outside the tx (D51). In practice nobody is listening — this runs during sign-in,
+    // before the client has a token to open a stream with — but the funnel has no
+    // exceptions, because an exception is how the next writer skips it.
+    if (joined) bus.emitMembership(joined, { type: 'joined' })
+    return vaultId
   } catch (err) {
     // concurrent first sign-in lost the race on vaults_personal_owner_idx
     const raced = await findPersonal(db, userId)

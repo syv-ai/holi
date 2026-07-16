@@ -31,7 +31,7 @@ export const authRouter = router({
         redirectUri: input.redirectUri,
       })
       const user = await upsertGoogleUser(ctx.db, profile)
-      await provisionPersonalVault(ctx.db, user.id)
+      await provisionPersonalVault(ctx.db, ctx.bus, user.id)
       const token = await mintSession(ctx.db, user.id)
       return { token, user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatarUrl } }
     }),
@@ -41,7 +41,7 @@ export const authRouter = router({
    * empty sign-in screen. Gated off in production — it mints a session for anyone. */
   devSession: publicProcedure.mutation(async ({ ctx }) => {
     if (!config.enableDevAuth) throw new TRPCError({ code: 'NOT_FOUND' })
-    const user = await ensureDevUser(ctx.db)
+    const user = await ensureDevUser(ctx.db, ctx.bus)
     const token = await mintSession(ctx.db, user.id)
     return { token, user: { id: user.id, email: user.email, name: user.name, avatarUrl: null } }
   }),

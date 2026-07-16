@@ -7,6 +7,7 @@
 import * as Y from 'yjs'
 import { YDOC_TEXT_KEY } from '@holi/shared'
 import { ensureDevUser } from '../src/auth/dev'
+import { createBus } from '../src/bus'
 import { mintSession } from '../src/auth/sessions'
 import { createDb } from '../src/db/client'
 import { runMigrations } from '../src/db/migrate'
@@ -15,7 +16,10 @@ import { docs, yjsDocs } from '../src/db/schema'
 async function seed(): Promise<void> {
   await runMigrations()
   const { db, sql } = createDb()
-  const user = await ensureDevUser(db)
+  // A throwaway bus: provisioning announces the personal vault (D51) and in this script
+  // nothing is listening. The funnel has no exceptions, so the script supplies one rather
+  // than provisioning being allowed to skip the announcement.
+  const user = await ensureDevUser(db, createBus())
   const [doc] = await db
     .insert(docs)
     .values({ vaultId: user.vaultId, path: `welcome-${Date.now()}.md`, kind: 'note' })

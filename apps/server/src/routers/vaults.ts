@@ -4,6 +4,7 @@ import { z } from 'zod'
 import type { DocsEvent } from '../bus'
 import { toDocMeta, toFolder, toVault } from '../db/mappers'
 import { docs, folders, memberships, vaults } from '../db/schema'
+import { insertMembershipRow } from '../membership/service'
 import { authedProcedure, ownerProcedure, router, vaultProcedure } from '../trpc'
 
 export const vaultsRouter = router({
@@ -24,14 +25,21 @@ export const vaultsRouter = router({
   create: authedProcedure
     .input(z.object({ name: z.string().min(1), kind: z.enum(['shared']).default('shared') }))
     .mutation(async ({ ctx, input }) => {
-      return ctx.db.transaction(async (tx) => {
-        const [vault] = await tx
+      const { vault, joined } = await ctx.db.transaction(async (tx) => {
+        const [row] = await tx
           .insert(vaults)
           .values({ name: input.name, kind: input.kind, ownerId: ctx.user.id })
           .returning()
-        await tx.insert(memberships).values({ vaultId: vault!.id, userId: ctx.user.id, role: 'owner' })
-        return toVault(vault!)
+        const joined = await insertMembershipRow(tx, {
+          vaultId: row!.id,
+          userId: ctx.user.id,
+          role: 'owner',
+        })
+        return { vault: toVault(row!), joined }
       })
+      // Outside the tx (D51) — your other windows learn about a vault that exists.
+      if (joined) ctx.bus.emitMembership(joined, { type: 'joined' })
+      return vault
     }),
 
   rename: ownerProcedure

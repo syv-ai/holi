@@ -37,7 +37,7 @@ export const membershipRouter = router({
   invite: sharedOwnerProcedure
     .input(z.object({ email: z.string().email(), role }))
     .mutation(({ ctx, input }) =>
-      inviteMember(ctx.db, {
+      inviteMember(ctx.db, ctx.bus, {
         vaultId: ctx.vaultId,
         email: input.email,
         role: input.role,
@@ -55,13 +55,13 @@ export const membershipRouter = router({
   remove: sharedOwnerProcedure
     .input(z.object({ userId: z.string().uuid() }))
     .mutation(async ({ ctx, input }) => {
-      await removeMember(ctx.db, { vaultId: ctx.vaultId, userId: input.userId })
+      await removeMember(ctx.db, ctx.bus, { vaultId: ctx.vaultId, userId: input.userId })
       return { ok: true }
     }),
 
   /** Any member may leave — it needs no owner rights, only a shared vault. */
   leave: sharedVaultProcedure.mutation(async ({ ctx }) => {
-    await leaveVault(ctx.db, { vaultId: ctx.vaultId, userId: ctx.user.id, role: ctx.role })
+    await leaveVault(ctx.db, ctx.bus, { vaultId: ctx.vaultId, userId: ctx.user.id, role: ctx.role })
     return { ok: true }
   }),
 

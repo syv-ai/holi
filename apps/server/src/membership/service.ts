@@ -12,11 +12,56 @@
  */
 import { and, eq, ne } from 'drizzle-orm'
 import { TRPCError } from '@trpc/server'
+import type { Bus } from '../bus'
 import { config } from '../config'
 import type { Db } from '../db/client'
 import { memberships, users, vaults } from '../db/schema'
 import type { SharedVaultId } from '../trpc'
 import type { Role } from '@holi/shared'
+
+/**
+ * The only place a `memberships` row appears or disappears (D51) — including from
+ * `vaults.create` and `provisionPersonalVault`, which write one without going near the
+ * rest of this module.
+ *
+ * Both return the affected userId, or **null when the table did not actually change**:
+ * a re-invite hits `onConflictDoNothing`, and a frame saying "you joined" when you were
+ * already a member is a frame that lies. (Same rule `getOrCreateDaily` follows before
+ * emitting `docs:created` — only on a real mint.)
+ *
+ * **They take no `Bus`, and must not.** The caller emits, *after* its transaction
+ * commits: the bus is an in-process EventEmitter with no transactional semantics, so an
+ * emit inside a tx announces a membership that can still roll back — and worse, a
+ * listener that reacts by reading the user's vaults (which is exactly what the SSE
+ * handler does, to re-key) would not see the uncommitted row and would skip the vault it
+ * was just told about. `await db.transaction(...)` resolving *is* the commit, so
+ * emitting on the far side of it is correct by construction. That is the whole reason
+ * the emit lives in the callers and not in here, and why adding a `Bus` parameter to
+ * these two would be a mistake rather than a tidy-up.
+ */
+export async function insertMembershipRow(
+  db: Pick<Db, 'insert'>,
+  values: { vaultId: string; userId: string; role: Role; invitedBy?: string },
+): Promise<string | null> {
+  const [row] = await db
+    .insert(memberships)
+    .values(values)
+    .onConflictDoNothing()
+    .returning({ userId: memberships.userId })
+  return row?.userId ?? null
+}
+
+export async function deleteMembershipRow(
+  db: Pick<Db, 'delete'>,
+  vaultId: string,
+  userId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .delete(memberships)
+    .where(and(eq(memberships.vaultId, vaultId), eq(memberships.userId, userId)))
+    .returning({ userId: memberships.userId })
+  return row?.userId ?? null
+}
 
 /** FR-10: invites are domain-restricted, to the *same* workspace sign-in enforces via
  * `assertWorkspace` — one knob, so the two can never disagree about who is allowed in.
@@ -43,10 +88,11 @@ function assertInvitableEmail(email: string): void {
  */
 export async function inviteMember(
   db: Db,
+  bus: Bus,
   args: { vaultId: SharedVaultId; email: string; role: Role; invitedBy: string },
 ): Promise<{ userId: string }> {
   assertInvitableEmail(args.email)
-  return db.transaction(async (tx) => {
+  const { userId, joined } = await db.transaction(async (tx) => {
     const [existing] = await tx.select().from(users).where(eq(users.email, args.email))
     const user =
       existing ??
@@ -54,14 +100,23 @@ export async function inviteMember(
         .insert(users)
         .values({ googleSub: `pending:${args.email}`, email: args.email })
         .returning())[0]!
-    await tx
-      .insert(memberships)
-      .values({ vaultId: args.vaultId, userId: user.id, role: args.role, invitedBy: args.invitedBy })
-      .onConflictDoNothing()
-    return { userId: user.id }
+    const joined = await insertMembershipRow(tx, {
+      vaultId: args.vaultId,
+      userId: user.id,
+      role: args.role,
+      invitedBy: args.invitedBy,
+    })
+    return { userId: user.id, joined }
   })
+  // After the commit, and only on a real insert — re-inviting an existing member is a
+  // documented no-op, not a re-join.
+  if (joined) bus.emitMembership(joined, { type: 'joined' })
+  return { userId }
 }
 
+/** Takes no `Bus` on purpose (D51): a role change is neither a join nor a leave, the
+ * vault *list* does not render role, and the Members panel refetches on its own
+ * mutations. The absent parameter is the statement — there is nothing here to forget. */
 export async function setMemberRole(
   db: Db,
   args: { vaultId: SharedVaultId; userId: string; role: Role },
@@ -75,28 +130,31 @@ export async function setMemberRole(
 
 export async function removeMember(
   db: Db,
+  bus: Bus,
   args: { vaultId: SharedVaultId; userId: string },
 ): Promise<void> {
   await assertNotLastOwner(db, args.vaultId, args.userId)
-  await db
-    .delete(memberships)
-    .where(and(eq(memberships.vaultId, args.vaultId), eq(memberships.userId, args.userId)))
+  const left = await deleteMembershipRow(db, args.vaultId, args.userId)
+  if (left) bus.emitMembership(left, { type: 'left' })
 }
 
 export async function leaveVault(
   db: Db,
+  bus: Bus,
   args: { vaultId: SharedVaultId; userId: string; role: Role },
 ): Promise<void> {
   if (args.role === 'owner') {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'owner must transfer ownership first' })
   }
-  await db
-    .delete(memberships)
-    .where(and(eq(memberships.vaultId, args.vaultId), eq(memberships.userId, args.userId)))
+  const left = await deleteMembershipRow(db, args.vaultId, args.userId)
+  if (left) bus.emitMembership(left, { type: 'left' })
 }
 
 /** One-way: the outgoing owner is demoted in the same transaction, so the vault is never
- * ownerless and never briefly has two owners. */
+ * ownerless and never briefly has two owners.
+ *
+ * No `Bus` either (D51) — this only ever *updates* rows. Both parties are members before
+ * and after; nobody's vault list changes. */
 export async function transferOwnership(
   db: Db,
   args: { vaultId: SharedVaultId; fromUserId: string; toUserId: string },

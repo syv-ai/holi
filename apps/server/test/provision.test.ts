@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { provisionPersonalVault } from '../src/auth/provision'
+import { createBus } from '../src/bus'
 import { memberships, vaults } from '../src/db/schema'
 import { createTestDb, type TestDb } from '../src/test/db'
 import { seedUser } from '../src/test/fixtures'
@@ -14,7 +15,7 @@ describe('personal vault provisioning (FR-7)', () => {
 
   it('first call creates exactly one personal vault + owner membership', async () => {
     const u = await seedUser(t.db)
-    const vaultId = await provisionPersonalVault(t.db, u.id)
+    const vaultId = await provisionPersonalVault(t.db, createBus(), u.id)
     const rows = await t.db
       .select()
       .from(vaults)
@@ -27,8 +28,8 @@ describe('personal vault provisioning (FR-7)', () => {
 
   it('is idempotent — second call returns the same vault', async () => {
     const u = await seedUser(t.db)
-    const first = await provisionPersonalVault(t.db, u.id)
-    const second = await provisionPersonalVault(t.db, u.id)
+    const first = await provisionPersonalVault(t.db, createBus(), u.id)
+    const second = await provisionPersonalVault(t.db, createBus(), u.id)
     expect(second).toBe(first)
     const rows = await t.db
       .select()
@@ -39,7 +40,7 @@ describe('personal vault provisioning (FR-7)', () => {
 
   it('DB enforces one personal vault per owner (partial unique index)', async () => {
     const u = await seedUser(t.db)
-    await provisionPersonalVault(t.db, u.id)
+    await provisionPersonalVault(t.db, createBus(), u.id)
     await expect(
       t.db.insert(vaults).values({ name: 'sneaky', kind: 'personal', ownerId: u.id }),
     ).rejects.toThrow()
