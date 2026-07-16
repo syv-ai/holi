@@ -22,7 +22,7 @@ export async function provisionPersonalVault(db: Db, bus: Bus, userId: string): 
     // Outside the tx (D51). In practice nobody is listening — this runs during sign-in,
     // before the client has a token to open a stream with — but the funnel has no
     // exceptions, because an exception is how the next writer skips it.
-    if (joined) bus.emitMembership(joined, { type: 'joined' })
+    if (joined) bus.emitMembership(joined, { type: 'joined', vaultId })
     return vaultId
   } catch (err) {
     // concurrent first sign-in lost the race on vaults_personal_owner_idx

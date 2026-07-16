@@ -110,7 +110,7 @@ export async function inviteMember(
   })
   // After the commit, and only on a real insert — re-inviting an existing member is a
   // documented no-op, not a re-join.
-  if (joined) bus.emitMembership(joined, { type: 'joined' })
+  if (joined) bus.emitMembership(joined, { type: 'joined', vaultId: args.vaultId })
   return { userId }
 }
 
@@ -135,7 +135,7 @@ export async function removeMember(
 ): Promise<void> {
   await assertNotLastOwner(db, args.vaultId, args.userId)
   const left = await deleteMembershipRow(db, args.vaultId, args.userId)
-  if (left) bus.emitMembership(left, { type: 'left' })
+  if (left) bus.emitMembership(left, { type: 'left', vaultId: args.vaultId })
 }
 
 export async function leaveVault(
@@ -147,7 +147,7 @@ export async function leaveVault(
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'owner must transfer ownership first' })
   }
   const left = await deleteMembershipRow(db, args.vaultId, args.userId)
-  if (left) bus.emitMembership(left, { type: 'left' })
+  if (left) bus.emitMembership(left, { type: 'left', vaultId: args.vaultId })
 }
 
 /** One-way: the outgoing owner is demoted in the same transaction, so the vault is never

@@ -54,7 +54,7 @@ describe('a membership change announces itself on user:<id> (D51)', () => {
     await membershipRouter
       .createCaller(ctxFor(t, bus, ownerId))
       .invite({ vaultId, email: 'invitee@syv.ai', role: 'member' })
-    expect(theirs).toEqual([{ type: 'joined' }])
+    expect(theirs).toEqual([{ type: 'joined', vaultId }])
     expect(owners).toEqual([])
   })
 
@@ -73,7 +73,7 @@ describe('a membership change announces itself on user:<id> (D51)', () => {
     await owner.invite({ vaultId, email: 'gone@syv.ai', role: 'member' })
     const seen = watch(bus, member.id)
     await owner.remove({ vaultId, userId: member.id })
-    expect(seen).toEqual([{ type: 'left' }])
+    expect(seen).toEqual([{ type: 'left', vaultId }])
   })
 
   it('leave tells the leaving user they left', async () => {
@@ -83,20 +83,22 @@ describe('a membership change announces itself on user:<id> (D51)', () => {
       .invite({ vaultId, email: 'bye@syv.ai', role: 'member' })
     const seen = watch(bus, member.id)
     await membershipRouter.createCaller(ctxFor(t, bus, member.id)).leave({ vaultId })
-    expect(seen).toEqual([{ type: 'left' }])
+    expect(seen).toEqual([{ type: 'left', vaultId }])
   })
 
   it('vaults.create tells the creator they joined the vault they just made', async () => {
     const seen = watch(bus, ownerId)
-    await vaultsRouter.createCaller(ctxFor(t, bus, ownerId)).create({ name: 'fresh', kind: 'shared' })
-    expect(seen).toEqual([{ type: 'joined' }])
+    const made = await vaultsRouter
+      .createCaller(ctxFor(t, bus, ownerId))
+      .create({ name: 'fresh', kind: 'shared' })
+    expect(seen).toEqual([{ type: 'joined', vaultId: made.id }])
   })
 
   it('provisioning a personal vault announces it', async () => {
     const fresh = await seedUser(t.db)
     const seen = watch(bus, fresh.id)
-    await provisionPersonalVault(t.db, bus, fresh.id)
-    expect(seen).toEqual([{ type: 'joined' }])
+    const personalId = await provisionPersonalVault(t.db, bus, fresh.id)
+    expect(seen).toEqual([{ type: 'joined', vaultId: personalId }])
   })
 
   it('provisioning twice announces once — the second call is a no-op, not a re-join', async () => {

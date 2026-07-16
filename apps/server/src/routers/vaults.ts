@@ -38,7 +38,7 @@ export const vaultsRouter = router({
         return { vault: toVault(row!), joined }
       })
       // Outside the tx (D51) — your other windows learn about a vault that exists.
-      if (joined) ctx.bus.emitMembership(joined, { type: 'joined' })
+      if (joined) ctx.bus.emitMembership(joined, { type: 'joined', vaultId: vault.id })
       return vault
     }),
 

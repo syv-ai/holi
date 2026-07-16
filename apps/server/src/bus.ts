@@ -54,10 +54,15 @@ export type PresenceEvent = {
  * would be wrong the moment you were invited; this is what lets it re-key a live
  * connection instead.
  *
- * **No `vaultId` here on purpose** — the SSE envelope carries it (D50), and a payload
- * that repeats it is a second copy that can disagree with the first.
+ * **`vaultId` lives in the payload here, unlike every other channel** — and that is
+ * forced, not a style choice. The other four are keyed `<channel>:<vaultId>`, so the SSE
+ * handler reads the vault out of the closure and lifts it into the envelope (D50). This
+ * one is keyed `user:<userId>`: the vault is not in the key, so if it were not in the
+ * payload it would be nowhere, and a listener would be told "you joined" with no idea
+ * what. The handler lifts it into the same envelope on the way out, so the wire stays
+ * uniform across all five channels and the desktop mirrors a bare `{ type }`.
  */
-export type MembershipEvent = { type: 'joined' | 'left' }
+export type MembershipEvent = { type: 'joined' | 'left'; vaultId: string }
 
 export class Bus extends EventEmitter {
   emitDocs(vaultId: string, event: DocsEvent): void {
