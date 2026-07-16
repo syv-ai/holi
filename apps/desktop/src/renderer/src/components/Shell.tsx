@@ -4,8 +4,10 @@ import { AgentPanel } from './AgentPanel'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
+import { HistoryPanel } from './HistoryPanel'
 import { VaultSettings } from './VaultSettings'
 import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
+import { historyOpenAtom } from '../state/history'
 import { openTodaysDailyNoteAtom, sweepDailyNotesAtom } from '../state/daily'
 import { sessionAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
@@ -35,6 +37,7 @@ export function Shell() {
   const sweepDailyNotes = useSetAtom(sweepDailyNotesAtom)
   const setSelectedTaskId = useSetAtom(selectedTaskIdAtom)
   const applyDocsEvent = useSetAtom(applyDocsEventAtom)
+  const [historyOpen, setHistoryOpen] = useAtom(historyOpenAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [view, setView] = useAtom(viewAtom)
@@ -235,8 +238,27 @@ export function Shell() {
                     {activeDoc.path.slice(activeDoc.path.lastIndexOf('/') + 1)}
                   </span>
                 )}
+                {/* History is about the open note, so it belongs beside its name. */}
+                {view === 'notes' && activeDoc && (
+                  <button
+                    onClick={() => setHistoryOpen((v) => !v)}
+                    title="version history"
+                    className={`ml-auto rounded px-2 py-0.5 text-xs ${
+                      historyOpen
+                        ? 'bg-neutral-800 text-neutral-100'
+                        : 'text-neutral-500 hover:text-neutral-300'
+                    }`}
+                  >
+                    history
+                  </button>
+                )}
               </div>
-              {view === 'board' ? <BoardView /> : <EditorPane />}
+              <div className="flex min-h-0 flex-1">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  {view === 'board' ? <BoardView /> : <EditorPane />}
+                </div>
+                {view === 'notes' && <HistoryPanel />}
+              </div>
             </>
           )}
         </main>
