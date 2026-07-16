@@ -7,6 +7,7 @@ import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
+import { linkClickHandler, type LinkNav } from './links'
 import { docExistsFacet, livePreview } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
@@ -20,6 +21,8 @@ export interface EditorDeps {
   mentionData: () => MentionData
   /** A picked task mention links the current note into the task's `related[]`. */
   onTaskMention: (taskId: string) => void
+  /** Where a clicked link goes (FR-6/FR-7). */
+  nav: () => LinkNav
 }
 
 /** The trimmed stack (notes-editor PRD FR-1) minus what other tasks add
@@ -39,6 +42,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     markdown({ base: markdownLanguage }),
     docExistsFacet.of(deps.docExists),
     livePreview,
+    linkClickHandler(deps.nav),
     // Nested in-cell editors mutate the same doc — verify live that these
     // transactions compose with yCollab (FR-10 risk), no binding bypass.
     markdownTables(),

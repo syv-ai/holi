@@ -2,6 +2,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useState } from 'react'
 import { buildTree, type TreeNode } from '../lib/tree'
 import { activeDocAtom, createNoteAtom, docsAtom } from '../state/vaults'
+import { openDocAtom } from '../state/view'
 
 export function FileTree() {
   const { docs, folders } = useAtomValue(docsAtom)
@@ -30,7 +31,7 @@ export function FileTree() {
         />
         <button className="rounded bg-neutral-800 px-2 text-xs hover:bg-neutral-700">+</button>
       </form>
-      <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
+      <div className="holi-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
         {tree.map((node) => (
           <TreeRow key={node.path} node={node} depth={0} />
         ))}
@@ -41,7 +42,8 @@ export function FileTree() {
 }
 
 function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
-  const setActiveDoc = useSetAtom(activeDocAtom)
+  const openDoc = useSetAtom(openDocAtom)
+  const activeDoc = useAtomValue(activeDocAtom)
   const { docs } = useAtomValue(docsAtom)
   const [open, setOpen] = useState(true)
   const pad = { paddingLeft: `${depth * 12 + 8}px` }
@@ -50,7 +52,7 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
     return (
       <div>
         <button
-          className="block w-full truncate rounded px-1 py-0.5 text-left text-neutral-400 hover:bg-neutral-900"
+          className="block w-full truncate rounded px-1 py-0.5 text-left text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
           style={pad}
           onClick={() => setOpen((o) => !o)}
         >
@@ -60,13 +62,23 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
       </div>
     )
   }
+  const isActive = activeDoc?.id === node.docId
   return (
     <button
-      className="block w-full truncate rounded px-1 py-0.5 text-left hover:bg-neutral-900"
+      // The open note is marked here, not only in the header — the tree is where you look
+      // to know where you are. Hover lands a step below the active row so the two read as
+      // the same scale of emphasis rather than competing.
+      className={`block w-full truncate rounded px-1 py-0.5 text-left transition-colors ${
+        isActive
+          ? 'bg-neutral-800 text-neutral-100'
+          : 'text-neutral-300 hover:bg-neutral-800/60 hover:text-neutral-100'
+      }`}
       style={pad}
       onClick={() => {
         const doc = docs.find((d) => d.id === node.docId)
-        if (doc) setActiveDoc(doc)
+        // openDoc, not setActiveDoc: from the board, setting the doc alone left the board
+        // on screen and the click looked broken.
+        if (doc) openDoc(doc)
       }}
     >
       {node.name}

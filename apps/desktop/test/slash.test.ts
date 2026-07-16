@@ -13,13 +13,21 @@ describe('slashCommands (FR-9)', () => {
     expect(result).not.toBeNull()
     expect(result!.from).toBe(0)
     const labels = result!.options.map((o) => o.label)
-    expect(labels).toContain('/subtask')
+    expect(labels).toContain('/todo')
     expect(labels).toContain('/table')
   })
 
-  it('/subtask inserts a checkbox line', () => {
-    const opt = slashCommands(ctx('/'))!.options.find((o) => o.label === '/subtask')
+  it('/todo inserts a checkbox line', () => {
+    const opt = slashCommands(ctx('/'))!.options.find((o) => o.label === '/todo')
     expect(opt!.apply).toBe('- [ ] ')
+  })
+
+  // It inserts a plain markdown checkbox and nothing else. It was called /subtask, which
+  // promised a parent task that cannot exist: this editor only ever opens notes (a task's
+  // description is a plain textarea, not CodeMirror).
+  it('offers no /subtask — a note has no parent task', () => {
+    const labels = slashCommands(ctx('/'))!.options.map((o) => o.label)
+    expect(labels).not.toContain('/subtask')
   })
 
   it('/table inserts a valid markdown table skeleton (header + delimiter + row)', () => {
@@ -40,9 +48,9 @@ describe('slashCommands (FR-9)', () => {
   })
 
   it('filters commands by the query after the / (custom filter, / excluded)', () => {
-    const result = slashCommands(ctx('/sub'))
+    const result = slashCommands(ctx('/tod'))
     const labels = result!.options.map((o) => o.label)
-    expect(labels).toEqual(['/subtask'])
+    expect(labels).toEqual(['/todo'])
     expect(result!.filter).toBe(false)
   })
 })

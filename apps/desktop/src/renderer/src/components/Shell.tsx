@@ -7,8 +7,9 @@ import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
 import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
 import { openTodaysDailyNoteAtom, sweepDailyNotesAtom } from '../state/daily'
-import { sessionAtom, signOutAtom } from '../state/session'
+import { sessionAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
+import { viewAtom } from '../state/view'
 import {
   activeDocAtom,
   activeVaultIdAtom,
@@ -20,7 +21,6 @@ import {
 
 export function Shell() {
   const session = useAtomValue(sessionAtom)
-  const signOut = useSetAtom(signOutAtom)
   const vaults = useAtomValue(vaultsAtom)
   const [activeVaultId, setActiveVaultId] = useAtom(activeVaultIdAtom)
   const activeDoc = useAtomValue(activeDocAtom)
@@ -33,7 +33,7 @@ export function Shell() {
   const sweepDailyNotes = useSetAtom(sweepDailyNotesAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
-  const [view, setView] = useState<'notes' | 'board'>('notes')
+  const [view, setView] = useAtom(viewAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const agentStatus = useAtomValue(agentStatusAtom)
   /** A vault switch mid-turn kills the session — hold the choice until confirmed. */
@@ -175,8 +175,17 @@ export function Shell() {
                     {v}
                   </button>
                 ))}
+                {/* The open note names the surface you're on — it reads at the same
+                  * weight as the selected toggle, with its folder path kept quiet. */}
                 {view === 'notes' && activeDoc && (
-                  <span className="ml-2 truncate text-xs text-neutral-500">{activeDoc.path}</span>
+                  <span className="ml-2 min-w-0 truncate text-xs text-neutral-100">
+                    {activeDoc.path.includes('/') && (
+                      <span className="text-neutral-500">
+                        {activeDoc.path.slice(0, activeDoc.path.lastIndexOf('/') + 1)}
+                      </span>
+                    )}
+                    {activeDoc.path.slice(activeDoc.path.lastIndexOf('/') + 1)}
+                  </span>
                 )}
               </div>
               {view === 'board' ? <BoardView /> : <EditorPane />}
@@ -200,12 +209,8 @@ export function Shell() {
           </span>{' '}
           {syncStatus}
         </span>
-        <span className="flex items-center gap-2">
-          {session?.email}
-          <button className="rounded px-1 hover:bg-neutral-900" onClick={() => void signOut()}>
-            sign out
-          </button>
-        </span>
+        {/* Sign out lives in settings — the footer states who you are, it does not act. */}
+        <span>{session?.email}</span>
       </footer>
     </div>
   )

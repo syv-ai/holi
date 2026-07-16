@@ -10,6 +10,7 @@ import {
   loadGitStatusAtom,
   syncNowAtom,
 } from '../state/git'
+import { sessionAtom, signOutAtom } from '../state/session'
 
 const toneClass = { idle: 'text-neutral-400', ok: 'text-emerald-400', error: 'text-red-400' } as const
 
@@ -21,6 +22,8 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   const connectRepo = useSetAtom(connectRepoAtom)
   const disconnect = useSetAtom(disconnectRepoAtom)
   const syncNow = useSetAtom(syncNowAtom)
+  const session = useAtomValue(sessionAtom)
+  const signOut = useSetAtom(signOutAtom)
   const [repoUrl, setRepoUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +48,7 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   return (
     <div className="flex h-full flex-col gap-4 p-4 text-sm">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Vault settings — Git mirror</h2>
+        <h2 className="text-base font-semibold">Settings</h2>
         <button className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700" onClick={onClose}>
           close
         </button>
@@ -116,6 +119,21 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           </ul>
         )}
         {error && <p className="text-xs text-red-400">{error}</p>}
+      </section>
+
+      {/* Account actions live here, not in the footer: the footer reports state, it does
+        * not act — and sign out is the one destructive control in the shell. */}
+      <section className="mt-auto space-y-2 border-t border-neutral-900 pt-4">
+        <h3 className="font-medium">Account</h3>
+        <div className="flex items-center justify-between">
+          <p className="text-neutral-400">{session?.email}</p>
+          <button
+            className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700"
+            onClick={() => void signOut()}
+          >
+            Sign out
+          </button>
+        </div>
       </section>
     </div>
   )

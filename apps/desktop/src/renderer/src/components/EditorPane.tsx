@@ -6,12 +6,14 @@ import { yCollab } from 'y-codemirror.next'
 import * as Y from 'yjs'
 import { openDoc, presenceColor } from '../collab/provider'
 import type { MentionData } from '../editor/mentions'
+import type { LinkNav } from '../editor/links'
 import { baseEditorExtensions } from '../editor/extensions'
 import { trpc } from '../lib/trpc'
 import { sessionAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
 import { tasksAtom } from '../state/tasks'
 import { activeDocAtom, activeVaultIdAtom, docsAtom } from '../state/vaults'
+import { openDocAtom } from '../state/view'
 
 export function EditorPane() {
   const activeDoc = useAtomValue(activeDocAtom)
@@ -20,6 +22,7 @@ export function EditorPane() {
   const tasks = useAtomValue(tasksAtom)
   const vaultId = useAtomValue(activeVaultIdAtom)
   const setSyncStatus = useSetAtom(syncStatusAtom)
+  const openDocInPane = useSetAtom(openDocAtom)
   const hostRef = useRef<HTMLDivElement>(null)
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(docs.map((d) => d.path))
@@ -36,6 +39,19 @@ export function EditorPane() {
     docId: null,
   })
   linkRef.current = { vaultId, docId: activeDoc?.id ?? null }
+
+  // Clicking a link opens the target (FR-6/FR-7). A ref, not an effect dep: rebuilding
+  // the whole EditorView because the doc list changed would drop the caret mid-edit.
+  const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
+  navRef.current = {
+    openNote: (path) => {
+      const doc = docs.find((d) => d.path === path)
+      // A link can point at a note that doesn't exist yet — the chip already renders it
+      // as missing, so a click on it should do nothing rather than invent a doc.
+      if (doc) openDocInPane(doc)
+    },
+    openExternal: (url) => void window.holi.openExternal(url),
+  }
 
   useEffect(() => {
     if (!activeDoc || !hostRef.current || !session) return
@@ -69,6 +85,7 @@ export function EditorPane() {
                   .mutate({ vaultId: vid, taskId, related: { kind: 'note', id: docId } })
                   .catch(() => {})
               },
+              nav: () => navRef.current,
             }),
             // provider.awareness is typed nullable in v2 but always set with a document
             yCollab(handle.text, handle.provider.awareness!, { undoManager }),

@@ -1,0 +1,74 @@
+/**
+ * Click-to-navigate for links (notes-editor PRD FR-6 wiki-links, FR-7 markdown links).
+ *
+ * The chip widget was always built for this — it sets `data-wiki-target` and returns
+ * `ignoreEvent() → false` so clicks reach the editor — but nothing ever listened. This is
+ * the missing consumer.
+ *
+ * Wiki-links and markdown links deliberately behave differently, because one is a widget
+ * and the other is text:
+ *
+ *  - A **wiki-link chip** is a `Decoration.replace` — there is no caret position "inside"
+ *    it to want. Clicking it can only sensibly mean *go there*. And a chip only exists on
+ *    a non-active line: the moment your caret is on that line the live-preview reveal
+ *    un-renders it to raw `[[path]]`, where clicks are ordinary text clicks again. So
+ *    "click navigates" can never fight "click to edit" — the two never coexist.
+ *
+ *  - A **markdown link** is a `Decoration.mark` over real, editable text. A plain click
+ *    there means *put my caret in it*, so navigation takes ⌘/Ctrl-click — the same bargain
+ *    VS Code strikes, and the only one that leaves the link text editable.
+ */
+import { EditorView } from '@codemirror/view'
+import type { Extension } from '@codemirror/state'
+
+export interface LinkNav {
+  /** Open a note by its vault-relative path. No-op if nothing is there. */
+  openNote: (path: string) => void
+  openExternal: (url: string) => void
+}
+
+/** What a click resolves to. `null` — the common case — means "not a link, leave it
+ * alone", which is what keeps ordinary clicks placing the caret. */
+export type LinkAction = { kind: 'note'; path: string } | { kind: 'external'; url: string } | null
+
+export interface ClickTargets {
+  /** `data-wiki-target` of the nearest chip ancestor, if any. */
+  wikiTarget?: string | undefined
+  /** `data-href` of the nearest markdown-link ancestor, if any. */
+  href?: string | undefined
+  /** ⌘ (mac) or Ctrl. */
+  modifier: boolean
+}
+
+/** The pure routing decision — a headless core, per the slash-command shape. The DOM
+ * lookup is the adapter's problem; the branches worth being sure about are here. */
+export function resolveLinkClick({ wikiTarget, href, modifier }: ClickTargets): LinkAction {
+  // A chip wins over any enclosing link: it is the innermost thing you clicked, and it
+  // is a widget, so there is no caret to place inside it.
+  if (wikiTarget) return { kind: 'note', path: wikiTarget }
+  if (!href || !modifier) return null
+  // Only http(s) leaves the app. A relative href is a vault path, so it routes internally
+  // like a wiki-link rather than handing the OS something it cannot open.
+  return /^https?:\/\//i.test(href) ? { kind: 'external', url: href } : { kind: 'note', path: href }
+}
+
+/** `nav` is a thunk, read at click time — the renderer's atoms move under us, and the
+ * editor is rebuilt per doc (the docExistsFacet/mentionData pattern). */
+export function linkClickHandler(nav: () => LinkNav): Extension {
+  return EditorView.domEventHandlers({
+    click(event) {
+      const el = event.target as HTMLElement | null
+      if (!el?.closest) return false
+      const action = resolveLinkClick({
+        wikiTarget: el.closest<HTMLElement>('[data-wiki-target]')?.dataset['wikiTarget'],
+        href: el.closest<HTMLElement>('[data-href]')?.dataset['href'],
+        modifier: event.metaKey || event.ctrlKey,
+      })
+      if (!action) return false
+      if (action.kind === 'note') nav().openNote(action.path)
+      else nav().openExternal(action.url)
+      event.preventDefault()
+      return true
+    },
+  })
+}

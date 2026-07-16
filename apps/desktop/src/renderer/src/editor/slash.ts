@@ -6,8 +6,15 @@
  */
 import type { CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 
-/** A checkbox subtask line. */
-const SUBTASK = '- [ ] '
+/** A markdown checkbox line.
+ *
+ * Called `/subtask` until it wasn't: the name promised a parent task to be a subtask *of*,
+ * and there is never one. This editor only ever opens notes — a task's description is a
+ * plain textarea, not CodeMirror — so the command could not mean what it said anywhere it
+ * could actually be typed. It inserts a checkbox; it is now called one. (Real task
+ * creation is `/task`, still deferred below.)
+ */
+const TODO = '- [ ] '
 
 /** A 2×2 markdown table skeleton — the codemirror-markdown-tables widget renders
  * any valid table, and inserting plain text keeps the edit on the yCollab path. */
@@ -20,7 +27,7 @@ interface SlashCommand {
 }
 
 const COMMANDS: SlashCommand[] = [
-  { label: '/subtask', detail: 'checkbox', apply: SUBTASK },
+  { label: '/todo', detail: 'checkbox', apply: TODO },
   { label: '/table', detail: 'markdown table', apply: TABLE },
 ]
 
