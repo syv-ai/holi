@@ -1,7 +1,8 @@
-/** Fetch-based SSE consumer for the server's /events/<vaultId> stream.
- * fetch (not EventSource) so the Authorization header rides a normal request.
- * Reconnects with capped exponential backoff; onReconnect lets the mirror
- * re-run its full reconcile after a gap. */
+/** Fetch-based SSE consumer for the server's /events stream — one per signed-in user,
+ * carrying every vault they are in (D50). fetch (not EventSource) so the Authorization
+ * header rides a normal request. Reconnects with capped exponential backoff; onReconnect
+ * lets the mirror re-run its full reconcile after a gap, since there is no resume cursor
+ * on the wire. Owned by main/events/user-stream.ts. */
 
 export interface SseClientOpts {
   url: string
