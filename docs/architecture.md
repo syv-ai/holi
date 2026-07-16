@@ -68,6 +68,7 @@ Each note is a **Yjs document**. The **Syv relay** (Hocuspocus) is the durable s
 
 - **Persistence:** Hocuspocus's `onStoreDocument` writes Yjs state (and periodic **snapshots** for the history timeline) to Postgres. `onLoadDocument` hydrates.
 - **Offline:** each client persists the Yjs doc to a local store (e.g. `y-indexeddb` in the renderer, or a leveldb-backed store in main). Edits made offline are standard Yjs updates that replay and auto-merge on reconnect. UI shows only a **sync-status indicator** — never a conflict dialog.
+  - **NOT BUILT (verified 2026-07-16).** There is no `y-indexeddb`/`y-leveldb` dependency and `collab/provider.ts` makes a bare `new Y.Doc()` with no persistence, so notes are **memory-only** and an offline edit is lost on quit. This is the one gap in the system that is unbuilt on *both* sides rather than missing a UI leg — do not confuse it with the cheap ones. The sync-status indicator ships and implies otherwise, which makes the gap worse than a blank. Deferred to its own phase since the desktop foundation (2026-07-12); tasks are unaffected — they have their own offline story (the working copy is the queue).
 - **Backup:** Postgres snapshots + object storage. Git is not part of backup or client sync — but a vault can opt into a server-side **git mirror** for remote sessions (below).
 
 ### Working copies and the file↔CRDT bridge
@@ -207,6 +208,7 @@ Object storage (Hetzner): archived original binaries from import conversion, doc
 - **State:** Jotai single-store, action atoms for multi-atom side effects, hooks mounted once in the app shell. Ports directly (renderer-only).
 - **IPC seam:** the old app funneled all IPC through two files (`_invoke.ts`, `events.ts`). Same discipline here: one **preload/contextBridge** module wraps `ipcRenderer.invoke`/events; tRPC client for server calls. Swappable seam, untouched call sites.
 - **UI system:** the `tone`/`variant`/`shape`/`size` cva primitives, `tokens.css` typography tiers, `cn()`/tailwind-merge — port verbatim (platform-agnostic React).
+  - **NOT PORTED (verified 2026-07-16)** — there is no `ui/` directory and no `cva` in the renderer; it is raw Tailwind throughout. Deliberately deferred at the desktop foundation until the UI grows past what raw Tailwind carries comfortably, and still deferred. The port itself is unchanged in scope; only its timing moved.
 - **App shell:** single-window, atom-driven view model (board ↔ editor), drawers/dialogs as summoned modals, hosts at root. Decompose the old 647-line `App.tsx`. **One forward-looking constraint:** the pane/tab system must not assume tabs are notes — post-v1 **vault apps** ([`prd/vault-apps.md`](prd/vault-apps.md)) open as first-class app tabs (sandboxed webviews with a `holi.*` bridge and Yjs-backed multiplayer state).
 
 ---
