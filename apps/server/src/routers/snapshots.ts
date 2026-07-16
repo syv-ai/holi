@@ -48,6 +48,33 @@ export const snapshotsRouter = router({
       return { ok: true }
     }),
 
+  /**
+   * What is actually in a version — restore with the write removed (D53).
+   *
+   * `list` deliberately never selects `state` (a full Y.Doc per row; shipping every
+   * version's bytes to render a list of labels grows with the doc). So without this,
+   * nothing in the router can tell you what a version *contains*, and the timeline
+   * offers "restore 10:31" versus "restore 09:58" with no way to tell them apart —
+   * `reason: 'interval'` rows carry a **null label**, so the only thing on screen would
+   * be a timestamp. Picking by timestamp is guessing, and that a guess is recoverable
+   * (restore leaves a pre-restore snapshot) is not a reason to make someone do it.
+   *
+   * Read-only, and deliberately not a second editor: a version is prose to read.
+   */
+  preview: authedProcedure
+    .input(z.object({ docId: z.string().uuid(), snapshotId: z.string().uuid() }))
+    .query(async ({ ctx, input }) => {
+      await requireDocAccess(ctx.db, input.docId, ctx.user.id)
+      const [snap] = await ctx.db
+        .select()
+        .from(yjsSnapshots)
+        .where(eq(yjsSnapshots.id, input.snapshotId))
+      // The docId gate above is satisfied by a doc you CAN read; without this the bytes
+      // could come from one you cannot. `restore` makes the same check for the same reason.
+      if (!snap || snap.docId !== input.docId) throw new TRPCError({ code: 'NOT_FOUND' })
+      return { text: docText(docFromState(snap.state)) }
+    }),
+
   /** D26 one-click restore: pre-restore snapshot, then rewrite text to the
    * snapshot's text as normal ops (merges/propagates, no hard overwrite). */
   restore: authedProcedure

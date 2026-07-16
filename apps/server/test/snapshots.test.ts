@@ -89,4 +89,53 @@ describe('snapshots', () => {
     const outsider = await seedUser(t.db)
     await expect(snapshotsRouter.createCaller(ctxFor(t, outsider.id)).take({ docId })).rejects.toThrow(/FORBIDDEN|forbidden/)
   })
+
+  // D53. `list` deliberately never selects `state`, so nothing in the router could tell
+  // you what is IN a version — and for interval snapshots, which carry a null label, the
+  // only thing on screen is a timestamp. A timeline without this offers "restore 10:31"
+  // vs "restore 09:58" and no way to tell them apart.
+  describe('preview', () => {
+    it('returns the text as of that snapshot, not the doc as it is now', async () => {
+      const caller = snapshotsRouter.createCaller(ctxFor(t, userId))
+      await editDocText(t.db, () => null, docId, (text) => replaceAllText(text, 'the old words'))
+      const state = await loadDocState(t.db, docId)
+      await takeSnapshot(t.db, { docId, state: state!, reason: 'manual', label: 'old', authorId: userId })
+      await editDocText(t.db, () => null, docId, (text) => replaceAllText(text, 'the new words'))
+
+      const snap = (await caller.list({ docId })).find((s) => s.label === 'old')!
+      expect(await caller.preview({ docId, snapshotId: snap.id })).toEqual({ text: 'the old words' })
+      // and the doc itself is untouched — preview is restore with the write removed
+      expect(docText(docFromState(await loadDocState(t.db, docId)))).toBe('the new words')
+    })
+
+    // The only security-relevant line in the procedure: without it, the doc gate is
+    // satisfied by a doc you CAN read while the bytes come from one you cannot.
+    //
+    // The positive control is load-bearing, not padding: tRPC's caller is a proxy that
+    // rejects an UNKNOWN procedure with NOT_FOUND too, so the rejection alone passed
+    // before `preview` existed at all. Proving the same call succeeds against the right
+    // doc is what makes the rejection mean "wrong doc" rather than "no such procedure".
+    it('rejects a snapshot id belonging to a different doc', async () => {
+      const caller = snapshotsRouter.createCaller(ctxFor(t, userId))
+      const snap = (await caller.list({ docId }))[0]!
+      const otherDocId = (
+        await notesRouter
+          .createCaller(ctxFor(t, userId))
+          .create({ vaultId, path: `other-${Date.now()}.md`, kind: 'note' })
+      ).id
+
+      await expect(caller.preview({ docId, snapshotId: snap.id })).resolves.toHaveProperty('text')
+      await expect(caller.preview({ docId: otherDocId, snapshotId: snap.id })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      })
+    })
+
+    it('is membership-gated', async () => {
+      const snap = (await snapshotsRouter.createCaller(ctxFor(t, userId)).list({ docId }))[0]!
+      const outsider = await seedUser(t.db)
+      await expect(
+        snapshotsRouter.createCaller(ctxFor(t, outsider.id)).preview({ docId, snapshotId: snap.id }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' })
+    })
+  })
 })
