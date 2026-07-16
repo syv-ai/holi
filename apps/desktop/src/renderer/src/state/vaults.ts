@@ -40,6 +40,45 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   set(activeDocAtom, doc)
 })
 
+/**
+ * Rename is also **move**: a new path with a different folder prefix relocates the note,
+ * and the server's `ensureAncestorFolders` makes the destination folders exist. The
+ * server rewrites every `[[link]]` that pointed at the old path, atomically — the same
+ * guarantee the agent has had via MCP since the drawer shipped, and the reason this must
+ * never be done by hand as a delete-and-recreate.
+ *
+ * None of these refetch: `docs:event` carries `renamed`/`deleted` back live, and two
+ * mechanisms updating the tree is worse than either.
+ */
+export const renameNoteAtom = atom(null, async (get, _set, docId: string, newPath: string) => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return
+  await trpc.notes.rename.mutate({ vaultId, docId, newPath })
+})
+
+export const renameFolderAtom = atom(null, async (get, _set, folderId: string, newPath: string) => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return
+  await trpc.notes.renameFolder.mutate({ vaultId, folderId, newPath })
+})
+
+/** Clears the editor when it is the open note being deleted — otherwise the pane holds a
+ * doc that no longer exists, on a relay room for a doc that is gone. */
+export const deleteNoteAtom = atom(null, async (get, set, docId: string) => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return
+  await trpc.notes.delete.mutate({ vaultId, docId })
+  if (get(activeDocAtom)?.id === docId) set(activeDocAtom, null)
+})
+
+/** What links here — surfaced BEFORE a delete (FR-12). Built and uncalled until now. */
+export const loadBackrefsAtom = atom(null, async (get, _set, path: string): Promise<NamedBackref[]> => {
+  const vaultId = get(activeVaultIdAtom)
+  if (!vaultId) return []
+  const refs = (await trpc.notes.backrefs.query({ vaultId, path })) as Backref[]
+  return namedBackrefs(refs, get(docsAtom).docs)
+})
+
 /** The one place a `docs:event` lands, live or echoed from our own mutation. */
 export const applyDocsEventAtom = atom(null, (get, set, event: DocsEvent) => {
   const before = get(docsAtom)
@@ -74,6 +113,27 @@ export function applyDocsEvent(state: DocsState, event: DocsEvent): DocsState {
     ...state,
     docs: known ? state.docs.map((d) => (d.id === event.doc.id ? event.doc : d)) : [...state.docs, event.doc],
   }
+}
+
+export interface Backref {
+  srcDocId: string
+  occurrences: number
+}
+export interface NamedBackref extends Backref {
+  path: string
+}
+
+/**
+ * Name the notes that link somewhere. `notes.backrefs` returns `srcDocId` and a count —
+ * no path, no title — so this joins against the docs we already have.
+ *
+ * The fallback is not decoration: a link can come from a doc that is not in this list,
+ * and this text goes straight into the confirm someone is about to make a delete decision
+ * from. Rendering `undefined` there would be worse than not warning at all.
+ */
+export function namedBackrefs(refs: Backref[], docs: DocMeta[]): NamedBackref[] {
+  const byId = new Map(docs.map((d) => [d.id, d.path]))
+  return refs.map((r) => ({ ...r, path: byId.get(r.srcDocId) ?? 'a note you cannot see' }))
 }
 
 /**
