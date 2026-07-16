@@ -24,6 +24,9 @@ export async function recomputeReminder(
     .values({ taskId: task.id, vaultId: task.vaultId, fireAt, computedFrom: task.reminder })
     .onConflictDoUpdate({
       target: reminders.taskId,
-      set: { fireAt, fired: false, computedFrom: task.reminder },
+      // Re-arming drops the old fire (firedAt: null). Load-bearing for catch-up (D47):
+      // without it, a reconnecting client would replay a fire whose task has since
+      // moved past it. A superseded fire is meant to be dropped — the task changed.
+      set: { fireAt, firedAt: null, computedFrom: task.reminder },
     })
 }

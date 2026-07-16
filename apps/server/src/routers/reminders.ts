@@ -1,5 +1,5 @@
 import { on } from 'node:events'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import type { RemindersEvent } from '../bus'
 import { reminders } from '../db/schema'
 import { router, vaultProcedure } from '../trpc'
@@ -10,7 +10,7 @@ export const remindersRouter = router({
     ctx.db
       .select()
       .from(reminders)
-      .where(and(eq(reminders.vaultId, ctx.vaultId), eq(reminders.fired, false))),
+      .where(and(eq(reminders.vaultId, ctx.vaultId), isNull(reminders.firedAt))),
   ),
 
   /** (S) Fire events → client raises the native notification (D19). */

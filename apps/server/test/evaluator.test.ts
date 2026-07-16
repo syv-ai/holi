@@ -22,7 +22,7 @@ describe('reminder evaluator', () => {
   })
   afterAll(() => t.destroy())
 
-  it('tick fires due reminders: marks fired, writes reminded_at, pushes per-vault', async () => {
+  it('tick fires due reminders: stamps fired_at, writes reminded_at, pushes per-vault', async () => {
     const bus = createBus()
     const events: RemindersEvent[] = []
     bus.on(`reminders:${vaultId}`, (e) => events.push(e))
@@ -35,11 +35,11 @@ describe('reminder evaluator', () => {
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ coalesced: false, fires: [expect.objectContaining({ taskId: task.id })] })
     const [firedRow] = await t.db.select().from(reminders).where(eq(reminders.taskId, task.id))
-    expect(firedRow?.fired).toBe(true)
+    expect(firedRow?.firedAt).not.toBeNull()
     const [taskRow] = await t.db.select().from(tasks).where(eq(tasks.id, task.id))
     expect(taskRow?.remindedAt).not.toBeNull()
     const [futureRow] = await t.db.select().from(reminders).where(eq(reminders.taskId, future.id))
-    expect(futureRow?.fired).toBe(false)
+    expect(futureRow?.firedAt).toBeNull()
 
     // second tick: nothing new fires
     await evaluator.tick()

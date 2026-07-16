@@ -5,8 +5,16 @@ import type { DocMeta, Task } from '@holi/shared'
 
 export type DocsEvent = { type: 'created' | 'renamed' | 'deleted'; doc: DocMeta }
 export type TasksEvent = { type: 'upserted'; task: Task } | { type: 'deleted'; taskId: string }
+/** `fireAt` is the *scheduled local wall-clock* time, for display. It is not an
+ * instant — never compute with it (D47: the delivery watermark runs on `firedAt`). */
 export type ReminderFire = { taskId: string; title: string; fireAt: string }
-export type RemindersEvent = { fires: ReminderFire[]; coalesced: boolean }
+export type RemindersEvent = {
+  fires: ReminderFire[]
+  coalesced: boolean
+  /** The instant this batch fired (ISO UTC) — every fire in a tick shares it. What
+   * the per-user delivery watermark advances on, live and on catch-up (D47). */
+  firedAt: string
+}
 
 /**
  * "Nicolai is editing this task" (prd/tasks.md §Concurrency: presence, not locks).

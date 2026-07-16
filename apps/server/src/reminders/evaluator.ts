@@ -1,6 +1,6 @@
 /** The single server-side reminder loop (D19). tick() is separable for tests;
  * start() runs the sleep-until-earliest loop, woken by bus 'evaluator:wake'. */
-import { and, asc, eq, inArray, lte } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, lte } from 'drizzle-orm'
 import type { Bus, ReminderFire } from '../bus'
 import type { Db } from '../db/client'
 import { reminders, tasks } from '../db/schema'
@@ -22,9 +22,11 @@ export function createReminderEvaluator(deps: { db: Db; bus: Bus }) {
       .select({ id: reminders.id, taskId: reminders.taskId, vaultId: reminders.vaultId, fireAt: reminders.fireAt, title: tasks.title })
       .from(reminders)
       .innerJoin(tasks, eq(tasks.id, reminders.taskId))
-      .where(and(eq(reminders.fired, false), lte(reminders.fireAt, now)))
+      .where(and(isNull(reminders.firedAt), lte(reminders.fireAt, now)))
     if (due.length === 0) return
-    await db.update(reminders).set({ fired: true }).where(inArray(reminders.id, due.map((d) => d.id)))
+    // `now` is the fire instant every fire in this batch shares — it is what the
+    // per-user delivery watermark advances on (D47), so it rides the event too.
+    await db.update(reminders).set({ firedAt: now }).where(inArray(reminders.id, due.map((d) => d.id)))
     await db.update(tasks).set({ remindedAt: now }).where(inArray(tasks.id, due.map((d) => d.taskId)))
     const byVault = new Map<string, ReminderFire[]>()
     for (const d of due) {
@@ -33,7 +35,11 @@ export function createReminderEvaluator(deps: { db: Db; bus: Bus }) {
       byVault.set(d.vaultId, fires)
     }
     for (const [vaultId, fires] of byVault) {
-      bus.emitReminders(vaultId, { fires, coalesced: fires.length > COALESCE_THRESHOLD })
+      bus.emitReminders(vaultId, {
+        fires,
+        coalesced: fires.length > COALESCE_THRESHOLD,
+        firedAt: now.toISOString(),
+      })
     }
   }
 
@@ -51,7 +57,7 @@ export function createReminderEvaluator(deps: { db: Db; bus: Bus }) {
     const [next] = await db
       .select({ fireAt: reminders.fireAt })
       .from(reminders)
-      .where(eq(reminders.fired, false))
+      .where(isNull(reminders.firedAt))
       .orderBy(asc(reminders.fireAt))
       .limit(1)
     const delay = next

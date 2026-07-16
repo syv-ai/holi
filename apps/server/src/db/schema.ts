@@ -190,10 +190,39 @@ export const reminders = pgTable(
       .notNull()
       .references(() => vaults.id, { onDelete: 'cascade' }),
     fireAt: timestamp('fire_at', { withTimezone: true }).notNull(),
-    fired: boolean('fired').notNull().default(false),
+    /** When the evaluator fired this, or null while pending — the single source of
+     * truth for both (`fired_at IS NULL` ⇔ pending, D47). It was a `fired` boolean;
+     * a bool plus a timestamp is redundant state that drifts, and the drift is
+     * invisible: set one, forget the other, and catch-up silently skips a fire.
+     * Cleared when the reminder re-arms (`recomputeReminder`). */
+    firedAt: timestamp('fired_at', { withTimezone: true }),
     computedFrom: text('computed_from'),
   },
-  (t) => [index('reminders_pending_idx').on(t.fireAt).where(sql`not ${t.fired}`)],
+  (t) => [index('reminders_pending_idx').on(t.fireAt).where(sql`${t.firedAt} is null`)],
+)
+
+/** How far each member has been notified of a vault's reminder fires (D47).
+ *
+ * Delivery is per-(vault, user) because a fire concerns every member — `Task` has no
+ * assignee — so the watermark cannot live on the reminder row. Server-written only:
+ * no router exposes a setter, deliberately. `per_user_state` would have fit the shape
+ * but is client-writable, and a client that can move its own watermark can silently
+ * disable its own reminders. */
+export const reminderDeliveries = pgTable(
+  'reminder_deliveries',
+  {
+    vaultId: uuid('vault_id')
+      .notNull()
+      .references(() => vaults.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Fires at or before this instant have been delivered to this user. Only ever
+     * moves forward: a crash between send and advance re-notifies one reminder, which
+     * beats the silent loss this table exists to end. */
+    seenAt: timestamp('seen_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.vaultId, t.userId] })],
 )
 
 export const perUserState = pgTable(
