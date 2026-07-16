@@ -9,7 +9,14 @@
  * record that may have moved under them. Here the user is looking at the live record,
  * which the SSE push keeps current.
  */
-import type { Priority, Task, TaskStatus } from '@holi/shared'
+import type {
+  Priority,
+  Recurrence,
+  RecurrenceFrequency,
+  RecurrenceWeekday,
+  Task,
+  TaskStatus,
+} from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -19,9 +26,12 @@ import {
   foldersAtom,
   heartbeatAtom,
   patchTaskAtom,
+  resolveRelated,
   selectedTaskIdAtom,
   tasksAtom,
 } from '../state/tasks'
+import { docsAtom } from '../state/vaults'
+import { openDocAtom } from '../state/view'
 
 /** The server's presence TTL is 10s; beat well inside it while the user is typing.
  *
@@ -205,6 +215,9 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
         />
       </Row>
 
+      <RecurrenceRows task={task} save={save} />
+      <RelatedRows task={task} save={save} />
+
       <textarea
         value={description}
         data-detail-description
@@ -221,6 +234,194 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
         delete task
       </button>
     </aside>
+  )
+}
+
+const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+
+/**
+ * The recurrence rule. Recurrence and reminders are the two features that justify a task
+ * being a server record at all, and until now the rule was reachable only by editing the
+ * task's markdown file or by asking Claude — the same "the agent can, the button can't"
+ * asymmetry the file tree had.
+ *
+ * A builder, unlike its sibling `reminder` directly above, which takes its grammar
+ * verbatim and parses it. That is not inconsistency: a reminder IS a string (`1d`,
+ * `2026-07-20T09:00`) with a parser whose error doubles as the format doc, while a
+ * `Recurrence` is a **map** — `{frequency, interval, weekdays?, endDate?}` — with no text
+ * form anywhere in `shared`. Inventing a grammar for it here would mean inventing a
+ * parser too, and a second way to say something the model already says structurally.
+ *
+ * Roll-forward is the server's (`nextDueCatchup` on complete), so nothing here computes a
+ * date; this only states the rule.
+ */
+function RecurrenceRows({
+  task,
+  save,
+}: {
+  task: Task
+  save: (p: Record<string, unknown>) => void
+}): React.JSX.Element {
+  const rule = task.recurrence
+  /** Patch the rule as a whole — the record holds one map, so a partial write would drop
+   * the fields it did not mention. */
+  const setRule = (next: Partial<Recurrence> | null) => {
+    if (next === null) return save({ recurrence: null })
+    save({ recurrence: { frequency: 'daily', interval: 1, ...rule, ...next } })
+  }
+
+  return (
+    <>
+      <Row label="repeats">
+        <select
+          value={rule?.frequency ?? ''}
+          data-detail-recurrence
+          onChange={(e) =>
+            e.target.value === ''
+              ? setRule(null)
+              : setRule({ frequency: e.target.value as RecurrenceFrequency })
+          }
+          className={input}
+        >
+          <option value="">never</option>
+          <option value="daily">daily</option>
+          <option value="weekly">weekly</option>
+          <option value="monthly">monthly</option>
+          <option value="yearly">yearly</option>
+        </select>
+      </Row>
+
+      {rule && (
+        <>
+          <Row label="every">
+            <input
+              type="number"
+              min={1}
+              value={rule.interval}
+              data-detail-interval
+              onChange={(e) => setRule({ interval: Math.max(1, Number(e.target.value) || 1) })}
+              className={input}
+            />
+            <span className="shrink-0 text-neutral-500">
+              {{ daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[rule.frequency]}
+            </span>
+          </Row>
+
+          {/* Weekdays are a weekly-only field in the model, and an empty list means "no
+              weekday constraint" — nextWeeklyWeekday returns null on an empty set, which
+              would silently stop the recurrence. So none-selected is stored as absent. */}
+          {rule.frequency === 'weekly' && (
+            <Row label="on">
+              <span className="flex flex-1 gap-0.5">
+                {WEEKDAYS.map((d) => {
+                  const on = rule.weekdays?.includes(d) ?? false
+                  return (
+                    <button
+                      key={d}
+                      data-detail-weekday={d}
+                      onClick={() => {
+                        const next = on
+                          ? (rule.weekdays ?? []).filter((w) => w !== d)
+                          : [...(rule.weekdays ?? []), d]
+                        setRule({ weekdays: next.length ? WEEKDAYS.filter((w) => next.includes(w)) : undefined })
+                      }}
+                      className={`flex-1 rounded py-0.5 text-[10px] ${
+                        on ? 'bg-neutral-700 text-neutral-100' : 'bg-neutral-900 text-neutral-500 hover:bg-neutral-800'
+                      }`}
+                    >
+                      {d[0]}
+                    </button>
+                  )
+                })}
+              </span>
+            </Row>
+          )}
+
+          <Row label="until">
+            <input
+              type="date"
+              value={rule.endDate ?? ''}
+              data-detail-recurrence-end
+              onChange={(e) => setRule({ endDate: e.target.value === '' ? undefined : e.target.value })}
+              className={input}
+            />
+          </Row>
+
+          {/* A recurring task with no due date never rolls: nextDue needs one to advance
+              from. Worth saying, because the rule looks set and simply would not fire. */}
+          {task.due === undefined && (
+            <p className="text-[10px] text-amber-400/80">
+              Set a due date — a repeat has nothing to advance from without one.
+            </p>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+/**
+ * What this task is linked to. Read-and-unlink, deliberately not an editor.
+ *
+ * **No "add" control.** Relations are authored from the *other* side — `@`-mention a task
+ * inside a note and the note lands in this list — and from the task file. A picker here
+ * would be a third author for the same edge, and the one it would duplicate is the one
+ * that already reads naturally.
+ *
+ * **Unlink exists because tombstones are permanent otherwise.** D27 means deleting a note
+ * does not cascade, so a dangling ref stays until something removes it; without an × the
+ * only way to clear one would be to hand-edit the task file.
+ */
+function RelatedRows({
+  task,
+  save,
+}: {
+  task: Task
+  save: (p: Record<string, unknown>) => void
+}): React.JSX.Element | null {
+  const { docs } = useAtomValue(docsAtom)
+  const tasks = useAtomValue(tasksAtom)
+  const openDoc = useSetAtom(openDocAtom)
+  const select = useSetAtom(selectedTaskIdAtom)
+  if (task.related.length === 0) return null
+  const refs = resolveRelated(task.related, docs, tasks)
+
+  const unlink = (id: string) =>
+    save({ related: task.related.filter((r) => r.id !== id).map((r) => ({ kind: r.kind, id: r.id })) })
+
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="text-neutral-500">related</span>
+      {refs.map((ref) => (
+        <div key={`${ref.kind}:${ref.id}`} className="group flex items-center gap-1 pl-1">
+          <span className="shrink-0 text-[10px] text-neutral-600">{ref.kind}</span>
+          <button
+            data-related-ref={ref.id}
+            disabled={ref.missing || ref.kind === 'email' || ref.kind === 'event'}
+            onClick={() => {
+              if (ref.kind === 'note') {
+                const doc = docs.find((d) => d.id === ref.id)
+                if (doc) openDoc(doc)
+              } else if (ref.kind === 'task') select(ref.id)
+            }}
+            className={`min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left ${
+              ref.missing
+                ? 'text-neutral-600 italic'
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-neutral-100 disabled:hover:bg-transparent'
+            }`}
+          >
+            {ref.label}
+          </button>
+          <button
+            onClick={() => unlink(ref.id)}
+            title={ref.missing ? 'remove this dead link' : 'unlink'}
+            className="hidden shrink-0 px-1 text-[10px] text-neutral-600 hover:text-red-400 group-hover:block"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+    </div>
   )
 }
 

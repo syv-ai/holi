@@ -1,14 +1,16 @@
 /** The board's state (prd/tasks.md §Board UX).
  *
- * Tasks reach the renderer by main **pushing** them: the SSE connection lives in
- * `main/vault/vault-manager.ts`, one per vault, and the board is a consumer of it.
- * The renderer never opens a second stream — that is the invariant, not an
- * implementation detail.
+ * Tasks reach the renderer by main **pushing** them: the one SSE connection lives in
+ * `main/events/user-stream.ts` — one per signed-in *user*, carrying every vault (D50) —
+ * and the board is a consumer of it. Main filters `tasks` frames to the active vault
+ * (D52), so what arrives here is still a bare payload with no envelope to unwrap. The
+ * renderer never opens a second stream — that is the invariant, not an implementation
+ * detail; only its scope changed.
  *
  * Nothing here parses a task file. The board reads Postgres through tRPC like every
  * other query; the file projection is one-directional and is never an index.
  */
-import type { Task } from '@holi/shared'
+import type { DocMeta, RelatedRef, RelatedRefKind, Task } from '@holi/shared'
 import { allLabels } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
@@ -93,6 +95,50 @@ export function laneFor(task: Task, folders: Map<string, string>): string {
 export function laneOrder(lanes: Iterable<string>): string[] {
   const rest = [...new Set(lanes)].filter((l) => l !== NO_AREA).sort((a, b) => a.localeCompare(b))
   return [NO_AREA, ...rest]
+}
+
+/** A `related[]` entry with something a human can read attached to it. */
+export interface ResolvedRef {
+  kind: RelatedRefKind
+  id: string
+  label: string
+  /** The target is gone. D27's tombstone — see resolveRelated. */
+  missing: boolean
+}
+
+/**
+ * Name each relation. The record stores **stable ids** and never a path (D27), so this
+ * join is the only place a relation becomes readable — and until now nothing did it, so
+ * `related[]` was writable (via `@`-mention, and via the task file) and visible nowhere.
+ *
+ * **The tombstone lives here.** Deleting a note does not cascade (D27), so a ref to it
+ * survives on purpose — `refToFile` even round-trips the raw docId rather than dropping
+ * it, because dropping it would silently delete the link on the next inbound file write.
+ * That means a dangling ref is a *designed* state, and the only honest rendering of it is
+ * to say so. This is FR-12's second half, deferred by D55 for exactly as long as there
+ * was no relations row to render it into.
+ *
+ * `email`/`event` are representable but have no source to resolve against (Gmail and
+ * Calendar are phase 2). They are **not** marked missing: we cannot look, so claiming
+ * they are deleted would be a lie. They show the id they carry.
+ */
+export function resolveRelated(
+  refs: RelatedRef[],
+  docs: DocMeta[],
+  tasks: Map<string, Task>,
+): ResolvedRef[] {
+  const pathById = new Map(docs.map((d) => [d.id, d.path]))
+  return refs.map((ref) => {
+    if (ref.kind === 'note') {
+      const path = pathById.get(ref.id)
+      return { ...ref, label: path ?? '[deleted note]', missing: path === undefined }
+    }
+    if (ref.kind === 'task') {
+      const title = tasks.get(ref.id)?.title
+      return { ...ref, label: title ?? '[deleted task]', missing: title === undefined }
+    }
+    return { ...ref, label: ref.id, missing: false }
+  })
 }
 
 // ------------------------------------------------------------------- filter
