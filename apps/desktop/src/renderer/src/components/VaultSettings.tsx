@@ -1,5 +1,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
+import { MembersSection } from './MembersSection'
 import {
   connectGithubAtom,
   connectRepoAtom,
@@ -53,6 +54,8 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           close
         </button>
       </div>
+
+      <MembersSection guard={guard} busy={busy} />
 
       <section className="space-y-1">
         <h3 className="font-medium">GitHub account</h3>
