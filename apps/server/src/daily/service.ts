@@ -21,6 +21,7 @@ import {
   buildDailyNoteContent,
   dailyNoteFilename,
   isUntouchedDailyNote,
+  type DocMeta,
   type VaultRelPath,
 } from '@holi/shared'
 import type { Db } from '../db/client'
@@ -60,10 +61,13 @@ function seedState(localDate: string): Uint8Array {
   return Y.encodeStateAsUpdate(ydoc)
 }
 
+/** Returns the full `DocMeta` (not just an id) so the caller can open it without a
+ * refetch-and-find — the same shape `notes.create` returns. `created` is the client's
+ * cue that this was a mint rather than an adoption. */
 export async function getOrCreateDaily(
   deps: Pick<RenameDeps, 'db' | 'bus'>,
   args: { vaultId: string; localDate: string },
-): Promise<{ docId: string; path: string; created: boolean }> {
+): Promise<{ doc: DocMeta; created: boolean }> {
   const { db, bus } = deps
   await assertPersonalVault(db, args.vaultId)
   const path = dailyPath(args.localDate)
@@ -99,8 +103,10 @@ export async function getOrCreateDaily(
     return { row: inserted, created: true }
   })
 
-  if (created) bus.emitDocs(args.vaultId, { type: 'created', doc: toDocMeta(row) })
-  return { docId: row.id, path: row.path, created }
+  const doc = toDocMeta(row)
+  // The SSE frame must not lie: only a real mint is a 'created'.
+  if (created) bus.emitDocs(args.vaultId, { type: 'created', doc })
+  return { doc, created }
 }
 
 async function hasBackrefs(db: Db, vaultId: string, path: string): Promise<boolean> {

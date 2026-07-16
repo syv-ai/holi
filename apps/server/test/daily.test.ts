@@ -56,14 +56,14 @@ describe('daily notes', () => {
 
   describe('getOrCreateDaily', () => {
     it('creates a seeded daily note at the DD-MM-YYYY.md root path', async () => {
-      const res = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
+      const { doc, created } = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
 
-      expect(res.created).toBe(true)
-      expect(res.path).toBe('15-07-2026.md')
-      expect(await readText(t, res.docId)).toBe(
+      expect(created).toBe(true)
+      expect(doc.path).toBe('15-07-2026.md')
+      expect(await readText(t, doc.id)).toBe(
         `---\ntype: daily-note\ndate: ${TODAY}\n---\n\n# 15-07-2026\n\n`,
       )
-      const [row] = await t.db.select().from(docs).where(eq(docs.id, res.docId))
+      const [row] = await t.db.select().from(docs).where(eq(docs.id, doc.id))
       expect(row!.kind).toBe('daily')
     })
 
@@ -73,7 +73,7 @@ describe('daily notes', () => {
       const first = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
       const second = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
 
-      expect(second.docId).toBe(first.docId)
+      expect(second.doc.id).toBe(first.doc.id)
       expect(second.created).toBe(false)
       const rows = await t.db
         .select()
@@ -86,18 +86,18 @@ describe('daily notes', () => {
       const results = await Promise.all(
         Array.from({ length: 5 }, () => caller.getOrCreateDaily({ vaultId, localDate: TODAY })),
       )
-      expect(new Set(results.map((r) => r.docId)).size).toBe(1)
+      expect(new Set(results.map((r) => r.doc.id)).size).toBe(1)
       expect(results.filter((r) => r.created)).toHaveLength(1)
     })
 
     // Re-seeding an adopted doc would duplicate the title into what you wrote.
     it('never re-seeds a note you have already written in', async () => {
       const first = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
-      await setDocText(t, vaultId, first.docId, 'my own words')
+      await setDocText(t, vaultId, first.doc.id, 'my own words')
 
       await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
 
-      expect(await readText(t, first.docId)).toBe('my own words')
+      expect(await readText(t, first.doc.id)).toBe('my own words')
     })
 
     it('adopts a doc already sitting at that path rather than failing', async () => {
@@ -105,7 +105,7 @@ describe('daily notes', () => {
 
       const res = await caller.getOrCreateDaily({ vaultId, localDate: TODAY })
 
-      expect(res.docId).toBe(planted.id)
+      expect(res.doc.id).toBe(planted.id)
       expect(res.created).toBe(false)
     })
 
@@ -132,12 +132,12 @@ describe('daily notes', () => {
       const res = await caller.sweepDaily({ vaultId, localDate: TODAY })
 
       expect(res).toEqual({ archived: 0, deleted: 0 })
-      expect(await pathOf(t, today.docId)).toBe('15-07-2026.md')
+      expect(await pathOf(t, today.doc.id)).toBe('15-07-2026.md')
     })
 
     it("archives a written prior-day note into journal/ and rewrites links to it", async () => {
       const daily = await caller.getOrCreateDaily({ vaultId, localDate: YESTERDAY })
-      await setDocText(t, vaultId, daily.docId, 'bought milk')
+      await setDocText(t, vaultId, daily.doc.id, 'bought milk')
       const src = await caller.create({ vaultId, path: 'src.md', kind: 'note' })
       await setDocText(t, vaultId, src.id, `see [[${YESTERDAY_FILE}]] and [[${YESTERDAY_FILE}|Yday]]`)
 
@@ -145,7 +145,7 @@ describe('daily notes', () => {
 
       expect(res).toEqual({ archived: 1, deleted: 0 })
       // Same doc id — an archive is a move, not a copy.
-      expect(await pathOf(t, daily.docId)).toBe(`journal/${YESTERDAY_FILE}`)
+      expect(await pathOf(t, daily.doc.id)).toBe(`journal/${YESTERDAY_FILE}`)
       expect(await readText(t, src.id)).toBe(
         `see [[journal/${YESTERDAY_FILE}]] and [[journal/${YESTERDAY_FILE}|Yday]]`,
       )
@@ -157,7 +157,7 @@ describe('daily notes', () => {
       const res = await caller.sweepDaily({ vaultId, localDate: TODAY })
 
       expect(res).toEqual({ archived: 0, deleted: 1 })
-      expect(await pathOf(t, stub.docId)).toBeUndefined()
+      expect(await pathOf(t, stub.doc.id)).toBeUndefined()
     })
 
     // No orphan-rescue exists in this repo, so GC must never create a dangling link.
@@ -169,14 +169,14 @@ describe('daily notes', () => {
       const res = await caller.sweepDaily({ vaultId, localDate: TODAY })
 
       expect(res).toEqual({ archived: 1, deleted: 0 })
-      expect(await pathOf(t, stub.docId)).toBe(`journal/${YESTERDAY_FILE}`)
+      expect(await pathOf(t, stub.doc.id)).toBe(`journal/${YESTERDAY_FILE}`)
       expect(await readText(t, src.id)).toBe(`see [[journal/${YESTERDAY_FILE}]]`)
     })
 
     // Runs on every activation — the second run must find nothing to do.
     it('is idempotent — a re-run is a no-op', async () => {
       const daily = await caller.getOrCreateDaily({ vaultId, localDate: YESTERDAY })
-      await setDocText(t, vaultId, daily.docId, 'bought milk')
+      await setDocText(t, vaultId, daily.doc.id, 'bought milk')
 
       expect(await caller.sweepDaily({ vaultId, localDate: TODAY })).toEqual({
         archived: 1,
@@ -186,7 +186,7 @@ describe('daily notes', () => {
         archived: 0,
         deleted: 0,
       })
-      expect(await pathOf(t, daily.docId)).toBe(`journal/${YESTERDAY_FILE}`)
+      expect(await pathOf(t, daily.doc.id)).toBe(`journal/${YESTERDAY_FILE}`)
     })
 
     // D46: only system-minted notes are swept. A hand-authored note that merely

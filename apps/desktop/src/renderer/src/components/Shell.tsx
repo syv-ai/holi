@@ -6,6 +6,7 @@ import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
 import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
+import { openTodaysDailyNoteAtom, sweepDailyNotesAtom } from '../state/daily'
 import { sessionAtom, signOutAtom } from '../state/session'
 import { syncStatusAtom } from '../state/sync'
 import {
@@ -28,6 +29,8 @@ export function Shell() {
   const loadVaults = useSetAtom(loadVaultsAtom)
   const loadDocs = useSetAtom(loadDocsAtom)
   const createVault = useSetAtom(createVaultAtom)
+  const openTodaysDailyNote = useSetAtom(openTodaysDailyNoteAtom)
+  const sweepDailyNotes = useSetAtom(sweepDailyNotesAtom)
   const [newVaultName, setNewVaultName] = useState<string | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [view, setView] = useState<'notes' | 'board'>('notes')
@@ -42,8 +45,15 @@ export function Shell() {
   useEffect(() => {
     if (activeVaultId) void window.holi.vault.activate(activeVaultId)
     setActiveDoc(null)
-    void loadDocs()
-  }, [activeVaultId, loadDocs, setActiveDoc])
+    void (async () => {
+      await loadDocs()
+      // A personal vault lands you on today's daily note; both calls no-op on a shared
+      // one. The sweep is deliberately not awaited — archiving yesterday must never
+      // delay opening the note you came here to write in, and it retries next time.
+      await openTodaysDailyNote()
+      void sweepDailyNotes()
+    })()
+  }, [activeVaultId, loadDocs, setActiveDoc, openTodaysDailyNote, sweepDailyNotes])
 
   // ⌘J / Ctrl-J toggles the agent drawer (the app's first shortcut)
   useEffect(() => {
