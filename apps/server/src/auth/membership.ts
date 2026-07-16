@@ -18,6 +18,24 @@ export async function resolveVaultRole(
   return row?.role ?? null
 }
 
+/**
+ * Every vault a user is in — the *set* form of `resolveVaultRole`, and the gate for the
+ * user-scoped event stream (D50), which has no single vault to check a role against:
+ * membership there is a subscription set, not an admission check.
+ *
+ * The same predicate `vaults.list` runs (memberships by user, served by
+ * `memberships_user_idx`); that one projects vault rows, this projects ids. Two answers
+ * to "which vaults is this user in" is how the stream ends up subscribed to a set the
+ * API disagrees with — so if one changes, change both.
+ */
+export async function listVaultIdsForUser(db: Db, userId: string): Promise<string[]> {
+  const rows = await db
+    .select({ vaultId: memberships.vaultId })
+    .from(memberships)
+    .where(eq(memberships.userId, userId))
+  return rows.map((r) => r.vaultId)
+}
+
 /** Resolve a docId to its vault and assert the caller is a member. */
 export async function requireDocAccess(
   db: Db,

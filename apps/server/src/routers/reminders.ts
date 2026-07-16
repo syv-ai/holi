@@ -1,4 +1,3 @@
-import { on } from 'node:events'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { RemindersEvent } from '../bus'
 import { reminders } from '../db/schema'
@@ -19,10 +18,4 @@ export const remindersRouter = router({
    * missed-pass — the server owns the ledger and answers the question. */
   catchUp: vaultProcedure.mutation(({ ctx }) => catchUpDeliveries(ctx.db, ctx.vaultId, ctx.user.id)),
 
-  /** (S) Fire events → client raises the native notification (D19). */
-  subscribe: vaultProcedure.subscription(async function* ({ ctx, signal }) {
-    for await (const [event] of on(ctx.bus, `reminders:${ctx.vaultId}`, { signal })) {
-      yield event as RemindersEvent
-    }
-  }),
 })

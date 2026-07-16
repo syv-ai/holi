@@ -60,8 +60,8 @@ async function main(): Promise<void> {
   const eventsHandler = makeEventsHandler({ db, bus })
 
   createServer((req, res) => {
-    const eventsMatch = req.method === 'GET' ? /^\/events\/([0-9a-f-]{36})$/.exec(req.url ?? '') : null
-    if (eventsMatch) return void eventsHandler(req, res, eventsMatch[1]!)
+    // No vault in the path any more: one stream per user, carrying every vault (D50).
+    if (req.method === 'GET' && req.url === '/events') return void eventsHandler(req, res)
     if (req.method === 'POST' && req.url === '/webhooks/github') return void webhookHandler(req, res)
     if (req.method === 'GET' && req.url?.startsWith('/github/oauth/callback')) {
       const url = new URL(req.url, config.publicBaseUrl)

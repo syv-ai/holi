@@ -1,7 +1,6 @@
 /** The task API. Input validation + a call into `tasks/mutations.ts`, which is the
  * one place a task actually changes — the git ingester is the other caller. */
 import { and, eq } from 'drizzle-orm'
-import { on } from 'node:events'
 import { z } from 'zod'
 import type { TasksEvent } from '../bus'
 import { toTask } from '../db/mappers'
@@ -119,10 +118,4 @@ export const tasksRouter = router({
       return { ok: true }
     }),
 
-  /** (S) Live board updates for every member (architecture §5). */
-  watch: vaultProcedure.subscription(async function* ({ ctx, signal }) {
-    for await (const [event] of on(ctx.bus, `tasks:${ctx.vaultId}`, { signal })) {
-      yield event as TasksEvent
-    }
-  }),
 })

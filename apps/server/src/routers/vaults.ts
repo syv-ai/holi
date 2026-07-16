@@ -1,7 +1,5 @@
-import { on } from 'node:events'
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import type { DocsEvent } from '../bus'
 import { toDocMeta, toFolder, toVault } from '../db/mappers'
 import { docs, folders, memberships, vaults } from '../db/schema'
 import { insertMembershipRow } from '../membership/service'
@@ -78,10 +76,4 @@ export const vaultsRouter = router({
     return { docs: docRows.map(toDocMeta), folders: folderRows.map(toFolder) }
   }),
 
-  /** (S) Live doc-metadata changes so the file tree updates without polling. */
-  watchDocs: vaultProcedure.subscription(async function* ({ ctx, signal }) {
-    for await (const [event] of on(ctx.bus, `docs:${ctx.vaultId}`, { signal })) {
-      yield event as DocsEvent
-    }
-  }),
 })
