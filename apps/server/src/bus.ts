@@ -45,6 +45,20 @@ export type PresenceEvent = {
   expiresAt: string
 }
 
+/**
+ * You joined or left a vault (D51) — the one event that is about a *person*, not a vault.
+ *
+ * Every other channel is keyed `<channel>:<vaultId>`, which is exactly why the switcher
+ * went stale: "you were added to a vault" has no vault you are already listening to, so
+ * it had nowhere to arrive. The user-scoped stream resolves your vaults at connect and
+ * would be wrong the moment you were invited; this is what lets it re-key a live
+ * connection instead.
+ *
+ * **No `vaultId` here on purpose** — the SSE envelope carries it (D50), and a payload
+ * that repeats it is a second copy that can disagree with the first.
+ */
+export type MembershipEvent = { type: 'joined' | 'left' }
+
 export class Bus extends EventEmitter {
   emitDocs(vaultId: string, event: DocsEvent): void {
     this.emit(`docs:${vaultId}`, event)
@@ -57,6 +71,12 @@ export class Bus extends EventEmitter {
   }
   emitReminders(vaultId: string, event: RemindersEvent): void {
     this.emit(`reminders:${vaultId}`, event)
+  }
+  /** Keyed by *user*, not vault — see MembershipEvent. Must be emitted only after the
+   * membership row's transaction commits: the bus has no transactional semantics, so an
+   * emit inside a tx announces a membership that can still roll back. */
+  emitMembership(userId: string, event: MembershipEvent): void {
+    this.emit(`user:${userId}`, event)
   }
   /** Wake the evaluator loop after any reminder-affecting mutation. */
   wakeEvaluator(): void {
