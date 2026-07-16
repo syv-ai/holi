@@ -53,6 +53,7 @@ describe('acceptance (d) against the real mirror: no lost updates', () => {
       vaultId: 'v',
       workRoot: root,
       baseDir: join(dir, 'bases'),
+      docStateDir: join(dir, 'docstate'),
       relayUrl: URL,
       token: 'tok',
       api,

@@ -96,9 +96,29 @@ app.whenReady().then(async () => {
   // A cached session or a dev auto-sign-in means we are already signed in; the other
   // routes in (Google, a pasted dev token) start it from `registerIpc`.
   if (store.load()) userStream.start()
-  app.on('before-quit', () => {
+  // Quit has to WAIT for the doc state to hit disk (D59). `before-quit` is synchronous:
+  // fire the teardown off unawaited and the app can exit before it finishes, which loses
+  // whatever the persist debounce was still holding — i.e. the edit the user just made,
+  // the exact thing this exists to keep. So: veto the first quit, flush, then quit for
+  // real. `quitting` makes the second pass fall through, or this vetoes forever.
+  let quitting = false
+  app.on('before-quit', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    quitting = true
     userStream.stop()
-    void agentManager.dispose().then(() => vaultManager.deactivate())
+    void (async () => {
+      try {
+        await vaultManager.flushPersist()
+        await agentManager.dispose()
+        await vaultManager.deactivate()
+      } catch (err) {
+        console.error('[quit] teardown failed:', err)
+      } finally {
+        // Always quit, even if teardown threw — a failed flush must not trap the app.
+        app.quit()
+      }
+    })()
   })
   createWindow()
   app.on('activate', () => {

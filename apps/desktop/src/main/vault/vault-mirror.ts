@@ -5,6 +5,7 @@
  * agent-created/deleted files propagate with git-ingress symmetry.
  */
 import { mkdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { HocuspocusProvider, HocuspocusProviderWebsocket } from '@hocuspocus/provider'
 import { watch, type FSWatcher } from 'chokidar'
 import WebSocket from 'ws'
@@ -22,6 +23,7 @@ import {
 } from '@holi/shared'
 import { BaseStore } from './base-store'
 import { DocBridge } from './doc-bridge'
+import { DocListStore, DocStore } from './doc-store'
 import {
   absPathFor,
   isIgnoredPath,
@@ -58,11 +60,15 @@ export interface VaultMirrorDeps {
   vaultId: string
   workRoot: string
   baseDir: string
+  /** Where persisted Yjs state lives (D59) — NOT `baseDir`, which holds merge bases. */
+  docStateDir: string
   relayUrl: string
   token: string
   api: MirrorApi
   turnIdleMs?: number
   lifecycleDebounceMs?: number
+  /** How long a doc may hold an unpersisted edit. Defaults to 400ms; tests drive it fast. */
+  persistDebounceMs?: number
   /** Backstop cadence for the periodic disk reconcile that recovers dropped
    * fsevents events (spec: chokidar events are a latency optimization, not
    * correctness). Defaults to 10s; tests drive it fast. */
@@ -96,6 +102,8 @@ interface DocEntry {
   /** Last relay status pushed for this doc — replayed to a renderer that links after the
    * fact, since the provider only fires these on transition. */
   status: SyncStatus
+  /** Pending debounced persist (D59). */
+  saveTimer: ReturnType<typeof setTimeout> | null
 }
 
 export class VaultMirror {
@@ -104,18 +112,27 @@ export class VaultMirror {
   private readonly activeTurns = new Set<string>() // docIds mid-turn
   private readonly pendingLifecycle = new Map<string, ReturnType<typeof setTimeout>>() // by rel
   private readonly bases: BaseStore
+  /** Persisted Yjs state — what makes an offline edit survive a quit (D59). Distinct from
+   * `bases`, which holds the frozen merge base and is discarded on close. */
+  private readonly docs: DocStore
+  /** The vault's doc list, cached so activation survives an unreachable server (D59). */
+  private readonly docList: DocListStore
   private socket: HocuspocusProviderWebsocket | null = null
   private watcher: FSWatcher | null = null
   private reconcileTimer: ReturnType<typeof setInterval> | null = null
   private stopped = false
   private readonly lifecycleDebounceMs: number
   private readonly reconcileIntervalMs: number
+  private readonly persistDebounceMs: number
   private readonly log: (msg: string) => void
 
   constructor(private readonly deps: VaultMirrorDeps) {
     this.bases = new BaseStore(deps.baseDir)
+    this.docs = new DocStore(deps.docStateDir)
+    this.docList = new DocListStore(join(deps.docStateDir, 'doc-list.json'))
     this.lifecycleDebounceMs = deps.lifecycleDebounceMs ?? 400
     this.reconcileIntervalMs = deps.reconcileIntervalMs ?? 10_000
+    this.persistDebounceMs = deps.persistDebounceMs ?? 400
     this.log = deps.log ?? ((msg) => console.log(`[mirror:${deps.vaultId}] ${msg}`))
   }
 
@@ -177,10 +194,31 @@ export class VaultMirror {
     this.socket?.destroy()
   }
 
-  /** Reconcile against server truth: open/close/move entries per listDocs,
-   * then adopt unknown disk files. Runs at start and on SSE reconnect. */
+  /**
+   * Reconcile against server truth: open/close/move entries per listDocs, then adopt
+   * unknown disk files. Runs at start and on SSE reconnect.
+   *
+   * Offline it falls back to the cached doc list (D59) — without which `listDocs` threw
+   * and vault activation failed outright, so there was no offline at all. **The fallback
+   * opens docs and stops there.** The close-what-is-missing half below deletes working
+   * copies, and a cached list is not evidence that anything was deleted; running it from
+   * the cache would destroy the user's notes on every offline launch.
+   */
   async refresh(): Promise<void> {
-    const docs = await this.deps.api.listDocs()
+    let docs: DocMeta[]
+    let authoritative = true
+    try {
+      docs = await this.deps.api.listDocs()
+      await this.docList.save(docs).catch((err) => this.log(`doc-list cache write failed: ${err}`))
+    } catch (err) {
+      const cached = await this.docList.load()
+      // No server AND no cache: nothing to open, and no basis to guess. Fail as before —
+      // a first-ever launch offline genuinely cannot materialize a vault.
+      if (!cached) throw err
+      this.log(`listDocs failed — opening ${cached.length} docs from cache: ${err}`)
+      docs = cached
+      authoritative = false
+    }
     const seen = new Set<string>()
     for (const meta of docs) {
       seen.add(meta.id)
@@ -188,8 +226,11 @@ export class VaultMirror {
       if (!existing) void this.openEntry(meta)
       else if (existing.rel !== meta.path) await this.applyRename(existing, meta.path)
     }
+    // Everything past here needs the network: closing keyed on server truth we do not
+    // have, and adoption calling createNote.
+    if (!authoritative) return
     for (const entry of [...this.entries.values()]) {
-      if (!seen.has(entry.docId)) await this.closeEntry(entry, { removeFromDisk: true })
+      if (!seen.has(entry.docId)) await this.closeEntry(entry, { removeFromDisk: true, docDeleted: true })
     }
     await this.adoptUnknownFiles()
   }
@@ -261,7 +302,7 @@ export class VaultMirror {
     const existing = this.entries.get(event.doc.id)
     if (event.type === 'created' && !existing) await this.openEntry(event.doc)
     else if (event.type === 'renamed' && existing) await this.applyRename(existing, event.doc.path)
-    else if (event.type === 'deleted' && existing) await this.closeEntry(existing, { removeFromDisk: true })
+    else if (event.type === 'deleted' && existing) await this.closeEntry(existing, { removeFromDisk: true, docDeleted: true })
   }
 
   private async openEntry(meta: DocMeta, seedText?: string): Promise<void> {
@@ -301,6 +342,7 @@ export class VaultMirror {
       bridge: null as unknown as DocBridge,
       started: false,
       status: 'syncing',
+      saveTimer: null,
     }
     entry.bridge = new DocBridge({
       doc,
@@ -314,26 +356,125 @@ export class VaultMirror {
       onTurnState: (active) => this.onTurnState(entry, active),
       turnIdleMs: this.deps.turnIdleMs,
     })
+    // Registered synchronously, before the first await — the invariant this method has
+    // always held (an `add` for a file we materialized must find its entry and read as an
+    // echo, never get adopted as a new doc). Loading persisted state above this line
+    // would put an fs read in front of it and let `adoptUnknownFiles` race in and create
+    // a duplicate.
     this.entries.set(meta.id, entry)
     this.byPath.set(rel, entry)
-    await synced
+    doc.on('update', () => this.schedulePersist(entry))
+
+    // Local state (D59). Applied after the provider exists, which is harmless — a CRDT
+    // does not care what order the two arrive in — but it MUST land before the bridge
+    // starts, because that is what decides whether there is anything to materialize.
+    const persisted = await this.docs.load(meta.id).catch(() => null)
     if (this.stopped || this.entries.get(meta.id) !== entry) return
+    if (persisted) {
+      try {
+        Y.applyUpdate(doc, persisted)
+      } catch (err) {
+        // A corrupt cache must degrade to "sync from the relay", never take the vault down.
+        this.log(`ignoring unreadable local state for ${meta.path}: ${err}`)
+      }
+    }
+
     if (seedText !== undefined) {
       doc.transact(() => doc.getText(YDOC_TEXT_KEY).insert(0, seedText), BRIDGE_ORIGIN)
+    }
+
+    // The relay gate, now conditional — and the condition is the whole trick (D59).
+    //
+    // This used to `await synced` unconditionally, which resolves only from the
+    // provider's onSynced: offline, no entry ever started, no bridge ever ran, and
+    // nothing was ever materialized. But the gate was also load-bearing for
+    // *correctness*, which is not obvious and cost a real bug to learn: DocBridge's
+    // start() treats "no persisted base" as **server truth wins** and materializes the
+    // doc straight over the working copy. Dropping the gate outright meant it did that
+    // with an EMPTY doc — clobbering the file with '', then taking the relay's content
+    // as a foreign write, opening a spurious turn, and firing a bogus "before Claude
+    // edited" snapshot on every doc at every vault open. (Caught by the awareness
+    // assertion in vault-mirror.test.ts: one turn, and its marker never observed.)
+    //
+    // So: a doc we have local state for starts NOW — it has real content to materialize
+    // and real edits to keep, which is the entire point of offline. A doc we have
+    // nothing for waits exactly as it always did. That costs nothing offline (a doc
+    // with no local state has nothing to show anyway) and keeps "server truth wins"
+    // true whenever it is the only truth there is.
+    if (!persisted) {
+      await synced
+      if (this.stopped || this.entries.get(meta.id) !== entry) return
     }
     await entry.bridge.start()
     entry.started = true
   }
 
-  private async closeEntry(entry: DocEntry, opts: { removeFromDisk: boolean }): Promise<void> {
+  /**
+   * @param docDeleted the DOC is gone, not just this entry — forget its local state.
+   *   Distinct from `removeFromDisk`, and the two genuinely diverge: `propagateDelete`
+   *   deletes the doc when its file is *already* off disk, while `stop()` removes neither
+   *   (a vault switch must not throw away an offline edit — that is the whole point).
+   */
+  private async closeEntry(
+    entry: DocEntry,
+    opts: { removeFromDisk: boolean; docDeleted?: boolean },
+  ): Promise<void> {
     this.entries.delete(entry.docId)
     this.byPath.delete(entry.rel)
     if (this.activeTurns.delete(entry.docId)) this.deps.onTurnActivity?.(this.activeTurns.size)
+    if (entry.saveTimer) clearTimeout(entry.saveTimer)
+    entry.saveTimer = null
+    // Persist before the doc goes, unless it is being deleted outright — an entry can
+    // close with edits the debounce never got to (a vault switch, a quit).
+    if (!opts.docDeleted) await this.persist(entry)
     await entry.bridge.stop()
     entry.provider.destroy()
     entry.doc.destroy()
     if (opts.removeFromDisk) await removeDocFile(this.deps.workRoot, entry.rel).catch(() => {})
     await this.bases.remove(entry.docId)
+    if (opts.docDeleted) await this.docs.remove(entry.docId).catch(() => {})
+  }
+
+  /**
+   * Trailing-edge debounce: at most one write per window, and the window is not extended
+   * by further edits — a doc being typed into continuously must still reach disk.
+   *
+   * **Never mid-turn.** During a turn the doc is a transient merge-in-progress against a
+   * frozen base, and a crash there already recovers through `BaseStore` — so a write here
+   * buys nothing. It also costs: the fs work measurably perturbs awareness delivery to
+   * remote peers, and a turn is exactly when presence matters ("Claude is editing…").
+   * `onTurnState(false)` schedules the write the turn deferred.
+   */
+  private schedulePersist(entry: DocEntry): void {
+    if (entry.saveTimer || this.stopped || this.activeTurns.has(entry.docId)) return
+    entry.saveTimer = setTimeout(() => {
+      entry.saveTimer = null
+      void this.persist(entry)
+    }, this.persistDebounceMs)
+    entry.saveTimer.unref?.()
+  }
+
+  private async persist(entry: DocEntry): Promise<void> {
+    await this.docs
+      .save(entry.docId, Y.encodeStateAsUpdate(entry.doc))
+      .catch((err) => this.log(`persist failed for ${entry.rel}: ${err}`))
+  }
+
+  /**
+   * Write every doc's state now, debounce or no debounce (D59).
+   *
+   * `before-quit` does not await teardown, so a debounced save is exactly the edit the
+   * user just made — the one this whole change exists to keep. Callable independently of
+   * `stop()` so quit can flush without racing a full mirror teardown.
+   */
+  async flushPersist(): Promise<void> {
+    await Promise.all(
+      [...this.entries.values()].map((entry) => {
+        if (entry.saveTimer) clearTimeout(entry.saveTimer)
+        entry.saveTimer = null
+        return this.persist(entry)
+      }),
+    )
   }
 
   private async applyRename(entry: DocEntry, newPathRaw: string): Promise<void> {
@@ -364,6 +505,10 @@ export class VaultMirror {
       void this.deps.api
         .takeSnapshot(entry.docId, 'before Claude edited')
         .catch((err) => this.log(`pre-agent-write snapshot failed for ${entry.rel}: ${err}`))
+    } else {
+      // The turn deferred every persist it saw (schedulePersist skips mid-turn); its
+      // merged result is the state worth keeping, so take it now.
+      this.schedulePersist(entry)
     }
   }
 
@@ -424,7 +569,9 @@ export class VaultMirror {
       return
     }
     if (this.entries.get(entry.docId) !== entry) return // already closed by a docs event
-    await this.closeEntry(entry, { removeFromDisk: false })
+    // The file is already off disk, but the DOC is going too — forget its local state or
+    // the next vault open would resurrect a deleted note from the cache.
+    await this.closeEntry(entry, { removeFromDisk: false, docDeleted: true })
     await this.deps.api.deleteNote(entry.docId)
   }
 

@@ -63,6 +63,9 @@ export interface VaultManager {
   handleEnvelope(channel: string, vaultId: string, event: unknown): void
   /** A stream gap: re-read whatever holds local state (the active vault only). */
   handleReconnect(): void
+  /** Force every doc's state to disk now (D59). Quit calls this before teardown: the
+   * persist debounce is holding the most recent edit, which is the one worth keeping. */
+  flushPersist(): Promise<void>
   /** The active working dir — slice 2 points the PTY here. */
   workRootFor(vaultId: string): string
   setObserver(observer: VaultObserver): void
@@ -186,6 +189,9 @@ export function createVaultManager(deps: {
       vaultId,
       workRoot,
       baseDir: join(dataDir(), 'vault-bases', vaultId),
+      // Separate from vault-bases: that holds frozen merge bases and is discarded per
+      // entry; this holds the doc state itself and must outlive a close (D59).
+      docStateDir: join(dataDir(), 'vault-docs', vaultId),
       relayUrl: RELAY_URL,
       token: session.token,
       api: makeMirrorApi(client, vaultId),
@@ -221,6 +227,7 @@ export function createVaultManager(deps: {
     deactivate,
     handleEnvelope,
     handleReconnect,
+    flushPersist: async () => void (await current?.mirror.flushPersist()),
     workRootFor,
     setObserver: (next) => void (observer = next),
     activeVaultId: () => current?.vaultId ?? null,
