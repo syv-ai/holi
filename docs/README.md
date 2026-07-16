@@ -37,11 +37,12 @@ The living documentation for the Holi rebuild. The PRDs, architecture, and visio
 | Dir | What it is |
 |---|---|
 | [specs/](specs/) | Point-in-time design documents from brainstorming sessions (e.g. the vault git mirror design) |
-| [plans/](plans/) | Executed implementation plans, deviations recorded inline |
+| [notes/](notes/) | Findings worth keeping that own no PRD (e.g. what Dash's PTY handling taught the agent drawer) |
 | [spikes/](spikes/) | Spike findings (e.g. the bridge turn protocol — **verdict: holds**) |
 
 ## Conventions
 - The PRDs are updated **in place** as decisions change — no changelog framing, no amendment trails. Git history is the archaeology.
 - New decisions get drafted in [decisions.md](decisions.md), agreed with Nicolai, then folded natively into the owning PRD and purged from the inbox.
+- **Implementation plans are not kept.** They are written lean, executed, and deleted once their reasoning is in the living docs — the same consolidate-then-purge cycle decisions.md runs. Git history is the archaeology (the whole set as of 2026-07-16 is in `f136352`, purged in `7ef4270`). A plan that still holds something the living docs do not is a docs bug, not a reason to keep the plan.
 - A term is ambiguous? [glossary.md](glossary.md) wins.
 - [server-data.md](prd/server-data.md) is the schema/API reference the other PRDs point to.

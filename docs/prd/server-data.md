@@ -424,11 +424,11 @@ This PRD is the reference; the key downstream dependencies:
 
 ## Open questions
 
-- **Snapshot retention/pruning** — the interval policy is set: one snapshot per 10 min of active editing (`SNAPSHOT_INTERVAL_MS`; plan [`../plans/2026-07-11-server-persistence.md`](../plans/2026-07-11-server-persistence.md)). Pruning is still open (dense-recent, thin-old vs fixed cadence; how long labeled risky-op snapshots outlive interval ones).
+- **Snapshot retention/pruning** — the interval policy is set: one snapshot per 10 min of active editing (`SNAPSHOT_INTERVAL_MS` in `server/config.ts`). Pruning is still open (dense-recent, thin-old vs fixed cadence; how long labeled risky-op snapshots outlive interval ones).
 - **Overlap detection placement** — does the server detect overlapping-range concurrent merges during Yjs merge, or does the client flag them? Implementation open.
 - **WebSocket horizontal scaling** — Redis pub/sub extension vs room-affinity LB; when to build (post-v1 likely).
-- **Timezone source** for reminder anchoring — currently server-wide `HOLI_TZ` (default Europe/Copenhagen; plan [`../plans/2026-07-11-server-persistence.md`](../plans/2026-07-11-server-persistence.md)); per-user (per-vault?) later, stored where — open.
+- **Timezone source** for reminder anchoring — currently server-wide `HOLI_TZ` (default Europe/Copenhagen; `server/config.ts`); per-user (per-vault?) later, stored where — open.
 - **Archived-original lifecycle** (phase 2) — import upload path, GC of unreferenced objects, size limits.
 - **Offline reminder delivery** — ack/dedup so a client offline across a fire doesn't miss or double-fire.
 - **`link_index` as source of truth vs pure derived cache** — do we ever trust it without a reconcile pass?
-- **Session tokens** — currently opaque DB tokens, 30-day sliding TTL, revocation by row delete (plan [`../plans/2026-07-11-server-persistence.md`](../plans/2026-07-11-server-persistence.md)). Open: whether membership removal revokes live sessions immediately vs within the TTL.
+- **Session tokens** — currently opaque DB tokens, 30-day sliding TTL, revocation by row delete (`server/auth/sessions.ts`). Open: whether membership removal revokes live sessions immediately vs within the TTL.

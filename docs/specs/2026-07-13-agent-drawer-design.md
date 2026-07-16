@@ -117,7 +117,7 @@ Two natural plan-sized slices with a clean seam: **(1) foundations** — SSE end
 
 ## Slice-1 implementation deviations (2026-07-13)
 
-Recorded during `docs/plans/2026-07-13-agent-drawer-foundations.md` execution:
+Recorded while executing the agent-drawer foundations slice:
 
 1. **One diff engine.** `applyAgentTurn` was promoted onto fast-diff (the server's existing dep), not the spike's diff-match-patch; the spike acceptance tests re-ran green against it in `packages/shared`.
 2. **`isLocalOnlyPath` lives in shared** and now also matches root `USER.md` (machine-local per this spec); the git exporter and the mirror share one definition.
@@ -145,7 +145,7 @@ Nothing already built is invalidated — the PTY, MCP server, hook protocol, con
 
 ## Slice-2 implementation deviations (2026-07-13)
 
-Decided in `docs/plans/2026-07-13-agent-drawer-slice2.md` and executed as written:
+Decided for the agent-drawer slice-2 and executed as written:
 
 1. **No login-PTY port.** Interactive CC handles `/login` in the same terminal, so the spec's "login-PTY fallback flow" is dropped. The auth probe (non-null `oauthAccount` in `~/.claude.json`, fallback `~/.claude/.claude.json` — the user's own config per the PRD, not a Holi-owned config dir) only powers a header hint.
 2. **The MCP server is hand-rolled** streamable-HTTP JSON-RPC on `node:http` (POST-only `/mcp`, plain JSON responses, GET → 405), not an SDK: 7 tools + 2 hook routes don't justify the dependency, and it matches the repo's hand-rolled SSE. Op failures come back as in-band `isError: true` results, never JSON-RPC errors.

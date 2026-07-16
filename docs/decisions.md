@@ -25,27 +25,27 @@ Living docs carry decisions as **prose, never as numbers** (grep confirms: zero 
 
 Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks/**.md`) and **D13** (presence is fire-and-forget, server-stateless) were consolidated as prose without needing a global number — nothing in code cites them.
 
-**D39–D40 allocated 2026-07-14** for the offline reconcile (`docs/plans/2026-07-14-offline-task-reconcile.md`).
+**D39–D40 allocated 2026-07-14** for the offline reconcile.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
 | **D39** | **The reconcile path sends its patch with no version guard.** It diffs against the `ProjectionStore` — the true base, the exact bytes the writer edited — so the per-field patch is exact and a version check protects nothing, while destroying legitimate edits: `version` bumps on every mutation *including a reminder firing server-side with no human involved*, so going offline, editing `title`, and having a reminder fire would throw the edit away. Untouched fields are never sent, so a teammate's concurrent change survives. Same argument as D34 for git ingress, and it makes the two inbound paths agree. *Live* watcher writes stay guarded. | `desktop/task-projector.ts` | `prd/tasks.md` |
 | **D40** | **A failed offline delete is retried on reconnect; a delete is never *inferred* from a missing file.** An `rm` while disconnected fails its mutation, so the record outlives the file — and reconcile's `write()` would re-materialize it, silently undoing the `rm`. Attempted-but-failed deletes are tracked **in memory** and retried. Dropped on restart on purpose: there the older, deliberate rule takes over — a file missing at `start()` is re-materialized, not read as a delete. Inferring deletes from absent files would let a half-synced working copy destroy records. | `desktop/task-projector.ts` | `prd/tasks.md` |
 
-**D41–D42 allocated 2026-07-14** for the board (`docs/plans/2026-07-14-board-slice1.md`).
+**D41–D42 allocated 2026-07-14** for the board.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
 | **D41** | **`overdue` and `p1`/`p2`/`p3` are *virtual* labels, computed at render — never stored.** They render as chips beside real tags and filter identically, so the board reads like a labelled issue list. But nothing writes them. **Why not store them:** something would have to write `overdue` onto a task the moment it tipped over at midnight, and every such write bumps `version` → rewrites the task file → **with the git mirror on, the bot commits it**. A hundred tasks going overdue is a hundred commits on an idle vault — the exact failure D33 exists to prevent. It would also make `tags` half machine-owned, so an agent deleting `overdue` would have it silently re-added. `priority` and `due` stay real fields; the labels are a *rendering* of them. | `shared/labels.ts` | `prd/tasks.md` §Board UX |
 | **D42** | **A board cell is `(column, lane)`, and one drop is one patch.** Dropping a card sets `status` **and** `area` in a single `tasks.update`. **Why:** the two drag axes as separate mutations would make a diagonal drag two writes, two pushes, two file rewrites and (mirrored) two commits — and a half-failed pair leaves the card somewhere nobody dropped it. | `renderer/state/tasks.ts`, `BoardView.tsx` | `prd/tasks.md` §Board UX |
 
-**D43 allocated 2026-07-14** for the board's slice 2 (`docs/plans/2026-07-14-board-slice2.md`).
+**D43 allocated 2026-07-14** for the board's slice 2.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
 | **D43** | **The lane-depth control is deferred — because a collapsed lane has no `area` to drop into.** The PRD offered a depth control collapsing `projects/a` and `projects/b` into one `projects` lane. Grouping is trivial; **dropping is not**: a merged lane cannot say *which* folder a dropped card lands in, so the horizontal drag axis — a real write, and the whole reason `area` is settable rather than derived — becomes undefined exactly when the control is on. Shipping it would mean a silent guess or a lane that accepts no drops. Deferred until there is an answer; the lane machinery does not design it out. | *(structural — nothing cites it)* | `prd/tasks.md` §Board UX |
 
-**D49 allocated 2026-07-16** for membership (`docs/plans/2026-07-16-membership.md`).
+**D49 allocated 2026-07-16** for membership.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
@@ -53,7 +53,7 @@ Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks
 
 **Also settled while building it, and not numbered:** **invite reuses `config.google.workspaceDomain`** — the knob sign-in already enforces via `assertWorkspace` — rather than a second domain setting or a hardcoded `@syv.ai`, so the two can never disagree about who is allowed in (FR-10). **Unset ⇒ unrestricted**, matching `assertWorkspace`: the var is unset in dev by design, and a hardcoded domain would fail every local invite while reading as correct. `assertNotLastOwner` is **not** the personal-vault guard though it has been mistaken for one — it blocks removing or demoting the last owner of *any* vault, a rule that must survive independently of D49.
 
-**D47–D48 allocated 2026-07-16** for reminder delivery (`docs/plans/2026-07-16-reminder-delivery.md`).
+**D47–D48 allocated 2026-07-16** for reminder delivery.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
@@ -62,7 +62,7 @@ Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks
 
 **Also settled while building it, and not numbered:** above the evaluator's coalesce threshold the client raises **one summary** rather than N notifications (six toasts is not six times the information — it is a wall you dismiss unread, which loses all six), and a summary carries **no** `taskId` because it speaks for several tasks, so focusing the window is the whole action. `/subtask` also became **`/todo`** while fixing wayside bugs (`prd/notes-editor.md` FR-9): it inserts `- [ ] ` and nothing else, and the name promised a parent task that cannot exist — the editor only ever opens notes, since a task description is a plain textarea.
 
-**D44–D46 allocated 2026-07-16** for daily notes, slices 1–2 (`docs/plans/2026-07-16-daily-notes.md`).
+**D44–D46 allocated 2026-07-16** for daily notes, slices 1–2.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
@@ -76,7 +76,7 @@ Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks
 
 **Also settled, and not a numbered decision because it removes one:** *there is no offline patch queue.* The PRD promised edits "queue as patches"; they do not, because the **working copy is the queue** and the **`ProjectionStore` is the diff base**. Both are already durable, so the patch is reconstructible at any later moment. A second queue would duplicate that state and add a way for the two to disagree.
 
-**D50–D52 allocated 2026-07-16** for the user-scoped event stream (`docs/plans/2026-07-16-user-scoped-event-stream.md`).
+**D50–D52 allocated 2026-07-16** for the user-scoped event stream.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
@@ -86,7 +86,7 @@ Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks
 
 **Also settled while building it, and not numbered:** the **`stream:resync`** push exists because there is **no resume cursor on the wire** (no `id:`, none parsed) — main's mirror and projector reconcile themselves after a gap, but the tree and the switcher have nothing but a refetch, and a gap is precisely the moment they would go stale on the path this slice exists to fix. **`reminders.catchUp` (per-vault) was deleted** in favour of `catchUpAll`: its only caller was the desktop, which knew its vault because the stream was per-vault; a gap now means *every* vault missed fires. It returns `{ vaultId, event }` — the same envelope — rather than a flat concat, because the notifier needs a vaultId per fire and flattening throws away the only thing that could supply it, reproducing D52's bug on the catch-up path. **The per-activation reminder catch-up is gone**: it existed only because the connection did not outlive the vault (the workaround D48 forced) and dissolves with its cause. `createNoteAtom`'s **refetch is gone** too — `created` upserts by id, so the echoed frame agrees with the optimistic apply instead of racing it; two mechanisms updating the tree is worse than either. **Folder rows still have no channel** (`DocsEvent` carries a `DocMeta`; `ensureAncestorFolders` writes rows silently), so `needsFolderRefetch` notices the rare "first note in a new folder" and refetches rather than inventing a row the server never sent. Finally, the **single-node** note (`bus.ts:1`) gets slightly sharper: a user's whole vault set must now be reachable from the one node holding their connection — unchanged for v1, but a real input to the multi-node question rather than a rounding error.
 
-**D53–D54 allocated 2026-07-16** for snapshot history (`docs/plans/2026-07-16-snapshot-history.md`).
+**D53–D54 allocated 2026-07-16** for snapshot history.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
@@ -95,7 +95,7 @@ Slice-2 plan-local **D11** (task files win a path collision with a doc at `tasks
 
 **Also settled while building it, and not numbered:** the history surface is a **right-hand drawer beside the editor**, mirroring `AgentPanel` — *not* a third `viewAtom` entry (history is *about* the open note, not a peer surface to notes/board) and *not* a modal, because **no modal/dialog/`role="dialog"` primitive exists in this codebase** and inventing one is a different slice; `window.confirm` (the `MembersSection` precedent) carries the restore confirmation, and it says what restore actually is — an edit every member sees, since `replaceAllText` goes through the live room, not a private undo. **No manual-snapshot button:** `snapshots.take` hardcodes `reason:'pre-agent-write'`, which is correct because its only caller *is* the agent path; four `SnapshotReason` values (`manual`, `pre-offline-merge`, `pre-reconcile`, `pre-git-ingest`) have no writer and are aspirational, not a contract — so `snapshotLabel` must not assume an unseen reason is impossible, and nobody should add a "save a version" button just because `manual` is sitting there (the PRD asks to browse and restore). **Restore refetches the list but not the doc** — the open editor updates itself over CRDT, while the list must refetch because the restore just minted the `pre-restore` row, and a timeline missing the undo of what you just did is missing it at the one moment it matters. **Left as an open question rather than fixed here:** `restore` writes the edit and takes its `pre-restore` snapshot **after**, with no transaction spanning both, so a throw between them leaves the edit committed with no undo — content is correct and the window is small, and widening a UI slice into transactional snapshot semantics is how it stops shipping.
 
-**D55–D56 allocated 2026-07-16** for file-tree ops (`docs/plans/2026-07-16-file-tree-ops.md`).
+**D55–D56 allocated 2026-07-16** for file-tree ops.
 
 | Global | Decision | Cited in | Consolidated into |
 |---|---|---|---|
