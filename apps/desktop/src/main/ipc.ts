@@ -1,6 +1,7 @@
 /** IPC surface — the ONLY seam between renderer and main (architecture §8). */
-import { ipcMain, shell } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { randomBytes } from 'node:crypto'
+import { join } from 'node:path'
 import type { YjsLink } from '@holi/shared'
 import { createLoopbackServer, googleAuthorizeUrl, pkcePair } from './oauth'
 import {
@@ -11,6 +12,7 @@ import {
   type ServerClient,
   type TrpcOp,
 } from './server-client'
+import { TrpcCache, readThrough } from './trpc-cache'
 import type { AgentManager } from './agent/agent-manager'
 import type { UserStream } from './events/user-stream'
 import type { SessionStore } from './session'
@@ -36,7 +38,13 @@ export function registerIpc(deps: {
   const { store, vaultManager, agentManager, userStream } = deps
   const client: ServerClient = createServerClient(() => store.load()?.token ?? null)
 
-  ipcMain.handle('holi:trpc', (_e, op: TrpcOp) => toEnvelope(callProcedure(client, op)))
+  // Read-through cache (D59, slice 2b): the switcher and the tree survive offline because
+  // `vaults.list`/`vaults.listDocs` fall back to their last online answer when the server
+  // is unreachable. Everything else — mutations, other reads — passes straight through.
+  const trpcCache = new TrpcCache(join(app.getPath('userData'), 'trpc-cache'))
+  ipcMain.handle('holi:trpc', (_e, op: TrpcOp) =>
+    toEnvelope(readThrough(op, (o) => callProcedure(client, o), trpcCache)),
+  )
 
   ipcMain.handle('holi:auth:get', (): PublicUser | null => {
     const s = store.load()
