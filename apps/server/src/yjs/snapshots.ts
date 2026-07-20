@@ -1,17 +1,22 @@
 import { desc, eq } from 'drizzle-orm'
+import { z } from 'zod'
 import { config } from '../config'
 import type { Db } from '../db/client'
 import { yjsSnapshots } from '../db/schema'
 
-export type SnapshotReason =
-  | 'interval'
-  | 'manual'
-  | 'pre-rename'
-  | 'pre-agent-write'
-  | 'pre-offline-merge'
-  | 'pre-reconcile'
-  | 'pre-restore'
-  | 'pre-git-ingest'
+/** One source of truth for the reason vocabulary: the zod enum gates the `snapshots.take`
+ * input and the TS type is derived from it, so the two can never drift. */
+export const snapshotReasonSchema = z.enum([
+  'interval',
+  'manual',
+  'pre-rename',
+  'pre-agent-write',
+  'pre-offline-merge',
+  'pre-reconcile',
+  'pre-restore',
+  'pre-git-ingest',
+])
+export type SnapshotReason = z.infer<typeof snapshotReasonSchema>
 
 export interface SnapshotArgs {
   docId: string

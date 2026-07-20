@@ -90,6 +90,32 @@ describe('snapshots', () => {
     await expect(snapshotsRouter.createCaller(ctxFor(t, outsider.id)).take({ docId })).rejects.toThrow(/FORBIDDEN|forbidden/)
   })
 
+  // Slice 3: the offline-merge snapshot. `pre-offline-merge` was in the enum with no
+  // writer; widening `take` to accept a reason makes it a contract main can call on
+  // reconnect. The POSITIVE control is load-bearing: a rejected invalid reason would pass
+  // even if the enum silently accepted anything, so we also assert the valid call SUCCEEDS
+  // and lands a correctly-labelled row of the current state.
+  it('take accepts an explicit reason and labels a pre-offline-merge snapshot', async () => {
+    await editDocText(t.db, () => null, docId, (text) => replaceAllText(text, 'merged offline work'))
+    const res = await snapshotsRouter
+      .createCaller(ctxFor(t, userId))
+      .take({ docId, reason: 'pre-offline-merge' })
+    expect(res).toEqual({ ok: true })
+    const rows = await t.db.select().from(yjsSnapshots).where(eq(yjsSnapshots.docId, docId))
+    const snap = rows.find((r) => r.reason === 'pre-offline-merge')
+    expect(snap).toBeDefined()
+    expect(snap!.label).toBe('before your offline changes merged')
+    expect(snap!.authorId).toBe(userId)
+    expect(docText(docFromState(snap!.state))).toBe('merged offline work')
+  })
+
+  it('take rejects an unknown reason — the enum actually constrains the input', async () => {
+    await expect(
+      // @ts-expect-error — 'nonsense' is not a SnapshotReason; the enum must reject it
+      snapshotsRouter.createCaller(ctxFor(t, userId)).take({ docId, reason: 'nonsense' }),
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   // D53. `list` deliberately never selects `state`, so nothing in the router could tell
   // you what is IN a version — and for interval snapshots, which carry a null label, the
   // only thing on screen is a timestamp. A timeline without this offers "restore 10:31"

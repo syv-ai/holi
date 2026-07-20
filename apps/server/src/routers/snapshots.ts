@@ -8,7 +8,14 @@ import { authedProcedure, router } from '../trpc'
 import { docFromState, docText, loadDocState } from '../yjs/doc-store'
 import { editDocText, replaceAllText } from '../yjs/edit'
 import { refreshLinkIndex } from '../yjs/link-index'
-import { takeSnapshot } from '../yjs/snapshots'
+import { snapshotReasonSchema, takeSnapshot, type SnapshotReason } from '../yjs/snapshots'
+
+/** The wording each reason gets on the timeline when the caller supplies none. The
+ * pre-offline-merge label is the PRD's words (§Merge safety net). */
+const DEFAULT_LABELS: Partial<Record<SnapshotReason, string>> = {
+  'pre-agent-write': 'before Claude edited',
+  'pre-offline-merge': 'before your offline changes merged',
+}
 
 export const snapshotsRouter = router({
   /** The timeline — labels surface the D26 auto-snapshot restore points. */
@@ -29,10 +36,20 @@ export const snapshotsRouter = router({
         .orderBy(desc(yjsSnapshots.takenAt))
     }),
 
-  /** Pre-agent-write snapshot — the bridge calls this at turn open (agent PRD
-   * §Merge safety net). Live relay state when the doc has an open room. */
+  /**
+   * A restore point of the doc's current state. Two writers today, distinguished by
+   * `reason`: the bridge at agent-turn open (`pre-agent-write`, the default so that caller
+   * is unchanged), and main on reconnect after offline edits (`pre-offline-merge`, agent
+   * PRD §Merge safety net). Live relay state when the doc has an open room, else stored.
+   */
   take: authedProcedure
-    .input(z.object({ docId: z.string().uuid(), label: z.string().max(200).optional() }))
+    .input(
+      z.object({
+        docId: z.string().uuid(),
+        label: z.string().max(200).optional(),
+        reason: snapshotReasonSchema.default('pre-agent-write'),
+      }),
+    )
     .mutation(async ({ ctx, input }) => {
       await requireDocAccess(ctx.db, input.docId, ctx.user.id)
       const live = ctx.getLiveDoc(input.docId)
@@ -41,8 +58,8 @@ export const snapshotsRouter = router({
       await takeSnapshot(ctx.db, {
         docId: input.docId,
         state,
-        reason: 'pre-agent-write',
-        label: input.label ?? 'before Claude edited',
+        reason: input.reason,
+        label: input.label ?? DEFAULT_LABELS[input.reason],
         authorId: ctx.user.id,
       })
       return { ok: true }
