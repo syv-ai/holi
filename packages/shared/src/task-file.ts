@@ -55,6 +55,10 @@ const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat',
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+/** The keys this version understands. Everything else in the frontmatter lands in
+ * `Task.extra` and is written back verbatim — see the field's own comment. */
+const KNOWN_KEYS = new Set(['title', 'status', 'due', 'priority', 'tags', 'reminder', 'recurrence'])
+
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
 
@@ -116,6 +120,9 @@ export function serializeTaskFile(task: Omit<Task, 'path'> & { path?: string }):
   if (task.tags.length) front.tags = task.tags
   if (task.reminder !== undefined) front.reminder = task.reminder
   if (task.recurrence !== undefined) front.recurrence = compactRecurrence(task.recurrence)
+  // Last, always: the known keys keep their fixed order so an unknown one cannot
+  // reorder the file out from under the byte-stability rule above.
+  for (const [key, value] of Object.entries(task.extra ?? {})) front[key] = value
 
   const body = task.description.trim()
   const yaml = stringifyYaml(front)
@@ -153,35 +160,102 @@ export function parseTaskFile(text: string, path: string): Task {
     description: body,
   }
 
-  if (front.due !== undefined && front.due !== null) {
-    if (typeof front.due !== 'string' || !DATE_RE.test(front.due)) {
-      throw new TaskFileError(`due must be YYYY-MM-DD, got: ${JSON.stringify(front.due)}`)
-    }
-    task.due = front.due
-  }
-  if (front.priority !== undefined && front.priority !== null) {
-    task.priority = enumOf(front.priority, PRIORITIES, 'priority')
-  }
-  if (front.tags !== undefined && front.tags !== null) {
-    if (!Array.isArray(front.tags) || front.tags.some((t) => typeof t !== 'string')) {
-      throw new TaskFileError('tags must be a list of strings')
-    }
-    task.tags = front.tags as string[]
-  }
-  if (front.reminder !== undefined && front.reminder !== null) {
-    // The grammar is deliberately NOT validated here: an unparseable reminder is
-    // inert (prd/tasks.md §Recurrence & reminders), never an error. The board
-    // shows it; nothing fires.
-    if (typeof front.reminder !== 'string') {
-      throw new TaskFileError('reminder must be a string')
-    }
-    task.reminder = front.reminder
-  }
-  if (front.recurrence !== undefined && front.recurrence !== null) {
-    task.recurrence = parseRecurrence(front.recurrence)
+  // The same readers a patch goes through (PATCH_READERS), so a file and an edit
+  // are held to one vocabulary. Absent *and* null both mean "not set" — a key
+  // written as `due:` with nothing after it is an empty field, not a malformed
+  // one, and only a value that is present and wrong is worth interrupting for.
+  for (const key of ['due', 'priority', 'tags', 'reminder', 'recurrence'] as const) {
+    const value = front[key]
+    if (value === undefined || value === null) continue
+    Object.assign(task, { [key]: PATCH_READERS[key]!(value) })
   }
 
+  const extra = Object.fromEntries(Object.entries(front).filter(([k]) => !KNOWN_KEYS.has(k)))
+  if (Object.keys(extra).length > 0) task.extra = extra
+
   return task
+}
+
+/**
+ * A field edit, on its way to a file. `undefined` for a key that is *present*
+ * means "clear it" — which is why the caller must merge by spreading rather than
+ * by testing each value for undefined.
+ */
+export type TaskPatch = Partial<
+  Pick<
+    Task,
+    'title' | 'status' | 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence' | 'description'
+  >
+>
+
+/** The fields a patch may name, and how each one reads. Sharing these readers
+ * with `parseTaskFile` is the point: an edit and a hand-written file are held to
+ * the same vocabulary, so the board cannot write a file it would then refuse. */
+const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
+  title: (v) => {
+    if (typeof v !== 'string' || v.trim() === '') {
+      throw new TaskFileError(`title must be a non-empty string, got: ${JSON.stringify(v)}`)
+    }
+    return v.trim()
+  },
+  status: (v) => enumOf(v, STATUSES, 'status'),
+  due: (v) => {
+    if (typeof v !== 'string' || !DATE_RE.test(v)) {
+      throw new TaskFileError(`due must be YYYY-MM-DD, got: ${JSON.stringify(v)}`)
+    }
+    return v
+  },
+  priority: (v) => enumOf(v, PRIORITIES, 'priority'),
+  tags: (v) => {
+    if (!Array.isArray(v) || v.some((t) => typeof t !== 'string')) {
+      throw new TaskFileError('tags must be a list of strings')
+    }
+    return v
+  },
+  reminder: (v) => {
+    // The grammar is deliberately NOT checked: an unparseable reminder is inert
+    // (prd/tasks.md §Recurrence & reminders), never an error. The board shows it;
+    // nothing fires.
+    if (typeof v !== 'string') throw new TaskFileError('reminder must be a string')
+    return v
+  },
+  recurrence: parseRecurrence,
+  description: (v) => {
+    if (typeof v !== 'string') throw new TaskFileError('description must be a string')
+    return v
+  },
+}
+
+/** The fields with a meaningful empty state. `null` on one of these clears it;
+ * `null` anywhere else is a bug in the caller, not a value. */
+const CLEARABLE = new Set(['due', 'priority', 'reminder', 'recurrence'])
+
+/**
+ * Validate a field edit before it becomes a file write.
+ *
+ * Deliberately **stricter than the file parser**: an unknown key throws here,
+ * where the parser carries it into `Task.extra`. The parser must tolerate keys
+ * from a hand-edited or migrated file; a patch comes from our own UI, so an
+ * unrecognised key is a typo — and silently dropping it looks to the user like
+ * the edit simply did not take.
+ */
+export function parseTaskPatch(raw: unknown): TaskPatch {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new TaskFileError('patch must be an object')
+  }
+  const patch: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const read = PATCH_READERS[key]
+    if (read === undefined) throw new TaskFileError(`unknown field: ${key}`)
+    if (value === null) {
+      if (!CLEARABLE.has(key)) throw new TaskFileError(`${key} cannot be cleared`)
+      // Present-and-undefined. The merge spreads, so this unsets the field.
+      patch[key] = undefined
+      continue
+    }
+    patch[key] = read(value)
+  }
+  return patch as TaskPatch
 }
 
 function titleOf(value: unknown, path: string): string {

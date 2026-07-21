@@ -93,6 +93,36 @@ export interface Task {
   recurrence?: Recurrence
   /** The markdown body. */
   description: string
+  /**
+   * Frontmatter keys this version of Holi does not understand, carried through
+   * untouched.
+   *
+   * Editing a task rewrites the whole file, so without this a drag would silently
+   * eat a pre-D60 `id`/`area` — or any key a human or another tool put there on
+   * purpose. Absent rather than `{}` when everything was understood: an empty map
+   * must serialize identically to never having had one.
+   */
+  extra?: Record<string, unknown>
+}
+
+/** A `task.*.md` that would not parse. */
+export interface BrokenTask {
+  path: string
+  error: string
+}
+
+/**
+ * Everything the vault holds, read fresh off disk.
+ *
+ * There is no index and nothing derived: the board, the tree and the editor all
+ * read this one shape, so there is no second source to disagree with it.
+ * `broken` is part of the snapshot rather than swallowed by the scan — a task
+ * file omitted from the board is indistinguishable from data loss.
+ */
+export interface VaultSnapshot {
+  docs: DocMeta[]
+  tasks: Task[]
+  broken: BrokenTask[]
 }
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */

@@ -3,6 +3,7 @@ import {
   TaskFileError,
   isTaskFilePath,
   parseTaskFile,
+  parseTaskPatch,
   serializeTaskFile,
   taskFileName,
   taskFilePath,
@@ -158,6 +159,17 @@ describe('parseTaskFile', () => {
     expect(parsed).not.toHaveProperty('id')
     expect(parsed).not.toHaveProperty('area')
   })
+
+  it('keeps unknown keys aside rather than forgetting them', () => {
+    const parsed = parse('---\ntitle: Legacy\nid: abc\narea: projects/q2\n---\n')
+    expect(parsed.extra).toEqual({ id: 'abc', area: 'projects/q2' })
+  })
+
+  it('has no `extra` at all when every key was understood', () => {
+    // Absent, not `{}` — an empty map would serialize a task differently from
+    // one that never had unknown keys, and byte-stability is the whole point.
+    expect(parse('---\ntitle: Plain\n---\n')).not.toHaveProperty('extra')
+  })
 })
 
 describe('serializeTaskFile', () => {
@@ -192,10 +204,83 @@ describe('serializeTaskFile', () => {
     expect(text).not.toMatch(/\bversion:/)
   })
 
+  it('writes unknown keys back, so an edit never eats them', () => {
+    // Dragging a card rewrites the whole file. Anything a human, another tool, or
+    // a pre-D60 vault put in the frontmatter must survive that rewrite — the
+    // alternative is silent data loss on the first status change.
+    const text = serializeTaskFile({ ...task, extra: { id: 'abc', area: 'projects/q2' } })
+    expect(parse(text, task.path).extra).toEqual({ id: 'abc', area: 'projects/q2' })
+  })
+
+  it('keeps the known keys first, so an unknown one cannot reorder the file', () => {
+    const text = serializeTaskFile({ ...task, extra: { zzz: 1 } })
+    expect(text).toBe('---\ntitle: Review\nstatus: todo\nzzz: 1\n---\n')
+  })
+
   it('is byte-stable for an unchanged task', () => {
     // The editor's watcher compares on text to tell its own save from a foreign
     // write; an unstable serializer would make every rewrite look foreign.
     expect(serializeTaskFile(task)).toBe(serializeTaskFile({ ...task }))
+  })
+})
+
+describe('parseTaskPatch', () => {
+  it('reads the fields a detail-view edit can send', () => {
+    expect(
+      parseTaskPatch({
+        title: 'Renamed',
+        status: 'doing',
+        due: '2026-08-01',
+        priority: 'low',
+        tags: ['ops'],
+        reminder: '2d',
+        recurrence: { frequency: 'daily', interval: 3 },
+        description: 'New body.',
+      }),
+    ).toEqual({
+      title: 'Renamed',
+      status: 'doing',
+      due: '2026-08-01',
+      priority: 'low',
+      tags: ['ops'],
+      reminder: '2d',
+      recurrence: { frequency: 'daily', interval: 3 },
+      description: 'New body.',
+    })
+  })
+
+  it('leaves an omitted key out entirely — a patch touches only what it names', () => {
+    expect(Object.keys(parseTaskPatch({ status: 'done' }))).toEqual(['status'])
+  })
+
+  it('clears an optional field with null', () => {
+    // The detail view needs a way to say "no due date" that is distinguishable
+    // from "I did not touch the due date".
+    const patch = parseTaskPatch({ due: null })
+    expect('due' in patch).toBe(true)
+    expect(patch.due).toBeUndefined()
+  })
+
+  it('refuses to clear a field that has no empty state', () => {
+    expect(() => parseTaskPatch({ status: null })).toThrow(/status cannot be cleared/)
+    expect(() => parseTaskPatch({ title: null })).toThrow(/title cannot be cleared/)
+  })
+
+  it('rejects a value outside the vocabulary, exactly as the parser does', () => {
+    expect(() => parseTaskPatch({ status: 'blocked' })).toThrow(/status must be one of/)
+    expect(() => parseTaskPatch({ priority: 'urgent' })).toThrow(/priority must be one of/)
+    expect(() => parseTaskPatch({ due: 'Friday' })).toThrow(/due must be YYYY-MM-DD/)
+    expect(() => parseTaskPatch({ tags: 'finance' })).toThrow(/tags must be a list/)
+    expect(() => parseTaskPatch({ recurrence: { frequency: 'fortnightly' } })).toThrow(
+      /recurrence.frequency must be one of/,
+    )
+  })
+
+  it('rejects a key it does not know, rather than dropping the edit on the floor', () => {
+    // Unlike the file parser, which must stay forgiving of foreign keys: this
+    // input comes from our own UI, so an unrecognised key is a typo, and
+    // ignoring it would look like the edit simply did not take.
+    expect(() => parseTaskPatch({ area: 'projects/q2' })).toThrow(/unknown field: area/)
   })
 })
 
