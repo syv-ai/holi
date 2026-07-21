@@ -5,15 +5,11 @@ import type { Task } from '../src/types'
 const TODAY = '2026-07-14'
 
 const task = (over: Partial<Task> = {}): Task => ({
-  id: 'a',
-  vaultId: 'v',
+  path: 'task.t.md',
   title: 'T',
   status: 'todo',
   tags: [],
-  related: [],
-  version: 1,
-  createdAt: TODAY,
-  updatedAt: TODAY,
+  description: '',
   ...over,
 })
 

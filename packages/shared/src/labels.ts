@@ -1,15 +1,16 @@
-/** Virtual labels — the board's GitHub-style chips (D41).
+/** Virtual labels — the board's GitHub-style chips.
  *
  * `overdue` and `p1`/`p2`/`p3` are **computed here and never stored**. They render
  * beside a task's real `tags` and filter identically, so the board reads like a
- * labelled issue list — but nothing writes them to the record.
+ * labelled issue list — but nothing writes them to the file.
  *
  * Why not store them: something would have to write `overdue` onto a task the moment
- * it tipped over at midnight. Every such write bumps `version`, which rewrites the
- * task file, which — with the git mirror on — makes the bot *commit*. A hundred tasks
- * going overdue is a hundred commits on an otherwise idle vault: the exact failure D33
- * exists to prevent. It would also make `tags` half machine-owned, so an agent deleting
- * `overdue` would have it silently re-added under it.
+ * it tipped over at midnight, and every such write is a file rewrite and therefore an
+ * autosave commit. A hundred tasks going overdue is a hundred commits on an otherwise
+ * idle vault — and on a shared one, a hundred commits to publish. (The reasoning
+ * survives D60 intact; only the mechanism it names changed, from a version bump and a
+ * mirror bot to a file write and a local commit.) It would also make `tags` half
+ * machine-owned, so an agent deleting `overdue` would have it silently re-added.
  *
  * `priority` and `due` stay real fields. This is a *rendering* of them.
  */
