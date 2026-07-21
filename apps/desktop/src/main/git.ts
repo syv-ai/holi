@@ -121,15 +121,57 @@ export type PullResult =
   | { kind: 'merged'; commits: number }
   | { kind: 'conflict'; paths: string[] }
 
+export type PushResult =
+  | { kind: 'pushed'; commits: number }
+  | { kind: 'nothing-to-push' }
+  | { kind: 'rejected'; reason: 'permission' | 'non-fast-forward' }
+
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
+  push(): Promise<PushResult>
+  /** FR-14: pull, then push. A conflicting pre-publish pull returns the
+   * PullResult and pushes nothing. */
+  publish(): Promise<PullResult | PushResult>
+  /** FR-20. A no-op when no merge is in progress. */
+  abortMerge(): Promise<void>
   /** Stage everything and commit. Returns the new sha, or **null** when the tree
    * was already clean — "nothing to commit" is the normal outcome of an idle
    * timer on an untouched vault, not an error. */
   commitAll(message: string): Promise<string | null>
+}
+
+/**
+ * Why a push was refused — or `null` when we genuinely cannot tell.
+ *
+ * **Returning null matters as much as the two answers.** The caller renders this
+ * to the user, and FR-16 is specifically that a permission failure must never be
+ * confused with a network or merge failure. The inverse is just as bad: calling
+ * a full disk or a DNS failure "you no longer have write access" sends someone
+ * to their GitHub settings to fix a problem that is not there. An unrecognised
+ * failure stays an unrecognised failure.
+ *
+ * The permission case is matched on stderr rather than porcelain because a
+ * transport-level auth failure kills the push before any ref is negotiated, so
+ * there is no porcelain line to read. That is the one documented exception to
+ * the "plumbing and porcelain only" rule, and it exists because the information
+ * is nowhere else.
+ */
+export function classifyPushFailure(
+  stdout: string,
+  stderr: string,
+): 'permission' | 'non-fast-forward' | null {
+  // GitHub's refusals, verbatim: `remote: Permission to <repo> denied to <user>`
+  // with a 403, or `Authentication failed` for a revoked or expired token.
+  if (/\bpermission to .+ denied|error: 403|returned error: 403|authentication failed|invalid username or token/i.test(stderr)) {
+    return 'permission'
+  }
+  // A ref git refused because ours is stale. Both spellings land here.
+  const refRejected = stdout.split('\n').some((line) => line.startsWith('!'))
+  if (refRejected && /non-fast-forward|fetch first|stale info/i.test(stdout)) return 'non-fast-forward'
+  return null
 }
 
 /** The result of a command allowed to fail. */
@@ -289,6 +331,54 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     if (await isMerging()) await runGit(root, ['merge', '--abort'], opts)
   }
 
+  /**
+   * The outbound half — and the only thing that leaves the machine (FR-13).
+   *
+   * `--porcelain` keeps the containment rule: the per-ref result comes back as
+   * `<flag>\t<from>:<to>\t<summary>` rather than as the prose git prints for
+   * humans. A transport-level auth failure is the one case with no porcelain
+   * representation — the push dies before any ref is negotiated — so that is
+   * matched on stderr, which is the only place the information exists.
+   */
+  async function push(): Promise<PushResult> {
+    const target = (await defaultBranch()) ?? (await status()).branch
+    const waiting = Number(
+      await runGit(root, ['rev-list', '--count', `origin/${target}..HEAD`], opts).catch(() => '0'),
+    )
+    if (waiting === 0) return { kind: 'nothing-to-push' }
+
+    const res = await tryGit(
+      root,
+      ['push', '--porcelain', 'origin', `HEAD:refs/heads/${target}`],
+      opts,
+    )
+    if (res.ok) return { kind: 'pushed', commits: waiting }
+
+    const reason = classifyPushFailure(res.stdout, res.stderr)
+    if (reason !== null) return { kind: 'rejected', reason }
+    // Unrecognised: surface it as the error it is rather than inventing a
+    // reason. A wrong diagnosis here sends someone to fix the wrong thing.
+    throw new GitError(
+      `git push failed (${res.code}): ${res.stderr.split('\n')[0] ?? ''}`,
+      res.code,
+      res.stderr,
+    )
+  }
+
+  /**
+   * FR-14: publish pulls first.
+   *
+   * A non-fast-forward rejection is not worth showing a user when the fix is the
+   * pull that was going to happen anyway — so the rule lives here, once, rather
+   * than at every call site that might forget it. A conflicting pull returns its
+   * own result and pushes nothing (FR-15): the work stays local and intact.
+   */
+  async function publish(): Promise<PullResult | PushResult> {
+    const pulled = await pull()
+    if (pulled.kind === 'conflict') return pulled
+    return push()
+  }
+
   async function commitAll(message: string): Promise<string | null> {
     if (!(await isDirty())) return null
     // `-A` so deletions and untracked files ride along: a deleted note is a
@@ -386,5 +476,5 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, commitAll, pull }
+  return { root, status, commitAll, pull, push, publish, abortMerge }
 }

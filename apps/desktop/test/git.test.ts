@@ -17,7 +17,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
-import { GitError, GitMissingError, ensureAskpass, openRepo, runGit, tryGit } from '../src/main/git'
+import {
+  GitError,
+  GitMissingError,
+  classifyPushFailure,
+  ensureAskpass,
+  openRepo,
+  runGit,
+  tryGit,
+} from '../src/main/git'
 
 const exec = promisify(execFile)
 
@@ -328,6 +336,137 @@ describe('pull', () => {
     // Our commit still exists, unrewritten, and is now an ancestor of HEAD.
     expect(await plainGit(ours, ['cat-file', '-t', before])).toBe('commit')
     expect(await plainGit(ours, ['merge-base', '--is-ancestor', before, 'HEAD'])).toBe('')
+  })
+})
+
+describe('push', () => {
+  it('sends local commits to the default branch', async () => {
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    await commitFile(dir, 'ours.md', 'ours\n')
+
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    // The remote really moved: a fresh clone sees the file.
+    const check = await makeClone(remote, 'check')
+    expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
+  })
+
+  it('reports nothing to push when already in step', async () => {
+    const dir = await makeClone(await makeRemote())
+    expect(await openRepo(dir).push()).toEqual({ kind: 'nothing-to-push' })
+  })
+
+  it('distinguishes a non-fast-forward rejection', async () => {
+    // FR-14 hands this to the pull that was going to happen anyway, so it must
+    // be told apart from a permission failure rather than lumped in with it.
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'theirs.md', 'theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await commitFile(dir, 'ours.md', 'ours\n')
+
+    expect(await openRepo(dir).push()).toEqual({ kind: 'rejected', reason: 'non-fast-forward' })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'fails honestly against an unwritable remote rather than guessing why',
+    async () => {
+      // A read-only local bare repo fails at the object-write layer ("unpacker
+      // error"), which is NOT an auth failure — so it must not be reported as
+      // one. Claiming "you lack permission" when the remote's disk is full is
+      // exactly the misreporting FR-16 exists to prevent.
+      const remote = await makeRemote()
+      const dir = await makeClone(remote)
+      await commitFile(dir, 'ours.md', 'ours\n')
+      await exec('chmod', ['-R', 'a-w', remote])
+      try {
+        await expect(openRepo(dir).push()).rejects.toThrow(GitError)
+      } finally {
+        await exec('chmod', ['-R', 'u+w', remote]) // or afterAll cannot clean up
+      }
+    },
+  )
+})
+
+describe('classifyPushFailure', () => {
+  // The rejection reason cannot be provoked locally — a real permission failure
+  // needs a real remote refusing a real token — so the classifier is pinned
+  // against verbatim output instead. These strings are what git and GitHub
+  // actually emit; the integration tests above cover the paths that CAN be
+  // reproduced.
+
+  it('reads GitHub’s permission refusal as permission (auth FR-13)', () => {
+    expect(
+      classifyPushFailure(
+        '',
+        'remote: Permission to syv-ai/1brain.git denied to someone.\n' +
+          "fatal: unable to access 'https://github.com/syv-ai/1brain.git/': The requested URL returned error: 403\n",
+      ),
+    ).toBe('permission')
+  })
+
+  it('reads a revoked or expired token as permission, not as a network failure', () => {
+    expect(
+      classifyPushFailure('', "remote: Invalid username or token.\nfatal: Authentication failed for 'https://github.com/syv-ai/1brain.git/'\n"),
+    ).toBe('permission')
+  })
+
+  it('reads a stale ref as non-fast-forward', () => {
+    expect(
+      classifyPushFailure(
+        'To github.com:syv-ai/1brain.git\n!\trefs/heads/main:refs/heads/main\t[rejected] (fetch first)\nDone\n',
+        'error: failed to push some refs\n',
+      ),
+    ).toBe('non-fast-forward')
+  })
+
+  it('refuses to classify anything else — an unknown failure is not a permission failure', () => {
+    // The whole point: silence beats a confident wrong answer, because the
+    // caller renders this reason to the user verbatim.
+    expect(
+      classifyPushFailure(
+        'To /tmp/o.git\n!\tHEAD:refs/heads/main\t[remote rejected] (unpacker error)\n',
+        'error: remote unpack failed: unable to create temporary object directory\n',
+      ),
+    ).toBeNull()
+    expect(classifyPushFailure('', 'fatal: unable to access: Could not resolve host: github.com\n')).toBeNull()
+  })
+})
+
+describe('publish', () => {
+  it('pulls before pushing, so a moved remote is not an error', async () => {
+    // FR-14. Without the pull-first rule this is the non-fast-forward rejection
+    // from the test above — and there is nothing for a user to do about it that
+    // the app could not do itself.
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'theirs.md', 'theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await commitFile(dir, 'ours.md', 'ours\n')
+
+    expect((await openRepo(dir).publish()).kind).toBe('pushed')
+    const check = await makeClone(remote, 'check')
+    expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
+    expect(await readFile(join(check, 'theirs.md'), 'utf8')).toBe('theirs\n')
+  })
+
+  it('stops at a conflicting pull and pushes nothing', async () => {
+    // FR-15: the user's work stays local and intact, and the remote is untouched.
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'README.md', '# Theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await commitFile(dir, 'README.md', '# Ours\n')
+
+    const repo = openRepo(dir)
+    expect(await repo.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+    expect((await repo.status()).dirty).toBe(false)
+
+    const check = await makeClone(remote, 'check')
+    expect(await readFile(join(check, 'README.md'), 'utf8')).toBe('# Theirs\n')
   })
 })
 
