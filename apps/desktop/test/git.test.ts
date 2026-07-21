@@ -12,7 +12,7 @@
  * bare repo plays the teammate.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -21,8 +21,10 @@ import {
   GitError,
   GitMissingError,
   classifyPushFailure,
+  cloneRepo,
   ensureAskpass,
   openRepo,
+  remoteUrl,
   runGit,
   tryGit,
 } from '../src/main/git'
@@ -549,6 +551,66 @@ describe('abortMerge', () => {
     // The control can be pressed twice without turning into an error.
     const repo = openRepo(await makeClone(await makeRemote()))
     await expect(repo.abortMerge()).resolves.toBeUndefined()
+  })
+})
+
+describe('cloneRepo', () => {
+  it('clones a remote into the given directory and returns a usable repo', async () => {
+    const remote = await makeRemote()
+    const base = await tmp('holi-git-clonedest-')
+    const dest = join(base, 'owner', 'repo')
+
+    const repo = await cloneRepo({ url: remote, dest })
+    expect(repo.root).toBe(dest)
+    expect(await readFile(join(dest, 'README.md'), 'utf8')).toBe('# Vault\n')
+
+    const status = await repo.status()
+    expect(status.dirty).toBe(false)
+    expect(status.defaultBranch).toBe('main')
+  })
+
+  it('creates parent directories on the way', async () => {
+    const remote = await makeRemote()
+    const base = await tmp('holi-git-clonedeep-')
+    const dest = join(base, 'a', 'b', 'c', 'repo')
+    await expect(cloneRepo({ url: remote, dest })).resolves.toBeTruthy()
+  })
+
+  it('refuses a destination that already holds something', async () => {
+    // Clobbering a directory that may hold unpublished commits is never
+    // acceptable — the same rule vaults.remove and notes.create follow.
+    const remote = await makeRemote()
+    const base = await tmp('holi-git-clonebusy-')
+    const dest = join(base, 'repo')
+    await mkdir(dest, { recursive: true })
+    await writeFile(join(dest, 'mine.md'), 'unpublished work\n', 'utf8')
+
+    await expect(cloneRepo({ url: remote, dest })).rejects.toThrow(/not empty/i)
+    expect(await readFile(join(dest, 'mine.md'), 'utf8')).toBe('unpublished work\n')
+  })
+
+  it('clones into an existing but empty directory', async () => {
+    const remote = await makeRemote()
+    const base = await tmp('holi-git-cloneempty-')
+    const dest = join(base, 'repo')
+    await mkdir(dest, { recursive: true })
+    await expect(cloneRepo({ url: remote, dest })).resolves.toBeTruthy()
+  })
+
+  it('surfaces a clone failure as GitError with stderr intact', async () => {
+    const base = await tmp('holi-git-clonefail-')
+    const err = await cloneRepo({
+      url: join(base, 'no-such-repo.git'),
+      dest: join(base, 'dest'),
+    }).catch((e) => e)
+    expect(err).toBeInstanceOf(GitError)
+    expect(err.stderr).not.toBe('')
+  })
+
+  it('builds an https URL from owner/repo so no caller hand-rolls one', () => {
+    // The token rides in via GIT_ASKPASS, so the URL must stay credential-free.
+    // Callers passing `owner/repo` cannot accidentally embed one.
+    expect(remoteUrl('syv-ai/1brain')).toBe('https://github.com/syv-ai/1brain.git')
   })
 })
 

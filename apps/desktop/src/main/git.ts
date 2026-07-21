@@ -14,9 +14,9 @@
  * interface, and a locale or git-version change would silently alter it.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 /** A git command that ran and failed. */
 export class GitError extends Error {
@@ -519,4 +519,47 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   return { root, status, log, commitAll, pull, push, publish, abortMerge }
+}
+
+/**
+ * `owner/repo` -> the HTTPS URL git clones from.
+ *
+ * Owned here so no caller ever hand-builds one — which is how a token ends up
+ * embedded in a remote URL and then persisted into `.git/config`. The credential
+ * arrives via GIT_ASKPASS instead, and this URL stays clean enough to show a
+ * user or paste into a terminal.
+ */
+export function remoteUrl(remote: string): string {
+  return `https://github.com/${remote}.git`
+}
+
+/**
+ * Clone a vault.
+ *
+ * `url` rather than `owner/repo` so tests can point at a local bare repo;
+ * production callers pass `remoteUrl(remote)`. The Holi-managed root that
+ * `dest` lives under is the registry's business, not this module's (FR-1).
+ */
+export async function cloneRepo(
+  args: { url: string; dest: string },
+  deps: GitDeps = {},
+): Promise<GitRepo> {
+  const { url, dest } = args
+
+  // Refuse rather than clobber: the directory may hold unpublished commits, and
+  // git's own "destination path already exists and is not an empty directory"
+  // arrives only after it has begun. Checking first keeps the message ours.
+  const existing = await readdir(dest).catch(() => null)
+  if (existing !== null && existing.length > 0) {
+    throw new Error(`${dest} is not empty — refusing to clone over it`)
+  }
+
+  await mkdir(dirname(dest), { recursive: true })
+  // Run from the parent: `dest` may not exist yet, and cwd must.
+  await runGit(dirname(dest), ['clone', url, dest], {
+    token: deps.token,
+    gitPath: deps.gitPath,
+    env: deps.env,
+  })
+  return openRepo(dest, deps)
 }
