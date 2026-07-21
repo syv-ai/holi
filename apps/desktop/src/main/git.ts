@@ -44,10 +44,14 @@ export interface GitDeps {
   /** The GitHub token, read lazily so a sign-out takes effect on the next
    * operation rather than on the next restart. */
   token?: () => string | null
-  /** Commit identity, so Holi works on a machine that has never configured git. */
+  /** Commit identity, used **only** when the machine has none of its own — see
+   * `commitAll`. Holi does not overwrite a user's configured git identity. */
   identity?: { name: string; email: string }
   /** Overridable for tests only. */
   gitPath?: string
+  /** Extra environment for the git child process. Tests use it to simulate a
+   * machine with no global config; nothing in the app needs it. */
+  env?: Record<string, string>
 }
 
 /** Bounded so a large `git log` cannot silently truncate: execFile's default is
@@ -94,7 +98,7 @@ export function ensureAskpass(): Promise<string> {
   return askpassPromise
 }
 
-export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath'> {}
+export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {}
 
 export interface RepoStatus {
   branch: string
@@ -114,6 +118,10 @@ export interface RepoStatus {
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
+  /** Stage everything and commit. Returns the new sha, or **null** when the tree
+   * was already clean — "nothing to commit" is the normal outcome of an idle
+   * timer on an untouched vault, not an error. */
+  commitAll(message: string): Promise<string | null>
 }
 
 /** The result of a command allowed to fail. */
@@ -175,6 +183,7 @@ export async function tryGit(
           // Stable messages regardless of the user's locale. We parse porcelain
           // rather than prose, but stderr still reaches error messages and logs.
           LC_ALL: 'C',
+          ...opts.env,
         },
       },
       (err, stdout, stderr) => {
@@ -196,7 +205,40 @@ export async function tryGit(
  * be a fourth opinion about a repo three other things are changing.
  */
 export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
-  const opts: RunOpts = { token: deps.token, gitPath: deps.gitPath }
+  const opts: RunOpts = { token: deps.token, gitPath: deps.gitPath, env: deps.env }
+
+  /** Anything at all to commit? Cheaper than a full `status()`, which also asks
+   * about the upstream and MERGE_HEAD — this runs on every idle tick. */
+  async function isDirty(): Promise<boolean> {
+    const raw = await runGit(root, ['status', '--porcelain=v2', '--untracked-files=all', '-z'], opts)
+    return raw.trim() !== ''
+  }
+
+  /**
+   * Identity flags for a commit — **only** when the machine has none.
+   *
+   * `-c user.email=…` overrides rather than defaults, so passing it
+   * unconditionally would author every commit as Holi and throw away the user's
+   * real name in the shared history. But a machine that has never run
+   * `git config --global user.email` cannot commit at all, and requiring that
+   * setup before Holi works would be a bad first run. So: ask, and fill in only
+   * the gap.
+   */
+  async function identityArgs(): Promise<string[]> {
+    const configured = await runGit(root, ['config', '--get', 'user.email'], opts).catch(() => '')
+    if (configured !== '') return []
+    const who = deps.identity ?? { name: 'Holi', email: 'holi@localhost' }
+    return ['-c', `user.name=${who.name}`, '-c', `user.email=${who.email}`]
+  }
+
+  async function commitAll(message: string): Promise<string | null> {
+    if (!(await isDirty())) return null
+    // `-A` so deletions and untracked files ride along: a deleted note is a
+    // change to publish, and a new one is the whole point.
+    await runGit(root, ['add', '-A'], opts)
+    await runGit(root, [...(await identityArgs()), 'commit', '-m', message], opts)
+    return runGit(root, ['rev-parse', 'HEAD'], opts)
+  }
 
   /**
    * `git status --porcelain=v2 --branch -z`, and nothing else.
@@ -286,5 +328,5 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status }
+  return { root, status, commitAll }
 }
