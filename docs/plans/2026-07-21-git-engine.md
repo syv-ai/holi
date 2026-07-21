@@ -134,7 +134,7 @@ export class GitMissingError extends Error {}
 - Create: `apps/desktop/src/main/git-askpass.mjs`
 - Create: `apps/desktop/test/git.test.ts`
 
-- [ ] **Step 1: Write failing tests for the primitive's contract**
+- [x] **Step 1: Write failing tests for the primitive's contract**
 
 In `git.test.ts`, a `describe('runGit')` covering:
 - `runs a command in the given cwd and returns stdout` — `git rev-parse --is-inside-work-tree` in a temp repo returns `true`.
@@ -151,20 +151,20 @@ Helper for the whole file — write it now, every later task uses it:
 
 Seed the bare repo by cloning it, committing a `README.md`, and pushing — a truly empty bare repo has no default branch, and every later test wants one.
 
-- [ ] **Step 2: Run the tests and watch them fail**
+- [x] **Step 2: Run the tests and watch them fail**
 
 Run: `cd apps/desktop && pnpm exec vitest run test/git.test.ts`
 Expected: FAIL — `runGit is not a function`.
 
-- [ ] **Step 3: Implement `runGit`, `GitError`, `GitMissingError`**
+- [x] **Step 3: Implement `runGit`, `GitError`, `GitMissingError`**
 
 `execFile` with `env: {...process.env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C', GIT_ASKPASS: <askpass path>, HOLI_GIT_TOKEN: token() ?? ''}`, an explicit `maxBuffer`, and `ENOENT` mapped to `GitMissingError`.
 
 Write `git-askpass.mjs` in the same step — it is part of this contract, not a later one.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/main/git.ts apps/desktop/src/main/git-askpass.mjs apps/desktop/test/git.test.ts
@@ -179,7 +179,7 @@ git commit -m "feat(desktop): shell out to git, without putting the token in arg
 - Modify: `apps/desktop/src/main/git.ts`
 - Modify: `apps/desktop/test/git.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('status')`:
 - `reports a clean clone as clean, with no divergence` — `dirty: false`, `ahead: 0`, `behind: 0`, `merging: false`, `detached: false`, `unborn: false`.
@@ -191,15 +191,15 @@ git commit -m "feat(desktop): shell out to git, without putting the token in arg
 - `survives a repo with no commits` — `unborn: true`, and nothing throws.
 - `reports a detached HEAD` — FR-2 refuses to sync one, so it must be detectable.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
-- [ ] **Step 3: Implement `status`**
+- [x] **Step 3: Implement `status`**
 
 `git status --porcelain=v2 --branch --untracked-files=all -z`. Parse the `# branch.*` headers and count entry lines. `defaultBranch` from `git symbolic-ref --short refs/remotes/origin/HEAD` (tolerate absence → `null`). `merging` from the existence of `.git/MERGE_HEAD`.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit** — `feat(desktop): read repo state from porcelain v2 only`
+- [x] **Step 5: Commit** — `feat(desktop): read repo state from porcelain v2 only`
 
 ---
 
@@ -207,7 +207,7 @@ git commit -m "feat(desktop): shell out to git, without putting the token in arg
 
 **Files:** modify `git.ts`, `git.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('commitAll')`:
 - `commits every change as one commit` — change three files, expect one new commit and a clean tree after (FR-5: a board drag is one commit, not three).
@@ -216,10 +216,10 @@ git commit -m "feat(desktop): shell out to git, without putting the token in arg
 - `commits on a machine with no git identity configured` — run with `-c user.useConfigOnly=true` in the env or an empty `HOME`, and assert the commit still succeeds via the injected identity.
 - `leaves the tree clean` — `status().dirty` is false afterwards (FR-7).
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement** — `git add -A` then `git -c user.name=… -c user.email=… commit -m …`; check `status().dirty` first and return `null` when clean.
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): an edit becomes one local commit`
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement** — `git add -A` then `git -c user.name=… -c user.email=… commit -m …`; check `status().dirty` first and return `null` when clean.
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): an edit becomes one local commit`
 
 ---
 
@@ -229,7 +229,7 @@ git commit -m "feat(desktop): shell out to git, without putting the token in arg
 
 This is the load-bearing task. FR-10 and FR-12 both live here.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('pull')`:
 - `is up-to-date when the remote has not moved`.
@@ -239,13 +239,13 @@ This is the load-bearing task. FR-10 and FR-12 both live here.
 - `reports a conflict and leaves the tree CLEAN` — both sides change the same line. Assert `kind: 'conflict'`, the path is named, **and `status()` afterwards is `dirty: false, merging: false`**. This is FR-12 and it is the most important assertion in the file: if the abort does not run, autosave commits conflict markers.
 - `never rebases` — after a merge, assert the local commit that existed before the pull still has its original sha (a rebase would rewrite it).
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement**
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement**
 
 `git fetch origin`, then `git merge --no-edit origin/<defaultBranch>`. **Not `--no-rebase`** — that is a `git pull` option and `git merge` rejects it with a usage error; an explicit fetch-then-merge is inherently a merge, which is also why it is two observable steps rather than a `pull`. On non-zero exit, read conflicted paths from `git diff --name-only --diff-filter=U -z`, run `git merge --abort`, and return them. Count merged commits with `git rev-list --count HEAD@{1}..HEAD` or by comparing before/after shas.
 
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): pull merges, and a conflict aborts before it can be committed`
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): pull merges, and a conflict aborts before it can be committed`
 
 ---
 
@@ -253,7 +253,7 @@ This is the load-bearing task. FR-10 and FR-12 both live here.
 
 **Files:** modify `git.ts`, `git.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('push')`:
 - `pushes local commits to the default branch` — the bare remote's HEAD advances.
@@ -263,20 +263,20 @@ This is the load-bearing task. FR-10 and FR-12 both live here.
 
 Skip the permission test on Windows via `it.skipIf(process.platform === 'win32')` — the chmod trick does not hold there.
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement** — `git push origin HEAD:<defaultBranch>`; classify stderr on failure by matching git's stable rejection reasons, falling back to a plain `GitError`.
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): publish, and say why a push was refused`
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement** — `git push origin HEAD:<defaultBranch>`; classify stderr on failure by matching git's stable rejection reasons, falling back to a plain `GitError`.
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): publish, and say why a push was refused`
 
-- [ ] **Step 6: Write failing tests for `publish` (FR-14/15)**
+- [x] **Step 6: Write failing tests for `publish` (FR-14/15)**
 
 `describe('publish')`:
 - `pulls before pushing, so a moved remote is not an error` — teammate pushes a different file, we commit, `publish()` succeeds and the remote holds both. Without the pull-first rule this is the non-fast-forward rejection from Step 1.
 - `stops and reports the conflict without pushing` — teammate and we change the same line; `publish()` returns the `conflict` PullResult, the remote is unchanged, and the local tree is clean (the abort still ran).
 
-- [ ] **Step 7: Implement `publish`** — `pull()`, return its result immediately if `kind === 'conflict'`, otherwise `push()`.
+- [x] **Step 7: Implement `publish`** — `pull()`, return its result immediately if `kind === 'conflict'`, otherwise `push()`.
 
-- [ ] **Step 8: Run, watch pass, commit** — `feat(desktop): publish pulls first`
+- [x] **Step 8: Run, watch pass, commit** — `feat(desktop): publish pulls first`
 
 ---
 
@@ -284,7 +284,7 @@ Skip the permission test on Windows via `it.skipIf(process.platform === 'win32')
 
 **Files:** modify `git.ts`, `git.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('log')`:
 - `returns commits newest first, with sha, subject, date and author`.
@@ -296,10 +296,10 @@ Skip the permission test on Windows via `it.skipIf(process.platform === 'win32')
 - `restores a clean tree mid-merge` — start a conflicting merge by hand, abort, assert clean.
 - `is a no-op when no merge is in progress` — FR-20's control can be pressed twice.
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement** — `git log -z --format=%H%x1f%s%x1f%aI%x1f%an` (unit separators, NUL records — never `--pretty` text we would have to guess the shape of), plus `--follow -- <path>` and `-n <limit>`.
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): history is git history`
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement** — `git log -z --format=%H%x1f%s%x1f%aI%x1f%an` (unit separators, NUL records — never `--pretty` text we would have to guess the shape of), plus `--follow -- <path>` and `-n <limit>`.
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): history is git history`
 
 ---
 
@@ -307,7 +307,7 @@ Skip the permission test on Windows via `it.skipIf(process.platform === 'win32')
 
 **Files:** modify `git.ts`, `git.test.ts`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `describe('cloneRepo')`:
 - `clones a remote into the given directory and returns a usable repo` — `status()` on the result is clean and names the default branch.
@@ -315,28 +315,52 @@ Skip the permission test on Windows via `it.skipIf(process.platform === 'win32')
 - `creates parent directories on the way`.
 - `surfaces a clone failure as GitError with stderr` — clone a remote that does not exist.
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement** — build the HTTPS URL from `owner/repo`, `git clone <url> <dest>`, return `openRepo(dest)`. Take the remote as `owner/repo` and let the module own URL construction, so no caller ever hand-builds one with a token in it.
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): a vault is a clone`
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement** — build the HTTPS URL from `owner/repo`, `git clone <url> <dest>`, return `openRepo(dest)`. Take the remote as `owner/repo` and let the module own URL construction, so no caller ever hand-builds one with a token in it.
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): a vault is a clone`
 
 ---
 
-## Task 8: Wire the askpass path for both dev and packaged builds
+## Task 8: ~~Wire the askpass path for both dev and packaged builds~~ — REMOVED
+
+**Not needed.** The premise was a shipped `git-askpass.mjs` resolved via
+`import.meta.url`, and two things kill it: `electron-vite` bundles main to CJS
+(no `"type": "module"`), so `import.meta.url` does not survive the build; and a
+`#!/usr/bin/env node` shebang assumes a working `node` on PATH. The script is
+materialized at first use instead — a POSIX `sh` (or `.bat`) file in a `mkdtemp`
+directory — which behaves identically under vitest, `electron-vite dev` and a
+packaged build, and needs no build-config change at all.
+
+<details><summary>Original task</summary>
 
 **Files:** modify `git.ts`, possibly `apps/desktop/electron.vite.config.*`
 
-- [ ] **Step 1: Confirm the failure**
+- [x] **Step 1: Confirm the failure**
 
 `git-askpass.mjs` must exist *on disk next to the built main bundle* at runtime. Under `electron-vite` the main process is bundled into `out/main/`, and a stray `.mjs` beside the source is not copied. Check `apps/desktop/electron.vite.config.*` for how main is built, then verify by building: `pnpm --filter @holi/desktop build` and looking for the file in `out/main/`.
 
-- [ ] **Step 2: Make it resolve in both modes**
+- [x] **Step 2: Make it resolve in both modes**
 
 Resolve the path relative to `__dirname` with a dev fallback to the source location, and add whatever copy step the config needs. Assert the resolved path exists at module load and throw a clear error naming it if not — a missing askpass means every authenticated git operation hangs, and that is a terrible thing to debug at runtime.
 
 - [ ] **Step 3: Commit** — `fix(desktop): the askpass helper ships with the main bundle`
 
+</details>
+
 ---
+
+## Outcome — completed 2026-07-21
+
+**48 tests, all green**, in `apps/desktop/test/git.test.ts`. Every invariant below verified.
+
+Three things the plan got wrong, corrected in place:
+
+1. **`git merge --no-rebase` does not exist** — `--no-rebase` is a `git pull` option; merge rejects it with a usage error. An explicit fetch-then-merge is inherently a merge.
+2. **The chmod permission test simulated the wrong failure.** A read-only local bare repo fails at the object-write layer (`unpacker error`), not at auth. GitHub's real refusal is `remote: Permission to … denied` plus a 403. The classifier is now unit-tested against verbatim output, and returns **null** when it cannot tell — because telling someone they lost write access when their disk is full is the same class of misreport FR-16 forbids.
+3. **Task 8 was unnecessary** (see above).
+
+One finding that outlives this plan: **git conflicts on adjacent line edits.** `prd/tasks.md` §Concurrency promises that two people editing different fields of one task both survive; that holds only when the fields are not neighbours, and `status`/`due` are adjacent in the PRD's own example format. Both behaviours are pinned by tests. **The PRD text needs a correction — Nicolai's call.**
 
 ## Definition of done
 
