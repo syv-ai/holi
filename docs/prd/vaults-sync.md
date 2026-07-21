@@ -107,6 +107,16 @@ Sync is **automatic inbound, explicit outbound**:
 
 ---
 
+## How git is run
+
+**Holi shells out to the system `git` binary.** Agreed with Nicolai 2026-07-21.
+
+**Why not a JS implementation (isomorphic-git):** merge-with-honest-conflict-reporting is the load-bearing operation in this entire design — FR-12 and the whole reconcile path rest on git *refusing* rather than guessing — and that is precisely isomorphic-git's weakest area (no real recursive merge). Building the hardest requirement on the weakest feature is the trade to avoid. Shelling out also inherits credential helpers, hooks, `.gitignore` semantics, and — the part that matters for reconcile — **identical behaviour to what the user and the agent see in a terminal**, which they will both be looking at when a merge goes wrong.
+
+**The cost, and the rule that contains it:** a process spawn per operation, and output that must be parsed. **Parse only plumbing commands and `--porcelain=v2`; never human-readable output** — porcelain text is explicitly not a stable interface, and a locale or version change would silently alter it.
+
+The standing assumption that makes this safe is the one the whole product rests on: every user is a developer, so `git` is present. Holi should still fail with a clear message rather than a stack trace if it is not.
+
 ## History
 
 The vault's history **is git history**, and autosave commits are what give it resolution.
