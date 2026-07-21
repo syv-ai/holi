@@ -13,7 +13,20 @@
  */
 import { readFile } from 'node:fs/promises'
 import { initTRPC, TRPCError } from '@trpc/server'
-import { vaultRelPath, type VaultEntry, type VaultRelPath } from '@holi/shared'
+import {
+  nextDueCatchup,
+  parseTaskFile,
+  parseTaskPatch,
+  serializeTaskFile,
+  shiftForRollover,
+  taskFilePath,
+  taskSlug,
+  vaultRelPath,
+  type Task,
+  type TaskPatch,
+  type VaultEntry,
+  type VaultRelPath,
+} from '@holi/shared'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import type { VaultRegistry } from './vault/registry'
@@ -24,13 +37,40 @@ export interface RouterDeps {
   registry: VaultRegistry
   /** Wall-clock, injected so `lastOpenedAt` is testable. */
   now?: () => string
+  /**
+   * Today, **local**, as `YYYY-MM-DD` — the frame a recurrence rolls against.
+   *
+   * Separate from `now()` rather than sliced off it: `now()` is a UTC instant,
+   * and for anyone west of Greenwich its date reads as yesterday for part of the
+   * evening. With no server left, the machine's local time is the only frame
+   * there is — and it is the one the reminder anchor already uses.
+   */
+  today?: () => string
+}
+
+/** `YYYY-MM-DD` in the machine's own timezone. `toISOString().slice(0, 10)`
+ * would be the UTC date, which is a different day for much of the world for
+ * much of the day. */
+function localToday(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
 /** A tiny validator, so the router keeps its input contract without pulling in a
  * schema library for four shapes. Each one throws on anything it did not ask
  * for; tRPC turns that into a BAD_REQUEST. */
+type Parsed<T extends Record<string, 'string' | 'string?'>> = {
+  [K in keyof T as T[K] extends 'string?' ? never : K]: string
+} & {
+  // Genuinely optional, not "required and possibly undefined". tRPC infers a
+  // procedure's input from this type, so the difference is whether a caller may
+  // omit the key at all — and every optional field here is one a caller omits.
+  [K in keyof T as T[K] extends 'string?' ? K : never]?: string
+}
+
 function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
-  return (raw: unknown): { [K in keyof T]: T[K] extends 'string?' ? string | undefined : string } => {
+  return (raw: unknown): Parsed<T> => {
     if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
     const input = raw as Record<string, unknown>
     const out: Record<string, unknown> = {}
@@ -49,6 +89,7 @@ function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
 
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
+  const today = deps.today ?? localToday
 
   /** remote -> the clone's root on this machine. Every path-taking procedure
    * goes through here, so an unknown vault fails once, in one place. */
@@ -64,6 +105,16 @@ export function createRouter(deps: RouterDeps) {
   function safe(path: string): VaultRelPath {
     try {
       return vaultRelPath(path)
+    } catch (err) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
+    }
+  }
+
+  /** Field edits are validated by the module that owns the format, not by a
+   * second vocabulary here that could drift from it. */
+  function patchOrThrow(raw: unknown): TaskPatch {
+    try {
+      return parseTaskPatch(raw)
     } catch (err) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
     }
@@ -91,6 +142,134 @@ export function createRouter(deps: RouterDeps) {
       .mutation(({ input }) => deps.registry.remove(input.remote)),
   })
 
+  /** Does this file exist? The existence half of "create must not clobber". */
+  async function exists(root: string, rel: VaultRelPath): Promise<boolean> {
+    return (await readFile(absPathFor(root, rel), 'utf8').catch(() => null)) !== null
+  }
+
+  /**
+   * The first free `task.<slug>.md` in `folder`.
+   *
+   * Two tasks may honestly share a title — "Call the vendor" twice is a normal
+   * week — so a colliding slug takes a numeric suffix. Refusing would make a
+   * board quick-add fail on a repeated title, which reads as a bug; overwriting
+   * would silently destroy the earlier task.
+   */
+  async function freeTaskPath(root: string, folder: string, title: string): Promise<VaultRelPath> {
+    const slug = taskSlug(title)
+    for (let n = 1; n <= 1000; n++) {
+      const rel = safe(taskFilePath(folder, n === 1 ? slug : `${slug}-${n}`))
+      if (!(await exists(root, rel))) return rel
+    }
+    throw new TRPCError({ code: 'CONFLICT', message: `too many tasks named like: ${title}` })
+  }
+
+  /** The task at `rel`, or a 404. An unparseable task file throws too: a field
+   * edit has nothing to merge into, and the honest place to fix bad frontmatter
+   * is the editor, on the text itself. */
+  async function readTask(root: string, rel: VaultRelPath): Promise<Task> {
+    const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
+    if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: rel })
+    try {
+      return parseTaskFile(text, rel)
+    } catch (err) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `${rel}: ${(err as Error).message}` })
+    }
+  }
+
+  const tasks = t.router({
+    create: t.procedure
+      .input(fields({ remote: 'string', folder: 'string?', title: 'string', status: 'string?' }))
+      .mutation(async ({ input }): Promise<{ path: string }> => {
+        const root = await rootFor(input.remote)
+        // The status rides through the same validator a field edit does, so the
+        // board cannot create a file it would then refuse to parse.
+        const patch = patchOrThrow({ status: input.status ?? 'todo' })
+        const rel = await freeTaskPath(root, input.folder ?? '', input.title)
+        await writeAtomic(
+          root,
+          rel,
+          serializeTaskFile({
+            title: input.title,
+            status: patch.status ?? 'todo',
+            tags: [],
+            description: '',
+          }),
+        )
+        return { path: rel }
+      }),
+
+    update: t.procedure
+      .input((raw: unknown) => ({
+        ...fields({ remote: 'string', path: 'string' })(raw),
+        patch: patchOrThrow((raw as { patch?: unknown }).patch ?? {}),
+      }))
+      .mutation(async ({ input }): Promise<Task> => {
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        // Read-modify-write. There is no record to patch — the file is the task,
+        // so an edit is a parse, a merge and a full rewrite. The merge SPREADS
+        // rather than testing for undefined: a key present-and-undefined is how
+        // `parseTaskPatch` spells "clear this field".
+        const next = { ...(await readTask(root, rel)), ...input.patch }
+        await writeAtomic(root, rel, serializeTaskFile(next))
+        return next
+      }),
+
+    /**
+     * The single roll-forward path.
+     *
+     * The card's checkbox and a drop into Done both land here rather than writing
+     * `status: done`, because for a recurring task `done` is not the answer — the
+     * next occurrence is. A patch would silently skip the roll and the series
+     * would end wherever someone happened to tick the box.
+     */
+    complete: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }): Promise<Task> => {
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        const task = await readTask(root, rel)
+
+        const next = rollForward(task)
+        await writeAtomic(root, rel, serializeTaskFile(next))
+        return next
+      }),
+
+    delete: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }) => {
+        await removeDocFile(await rootFor(input.remote), safe(input.path))
+        return { ok: true as const }
+      }),
+  })
+
+  /**
+   * Completing a task: the next occurrence if there is one, `done` if there is
+   * not.
+   *
+   * A recurrence with no `due` has nothing to advance from, and one that has run
+   * past its `endDate` has nowhere left to go — both end the series rather than
+   * looking set and never firing again (prd/tasks.md §Recurrence & reminders).
+   */
+  function rollForward(task: Task): Task {
+    const rolled =
+      task.recurrence !== undefined && task.due !== undefined
+        ? nextDueCatchup(task.due, task.recurrence, today())
+        : null
+    if (rolled === null) return { ...task, status: 'done' }
+
+    // An ABSOLUTE reminder is a wall-clock instant tied to the old occurrence, so
+    // it moves by the same delta the due date did. A relative one (`1d`) already
+    // re-resolves against the new `due`, so shifting it would double-count.
+    const reminder =
+      task.reminder === undefined
+        ? undefined
+        : (shiftForRollover(task.reminder, task.due!, rolled) ?? task.reminder)
+
+    return { ...task, status: 'todo', due: rolled, reminder }
+  }
+
   const notes = t.router({
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
@@ -114,9 +293,10 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
         // Refuse rather than overwrite: "create" that clobbers an existing note
-        // is indistinguishable from losing it.
-        const existing = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
-        if (existing !== null) {
+        // is indistinguishable from losing it. (A task, by contrast, takes a
+        // numeric suffix — see freeTaskPath. The difference is that a note's path
+        // is chosen by the user and a task's is derived from its title.)
+        if (await exists(root, rel)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${rel}` })
         }
         await writeAtomic(root, rel, input.text ?? '')
@@ -131,7 +311,7 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ vaults, notes })
+  return t.router({ vaults, notes, tasks })
 }
 
 export type AppRouter = ReturnType<typeof createRouter>

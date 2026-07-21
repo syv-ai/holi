@@ -1,10 +1,17 @@
 /** The stripped board (prd/tasks.md §Board UX).
  *
- * One layout. Todo / Doing / Done, fixed; one swim lane per `area`. Both drag axes are
- * real writes, and a cell is `(column, lane)` — so one drop is one patch (D42).
+ * One layout. Todo / Doing / Done, fixed; one swim lane per folder, because the
+ * folder IS the lane. A cell is `(column, lane)`.
  *
- * There is no "N excluded" count anywhere, because nothing is hidden into unselected
- * buckets. The empty state distinguishes "no tasks" from "nothing matches".
+ * **Only the vertical axis is a write.** Dragging between columns rewrites
+ * `status`; dragging between lanes would move the file, and a move has to
+ * rewrite every inbound `[[wiki-link]]` in the same pass or it silently breaks
+ * them. Until that pass exists, a cross-lane cell simply is not a drop target —
+ * the drag shows "no drop" rather than half-applying.
+ *
+ * There is no "N excluded" count anywhere, because nothing is hidden into
+ * unselected buckets. The empty state distinguishes "no tasks" from "nothing
+ * matches".
  */
 import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
@@ -13,17 +20,17 @@ import { useState } from 'react'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
 import {
-  NO_AREA,
+  ROOT_LANE,
+  brokenTasksAtom,
   completeTaskAtom,
   createTaskAtom,
-  foldersAtom,
-  laneFor,
-  laneOrder,
   filterAtom,
+  laneLabel,
+  laneOf,
+  laneOrder,
   matchesFilter,
-  moveTaskAtom,
-  presenceAtom,
-  selectedTaskIdAtom,
+  selectedTaskPathAtom,
+  setTaskStatusAtom,
   tasksAtom,
   todayAtom,
 } from '../state/tasks'
@@ -35,7 +42,7 @@ const COLUMNS: { status: TaskStatus; label: string }[] = [
 ]
 
 /** Virtual labels get a colour; a task's own tags stay neutral. The chip is the same
- * shape either way — that is the point of D41: they read as one vocabulary. */
+ * shape either way — they read as one vocabulary. */
 const CHIP: Record<string, string> = {
   overdue: 'bg-red-950 text-red-300 border-red-900',
   p1: 'bg-orange-950 text-orange-300 border-orange-900',
@@ -43,25 +50,33 @@ const CHIP: Record<string, string> = {
   p3: 'bg-neutral-800 text-neutral-400 border-neutral-700',
 }
 
-function Card({ task }: { task: Task }): React.JSX.Element {
+function Card({
+  task,
+  onDragStart,
+}: {
+  task: Task
+  onDragStart: (task: Task) => void
+}): React.JSX.Element {
   const today = useAtomValue(todayAtom)
-  const presence = useAtomValue(presenceAtom)
   const complete = useSetAtom(completeTaskAtom)
-  const select = useSetAtom(selectedTaskIdAtom)
+  const select = useSetAtom(selectedTaskPathAtom)
 
   const labels = virtualLabels(task, today)
-  const watching = presence.get(task.id) ?? []
 
   return (
     <div
       draggable
-      data-task={task.id}
-      // The dragged id rides the drag itself, not React state. State would mean the drop
-      // handler only learns what is being dragged once a re-render has happened between
-      // the two events — true in a browser, but a dependency on frame timing for what is
-      // really just a payload. dataTransfer IS the payload.
-      onDragStart={(e) => e.dataTransfer.setData('text/plain', task.id)}
-      onClick={() => select(task.id)}
+      data-task={task.path}
+      // The dragged path rides the drag itself, not React state. State would mean the
+      // drop handler only learns what is being dragged once a re-render has happened
+      // between the two events. dataTransfer IS the payload. (The lane goes through
+      // state as well as here, because dataTransfer is unreadable during dragover and
+      // that is where lane validity has to be decided.)
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/plain', task.path)
+        onDragStart(task)
+      }}
+      onClick={() => select(task.path)}
       className="cursor-grab rounded border border-neutral-800 bg-neutral-900 p-2 text-xs active:cursor-grabbing"
     >
       <div className="flex items-start gap-2">
@@ -70,7 +85,7 @@ function Card({ task }: { task: Task }): React.JSX.Element {
         <input
           type="checkbox"
           checked={task.status === 'done'}
-          onChange={() => void complete(task.id)}
+          onChange={() => void complete(task.path)}
           onClick={(e) => e.stopPropagation()}
           className="mt-0.5 shrink-0"
           aria-label={`Complete ${task.title}`}
@@ -98,21 +113,17 @@ function Card({ task }: { task: Task }): React.JSX.Element {
           ))}
         </div>
       )}
-
-      {watching.length > 0 && (
-        // "Nicolai is editing this task" — true when Nicolai's *Claude* is editing it
-        // too: a user and their agent are one identity (D37), so there is no actor to
-        // distinguish and the board must not try.
-        <div className="mt-1.5 flex items-center gap-1 pl-6 text-[10px] text-sky-400">
-          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />
-          {watching.map((p) => p.name).join(', ')} editing…
-        </div>
-      )}
     </div>
   )
 }
 
-function QuickAdd({ status, area }: { status: TaskStatus; area: string | null }): React.JSX.Element {
+function QuickAdd({
+  status,
+  folder,
+}: {
+  status: TaskStatus
+  folder: string
+}): React.JSX.Element {
   const create = useSetAtom(createTaskAtom)
   const [title, setTitle] = useState('')
 
@@ -123,7 +134,7 @@ function QuickAdd({ status, area }: { status: TaskStatus; area: string | null })
         const t = title.trim()
         if (!t) return
         setTitle('')
-        void create({ title: t, status, area })
+        void create({ title: t, status, folder })
       }}
     >
       <input
@@ -136,12 +147,38 @@ function QuickAdd({ status, area }: { status: TaskStatus; area: string | null })
   )
 }
 
+/**
+ * Task files that would not parse.
+ *
+ * Shown as a strip rather than as cards in a column, because an unparseable file
+ * has no `status` to place it by — inventing one would be the same guess the
+ * parser just refused to make. Never hidden: a task missing from the board is
+ * indistinguishable from data loss, and the model will occasionally write bad
+ * frontmatter.
+ */
+function BrokenStrip(): React.JSX.Element | null {
+  const broken = useAtomValue(brokenTasksAtom)
+  if (broken.length === 0) return null
+
+  return (
+    <div className="mx-3 mt-3 rounded border border-red-900 bg-red-950/40 p-2 text-xs">
+      <p className="mb-1 font-medium text-red-300">
+        {broken.length} task {broken.length === 1 ? 'file' : 'files'} could not be read
+      </p>
+      {broken.map((b) => (
+        <div key={b.path} data-broken-task={b.path} className="text-[11px] text-red-400/90">
+          <span className="font-mono">{b.path}</span> — {b.error}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function BoardView(): React.JSX.Element {
-  // The feed is Shell's now (state/task-feed.ts): the notes editor needs tasks too, and
-  // the board is not always mounted.
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <FilterBar />
+      <BrokenStrip />
       <div className="flex min-h-0 flex-1">
         <Grid />
         <TaskDetailPanel />
@@ -152,32 +189,30 @@ export function BoardView(): React.JSX.Element {
 
 function Grid(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
-  const folders = useAtomValue(foldersAtom)
-  const move = useSetAtom(moveTaskAtom)
+  const setStatus = useSetAtom(setTaskStatusAtom)
   const filter = useAtomValue(filterAtom)
   const today = useAtomValue(todayAtom)
 
+  // The lane the in-flight drag started in. dataTransfer cannot be read during
+  // dragover, and that is where a cross-lane cell has to refuse the drop.
+  const [dragLane, setDragLane] = useState<string | null>(null)
+
   const everything = [...tasks.values()]
   const all = everything.filter((t) => matchesFilter(t, filter, today))
-  // Lane ids by path, so a drop can turn a lane back into the folder id the record stores.
-  const folderIdByPath = new Map([...folders].map(([id, path]) => [path, id]))
-  const lanes = laneOrder(all.map((t) => laneFor(t, folders)))
-
-  const areaOf = (lane: string) =>
-    lane === NO_AREA ? null : (folderIdByPath.get(lane) ?? null)
+  const lanes = laneOrder(all.map(laneOf))
 
   const cell = (lane: string, status: TaskStatus) =>
-    all.filter((t) => t.status === status && laneFor(t, folders) === lane)
+    all.filter((t) => t.status === status && laneOf(t) === lane)
 
   const drop = (e: React.DragEvent, lane: string, status: TaskStatus) => {
-    const taskId = e.dataTransfer.getData('text/plain')
-    if (!taskId) return
-    // A cell is (column, lane), so ONE drop is ONE patch carrying both axes (D42).
-    void move(taskId, { status, area: areaOf(lane) })
+    setDragLane(null)
+    const path = e.dataTransfer.getData('text/plain')
+    if (!path || laneOf({ path } as Task) !== lane) return
+    void setStatus(path, status)
   }
 
   return (
-    <div className="flex-1 overflow-auto p-3">
+    <div className="flex-1 overflow-auto p-3" onDragEnd={() => setDragLane(null)}>
       <div className="grid grid-cols-[8rem_repeat(3,minmax(0,1fr))] gap-2">
         <div />
         {COLUMNS.map((c) => (
@@ -187,24 +222,31 @@ function Grid(): React.JSX.Element {
         ))}
 
         {lanes.map((lane) => (
-          <div key={lane} className="contents">
-            <div className="truncate pt-2 text-xs text-neutral-500" title={lane}>
-              {lane}
+          <div key={lane || ROOT_LANE} className="contents">
+            <div className="truncate pt-2 text-xs text-neutral-500" title={laneLabel(lane)}>
+              {laneLabel(lane)}
             </div>
-            {COLUMNS.map((c) => (
-              <div
-                key={c.status}
-                data-cell={`${c.status}:${lane}`}
-                onDragOver={(e) => e.preventDefault()}
-                onDrop={(e) => drop(e, lane, c.status)}
-                className="min-h-16 space-y-1.5 rounded border border-neutral-900 bg-neutral-950/60 p-1.5"
-              >
-                {cell(lane, c.status).map((t) => (
-                  <Card key={t.id} task={t} />
-                ))}
-                <QuickAdd status={c.status} area={areaOf(lane)} />
-              </div>
-            ))}
+            {COLUMNS.map((c) => {
+              // Only the lane the drag started in accepts it: the horizontal axis is
+              // a file move, and that needs the link rewrite it does not have yet.
+              const accepts = dragLane === null || dragLane === lane
+              return (
+                <div
+                  key={c.status}
+                  data-cell={`${c.status}:${lane}`}
+                  onDragOver={(e) => accepts && e.preventDefault()}
+                  onDrop={(e) => drop(e, lane, c.status)}
+                  className={`min-h-16 space-y-1.5 rounded border border-neutral-900 bg-neutral-950/60 p-1.5 ${
+                    accepts ? '' : 'opacity-40'
+                  }`}
+                >
+                  {cell(lane, c.status).map((t) => (
+                    <Card key={t.path} task={t} onDragStart={(d) => setDragLane(laneOf(d))} />
+                  ))}
+                  <QuickAdd status={c.status} folder={lane} />
+                </div>
+              )
+            })}
           </div>
         ))}
       </div>

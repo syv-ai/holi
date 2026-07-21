@@ -1,151 +1,71 @@
 /** The board's state (prd/tasks.md §Board UX).
  *
- * Tasks reach the renderer by main **pushing** them: the one SSE connection lives in
- * `main/events/user-stream.ts` — one per signed-in *user*, carrying every vault (D50) —
- * and the board is a consumer of it. Main filters `tasks` frames to the active vault
- * (D52), so what arrives here is still a bare payload with no envelope to unwrap. The
- * renderer never opens a second stream — that is the invariant, not an implementation
- * detail; only its scope changed.
+ * Tasks are **derived from the vault snapshot**, not held in a store of their own.
+ * There is no server, so there is no push channel and nothing to reconcile a
+ * second cache against: `scanVault` reads the files, the snapshot holds the
+ * result, and the board is a view of it. A write goes to the router and then
+ * re-reads — glob-and-parse is imperceptible at a vault's scale, and buying an
+ * index before a measurement asks for one is what the PRD rejects outright.
  *
- * Nothing here parses a task file. The board reads Postgres through tRPC like every
- * other query; the file projection is one-directional and is never an index.
+ * Gone with the server, and worth naming so they are not re-added by habit:
+ * **presence** (its heartbeat needed a push channel, and two people on one task
+ * file is now an ordinary git conflict), and **`related[]`** (a task links by
+ * writing wiki-links in its body — backrefs are a grep).
  */
-import type { DocMeta, RelatedRef, RelatedRefKind, Task } from '@holi/shared'
-import { allLabels } from '@holi/shared'
+import type { Task, TaskStatus } from '@holi/shared'
+import { allLabels, taskArea } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
-import { activeVaultIdAtom, docsAtom } from './vaults'
+import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
-/** Mirrors the server bus (apps/server/src/bus.ts). Do NOT widen it (D36). */
-export type TasksEvent = { type: 'upserted'; task: Task } | { type: 'deleted'; taskId: string }
+/** The vault root's lane. The lane IS the containing folder, and the root
+ * folder's path is the empty string — there is no "(no area)" any more because
+ * there is no `area` field to be missing. */
+export const ROOT_LANE = ''
 
-export type PresenceEvent = {
-  taskId: string
-  userId: string
-  name: string
-  /** ISO. The entry dies on its own — there is no "stopped editing" event. */
-  expiresAt: string
-}
-
-export const NO_AREA = '(no area)'
-
-export const tasksAtom = atom<Map<string, Task>>(new Map())
-export const presenceAtom = atom<Map<string, PresenceEvent[]>>(new Map())
-
-/** folderId -> path. Derived from the docs fetch, which already carries folders —
- * a second query would just be a second chance to disagree with it. */
-export const foldersAtom = atom<Map<string, string>>(
-  (get) => new Map(get(docsAtom).folders.map((f) => [f.id, f.path])),
+/** Tasks by path. The path is the identity, so this needs no id and no join. */
+export const tasksAtom = atom<Map<string, Task>>(
+  (get) => new Map(get(snapshotAtom).tasks.map((t) => [t.path, t])),
 )
-/** Today, as YYYY-MM-DD. Held in state so virtual labels stay pure and testable and
- * the board re-renders when the day turns rather than reading the clock inline. */
-export const todayAtom = atom<string>(new Date().toISOString().slice(0, 10))
+
+/** Task files that would not parse, rendered as error cards. Never hidden:
+ * omitting one from the board is indistinguishable from data loss. */
+export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
+
+/** Today, as YYYY-MM-DD. Held in state so virtual labels stay pure and testable
+ * and the board re-renders when the day turns rather than reading the clock
+ * inline. Local, not UTC — the same frame the roll-forward uses. */
+export const todayAtom = atom<string>(
+  `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
+)
+
+/** The task open in the detail view, by path. */
+export const selectedTaskPathAtom = atom<string | null>(null)
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.
 
-/** Read the union exactly as the projector does. A third variant would land in the
- * `else` — which in the projector *deletes the task's file* (D36). */
-export function applyTasksEvent(tasks: Map<string, Task>, event: TasksEvent): Map<string, Task> {
-  const next = new Map(tasks)
-  if (event.type === 'upserted') next.set(event.task.id, event.task)
-  else next.delete(event.taskId)
-  return next
-}
-
-/** One live entry per user per task — a fresh heartbeat replaces the last, it does not
- * stack. Without this a user typing for a minute would grow six entries. */
-export function applyPresence(
-  presence: Map<string, PresenceEvent[]>,
-  event: PresenceEvent,
-): Map<string, PresenceEvent[]> {
-  const next = new Map(presence)
-  const others = (next.get(event.taskId) ?? []).filter((e) => e.userId !== event.userId)
-  next.set(event.taskId, [...others, event])
-  return next
-}
-
-/** Drop what has expired. **A heartbeat that stops arriving IS the release** — this is
- * the whole reason tasks need no locks: no acquire, no release, no stale holder from a
- * crashed client, no steal path. Do not add a "stopped editing" event. */
-export function pruneExpired(
-  presence: Map<string, PresenceEvent[]>,
-  nowIso: string,
-): Map<string, PresenceEvent[]> {
-  const next = new Map<string, PresenceEvent[]>()
-  for (const [taskId, entries] of presence) {
-    const live = entries.filter((e) => e.expiresAt > nowIso)
-    if (live.length > 0) next.set(taskId, live)
-  }
-  return next
-}
-
-/** The lane a task belongs to: its area's folder path, or "(no area)".
+/** The vault-root lane first, then alphabetical by path (prd/tasks.md §Board UX).
  *
- * A folder the renderer does not know yet (it appeared since we fetched, which happens
- * — folders are created as a side effect of note paths and have no channel of their
- * own) falls into "(no area)" rather than making the card vanish. A task the user
- * cannot see is worse than a task in the wrong lane. */
-export function laneFor(task: Task, folders: Map<string, string>): string {
-  if (task.area === undefined) return NO_AREA
-  return folders.get(task.area) ?? NO_AREA
-}
-
-/** "(no area)" first, then alphabetical by path (prd/tasks.md §Board UX). */
+ * The root lane is always present, even with nothing filed there: quick-add
+ * needs a cell to land in, and a vault whose every task lives in a folder would
+ * otherwise offer nowhere to add a root-level one. */
 export function laneOrder(lanes: Iterable<string>): string[] {
-  const rest = [...new Set(lanes)].filter((l) => l !== NO_AREA).sort((a, b) => a.localeCompare(b))
-  return [NO_AREA, ...rest]
+  const rest = [...new Set(lanes)].filter((l) => l !== ROOT_LANE).sort((a, b) => a.localeCompare(b))
+  return [ROOT_LANE, ...rest]
 }
 
-/** A `related[]` entry with something a human can read attached to it. */
-export interface ResolvedRef {
-  kind: RelatedRefKind
-  id: string
-  label: string
-  /** The target is gone. D27's tombstone — see resolveRelated. */
-  missing: boolean
-}
-
-/**
- * Name each relation. The record stores **stable ids** and never a path (D27), so this
- * join is the only place a relation becomes readable — and until now nothing did it, so
- * `related[]` was writable (via `@`-mention, and via the task file) and visible nowhere.
- *
- * **The tombstone lives here.** Deleting a note does not cascade (D27), so a ref to it
- * survives on purpose — `refToFile` even round-trips the raw docId rather than dropping
- * it, because dropping it would silently delete the link on the next inbound file write.
- * That means a dangling ref is a *designed* state, and the only honest rendering of it is
- * to say so. This is FR-12's second half, deferred by D55 for exactly as long as there
- * was no relations row to render it into.
- *
- * `email`/`event` are representable but have no source to resolve against (Gmail and
- * Calendar are phase 2). They are **not** marked missing: we cannot look, so claiming
- * they are deleted would be a lie. They show the id they carry.
- */
-export function resolveRelated(
-  refs: RelatedRef[],
-  docs: DocMeta[],
-  tasks: Map<string, Task>,
-): ResolvedRef[] {
-  const pathById = new Map(docs.map((d) => [d.id, d.path]))
-  return refs.map((ref) => {
-    if (ref.kind === 'note') {
-      const path = pathById.get(ref.id)
-      return { ...ref, label: path ?? '[deleted note]', missing: path === undefined }
-    }
-    if (ref.kind === 'task') {
-      const title = tasks.get(ref.id)?.title
-      return { ...ref, label: title ?? '[deleted task]', missing: title === undefined }
-    }
-    return { ...ref, label: ref.id, missing: false }
-  })
+/** A lane's heading. Only the root needs naming — its path is the empty string,
+ * which would render as a blank row. */
+export function laneLabel(lane: string): string {
+  return lane === ROOT_LANE ? '(vault root)' : lane
 }
 
 // ------------------------------------------------------------------- filter
 
 export type Filter = {
   search: string
-  /** Matched against virtual labels AND real tags alike — one vocabulary (D41). */
+  /** Matched against virtual labels AND real tags alike — one vocabulary. */
   tags: string[]
   hideDone: boolean
 }
@@ -157,7 +77,7 @@ export const filterAtom = atom<Filter>(EMPTY_FILTER)
  * the bar is a search-and-narrow aid, not a second configuration surface.
  *
  * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing
- * the labels (D41) is what makes "show me the overdue p1s" a tag query rather than two
+ * the labels is what makes "show me the overdue p1s" a tag query rather than two
  * bespoke controls. Selected tags are ANDed, as an issue tracker does.
  */
 export function matchesFilter(task: Task, filter: Filter, today: string): boolean {
@@ -165,7 +85,7 @@ export function matchesFilter(task: Task, filter: Filter, today: string): boolea
 
   const needle = filter.search.trim().toLowerCase()
   if (needle) {
-    const hay = `${task.title}\n${task.description ?? ''}`.toLowerCase()
+    const hay = `${task.title}\n${task.description}`.toLowerCase()
     if (!hay.includes(needle)) return false
   }
 
@@ -184,116 +104,67 @@ export function availableLabels(tasks: Iterable<Task>, today: string): string[] 
   return [...all].sort((a, b) => a.localeCompare(b))
 }
 
+/** The lane a task sits in. A one-liner over `taskArea`, kept so the board reads
+ * in lane vocabulary rather than reaching for a domain helper mid-render. */
+export function laneOf(task: Task): string {
+  return taskArea(task)
+}
+
 // ------------------------------------------------------------------- writes
-// Optimistic: patch the atom, roll back on failure. The server push stays the ONE
-// authoritative update — we do not treat a mutation's return value as truth by
-// another name, we let the push land.
-
-export const loadTasksAtom = atom(null, async (get, set) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  const tasks = await trpc.tasks.list.query({ vaultId })
-  set(tasksAtom, new Map(tasks.map((t) => [t.id, t])))
-})
-
-/** One drop is ONE patch (D42). A board cell is `(column, lane)`, so a diagonal drag
- * moves both axes — as two mutations that would be two pushes, two file rewrites and
- * (mirrored) two commits, and a half-failed pair leaves the card somewhere nobody
- * dropped it. */
-export const moveTaskAtom = atom(
-  null,
-  async (get, set, taskId: string, to: { status: Task['status']; area: string | null }) => {
-    const vaultId = get(activeVaultIdAtom)
-    const before = get(tasksAtom).get(taskId)
-    if (!vaultId || !before) return
-
-    set(tasksAtom, applyTasksEvent(get(tasksAtom), {
-      type: 'upserted',
-      task: { ...before, status: to.status, area: to.area ?? undefined },
-    }))
-    try {
-      await trpc.tasks.update.mutate({
-        vaultId,
-        taskId,
-        patch: { status: to.status, area: to.area },
-      })
-    } catch {
-      set(tasksAtom, applyTasksEvent(get(tasksAtom), { type: 'upserted', task: before }))
-    }
-  },
-)
-
-/** The card's ONE affordance. It goes through `tasks.complete`, never a `status:'done'`
- * patch: complete is the single roll-forward path, so a recurring task rolls to its next
- * occurrence instead of persisting `done`. A patch would silently skip the roll. */
-export const completeTaskAtom = atom(null, async (get, set, taskId: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  const before = get(tasksAtom).get(taskId)
-  if (!vaultId || !before) return
-  // No optimistic status flip: for a recurring task the answer is not `done` but a NEW
-  // due date, and only the server knows it. Guessing would show the wrong thing and then
-  // correct itself a beat later.
-  try {
-    await trpc.tasks.complete.mutate({ vaultId, taskId })
-  } catch {
-    /* the push will not come; the board simply does not move */
-  }
-})
+//
+// Every write re-reads the vault. There is no optimistic patching and no
+// mutation-result-as-truth: the file on disk is the only truth there is, and a
+// second representation of a task is exactly what D60 deleted.
 
 export const createTaskAtom = atom(
   null,
-  async (get, set, input: { title: string; status: Task['status']; area: string | null }) => {
-    const vaultId = get(activeVaultIdAtom)
-    if (!vaultId) return
-    await trpc.tasks.create.mutate({ vaultId, ...input })
-    // no optimistic insert: the record's id is the server's to mint, and the push is
-    // moments away
+  async (get, set, input: { title: string; status: TaskStatus; folder: string }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    await trpc.tasks.create.mutate({ remote, ...input })
+    await set(loadSnapshotAtom)
   },
 )
-
-/** The task open in the detail view. */
-export const selectedTaskIdAtom = atom<string | null>(null)
 
 /** A field edit from the detail view.
  *
- * **No `version`.** The board is plain last-writer-wins per field, exactly as the PRD
- * specifies — the concurrency token belongs to the *file* path, where the writer edited
- * a snapshot of a record that may have moved under them. Here the user is looking at
- * the live record.
- */
+ * **No `version`.** There is nothing to race with on this machine — the file is
+ * the single writer target — and between machines git arbitrates, not a token. */
 export const patchTaskAtom = atom(
   null,
-  async (get, set, taskId: string, patch: Record<string, unknown>) => {
-    const vaultId = get(activeVaultIdAtom)
-    const before = get(tasksAtom).get(taskId)
-    if (!vaultId || !before) return
-
-    set(tasksAtom, applyTasksEvent(get(tasksAtom), {
-      type: 'upserted',
-      task: { ...before, ...(patch as Partial<Task>) },
-    }))
-    try {
-      await trpc.tasks.update.mutate({ vaultId, taskId, patch })
-    } catch {
-      set(tasksAtom, applyTasksEvent(get(tasksAtom), { type: 'upserted', task: before }))
-    }
+  async (get, set, path: string, patch: Record<string, unknown>) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    await trpc.tasks.update.mutate({ remote, path, patch })
+    await set(loadSnapshotAtom)
   },
 )
 
-export const deleteTaskAtom = atom(null, async (get, set, taskId: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  set(selectedTaskIdAtom, null)
-  await trpc.tasks.delete.mutate({ vaultId, taskId })
+/** The card's ONE affordance, and the status select's `done` branch.
+ *
+ * Goes through `tasks.complete`, never a `status: 'done'` patch: complete is the
+ * single roll-forward path, so a recurring task rolls to its next occurrence
+ * instead of persisting `done`. A patch would silently end the series. */
+export const completeTaskAtom = atom(null, async (get, set, path: string) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  await trpc.tasks.complete.mutate({ remote, path })
+  await set(loadSnapshotAtom)
 })
 
-/** "Nicolai is editing this task" — the renderer half of presence.
- *
- * Fire-and-forget, and never awaited into a write path: presence failing must not cost
- * the user an edit. It touches no row and must never bump `version` — one that did
- * would rewrite every task file and, with the mirror on, commit it. */
-export const heartbeatAtom = atom(null, (get, _set, taskId: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  void trpc.tasks.heartbeat.mutate({ vaultId, taskId }).catch(() => {})
+/** Moves a card between columns. The horizontal axis — moving a card to another
+ * lane — is deliberately NOT here: it moves the file, which must rewrite inbound
+ * wiki-links in the same pass, and shipping the move half alone would silently
+ * break every link that pointed at the task. */
+export const setTaskStatusAtom = atom(null, async (get, set, path: string, status: TaskStatus) => {
+  if (status === 'done') return set(completeTaskAtom, path)
+  return set(patchTaskAtom, path, { status })
+})
+
+export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  set(selectedTaskPathAtom, null)
+  await trpc.tasks.delete.mutate({ remote, path })
+  await set(loadSnapshotAtom)
 })

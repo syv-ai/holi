@@ -17,20 +17,13 @@
  *     model will occasionally write bad frontmatter.
  */
 import { readFile, stat } from 'node:fs/promises'
-import { isTaskFilePath, parseTaskFile, TaskFileError, type DocMeta, type Task } from '@holi/shared'
+import { isTaskFilePath, parseTaskFile, TaskFileError, type VaultSnapshot } from '@holi/shared'
 import { isIgnoredPath, listFiles } from './vault-files'
 
-export interface BrokenTask {
-  path: string
-  error: string
-}
-
-export interface VaultSnapshot {
-  docs: DocMeta[]
-  tasks: Task[]
-  /** Task files that failed to parse. Rendered as error cards — never hidden. */
-  broken: BrokenTask[]
-}
+// The shape is `@holi/shared`'s: the renderer reads it too, and a type that
+// crossed the IPC seam by being imported out of `main/` would make the seam a
+// lie. Re-exported so the scan and its result still read as one module.
+export type { BrokenTask, VaultSnapshot } from '@holi/shared'
 
 /**
  * `type: daily-note` in the file's **leading** frontmatter block, and nowhere

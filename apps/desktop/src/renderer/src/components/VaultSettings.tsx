@@ -1,6 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { MembersSection } from './MembersSection'
 import {
   connectGithubAtom,
   connectRepoAtom,
@@ -55,7 +54,10 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
-      <MembersSection guard={guard} busy={busy} />
+      {/* The members section is gone with the membership system it drove — invites,
+          roles and transfer-ownership were server rules, and GitHub owns access now
+          (D60 §9). Its replacement is a READ-ONLY collaborators panel over the repo's
+          collaborator list, built with the device-flow auth it depends on. */}
 
       <section className="space-y-1">
         <h3 className="font-medium">GitHub account</h3>

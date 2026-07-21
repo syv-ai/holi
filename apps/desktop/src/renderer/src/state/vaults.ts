@@ -1,5 +1,5 @@
 import { atom } from 'jotai'
-import type { DocMeta, Folder, Vault } from '@holi/shared'
+import type { DocMeta, Folder, VaultEntry, VaultSnapshot } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 
 /** Mirrors the server bus's DocsEvent shape (apps/server/src/bus.ts), the same way
@@ -10,87 +10,70 @@ export type DocsEvent = { type: 'created' | 'renamed' | 'deleted'; doc: DocMeta 
 
 type DocsState = { docs: DocMeta[]; folders: Folder[] }
 
-export const vaultsAtom = atom<Vault[]>([])
-export const activeVaultIdAtom = atom<string | null>(null)
-export const docsAtom = atom<{ docs: DocMeta[]; folders: Folder[] }>({ docs: [], folders: [] })
+export const vaultsAtom = atom<VaultEntry[]>([])
+
+/** The open vault, as `owner/repo`. A vault has no id — the remote IS the
+ * identity, and the clone's path is machine-local (types.ts §VaultEntry). */
+export const activeRemoteAtom = atom<string | null>(null)
+
+const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [] }
+
+/**
+ * The whole vault, as last read off disk.
+ *
+ * **One source.** The board, the tree and the editor all derive from this rather
+ * than each holding a query of their own — under D60 there is no server pushing
+ * per-entity events to keep several caches honest, so a second source would only
+ * ever be a second chance to disagree.
+ *
+ * Refreshed by re-scanning after a write. That is a full walk-and-parse of the
+ * vault, and deliberately so: a task set this size is imperceptible to re-read,
+ * and the alternative is an index with an invalidation story bought before any
+ * measurement asked for one (prd/tasks.md §Summary). The filesystem watcher will
+ * replace the explicit refetch, not the shape.
+ */
+export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
+
 /** The doc open in the editor. */
 export const activeDocAtom = atom<DocMeta | null>(null)
 
 export const loadVaultsAtom = atom(null, async (get, set) => {
   const vaults = await trpc.vaults.list.query()
   set(vaultsAtom, vaults)
-  const active = get(activeVaultIdAtom)
-  if (!active && vaults[0]) set(activeVaultIdAtom, vaults[0].id)
+  const active = get(activeRemoteAtom)
+  if (!active && vaults[0]) set(activeRemoteAtom, vaults[0].remote)
 })
 
-export const loadDocsAtom = atom(null, async (get, set) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  set(docsAtom, await trpc.vaults.listDocs.query({ vaultId }))
+export const loadSnapshotAtom = atom(null, async (get, set) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return set(snapshotAtom, EMPTY_SNAPSHOT)
+  set(snapshotAtom, await trpc.vaults.snapshot.query({ remote }))
 })
 
 export const createNoteAtom = atom(null, async (get, set, path: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  const doc = await trpc.notes.create.mutate({ vaultId, path, kind: 'note' })
-  // Applied straight away rather than refetched — the `docs:event` echo of this same
-  // create upserts by id, so the two agree instead of racing. (This used to refetch,
-  // with a comment saying there were no subscriptions in this phase. There are now.)
-  set(applyDocsEventAtom, { type: 'created', doc })
-  set(activeDocAtom, doc)
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  await trpc.notes.create.mutate({ remote, path })
+  await set(loadSnapshotAtom)
+  set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
 
-/**
- * Rename is also **move**: a new path with a different folder prefix relocates the note,
- * and the server's `ensureAncestorFolders` makes the destination folders exist. The
- * server rewrites every `[[link]]` that pointed at the old path, atomically — the same
- * guarantee the agent has had via MCP since the drawer shipped, and the reason this must
- * never be done by hand as a delete-and-recreate.
- *
- * None of these refetch: `docs:event` carries `renamed`/`deleted` back live, and two
- * mechanisms updating the tree is worse than either.
- */
-export const renameNoteAtom = atom(null, async (get, _set, docId: string, newPath: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  await trpc.notes.rename.mutate({ vaultId, docId, newPath })
+/** Clears the editor when it is the open note being deleted — otherwise the pane
+ * holds a doc that no longer exists. */
+export const deleteNoteAtom = atom(null, async (get, set, path: string) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  await trpc.notes.delete.mutate({ remote, path })
+  if (get(activeDocAtom)?.path === path) set(activeDocAtom, null)
+  await set(loadSnapshotAtom)
 })
 
-export const renameFolderAtom = atom(null, async (get, _set, folderId: string, newPath: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  await trpc.notes.renameFolder.mutate({ vaultId, folderId, newPath })
-})
-
-/** Clears the editor when it is the open note being deleted — otherwise the pane holds a
- * doc that no longer exists, on a relay room for a doc that is gone. */
-export const deleteNoteAtom = atom(null, async (get, set, docId: string) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  await trpc.notes.delete.mutate({ vaultId, docId })
-  if (get(activeDocAtom)?.id === docId) set(activeDocAtom, null)
-})
-
-/** What links here — surfaced BEFORE a delete (FR-12). Built and uncalled until now. */
-export const loadBackrefsAtom = atom(null, async (get, _set, path: string): Promise<NamedBackref[]> => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return []
-  const refs = (await trpc.notes.backrefs.query({ vaultId, path })) as Backref[]
-  return namedBackrefs(refs, get(docsAtom).docs)
-})
-
-/** The one place a `docs:event` lands, live or echoed from our own mutation. */
-export const applyDocsEventAtom = atom(null, (get, set, event: DocsEvent) => {
-  const before = get(docsAtom)
-  set(docsAtom, applyDocsEvent(before, event))
-  if (event.type !== 'deleted' && needsFolderRefetch(before, event.doc)) void set(loadDocsAtom)
-})
-
-export const createVaultAtom = atom(null, async (_get, set, name: string) => {
-  const vault = await trpc.vaults.create.mutate({ name, kind: 'shared' })
-  await set(loadVaultsAtom)
-  set(activeVaultIdAtom, vault.id)
-})
+// `renameNoteAtom` / `renameFolderAtom` are deliberately absent, exactly as
+// `notes.rename` is absent from the router: a rename must move the file AND
+// rewrite every inbound `[[wiki-link]]` in one pass, and shipping the move half
+// alone would silently break every link. `loadBackrefsAtom` and `createVaultAtom`
+// went with the procedures they called — backrefs is a grep now, and creating a
+// vault means cloning a GitHub repo (prd/auth-identity.md), not a server insert.
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.

@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parseTaskFile } from '@holi/shared'
 import { afterAll, describe, expect, it } from 'vitest'
 import { createRouter } from '../src/main/router'
 import { VaultRegistry } from '../src/main/vault/registry'
 
 const REMOTE = 'syv-ai/1brain'
+const TODAY = '2026-07-21'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -30,7 +32,11 @@ async function rig(files: Record<string, string> = {}) {
     name: '1brain',
     lastOpenedAt: '2026-07-01T00:00:00Z',
   })
-  const caller = createRouter({ registry, now: () => '2026-07-21T12:00:00Z' }).createCaller({})
+  const caller = createRouter({
+    registry,
+    now: () => '2026-07-21T12:00:00Z',
+    today: () => TODAY,
+  }).createCaller({})
   return { caller, root, registry }
 }
 
@@ -105,6 +111,219 @@ describe('notes', () => {
   })
 })
 
+describe('tasks', () => {
+  it('creates `task.<slug>.md` in the lane it was added to, with that column’s status', async () => {
+    const { caller, root } = await rig()
+    const { path } = await caller.tasks.create({
+      remote: REMOTE,
+      folder: 'projects/q2',
+      title: 'Review the Q2 doc',
+      status: 'doing',
+    })
+    expect(path).toBe('projects/q2/task.review-the-q2-doc.md')
+
+    const task = parseTaskFile(await readFile(join(root, path), 'utf8'), path)
+    expect(task.title).toBe('Review the Q2 doc')
+    expect(task.status).toBe('doing')
+  })
+
+  it('defaults to todo at the vault root', async () => {
+    const { caller } = await rig()
+    const { path } = await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })
+    expect(path).toBe('task.call-the-vendor.md')
+  })
+
+  it('suffixes a colliding slug rather than refusing or clobbering', async () => {
+    // Two tasks can honestly share a title, and a board quick-add that errors on
+    // a repeated title reads as a bug.
+    const { caller } = await rig({ 'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n' })
+    expect((await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })).path).toBe(
+      'task.call-the-vendor-2.md',
+    )
+    expect((await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })).path).toBe(
+      'task.call-the-vendor-3.md',
+    )
+  })
+})
+
+describe('tasks.update', () => {
+  const FILE = [
+    '---',
+    'title: Review',
+    'status: todo',
+    'due: 2026-07-20',
+    'priority: high',
+    '---',
+    '',
+    'The body.',
+    '',
+  ].join('\n')
+
+  it('rewrites the fields it names and leaves the rest alone', async () => {
+    const { caller } = await rig({ 'task.review.md': FILE })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.review.md',
+      patch: { status: 'doing' },
+    })
+    expect(task.status).toBe('doing')
+    expect(task.due).toBe('2026-07-20')
+    expect(task.priority).toBe('high')
+    expect(task.description).toBe('The body.')
+  })
+
+  it('clears a field with null', async () => {
+    const { caller } = await rig({ 'task.review.md': FILE })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.review.md',
+      patch: { due: null },
+    })
+    expect(task.due).toBeUndefined()
+  })
+
+  it('carries unknown frontmatter keys through the rewrite', async () => {
+    // A whole-file rewrite is what an edit IS, so anything the parser did not
+    // understand — a pre-D60 `id`, a key another tool owns — must survive it.
+    const { caller, root } = await rig({
+      'task.legacy.md': '---\ntitle: Legacy\nstatus: todo\nid: abc\n---\n',
+    })
+    await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.legacy.md',
+      patch: { status: 'done' },
+    })
+    expect(await readFile(join(root, 'task.legacy.md'), 'utf8')).toContain('id: abc')
+  })
+
+  it('refuses a value outside the vocabulary', async () => {
+    const { caller } = await rig({ 'task.review.md': FILE })
+    await expect(
+      caller.tasks.update({ remote: REMOTE, path: 'task.review.md', patch: { status: 'blocked' } }),
+    ).rejects.toThrow(/status must be one of/)
+  })
+
+  it('reports a missing task rather than creating one', async () => {
+    const { caller } = await rig()
+    await expect(
+      caller.tasks.update({ remote: REMOTE, path: 'task.ghost.md', patch: { status: 'done' } }),
+    ).rejects.toThrow(/task.ghost.md/)
+  })
+})
+
+describe('tasks.complete', () => {
+  it('marks a plain task done', async () => {
+    const { caller } = await rig({ 'task.review.md': '---\ntitle: Review\nstatus: doing\n---\n' })
+    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.review.md' })
+    expect(task.status).toBe('done')
+  })
+
+  it('rolls a recurring task forward instead of persisting done', async () => {
+    // The card's checkbox goes through here, never a bare `status: done` write —
+    // this is the single roll-forward path (prd/tasks.md §Board UX).
+    const { caller } = await rig({
+      'task.standup.md': [
+        '---',
+        'title: Standup',
+        'status: todo',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })
+    expect(task.status).toBe('todo')
+    expect(task.due).toBe('2026-07-27')
+  })
+
+  it('catches a stale recurring task up to on-or-after today', async () => {
+    // A decade-stale daily task must not roll to a date still in the past.
+    const { caller } = await rig({
+      'task.water.md': [
+        '---',
+        'title: Water the plants',
+        'status: todo',
+        'due: 2020-01-01',
+        'recurrence: { frequency: daily, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.water.md' })
+    expect(task.due! >= TODAY).toBe(true)
+  })
+
+  it('shifts an absolute reminder by the same day-delta the due date moved', async () => {
+    const { caller } = await rig({
+      'task.standup.md': [
+        '---',
+        'title: Standup',
+        'status: todo',
+        'due: 2026-07-20',
+        'reminder: 2026-07-19T08:30',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })
+    expect(task.reminder).toBe('2026-07-26T08:30')
+  })
+
+  it('leaves a relative reminder alone — it re-resolves against the new due on its own', async () => {
+    const { caller } = await rig({
+      'task.standup.md': [
+        '---',
+        'title: Standup',
+        'status: todo',
+        'due: 2026-07-20',
+        'reminder: 1d',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    expect((await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })).reminder).toBe(
+      '1d',
+    )
+  })
+
+  it('ends the series when the recurrence has run past its endDate', async () => {
+    const { caller } = await rig({
+      'task.sprint.md': [
+        '---',
+        'title: Sprint review',
+        'status: todo',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1, endDate: 2026-07-22 }',
+        '---',
+      ].join('\n'),
+    })
+    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.sprint.md' })
+    expect(task.status).toBe('done')
+  })
+
+  it('completes a recurring task that has no due date — there is nothing to advance from', async () => {
+    const { caller } = await rig({
+      'task.someday.md': [
+        '---',
+        'title: Someday',
+        'status: todo',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    expect((await caller.tasks.complete({ remote: REMOTE, path: 'task.someday.md' })).status).toBe(
+      'done',
+    )
+  })
+})
+
+describe('tasks.delete', () => {
+  it('removes the file', async () => {
+    const { caller, root } = await rig({ 'task.review.md': '---\ntitle: Review\n---\n' })
+    await caller.tasks.delete({ remote: REMOTE, path: 'task.review.md' })
+    await expect(readFile(join(root, 'task.review.md'), 'utf8')).rejects.toThrow()
+  })
+})
+
 describe('path safety', () => {
   // The only thing between an input and the user's filesystem, now that
   // server-side authorization is gone.
@@ -129,6 +348,24 @@ describe('path safety', () => {
     for (const path of escapes) {
       await expect(caller.notes.delete({ remote: REMOTE, path })).rejects.toThrow()
     }
+  })
+
+  it('guards the task procedures too — every path-taking entry point, not just notes', async () => {
+    const { caller } = await rig()
+    for (const path of escapes) {
+      await expect(
+        caller.tasks.update({ remote: REMOTE, path, patch: { status: 'done' } }),
+      ).rejects.toThrow()
+      await expect(caller.tasks.complete({ remote: REMOTE, path })).rejects.toThrow()
+      await expect(caller.tasks.delete({ remote: REMOTE, path })).rejects.toThrow()
+    }
+  })
+
+  it('a folder cannot carry a task out of the vault either', async () => {
+    const { caller } = await rig()
+    await expect(
+      caller.tasks.create({ remote: REMOTE, folder: '../outside', title: 'Sneaky' }),
+    ).rejects.toThrow()
   })
 })
 
