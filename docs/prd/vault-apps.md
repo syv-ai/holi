@@ -1,6 +1,10 @@
 # PRD — Vault Apps *(post-v1, designed)*
 
-Just-in-time interactive apps the vault assistant creates on demand: small, reusable tools that live **in the vault**, sync to every member, and open **inside Holi** as first-class tabs. Design locked; ships **post-v1** (depends on the relay, the pane system, and the bridge existing) — designed now so v1 forecloses nothing.
+Just-in-time interactive apps the vault assistant creates on demand: small, reusable tools that live **in the vault**, sync to every member, and open **inside Holi** as first-class tabs. Ships **post-v1** — designed now so v1 forecloses nothing.
+
+> **Status: the state model needs redesign.** This PRD's differentiator was a per-app **shared Yjs doc on the relay**, giving every app live multiplayer for free. There is no relay ([`../vision.md`](../vision.md)), so that mechanism is gone and its replacement is undecided. The *rest* of the design — the on-disk anatomy, the sandboxed webview, the `holi.*` bridge shape, the `utilityProcess` backend, reuse-by-copy — is unaffected, because those never depended on the sync engine. **The likely replacement:** app state is a **file in the app directory** (`data.json`), synced like any vault content, with git as the merge mechanism — which makes an app's state as inspectable and as agent-readable as everything else in the vault, and drops "live multiplayer by default" to "eventually consistent, like the rest of the vault". Sections below that assume the relay are marked.
+>
+> **The one v1 accommodation this PRD still asks for is unchanged and still load-bearing:** the pane/tab system must not assume tabs are notes.
 
 ---
 
@@ -13,8 +17,8 @@ A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown 
 **Goals**
 - The agent can create, edit, and open an app **within one conversation** — no toolchain, no build step required for the common case.
 - Apps are **vault content**: synced to all members, visible in a dedicated Apps surface, reusable by copying the directory.
-- **Live multiplayer app state** via a per-app shared Yjs doc on the existing relay (snapshots included).
-- Apps can read/write **vault tasks and docs** (membership-gated server-side) and look **native** (theme tokens injected).
+- ~~**Live multiplayer app state** via a per-app shared Yjs doc on the existing relay~~ — **superseded**; see the status note. Replacement: app state as a synced file.
+- Apps can read/write **vault tasks and docs** and look **native** (theme tokens injected).
 - Optional **backend** per app via `utilityProcess` — no separate runtime shipped.
 
 **Non-goals**
@@ -58,15 +62,15 @@ postMessage RPC between the webview and Electron main (a preload-style shim insi
 
 | API | What it does |
 |---|---|
-| `holi.data` | The app's **shared Yjs doc** (Y.Map/Y.Array via a provider proxied over the bridge to the relay). Live-multiplayer state, offline queue, snapshot coverage. Doc identity: `(vaultId, app:<name>)`. |
-| `holi.tasks` | list / create / update / subscribe — proxied to the Syv tRPC API, gated by the **user's** membership. |
-| `holi.docs` | read / write / list vault docs — same gating; writes flow through the same server authority as everything else. |
-| `holi.awareness` | presence in the app (who has it open, ephemeral cursors/selections) — the relay's awareness channel scoped to the app doc. |
+| `holi.data` | The app's state store. **Mechanism undecided** (see the status note) — likely a synced `data.json` in the app directory, merged by git like any vault content. |
+| `holi.tasks` | list / create / update / subscribe — task files in the vault. |
+| `holi.docs` | read / write / list vault docs — files in the vault, path-safety enforced. |
+| ~~`holi.awareness`~~ | **Deleted** — presence rode the relay's awareness channel, which does not exist. |
 | `holi.open` | navigate Holi: open a note, task, or another app. |
 | `holi.theme` | current resolved theme tokens + change events (also auto-injected as CSS vars). |
 
-- **Why a shared Yjs doc for app state** (rejected: server-side KV, state in a vault text file): the relay already provides live sync, offline queueing, and snapshot history — a bespoke state store would be strictly worse than the machinery notes already ride.
-- **Agent inspection:** `holi.data` optionally materializes as a read-only `data.json` in the app dir (debounced), so the assistant can `Read` app state with native tools — apps and agent compose.
+- **Why a file for app state** (the replacement for the Yjs doc): it is the same argument the rest of the pivot runs on — the vault already syncs files, so an app that stores its state as a file inherits sync, history, and portability with no new machinery. It loses live multiplayer, which is the deferred property everywhere else too.
+- **Agent inspection comes free** rather than being bolted on: state *is* `data.json`, so the assistant reads it with native tools. The old design had to materialize a read-only copy to achieve this.
 - Backend processes get the same bridge over IPC.
 
 ## Reuse
@@ -78,26 +82,26 @@ An app is a directory: **reuse = copy it** (the agent can, across vaults the use
 - **Create:** user asks → agent `Write`s the dir (scaffold from the skill) → agent calls open-app → tab appears; other members see the app in their Apps section on sync.
 - **Iterate:** agent (or user) edits files → Holi hot-reloads the open webview on file change (working-copy watcher already exists for the bridge).
 - **Open:** palette / sidebar / agent → new tab; backend spawns if declared.
-- **Delete:** remove the directory (file-tree or agent); open tabs close with a tombstone message; the app's Yjs data doc is archived with the vault's snapshot retention, not silently destroyed.
+- **Delete:** remove the directory (file-tree or agent); open tabs close with a tombstone message. The app's state is not "archived" by any special mechanism — it is in git history, like everything else that was ever committed.
 
 ## Edge cases & risks
 
 - **Concurrent app-code edits while open:** the app's *files* are synced content — a teammate's edit hot-reloads your open tab. Acceptable (same trust as the code itself); debounce reloads.
 - **Backend runaway:** a `utilityProcess` that spins — cap lifetime to tab-open, surface CPU in the Apps section, kill on close. No orphaned processes.
-- **App data growth:** app Yjs docs are unbounded by design (like notes); snapshot retention (server-data) applies. Flag per-app doc size in the Apps section if it becomes real.
-- **Schema drift:** app code evolves but old `holi.data` state persists — apps own their migrations (document the pattern in the skill); Holi guarantees only the doc, not its shape.
-- **v1 accommodation (the only one):** the pane/tab system must not assume tabs are notes; the bridge API design should keep app-scoped docs addressable (`app:<name>` doc ids in the docs table or a sibling kind).
+- **App data growth:** app state is committed vault content, so an app that writes constantly writes commits. This is a **new** risk the relay-backed design did not have, and it is the main thing the replacement state model must answer: a debounce, or state deliberately excluded from git.
+- **Schema drift:** app code evolves but old state persists — apps own their migrations (document the pattern in the skill); Holi guarantees only the store, not its shape.
+- **v1 accommodation (the only one):** the pane/tab system must not assume tabs are notes.
 
 ## Dependencies
 
-- **vaults-collaboration** — the relay, app-scoped Yjs docs, offline cache, snapshots.
-- **server-data** — doc kinds (`app-data`), membership gating on bridge-proxied tRPC calls, snapshot retention.
-- **agent** — authoring skill in `.claude/`, the open-app action, `data.json` inspection.
-- **notes-editor / app shell** — the pane system accepting app tabs; palette + sidebar launchers.
+- **[`vaults-sync.md`](vaults-sync.md)** — app directories are vault content and sync like anything else; the state-store decision lands against this engine.
+- **[`agent.md`](agent.md)** — authoring skill in `.claude/`, the open-app action, state inspection.
+- **[`notes-editor.md`](notes-editor.md)** — the pane system accepting app tabs; palette + sidebar launchers.
 
 ## Open questions
 
-1. **App-data doc granularity:** one Yjs doc per app, or per app *instance* (e.g. one retro board app, many retro sessions)? Leaning: the app decides — `holi.data.open(key)` with a default key, so both work.
+0. **The state model itself** (see the status note) — a synced `data.json` is the leading candidate; decide before this PRD is picked up.
+1. **App-data granularity:** one store per app, or per app *instance* (e.g. one retro board app, many retro sessions)? Leaning: the app decides — `holi.data.open(key)` with a default key, so both work.
 2. **Hot-reload UX:** reload silently vs. a "app updated — reload?" toast when state could be lost mid-interaction.
 3. **Backend bridge surface:** does `server.mjs` get `holi.*` too, or only frontend + its own Node powers? Leaning: yes, same bridge over IPC.
 4. **Apps section placement:** sidebar section vs. palette-only for the first cut.

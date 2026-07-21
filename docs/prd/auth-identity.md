@@ -1,286 +1,201 @@
-# PRD — Auth, Identity & Access Control
+# PRD — Auth, Identity & Access
 
-The identity spine of the system. Everything else — per-user UI prefs, vault membership, role-gated agent ops, offline caching — hangs off a real, server-verified user identity.
+The identity spine of the system — which is now almost entirely **GitHub's**.
 
-Server-side schema is owned by [`server-data.md`](server-data.md); this PRD references those tables and defines behavior.
+Holi has no server, no user table, no session store, and no authorization layer of its own. Identity is a GitHub account; access to a vault is access to a repo; and the enforcement point is `git push`. This PRD specifies the one flow Holi owns (obtaining and holding a GitHub token) and, just as importantly, what it deliberately no longer does.
 
 ---
 
 ## Summary
 
-Employees sign in with their **Syv Google Workspace** account. Identity **is** the Google account — no Syv-native passwords. The desktop app runs a standard OAuth **Authorization Code + PKCE** flow in the **system browser** with a **loopback redirect**, exchanges the code for a Syv-issued **session token** (not the raw Google tokens), and stores it in the **OS keychain**. Every subsequent tRPC call and every Yjs WebSocket connection carries that token and is authorized server-side against **vault membership + role** — exactly two roles, **owner** and **member**; there is no viewer / read-only tier. The agent's MCP ops are gated by the **same** role at the same boundary, so the client can never self-escalate. First sign-in provisions the user's personal vault. A cached session permits **offline** work for **~30 days since last successful server contact**, then re-auth is required; sign-in is required at least once to use Holi.
+A user signs in with **GitHub**, via the **OAuth device flow** — the browser-based grant designed for clients that cannot hold a client secret, which a desktop app cannot. Holi stores the resulting token in the **OS keychain** (Electron `safeStorage`) and uses it for exactly four things: identifying the user, listing their repos (the vault switcher), listing a repo's collaborators (the members panel), and authenticating `git` over HTTPS.
 
-**Why Google Workspace SSO:** Syv is a Google shop (already on Google Drive) — low-friction, standard company SSO — and per-user server state needs a real identity to scope to. **Rejected:** Syv-native accounts (build and maintain auth; another login) and deferring auth entirely (undercuts per-user scoping). **Why no viewer role:** the agent's native file writes can't be role-blocked cleanly, so a read-only role was an awkward fit — and it wasn't wanted; everyone with access can edit.
+There is **no Holi session**, because there is no Holi server to hold one. There is **no membership model**, because a repo has collaborators. There is **no role model**, because GitHub's push permission is the only distinction that changes what you can do. And there is **no authorization boundary in the app**, because an authorization check that runs on the client protects nothing.
 
-Sign-in is **Google-only**, but a user may additionally **link a GitHub account** — needed only by vault owners enabling the vault git mirror (see [Linked accounts](#linked-accounts-github)).
+**Why GitHub and not Google Workspace.** The previous design used Google SSO because identity had to key server-side records, and Syv is a Google shop. With the server gone, the only thing identity must unlock is *the repos the vault lives in* — and that is GitHub's account, not Google's. Using anything else would mean maintaining a mapping between the identity that signs in and the identity that can push.
 
-Holi's auth is **only** the Syv/Google session. Claude Code is assumed **already installed and authenticated** on every machine with the employee's own account — Holi does no Claude provisioning, metering, or credential management; the two auth surfaces never touch.
+**What this costs, plainly.** Workspace-managed offboarding is gone: disabling someone's Google account no longer cuts their Holi access. Revoking access means removing them from the GitHub repo or the org — which is a real, auditable action, but it is one an admin performs in GitHub rather than something Holi enforces. For a company where every employee is a developer with a GitHub account, this is the boundary that was already load-bearing.
+
+Holi's auth is **only** the GitHub token. Claude Code is assumed **already installed and authenticated** on every machine with the employee's own account — the two auth surfaces never touch.
 
 ---
 
 ## Goals / Non-goals
 
 ### Goals
-- One-tap company SSO via Google Workspace; no separate Holi credentials.
-- Secure desktop OAuth: system-browser flow, tokens never exposed to the renderer, secrets in the OS keychain.
-- A durable, server-owned **user record** keyed to Google identity; **first-login provisioning** of a personal vault.
-- **Membership + roles** on shared vaults — exactly two roles, **owner** and **member**, no viewer tier: invite by `@syv.ai` email, change role, remove, leave, transfer ownership; personal vault as the single-member degenerate case.
-- A **single authorization boundary** on the server that covers tRPC, Yjs connections, and agent MCP ops uniformly.
-- **Per-user scoping** (tier-2 server state = **UI prefs only**) keyed to the user identity and invisible to other members. Personal agent config (`~/.claude`, `CLAUDE.local.md`, USER.md) is machine-local and never touches the server.
-- **Offline** via cached session, valid **~30 days since last successful server contact** before re-auth.
+- One-tap **Sign in with GitHub** using the device flow; no client secret shipped, no Holi credentials.
+- Token in the **OS keychain**, held in Electron main, never handed to the renderer in plaintext.
+- The **repo list** as the vault picker, and repo **creation** for "New vault".
+- The **collaborator list** as a read-only members panel.
+- A credential `git` can push with.
+- **Honest access semantics**: Holi never claims to enforce something GitHub enforces.
 
 ### Non-goals
-- Non-Google identity providers, multi-tenant / multi-domain support, external (non-`@syv.ai`) guests. Google-Workspace-only for v1.
-- Syv-native accounts / password auth (explicitly rejected — see Summary).
-- Fine-grained per-document ACLs *within* a vault — the access unit is the **vault** (v1). Per-folder/per-doc permissions are out of scope.
-- SCIM / directory auto-provisioning, admin console, audit-log UI (post-v1).
-- MDM/device trust, hardware-key enforcement.
+- **A Holi user record, session, or membership table.** There is nowhere to put one.
+- **Roles.** GitHub's repo permissions are the model. Holi does not define `owner`/`member`.
+- **Authorization checks in the client.** They would be advisory at best and misleading at worst.
+- **Invite flows.** Adding a collaborator is a GitHub action; Holi deep-links to it.
+- **Per-document ACLs within a vault** — the access unit is the repo.
+- **Google Workspace SSO** — removed. Returns only if the phase-2 Gmail/Calendar work needs Google OAuth, and that grant is about *data access*, not sign-in.
+- **SCIM / directory provisioning, admin console, audit-log UI.**
 
 ---
 
 ## User stories
 
-- As a new employee, I open Holi, click **Sign in with Google**, approve in my browser, and land in my ready-to-use **personal vault** — no setup. (The agent drawer just works because Claude Code is already installed and signed in with my own account — Holi never asks me to authenticate Claude.)
-- As a vault **owner**, I invite a teammate by their `@syv.ai` email as a **member** (default) or **owner**, and they see the vault appear in their list with read-write access.
-- As an **owner**, I promote a member to owner, demote a co-owner to member, or remove someone; the change takes effect immediately on their live sessions.
-- As a **member**, I can read and edit every doc and the task board, watch presence, and run the assistant to read *and* write on my behalf.
-- As a **member**, I can leave a shared vault I no longer work in.
-- As an **owner** leaving the company's project, I **transfer ownership** to another member before leaving.
-- As an **owner** enabling the git mirror on a vault, I **link my GitHub account** once in app settings, then connect the repo from vault settings.
-- As any user, my **UI prefs** follow me across my devices and stay **invisible** to everyone else in a shared vault. My USER.md, personal skills, and chat history are **machine-local** — never on the server, so never visible to anyone.
-- As any user, I keep working on a **flight** (offline) against my cached session and synced edits replay when I reconnect.
-- As any user, I **sign out**; my session token and cached vault contents are purged from the machine.
+- As a new employee, I open Holi, click **Sign in with GitHub**, approve a short code in my browser, and land in a vault picker listing my repos.
+- As a user, I pick a repo and Holi clones it into its managed vault root; it opens as a vault.
+- As a user, I create a new vault; Holi creates a private repo and clones it.
+- As a user, I open the members panel and see who has access, straight from GitHub.
+- As a user, I want to add a teammate, so Holi opens the repo's GitHub collaborators page — it does not pretend to own that flow.
+- As a user, I publish and my push succeeds because GitHub says I may. If I've been removed, the push fails and Holi tells me clearly.
+- As a user, I sign out; the token leaves the keychain and Holi stops touching the remotes. My clones stay on disk unless I say otherwise.
 
 ---
 
 ## Functional requirements
 
 ### Sign-in
-1. **FR-1** Provide a single **Sign in with Google** action. No email/password form.
-2. **FR-2** Use OAuth 2.0 **Authorization Code + PKCE** in the **system browser** (not an embedded webview) with a **loopback** (`http://127.0.0.1:<ephemeral-port>`) redirect. (Rationale in [Security](#authorization-model).)
-3. **FR-3** Restrict the flow to the Syv Google Workspace by setting the OAuth `hd` (hosted-domain) parameter **and** re-verifying `hd == syv.ai` server-side on the ID token. Reject any account outside the domain with a clear "Holi is Syv-only" error.
-4. **FR-4** Request **minimal scopes** for v1 sign-in: `openid email profile`. Gmail/Calendar scopes (Phase 2) are requested **incrementally** only when those features are first used — not at sign-in.
-5. **FR-5** The desktop app exchanges the code and receives a **Syv session token** from the server; the raw Google refresh/access tokens **never** reach the desktop app (see Flows).
+1. **FR-1** Provide a single **Sign in with GitHub** action. No email/password form, no other provider.
+2. **FR-2** Use the **OAuth device flow**: request a device + user code, show the user code with a copy button, open `github.com/login/device` in the **system browser**, poll for the grant. **Why the device flow:** a public desktop client cannot keep a client secret, and the device flow is the grant designed for that case. It also avoids registering a custom URL scheme and running a loopback listener.
+3. **FR-3** Request the minimal scopes needed: **`repo`** (private repo read/write — the vault) and **`read:user`** (identity for the UI). `read:org` only if org-owned vaults need it. Nothing else.
+4. **FR-4** Handle the device-flow states explicitly: `authorization_pending` (keep polling at the returned interval), `slow_down` (back off), `expired_token` (offer to restart), `access_denied` (return to the sign-in screen with a clear message).
+5. **FR-5** Store the token via Electron **`safeStorage`** in the OS keychain. The token lives in **main**; the renderer receives only `{login, name, avatarUrl}`.
 
-### Identity & provisioning
-6. **FR-6** On first successful sign-in, upsert a **user record** keyed by the Google account (`sub` claim as stable primary key; email as a mutable attribute), capturing display name and avatar URL.
-7. **FR-7** On first-ever sign-in for a user, **provision a personal vault** owned solely by them (one membership row, role `owner`, `kind = personal`). Idempotent — re-runs never create a second personal vault.
-8. **FR-8** Personal-vault provisioning seeds default config (daily-note scaffold, empty AGENTS/MEMORY, tier-1 defaults). Provisioning is a server transaction; a partial failure leaves no half-vault.
+### Identity & vaults
+6. **FR-6** After sign-in, fetch the viewer (`login`, `name`, `avatarUrl`) and cache it for offline display. Identity is the **GitHub account id**, not the login (logins are mutable).
+7. **FR-7** **Add vault** lists the user's repos (sorted by recent push, searchable) and clones the chosen one into the managed vault root.
+8. **FR-8** **New vault** creates a **private** repo, seeds it (a `.gitignore` covering `.holi/settings.local.json` and `USER.md`, a `.claude/` scaffold, an empty `AGENTS.md`/`MEMORY.md`, a daily-note folder), commits, pushes, and opens it.
+9. **FR-9** Vaults the user has added are remembered machine-locally, with their clone paths. This list is a *machine* fact, not an account fact — a second laptop starts empty and adds its own.
 
-### Membership & roles
-9. **FR-9** Roles are exactly **owner** and **member** — no viewer / read-only tier (see Summary for why). `member` = read + write **all** content (notes, tasks); `owner` = member + vault administration (invite/remove members, transfer ownership, delete vault, edit theme/settings). Owner ⊇ member in capability. Every membership row is `(vaultId, userId, role)`.
-10. **FR-10** **Invite** by `@syv.ai` email (owner only), picking role `member` | `owner` (default **member**). The restriction reads the **same configured workspace domain sign-in enforces** (FR-3's `hd` check), never a second setting or a literal — one knob, so the two cannot disagree about who is allowed in; unset means unrestricted, exactly as the sign-in check behaves, because it is unset in dev by design. If the invitee already has a user record, the vault appears in their list immediately; if not, the invite is **pending** and resolves to a membership on their first sign-in (email match). Invites are non-transferable and domain-restricted.
-11. **FR-11** **Change role** (member ↔ owner) and **remove member** are owner-only. A removal must take effect on the removed user's **live** sessions — their Yjs connection for the vault is closed on the change (see Flows / Authorization).
-12. **FR-12** **Leave**: any non-owner member may remove their own membership. An **owner cannot leave** a shared vault with other members without transferring ownership first.
-13. **FR-13** **Transfer ownership**: owner designates another **member** as new owner; the old owner atomically becomes a member. A shared vault always has **exactly one** owner.
-14. **FR-14** A **personal vault** has exactly one membership (owner); invite/leave/transfer are disabled for it — enforced by a **shared-vault-only procedure**, and carried in the *type*: membership mutations take a vault id branded as shared, which only that procedure can produce, so an op written without the check does not compile. Not decoration — `invite` and `transferOwnership` both shipped without a runtime guard, and `setRole`/`remove`/`leave` were safe only incidentally (via the last-owner and owner checks). Beyond FR-14 itself, this is what keeps **daily notes** honest: they assume a personal vault has one owner and therefore one clock, so a second member would make "today" ambiguous. Attempting to share a personal vault is out of scope for v1 (a future "promote to shared" path is an open question).
+### Access
+10. **FR-10** The members panel lists the repo's **collaborators** from the GitHub API, read-only, showing avatar, login, and permission level.
+11. **FR-11** "Add someone" **deep-links** to the repo's GitHub settings page. Holi does not implement invitation.
+12. **FR-12** Holi performs **no authorization checks**. Every user with the vault on disk can edit every file in it; whether the result reaches anyone else is decided by GitHub at push time.
+13. **FR-13** A **push rejected for permissions** must be reported as exactly that — "you no longer have write access to this repo" — and must not be confused with a network failure or a merge conflict. This is the one place the access model becomes visible, so it is the one place the message must be right.
 
-### Session & authorization
-15. **FR-15** Every tRPC procedure and every Yjs (Hocuspocus) connection **must** resolve a valid session → user, then authorize against membership/role. Unauthenticated or unauthorized calls fail closed.
-16. **FR-16** Members and owners get **read-write** Yjs (Hocuspocus) connections; a non-member's connection is **rejected**. There is no read-only connection tier — every user with vault access can edit.
-17. **FR-17** The agent's MCP ops are authorized against the **same** membership/role at the server, independent of any client-supplied mode. No client input can raise the effective role.
-18. **FR-18** **Sign-out** revokes the server session, deletes the keychain token, and purges the local working-copy cache + offline queue for all vaults on that machine.
+### Token lifecycle
+14. **FR-14** A **401/403 from the API or a credential failure from git** puts the vault into a signed-out state and prompts re-authentication, preserving local work. Tokens are revoked from GitHub's side, not expired on a schedule Holi controls.
+15. **FR-15** **Sign-out** deletes the keychain entry and stops all sync. **Clones are left on disk** and the user is told where they are — deleting someone's files (which may hold unpushed commits) is not a sign-out side effect. Offer an explicit "also delete local clones" with an unpushed-work warning.
 
 ### Offline
-19. **FR-19** A previously signed-in user may launch and work **offline** using a cached session for up to the **offline grace window** of **~30 days since last successful server contact**. A short-lived access token is refreshed silently while online, which re-anchors the window; beyond 30 days offline, Holi enters a locked state requiring reconnection and re-auth.
-20. **FR-20** Offline edits queue locally and replay on reconnect; the sync-status indicator reflects offline/syncing/synced. Authorization is re-checked on reconnect — a role revoked while offline is enforced when the connection re-establishes, and any queued writes the user is no longer permitted are rejected server-side (surfaced as a sync notice, never silently applied).
+16. **FR-16** Holi **works fully offline with no session check at all**. The clone is the vault; the editor, board, agent, and reminders are local. This is a substantial simplification over the previous design's 30-day offline grace window, which existed because a server owned the truth.
+17. **FR-17** Offline, pull and publish are unavailable and the vault shows its sync state as offline. Local commits accumulate and publish when the network returns.
 
 ---
 
 ## Data & types
 
-Full schema is owned by [`server-data.md`](server-data.md); the shapes below are the contract this PRD depends on. Types live in `packages/shared`.
+There is no server schema. Everything below is machine-local.
 
 ```ts
-// Identity
-type User = {
-  id: string            // server-assigned uuid (internal PK)
-  googleSub: string     // Google 'sub' claim — stable identity key, unique
-  email: string         // @syv.ai; mutable, not the identity key
-  displayName: string
+// Held in Electron main; token in the OS keychain via safeStorage
+type GitHubAuth = {
+  token: string          // OAuth token from the device flow
+  accountId: number      // stable GitHub account id — the identity key
+  login: string          // mutable; display only
+  name?: string
   avatarUrl?: string
-  createdAt: string; updatedAt: string
+  scopes: string[]       // what was actually granted, for honest error messages
 }
 
-type Role = 'owner' | 'member'   // exactly two roles — no viewer/read-only
-
-type Membership = {
-  vaultId: string
-  userId: string
-  role: Role
-  invitedByUserId?: string
-  createdAt: string
+// Machine-local vault registry (not synced, not an account fact)
+type VaultEntry = {
+  remote: string         // owner/repo — the vault's identity
+  path: string           // clone location under the managed root
+  lastOpenedAt: string
 }
 
-// Pending invite for a user who has not signed in yet
-type PendingInvite = {
-  vaultId: string
-  email: string         // @syv.ai
-  role: Exclude<Role, 'owner'>   // can't pre-invite an owner
-  invitedByUserId: string
-  createdAt: string
+// Read-only, from the GitHub API
+type Collaborator = {
+  accountId: number
+  login: string
+  avatarUrl?: string
+  permission: 'admin' | 'maintain' | 'write' | 'triage' | 'read'
 }
 ```
 
-**Sessions** are server-side records; the client holds only an opaque token.
-
-```ts
-// Server-side; client never sees google tokens
-type Session = {
-  id: string
-  userId: string
-  tokenHash: string     // hash of the opaque session token; raw token is client-only
-  createdAt: string
-  lastSeenAt: string    // updated on each authorized call — drives offline grace
-  expiresAt: string     // absolute session lifetime
-  revokedAt?: string
-}
-
-// Held only by the desktop app, in the OS keychain
-type ClientSession = {
-  token: string         // opaque bearer; presented to tRPC + Hocuspocus
-  userId: string
-  expiresAt: string
-  cachedAt: string      // last successful server contact — offline-grace anchor
-}
-```
-
-Google refresh/access tokens (needed for Phase-2 Gmail/Calendar) are stored **server-side only**, encrypted at rest, associated to the user — never synced to the desktop app.
-
-**Per-user tier-2 state** is **UI prefs only**, keyed `(userId, vaultId, key)` in `per_user_state` (architecture §7). It is readable/writable **only** by that `userId`; no membership role grants access to another user's tier-2 rows (see [Per-user scoping](#per-user-scoping)). *(USER.md and personal skills are **not** server state — they live in the user's machine-local Claude config (`~/.claude`, `CLAUDE.local.md`), untouched by Holi. Chat history is likewise local/per-machine, never synced — Claude Code's native `--resume` is the history.)*
+**`accountId` is the identity key, never `login`.** A GitHub login can be changed by its owner, and a freed login can be claimed by someone else — the same class of bug the old design avoided by keying on Google's `sub` rather than email.
 
 ---
 
 ## Flows
 
-### Sign-in (desktop OAuth, system browser + loopback)
-1. App has no valid keychain session → shows **Sign in with Google**.
-2. Desktop **main** process: generate PKCE `code_verifier`/`code_challenge` + `state` (CSRF nonce); bind an ephemeral loopback listener on `127.0.0.1`.
-3. Open the **system browser** to Google's authorize URL with `client_id`, `redirect_uri=http://127.0.0.1:<port>`, `scope=openid email profile`, `hd=syv.ai`, `code_challenge`, `state`.
-4. User approves in-browser. Google redirects to the loopback listener with `code` + `state`. Main verifies `state`, then closes the browser tab handoff with a small "you can return to Holi" page.
-5. Main sends `{ code, code_verifier, redirect_uri }` to the **Syv server** (tRPC `auth.exchange`). **The server** does the token exchange with Google (holding the Google `client_secret`), verifies the ID token (signature, `aud`, `exp`, `hd == syv.ai`), upserts the `User` (FR-6), provisions the personal vault if first-ever (FR-7), stores Google refresh token server-side, and returns a **Syv session token** + `expiresAt`.
-6. Main stores the session in the **OS keychain** (`ClientSession`); the renderer is told only "signed in as X" via the preload bridge. **Renderer never holds the token.**
-7. All later tRPC/Yjs calls attach the token; main injects it (renderer asks main to make privileged calls, or the token is attached in the main-side tRPC/WS client).
+### Sign-in (device flow)
+1. No keychain token → show **Sign in with GitHub**.
+2. Main `POST`s to GitHub's device-code endpoint with the client id and scopes, receiving `device_code`, `user_code`, `verification_uri`, `interval`, `expires_in`.
+3. The renderer shows the **user code** prominently with a copy button and a "open GitHub" action; main opens the verification URI in the **system browser**.
+4. Main polls the token endpoint at the given `interval`, honouring `slow_down`.
+5. On success, main stores the token in the keychain, fetches the viewer, and tells the renderer "signed in as X".
+6. All GitHub API calls and git operations happen **in main**, with the token attached there.
 
-> **Why loopback + system browser, not embedded:** Google blocks OAuth in embedded webviews; the system browser reuses the user's existing Google session (true SSO) and keeps credentials out of the app's renderer. Loopback (RFC 8252 native-app pattern) needs no custom URL-scheme registration and no client secret on the device (PKCE replaces it). The **code exchange happens on the server**, so the confidential `client_secret` and the Google refresh token stay off every desktop machine.
+> **Why the system browser:** it reuses the user's existing GitHub session (so this is usually two clicks), and keeps credentials out of the app's web context entirely.
 
-> **Implementation note:** the canonical session token lives only in Electron main (`safeStorage`); tRPC ops cross IPC token-free. The Yjs `HocuspocusProvider` runs in the renderer, which fetches `{url, token}` from main per connection and holds it in memory only — a pragmatic deviation from the letter of step 6, chosen over the machinery of mirroring Y.Docs across IPC. Revisit if the renderer threat model hardens.
+### Adding a vault
+1. Signed-in user opens the vault dropdown → **+ New vault…** → **Add existing repo**.
+2. Main lists repos via the API; the user picks one.
+3. Main clones it under the managed root (`~/Holi/<owner>/<repo>`) using the token, registers a `VaultEntry`, and opens it.
 
-### Token refresh / session renewal
-- The Syv session token is **short-lived**; main **silently refreshes** it via a tRPC `auth.refresh` before expiry while online, and each refresh re-anchors the offline window (updates `lastSeenAt`/`cachedAt`). The cached session stays valid for **offline** work for **~30 days since last successful server contact**; past that, re-auth is required. (Exact access-token TTL is an implementation detail; the 30-day offline ceiling is the decided user-facing bound.)
-- Google refresh (for Phase-2 APIs) is entirely **server-side**; the desktop app never participates.
+**Only Holi-managed clones.** Holi never adopts a checkout the user maintains themselves — autosave-commit inside a working tree where someone keeps WIP branches and staged changes is destructive, and a managed clone makes that impossible by construction.
 
-### Invite a member
-1. Owner opens vault members panel → enters an `@syv.ai` email, picks role (member | owner; default **member**).
-2. tRPC `membership.invite` (authorized: caller is owner of vault). Server validates domain, then either creates a `Membership` (invitee has a user record) or a `PendingInvite` (they don't).
-3. If the invitee is online and already a user, the server pushes a vault-list update; the vault appears for them. Pending invites resolve on their next sign-in (FR-10).
+### Creating a vault
+As FR-8: create a private repo, seed, commit, push, open. Seeding matters more than it looks — the `.gitignore` is what keeps `USER.md` and the machine-local settings out of a shared repo, and that is now a **file**, not a server boundary.
 
-### Role change / removal (live enforcement)
-1. Owner calls `membership.setRole` / `membership.remove`.
-2. On a **role change** (member ↔ owner), the server updates the membership and signals the affected client; the renderer re-renders vault-admin affordances (invite/setRole/remove, theme/settings edit) to match the new role. Edit access is unchanged — both roles read-write.
-3. On a **removal**, the server closes the removed user's live Yjs connection for the vault; the vault disappears from their list; their local cache for that vault is purged on the removal event (or on next launch if offline).
+### Losing access
+1. A teammate is removed from the repo on GitHub.
+2. Their next auto-pull or publish fails with a permission error.
+3. Holi reports it plainly, stops syncing that vault, and leaves the clone and its unpublished commits alone. Their local copy still opens and still edits — it is a folder of markdown on their machine, and pretending otherwise would be theatre.
 
-### Sign-out
-1. Renderer triggers sign-out → main calls `auth.signout` (server revokes the session: sets `revokedAt`).
-2. Main deletes the keychain entry and **purges** local working copies + offline queues for all vaults (tier-3 is machine-local and disposable). Any un-synced offline edits are surfaced as a warning **before** purge (Open questions: block sign-out on unsynced edits?).
-3. App returns to the sign-in screen.
-
-### Offline session
-1. On launch with no network, main reads the keychain `ClientSession`. If `now - cachedAt <= offlineGraceWindow` **and** `now < expiresAt`, Holi opens in offline mode against local caches.
-2. Editing works against local Yjs caches; edits queue. Sync-status shows **offline**.
-3. On reconnect: main renews the session, Hocuspocus `onAuthenticate` re-authorizes; queued updates replay and auto-merge. If the role changed or membership was revoked while offline, enforcement applies now (FR-20) — disallowed queued writes are rejected and reported.
-4. If the grace window elapsed while offline, Holi **locks** to a sign-in prompt (no further local editing) until reconnection re-establishes a session.
+**This is the honest description of the access model** and it should be stated in the product, not just here: **removing someone stops future sync; it does not reach back and remove what they already have.** That was true of any git-backed system, and it was true of the old design too the moment a clone existed.
 
 ---
 
-## Authorization model
+## Access model
 
-**One boundary, server-side, total.** There is exactly one place that decides "can this identity do this to this vault": the server. The client is never trusted for authorization.
-
-Concretely, three enforcement surfaces all resolve the **same** `(session → userId → membership.role)` tuple:
+**One boundary: GitHub.** There is exactly one place that decides whether an action affects the shared vault — the remote, at push time.
 
 | Surface | Where | Check |
 |---|---|---|
-| **tRPC procedures** | server, per-procedure middleware | Resolve session token → user. Load `Membership(vaultId, userId)`. Reject if absent (fail closed). Both roles get read+write on content; **owner-only** procedures (invite / setRole / remove, transfer, delete vault, edit theme/settings) additionally require `role == owner`. |
-| **Yjs / Hocuspocus** | `onAuthenticate` hook | Validate the token passed on WS connect → user. Load membership. Member/owner → **read-write** connection. No membership → **reject** the connection. No read-only tier exists. Presence/awareness allowed for any member. |
-| **Agent MCP ops** | local MCP server (Electron main) → proxies to Syv API; **the Syv API re-checks role** | Every structured op (task create/set, note_rename, calendar/mail writes) is authorized server-side against the run's user + vault role. Any member's agent can call read and write ops; **owner-only ops** (vault admin) are rejected server-side for a member regardless of what the client sends. This is the authoritative boundary; the MCP server in main is a convenience proxy, not a trust boundary. |
+| **Reading a vault** | local filesystem | None. The clone is on disk; the app opens it. |
+| **Editing a vault** | local filesystem | None. Every local edit succeeds. |
+| **Publishing** | GitHub, on `git push` | GitHub's repo permissions. A rejected push is the enforcement. |
+| **Pulling** | GitHub, on `git fetch` | GitHub's repo permissions. |
+| **The agent** | local | Whatever the user can do. It runs as them, on their files, with their credential. |
 
 Key properties:
-- **No client self-escalation.** The role is derived server-side from the DB, never from a client-supplied field, header, or "mode." There are no client-selectable permission modes — the role gate is the entire model.
-- **Native tool prompts are UX, not security.** Claude's interactive file/bash permission prompts control *local* file actions on the working copies; they are not the authorization boundary. Authorization for anything that touches server truth (task records, rename, mail/calendar) is the server role gate. Because there is no read-only role, every user with a vault connection is a legitimate writer — the boundary that matters is **membership** (non-members are rejected outright) and, above content, the **owner-only** vault-admin gate.
-- **Role capability matrix:**
 
-  | Capability | member | owner |
-  |---|:--:|:--:|
-  | Read docs / tasks / history-of-own | ✓ | ✓ |
-  | Presence / awareness | ✓ | ✓ |
-  | Edit docs (Yjs writes) | ✓ | ✓ |
-  | Create/modify tasks | ✓ | ✓ |
-  | Agent write ops (MCP) | ✓ | ✓ |
-  | `note_rename` (atomic link rewrite) | ✓ | ✓ |
-  | Invite / setRole / remove | — | ✓ |
-  | Transfer ownership | — | ✓ |
-  | Edit vault theme / settings | — | ✓ |
-  | Connect / disconnect the git mirror | — | ✓ |
-  | Delete vault | — | ✓ |
-
-- **Live revocation.** Role/membership changes propagate to live connections by re-running `onAuthenticate` or closing connections (Flows). No stale-role window beyond one reconnect.
-
-### Per-user scoping
-
-Tier-2 state is keyed to **identity**, not to vault role — and it is **UI prefs only**:
-- `per_user_state(userId, vaultId, key)` is readable/writable only by that `userId`. Owners have **no** read access to another member's UI prefs — ownership governs the **shared** vault, never someone's private tier-2 rows.
-- **Personal agent config is not server state at all**: USER.md, personal skills, and `CLAUDE.local.md` live in the user's machine-local Claude config (`~/.claude` and the vault working dir), untouched by Holi and never synced. There is nothing for the server to scope or for another member to leak.
-- The vault **theme** is a shared (tier-1) property editable **only by the owner**; members see it but cannot restyle the team's vault. **Light/dark mode**, by contrast, is a per-user **local** toggle (a tier-2 UI pref) — not a server permission and not gated by role.
-- Holi composes **no** agent config dir: Claude Code natively picks up the shared vault `.claude/` from the working dir and the user's personal `~/.claude` / `CLAUDE.local.md` layer. Tier-2 UI prefs are fetched with the signed-in user's token and never fanned out over the vault's Yjs channel, so other members' clients never receive them.
-- Chat-history JSONLs live on the user's machine; history is Claude Code's native `--resume`. Nothing routes another user's history into a shared surface — there is no server-side conversation store.
-
----
-
-## Linked accounts (GitHub)
-
-Sign-in stays **Google-only** — GitHub is never an identity provider for Holi. A user may additionally **link a GitHub account** via a standard OAuth redirect ("Connect GitHub" in app settings). The link is required only for **vault owners enabling the git mirror** on a vault; nobody else ever needs one.
-
-- The owner's GitHub OAuth token is used **once, at wiring/un-wiring time**: verifying admin access to the target repo, installing the write **deploy key**, and registering the push **webhook** (and removing both on disconnect). It is **never used for background operations** — day-to-day mirror traffic runs on the deploy key.
-- **Rejected: switching sign-in to GitHub.** That loses Workspace-managed offboarding (a disabled Google account cuts Holi access), and the Phase-2 Gmail/Calendar integration needs Google OAuth anyway.
-- The `github_connections` table (linked GitHub identity + encrypted OAuth token, one row per user) is owned by [`server-data.md`](server-data.md).
-- The mirror itself — exporter, ingester, repo wiring, edge policy — is outside this PRD; full design in [`../specs/2026-07-13-vault-git-mirror-design.md`](../specs/2026-07-13-vault-git-mirror-design.md).
+- **No client-side authorization, by design.** The previous design's central rule — "the client is never trusted for authorization" — is preserved, not abandoned: the way to preserve it without a server is to *put no authorization in the client at all*. A permission check running on the machine of the person it restricts is not a boundary, and shipping one would create the illusion of protection.
+- **Native tool prompts are UX, not security.** Claude's interactive file/bash prompts control local file actions; they were never the authorization boundary and still aren't.
+- **The agent has no authority the user lacks** — it uses the user's credential and the user's clone.
+- **Revocation is GitHub's**, and takes effect on the next network operation rather than on a live connection, because there is no live connection to close.
 
 ---
 
 ## Edge cases & risks
 
-- **Non-`@syv.ai` Google account** used at the consent screen: rejected server-side on `hd`/`aud` verification with a Syv-only error, even though the OAuth succeeded at Google. `hd` alone is client-forgeable in some flows, so the **server ID-token check is authoritative**.
-- **Email reuse / rename.** Google `sub` is the identity key, not email — a display-name or email change (rare in Workspace) keeps the same user. A **pending invite** matches on email, so an invite sent to an email that later belongs to a different person is a (low) risk; scope pending-invite matching to same-domain and expire invites (Open questions).
-- **Owner leaves without transfer.** Blocked (FR-12). A vault must always have exactly one owner. Guard: `membership.remove`/`leave` rejects if it would orphan a shared vault.
-- **Last-owner deletion.** Removing the only owner of a shared vault is disallowed; deleting the vault entirely is a separate owner-only action (owned by [`vaults-collaboration.md`](vaults-collaboration.md)).
-- **Removal mid-edit.** A member typing in a doc when **removed** from the vault: the server closes their Yjs connection at the change; in-flight local edits after the cutover can't sync and are flagged. Data already synced stays. (A role change owner ↔ member never affects editing — both roles are read-write.)
-- **Offline role change.** Enforced on reconnect (FR-20); queued writes the user is no longer permitted are rejected and reported — never silently dropped or silently applied.
-- **Token theft / exfiltration.** Session token in the OS keychain, not in plaintext files or `localStorage`; never handed to the renderer. Renderer isolation (`contextIsolation: true`, no `nodeIntegration`) keeps a compromised web context from reading it (architecture §9). A stolen token is bounded by session `expiresAt` and can be killed by sign-out/`auth.revoke`. **Risk accepted:** a fully compromised main process can read the keychain — out of scope to defend against for v1.
-- **Loopback interception.** The ephemeral loopback listener + `state` nonce + PKCE prevents another local process from completing the flow without the `code_verifier`. Bind to `127.0.0.1` (not `0.0.0.0`).
-- **Provisioning race.** Concurrent first-sign-ins (two devices at once) must not create two personal vaults — provisioning is an idempotent upsert keyed on `(userId, kind=personal)` in one transaction (FR-7).
-- **Google downtime.** If Google OAuth is unreachable, **new** sign-ins fail; already-signed-in users continue via cached session (offline grace). Session refresh depends on the Syv server, not Google, so short Google outages don't sign existing users out.
-- **Scope creep (Phase 2).** Gmail/Calendar scopes are broad; requesting them incrementally (FR-4) keeps sign-in minimal and avoids a scary first-run consent screen. Google refresh tokens for these stay server-side.
-- **Company is Google-only (v1).** No fallback IdP means Google being down blocks onboarding of *brand-new* users; acceptable given the whole company is on Workspace.
+- **The token is a broad `repo` grant.** It can read and write *every* repo the user has, not just their vaults. This is a real widening versus a server-mediated deploy key, and it is inherent to a desktop client acting as the user. Mitigations: the token stays in main and in the keychain, and Holi only ever runs git against its own managed clones. A **fine-grained personal access token** scoped to selected repos is a supported alternative for users who want it, and the sign-in screen should say so.
+- **Renderer compromise.** `contextIsolation: true`, no `nodeIntegration`; the token never crosses to the renderer. A fully compromised main process can read the keychain — out of scope to defend for v1, unchanged from before.
+- **A private repo made public** exposes vault contents. Holi should surface repo visibility in the members panel, because a vault silently becoming public is the highest-severity thing that can happen to it and nothing else in the product would show it.
+- **Login rename / account reuse** — keyed on `accountId`, so display updates and identity does not.
+- **`USER.md` or `.holi/settings.local.json` committed by accident** — the seed `.gitignore` prevents it, but an *adopted* repo (or one created before the seed changed) may lack the entries. Holi should check on vault open and offer to add them. This replaces a boundary the server used to enforce structurally, so it deserves an active check rather than a hope.
+- **Org SSO enforcement.** A GitHub org with SAML SSO requires the token to be authorized for the org; an unauthorized token fails with a specific error that must be surfaced as "authorize this token for your org", not as a generic auth failure.
+- **Rate limits.** Repo and collaborator lists are cheap but not free; cache them and refresh on demand rather than per render.
+- **Two machines, one vault, diverged** — normal git divergence, handled by the sync engine, not by identity.
+- **A user with no GitHub account** cannot use Holi. Given the standing assumption that every employee is a developer, this is acceptable and should be stated rather than worked around.
 
 ---
 
 ## Dependencies
 
-- **[`server-data.md`](server-data.md)** — owns the authoritative schema: `users`, `memberships`, `sessions`, `per_user_state`, pending invites, `github_connections`, and the encrypted server-side Google token store. This PRD defines behavior against those tables. (There is no server-side conversation store — chat history is local per machine.)
-- **[`vaults-collaboration.md`](vaults-collaboration.md)** — vault lifecycle (create/delete/rename), the members panel UX, presence/awareness, and Hocuspocus `onAuthenticate` wiring (this PRD specifies the *authorization* contract that hook must satisfy; that PRD owns the collaboration surface).
-- **[`agent.md`](agent.md)** — the MCP ops surface and the CC-native config layering. This PRD specifies that MCP ops are role-gated at the same server boundary and that tier-2 UI prefs are scoped to the signed-in user; that PRD owns the op catalog and the PTY mechanics.
-- **[`../specs/2026-07-13-vault-git-mirror-design.md`](../specs/2026-07-13-vault-git-mirror-design.md)** — the git mirror this PRD's GitHub account-linking serves: repo wiring, exporter/ingester, edge policy, status UX.
-- **Platform:** Electron `safeStorage` / OS keychain (macOS Keychain, Windows Credential Vault, libsecret) for token storage; system-browser launch + loopback listener in main; Google Cloud OAuth client (Workspace-restricted).
+- **[`../architecture.md`](../architecture.md)** — the sync engine that uses the credential this PRD obtains.
+- **[`agent.md`](agent.md)** — the agent runs with the user's identity in the clone this PRD manages.
+- **Platform:** Electron `safeStorage` / OS keychain (macOS Keychain, Windows Credential Vault, libsecret); system-browser launch from main; a GitHub OAuth app configured as a **public client with device flow enabled**.
 
 ---
 
 ## Open questions
 
-1. **Session lifetimes.** The **offline grace window is decided at ~30 days** since last successful server contact. What remains open: the exact **access-token TTL** and whether to force periodic re-consent (e.g. re-auth every N days regardless, independent of the offline ceiling).
-2. **Sign-out with unsynced offline edits.** Block sign-out until synced, warn-and-purge, or stash the queue keyed to the user for next sign-in? Leaning warn-and-block-if-unsynced; undecided.
-3. **Pending-invite expiry & re-targeting.** How long do pending invites live, and how do we prevent an invite resolving to a re-issued `@syv.ai` address belonging to a new hire? Proposed: expire after 30 days, require same-domain, re-verify on resolution.
-4. **Personal → shared promotion.** Out of scope for v1 (FR-14). If needed later, does a personal vault become shareable in place (membership rows added) or is it always a copy? Affects whether personal and shared vaults differ structurally at all.
-5. **Departed-employee cleanup.** When Workspace disables an account, Holi should revoke sessions and reassign/orphan their owned shared vaults. Depends on whether we integrate Workspace admin signals (SCIM/directory) — deferred, but the ownership-transfer requirement (FR-13) is the manual stopgap.
-6. **Device management.** Do we surface "your active sessions/devices" and allow remote revoke? Nice-to-have; not v1 unless token-theft posture demands it.
-7. **Owner count > 1.** v1 fixes exactly one owner (FR-13). If teams want co-owners, `memberships.role` already supports multiple `owner` rows — the only blocker is the "exactly one owner" invariant. Revisit if requested.
+1. **OAuth app vs GitHub App.** A GitHub App gives per-repo installation and short-lived tokens — a materially tighter grant than `repo`. It also complicates the "any repo you own is a vault" story and adds an installation step per repo. Leaning OAuth app for v1, with fine-grained PATs documented as the tighter option; revisit if the broad grant proves uncomfortable.
+2. **Org-owned vaults.** Do vaults live under `syv-ai/` or under personal accounts? This decides whether `read:org` is needed and whether "your repos" is the right vault picker.
+3. **Should sign-out offer to delete clones?** FR-15 says leave them and offer explicitly. Confirm the unpushed-work warning is enough.
+4. **Multiple accounts.** Personal GitHub for personal vaults, work account for shared ones — supported, or explicitly one account per Holi install? Leaning one, with the cost stated.

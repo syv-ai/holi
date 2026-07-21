@@ -6,45 +6,47 @@ How Holi fits together. This is the technical spine — the map; each PRD in [`p
 
 ## 1. System shape
 
-Three deployable/importable pieces in one pnpm monorepo (one repo keeps cross-cutting changes atomic and lets client and server share types with no codegen):
+**One deployable: a desktop app.** There is no server, no database, and no hosted service.
 
 ```
-┌─────────────────────────── apps/desktop (Electron) ───────────────────────────┐
-│  Renderer (React + Jotai + CodeMirror)          Main (Node)                     │
-│  ┌───────────────┐  ┌──────────────┐            ┌──────────────────────────┐    │
-│  │ Editor (CM6 + │  │ Task board,  │            │ MCP ops server (local,   │    │
-│  │ Yjs binding)  │  │ drawers, UI  │            │ per-run bearer token)    │    │
-│  └──────┬────────┘  └──────┬───────┘            │  → proxies to Syv API    │    │
-│         │  presence/edits  │  tRPC calls        ├──────────────────────────┤    │
-│  ┌──────▼──────────────────▼───────┐            │ PTY host → `claude`      │    │
-│  │ Sync client (Yjs doc store,     │            │  (xterm drawer)          │    │
-│  │ offline cache, awareness)       │            ├──────────────────────────┤    │
-│  └──────┬──────────────────────────┘            │ File↔CRDT bridge         │    │
-│         │                                       │  (materialize working    │    │
-│  preload/IPC bridge  ───────────────────────────┤   copies on disk)        │    │
-│         │                                       └───────────┬──────────────┘    │
-└─────────┼───────────────────────────────────────────────────┼──────────────────┘
-          │ WebSocket (Yjs sync + awareness)                   │ HTTPS (tRPC)
-          ▼                                                    ▼
-┌───────────────────────────── apps/server (Node/TS) ─────────────────────────────┐
-│  Hocuspocus (Yjs relay + persistence hooks)   tRPC API (auth, vaults, tasks,    │
-│  Awareness fan-out                            membership, reminders, history)    │
-│                         ┌──────────────────────────────┐                         │
-│                         │ Postgres                     │                         │
-│                         │  yjs_snapshots, docs, tasks, │                         │
-│                         │  vaults, memberships, users, │                         │
-│                         │  per_user_state, reminders   │                         │
-│                         └──────────────────────────────┘                         │
-│  Google OAuth (Workspace SSO)      Object storage (attachments/backups)          │
-└──────────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────── apps/desktop (Electron) ─────────────────────────────┐
+│  Renderer (React + Jotai + CodeMirror)          Main (Node)                       │
+│  ┌───────────────┐  ┌──────────────┐            ┌───────────────────────────┐     │
+│  │ Editor (CM6,  │  │ Task board,  │            │ Sync engine               │     │
+│  │ file-backed)  │  │ drawers, UI  │            │  auto-pull · autosave     │     │
+│  └──────┬────────┘  └──────┬───────┘            │  commits · publish        │     │
+│         │                  │  tRPC over IPC     │  · reconcile              │     │
+│  ┌──────▼──────────────────▼───────┐            ├───────────────────────────┤     │
+│  │ preload / contextBridge          │◄──────────┤ Vault store               │     │
+│  └──────────────────────────────────┘           │  fs walk + watcher        │     │
+│                                                 ├───────────────────────────┤     │
+│                                                 │ PTY host → `claude`       │     │
+│                                                 │  (xterm drawer)           │     │
+│                                                 ├───────────────────────────┤     │
+│                                                 │ GitHub client (device     │     │
+│                                                 │  flow, repos, collabs)    │     │
+│                                                 └─────────────┬─────────────┘     │
+└───────────────────────────────────────────────────────────────┼──────────────────┘
+                                                                │ git over HTTPS
+                                                                │ + GitHub REST
+                                                                ▼
+                                  ┌──────────────────────────────────────┐
+                                  │  GitHub                              │
+                                  │   the vault repo · collaborators      │
+                                  │   · auth · history · durability       │
+                                  └──────────────────────────────────────┘
 
-              packages/shared  (imported by desktop AND server)
-   types · task model · wiki-link grammar · path-safety · recurrence/reminder rules
+         ~/Holi/<owner>/<repo>          packages/shared
+         the vault: a git clone         types · task file grammar · wiki-links
+         of markdown files              · path-safety · recurrence/reminders
+                                        · 3-way text merge
 ```
 
-Key property: **the client is not thin, and the server is not thin.** The client owns the live editing experience, the agent runtime, and the file bridge. The server owns truth, auth, structured data, and durability. `packages/shared` is the seam that keeps them honest — one definition of a task, a link, a path rule, used on both sides with no codegen. (The server's *internal* DB layer is the one codegen exception: Drizzle defines the Postgres schema in TS and drizzle-kit generates SQL migrations; `packages/shared` remains the only client↔server type seam.)
+**Key property: the truth is the filesystem.** Everything in the app — the editor, the board, the file tree, the agent — reads and writes the same `.md` files in one directory. Nothing derives from anything else, so nothing can disagree.
 
-The server stack is a **self-hosted TypeScript monolith** — all-TS with shared types, full control, no vendor lock-in, in line with the OSS preference. Rejected: managed CRDT platforms (Liveblocks/PartyKit) — a vendor holding core company doc data, partly closed-source.
+`packages/shared` is no longer a client↔server seam; it is the vocabulary the app uses with itself and with the files on disk. It stays a separate package because its contents are pure, testable rules — the task file grammar, the wiki-link grammar, path containment, recurrence math — and keeping them free of Electron is what keeps them testable.
+
+**What was deleted, and why it isn't missed.** The previous architecture had a Hocuspocus relay, Postgres, Google SSO, memberships, a tasks table, a reminder evaluator, snapshot history, an SSE fan-out, a server-side git mirror, and a file↔CRDT bridge on every client. All of it existed to serve one premise — that shared vaults require real-time co-editing, and co-editing requires CRDTs over a hosted relay. [`vision.md`](vision.md) withdraws that premise for v1. Each subsystem's replacement is named in the section that used to own it.
 
 ---
 
@@ -52,180 +54,172 @@ The server stack is a **self-hosted TypeScript monolith** — all-TS with shared
 
 **Build only what Claude Code doesn't already do; work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Standing assumptions:
 
-- **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability.
-- **CC is already installed and authenticated** on every machine (each employee's own account, native auth). Holi does no provisioning, metering, or credential management; the old login-PTY flow is at most an edge-case fallback.
+- **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability. Git is a tool they already have.
+- **CC is already installed and authenticated** on every machine (each employee's own account, native auth). Holi does no provisioning, metering, or credential management.
 
-This principle governs the whole agent surface (§5): native `--resume` *is* the chat history, config layering is CC's own, per-turn context rides a supported hook, and permissions are settings-seeded configuration rather than bespoke machinery.
+This principle governs the whole agent surface (§5), and under the new shape it governs *more*: with the vault being plain files in a git repo, the set of things Claude Code cannot already do has shrunk to **zero**, so the MCP op surface is empty (§5).
 
 ---
 
-## 3. Sync & storage
+## 3. The vault, and how it syncs
 
-### Documents are CRDTs
-Each note is a **Yjs document**. The **Syv relay** (Hocuspocus) is the durable source of truth and the fan-out point. Clients connect over WebSocket, receive/send Yjs updates, and participate in the **awareness** channel for presence.
+### A vault is a GitHub repo, cloned
+A vault is a clone of a GitHub repository under a **Holi-managed root** (`~/Holi/<owner>/<repo>`). Its identity is its remote. Its documents are `.md` files. Its tasks are `task.*.md` files. Its agent config is `.claude/`. Its history is git history.
 
-**Why:** the headline requirement is Google-Docs-style concurrent editing with presence, and CRDTs give character-level auto-merge, offline-first, and awareness natively. **Rejected:** git with real pull/merge (no live co-editing, whole-file markdown/YAML conflicts) and peer-to-peer CRDT (no durable truth when everyone's offline; NAT/discovery pain). Deep rationale: [`prd/vaults-collaboration.md`](prd/vaults-collaboration.md).
+Holi never adopts a checkout you maintain yourself: it **auto-commits**, and pointing that at a working tree where you keep WIP branches and staged changes would be destructive. A managed clone makes that impossible by construction.
 
-- **Persistence:** Hocuspocus's `onStoreDocument` writes Yjs state (and periodic **snapshots** for the history timeline) to Postgres. `onLoadDocument` hydrates.
-- **Offline:** each client persists the Yjs doc to a local store (e.g. `y-indexeddb` in the renderer, or a leveldb-backed store in main). Edits made offline are standard Yjs updates that replay and auto-merge on reconnect. UI shows only a **sync-status indicator** — never a conflict dialog.
-  - **NOT BUILT (verified 2026-07-16).** There is no `y-indexeddb`/`y-leveldb` dependency and `collab/provider.ts` makes a bare `new Y.Doc()` with no persistence, so notes are **memory-only** and an offline edit is lost on quit. This is the one gap in the system that is unbuilt on *both* sides rather than missing a UI leg — do not confuse it with the cheap ones. The sync-status indicator ships and implies otherwise, which makes the gap worse than a blank. Deferred to its own phase since the desktop foundation (2026-07-12); tasks are unaffected — they have their own offline story (the working copy is the queue).
-- **Backup:** Postgres snapshots + object storage. Git is not part of backup or client sync — but a vault can opt into a server-side **git mirror** for remote sessions (below).
+**Why git, when git was explicitly rejected before.** It was rejected as a *client↔client sync engine for live collaboration* — a judgement that stands, and is exactly why concurrent editing is deferred rather than attempted over git. What it is being used for here is different: durable, shared, asynchronous storage with history and access control, which is the thing git is best at. The old app's git failure modes came from **auto-committing every 30 s and never pulling**, not from git.
 
-### Working copies and the file↔CRDT bridge
-The agent keeps its **native file tools** — forcing every note write through a gateway op would fight the grain of the interactive agent — so every Doc is **materialized** as a `.md` **working copy** on disk (under a per-vault working dir the agent's `claude` process is pointed at).
+### Sync: automatic inbound, explicit outbound
+Full design: [`prd/vaults-sync.md`](prd/vaults-sync.md).
 
-The **bridge** (in Electron main) mediates **agent↔CRDT only** — human↔human editing is pure Yjs and never touches the filesystem. Turn protocol (spike-verified: [spikes/2026-07-10-bridge-turn-protocol.md](spikes/2026-07-10-bridge-turn-protocol.md)):
-1. Agent starts writing a doc → **soft lock**: presence shows *"Claude is editing…"* and **CRDT→file re-materialization pauses** for that doc, freezing the **base**.
-2. Agent edits the stable file freely (CC's read-before-edit guard is satisfied).
-3. On turn end: `diff(base, file)` applies as **positioned Yjs ops** onto the live CRDT (3-way merge). **Never blind-replace** — a blind whole-file replace would revert teammates' concurrent edits; diffing against a *frozen* base makes the patch mean "what the agent changed" and nothing more.
-4. New base = merge result; re-materialize; release.
+- **Autosave commits.** Edits become local commits on an idle debounce or ⌘S. The working tree is therefore **always clean**, so a pull can always merge; a crash loses nothing; and the commit journal *is* the undo history.
+- **Auto-pull, merging.** Holi fetches and merges on an interval and on focus. **Merge, never rebase** — with dozens of unpushed autosave commits, a rebase replays each and can conflict repeatedly on the same hunk, a failure mode manufactured entirely by autosave granularity.
+- **Publish.** Push is explicit. Your work leaves the machine when you say so.
+- **Reconcile.** A conflicting merge is **aborted immediately**, restoring a clean tree, and surfaces a banner offering **Ask Claude to reconcile** — which pauses autosave, re-runs the merge for real, and hands it to the agent in the drawer. *Ignore the banner and you keep working on an unbroken vault.*
 
-Staleness is handled by Claude Code itself: its `Edit`/`Write` require a prior `Read` and fail if the file changed since. The bridge is the only genuinely novel component in the system — everything else is standard practice (stock Hocuspocus + Postgres, Electron + node-pty + xterm, tRPC CRUD).
+### The file tree and the watcher
+The tree is a filesystem walk plus a watcher — not server metadata. Folders are real directories, which deletes an entire class of problem the previous design had (orphan folder rows, vestigial empty folders, and the display-level workaround for them): git does not track empty directories, so an empty folder is a transient local state rather than a row that outlives its contents.
 
-**Merge safety net:** no conflict dialogs, ever (the Google Docs model) — instead, auto-labeled snapshots before risky operations (agent bulk-writes, long-offline reconciles), Yjs **overlap detection** flagging risky merges, and a non-blocking **"let Claude reconcile?"** that hands base/mine/theirs to the local agent for a semantic repair written back through the bridge.
+### External writes
+A file can change under an open editor because the agent wrote it, a pull landed it, or another window touched it. All three are one event: a **clean buffer reloads**, a **dirty buffer takes a plain 3-way text merge** (base = last loaded text), and an **unmergeable overlap** falls into the same reconcile path as a git conflict. `packages/shared/agent-merge` already implements the merge and survives the CRDT deletion untouched.
 
-> **Tasks are NOT documents.** They're structured records (§6), synced via tRPC + server push, not Yjs. Only prose notes are CRDTs.
+This is what remains of the **file↔CRDT bridge** — roughly a tenth of it, and the only tenth that was load-bearing here. The soft lock, the frozen base, the turn protocol and the diff-to-positioned-ops translation are gone with the CRDT they translated into.
 
-### Materialization scope
-A client materializes the **whole active vault** to disk as working copies, so the agent's native `Grep`/`Glob`/`Read` see every doc — not just opened ones — and the file tree reflects real files. This holds permanently because the vault is **text by construction**: PDFs/docx convert to markdown on entry; original binaries archive to object storage (Hetzner) and fetch on demand — never eagerly synced. **Lazy/partial materialization is a deferred optimization** for very large vaults. The file tree is still driven by server metadata (paths) as the authority; the working copies are the agent's substrate.
-
-### Git mirror + remote-edit ingress
-A vault owner can connect an **owner-provided GitHub repo**; the relay then maintains a **server-side mirror clone** and is the **only git writer** (clients still have no `.git`). Outbound, an **exporter** debounces vault edits and commits to the default branch (bot-authored) from **two sources** — the `docs` ⋈ `yjs_docs` join **and** the `tasks` table (revised 2026-07-14) — plus `.claude/**` + `.holi/settings.json`. Inbound, a webhook-driven **ingester** applies foreign commits (e.g. from **Claude Code cloud sessions** working the repo via the Claude GitHub App). It **branches on the path before its A/M/D/R dispatch**: a `tasks/**.md` path is patched into the **record** (§6), and everything else is diffed against the **last-exported base** and applied as positioned Yjs ops — the same spike-proven frozen-base shape as the local bridge, guarded by a pre-snapshot + overlap flags (the merge safety net above). The branch is load-bearing: the doc path's `createDoc` hardcodes `kind: 'note'`, so without it a remotely-edited task file would silently become a **CRDT note**. Wiring uses the owner's linked GitHub OAuth once (installs a write deploy key + webhook); background operations run on the deploy key.
-
-**Tasks *do* ride the mirror** — this reverses the earlier "tasks never appear in the repo; remote sessions can't see or edit tasks in v1" limitation, which the task file projection (§6) removed. Full design: [specs/2026-07-13-vault-git-mirror-design.md](specs/2026-07-13-vault-git-mirror-design.md).
-
-**Why one writer:** the old app's git failure modes (N clients auto-pushing; whole-vault link-rewrite commits colliding) are structurally excluded when the relay serializes all git I/O per vault behind one lock. Git never returns as client↔client sync — the relay stays the source of truth.
+### Durability
+GitHub holds the vault. There are no snapshots to store, no object storage, and no backup subsystem — a vault that has been published is on GitHub, and a vault that hasn't is in a local git repo with its full history.
 
 ---
 
 ## 4. Identity, auth, access
 
-- **Sign-in:** Google Workspace SSO (OAuth) — Syv is a Google shop, so this is the low-friction, standard company SSO with Workspace-managed offboarding. Identity = Google account. The desktop app obtains a session token used for tRPC and to authenticate the Yjs WebSocket (Hocuspocus `onAuthenticate`). A user may additionally **link a GitHub account** (OAuth) — required only for vault owners enabling the git mirror (§3); sign-in itself stays Google-only. Deep rationale: [`prd/auth-identity.md`](prd/auth-identity.md).
-- **Vaults & membership:** a vault has a membership list with **two roles — owner and member**. **member** = read + write all content; **owner** = member + vault admin (membership, transfer, delete, theme/settings). **No viewer/read-only role** — the agent's native file writes can't be role-blocked cleanly, and everyone with access should edit. Personal vaults have a single member (the owner).
-- **Authorization is server-side and total:** every tRPC call and every Yjs connection is checked against membership. Non-members are rejected; owner-only actions (membership, delete, theme) are gated to owners. The **agent's MCP ops are gated by the same membership** — the client can't grant itself access the user doesn't have.
+Full design: [`prd/auth-identity.md`](prd/auth-identity.md).
+
+- **Sign-in:** GitHub, via the **OAuth device flow** — the grant designed for clients that cannot hold a client secret. Token in the OS keychain (Electron `safeStorage`), held in main, never given to the renderer. Scopes: `repo` + `read:user`.
+- **Vaults & membership:** a vault's members are **the repo's GitHub collaborators**. Holi defines no roles. The members panel is a read-only view of GitHub's truth, and "add someone" deep-links to GitHub.
+- **Authorization is GitHub's, at push time.** Holi performs **no** authorization checks — and that is the honest version of the old rule "the client is never trusted for authorization". Without a server, the way to keep that rule is to put no authorization in the client at all; a permission check running on the machine of the person it restricts is not a boundary, and shipping one would manufacture a false sense of protection.
+
+**What this costs:** Workspace-managed offboarding is gone, and removing someone stops future sync without reaching back to what they already cloned. Both were true of any git-backed system, and the second was true of the old design too the moment a working copy existed.
 
 ---
 
 ## 5. The agent
 
+Full design: [`prd/agent.md`](prd/agent.md).
+
 ### Runtime: interactive Claude in a PTY
-Electron main spawns **`claude`** in a **node-pty** PTY, pointed at the vault's working-copy dir with the user's own Claude auth (per-user cost attribution). Bytes stream to an **xterm.js** drawer in the renderer (write/resize/kill over IPC). This is the **live** surface — native Claude UX (permission prompts, plan mode, thinking, todos) at full fidelity, with no brittle stream-json parsing. (The old `login_pty` flow is the working template.) Rejected: a server-side/headless agent — remote TTY streaming, mixed per-user actions, and it forfeits the native interactive UX. Deep rationale: [`prd/agent.md`](prd/agent.md).
+Electron main spawns **`claude`** in a **node-pty** PTY, with the **vault clone** as its cwd and the user's own Claude auth (per-user cost attribution). Bytes stream to an **xterm.js** drawer in the renderer. This is the **live** surface — native Claude UX (permission prompts, plan mode, thinking, todos) at full fidelity, with no stream-json parsing. Rejected: a server-side/headless agent — which now has nowhere to run anyway.
 
 ### Config layering
 **Pure CC-native layering — Holi composes nothing and syncs no personal config:**
-- **Shared:** the vault working dir carries `.claude/` (persona SOUL/IDENTITY, shared skills/commands, `settings.json` with seeded permission defaults — §10), `AGENTS.md` (→ imported by a managed `CLAUDE.md` shim), and `MEMORY.md`. They sync because vault content syncs; CC picks them up from the cwd natively.
-- **Personal (machine-local, untouched):** the user's own `~/.claude` + `CLAUDE.local.md` + `USER.md`. Holi never reads, writes, or syncs these.
-- **Holi app settings:** `.holi/settings.json` (vault-wide, synced) + `.holi/settings.local.json` (machine-local override) — mirroring CC's own shared/local convention.
-
-**Why:** an earlier design *composed* a config dir per launch and ran a per-user config-sync subsystem — machinery CC already provides (§2). Cost accepted: personal agent config (the assistant's model of *you*) is per-machine and doesn't follow you across devices — deliberate; your setup travels the way every developer's does.
+- **Shared:** the repo carries `.claude/` (persona, shared skills/commands, `settings.json` with seeded permission defaults and the `UserPromptSubmit` hook), `AGENTS.md`, and `MEMORY.md`. They travel because they are **committed** — which is also how every developer already ships shared Claude config.
+- **Personal (machine-local):** the user's own `~/.claude` + `CLAUDE.local.md` + `USER.md`, plus `.holi/settings.local.json`. Holi never reads, writes, or syncs these.
+- **`.gitignore` is now what enforces personal privacy.** It used to be a server boundary; it is now a file, and the vault seed must carry it.
 
 ### Per-turn context
-A **`UserPromptSubmit` hook** (configured in the vault's `.claude/settings`) runs on every prompt and emits Holi's fresh context — active note, linked tasks, `USER.md`/`MEMORY.md` fill indicators. Claude appends it to context automatically. The base system prompt ships once via `--append-system-prompt` at launch. A hook rather than system-prompt-only because launch-time context goes stale as the user switches notes mid-session — and you can't transparently prepend text to what a user types into an interactive TUI; the hook is the native mechanism. (Ports the old `build_system_prompt` / `build_per_turn_prefix` content and the memory budgets/fill indicators.)
+A **`UserPromptSubmit` hook** runs on every prompt and emits Holi's fresh context — active note, linked tasks, memory fill indicators, and the vault's sync state. The base system prompt ships once via `--append-system-prompt` at launch. The hook now sources everything from the local filesystem, which removes the transport-and-auth question the old design carried: there is nothing to authenticate to.
 
-### MCP ops
-A **local MCP server in Electron main** exposes only the non-file ops — in v1 exactly **3**: **`task_set`**, **`task_list`**, **`note_rename`** (calendar/mail join in phase 2). Per-run bearer token (as before); ops proxy to the Syv tRPC API. Everything else is Claude's native `Read/Write/Edit/Bash/Glob/Grep` on working copies — any vault action that's "just a file op" needs no custom tool.
+### MCP ops: none
+**The MCP server is deleted.** The three v1 ops each lost their reason:
 
-- **Permissions:** Claude's native interactive prompts for file/bash + **server-side membership gating** on MCP ops (never skip-permissions; the vault `settings.json` seeds defaults like gated network egress). No bespoke safe/power_user modes.
-- **`note_rename`** is an op (not a native `mv`) because a rename must (a) preserve the CRDT Doc identity and (b) atomically rewrite `[[links]]` across affected docs — a server operation (§7).
+- `task_list` was a server query because full-vault file scans were forbidden; it is now `Glob **/task.*.md`, which is what the `task.` filename prefix exists to make cheap.
+- `task_set` existed because `status: done` was ambiguous for a recurring task; the ambiguity is resolved by convention, and the convention is safe — `done` rolls forward (Holi's watcher performs the roll whoever wrote the file), and ending a series means deleting `recurrence` from the frontmatter. The conservative reading is the default.
+- `note_rename` had to preserve CRDT Doc identity and rewrite links atomically; there is no Doc identity, so it is `git mv` plus a link rewrite, shipped as a **vault skill** in `.claude/`.
+
+**Cost accepted:** a skill-driven rename is not atomic and can miss a link. The fallback if that proves common is to expose the app's own rename as a slash command — not to resurrect an op surface.
+
+Phase 2's calendar and mail are the one category expected to need an MCP server again, because that data is not in the repo.
+
+### The agent as merge resolver
+This is the agent's one *new* structural role. When a pull conflicts, Holi hands the merge to the agent rather than to a three-pane diff UI — because a merge editor resolves conflicts *positionally*, which is the wrong level for prose and for YAML frontmatter, while an agent resolves on meaning, in a surface already open, and can ask. It operates inside git, mid-merge, on a repo whose pre-merge state is a commit; the worst case is `git merge --abort`.
 
 ### History: native `--resume`
-No custom history system. The drawer's history affordance relaunches **`claude --resume`** — CC's own session picker, replaying the full transcript in the terminal at perfect fidelity. No JSONL parsing, no reconstruction, no summarizer, no sync. Conversations stay on the machine that ran them. **Why:** a custom reconstruction would couple to CC's undocumented JSONL session format — the single most brittle subsystem in the earlier plan — while duplicating what CC does natively (§2). Cost accepted: no rich browse/search outside the terminal, no cross-device history.
+No custom history system. The drawer's history affordance relaunches **`claude --resume`** — CC's own session picker, replaying the transcript in the terminal at perfect fidelity. Conversations stay on the machine that ran them.
 
 ---
 
 ## 6. Tasks
 
-**Structured records on the server, projected into the vault as files** (revised 2026-07-14). The record is the truth — reminders must fire while every client is closed, recurrence rolls server-side, and boards need live cross-member queries, all of which force an authoritative structured record regardless of what sits on disk. Given the record exists anyway, a file projection is purely additive, and it buys the agent native `Read`/`Edit` (instead of an op surface), git-mirror presence, and remote-agent access.
+**A task is a markdown file.** Full design: [`prd/tasks.md`](prd/tasks.md).
 
-The old file-based complexity (the derived `area` phantom, orphan rescue, `source_file`-as-home) came from coupling task identity to a note's *path*, not from files as such — stable-ID refs already design it out. Deep rationale, the projection contract, and the presence-not-locks decision: [`prd/tasks.md`](prd/tasks.md). Shape (`packages/shared`):
+- **`task.<name>.md`**, living in the vault folder it is about. The **path is its identity**, its **folder is its swim lane**, and the filename prefix is what makes it a task — so one glob finds every task, and no note can accidentally become one.
+- **Frontmatter** carries `title, status, due, priority, tags, reminder, recurrence`; the body is the description.
 
 ```ts
+// packages/shared
 type Task = {
-  id: string
-  vaultId: string
-  title: string
+  path: string           // vault-relative — the identity
+  title: string          // frontmatter, falling back to the filename
   status: 'todo' | 'doing' | 'done'
-  area?: string            // stable folder ID (drives swim lanes) — settable; shown as path
-  due?: string             // YYYY-MM-DD
+  due?: string           // YYYY-MM-DD
   priority?: 'low' | 'medium' | 'high'
   tags: string[]
-  reminder?: string        // Nd | Nw | YYYY-MM-DDTHH:MM
+  reminder?: string      // Nd | Nw | YYYY-MM-DDTHH:MM
   recurrence?: Recurrence
-  related: RelatedRef[]    // unified: note | task | email | event — by STABLE ID, shown as path
-  createdAt: string; updatedAt: string
+  description: string    // the markdown body
 }
 ```
 
-- **Sync:** tasks change via tRPC mutations; the server pushes updates to vault members so boards are live. **No CRDT** — tasks are small structured records, last-writer-wins per field is fine, and character-merging YAML frontmatter can converge on invalid syntax with no writer able to reject it. Task files are therefore materialized from the record and **excluded from the CRDT/DocBridge path**.
-- **Server push — one SSE connection per signed-in *user*, carrying every vault they are in** (`GET /events`, `apps/server/src/events.ts`). Five channels: **`docs`**, **`tasks`**, **`reminders`**, **`presence`**, and **`membership`**. It was one connection per *vault* (`/events/<vaultId>`), and that shape was the cause of three bugs rather than a detail of them — the connection's identity was a vaultId, so anything about **you** rather than about one vault had nowhere to arrive: a stale file tree, a switcher that needed a restart to see a vault you were invited to, and undeliverable cross-vault reminders.
-  - **Every frame is an envelope, `{ vaultId, event }`.** No bus payload carries a vaultId — the key `docs:<vaultId>` always supplied it — and each shape is hand-mirrored in up to three client files, so widening them would spring the `presence` trap below. Multiplexing is a *transport* concern: the payload says **what** happened, the envelope says **where**.
-  - **Membership is the re-keying signal** (`user:<userId>`, the only user-keyed channel). A stream that resolved your vaults at connect would be stale the moment you were invited — the new vault's frames would go to a key nobody is listening on. It is also the one channel whose *payload* carries a vaultId, because its key names a user, so the vault is not in the key.
-  - **Auth is a subscription set, not an admission check.** No vault in the URL means no role to check: 401 is the only rejection. Authorization is unchanged everywhere else — `vaultProcedure`, `requireDocAccess` and the relay's `onAuthenticate` still gate per vault.
-  - **Main owns the one connection and the renderer never opens its own.** It filters `docs`/`tasks`/`presence` to the active vault and never filters `reminders`/`membership` — the latter two crossing vault boundaries is the entire point.
-  - `presence` is a *sibling* frame, deliberately **not** a `TasksEvent` variant: the desktop's `TaskProjector.applyTasksEvent` reads that union as `if (upserted) … else remove(taskId)`, so a third variant would fall into the `else` and **delete the task's file**. The same trap is why a frame for a non-active vault must never reach the projector.
-  - **No resume cursor** (no `id:` on the wire). Gap recovery is reconnect-then-reconcile: the mirror and projector re-read themselves, and the renderer refetches the tree and vault list on a `stream:resync` push.
-- **Every task mutation goes through one module** — `apps/server/src/tasks/mutations.ts` — called by both the tRPC router and the git ingester. It is where `recomputeReminder` + `bus.emitTasks` + `wakeEvaluator` live; a writer that touched the `tasks` table directly would fire no reminder and push no SSE, so no client would rewrite the file.
-- **File projection:** every task is also `tasks/<slug>-<id>.md` in the working copy (YAML frontmatter + markdown body = the `description`, a plain column). Record → file is a **rewrite** on any change; file → record is a **per-field patch**. Stale or unparseable writes lose and the file is rewritten from truth — no conflict UI. `rm` deletes the task (the same symmetry the vault mirror gives notes). Task files ride the git mirror, so remote agents read *and* write tasks. Concurrency safety is per-field LWW + a version check; concurrent *awareness* is **presence**, not locks.
-- **The `version` token is out-of-band** — never in the file. The desktop holds the version each file was rendered from in its `ProjectionStore`; git ingress needs no token at all, because a commit carries its own base blob and *is* its own diff base. In the frontmatter it would have made every reminder fire rewrite — and, once mirrored, **commit** — a file to change one integer.
-- **Board:** default **Todo/Doing/Done** with **swim lanes by `area`** (folder) and lane-depth; simple filter bar. No time-bucket mode / 10-bucket system in v1 — the old config space was the interaction-level source of "not intuitive enough"; a time-grouped secondary view may return post-v1 as an option.
-- **Recurrence & reminders:** the **rules** (grammar + roll-forward math) are pure functions in `packages/shared` — port the old, well-tested math. The **server** evaluates reminders and pushes fire events; clients raise native notifications. Roll-forward runs server-side on completion.
-- **Agent:** works tasks as **files** with its native tools (`Read`/`Edit`/`Glob`/`rm`). Only the two things a file write cannot express stay MCP ops — **`task_set`** (`status: done` is ambiguous for a recurring task: roll it forward, or end the series?) and **`task_list`** (filtering is a server query; no full-vault file scans). `task_new`/`task_get`/`task_link`/`task_delete` are retired. Membership-gated.
+- **What this deletes.** The record/projection split and everything it required: `ProjectionStore`, the version token, per-field patching, rewrite-from-truth, `RelatedRef`, `[[task:<id>]]` chips, task ids, `area` as a stored field, presence heartbeats, and the SSE `tasks` channel. All of it existed to reconcile a file with a record; there is no record.
+- **Board:** default **Todo/Doing/Done** with **swim lanes by folder**; a three-control filter bar. Virtual labels (`overdue`, `p1`–`p3`) are computed at render, never stored — storing them would mean a write at midnight, which is now a commit.
+- **Recurrence & reminders:** the **rules** stay pure functions in `packages/shared` (port the old, well-tested math). **A tray-resident Holi evaluates reminders locally**, catching up missed fires on launch. The delivered-watermark is machine-local and never committed — a fire that produced a commit is the same failure the old design kept the version token out of frontmatter to avoid.
+- **Concurrency** is the vault's ordinary git semantics: different files merge, different frontmatter lines merge, the same line conflicts and goes to reconcile. The old design refused to merge task YAML because a CRDT can converge on invalid syntax *with no writer able to reject it*; git is not a CRDT — it refuses rather than guesses, and the refusal is what makes agent-assisted resolution possible.
 
 ---
 
 ## 7. Notes, links, editor
 
-- **Editor:** CodeMirror 6 with **simple live-preview** (reveal-raw-on-caret, **no animation** — the View-Transition morph and its frozen-caret/gap-mark machinery are cut: the animation layer was fragile, and animating CM decorations pegs CodeMirror's measure loop on the main thread), plus a **`y-codemirror.next`** binding to the Doc's Yjs text and **remote cursors** from awareness. Keeps formatting hotkeys, wiki/markdown links, `@`-mentions, and the table widget + package. Cutting the morph erases the old "morph-vs-remote-edits" risk entirely — a remote edit just re-decorates. Deep rationale: [`prd/notes-editor.md`](prd/notes-editor.md).
-- **Wiki-links:** path-based `[[folder/note.md]]` — readable in raw markdown, so Claude can follow *and* author them naturally (opaque stable-ID links like `[[doc:…]]` were rejected for this reason). One parser in `packages/shared` (ports `vaultRefs.ts`); thin renderers in editor/chat.
-- **Rename:** `note_rename` op → server rewrites the path + all referencing `[[links]]` in one atomic pass over the affected CRDT docs. The seam principle — **machine references use stable IDs; human prose uses paths** — makes this a **docs-only** operation: task records reference docs by stable ID, so they need no rewrite. Backrefs and delete-with-references surfacing are server queries over doc content + the link index. Deletes render **tombstones** on dangling refs, no cascades.
-- **Folder hierarchy:** vaults have real paths/folders (needed for links, the file tree, and task `area`). Folder structure is server metadata; folders carry stable IDs.
-- **Daily notes:** keep the old **untouched-stub heuristic** (an empty daily is not archived) — port it. Details: [`prd/daily-notes.md`](prd/daily-notes.md).
+Full design: [`prd/notes-editor.md`](prd/notes-editor.md).
+
+- **Editor:** CodeMirror 6 with **simple live-preview** (reveal-raw-on-caret, **no animation** — the View-Transition morph and its frozen-caret/gap-mark machinery stay cut: the layer was fragile, and animating CM decorations pegs CodeMirror's measure loop on the main thread). It is now **file-backed**: it reads the file, autosaves on idle or ⌘S, and handles external writes with a 3-way merge. The `y-codemirror.next` binding, remote cursors, and awareness are gone with the relay.
+- **Wiki-links:** path-based `[[folder/note.md]]` — readable in raw markdown, so Claude can follow *and* author them naturally. One parser in `packages/shared`. This is now the **only** link grammar: `[[task:<id>]]` died with task ids, so a link to a task is a link to a file.
+- **Rename:** move the file and rewrite inbound links in one local pass, rejecting an existing destination *before* moving anything. There is no transaction and there cannot be one — but every step is a file write inside a git repo, so the commit before the rename is a complete restore point and a half-finished rename shows up in `git status` rather than hiding in a database.
+- **Backrefs:** a grep. The `link_index` existed to avoid a full-disk scan on a server holding many vaults; a local vault greps in milliseconds, and an index would be a second copy of the truth that can go stale.
+- **Daily notes:** keep the untouched-stub heuristic and the `journal/` archive. Creation is now `if (!exists) write(seed)` — and because the path *and the seed bytes* are deterministic, two of your devices creating it offline produce an identical blob that git merges silently. Details: [`prd/daily-notes.md`](prd/daily-notes.md).
 
 ---
 
-## 8. Data model (server, Postgres)
+## 8. Data model
 
-Indicative tables (detailed in [`prd/server-data.md`](prd/server-data.md)):
+**There isn't one.** The vault is a directory of markdown files; there is no database, no schema, and no migrations.
 
-- `users` — Google identity, profile.
-- `vaults` — id, name, kind (personal|shared), owner, theme, created/updated.
-- `memberships` — (vault, user, role).
-- `docs` — id, vault, path, kind (note|daily), timestamps. (CRDT state in `yjs_docs`/snapshots.)
-- `yjs_docs` / `yjs_snapshots` — Yjs binary state + history timeline.
-- `tasks` — the Task record (§6).
-- `reminders` — derived/scheduled fire times for server-side evaluation.
-- `per_user_state` — (user, vault, key) → value: **UI prefs only** (personal agent config — USER.md, personal skills — is machine-local, never synced).
-- `link_index` *(optional/derived)* — for fast backrefs/rename without full scans.
+What state exists outside the repo is machine-local and small:
 
-*(No conversation store: chat history is local/per-machine — never in Postgres.)*
+- **OS keychain** — the GitHub token.
+- **`.holi/settings.local.json`** (gitignored, per vault) — reminder delivery watermark, UI prefs, machine-local overrides.
+- **`.holi/settings.json`** (committed, per vault) — vault-wide app settings.
+- **App-level config** — the vault registry: which repos are added, and where they are cloned. A *machine* fact, not an account fact; a second laptop starts empty.
 
-Object storage (Hetzner): archived original binaries from import conversion, doc snapshots/backups.
+*(No conversation store: chat history is Claude Code's, local per machine.)*
 
 ---
 
-## 9. Client architecture (ports from old frontend)
+## 9. Client architecture
 
-- **State:** Jotai single-store, action atoms for multi-atom side effects, hooks mounted once in the app shell. Ports directly (renderer-only).
-- **IPC seam:** the old app funneled all IPC through two files (`_invoke.ts`, `events.ts`). Same discipline here: one **preload/contextBridge** module wraps `ipcRenderer.invoke`/events; tRPC client for server calls. Swappable seam, untouched call sites.
-- **UI system:** the `tone`/`variant`/`shape`/`size` cva primitives, `tokens.css` typography tiers, `cn()`/tailwind-merge — port verbatim (platform-agnostic React).
-  - **NOT PORTED (verified 2026-07-16)** — there is no `ui/` directory and no `cva` in the renderer; it is raw Tailwind throughout. Deliberately deferred at the desktop foundation until the UI grows past what raw Tailwind carries comfortably, and still deferred. The port itself is unchanged in scope; only its timing moved.
-- **App shell:** single-window, atom-driven view model (board ↔ editor), drawers/dialogs as summoned modals, hosts at root. Decompose the old 647-line `App.tsx`. **One forward-looking constraint:** the pane/tab system must not assume tabs are notes — post-v1 **vault apps** ([`prd/vault-apps.md`](prd/vault-apps.md)) open as first-class app tabs (sandboxed webviews with a `holi.*` bridge and Yjs-backed multiplayer state).
+- **State:** Jotai single-store, action atoms for multi-atom side effects, hooks mounted once in the app shell.
+- **IPC seam:** one **preload/contextBridge** module wraps `ipcRenderer.invoke`/events; the renderer reaches main through a **tRPC-over-IPC** link. This seam survives the pivot intact and is what makes the rebuild tractable: the renderer keeps calling a typed router, and the router's *implementation* moves from "proxy to the Syv server" to "read and write the clone". The signatures change — identity moves from `docId`/`vaultId` to paths — but the shape does not.
+- **A store loaded by whoever renders it will fail silently.** Vault-scoped stores (the tree, the task set) mount in the app shell with the lifetime of the active vault, never inside the surface that happens to read them first — a second consumer cannot tell an unloaded store from an empty one, and the failure looks like data loss.
+- **UI system:** the `tone`/`variant`/`shape`/`size` cva primitives and `tokens.css` typography tiers port from the old frontend.
+  - **NOT PORTED (verified 2026-07-16)** — there is no `ui/` directory and no `cva` in the renderer; it is raw Tailwind throughout. Deliberately deferred until the UI grows past what raw Tailwind carries comfortably, and still deferred.
+- **App shell:** single-window, atom-driven view model, drawers/dialogs as summoned modals. **One forward-looking constraint:** the pane/tab system must not assume tabs are notes — post-v1 **vault apps** ([`prd/vault-apps.md`](prd/vault-apps.md)) open as first-class app tabs. Design in [`prd/notes-editor.md`](prd/notes-editor.md) §Panes & tabs.
+- **Tray residency.** Holi launches at login and lives in the tray, because that is what makes local reminder evaluation a real feature rather than a promise.
 
 ---
 
 ## 10. Security boundaries
 
-- **Path safety** (`packages/shared`): reimplement the `resolve_relative` / `VaultPath` containment logic **test-first** — reject `..`/absolute/NUL, canonicalize through the closest existing ancestor, reassert containment. Guards the file bridge and any path from the agent/renderer. Security-critical; treat as a first-class module, not an afterthought.
-- **Renderer isolation:** `contextIsolation: true`, no `nodeIntegration`; the renderer reaches main only through the preload bridge.
-- **Agent posture:** trust boundary = vault membership (a small all-developer company; members are trusted colleagues — and a member's agent has no authority the member lacks). CC's native permission prompts stay on (never skip-permissions); the vault's shared `.claude/settings.json` seeds permission defaults (network-egress commands gated); MCP ops are membership-gated server-side (the authoritative boundary); snapshots/history (§3) are the recovery story — server truth means local wreckage always re-materializes. Prompt injection via shared content is a documented residual risk — no bespoke sandboxing in v1 (rejected: sandboxed-bash by default — friction on legit dev tasks; it gets turned off).
+- **Path safety** (`packages/shared`): the `resolve_relative` / `VaultPath` containment logic — reject `..`/absolute/NUL, canonicalize through the closest existing ancestor, reassert containment. Implemented **test-first**. It is **more** load-bearing than before: it is now the only thing between a path and the user's filesystem, where server-side authorization used to be a second line.
+- **Renderer isolation:** `contextIsolation: true`, no `nodeIntegration`; the renderer reaches main only through the preload bridge, and never holds the GitHub token.
+- **Agent posture:** trust boundary = repo access (a small all-developer company; members are trusted colleagues, and a member's agent has no authority the member lacks). CC's native permission prompts stay on (never skip-permissions); the vault's shared `.claude/settings.json` seeds permission defaults. **Git history is the recovery story** — and a better one than the snapshot timeline it replaces, because `git revert` is a command the user already knows.
+  - **The blast radius grew in one specific way and should be named:** the vault directory is now a git repo with a push credential reachable from it, so a destructive git command is expressible where the client previously had no `.git` at all. Bounded by native permission prompts, a Holi-managed clone containing nothing else, and branch protection on the remote. **Not** bounded by blocklisting git from the agent — it needs git for reconcile, and a blocklist the reconcile flow must punch through is not a boundary.
+- **Token scope:** a `repo` grant reaches every repo the user has, not just their vaults — inherent to a desktop client acting as the user. Mitigated by keychain storage, main-process confinement, and documenting fine-grained PATs as the tighter option.
+- **Prompt injection via shared content** is a documented residual risk — no bespoke sandboxing in v1 (rejected: sandboxed-bash by default — friction on legit dev tasks; it gets turned off).
 - **Theme injection:** if per-vault theme CSS is injected into a privileged context, validate it (parse, not substring-blocklist) or inject into a sandboxed context — the old substring validator was the weak point.
-- **Server authz:** every tRPC + Yjs connection checked against membership; non-members rejected, owner-only actions gated to owners. No read-only role — every member connection is read-write.
 
 ---
 
-## 11. Build & deploy (indicative)
+## 11. Build & deploy
 
-- **Client:** Electron + Vite + React; packaged with electron-builder (dmg/nsis/AppImage).
-- **Server:** Node/TS service (Hocuspocus + tRPC + Postgres), Syv-hosted on **Hetzner** (containerized; Hetzner object storage for archives/backups).
-- **Shared:** `packages/shared` consumed by both; no codegen — types are the source.
-- **Dev:** `pnpm dev` runs the server + the desktop app; one install for the workspace.
+- **Client:** Electron + Vite + React; packaged with electron-builder (dmg/nsis/AppImage). **This is the entire deployment.**
+- **Shared:** `packages/shared`, consumed by the desktop app; no codegen.
+- **Dev:** `pnpm dev` runs the desktop app. No database, no Docker, no compose file.

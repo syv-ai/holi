@@ -13,7 +13,7 @@ Turn any Holi markdown doc into a **branded syv.ai document** by rendering it th
 - A set of **syv.ai Typst templates** (letter, report, memo, proposal…) with company branding (logo, fonts, colors — reusing the vault theme tokens where sensible).
 - **Export flow:** pick a doc → pick a template → map/confirm metadata (title, author, date, recipient) → render → preview → download/save the PDF (and optionally the `.typ` source).
 - Markdown → Typst conversion: headings, emphasis, lists, tables, code, images, links, blockquotes. Decide handling for wiki-links (resolve to text/title) and embeds.
-- Templates are **shared vault assets** (tier-1) so a team exports consistently; possibly per-vault template sets.
+- Templates are **committed vault content** so a team exports consistently; possibly per-vault template sets.
 - Agent-invokable: the assistant can "export this as a syv proposal" (an MCP op or a skill).
 
 ## Non-goals (phase 2)
@@ -21,11 +21,11 @@ Turn any Holi markdown doc into a **branded syv.ai document** by rendering it th
 - Round-tripping Typst back into markdown.
 
 ## Open questions
-- Where rendering runs: server-side Typst service (consistent fonts/assets, no local install) vs bundled in the client. Recommend **server-side** for brand-asset consistency — confirm.
-- Template authoring/versioning: who edits templates, how they're distributed to vaults.
+- **Where rendering runs.** The old recommendation was a server-side Typst service for consistent fonts and brand assets; there is no server. Options: bundle the Typst binary with the app (consistent, bigger installer), shell out to a user-installed `typst` (every user is a developer, so plausible), or commit the brand assets into the vault and render locally. Leaning: bundle, because brand consistency is the whole point of the feature.
+- Template authoring/versioning: who edits templates, how they're distributed to vaults (a shared "brand" repo, cloned as a vault?).
 - Metadata model: front-matter fields the templates consume; how much is inferred vs prompted.
 - Wiki-link / task-embed / image resolution during conversion.
 - Output targets beyond PDF (e.g. Typst source, or Google Docs export).
 
 ## Dependencies
-notes-editor (source docs, markdown pipeline), server-data (a Typst render service + template storage; object storage for outputs), agent (export op/skill), vaults-collaboration (templates as shared vault assets), + the phase-2 theme tokens.
+[`notes-editor.md`](notes-editor.md) (source docs, markdown pipeline), [`agent.md`](agent.md) (export as a vault skill), [`vaults-sync.md`](vaults-sync.md) (templates as committed vault content), + the phase-2 theme tokens.

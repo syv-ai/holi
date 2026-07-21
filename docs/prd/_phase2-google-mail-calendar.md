@@ -4,17 +4,20 @@
 > **Mailspring is dead** — it was only ever chosen for OSS/extensibility and is being abandoned. This feature is rebuilt natively on **Google APIs**.
 
 ## Summary
-Let employees sync their **@syv.ai Gmail and Google Calendar** into Holi — read their mail/threads and calendar events, and link them to tasks and notes. Because identity is already **Google Workspace SSO** (see [auth-identity](auth-identity.md)), this rides the same OAuth: no separate mail client, no bridge, no handshake.
+Let employees sync their **@syv.ai Gmail and Google Calendar** into Holi — read their mail/threads and calendar events, and link them to tasks and notes.
+
+**This now needs its own Google OAuth grant.** Sign-in is GitHub ([`auth-identity.md`](auth-identity.md)), so there is no existing Google consent to ride on and no server to hold a refresh token — Google auth becomes a **per-user, per-machine desktop OAuth flow** with the token in the OS keychain, alongside the GitHub one. That is a real addition this stub previously got for free, and it is shared with the **Google Drive integration** [`../vision.md`](../vision.md) names.
 
 ## Why this shape
-- Syv is a Google-Workspace company; @syv.ai mail and calendar are Google. Using the **Gmail API + Google Calendar API** under the existing SSO grant (incremental scopes) is the on-brand, lowest-friction path — and replaces the entire Mailspring plugin/HTTP/SSE bridge with standard API calls.
-- Aligns with the existing Google Drive integration thinking (BYO scopes, multi-account) — a shared "Google connector" story.
+- Syv is a Google-Workspace company; @syv.ai mail and calendar are Google. Using the **Gmail API + Google Calendar API** directly replaces the entire Mailspring plugin/HTTP/SSE bridge with standard API calls.
+- **Build the Google connector once** — Drive, Gmail, and Calendar are one auth surface and should share it.
+- **This is where an MCP server legitimately returns.** Mail and calendar are external services, not files in the repo, so they are the one category the "no ops, it's all files" rule does not cover ([`agent.md`](agent.md)).
 
 ## Goals
 - OAuth incremental consent for Gmail (readonly + send) and Calendar (readonly + events) scopes.
 - Read: list/search threads, read a thread; list calendars, list events (agenda).
-- Link: attach an email or a calendar event to a **task** or **note** (`related[]`), like the old app's email/event task-seeding — but on Google data.
-- Agent MCP ops for mail + calendar — the MCP surface is minimal and native-first, and these are the two ops that are external services rather than plain files (see the [agent PRD](agent.md)).
+- Link: attach an email or a calendar event to a **task** or **note**. How — a frontmatter field, or a URL in the body — is open; `related[]` no longer exists ([`tasks.md`](tasks.md)).
+- Agent MCP ops for mail + calendar (see above).
 - Reminders/agenda: create a task from an event; task lights up for a recurring event series.
 
 ## Non-goals (phase 2)
@@ -22,10 +25,11 @@ Let employees sync their **@syv.ai Gmail and Google Calendar** into Holi — rea
 - Persisting mail/calendar as vault content (keep Google as source of truth; cache transiently, like the old "Holi never persists mail").
 
 ## Open questions
+- **Desktop Google OAuth without a server.** A confidential client secret can't ship. Loopback + PKCE is the native-app pattern and works, but confirm Google's rules for the required scopes.
 - Scope minimization + Google verification/review for the added scopes.
-- Per-user (each employee's own mailbox) — confirms tier-2; how the agent's mail/calendar ops scope to the acting user.
-- Multi-account (personal + syv.ai)? The old Drive design wanted multi-account — decide if mail/calendar follows.
-- Push/watch (Gmail push notifications, Calendar watch) vs polling.
+- Multi-account (personal + syv.ai)?
+- Push/watch (Gmail push notifications, Calendar watch) vs polling — polling is the likely answer with no server to receive a webhook.
+- How an email/event link is represented in a task file now that `related[]` is gone.
 
 ## Dependencies
-auth-identity (Google OAuth, incremental scopes), agent (mail/calendar MCP ops), tasks (related[] to email/event; create-from-event), server-data (token storage, transient cache).
+[`auth-identity.md`](auth-identity.md) (a second OAuth provider alongside GitHub, keychain token storage), [`agent.md`](agent.md) (the returning MCP surface), [`tasks.md`](tasks.md) (linking an email/event to a task; create-from-event).
