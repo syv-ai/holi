@@ -96,6 +96,26 @@ export function ensureAskpass(): Promise<string> {
 
 export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath'> {}
 
+export interface RepoStatus {
+  branch: string
+  /** `origin/HEAD`'s target, or null when the remote has none. FR-2: Holi syncs
+   * this branch and no other. */
+  defaultBranch: string | null
+  ahead: number
+  behind: number
+  dirty: boolean
+  /** A merge is in progress — the state a reconcile runs inside. */
+  merging: boolean
+  detached: boolean
+  /** No commits yet. A repo "New vault" just created is one. */
+  unborn: boolean
+}
+
+export interface GitRepo {
+  readonly root: string
+  status(): Promise<RepoStatus>
+}
+
 /** The result of a command allowed to fail. */
 export interface GitOutcome {
   ok: boolean
@@ -166,4 +186,105 @@ export async function tryGit(
       },
     )
   })
+}
+
+/**
+ * A vault's clone, as an object you can ask questions of.
+ *
+ * Every method here is a git invocation — nothing is cached. A vault is written
+ * to by Holi, by the user's editor, and by the agent's `Bash`, so a cache would
+ * be a fourth opinion about a repo three other things are changing.
+ */
+export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
+  const opts: RunOpts = { token: deps.token, gitPath: deps.gitPath }
+
+  /**
+   * `git status --porcelain=v2 --branch -z`, and nothing else.
+   *
+   * Porcelain v2's `# branch.*` headers carry everything the vault indicator
+   * needs, and the entry lines that follow are the dirtiness. `-z` makes the
+   * record separator NUL, which matters: a path containing a newline would
+   * corrupt a line-based parse, and git will happily track one.
+   */
+  async function status(): Promise<RepoStatus> {
+    const raw = await runGit(
+      root,
+      ['status', '--porcelain=v2', '--branch', '--untracked-files=all', '-z'],
+      opts,
+    )
+
+    let branch = ''
+    let ahead = 0
+    let behind = 0
+    let detached = false
+    let unborn = false
+    let dirty = false
+
+    for (const record of raw.split('\0')) {
+      if (record === '') continue
+      if (!record.startsWith('# ')) {
+        // Any entry at all — changed, untracked or unmerged — means dirty.
+        dirty = true
+        continue
+      }
+      const [key, ...rest] = record.slice(2).split(' ')
+      const value = rest.join(' ')
+      if (key === 'branch.oid') {
+        // A repo with no commits reports the literal `(initial)` here — NOT
+        // `(unborn)` in branch.head, which is what it looks like it should do.
+        // branch.head still carries the branch name in that state.
+        unborn = value === '(initial)'
+      } else if (key === 'branch.head') {
+        if (value === '(detached)') detached = true
+        else branch = value
+      } else if (key === 'branch.ab') {
+        // Present only when the branch has an upstream. Absent is not a parse
+        // failure — it means "nothing to compare against", i.e. zero both ways.
+        const [a, b] = value.split(' ')
+        ahead = Number(a?.replace('+', '') ?? 0)
+        behind = Math.abs(Number(b ?? 0))
+      }
+    }
+
+    // An unborn or detached HEAD still has a branch name worth reporting, and
+    // porcelain does not give one — ask the plumbing directly.
+    if (branch === '') {
+      branch = await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD'], opts).catch(() => '')
+      if (branch === 'HEAD' || branch === '') {
+        branch = (await runGit(root, ['symbolic-ref', '--short', 'HEAD'], opts).catch(() => '')) || branch
+      }
+    }
+
+    return {
+      branch,
+      defaultBranch: await defaultBranch(),
+      ahead,
+      behind,
+      dirty,
+      merging: await isMerging(),
+      detached,
+      unborn,
+    }
+  }
+
+  /** What `origin/HEAD` points at. Null when the remote never published one —
+   * a local-only or freshly initialised repo. */
+  async function defaultBranch(): Promise<string | null> {
+    const ref = await runGit(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], opts).catch(
+      () => null,
+    )
+    return ref === null ? null : ref.replace(/^origin\//, '')
+  }
+
+  /** MERGE_HEAD is git's own record that a merge is underway. Asked via
+   * `rev-parse` rather than by stat-ing `.git/MERGE_HEAD`, because `.git` is a
+   * file rather than a directory in a worktree or submodule. */
+  async function isMerging(): Promise<boolean> {
+    const out = await runGit(root, ['rev-parse', '--verify', '--quiet', 'MERGE_HEAD'], opts).catch(
+      () => '',
+    )
+    return out !== ''
+  }
+
+  return { root, status }
 }

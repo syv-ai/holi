@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterAll, describe, expect, it } from 'vitest'
-import { GitError, GitMissingError, ensureAskpass, runGit } from '../src/main/git'
+import { GitError, GitMissingError, ensureAskpass, openRepo, runGit, tryGit } from '../src/main/git'
 
 const exec = promisify(execFile)
 
@@ -84,6 +84,84 @@ export async function commitFile(repo: string, rel: string, text: string): Promi
   await plainGit(repo, ['add', '-A'])
   await plainGit(repo, ['commit', '-m', `write ${rel}`])
 }
+
+describe('status', () => {
+  it('reports a fresh clone as clean, in step, on the default branch', async () => {
+    const repo = openRepo(await makeClone(await makeRemote()))
+    expect(await repo.status()).toEqual({
+      branch: 'main',
+      defaultBranch: 'main',
+      ahead: 0,
+      behind: 0,
+      dirty: false,
+      merging: false,
+      detached: false,
+      unborn: false,
+    })
+  })
+
+  it('reports an edited file as dirty', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'README.md'), '# Changed\n', 'utf8')
+    expect((await openRepo(dir).status()).dirty).toBe(true)
+  })
+
+  it('reports an untracked file as dirty — a new note must reach the commit', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'new-note.md'), 'hi\n', 'utf8')
+    expect((await openRepo(dir).status()).dirty).toBe(true)
+  })
+
+  it('counts commits waiting to publish', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'a\n')
+    await commitFile(dir, 'b.md', 'b\n')
+    const status = await openRepo(dir).status()
+    expect(status.ahead).toBe(2)
+    expect(status.behind).toBe(0)
+  })
+
+  it('counts commits waiting to arrive', async () => {
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'theirs.md', 'theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+
+    await runGit(dir, ['fetch', 'origin'])
+    expect((await openRepo(dir).status()).behind).toBe(1)
+  })
+
+  it('survives a repo with no commits at all', async () => {
+    // "New vault" creates an empty GitHub repo and walks straight into this.
+    const base = await tmp('holi-git-unborn-')
+    const dir = join(base, 'fresh')
+    await exec('git', ['init', '-b', 'main', dir])
+    const status = await openRepo(dir).status()
+    expect(status.unborn).toBe(true)
+    expect(status.branch).toBe('main')
+  })
+
+  it('reports a detached HEAD, which FR-2 refuses to sync', async () => {
+    const dir = await makeClone(await makeRemote())
+    await plainGit(dir, ['checkout', '--detach', 'HEAD'])
+    expect((await openRepo(dir).status()).detached).toBe(true)
+  })
+
+  it('reports a merge in progress', async () => {
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'README.md', '# Theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await commitFile(dir, 'README.md', '# Ours\n')
+    await runGit(dir, ['fetch', 'origin'])
+    // Left mid-merge on purpose — this is the state a reconcile runs inside.
+    await tryGit(dir, ['merge', '--no-edit', 'origin/main'])
+
+    expect((await openRepo(dir).status()).merging).toBe(true)
+  })
+})
 
 describe('runGit', () => {
   it('runs a command in the given repo and returns its stdout', async () => {

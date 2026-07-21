@@ -242,7 +242,7 @@ This is the load-bearing task. FR-10 and FR-12 both live here.
 - [ ] **Step 2: Run and watch fail**
 - [ ] **Step 3: Implement**
 
-`git fetch origin`, then `git merge --no-rebase --no-edit origin/<defaultBranch>`. On non-zero exit, read conflicted paths from `git diff --name-only --diff-filter=U -z`, run `git merge --abort`, and return them. Count merged commits with `git rev-list --count HEAD@{1}..HEAD` or by comparing before/after shas.
+`git fetch origin`, then `git merge --no-edit origin/<defaultBranch>`. **Not `--no-rebase`** — that is a `git pull` option and `git merge` rejects it with a usage error; an explicit fetch-then-merge is inherently a merge, which is also why it is two observable steps rather than a `pull`. On non-zero exit, read conflicted paths from `git diff --name-only --diff-filter=U -z`, run `git merge --abort`, and return them. Count merged commits with `git rev-list --count HEAD@{1}..HEAD` or by comparing before/after shas.
 
 - [ ] **Step 4: Run and watch pass**
 - [ ] **Step 5: Commit** — `feat(desktop): pull merges, and a conflict aborts before it can be committed`
