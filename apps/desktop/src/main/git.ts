@@ -126,9 +126,20 @@ export type PushResult =
   | { kind: 'nothing-to-push' }
   | { kind: 'rejected'; reason: 'permission' | 'non-fast-forward' }
 
+export interface Commit {
+  sha: string
+  subject: string
+  /** ISO 8601, author date. */
+  date: string
+  author: string
+}
+
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
+  /** The vault's history — which IS git history (`prd/vaults-sync.md` §History).
+   * `path` follows a file through renames. */
+  log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   push(): Promise<PushResult>
@@ -325,6 +336,37 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     }
   }
 
+  /**
+   * The file's — or the vault's — history. There is no snapshot store; git's
+   * object store is the snapshot store, and autosave commits are what give it
+   * resolution.
+   *
+   * Fields are delimited with **US (0x1f)** and records with NUL, neither of
+   * which a human can type into a commit subject. A subject is arbitrary user
+   * text, so delimiting on anything typeable — a tab, a pipe — would let a
+   * commit message corrupt the parse of the log it appears in.
+   */
+  async function log(o: { path?: string; limit?: number } = {}): Promise<Commit[]> {
+    const args = ['log', '-z', '--format=%H%x1f%s%x1f%aI%x1f%an']
+    if (o.limit !== undefined) args.push(`-n${o.limit}`)
+    // `--follow` needs exactly one pathspec, and must precede the `--`.
+    if (o.path !== undefined) args.push('--follow', '--', o.path)
+
+    // A repo with no commits makes `git log` fail rather than print nothing.
+    // That is not an error here: a brand-new vault simply has no history yet.
+    const raw = await runGit(root, args, opts).catch(() => '')
+
+    return raw
+      .split('\0')
+      .filter((record) => record !== '')
+      .map((record) => {
+        const [sha = '', subject = '', date = '', author = ''] = record.split('\x1f')
+        // `-z` leaves a newline between records in some git versions; the sha is
+        // fixed-width and leads, so trimming it is enough to normalise.
+        return { sha: sha.trim(), subject, date, author }
+      })
+  }
+
   /** FR-20. A no-op when no merge is in progress, so the control can be pressed
    * twice without turning into an error. */
   async function abortMerge(): Promise<void> {
@@ -476,5 +518,5 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, commitAll, pull, push, publish, abortMerge }
+  return { root, status, log, commitAll, pull, push, publish, abortMerge }
 }

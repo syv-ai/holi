@@ -470,6 +470,88 @@ describe('publish', () => {
   })
 })
 
+describe('log', () => {
+  it('returns commits newest first, with sha, subject, date and author', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'a\n')
+
+    const [head, ...rest] = await openRepo(dir).log()
+    expect(head!.subject).toBe('write a.md')
+    expect(head!.sha).toMatch(/^[0-9a-f]{40}$/)
+    expect(head!.author).toBe('Holi Test')
+    expect(head!.date).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(rest[0]!.subject).toBe('seed')
+  })
+
+  it('follows a file through a rename', async () => {
+    // The history PRD promises the open file's timeline survives a rename, and
+    // a rename is how a note moves lanes.
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'old.md', 'content\n')
+    await plainGit(dir, ['mv', 'old.md', 'new.md'])
+    await plainGit(dir, ['commit', '-m', 'rename old.md to new.md'])
+
+    const history = await openRepo(dir).log({ path: 'new.md' })
+    expect(history.map((c) => c.subject)).toEqual(['rename old.md to new.md', 'write old.md'])
+  })
+
+  it('respects the limit', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'a\n')
+    await commitFile(dir, 'b.md', 'b\n')
+    expect(await openRepo(dir).log({ limit: 1 })).toHaveLength(1)
+  })
+
+  it('handles a subject containing the separator it is delimited with', async () => {
+    // A commit subject is user text and can contain anything. Splitting on a
+    // character a human can type would corrupt the parse.
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'Update a.md\twith\ttabs and | pipes'])
+
+    expect((await openRepo(dir).log({ limit: 1 }))[0]!.subject).toBe(
+      'Update a.md\twith\ttabs and | pipes',
+    )
+  })
+
+  it('returns an empty list for a repo with no commits, rather than throwing', async () => {
+    const base = await tmp('holi-git-nolog-')
+    const dir = join(base, 'fresh')
+    await exec('git', ['init', '-b', 'main', dir])
+    expect(await openRepo(dir).log()).toEqual([])
+  })
+})
+
+describe('abortMerge', () => {
+  it('restores a clean tree from mid-merge', async () => {
+    const remote = await makeRemote()
+    const dir = await makeClone(remote)
+    const teammate = await makeClone(remote, 'teammate')
+    await commitFile(teammate, 'README.md', '# Theirs\n')
+    await plainGit(teammate, ['push', 'origin', 'main'])
+    await commitFile(dir, 'README.md', '# Ours\n')
+    await runGit(dir, ['fetch', 'origin'])
+    await tryGit(dir, ['merge', '--no-edit', 'origin/main'])
+
+    const repo = openRepo(dir)
+    expect((await repo.status()).merging).toBe(true)
+    await repo.abortMerge()
+
+    const after = await repo.status()
+    expect(after.merging).toBe(false)
+    expect(after.dirty).toBe(false)
+    // FR-20: the pre-merge state is a commit, so nothing was ever at risk.
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Ours\n')
+  })
+
+  it('is a no-op when no merge is in progress', async () => {
+    // The control can be pressed twice without turning into an error.
+    const repo = openRepo(await makeClone(await makeRemote()))
+    await expect(repo.abortMerge()).resolves.toBeUndefined()
+  })
+})
+
 describe('runGit', () => {
   it('runs a command in the given repo and returns its stdout', async () => {
     const repo = await makeClone(await makeRemote())
