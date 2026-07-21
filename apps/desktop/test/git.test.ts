@@ -12,7 +12,7 @@
  * bare repo plays the teammate.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -216,6 +216,118 @@ describe('commitAll', () => {
       env: { HOME: base, USERPROFILE: base, GIT_CONFIG_GLOBAL: join(base, 'nonexistent') },
     })
     expect(await repo.commitAll('Update a.md')).not.toBeNull()
+  })
+})
+
+describe('pull', () => {
+  /** Us and a teammate, both cloned from the same remote. */
+  async function pair() {
+    const remote = await makeRemote()
+    return { ours: await makeClone(remote), theirs: await makeClone(remote, 'teammate') }
+  }
+
+  async function publish(repo: string, rel: string, text: string) {
+    await commitFile(repo, rel, text)
+    await plainGit(repo, ['push', 'origin', 'main'])
+  }
+
+  it('is up-to-date when the remote has not moved', async () => {
+    const { ours } = await pair()
+    expect(await openRepo(ours).pull()).toEqual({ kind: 'up-to-date' })
+  })
+
+  it('brings a teammate’s work in without anyone remembering anything', async () => {
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'theirs.md', 'their note\n')
+
+    expect(await openRepo(ours).pull()).toEqual({ kind: 'merged', commits: 1 })
+    expect(await readFile(join(ours, 'theirs.md'), 'utf8')).toBe('their note\n')
+  })
+
+  it('merges when both sides changed different files', async () => {
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'theirs.md', 'theirs\n')
+    await commitFile(ours, 'ours.md', 'ours\n')
+
+    expect((await openRepo(ours).pull()).kind).toBe('merged')
+    expect(await readFile(join(ours, 'theirs.md'), 'utf8')).toBe('theirs\n')
+    expect(await readFile(join(ours, 'ours.md'), 'utf8')).toBe('ours\n')
+  })
+
+  /** A task's frontmatter, with one field swapped. */
+  const taskFile = (over: Partial<Record<string, string>> = {}) => {
+    const f = { title: 'A', status: 'todo', due: '2026-08-01', tags: '[x]', priority: 'low', ...over }
+    return `---\ntitle: ${f.title}\nstatus: ${f.status}\ndue: ${f.due}\ntags: ${f.tags}\npriority: ${f.priority}\n---\n`
+  }
+
+  it('merges two edits to the same file when the changed lines are apart', async () => {
+    // prd/tasks.md §Concurrency: two people editing different fields of one
+    // task both survive. True — with the caveat pinned by the next test.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'task.a.md', taskFile())
+    await openRepo(ours).pull()
+
+    await publish(theirs, 'task.a.md', taskFile({ priority: 'high' })) // line 6
+    await commitFile(ours, 'task.a.md', taskFile({ due: '2026-09-09' })) // line 4
+
+    expect((await openRepo(ours).pull()).kind).toBe('merged')
+    const merged = await readFile(join(ours, 'task.a.md'), 'utf8')
+    expect(merged).toContain('priority: high') // theirs
+    expect(merged).toContain('due: 2026-09-09') // ours
+  })
+
+  it('CONFLICTS when the two changed lines are adjacent, even though the fields differ', async () => {
+    // Not a bug — git's merge needs at least one unchanged line between two
+    // changes to treat them as independent hunks. Adjacent edits overlap.
+    //
+    // This narrows a promise in prd/tasks.md §Concurrency ("two people editing
+    // different fields of the same task ... both survive"): it holds only when
+    // the fields are not neighbours, and in a five-line frontmatter block
+    // neighbours are the common case. `status` and `due` are adjacent in the
+    // PRD's own example format, and are the two fields most likely to be edited
+    // by two people at once.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'task.a.md', taskFile())
+    await openRepo(ours).pull()
+
+    await publish(theirs, 'task.a.md', taskFile({ status: 'doing' })) // line 3
+    await commitFile(ours, 'task.a.md', taskFile({ due: '2026-09-09' })) // line 4
+
+    expect(await openRepo(ours).pull()).toEqual({ kind: 'conflict', paths: ['task.a.md'] })
+  })
+
+  it('reports a conflict AND leaves the tree clean', async () => {
+    // FR-12, and the most important assertion in this file. A conflicted tree
+    // contains <<<<<<< markers, and autosave would happily commit them — so the
+    // abort must have already run by the time this returns. Ignore the banner
+    // and you keep working on an unbroken vault.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'README.md', '# Theirs\n')
+    await commitFile(ours, 'README.md', '# Ours\n')
+
+    const repo = openRepo(ours)
+    expect(await repo.pull()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+
+    const after = await repo.status()
+    expect(after.dirty).toBe(false)
+    expect(after.merging).toBe(false)
+    expect(await readFile(join(ours, 'README.md'), 'utf8')).toBe('# Ours\n')
+  })
+
+  it('merges rather than rebases, so local commits keep their identity', async () => {
+    // FR-10. A rebase would replay our commit onto theirs and give it a new
+    // sha — and with dozens of autosave commits it would conflict repeatedly on
+    // the same hunk. Merge resolves the divergence once.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'theirs.md', 'theirs\n')
+    await commitFile(ours, 'ours.md', 'ours\n')
+    const before = await plainGit(ours, ['rev-parse', 'HEAD'])
+
+    await openRepo(ours).pull()
+
+    // Our commit still exists, unrewritten, and is now an ancestor of HEAD.
+    expect(await plainGit(ours, ['cat-file', '-t', before])).toBe('commit')
+    expect(await plainGit(ours, ['merge-base', '--is-ancestor', before, 'HEAD'])).toBe('')
   })
 })
 

@@ -115,9 +115,17 @@ export interface RepoStatus {
   unborn: boolean
 }
 
+/** A conflict names its paths, because the reconcile prompt is built from them. */
+export type PullResult =
+  | { kind: 'up-to-date' }
+  | { kind: 'merged'; commits: number }
+  | { kind: 'conflict'; paths: string[] }
+
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
+  /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
+  pull(): Promise<PullResult>
   /** Stage everything and commit. Returns the new sha, or **null** when the tree
    * was already clean — "nothing to commit" is the normal outcome of an idle
    * timer on an untouched vault, not an error. */
@@ -231,6 +239,56 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return ['-c', `user.name=${who.name}`, '-c', `user.email=${who.email}`]
   }
 
+  /**
+   * Fetch, then merge — the inbound half of sync (FR-9, FR-10, FR-12).
+   *
+   * **Merge, never rebase.** With dozens of unpushed autosave commits a rebase
+   * replays each one and can conflict *repeatedly on the same hunk* — a failure
+   * mode manufactured entirely by autosave granularity. Merge resolves the
+   * divergence once. Non-linear history is the accepted price.
+   *
+   * (Note it is `git merge`, not `git pull --no-rebase`: fetch and merge are two
+   * observable steps, and `git merge` rejects `--no-rebase` outright since a
+   * merge is already not a rebase.)
+   *
+   * **A conflict aborts before this returns.** A conflicted tree holds files
+   * full of `<<<<<<<` markers, and autosave would commit them without hesitating.
+   * Aborting means the failure is *announced* rather than *inflicted*: ignore the
+   * banner and you keep working on an unbroken vault. The conflict is then
+   * re-created deliberately, once, when someone chooses to deal with it.
+   */
+  async function pull(): Promise<PullResult> {
+    const target = (await defaultBranch()) ?? 'HEAD'
+    await runGit(root, ['fetch', 'origin'], opts)
+
+    const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
+    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..origin/${target}`], opts)
+    if (incoming === '0') return { kind: 'up-to-date' }
+
+    const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
+    if (!merge.ok) {
+      // `--diff-filter=U` is the unmerged set — the paths git could not decide.
+      const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
+        () => '',
+      )
+      const paths = raw.split('\0').filter((p) => p !== '')
+      await abortMerge()
+      return { kind: 'conflict', paths }
+    }
+
+    const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
+    return {
+      kind: 'merged',
+      commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+    }
+  }
+
+  /** FR-20. A no-op when no merge is in progress, so the control can be pressed
+   * twice without turning into an error. */
+  async function abortMerge(): Promise<void> {
+    if (await isMerging()) await runGit(root, ['merge', '--abort'], opts)
+  }
+
   async function commitAll(message: string): Promise<string | null> {
     if (!(await isDirty())) return null
     // `-A` so deletions and untracked files ride along: a deleted note is a
@@ -328,5 +386,5 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, commitAll }
+  return { root, status, commitAll, pull }
 }
