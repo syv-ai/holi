@@ -1,33 +1,41 @@
 # better-holi-final
 
-The rebuild of **Holi** — Syv.ai's collaborative document-management system and vault assistant.
+The rebuild of **Holi** — Syv.ai's document-management system and vault assistant.
 
-Holi is moving from a single-user **Tauri 2 (Rust + React)** desktop app to a **full-TypeScript, multiplayer** product: an Electron client, a self-hosted Syv server, and a shared domain package. Each employee gets a **personal vault**; teams get **shared vaults** with real-time (Google-Docs-style) collaboration, presence, and an in-app **Claude Code vault assistant** running in an interactive terminal drawer.
+A vault is a **GitHub repository** of markdown, cloned locally. Holi is an Electron app over that clone: a CodeMirror live-preview editor, a task board built from `task.*.md` files, and an in-app **Claude Code vault assistant** running in an interactive terminal drawer. Sync is git — pulled automatically, published when you say so. There is no server.
 
 ## Where to start
 
-This repo currently holds the **planning docs** for the rebuild. Read in this order:
-
-1. [`docs/vision.md`](docs/vision.md) — why we're rebuilding, what Holi is, product principles.
-2. [`docs/architecture.md`](docs/architecture.md) — the whole system: CRDT sync, client/server split, the agent, data model, security.
-3. [`docs/decisions.md`](docs/decisions.md) — the design decisions (with rationale) that fixed the architecture. Read this if a choice in the other docs looks arbitrary — the "why" is here.
-4. [`docs/glossary.md`](docs/glossary.md) — canonical terms. When a word is ambiguous ("vault", "area", "thread"), this is the source of truth.
+1. [`docs/vision.md`](docs/vision.md) — what Holi is, product principles, the shape of v1.
+2. [`docs/architecture.md`](docs/architecture.md) — the whole system: the vault as a repo, sync, the agent, security.
+3. [`docs/decisions.md`](docs/decisions.md) — the decision inbox. D60 is the pivot that produced the current shape; read it if a choice elsewhere looks arbitrary.
+4. [`docs/glossary.md`](docs/glossary.md) — canonical terms. When a word is ambiguous ("vault", "publish", "reconcile"), this wins.
 5. [`docs/prd/`](docs/prd) — one PRD per product pillar, plus phase-2 stubs.
 
-## Planned repo layout (once we scaffold the build)
+## Repo layout
 
 ```
 better-holi-final/
   apps/
-    desktop/     Electron + React client (the app)
-    server/      Node/TS: Hocuspocus (Yjs) + tRPC API + Postgres
+    desktop/     Electron + React client — the whole product
   packages/
-    shared/      Domain types, task model, wiki-link grammar,
-                 path-safety — imported by BOTH client and server
-  docs/          These planning docs
+    shared/      Domain rules: task file grammar, wiki-links, path-safety,
+                 recurrence/reminder math
+  docs/          The living documentation
   pnpm-workspace.yaml
 ```
 
 ## Status
 
-Planning. No application code yet. The docs define v1 and the phased roadmap.
+**Mid-pivot, and deliberately not running.** The docs describe the local, git-backed architecture (D60); the code has had the server and CRDT stack removed and is being rebuilt against it. `apps/desktop` does not compile until main's router is reimplemented file-backed.
+
+## Dev
+
+```sh
+pnpm install
+pnpm dev        # desktop app
+pnpm test
+pnpm typecheck
+```
+
+No database, no Docker.

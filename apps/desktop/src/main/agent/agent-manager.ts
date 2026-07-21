@@ -1,12 +1,14 @@
 /**
- * Session orchestration (spec §AgentRuntime + §McpServer): owns the one live
- * `claude` session — its PTY, its MCP server, its context snapshot — and keeps
- * it tied to the active vault by observing the VaultManager.
+ * Session orchestration: owns the one live `claude` session — its PTY, its
+ * terminal mirror, its context snapshot — and keeps it tied to the active
+ * vault.
+ *
+ * The MCP server and the turn-protocol hooks it hosted are gone (D60): the
+ * agent's whole surface is now its native tools on the vault's files.
  *
  * NOTE: no runtime `electron` import (types only). The window arrives through
  * `getWindow()`, so this module loads under vitest.
  */
-import { randomBytes } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
@@ -24,8 +26,6 @@ import {
   type SpawnPty,
 } from './agent-runtime'
 import { ContextSnapshot } from './context-snapshot'
-import { buildOps } from './mcp-ops'
-import { McpServer } from './mcp-server'
 import { buildSystemPrompt, readVaultTree } from './system-prompt'
 import { TerminalMirror } from './terminal-mirror'
 
@@ -74,7 +74,6 @@ export interface AgentManager {
 interface Session {
   vaultId: string
   runtime: AgentRuntime
-  mcp: McpServer
   mirror: TerminalMirror
 }
 
@@ -110,7 +109,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   async function teardown(): Promise<void> {
     const current = session
     if (!current) return
-    session = null // guard the double-stop: PTY exit also tears the MCP server down
+    session = null // guard the double-stop: the PTY exit path tears down too
     working = false
     attached = false
     if (stopTimer) {
@@ -118,7 +117,6 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       stopTimer = null
     }
     await current.runtime.kill()
-    await current.mcp.stop()
     current.mirror.dispose()
   }
 
@@ -146,21 +144,6 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       tree: await readVaultTree(workRoot),
     })
 
-    const token = randomBytes(32).toString('base64url')
-    const mcp = new McpServer({
-      token,
-      ops: buildOps({
-        client: deps.client,
-        vaultId,
-        // resolve against the LIVE mirror — adopted files show up mid-session
-        docIdForPath: (rel) => mirror?.docIdForPath(rel) ?? null,
-        pathForDocId: (id) => mirror?.pathForDocId(id) ?? null,
-      }),
-      onPreToolUse: ({ filePath }) => onPreToolUse(workRoot, filePath),
-      onStop: () => onStop(),
-    })
-    const port = await mcp.start()
-
     const terminal = new TerminalMirror(SPAWN_COLS, SPAWN_ROWS)
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {
@@ -176,19 +159,18 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     try {
       runtime.start({
         bin,
-        args: buildAgentArgs({ systemPrompt, mcpConfig: mcp.mcpConfig(), resume }),
+        args: buildAgentArgs({ systemPrompt, resume }),
         cwd: workRoot,
-        env: buildAgentEnv(process.env, { endpoint: `http://127.0.0.1:${port}`, token }),
+        env: buildAgentEnv(process.env),
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
       })
     } catch (err) {
-      await mcp.stop() // never leak a bearer-gated port for a session that isn't there
       terminal.dispose()
       throw err
     }
 
-    session = { vaultId, runtime, mcp, mirror: terminal }
+    session = { vaultId, runtime, mirror: terminal }
     configStale = false
     pushStatus()
     return { ok: true }

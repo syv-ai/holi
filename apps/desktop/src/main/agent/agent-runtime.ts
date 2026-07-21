@@ -37,20 +37,15 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   return pty.spawn(file, args, { name: 'xterm-256color', ...opts }) as unknown as PtyProcess
 }
 
-export interface AgentEndpoint {
-  endpoint: string
-  token: string
-}
-
 /**
  * The child's env. Strips the nested-session guards (`claude` refuses to run
- * inside another Claude Code session), keeps PATH/HOME, and hands the hook
- * scripts the MCP endpoint + bearer.
+ * inside another Claude Code session) and keeps PATH/HOME.
+ *
+ * It no longer hands the child an endpoint or a bearer: there is no MCP server
+ * to reach (D60). The one surviving hook, `user-prompt-submit`, reads the
+ * vault's own files and needs nothing from us.
  */
-export function buildAgentEnv(
-  base: NodeJS.ProcessEnv,
-  { endpoint, token }: AgentEndpoint,
-): Record<string, string> {
+export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined) env[key] = value
@@ -58,26 +53,22 @@ export function buildAgentEnv(
   delete env.CLAUDECODE
   delete env.CLAUDE_CODE_ENTRYPOINT
   env.TERM = 'xterm-256color'
-  env.HOLI_AGENT_ENDPOINT = endpoint
-  env.HOLI_AGENT_TOKEN = token
   return env
 }
 
 export interface AgentArgs {
   systemPrompt: string
-  mcpConfig: Record<string, unknown>
   /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
   resume?: boolean
 }
 
-export function buildAgentArgs({ systemPrompt, mcpConfig, resume }: AgentArgs): string[] {
-  const args = [
-    '--append-system-prompt',
-    systemPrompt,
-    '--mcp-config',
-    JSON.stringify(mcpConfig),
-    '--strict-mcp-config', // our MCP server is the only one the session sees
-  ]
+/**
+ * No `--mcp-config`/`--strict-mcp-config`: Holi declares no MCP servers, and
+ * `--strict-mcp-config` would additionally suppress any the *vault* configures
+ * natively in `.claude/` — which it is entitled to do.
+ */
+export function buildAgentArgs({ systemPrompt, resume }: AgentArgs): string[] {
+  const args = ['--append-system-prompt', systemPrompt]
   if (resume) args.push('--resume')
   return args
 }

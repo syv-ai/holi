@@ -150,22 +150,8 @@ async function rig(opts: { bin?: string | null } = {}): Promise<Rig> {
   } as Rig & { vaultManager: { setActive(v: string | null): void } }
 }
 
-/** Read the --mcp-config blob the CLI was spawned with. */
-function mcpConfigFrom(args: string[]): any {
-  return JSON.parse(args[args.indexOf('--mcp-config') + 1]!)
-}
-
-async function mcpCall(endpoint: string, token: string, method: string, params?: unknown) {
-  const res = await fetch(`${endpoint}/mcp`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-  })
-  return res.json() as Promise<any>
-}
-
 describe('AgentManager', () => {
-  it('spawns claude in the working dir with the prompt, the MCP blob, and no skip-permissions', async () => {
+  it('spawns claude in the working dir with the prompt and no skip-permissions', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
 
@@ -173,20 +159,22 @@ describe('AgentManager', () => {
     expect(spawn.file).toBe('/bin/fake-claude')
     expect(spawn.opts.cwd).toBe(r.workRoot)
     expect(spawn.args).not.toContain('--dangerously-skip-permissions')
-    expect(spawn.args).toContain('--strict-mcp-config')
 
     const prompt = spawn.args[spawn.args.indexOf('--append-system-prompt') + 1]!
     expect(prompt).toContain('## Tools')
     expect(prompt).toContain('## Vault top-level layout')
-
-    // the blob's url + bearer are exactly what the hook scripts get in env
-    const blob = mcpConfigFrom(spawn.args)
-    const server = blob.mcpServers.holi
-    expect(server.type).toBe('http')
-    expect(server.alwaysLoad).toBe(true)
-    expect(server.url).toBe(`${spawn.opts.env.HOLI_AGENT_ENDPOINT}/mcp`)
-    expect(server.headers.Authorization).toBe(`Bearer ${spawn.opts.env.HOLI_AGENT_TOKEN}`)
     expect(r.manager.status().running).toBe(true)
+  })
+
+  it('declares no MCP surface and hands the child no bearer (D60)', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+
+    const spawn = r.spawns[0]!
+    expect(spawn.args).not.toContain('--mcp-config')
+    expect(spawn.args).not.toContain('--strict-mcp-config')
+    expect(spawn.opts.env.HOLI_AGENT_ENDPOINT).toBeUndefined()
+    expect(spawn.opts.env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
 
   it('picks up IDENTITY.md and SOUL.md from the working copy', async () => {
@@ -199,67 +187,6 @@ describe('AgentManager', () => {
     const prompt = r.spawns[0]!.args[r.spawns[0]!.args.indexOf('--append-system-prompt') + 1]!
     expect(prompt.indexOf('# IDENTITY')).toBeGreaterThanOrEqual(0)
     expect(prompt.indexOf('# SOUL')).toBeGreaterThan(prompt.indexOf('# IDENTITY'))
-  })
-
-  it('serves the 3 ops over the live MCP server, bearer-gated', async () => {
-    const r = await rig()
-    await r.manager.start({ vaultId: VAULT })
-    const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
-
-    const unauthorized = await fetch(`${endpoint}/mcp`, { method: 'POST', body: '{}' })
-    expect(unauthorized.status).toBe(401)
-
-    const listed = await mcpCall(endpoint!, token!, 'tools/list')
-    expect(listed.result.tools.map((t: any) => t.name)).toEqual([
-      'note_rename',
-      'task_list',
-      'task_set',
-    ])
-
-    // an op reaches the server client with the vault injected
-    const called = await mcpCall(endpoint!, token!, 'tools/call', {
-      name: 'task_set',
-      arguments: { task_id: 't1', status: 'done' },
-    })
-    expect(called.result.isError).toBeUndefined()
-    expect(r.calls).toContainEqual({
-      path: 'tasks.complete',
-      input: { vaultId: VAULT, taskId: 't1' },
-    })
-  })
-
-  it('routes the PreToolUse hook to the bridge for that path, ignoring paths outside the vault', async () => {
-    const r = await rig()
-    await r.manager.start({ vaultId: VAULT })
-    const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
-
-    const post = (filePath: string) =>
-      fetch(`${endpoint}/hook/pre-tool-use`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ filePath }),
-      })
-
-    await post(join(r.workRoot, NOTE_PATH))
-    expect(r.mirror.signalled).toEqual([NOTE_PATH])
-
-    await post('/etc/passwd') // outside the vault — path safety
-    await post(join(r.workRoot, 'unknown.md')) // inside, but not a doc
-    expect(r.mirror.signalled).toEqual([NOTE_PATH])
-  })
-
-  it('the Stop hook ends open turns after the settle delay', async () => {
-    const r = await rig()
-    await r.manager.start({ vaultId: VAULT })
-    const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
-
-    await fetch(`${endpoint}/hook/stop`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}` },
-    })
-    expect(r.mirror.endOpenTurnsCalls).toBe(0) // still settling — the last write may be in flight
-    await new Promise((res) => setTimeout(res, 60))
-    expect(r.mirror.endOpenTurnsCalls).toBe(1)
   })
 
   it('holds PTY output in the mirror until a renderer attaches, then streams', async () => {
@@ -296,11 +223,10 @@ describe('AgentManager', () => {
     expect(replayed).not.toContain('first session') // the old mirror died with the PTY
   })
 
-  it('forwards PTY data and exit to the renderer, and tears the MCP server down on exit', async () => {
+  it('forwards PTY data and exit to the renderer, and tears the session down on exit', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
     await r.manager.attach()
-    const { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: token } = r.spawns[0]!.opts.env
 
     r.pty().emit('hello from claude')
     expect(r.sent).toContainEqual({ channel: 'agent-pty:data', payload: 'hello from claude' })
@@ -309,7 +235,6 @@ describe('AgentManager', () => {
     expect(r.sent).toContainEqual({ channel: 'agent-pty:exit', payload: { code: 3 } })
     await new Promise((res) => setTimeout(res, 50))
     expect(r.manager.status().running).toBe(false)
-    await expect(mcpCall(endpoint!, token!, 'ping')).rejects.toThrow() // port is closed
   })
 
   it('write and resize reach the PTY; a restart kills the prior session', async () => {

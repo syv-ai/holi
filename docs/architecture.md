@@ -82,9 +82,11 @@ Full design: [`prd/vaults-sync.md`](prd/vaults-sync.md).
 The tree is a filesystem walk plus a watcher — not server metadata. Folders are real directories, which deletes an entire class of problem the previous design had (orphan folder rows, vestigial empty folders, and the display-level workaround for them): git does not track empty directories, so an empty folder is a transient local state rather than a row that outlives its contents.
 
 ### External writes
-A file can change under an open editor because the agent wrote it, a pull landed it, or another window touched it. All three are one event: a **clean buffer reloads**, a **dirty buffer takes a plain 3-way text merge** (base = last loaded text), and an **unmergeable overlap** falls into the same reconcile path as a git conflict. `packages/shared/agent-merge` already implements the merge and survives the CRDT deletion untouched.
+A file can change under an open editor because the agent wrote it, a pull landed it, or another window touched it. All three are one event: a **clean buffer reloads**, a **dirty buffer takes a plain 3-way text merge** (base = last loaded text), and an **unmergeable overlap** falls into the same reconcile path as a git conflict.
 
-This is what remains of the **file↔CRDT bridge** — roughly a tenth of it, and the only tenth that was load-bearing here. The soft lock, the frozen base, the turn protocol and the diff-to-positioned-ops translation are gone with the CRDT they translated into.
+**The 3-way merge is new work, not a survivor.** `packages/shared/agent-merge` looked like the merge and is not: it forks a shadow `Y.Doc` from the frozen base, replays the diff onto it, and lets **Yjs** do the positional reconciliation. Take away the CRDT and there is no merger left — only a 2-way diff (`fast-diff`, which does survive). A real diff3 has to be written or vendored, and it must report an unmergeable overlap rather than guessing, because that report is what routes the case to reconcile.
+
+This is what remains of the **file↔CRDT bridge**: the soft lock, the frozen base, the turn protocol and the diff-to-positioned-ops translation are gone with the CRDT they translated into, and the merge core is replaced rather than reused.
 
 ### Durability
 GitHub holds the vault. There are no snapshots to store, no object storage, and no backup subsystem — a vault that has been published is on GitHub, and a vault that hasn't is in a local git repo with its full history.

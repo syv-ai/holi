@@ -16,8 +16,6 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
-import preToolUseHook from './hooks/pre-tool-use.mjs?raw'
-import stopHook from './hooks/stop.mjs?raw'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 
 /** The old bootstrap's shim: CLAUDE.md is the file the CLI reads; AGENTS.md is
@@ -53,15 +51,10 @@ const SETTINGS_JSON =
   JSON.stringify(
     {
       hooks: {
-        // Holi's turn protocol: open the turn before a write lands, close it
-        // when the agent stops. Both degrade to the watcher if they fail.
-        PreToolUse: [
-          {
-            matcher: 'Write|Edit|MultiEdit',
-            hooks: [{ type: 'command', command: hookCommand('pre-tool-use') }],
-          },
-        ],
-        Stop: [{ hooks: [{ type: 'command', command: hookCommand('stop') }] }],
+        // The one surviving hook. PreToolUse/Stop existed to open and close the
+        // bridge's turn protocol; there is no turn to bracket now that the file
+        // IS the document (D60), and the editor reconciles a foreign write on
+        // its own.
         UserPromptSubmit: [{ hooks: [{ type: 'command', command: hookCommand('user-prompt-submit') }] }],
       },
       permissions: {
@@ -79,8 +72,6 @@ export const SEED_FILES: Record<string, string> = {
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,
   '.claude/settings.json': SETTINGS_JSON,
-  '.claude/hooks/pre-tool-use.mjs': preToolUseHook,
-  '.claude/hooks/stop.mjs': stopHook,
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
 }
 

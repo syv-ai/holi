@@ -73,8 +73,6 @@ async function captureServer(): Promise<{
 describe('SEED_FILES', () => {
   it('covers exactly the spec\'s managed set (USER.md is machine-local, never seeded)', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
-      '.claude/hooks/pre-tool-use.mjs',
-      '.claude/hooks/stop.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
       'AGENTS.md',
@@ -87,14 +85,13 @@ describe('SEED_FILES', () => {
     expect(SEED_FILES['CLAUDE.md']).toBe('<rules>\n@AGENTS.md\n</rules>\n')
   })
 
-  it('settings.json wires all three hooks and gates network egress', () => {
+  it('settings.json wires the one surviving hook and gates network egress', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
-    expect(settings.hooks.PreToolUse[0].matcher).toBe('Write|Edit|MultiEdit')
-    expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain('.claude/hooks/pre-tool-use.mjs')
-    expect(settings.hooks.Stop[0].hooks[0].command).toContain('.claude/hooks/stop.mjs')
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
       '.claude/hooks/user-prompt-submit.mjs',
     )
+    // PreToolUse/Stop bracketed the bridge's turn protocol; there is no turn (D60)
+    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit'])
     expect(settings.permissions.ask).toEqual(['Bash(curl:*)', 'Bash(wget:*)'])
   })
 
@@ -111,8 +108,8 @@ describe('ensureSeeded', () => {
     const written = await ensureSeeded(root, new Set())
     expect(written.sort()).toEqual(Object.keys(SEED_FILES).sort())
     expect(await readFile(join(root, 'CLAUDE.md'), 'utf8')).toBe(SEED_FILES['CLAUDE.md'])
-    expect(await readFile(join(root, '.claude/hooks/stop.mjs'), 'utf8')).toBe(
-      SEED_FILES['.claude/hooks/stop.mjs'],
+    expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
+      SEED_FILES['.claude/hooks/user-prompt-submit.mjs'],
     )
   })
 
@@ -139,44 +136,9 @@ describe('ensureSeeded', () => {
 })
 
 describe('hook scripts', () => {
-  it('all three exit silently without the Holi env (bare claude keeps working)', async () => {
+  it('exits silently outside a vault (bare claude keeps working)', async () => {
     const cwd = await tempDir()
-    for (const name of ['pre-tool-use', 'stop', 'user-prompt-submit']) {
-      const run = await runHook(name, { cwd, stdin: '{}' })
-      expect(run.code).toBe(0)
-    }
-    // user-prompt-submit still prints its (empty) memory sections
-    const stop = await runHook('stop', { cwd })
-    expect(stop.stdout).toBe('')
-  })
-
-  it('pre-tool-use POSTs the file path with the bearer token', async () => {
-    const { endpoint, calls } = await captureServer()
-    const run = await runHook('pre-tool-use', {
-      env: { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: 'tok' },
-      stdin: JSON.stringify({ tool_name: 'Write', tool_input: { file_path: '/work/notes/a.md' } }),
-    })
-    expect(run.code).toBe(0)
-    expect(calls).toEqual([
-      { path: '/hook/pre-tool-use', auth: 'Bearer tok', body: { filePath: '/work/notes/a.md' } },
-    ])
-  })
-
-  it('stop POSTs to /hook/stop with the bearer token', async () => {
-    const { endpoint, calls } = await captureServer()
-    const run = await runHook('stop', {
-      env: { HOLI_AGENT_ENDPOINT: endpoint, HOLI_AGENT_TOKEN: 'tok' },
-    })
-    expect(run.code).toBe(0)
-    expect(calls[0]!.path).toBe('/hook/stop')
-    expect(calls[0]!.auth).toBe('Bearer tok')
-  })
-
-  it('an unreachable endpoint never fails the turn', async () => {
-    const run = await runHook('pre-tool-use', {
-      env: { HOLI_AGENT_ENDPOINT: 'http://127.0.0.1:1', HOLI_AGENT_TOKEN: 'tok' },
-      stdin: JSON.stringify({ tool_input: { file_path: '/x.md' } }),
-    })
+    const run = await runHook('user-prompt-submit', { cwd, stdin: '{}' })
     expect(run.code).toBe(0)
   })
 

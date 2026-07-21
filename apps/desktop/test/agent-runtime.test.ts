@@ -76,43 +76,45 @@ function fakeSpawn(pid?: number) {
 }
 
 describe('buildAgentEnv', () => {
-  it('strips the nested-session guards, sets TERM and the agent endpoint/token', () => {
-    const env = buildAgentEnv(
-      {
-        PATH: '/usr/bin',
-        HOME: '/Users/nic',
-        CLAUDECODE: '1',
-        CLAUDE_CODE_ENTRYPOINT: 'cli',
-        TERM: 'dumb',
-        UNDEFINED_VAR: undefined,
-      },
-      { endpoint: 'http://127.0.0.1:5555', token: 'tok' },
-    )
+  it('strips the nested-session guards and sets TERM', () => {
+    const env = buildAgentEnv({
+      PATH: '/usr/bin',
+      HOME: '/Users/nic',
+      CLAUDECODE: '1',
+      CLAUDE_CODE_ENTRYPOINT: 'cli',
+      TERM: 'dumb',
+      UNDEFINED_VAR: undefined,
+    })
     expect(env.CLAUDECODE).toBeUndefined()
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined()
     expect(env.UNDEFINED_VAR).toBeUndefined()
     expect(env.PATH).toBe('/usr/bin')
     expect(env.HOME).toBe('/Users/nic')
     expect(env.TERM).toBe('xterm-256color')
-    expect(env.HOLI_AGENT_ENDPOINT).toBe('http://127.0.0.1:5555')
-    expect(env.HOLI_AGENT_TOKEN).toBe('tok')
     // the user's own ~/.claude stays in play (PRD) — we never redirect it
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
+  })
+
+  it('hands the child no endpoint or bearer — there is no MCP server (D60)', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin' })
+    expect(env.HOLI_AGENT_ENDPOINT).toBeUndefined()
+    expect(env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
 })
 
 describe('buildAgentArgs', () => {
-  const base = { systemPrompt: 'BE HELPFUL', mcpConfig: { mcpServers: {} } }
+  const base = { systemPrompt: 'BE HELPFUL' }
 
-  it('appends the system prompt and the strict mcp config', () => {
+  it('appends the system prompt and nothing else', () => {
+    expect(buildAgentArgs(base)).toEqual(['--append-system-prompt', 'BE HELPFUL'])
+  })
+
+  it('declares no MCP config, and does not suppress the vault own (D60)', () => {
     const args = buildAgentArgs(base)
-    expect(args).toEqual([
-      '--append-system-prompt',
-      'BE HELPFUL',
-      '--mcp-config',
-      JSON.stringify({ mcpServers: {} }),
-      '--strict-mcp-config',
-    ])
+    expect(args).not.toContain('--mcp-config')
+    // --strict-mcp-config would also disable MCP servers the VAULT configures
+    // natively in .claude/, which it is entitled to do.
+    expect(args).not.toContain('--strict-mcp-config')
   })
 
   it('adds a bare --resume when asked (the CLI shows its native picker)', () => {
