@@ -133,6 +133,23 @@ export async function openActiveVault(args: {
   /** Set by `pause()` — a reconcile. Distinct from the status-derived pause,
    *  which clears itself the moment the user switches back to the branch. */
   let manualPause: string | null = null
+  let syncing: 'pulling' | 'publishing' | null = null
+  /** Claimed synchronously by `maybePull`. Separate from `syncing`, which is
+   *  for display and is only set once a pull is really going to happen. */
+  let pullInFlight = false
+  let lastFocusPull = 0
+  /** The last network attempt failed. A flag rather than a state, so the
+   *  `finally` that clears `syncing` cannot overwrite it. */
+  let offline = false
+  /**
+   * The conflict banner, and it is **sticky** (FR-17): ignore it and you keep
+   * working on a clean tree, so it must survive every autosave commit that
+   * happens while you do. Cleared only by a pull that succeeds.
+   *
+   * It is also what pauses auto-pull for this vault (FR-12) — without that the
+   * loop retries and re-aborts the same merge every interval, forever.
+   */
+  let conflictPaths: string[] | null = null
 
   function setState(next: SyncState): void {
     // Only on a real change: the panel would otherwise re-render on every tick.
@@ -156,9 +173,33 @@ export async function openActiveVault(args: {
     }
   }
 
-  /** What the repo says, when nothing is in flight. */
-  function idleState(status: RepoStatus): SyncState {
+  /**
+   * The one place a sync state is decided, so the loops cannot overwrite each
+   * other's answers. Order is priority order, and it is load-bearing:
+   *
+   *   - A reconcile outranks everything; the user asked for it.
+   *   - The conflict banner outranks the ordinary states, or the next autosave
+   *     commit would silently clear a banner the user has not dealt with
+   *     (FR-17 — it is non-blocking, not transient).
+   *   - Being on the wrong branch outranks progress reporting: nothing is
+   *     going to happen, so "N to publish" would be a promise we do not keep.
+   */
+  function computeState(status: RepoStatus): SyncState {
+    if (manualPause !== null) return { kind: 'paused', reason: manualPause }
+    if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
+    const blocked = blockedReason(status)
+    if (blocked !== null) return { kind: 'paused', reason: blocked }
+    if (syncing !== null) return { kind: syncing }
+    if (offline) return { kind: 'offline' }
     return status.ahead > 0 ? { kind: 'ahead', count: status.ahead } : { kind: 'up-to-date' }
+  }
+
+  async function refreshState(): Promise<void> {
+    if (closed) return
+    // `status()` can fail on a vault whose directory vanished; `offline` is the
+    // wrong word for it, but a stale state is worse than an imprecise one.
+    const status = await args.repo.status().catch(() => null)
+    if (status !== null) setState(computeState(status))
   }
 
   /**
@@ -175,25 +216,68 @@ export async function openActiveVault(args: {
     committing = true
     try {
       const status = await args.repo.status()
-      const blocked = blockedReason(status)
-      if (blocked !== null) {
-        setState({ kind: 'paused', reason: blocked })
-        return null
-      }
-      // Not an error, and must not be logged as one: an idle timer on a vault
-      // nobody is touching finds a clean tree every time.
-      if (!status.dirty) {
-        setState(idleState(status))
+      if (blockedReason(status) !== null || !status.dirty) {
+        // A clean tree is not an error and must not be logged as one: an idle
+        // timer on a vault nobody is touching finds one every time.
+        setState(computeState(status))
         return null
       }
       const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths))
-      setState(idleState(await args.repo.status()))
+      await refreshState()
       return sha
     } catch (err) {
       console.error('[vault] commit failed:', err)
       return null
     } finally {
       committing = false
+    }
+  }
+
+  /**
+   * Fetch and merge, if that is allowed right now.
+   *
+   * Returns null when it declined rather than throwing, because every caller is
+   * a timer and a timer has no handler.
+   */
+  async function maybePull(): Promise<PullResult | null> {
+    // FR-12's pause is `conflictPaths`: without it the loop re-runs the same
+    // doomed merge every interval and aborts it every time.
+    if (closed || pullInFlight || manualPause !== null || conflictPaths !== null) return null
+    // Claimed synchronously, before the first await. Checking a guard before an
+    // await and setting it after one is not a guard at all: every tick that
+    // arrives while `status()` is resolving walks straight through it, and with
+    // an interval shorter than a fetch that is all of them.
+    pullInFlight = true
+    try {
+      const status = await args.repo.status().catch(() => null)
+      if (status === null) return null
+      if (blockedReason(status) !== null) {
+        setState(computeState(status))
+        return null
+      }
+
+      syncing = 'pulling'
+      await refreshState()
+      const result = await args.repo.pull()
+      offline = false
+      if (result.kind === 'conflict') conflictPaths = result.paths
+      // A clean merge is silent (FR-11) — no notification, no dialog. The tree
+      // updates itself because the merge wrote files and the watcher saw it,
+      // but rescan directly too: a merge is exactly the burst most likely to
+      // land inside a coalescing window.
+      if (result.kind === 'merged') await rescan()
+      return result
+    } catch (err) {
+      // Offline is the ordinary case here, not an exception worth shouting
+      // about: a laptop on a plane hits this every interval. Recorded as a flag
+      // rather than set directly, so the `finally` below cannot overwrite it.
+      console.error('[vault] pull failed:', err)
+      offline = true
+      return null
+    } finally {
+      syncing = null
+      pullInFlight = false
+      await refreshState()
     }
   }
 
@@ -225,6 +309,14 @@ export async function openActiveVault(args: {
     void maybeCommit()
   }, timings.healIntervalMs)
 
+  const pullTimer = setInterval(() => void maybePull(), timings.pullIntervalMs)
+
+  // The state the vault opens in. Without this a freshly opened vault reports
+  // `up-to-date` until the first tick, which is a claim rather than a reading —
+  // and FR-22 is specifically that the indicator must never say synced when it
+  // is not.
+  await refreshState()
+
   return {
     remote: args.remote,
     root,
@@ -241,10 +333,30 @@ export async function openActiveVault(args: {
       }
       return maybeCommit()
     },
-    publish: () => {
-      throw new Error('not implemented')
+    async publish() {
+      // FR-13/FR-14. `publish()` in the engine pulls first, so the one call
+      // site cannot forget to.
+      syncing = 'publishing'
+      await refreshState()
+      try {
+        const result = await args.repo.publish()
+        offline = false
+        // FR-15: a conflicting pre-publish pull hands off to the reconcile path
+        // with nothing pushed and the user's work local and intact.
+        if (result.kind === 'conflict') conflictPaths = result.paths
+        return result
+      } finally {
+        syncing = null
+        await refreshState()
+      }
     },
-    onFocus: () => {},
+    onFocus() {
+      // FR-9. Throttled, or every alt-tab is a fetch.
+      const now = Date.now()
+      if (now - lastFocusPull < timings.focusThrottleMs) return
+      lastFocusPull = now
+      void maybePull()
+    },
     pause(reason) {
       manualPause = reason
       setState({ kind: 'paused', reason })
@@ -256,6 +368,7 @@ export async function openActiveVault(args: {
     async close() {
       closed = true
       clearInterval(heal)
+      clearInterval(pullTimer)
       if (commitTimer !== null) clearTimeout(commitTimer)
       commitTimer = null
       await watcher.close()

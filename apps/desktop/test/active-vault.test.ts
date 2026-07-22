@@ -370,3 +370,229 @@ describe('ActiveVault — commit', () => {
     expect(await count(dir)).toBe(1)
   })
 })
+
+describe('ActiveVault — sync', () => {
+  const count = async (dir: string) => Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
+
+  /** A vault plus a second clone of the same bare repo, playing the teammate. */
+  async function withTeammate(timings?: Parameters<typeof openActiveVault>[0]['timings']) {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await sleep(QUIESCE)
+    const snaps = snapshots()
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      // Pulling is off unless a test asks for it, so an unrelated fetch cannot
+      // change the repo under an assertion.
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, ...timings },
+    })
+    open.push(active)
+    return { active, snaps, dir, teammate }
+  }
+
+  /** The teammate publishes. */
+  async function theyPublish(teammate: string, rel: string, text: string) {
+    await writeFile(join(teammate, rel), text, 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', `write ${rel}`])
+    await plainGit(teammate, ['push', 'origin', 'main'])
+  }
+
+  it('pulls on the interval, and the tree updates itself', async () => {
+    // FR-9 and FR-11: a teammate's work arrives without anyone remembering
+    // anything, and a clean merge is silent.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'theirs.md', 'their note\n')
+
+    await waitFor('their note to arrive', async () =>
+      (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
+    )
+    await waitFor('the tree to show it', () =>
+      active.snapshot().docs.some((d) => d.path === 'theirs.md'),
+    )
+  })
+
+  it('reports up-to-date when nothing has changed', async () => {
+    const { active } = await withTeammate({ pullIntervalMs: 80 })
+    await waitFor('a settled state', () => active.syncState().kind === 'up-to-date')
+  })
+
+  it('reports how many commits are waiting to publish', async () => {
+    // FR-21's "N to publish".
+    const { active, dir } = await withTeammate({ rescanDebounceMs: 30, commitQuietMs: 60 })
+    await writeFile(join(dir, 'mine.md'), 'x\n', 'utf8')
+
+    await waitFor('the ahead count', () => active.syncState().kind === 'ahead')
+    expect(active.syncState()).toEqual({ kind: 'ahead', count: 1 })
+  })
+
+  it('reports a conflict, leaves the tree clean, and stops retrying', async () => {
+    // FR-12, and the most important assertion here. A conflicted tree contains
+    // <<<<<<< markers and autosave would happily commit them, so the abort has
+    // already run by the time the state changes. Auto-pull then pauses for this
+    // vault, or it retries and re-aborts forever.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'ours'])
+
+    await waitFor('the conflict to be reported', () => active.syncState().kind === 'conflict')
+    expect(active.syncState()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+
+    const status = await active.repo.status()
+    expect(status.merging).toBe(false)
+    expect(status.dirty).toBe(false)
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Ours\n')
+
+    // And it does not keep trying: the state stays put across several intervals.
+    await sleep(500)
+    expect(active.syncState().kind).toBe('conflict')
+  })
+
+  it('keeps committing while a conflict banner is up', async () => {
+    // FR-17: the banner is non-blocking — ignore it and you keep working on an
+    // unbroken vault. Only a reconcile (FR-8) pauses autosave.
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 80,
+      rescanDebounceMs: 30,
+      commitQuietMs: 60,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'ours'])
+    await waitFor('the conflict', () => active.syncState().kind === 'conflict')
+
+    const before = await count(dir)
+    await writeFile(join(dir, 'carrying-on.md'), 'still working\n', 'utf8')
+    await waitFor('a commit despite the banner', async () => (await count(dir)) === before + 1)
+    // The banner survives the commit rather than being overwritten by it.
+    expect(active.syncState().kind).toBe('conflict')
+  })
+
+  it('publish pulls first, so both sides survive', async () => {
+    // FR-14: a non-fast-forward rejection is not worth surfacing when the fix
+    // is the pull that was going to happen anyway.
+    const { active, dir, teammate } = await withTeammate()
+    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+    await writeFile(join(dir, 'mine.md'), 'mine\n', 'utf8')
+    await active.commitNow()
+
+    const result = await active.publish()
+
+    expect(result.kind).toBe('pushed')
+    await plainGit(teammate, ['pull', 'origin', 'main'])
+    expect(await readFile(join(teammate, 'mine.md'), 'utf8')).toBe('mine\n')
+    expect(await readFile(join(dir, 'theirs.md'), 'utf8')).toBe('theirs\n')
+  })
+
+  it('publish stops at a conflicting pull and pushes nothing', async () => {
+    // FR-15: the user's work stays local and intact.
+    const { active, dir, teammate } = await withTeammate()
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await active.commitNow()
+
+    expect(await active.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Ours\n')
+    expect((await active.repo.status()).merging).toBe(false)
+  })
+
+  it('pulls on window focus', async () => {
+    // FR-9. Focus is the trigger that makes the interval nearly irrelevant.
+    const { active, dir, teammate } = await withTeammate()
+    await theyPublish(teammate, 'focus.md', 'arrived\n')
+
+    active.onFocus()
+    await waitFor('the focus pull', async () =>
+      (await readFile(join(dir, 'focus.md'), 'utf8').catch(() => null)) !== null,
+    )
+  })
+
+  it('throttles focus so alt-tabbing does not fetch in a loop', async () => {
+    const { active, dir, teammate } = await withTeammate({ focusThrottleMs: 60_000 })
+
+    // Wait on the ARRIVAL of a real file rather than on a state, because
+    // `up-to-date` is also the state the vault opens in — the first focus pull
+    // would otherwise be considered finished before it had started.
+    await theyPublish(teammate, 'early.md', 'arrives\n')
+    active.onFocus()
+    await waitFor('the first focus pull to complete', async () =>
+      (await readFile(join(dir, 'early.md'), 'utf8').catch(() => null)) !== null,
+    )
+
+    // Publish AFTER that pull, then focus again inside the throttle window.
+    await theyPublish(teammate, 'late.md', 'should not arrive yet\n')
+    active.onFocus()
+    await sleep(SETTLE)
+
+    expect(await readFile(join(dir, 'late.md'), 'utf8').catch(() => null)).toBeNull()
+  })
+
+  it('does not pull a vault opened on a branch that is not the default one', async () => {
+    // The branch is switched BEFORE the vault opens, which is the state FR-2
+    // actually describes ("if the clone is on another branch ... on open").
+    //
+    // Switching *while* a pull is already in flight is a different and much
+    // narrower thing: the pull is authorised against a status read moments
+    // earlier, so a checkout landing inside that window merges onto the new
+    // branch. In production that needs a branch switch inside roughly a second
+    // of a three-minute interval, and `git.ts` merges rather than resets, so
+    // the cost is a merge commit somewhere unexpected and not lost work.
+    // Asserting the no-merge property here would be asserting the absence of
+    // that race, which is not what this requirement is about.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await plainGit(dir, ['checkout', '-b', 'spike/idea'])
+    await sleep(QUIESCE)
+
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 80, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+
+    await waitFor('sync to report itself paused', () => active.syncState().kind === 'paused')
+    await sleep(400)
+    expect(await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)).toBeNull()
+  })
+
+  it('pauses when the branch changes under an open vault, and resumes on the way back', async () => {
+    // Decision 11: the FR-2 refusal is derived fresh from `git status` rather
+    // than latched, so it clears itself when the user switches back instead of
+    // needing anyone to notice.
+    const { active, dir } = await withTeammate({ pullIntervalMs: 60_000, healIntervalMs: 80 })
+
+    await plainGit(dir, ['checkout', '-b', 'spike/idea'])
+    await waitFor('the pause', () => active.syncState().kind === 'paused')
+    expect((active.syncState() as { reason: string }).reason).toContain('spike/idea')
+
+    await plainGit(dir, ['checkout', 'main'])
+    await waitFor('sync to resume by itself', () => active.syncState().kind !== 'paused')
+  })
+
+  it('survives overlapping pull ticks', async () => {
+    // A pull slower than the interval must not start a second one on top of
+    // itself. Driven by an interval far shorter than a fetch takes.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 10 })
+    await theyPublish(teammate, 'theirs.md', 'theirs\n')
+
+    await waitFor('their note, exactly once', async () =>
+      (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
+    )
+    await waitFor('a settled state', () =>
+      ['up-to-date', 'ahead'].includes(active.syncState().kind),
+    )
+    expect((await active.repo.status()).merging).toBe(false)
+  })
+})
