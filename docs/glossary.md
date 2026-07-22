@@ -8,6 +8,14 @@ A **GitHub repository**, cloned locally, containing a folder hierarchy of markdo
 - **Personal vault** — a private repo with one collaborator: you.
 - **Shared vault** — a private repo with several collaborators.
 
+### Managed vault root
+`~/Holi` — the directory Holi clones into, one level per remote: `~/Holi/<owner>/<repo>`. Fixed, not user-configurable in v1; overridable by `HOLI_VAULT_ROOT` for development and tests only. Holi owns everything beneath it and never adopts a checkout the user made elsewhere.
+
+### ActiveVault
+The **one vault currently open**, as a live object in the main process: its `GitRepo` handle, its filesystem watcher, its cached snapshot, and its sync timers. Created when a vault is opened, torn down on vault switch and on quit. Exactly one exists at a time — a second vault becomes active only by replacing it.
+
+Deliberately not called a "vault session": **session** in this codebase means the GitHub sign-in ([`GitHubSession`](../apps/desktop/src/main/github/session.ts)), which outlives every vault.
+
 ### Membership / Role
 The repo's **GitHub collaborator list**. Holi defines no roles of its own and enforces no access control: GitHub does, at the git layer. If you can clone and push, you are a member.
 
@@ -36,7 +44,9 @@ The explicit act of pushing your local commits to the repo. Pull is automatic; p
 The conflict path. An automatic pull that hits a textual conflict is **aborted immediately** (`git merge --abort`), leaving a clean tree, and surfaces a banner. Pressing **Ask Claude to reconcile** pauses autosave, re-runs the merge for real, and hands it to the agent in the drawer. If you ignore the banner you keep working on an unbroken vault.
 
 ### 3-way reload
-What the editor does when a file changes underneath it — because Claude wrote it, or because auto-pull landed it. A clean buffer reloads silently; a dirty buffer takes a plain text 3-way merge (base = last loaded text, mine = buffer, theirs = disk). An unmergeable overlap falls into the same **Reconcile** path as a git conflict.
+What the editor does when a file changes underneath it — because Claude wrote it, or because auto-pull landed it. A clean buffer reloads silently; a dirty buffer takes a plain text 3-way merge (mine = buffer, theirs = disk). An unmergeable overlap falls into the same **Reconcile** path as a git conflict.
+
+**Base** is the text the editor last **loaded or saved**. `disk === base` means nothing happened that concerns the editor, whoever did the writing — which is why the editor's own save needs no attribution and the change signal can be coarse.
 
 ### Wiki-link
 A path-based reference between files: **`[[folder/note.md]]`** (optional `[[path|Label]]`). The only link grammar — notes and tasks alike. Human- and agent-readable. Renaming a file rewrites inbound links.
