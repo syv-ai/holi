@@ -27,14 +27,43 @@ import {
   type VaultEntry,
   type VaultRelPath,
 } from '@holi/shared'
+import { GitHubApiError, type Repo } from './github/api'
+import type { DeviceFlow } from './github/device-flow'
+import type { GitHubSession } from './github/session'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
-import type { VaultRegistry } from './vault/registry'
+import { isRemote, type VaultRegistry } from './vault/registry'
 
 const t = initTRPC.create()
 
+/**
+ * What the renderer is allowed to know about who is signed in — FR-5, and
+ * nothing beyond it.
+ *
+ * Hand-written rather than `Omit<StoredAuth, 'token'>`, because an `Omit` would
+ * silently re-include whatever gets added to `StoredAuth` later. `accountId` is
+ * absent on purpose too: it is our identity key, not the renderer's, and it has
+ * no use for it.
+ */
+export interface PublicViewer {
+  login: string
+  name?: string
+  avatarUrl?: string
+}
+
 export interface RouterDeps {
   registry: VaultRegistry
+  session: GitHubSession
+  /**
+   * Electron's `shell.openExternal`, injected rather than imported so this
+   * module keeps typechecking and testing under plain Node.
+   *
+   * Two requirements need it: FR-2 opens `github.com/login/device` in the
+   * **system** browser, so the grant reuses the user's existing GitHub session
+   * and no credential enters the app's web context; and FR-11 deep-links to the
+   * repo's collaborator settings, because Holi does not implement invitation.
+   */
+  openExternal: (url: string) => Promise<void>
   /** Wall-clock, injected so `lastOpenedAt` is testable. */
   now?: () => string
   /**
@@ -119,6 +148,127 @@ export function createRouter(deps: RouterDeps) {
       throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message })
     }
   }
+
+  /** The renderer-facing projection of the session (FR-5). */
+  function publicViewer(): PublicViewer | null {
+    const v = deps.session.viewer
+    return v === null ? null : { login: v.login, name: v.name, avatarUrl: v.avatarUrl }
+  }
+
+  /**
+   * Every GitHub call goes through here, so the mapping from *which kind of no*
+   * to what the renderer is told lives in one place.
+   *
+   * The SSO URL rides in the message because it is advice for a human — a
+   * `FORBIDDEN` with no URL is the dead end the PRD calls out by name.
+   */
+  async function gh<T>(fn: () => Promise<T>): Promise<T> {
+    // Refuse before the request rather than sending an unauthenticated one and
+    // letting a 401 arrive at the same place by accident.
+    if (deps.session.token() === null) {
+      throw new TRPCError({ code: 'UNAUTHORIZED', message: 'not signed in to GitHub' })
+    }
+    try {
+      return await fn()
+    } catch (err) {
+      if (!(err instanceof GitHubApiError)) throw err
+      throw new TRPCError({
+        code: TRPC_CODE[err.kind],
+        message: err.ssoUrl ? `${err.message}: ${err.ssoUrl}` : err.message,
+      })
+    }
+  }
+
+  /** The remote is interpolated into a URL, so it is validated before it is. */
+  function safeRemote(remote: string): string {
+    if (!isRemote(remote)) {
+      throw new TRPCError({ code: 'BAD_REQUEST', message: `not an owner/repo remote: ${remote}` })
+    }
+    return remote
+  }
+
+  /**
+   * The sign-in in progress.
+   *
+   * The device flow is two-phase — a code to show, then a grant that lands
+   * later — and a tRPC procedure returns once. So `signIn` stashes the flow and
+   * `awaitSignIn` waits on it: the renderer paints the code immediately and
+   * long-polls for the verdict, rather than polling `auth.status` and guessing
+   * when to stop.
+   */
+  let signInFlow: DeviceFlow | null = null
+
+  const auth = t.router({
+    status: t.procedure.query(() => ({ viewer: publicViewer() })),
+
+    signIn: t.procedure.mutation(async () => {
+      signInFlow = await deps.session.signIn()
+      // The URI GitHub returned, never a hardcoded one — the code on screen
+      // belongs to whatever it said.
+      await deps.openExternal(signInFlow.code.verificationUri)
+      return signInFlow.code
+    }),
+
+    awaitSignIn: t.procedure.mutation(async () => {
+      if (signInFlow === null) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'no sign-in in progress' })
+      }
+      const result = await signInFlow.wait()
+      signInFlow = null
+      // The token stops here. The renderer gets the identity and nothing else.
+      return result.kind === 'granted'
+        ? { kind: 'granted' as const, viewer: publicViewer() }
+        : { kind: result.kind }
+    }),
+
+    cancelSignIn: t.procedure.mutation(() => {
+      signInFlow?.cancel()
+      return { ok: true as const }
+    }),
+
+    signOut: t.procedure.mutation(async () => {
+      // FR-15: the keychain entry goes, the clones stay. `vaults.remove` is a
+      // separate, deliberate act.
+      await deps.session.signOut()
+      return { ok: true as const }
+    }),
+  })
+
+  const github = t.router({
+    repos: t.procedure.query((): Promise<Repo[]> => gh(() => deps.session.api.repos())),
+
+    orgs: t.procedure.query(() => gh(() => deps.session.api.orgs())),
+
+    collaborators: t.procedure.input(fields({ remote: 'string' })).query(({ input }) =>
+      gh(async () => {
+        const remote = safeRemote(input.remote)
+        // Visibility arrives *with* the members rather than from a second call
+        // the UI could forget to make: a vault silently becoming public is the
+        // highest-severity thing that can happen to it, and this panel is the
+        // only surface that would ever show it.
+        const [repo, collaborators] = await Promise.all([
+          deps.session.api.repo(remote),
+          deps.session.api.collaborators(remote),
+        ])
+        return { visibility: repo.visibility, collaborators }
+      }),
+    ),
+
+    openCollaboratorSettings: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }) => {
+        // FR-11. Holi does not implement invitation; it points at the flow
+        // that does.
+        await deps.openExternal(`https://github.com/${safeRemote(input.remote)}/settings/access`)
+        return { ok: true as const }
+      }),
+
+    createRepo: t.procedure
+      .input(fields({ name: 'string', owner: 'string?' }))
+      .mutation(({ input }): Promise<Repo> =>
+        gh(() => deps.session.api.createRepo({ name: input.name, owner: input.owner })),
+      ),
+  })
 
   const vaults = t.router({
     list: t.procedure.query((): Promise<VaultEntry[]> => deps.registry.list()),
@@ -311,7 +461,24 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ vaults, notes, tasks })
+  return t.router({ auth, github, vaults, notes, tasks })
 }
+
+/**
+ * Which refusal becomes which tRPC code.
+ *
+ * `saml-required` maps to FORBIDDEN like a plain 403, and the difference lives
+ * entirely in the message — because the two really are the same *kind* of no,
+ * and only one of them has a link that fixes it.
+ */
+const TRPC_CODE = {
+  unauthorized: 'UNAUTHORIZED',
+  forbidden: 'FORBIDDEN',
+  'saml-required': 'FORBIDDEN',
+  'rate-limited': 'TOO_MANY_REQUESTS',
+  'not-found': 'NOT_FOUND',
+  other: 'INTERNAL_SERVER_ERROR',
+} as const satisfies Record<GitHubApiError['kind'], TRPCError['code']>
+
 
 export type AppRouter = ReturnType<typeof createRouter>

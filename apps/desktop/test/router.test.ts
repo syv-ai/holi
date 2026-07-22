@@ -2,8 +2,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseTaskFile } from '@holi/shared'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createRouter } from '../src/main/router'
+import { GitHubSession } from '../src/main/github/session'
+import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 import { VaultRegistry } from '../src/main/vault/registry'
 
 const REMOTE = 'syv-ai/1brain'
@@ -13,6 +15,22 @@ const dirs: string[] = []
 afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true })
 })
+
+const storage: SafeStorageLike = {
+  isEncryptionAvailable: () => true,
+  encryptString: (plain) => Buffer.from(`enc:${Buffer.from(plain, 'utf8').toString('base64')}`),
+  decryptString: (buf) => Buffer.from(buf.toString('utf8').slice(4), 'base64').toString('utf8'),
+}
+
+/** A signed-out session over a real store, for the suites that do not care. */
+async function idleSession(base: string): Promise<GitHubSession> {
+  return GitHubSession.load({
+    store: new TokenStore(join(base, 'github-auth.enc'), storage),
+    fetch: (() => {
+      throw new Error('no network in this rig')
+    }) as unknown as typeof globalThis.fetch,
+  })
+}
 
 async function rig(files: Record<string, string> = {}) {
   const base = await mkdtemp(join(tmpdir(), 'holi-rt-'))
@@ -34,6 +52,8 @@ async function rig(files: Record<string, string> = {}) {
   })
   const caller = createRouter({
     registry,
+    session: await idleSession(base),
+    openExternal: async () => {},
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
@@ -387,5 +407,320 @@ describe('input validation', () => {
     await expect(caller.notes.create({ remote: REMOTE, path: 'x.md' })).resolves.toEqual({
       path: 'x.md',
     })
+  })
+})
+
+// ─── auth & github ─────────────────────────────────────────────────────────
+
+interface Scripted {
+  status?: number
+  body: unknown
+  headers?: Record<string, string>
+}
+
+const TOKEN = 'gho_16C7e42F292c6912E7710c838347Ae178B4a'
+
+const CODE = {
+  device_code: '3584d83530557fdd1f46af8289938c8ef79f9dc5',
+  user_code: 'WDJB-MJHT',
+  verification_uri: 'https://github.com/login/device',
+  expires_in: 900,
+  interval: 5,
+}
+const GRANT = { access_token: TOKEN, token_type: 'bearer', scope: 'repo,read:user,read:org' }
+const VIEWER = {
+  login: 'nthomsencph',
+  id: 583231,
+  avatar_url: 'https://avatars.githubusercontent.com/u/583231?v=4',
+  name: 'Nicolai Thomsen',
+  type: 'User',
+}
+
+const ghRepo = (over: Record<string, unknown> = {}) => ({
+  name: '1brain',
+  full_name: REMOTE,
+  private: true,
+  visibility: 'private',
+  owner: { login: 'syv-ai', id: 9, type: 'Organization' },
+  default_branch: 'main',
+  pushed_at: '2026-07-20T10:00:00Z',
+  permissions: { admin: true, push: true, pull: true },
+  ...over,
+})
+
+const seeded = (): StoredAuth => ({
+  token: TOKEN,
+  accountId: 583231,
+  login: 'nthomsencph',
+  name: 'Nicolai Thomsen',
+  avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
+  scopes: ['repo', 'read:user', 'read:org'],
+})
+
+/** A caller wired to a scripted network, and a recording `openExternal`. */
+async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
+  const base = await mkdtemp(join(tmpdir(), 'holi-auth-'))
+  dirs.push(base)
+
+  const store = new TokenStore(join(base, 'github-auth.enc'), storage)
+  if (seed) await store.write(seed)
+
+  const cursor = new Map<string, number>()
+  const fetch = (async (input: unknown) => {
+    const url = new URL(String(input))
+    const script = routes[url.pathname]
+    if (!script) throw new Error(`unrouted request: ${url.pathname}`)
+    const i = cursor.get(url.pathname) ?? 0
+    cursor.set(url.pathname, i + 1)
+    const next = script[Math.min(i, script.length - 1)]!
+    return new Response(JSON.stringify(next.body), {
+      status: next.status ?? 200,
+      headers: { 'content-type': 'application/json', ...next.headers },
+    })
+  }) as unknown as typeof globalThis.fetch
+
+  const session = await GitHubSession.load({
+    store,
+    clientId: 'Iv1.test0client0id',
+    fetch,
+    sleep: async () => {},
+  })
+
+  const registry = new VaultRegistry(join(base, 'vaults.json'))
+  const openExternal = vi.fn(async () => {})
+  const caller = createRouter({ registry, session, openExternal }).createCaller({})
+  return { caller, session, store, openExternal }
+}
+
+const SIGN_IN = {
+  '/login/device/code': [{ body: CODE }],
+  '/login/oauth/access_token': [{ body: GRANT }],
+  '/user': [{ body: VIEWER }],
+}
+
+describe('auth', () => {
+  it('status returns null when signed out', async () => {
+    const { caller } = await authRig({})
+    expect(await caller.auth.status()).toEqual({ viewer: null })
+  })
+
+  it('status returns the viewer when signed in', async () => {
+    const { caller } = await authRig({}, seeded())
+    expect(await caller.auth.status()).toEqual({
+      viewer: {
+        login: 'nthomsencph',
+        name: 'Nicolai Thomsen',
+        avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
+      },
+    })
+  })
+
+  it('status never returns the token', async () => {
+    // Asserted on the serialized result, not on the type. A type says what we
+    // meant; this says what we shipped, and it is the kind of thing a later
+    // convenience field silently re-adds.
+    const { caller } = await authRig({}, seeded())
+    expect(JSON.stringify(await caller.auth.status())).not.toContain(TOKEN)
+  })
+
+  it('status returns exactly the three fields FR-5 names', async () => {
+    // accountId is our identity key, not the renderer's, and it is absent.
+    // Asserted on the *keys*: searching the JSON for the id itself would
+    // always hit, because GitHub embeds the account id in the avatar URL.
+    const { caller } = await authRig({}, seeded())
+    const { viewer } = await caller.auth.status()
+    expect(Object.keys(viewer ?? {}).sort()).toEqual(['avatarUrl', 'login', 'name'])
+  })
+
+  it('signIn returns the user code and verification uri', async () => {
+    const { caller } = await authRig(SIGN_IN)
+    const started = await caller.auth.signIn()
+    expect(started.userCode).toBe('WDJB-MJHT')
+    expect(started.verificationUri).toBe('https://github.com/login/device')
+    expect(typeof started.expiresAt).toBe('number')
+  })
+
+  it('signIn opens the verification uri in the system browser', async () => {
+    // The URI GitHub returned, not a hardcoded one: GitHub is free to change
+    // it, and the code on screen belongs to whatever it says.
+    const { caller, openExternal } = await authRig(SIGN_IN)
+    await caller.auth.signIn()
+    expect(openExternal).toHaveBeenCalledWith('https://github.com/login/device')
+  })
+
+  it('awaitSignIn resolves with the viewer once the grant lands', async () => {
+    const { caller } = await authRig(SIGN_IN)
+    await caller.auth.signIn()
+
+    expect(await caller.auth.awaitSignIn()).toEqual({
+      kind: 'granted',
+      viewer: {
+        login: 'nthomsencph',
+        name: 'Nicolai Thomsen',
+        avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
+      },
+    })
+  })
+
+  it('awaitSignIn never returns the token', async () => {
+    const { caller } = await authRig(SIGN_IN)
+    await caller.auth.signIn()
+    expect(JSON.stringify(await caller.auth.awaitSignIn())).not.toContain(TOKEN)
+  })
+
+  it('awaitSignIn reports a denial without throwing', async () => {
+    const { caller } = await authRig({
+      ...SIGN_IN,
+      '/login/oauth/access_token': [{ body: { error: 'access_denied' } }],
+    })
+    await caller.auth.signIn()
+    expect(await caller.auth.awaitSignIn()).toEqual({ kind: 'denied' })
+  })
+
+  it('awaitSignIn fails clearly when no sign-in was started', async () => {
+    const { caller } = await authRig({})
+    await expect(caller.auth.awaitSignIn()).rejects.toThrow(/no sign-in in progress/)
+  })
+
+  it('cancelSignIn stops the flow', async () => {
+    const { caller } = await authRig({
+      ...SIGN_IN,
+      '/login/oauth/access_token': [{ body: { error: 'authorization_pending' } }],
+    })
+    await caller.auth.signIn()
+    await caller.auth.cancelSignIn()
+    expect(await caller.auth.awaitSignIn()).toEqual({ kind: 'cancelled' })
+  })
+
+  it('signOut clears the session', async () => {
+    const { caller, session } = await authRig({}, seeded())
+    await caller.auth.signOut()
+    expect(session.token()).toBeNull()
+    expect(await caller.auth.status()).toEqual({ viewer: null })
+  })
+})
+
+describe('github', () => {
+  it('lists repos, pushable ones flagged', async () => {
+    const { caller } = await authRig(
+      {
+        '/user/repos': [
+          { body: [ghRepo(), ghRepo({ full_name: 'a/ro', permissions: { push: false } })] },
+        ],
+      },
+      seeded(),
+    )
+
+    const repos = await caller.github.repos()
+    expect(repos.map((r) => [r.remote, r.canPush])).toEqual([
+      [REMOTE, true],
+      ['a/ro', false],
+    ])
+  })
+
+  it('returns collaborators with the repo visibility', async () => {
+    // A vault silently becoming public is the highest-severity thing that can
+    // happen to it, and the members panel is the only surface that would show
+    // it — so it arrives with the members, not from a second call the UI can
+    // forget to make.
+    const { caller } = await authRig(
+      {
+        [`/repos/${REMOTE}`]: [{ body: ghRepo({ visibility: 'public', private: false }) }],
+        [`/repos/${REMOTE}/collaborators`]: [
+          {
+            body: [
+              {
+                login: 'octocat',
+                id: 1,
+                avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+                permissions: { admin: false, maintain: false, push: true, triage: true, pull: true },
+              },
+            ],
+          },
+        ],
+      },
+      seeded(),
+    )
+
+    expect(await caller.github.collaborators({ remote: REMOTE })).toEqual({
+      visibility: 'public',
+      collaborators: [
+        {
+          accountId: 1,
+          login: 'octocat',
+          avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+          permission: 'write',
+        },
+      ],
+    })
+  })
+
+  it('opens the repo collaborator settings page', async () => {
+    // FR-11: Holi does not implement invitation, it deep-links to the flow
+    // that does.
+    const { caller, openExternal } = await authRig({}, seeded())
+    await caller.github.openCollaboratorSettings({ remote: REMOTE })
+    expect(openExternal).toHaveBeenCalledWith(`https://github.com/${REMOTE}/settings/access`)
+  })
+
+  it('refuses to open a settings page for a remote that is not owner/repo', async () => {
+    // The value is interpolated into a URL. Validate before, not after.
+    const { caller, openExternal } = await authRig({}, seeded())
+    await expect(
+      caller.github.openCollaboratorSettings({ remote: '../../evil' }),
+    ).rejects.toThrow()
+    expect(openExternal).not.toHaveBeenCalled()
+  })
+
+  it('surfaces saml-required with its url', async () => {
+    // "403 Forbidden" sends the user nowhere. The authorization URL is the
+    // whole difference between a dead end and a fix.
+    const { caller } = await authRig(
+      {
+        '/user/repos': [
+          {
+            status: 403,
+            body: { message: 'Resource protected by organization SAML enforcement' },
+            headers: {
+              'x-github-sso':
+                'required; url=https://github.com/orgs/syv-ai/sso?authorization_request=AB4CkQ',
+            },
+          },
+        ],
+      },
+      seeded(),
+    )
+
+    await expect(caller.github.repos()).rejects.toThrow(
+      /https:\/\/github\.com\/orgs\/syv-ai\/sso/,
+    )
+  })
+
+  it('fails clearly when signed out', async () => {
+    // UNAUTHORIZED before a request goes out — not an unauthenticated call
+    // that 401s its way to the same place by accident.
+    const { caller } = await authRig({})
+    await expect(caller.github.repos()).rejects.toThrow(/not signed in/)
+  })
+
+  it('creates a private vault repo', async () => {
+    const { caller } = await authRig(
+      { '/orgs/syv-ai/repos': [{ status: 201, body: ghRepo() }] },
+      seeded(),
+    )
+    expect(await caller.github.createRepo({ name: '1brain', owner: 'syv-ai' })).toMatchObject({
+      remote: REMOTE,
+      private: true,
+    })
+  })
+
+  it('lists the orgs a new vault could live under', async () => {
+    const { caller } = await authRig(
+      { '/user/orgs': [{ body: [{ login: 'syv-ai', avatar_url: 'https://a.test/9.png' }] }] },
+      seeded(),
+    )
+    expect(await caller.github.orgs()).toEqual([
+      { login: 'syv-ai', avatarUrl: 'https://a.test/9.png' },
+    ])
   })
 })
