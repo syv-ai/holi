@@ -909,3 +909,33 @@ Worth stating plainly: **all three were invisible at production timings and obvi
 2. **`index.lock` contention** (bug 4). Options: leave it (a developer knows what the message means), retry inside `git.ts`, or hold off the loop while an agent turn is running — which `vaults-sync.md` §Edge cases already raises for a different reason. Worth one measurement before choosing.
 3. **A focus arriving during a pull consumes the throttle window without pulling.** `onFocus` stamps `lastFocusPull` and then hits the in-flight guard, so the next focus is throttled for 30 s having achieved nothing. Small, and only visible if you alt-tab twice during a fetch.
 4. **The focus-triggered pull was never verified in the app.** `Page.bringToFront` over CDP does not make Electron emit `focus` on an already-focused window, and the code path is covered only by unit tests. Worth checking by hand in plan 5.
+
+### Resolved — 2026-07-22, before plan 5
+
+All four, settled in an interview rather than guessed. Landed as a short main-process sequence on `main`; the renderer half of D2 is plan 5's first task.
+
+**D1 — `up-to-date` over a dirty tree: accepted, but publish becomes a commit point.** The question was mis-stated above in a way worth recording: the window is **not** `commitQuietMs`. `scheduleCommit` restarts on every keystroke, so continuous typing is only caught by the 30 s heal tick — the real bound is `healIntervalMs`, ten times wider.
+
+The wording, though, was never the bug. `ActiveVault.publish()` called `repo.publish()` — `pull()` then `push()`, no commit anywhere — so typing and then pressing Publish pushed everything *except* the last few seconds of work, which is a lie the user can actually be hurt by. Publish now flushes and commits first (FR-4 already calls ⌘S a real commit point; Publish is the same kind of moment, and FR-6 simply failed to list it).
+
+With that closed, no seventh state. FR-22's cited failure is a durability lie — "a sync indicator over a persistence layer that was never built" — and here durability is real: the bytes are on disk, every explicit action commits, and the heal tick bounds the rest. A `saving` chip toggling every three seconds of typing buys no information and costs a steady indicator.
+
+**D2 — the buffer must reach disk before the commit, and only the renderer can do it.** `commitNow()` commits what is on disk; the editor holds a buffer on its own idle debounce. So each flush point is a flush *then* a commit. The renderer owns the ones it can see (⌘S, publish, tab close, vault switch, blur). **Quit is the one main initiates**, and `index.ts` never asked for it — it vetoes, commits, and quits, losing whatever the buffer still held, which is precisely what FR-6 forbids.
+
+Main therefore gains one request→ack: push `vault:flush` on `webContents`, await a single `vault:flush-done`, race a 1 s timeout. No request id — quit is the only caller and there is one window. On timeout it commits and quits anyway; the veto path already assumes teardown can fail, and trapping someone in an app they are leaving is worse than losing a second of typing. See [`../glossary.md`](../glossary.md) §Flush for the vocabulary this settled.
+
+**D3 — `index.lock`: retry what we issue, accept what we collide with.** Measured on an 800-file vault (macOS, no fsmonitor) rather than argued:
+
+| op | time | takes `index.lock` |
+|---|---|---|
+| `git status --porcelain=v2 …` | 155–300 ms | **no** — succeeds with the lock held |
+| `git add -A` + `git commit` | ~215 ms | yes |
+| `git checkout` / `git add` | — | yes, and fails outright |
+
+That reverses the premise. Holi's most frequent op is `status`, and `status` degrades gracefully in both directions. The only window is the ~215 ms commit, open *only while the tree is dirty* — i.e. while someone is typing, which is not while they are running `git checkout` — plus the merge every 180 s. And FR-18 already pauses both loops for a reconcile, so the one agent turn certain to touch git has nothing running against it.
+
+So: `git.ts` retries a lock-failed command ~3× with short backoff, and a lock collision is classified as its own transient — never `offline`. It currently reaches `maybePull`'s `catch` and sets `offline = true`, the same class of wrong-word bug as the empty-conflict case above. The other direction (our loop failing the user's `git`) is accepted, documented, and measured; the agent-turn hold-off from `vaults-sync.md` §Edge cases stays unbuilt until something actually hits it.
+
+**D4 — `onFocus` guards before it stamps.** `if (pullInFlight) return`, ahead of the throttle check: a fetch is already in flight, so this focus needs neither a pull nor a throttle window. Two lines, in preference to giving `maybePull` a "declined vs ran" return — that null-means-declined contract is documented and two timers depend on it.
+
+**Verification of the focus pull is scripted, not manual.** macOS emits a real window `focus` when the app genuinely regains frontmost status, and `osascript` can drive that from Bash: push to the fixture origin, `tell application "Finder" to activate`, activate Electron, then assert over `cdp.mjs` that the commit arrived in seconds rather than after the 180 s interval. No human in the loop, and it catches a regression later.

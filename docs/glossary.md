@@ -37,8 +37,16 @@ A task's state: **todo | doing | done**.
 ### Autosave commit
 A local git commit made automatically when editing goes idle, or on ⌘S. Its purpose is to keep the working tree **clean** so an incoming pull can always merge, and to give the vault a free undo history. Local only until you publish.
 
+### Flush
+Writing a **dirty buffer to disk**. Distinct from the commit that follows it, and the distinction matters because **dirty** otherwise means two different things:
+
+- **Dirty buffer** — the editor holds text the file does not. Fixed by a flush. This is the only state from which data can be lost.
+- **Dirty tree** — the file holds text the last commit does not. Fixed by an autosave commit.
+
+A flush is the renderer's job, because only the renderer can see a buffer. A commit is the main process's, because only it holds the repo. Every durable moment — ⌘S, publish, tab close, vault switch, blur, quit — is a flush *then* a commit, in that order.
+
 ### Publish
-The explicit act of pushing your local commits to the repo. Pull is automatic; push never is.
+The explicit act of pushing your local commits to the repo. Pull is automatic; push never is. Publish flushes and commits first, so it means "publish my work", not "publish what happened to be committed".
 
 ### Reconcile
 The conflict path. An automatic pull that hits a textual conflict is **aborted immediately** (`git merge --abort`), leaving a clean tree, and surfaces a banner. Pressing **Ask Claude to reconcile** pauses autosave, re-runs the merge for real, and hands it to the agent in the drawer. If you ignore the banner you keep working on an unbroken vault.
