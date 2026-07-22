@@ -216,6 +216,153 @@ describe('GitHubApi.repos', () => {
   })
 })
 
+const collaborator = (over: Record<string, unknown> = {}) => ({
+  login: 'octocat',
+  id: 1,
+  avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
+  permissions: { admin: false, maintain: false, push: true, triage: true, pull: true },
+  role_name: 'write',
+  ...over,
+})
+
+describe('GitHubApi.collaborators', () => {
+  it('maps a collaborator list to the shared Collaborator type', async () => {
+    const t = api([{ body: [collaborator()] }])
+
+    expect(await t.client.collaborators('syv-ai/1brain')).toEqual([
+      {
+        accountId: 1,
+        login: 'octocat',
+        avatarUrl: 'https://avatars.githubusercontent.com/u/1?v=4',
+        permission: 'write',
+      },
+    ])
+    expect(new URL(t.requests[0].url).pathname).toBe('/repos/syv-ai/1brain/collaborators')
+  })
+
+  it('takes the highest permission from the permissions object', async () => {
+    // Read from `permissions`, not `role_name`. The object is a fixed set of
+    // booleans; role_name is a vocabulary GitHub can extend with custom org
+    // roles, and an unrecognised string there has no safe default — guessing
+    // high grants access we cannot verify, guessing low hides real admins.
+    const t = api([
+      {
+        body: [
+          collaborator({ id: 1, permissions: { admin: true, maintain: true, push: true, triage: true, pull: true }, role_name: 'some_custom_role' }),
+          collaborator({ id: 2, permissions: { admin: false, maintain: true, push: true, triage: true, pull: true } }),
+          collaborator({ id: 3, permissions: { admin: false, maintain: false, push: false, triage: true, pull: true } }),
+          collaborator({ id: 4, permissions: { admin: false, maintain: false, push: false, triage: false, pull: true } }),
+        ],
+      },
+    ])
+
+    expect((await t.client.collaborators('a/b')).map((c) => c.permission)).toEqual([
+      'admin',
+      'maintain',
+      'triage',
+      'read',
+    ])
+  })
+
+  it('paginates', async () => {
+    const t = api([
+      { body: [collaborator({ id: 1 })], headers: { link: `<${BASE}/c?page=2>; rel="next"` } },
+      { body: [collaborator({ id: 2 })] },
+    ])
+
+    expect(await t.client.collaborators('a/b')).toHaveLength(2)
+    expect(t.requests).toHaveLength(2)
+  })
+
+  it('rejects a remote that is not owner/repo', async () => {
+    // The value goes into a URL path. This reuses registry.ts's isRemote
+    // rather than a second validator that could drift from it.
+    const t = api([{ body: [] }])
+    await expect(t.client.collaborators('../../etc/passwd')).rejects.toThrow(/owner\/repo/)
+    expect(t.requests).toHaveLength(0)
+  })
+})
+
+describe('GitHubApi.repo', () => {
+  it('returns a single repo with its visibility', async () => {
+    // The members panel needs this and cannot get it from repos() without
+    // listing every repo the user has to read one field. PRD §Edge cases calls
+    // a vault silently becoming public the highest-severity thing that can
+    // happen to it, and nothing else in the product would show it.
+    const t = api([{ body: repo({ visibility: 'public', private: false }) }])
+
+    const r = await t.client.repo('nthomsencph/notes')
+    expect(r.visibility).toBe('public')
+    expect(r.remote).toBe('nthomsencph/notes')
+    expect(new URL(t.requests[0].url).pathname).toBe('/repos/nthomsencph/notes')
+  })
+
+  it('reads internal visibility, which is neither public nor private', async () => {
+    const t = api([{ body: repo({ visibility: 'internal', private: false }) }])
+    expect((await t.client.repo('syv-ai/1brain')).visibility).toBe('internal')
+  })
+})
+
+describe('GitHubApi.orgs', () => {
+  it("lists the viewer's orgs", async () => {
+    // The only thing `read:org` was requested for: the New vault owner picker.
+    const t = api([
+      { body: [{ login: 'syv-ai', avatar_url: 'https://avatars.githubusercontent.com/u/9?v=4' }] },
+    ])
+
+    expect(await t.client.orgs()).toEqual([
+      { login: 'syv-ai', avatarUrl: 'https://avatars.githubusercontent.com/u/9?v=4' },
+    ])
+    expect(new URL(t.requests[0].url).pathname).toBe('/user/orgs')
+  })
+})
+
+describe('GitHubApi.createRepo', () => {
+  it('creates a private repo under the viewer by default', async () => {
+    const t = api([{ status: 201, body: repo({ full_name: 'nthomsencph/vault' }) }])
+
+    const created = await t.client.createRepo({ name: 'vault' })
+    expect(created.remote).toBe('nthomsencph/vault')
+
+    const req = t.requests[0]
+    expect(new URL(req.url).pathname).toBe('/user/repos')
+    expect(req.method).toBe('POST')
+    expect(req.body).toMatchObject({ name: 'vault', private: true })
+  })
+
+  it('is private with no way for a caller to ask otherwise', async () => {
+    // Not a default the caller may override. A vault created public is the
+    // highest-severity thing in the PRD's edge cases, and the type is what
+    // makes it unsayable.
+    const t = api([{ status: 201, body: repo() }])
+    await t.client.createRepo({ name: 'vault', owner: 'syv-ai' })
+    expect(t.requests[0].body).toMatchObject({ private: true })
+  })
+
+  it('creates under an org when one is given', async () => {
+    const t = api([{ status: 201, body: repo({ full_name: 'syv-ai/1brain' }) }])
+
+    await t.client.createRepo({ name: '1brain', owner: 'syv-ai' })
+    expect(new URL(t.requests[0].url).pathname).toBe('/orgs/syv-ai/repos')
+  })
+
+  it('surfaces a name collision as an error naming the repo', async () => {
+    // "already exists" is something the user can fix themselves, but only if
+    // they are told which name collided.
+    const t = api([
+      {
+        status: 422,
+        body: {
+          message: 'Repository creation failed.',
+          errors: [{ resource: 'Repository', field: 'name', message: 'name already exists on this account' }],
+        },
+      },
+    ])
+
+    await expect(t.client.createRepo({ name: 'vault' })).rejects.toThrow(/vault/)
+  })
+})
+
 describe('GitHubApi errors', () => {
   it('classifies 401 as unauthorized and calls onUnauthorized', async () => {
     const onUnauthorized = vi.fn()

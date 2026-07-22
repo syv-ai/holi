@@ -27,6 +27,12 @@ export interface Repo {
   /** `owner/repo` — the same identity `VaultEntry` and `cloneRepo` speak. */
   remote: string
   private: boolean
+  /**
+   * Surfaced because a vault silently becoming public is the highest-severity
+   * thing that can happen to it, and nothing else in the product would show it
+   * (PRD §Edge cases). `internal` is a third state, not a synonym for either.
+   */
+  visibility: 'public' | 'private' | 'internal'
   /** ISO. The picker's sort key (FR-7: "sorted by recent push"). */
   pushedAt: string
   defaultBranch: string
@@ -37,6 +43,12 @@ export interface Repo {
    */
   canPush: boolean
   owner: { login: string; kind: 'user' | 'org' }
+}
+
+/** An organization the viewer belongs to — an owner "New vault" can offer. */
+export interface Org {
+  login: string
+  avatarUrl?: string
 }
 
 export interface ApiDeps {
@@ -123,6 +135,54 @@ export class GitHubApi {
       `${this.#base}/repos/${assertRemote(remote)}/collaborators?per_page=100`,
     )
     return raw.map(toCollaborator)
+  }
+
+  /**
+   * The viewer's organizations — the only thing the `read:org` scope was
+   * requested for. It exists so "New vault" can offer an org as the owner;
+   * *listing* org repos never needed it, because `affiliation` covers that.
+   */
+  async orgs(): Promise<Org[]> {
+    const raw = await this.#paginate(`${this.#base}/user/orgs?per_page=100`)
+    return raw.map((o) => ({
+      login: String(o.login),
+      avatarUrl: typeof o.avatar_url === 'string' ? o.avatar_url : undefined,
+    }))
+  }
+
+  /**
+   * FR-8. **Always private**, and there is no parameter to say otherwise — a
+   * vault created public is the highest-severity thing in the PRD's edge cases,
+   * so the signature is what makes it unsayable rather than a default someone
+   * can pass around.
+   *
+   * Seeding the repo is not this module's job: what goes *in* a vault belongs
+   * with the code that knows what a vault contains.
+   */
+  async createRepo(args: { name: string; owner?: string }): Promise<Repo> {
+    const url = args.owner
+      ? `${this.#base}/orgs/${encodeURIComponent(args.owner)}/repos`
+      : `${this.#base}/user/repos`
+
+    try {
+      return toRepo(
+        await this.#request(url, {
+          method: 'POST',
+          body: JSON.stringify({ name: args.name, private: true, auto_init: false }),
+        }),
+      )
+    } catch (err) {
+      // A collision is something the user can fix themselves — but only if they
+      // are told which name collided, and GitHub's 422 does not say.
+      if (err instanceof GitHubApiError && err.status === 422) {
+        throw new GitHubApiError(
+          422,
+          err.kind,
+          `GitHub refused to create "${args.name}": ${err.message}`,
+        )
+      }
+      throw err
+    }
   }
 
   async #request(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
@@ -248,6 +308,14 @@ function toRepo(raw: Record<string, unknown>): Repo {
   return {
     remote: String(raw.full_name),
     private: raw.private === true,
+    // Fall back to the boolean rather than to a string: an unknown value here
+    // must not read as "public" on a repo GitHub called private.
+    visibility:
+      raw.visibility === 'public' || raw.visibility === 'internal'
+        ? raw.visibility
+        : raw.private === true
+          ? 'private'
+          : 'public',
     pushedAt: String(raw.pushed_at),
     defaultBranch: String(raw.default_branch),
     canPush: permissions.push === true,
