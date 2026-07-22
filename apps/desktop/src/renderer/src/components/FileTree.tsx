@@ -1,20 +1,32 @@
+/**
+ * The vault, as rows.
+ *
+ * Driven entirely by the pushed snapshot: main walks the directory, pushes the
+ * whole vault, and this projects it. Nothing here refetches, and nothing here
+ * holds a second copy — a note that arrives by pull, by the agent, or from
+ * another window simply appears.
+ *
+ * **Rename is deliberately absent**, as is the backref preview that used to run
+ * before a delete. `notes.rename` is not in the router: a rename must move the
+ * file *and* rewrite every inbound `[[wiki-link]]` in one pass (FR-11), and
+ * shipping the move half alone would silently break every link pointing at it.
+ * Backrefs are a grep now (FR-12), and the grep is not written. Both come back
+ * together, with the procedure that makes them honest.
+ */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useState } from 'react'
-import { buildTree, renameTarget, type TreeNode } from '../lib/tree'
-import {
-  activeDocAtom,
-  createNoteAtom,
-  deleteNoteAtom,
-  docsAtom,
-  loadBackrefsAtom,
-  renameFolderAtom,
-  renameNoteAtom,
-} from '../state/vaults'
-import { openDocAtom } from '../state/view'
+import { buildTree, type TreeNode } from '../lib/tree'
+import { createNoteAtom, deleteNoteAtom, snapshotAtom } from '../state/vaults'
 
-export function FileTree() {
-  const { docs, folders } = useAtomValue(docsAtom)
-  const tree = useMemo(() => buildTree(docs, folders), [docs, folders])
+export function FileTree({
+  activePath,
+  onOpen,
+}: {
+  activePath: string | null
+  onOpen: (path: string) => void
+}) {
+  const snapshot = useAtomValue(snapshotAtom)
+  const tree = useMemo(() => buildTree(snapshot.docs.map((d) => d.path)), [snapshot])
   const createNote = useSetAtom(createNoteAtom)
   const [newPath, setNewPath] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -28,8 +40,9 @@ export function FileTree() {
           const path = newPath.trim()
           if (!path) return
           setError(null)
-          // Surfaced, not voided: `notes.create` rejects a taken path with CONFLICT, and
-          // this used to swallow it — the row simply never appeared and nothing said why.
+          // Surfaced, not voided: `notes.create` refuses a taken path with
+          // CONFLICT rather than clobbering it, and swallowing that leaves a row
+          // that never appears and nothing saying why.
           void createNote(path.endsWith('.md') ? path : `${path}.md`)
             .then(() => setNewPath(''))
             .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
@@ -46,7 +59,7 @@ export function FileTree() {
       {error && <p className="px-2 pb-1 text-xs text-red-400">{error}</p>}
       <div className="holi-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
         {tree.map((node) => (
-          <TreeRow key={node.path} node={node} depth={0} />
+          <TreeRow key={node.path} node={node} depth={0} activePath={activePath} onOpen={onOpen} />
         ))}
         {tree.length === 0 && <p className="px-2 text-xs text-neutral-500">no notes yet</p>}
       </div>
@@ -54,113 +67,21 @@ export function FileTree() {
   )
 }
 
-function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
-  const openDoc = useSetAtom(openDocAtom)
-  const activeDoc = useAtomValue(activeDocAtom)
-  const { docs } = useAtomValue(docsAtom)
-  const renameNote = useSetAtom(renameNoteAtom)
-  const renameFolder = useSetAtom(renameFolderAtom)
+function TreeRow({
+  node,
+  depth,
+  activePath,
+  onOpen,
+}: {
+  node: TreeNode
+  depth: number
+  activePath: string | null
+  onOpen: (path: string) => void
+}) {
   const deleteNote = useSetAtom(deleteNoteAtom)
-  const loadBackrefs = useSetAtom(loadBackrefsAtom)
   const [open, setOpen] = useState(true)
-  /** Non-null while renaming: the draft path. Inline, matching the create form above —
-   * there is no modal primitive in this codebase and no context menu anywhere. */
-  const [draft, setDraft] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const pad = { paddingLeft: `${depth * 12 + 8}px` }
-  const target = renameTarget(node)
-
-  const guard = (fn: () => Promise<unknown>) => async () => {
-    setBusy(true)
-    setError(null)
-    try {
-      await fn()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const submitRename = guard(async () => {
-    const next = draft?.trim()
-    if (!next || !target || next === node.path) return setDraft(null)
-    // Rename IS move: a different folder prefix relocates it, and the server creates the
-    // destination folders. The server rewrites every [[link]] either way.
-    if (target.kind === 'note') await renameNote(target.docId, next.endsWith('.md') ? next : `${next}.md`)
-    else await renameFolder(target.folderId, next)
-    setDraft(null)
-  })
-
-  const onDelete = guard(async () => {
-    if (node.kind !== 'doc') return
-    // FR-12: what links here, BEFORE you decide. `notes.backrefs` has been built and
-    // uncalled all along. D27 means no cascade — those links will dangle on purpose.
-    const refs = await loadBackrefs(node.path)
-    const links = refs.length
-      ? `\n\n${refs.length === 1 ? '1 note links' : `${refs.length} notes link`} here and will be left ` +
-        `pointing at nothing:\n` +
-        refs.map((r) => `  • ${r.path}${r.occurrences > 1 ? ` (${r.occurrences}×)` : ''}`).join('\n')
-      : ''
-    if (window.confirm(`Delete ${node.path}?${links}`)) await deleteNote(node.docId)
-  })
-
-  if (draft !== null) {
-    return (
-      <form
-        style={pad}
-        className="px-1 py-0.5"
-        onSubmit={(e) => {
-          e.preventDefault()
-          void submitRename()
-        }}
-      >
-        <input
-          autoFocus
-          disabled={busy}
-          className="w-full rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-xs"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && setDraft(null)}
-          onBlur={() => setDraft(null)}
-        />
-        {error && <p className="pt-0.5 text-[10px] text-red-400">{error}</p>}
-      </form>
-    )
-  }
-
-  /** Hover-revealed, because there is no context-menu primitive in this renderer. */
-  const actions = (
-    <span className="ml-auto hidden shrink-0 gap-1 pr-1 group-hover:flex">
-      {target && (
-        <span
-          role="button"
-          title="rename"
-          className="rounded px-1 text-[10px] text-neutral-500 hover:text-neutral-200"
-          onClick={(e) => {
-            e.stopPropagation()
-            setDraft(node.path)
-          }}
-        >
-          ✎
-        </span>
-      )}
-      {node.kind === 'doc' && (
-        <span
-          role="button"
-          title="delete"
-          className="rounded px-1 text-[10px] text-neutral-500 hover:text-red-400"
-          onClick={(e) => {
-            e.stopPropagation()
-            void onDelete()
-          }}
-        >
-          ✕
-        </span>
-      )}
-    </span>
-  )
 
   if (node.kind === 'folder') {
     return (
@@ -169,23 +90,27 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
           className="group flex items-center rounded text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
           style={pad}
         >
-          <button className="min-w-0 flex-1 truncate py-0.5 text-left" onClick={() => setOpen((o) => !o)}>
+          <button
+            className="min-w-0 flex-1 truncate py-0.5 text-left"
+            onClick={() => setOpen((o) => !o)}
+          >
             {open ? '▾' : '▸'} {node.name}
           </button>
-          {actions}
         </div>
-        {error && <p className="px-2 text-[10px] text-red-400">{error}</p>}
-        {open && node.children.map((c) => <TreeRow key={c.path} node={c} depth={depth + 1} />)}
+        {open &&
+          node.children.map((c) => (
+            <TreeRow key={c.path} node={c} depth={depth + 1} activePath={activePath} onOpen={onOpen} />
+          ))}
       </div>
     )
   }
 
-  const isActive = activeDoc?.id === node.docId
+  const isActive = activePath === node.path
   return (
     <div
-      // The open note is marked here, not only in the header — the tree is where you look
-      // to know where you are. Hover lands a step below the active row so the two read as
-      // the same scale of emphasis rather than competing.
+      // The open note is marked here, not only in the header — the tree is
+      // where you look to know where you are. Hover sits a step below the
+      // active row so the two read as one scale of emphasis, not a competition.
       className={`group flex items-center rounded transition-colors ${
         isActive
           ? 'bg-neutral-800 text-neutral-100'
@@ -195,16 +120,28 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
     >
       <button
         className="min-w-0 flex-1 truncate py-0.5 text-left"
-        onClick={() => {
-          const doc = docs.find((d) => d.id === node.docId)
-          // openDoc, not setActiveDoc: from the board, setting the doc alone left the board
-          // on screen and the click looked broken.
-          if (doc) openDoc(doc)
-        }}
+        onClick={() => onOpen(node.path)}
       >
         {node.name}
       </button>
-      {actions}
+      <span
+        role="button"
+        title="delete"
+        className="ml-auto hidden shrink-0 px-1 pr-2 text-[10px] text-neutral-500 hover:text-red-400 group-hover:block"
+        onClick={(e) => {
+          e.stopPropagation()
+          // No backref warning yet, and FR-12 wants one. Until the grep exists,
+          // the confirm names the file and nothing else rather than implying a
+          // check that did not happen.
+          if (window.confirm(`Delete ${node.path}?`)) {
+            void deleteNote(node.path).catch((err: unknown) =>
+              setError(err instanceof Error ? err.message : String(err)),
+            )
+          }
+        }}
+      >
+        ✕
+      </span>
       {error && <p className="px-2 text-[10px] text-red-400">{error}</p>}
     </div>
   )
