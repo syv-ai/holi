@@ -290,12 +290,12 @@ describe('pull', () => {
     // Not a bug — git's merge needs at least one unchanged line between two
     // changes to treat them as independent hunks. Adjacent edits overlap.
     //
-    // This narrows a promise in prd/tasks.md §Concurrency ("two people editing
-    // different fields of the same task ... both survive"): it holds only when
-    // the fields are not neighbours, and in a five-line frontmatter block
-    // neighbours are the common case. `status` and `due` are adjacent in the
-    // PRD's own example format, and are the two fields most likely to be edited
-    // by two people at once.
+    // This is the boundary prd/tasks.md §Concurrency now states: two people
+    // editing different fields of one task both survive only when the changed
+    // lines are not neighbours, and in a five-line frontmatter block neighbours
+    // are the common case. `status` and `due` are adjacent in the PRD's own
+    // example format, and are the two fields most likely to be edited at once.
+    // Adjacent edits fall into the same Reconcile path as a same-field conflict.
     const { ours, theirs } = await pair()
     await publish(theirs, 'task.a.md', taskFile())
     await openRepo(ours).pull()

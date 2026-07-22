@@ -172,7 +172,7 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 **Between machines**, tasks get the vault's ordinary sync semantics and nothing bespoke:
 
 - Two people editing **different tasks** — different files, git merges them, nobody notices.
-- Two people editing **different fields of the same task** — one file, one hunk each; git merges frontmatter line-by-line and both survive.
+- Two people editing **different fields of the same task** — one file, and git merges both **only when the changed lines are not adjacent**. Git needs at least one unchanged line between two changes to treat them as independent hunks; in a five-line frontmatter block neighbours are the common case, and `status` and `due` — the two fields most likely to be edited at once — sit next to each other. Adjacent edits therefore behave like the case below, even though the fields differ.
 - Two people editing **the same field** — a genuine conflict, which aborts the merge and offers **Ask Claude to reconcile**, exactly like a conflict in a note. YAML frontmatter is a good case for this: the agent can read both sides and resolve on meaning rather than on line position.
 - Two people creating **the same filename** — an add/add conflict, same path.
 
