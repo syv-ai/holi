@@ -221,8 +221,19 @@ export async function openActiveVault(args: {
    * between commits by construction", and a tree that is not clean is a tree
    * the next pull cannot merge.
    */
-  async function maybeCommit(): Promise<string | null> {
+  async function maybeCommit(duringPull = false): Promise<string | null> {
     if (closed || committing || manualPause !== null) return null
+    /**
+     * A commit must not run while a pull is merging.
+     *
+     * They had separate guards, which is not enough: `git commit` and
+     * `git merge` both take `.git/index.lock`, so an autosave landing inside a
+     * merge fails outright — and the merge it collided with may be left
+     * half-done. The pull path calls this deliberately (to satisfy FR-7 before
+     * merging) and passes `duringPull`, which is the one case that is safe
+     * because it is sequenced rather than concurrent.
+     */
+    if (pullInFlight && !duringPull) return null
     committing = true
     try {
       const status = await args.repo.status()
@@ -252,25 +263,70 @@ export async function openActiveVault(args: {
   async function maybePull(): Promise<PullResult | null> {
     // FR-12's pause is `conflictPaths`: without it the loop re-runs the same
     // doomed merge every interval and aborts it every time.
-    if (closed || pullInFlight || manualPause !== null || conflictPaths !== null) return null
+    // `committing` is part of the guard for the same reason `pullInFlight` is
+    // part of the commit's: both loops run git against one index, and even a
+    // `git status` refreshes (and therefore locks) it. Deferring a pull by one
+    // tick costs nothing; overlapping them costs a failed command.
+    if (closed || pullInFlight || committing || manualPause !== null || conflictPaths !== null) {
+      return null
+    }
     // Claimed synchronously, before the first await. Checking a guard before an
     // await and setting it after one is not a guard at all: every tick that
     // arrives while `status()` is resolving walks straight through it, and with
     // an interval shorter than a fetch that is all of them.
     pullInFlight = true
     try {
-      const status = await args.repo.status().catch(() => null)
+      let status = await args.repo.status().catch(() => null)
       if (status === null) return null
       if (blockedReason(status) !== null) {
         setState(computeState(status))
         return null
       }
 
+      /**
+       * A pull needs a clean tree, and "clean between commits" (FR-7) is a
+       * statement about the gaps, not about every instant: there is always a
+       * window up to `commitQuietMs` wide where an edit is on disk and not yet
+       * committed, and a pull tick can land inside it.
+       *
+       * `git merge` then refuses outright rather than conflicting — "your local
+       * changes would be overwritten" — and because no merge ever starts there
+       * are no unmerged paths to report, so it surfaces as a **conflict with an
+       * empty path list**: a banner naming nothing, for a conflict that does not
+       * exist. Committing first is what FR-7 is for.
+       */
+      if (status.dirty) {
+        await maybeCommit(true)
+        status = await args.repo.status().catch(() => null)
+        // Still dirty means something declined to commit it (a reconcile, a
+        // detached HEAD). Leave the pull for a later tick rather than making
+        // git refuse it.
+        if (status === null || status.dirty) return null
+      }
+
       syncing = 'pulling'
       await refreshState()
       const result = await args.repo.pull()
       offline = false
-      if (result.kind === 'conflict') conflictPaths = result.paths
+      if (result.kind === 'conflict') {
+        /**
+         * **A conflict naming no paths is not a conflict.**
+         *
+         * `git merge` reports unmerged paths only once it has actually started
+         * merging. When it refuses up front — overwhelmingly because the working
+         * tree changed between the check above and the merge itself, i.e. someone
+         * typed — there are no unmerged paths and this comes back as
+         * `{kind:'conflict', paths:[]}`.
+         *
+         * Latching FR-12's pause on that would be severe: it is sticky by design,
+         * so a user who happened to be typing while a pull was in flight would
+         * have auto-pull disabled *permanently*, for a conflict that does not
+         * exist and that no reconcile can resolve. Treat it as the transient
+         * failure it is and try again on the next tick.
+         */
+        if (result.paths.length === 0) return null
+        conflictPaths = result.paths
+      }
       // A clean merge is silent (FR-11) — no notification, no dialog. The tree
       // updates itself because the merge wrote files and the watcher saw it,
       // but rescan directly too: a merge is exactly the burst most likely to
@@ -289,6 +345,13 @@ export async function openActiveVault(args: {
       pullInFlight = false
       await refreshState()
     }
+  }
+
+  /** Wait for an in-flight pull to finish. Polled rather than promise-chained:
+   *  there is exactly one pull at a time, and a chain would have to be threaded
+   *  through every early return in `maybePull`. */
+  async function waitForIdlePull(): Promise<void> {
+    for (let i = 0; pullInFlight && i < 600; i++) await new Promise((r) => setTimeout(r, 50))
   }
 
   function scheduleCommit(): void {
@@ -358,6 +421,18 @@ export async function openActiveVault(args: {
     async publish() {
       // FR-13/FR-14. `publish()` in the engine pulls first, so the one call
       // site cannot forget to.
+      //
+      // It claims the same in-flight guard `maybePull` does, and must: a
+      // publish pulls, so without this an interval tick and a Publish click can
+      // have two `git merge`s running on one repo at once. They then fight over
+      // MERGE_HEAD — one abort tears down the other's merge, and the loser
+      // reports "There is no merge to abort" for a merge it was in the middle
+      // of. Rare in production at a three-minute interval, and unpleasant.
+      if (pullInFlight) {
+        // A pull is already merging; let it finish rather than racing it.
+        await waitForIdlePull()
+      }
+      pullInFlight = true
       syncing = 'publishing'
       await refreshState()
       try {
@@ -369,6 +444,7 @@ export async function openActiveVault(args: {
         return result
       } finally {
         syncing = null
+        pullInFlight = false
         await refreshState()
       }
     },
@@ -392,8 +468,12 @@ export async function openActiveVault(args: {
       // attempted again, even once the conflict has actually been resolved.
       // FR-18's "resumes normal operation" is this line.
       conflictPaths = null
-      void maybeCommit()
-      void maybePull()
+      // Sequenced, not fired together: run concurrently, one simply loses to the
+      // other's guard and silently does nothing.
+      void (async () => {
+        await maybeCommit()
+        await maybePull()
+      })()
     },
     async close() {
       closed = true

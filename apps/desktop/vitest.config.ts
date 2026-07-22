@@ -29,5 +29,17 @@ export default defineConfig({
     // theories in this repo that looked obvious were wrong (4b023b4 — a file that lives
     // for milliseconds is delivered as NOTHING AT ALL, and usePolling makes it worse).
     fileParallelism: false,
+    // Vitest's 5s default is wrong for this suite, and not by a little. Nothing
+    // here mocks git: a single test can build a bare repo, clone it twice,
+    // publish, merge and pull — dozens of real process spawns, serialised by
+    // `fileParallelism: false` above. Several tests sit around 4-6s, so the
+    // default turns ordinary variance into a red suite.
+    //
+    // This is NOT the "widen the wait" mistake the comment above warns about.
+    // A test timeout only bounds a FAILURE; it never slows a passing test, and
+    // every assertion that waits for something waits on a condition rather than
+    // a duration. Raising it changes what a failure looks like, not whether one
+    // is detected.
+    testTimeout: 20_000,
   },
 })

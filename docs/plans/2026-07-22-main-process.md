@@ -871,10 +871,23 @@ The first run was worth more than the plan predicted, and all four are of the sa
 
 4. **`index.lock` contention is real.** A user's `git checkout` fails outright if it lands while Holi's loop holds the index — no retry, just `fatal: Unable to create index.lock`. It flaked a test ~40% of the time at an 80 ms heal interval. In production the window is ~300 ms out of every 30 s, so it is small but not zero, and `vaults-sync.md` deliberately makes the clone shared and legible. **Not fixed** — the test now retries the way a person would. See open questions.
 
+### Three more, found by chasing a flaky test to its root
+
+The conflict tests flaked ~30% of the time. The first reading was contention noise; it was three real concurrency defects wearing one costume, and every one of them is reachable in production.
+
+5. **A conflict naming no paths was latching the pause forever.** `git merge` reports unmerged paths only once it has *started* merging. If the working tree changes between the status check and the merge — i.e. somebody types — it refuses up front, and `pull()` returns `{kind:'conflict', paths:[]}`. FR-12's pause is sticky by design, so a user who happened to be typing during a pull would have auto-pull disabled **permanently**, for a conflict that does not exist and that no reconcile can resolve. An empty path list is now treated as the transient failure it is. `maybePull` also commits first when the tree is dirty, which shrinks the window that produces it.
+
+6. **`publish()` did not claim the pull in-flight guard.** A Publish click and an interval tick could run two `git merge`es on one repo, fighting over `MERGE_HEAD` — the loser reporting "There is no merge to abort" for a merge it was in the middle of.
+
+7. **The commit loop and the pull loop had separate guards, so they ran git concurrently.** `git commit` and `git merge` both take `.git/index.lock`, and even `git status` refreshes and locks the index. An autosave landing inside a merge failed outright, and could leave the merge half-done. They are now mutually exclusive, and `resume()` sequences its commit and pull rather than firing both.
+
+Worth stating plainly: **all three were invisible at production timings and obvious at test timings.** Shrinking the intervals did not manufacture these bugs, it just made a rare interleaving common — which is the argument for keeping the timings injectable.
+
 ### Three test-side findings
 
 - **macOS replays FSEvents from just before a watcher becomes ready.** `ignoreInitial` suppresses chokidar's own initial walk, not the OS's replay window, so building a vault and watching it in the same tick delivers the setup writes as events. Five watcher tests failed on it. Measured: 0 ms leaks one event, 50 ms is clean; fixtures settle 150 ms. Harmless in production precisely because decision 6 made the signal idempotent.
 - **Ten writes arrive as 14 events in two batches ~50 ms apart.** A 30 ms debounce splits the burst; 100 ms does not. This is the measurement behind the shipped 200 ms, and it is why the coalescing test runs at the production value.
+- **Every test's vault was left running until the end of the file.** A live `ActiveVault` holds a watcher and two timers, each tick spawning several git processes, so the last tests ran against dozens of vaults polling repositories that no longer existed. It surfaced as `git` failing to spawn at all — reported, wonderfully, as *"git was not found"*. Vaults are now torn down after each test.
 - **Eight commit tests failed against correct code.** One commit cycle is `status` → `commitAll` → `status`, roughly ten git processes, and it regularly exceeds 400 ms. The tempting fix was a longer sleep, which `vitest.config.ts` warns against by name; instead every positive assertion waits on the **condition** via `waitFor()`. Fixed sleeps survive only for absence assertions.
 
 ### One bug in the code the plan wrote badly
@@ -894,4 +907,5 @@ The first run was worth more than the plan predicted, and all four are of the sa
 
 1. **`up-to-date` is still reported while the working tree is dirty.** FR-22 says the state must never say synced when it isn't. After fix 1 the window is bounded by `commitQuietMs` (~3 s of typing), and FR-21's vocabulary has no word for "saving". Inventing one is a product decision, not an implementation one — hence this note rather than a new state.
 2. **`index.lock` contention** (bug 4). Options: leave it (a developer knows what the message means), retry inside `git.ts`, or hold off the loop while an agent turn is running — which `vaults-sync.md` §Edge cases already raises for a different reason. Worth one measurement before choosing.
-3. **The focus-triggered pull was never verified in the app.** `Page.bringToFront` over CDP does not make Electron emit `focus` on an already-focused window, and the code path is covered only by unit tests. Worth checking by hand in plan 5.
+3. **A focus arriving during a pull consumes the throttle window without pulling.** `onFocus` stamps `lastFocusPull` and then hits the in-flight guard, so the next focus is throttled for 30 s having achieved nothing. Small, and only visible if you alt-tab twice during a fetch.
+4. **The focus-triggered pull was never verified in the app.** `Page.bringToFront` over CDP does not make Electron emit `focus` on an already-focused window, and the code path is covered only by unit tests. Worth checking by hand in plan 5.
