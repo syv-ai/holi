@@ -301,3 +301,74 @@ describe('merge3 — conflict', () => {
     expect(regions[0]!.base.lines).toHaveLength(70_000)
   })
 })
+
+describe('merge3 — the scenarios this exists for', () => {
+  it("a pull lands a teammate's new section while you type in another", () => {
+    const base = T('# Roadmap', '', '## Q2', '', 'Ship the editor.', '', '## Q3', '', 'TBD.')
+    const mine = T('# Roadmap', '', '## Q2', '', 'Ship the editor and the board.', '', '## Q3', '', 'TBD.')
+    const theirs = T('# Roadmap', '', '## Q2', '', 'Ship the editor.', '', '## Q3', '', 'Hiring, then infra.')
+
+    expect(merged(base, mine, theirs)).toBe(
+      T('# Roadmap', '', '## Q2', '', 'Ship the editor and the board.', '', '## Q3', '', 'Hiring, then infra.'),
+    )
+  })
+
+  it('the agent appends a section while you edit the intro', () => {
+    const base = T('# Notes', '', 'An intro.')
+    const mine = T('# Notes', '', 'A better intro.')
+    const theirs = T('# Notes', '', 'An intro.', '', '## Added by the agent', '', 'Some findings.')
+
+    expect(merged(base, mine, theirs)).toBe(
+      T('# Notes', '', 'A better intro.', '', '## Added by the agent', '', 'Some findings.'),
+    )
+  })
+
+  it('the agent rewrites the paragraph you are editing', () => {
+    const base = T('# Notes', '', 'The original paragraph.')
+    const [region] = conflicted(
+      base,
+      T('# Notes', '', 'The paragraph, as I am rewriting it.'),
+      T('# Notes', '', 'The paragraph, as the agent rewrote it.'),
+    )
+
+    expect(region!.base.lines).toEqual(['The original paragraph.'])
+    expect(region!.mine.lines).toEqual(['The paragraph, as I am rewriting it.'])
+    expect(region!.theirs.lines).toEqual(['The paragraph, as the agent rewrote it.'])
+  })
+
+  it('a task file gains a different frontmatter field on each side', () => {
+    const base = T('---', 'title: Review', 'status: todo', 'due: 2026-07-20', '---', '', 'The body.')
+    const mine = T('---', 'title: Review', 'status: doing', 'due: 2026-07-20', '---', '', 'The body.')
+    const theirs = T('---', 'title: Review', 'status: todo', 'due: 2026-09-09', '---', '', 'The body.')
+
+    // Adjacent lines, different fields — and it MERGES.
+    //
+    // `git merge` refuses this exact case (prd/tasks.md §Concurrency, and
+    // git.test.ts pins it both ways), because its merge needs an unchanged
+    // line between two changes to call them independent hunks. That is a
+    // property of git's three-line context model, not a claim about meaning:
+    // whoever changed `status` and whoever changed `due` both want both, and
+    // the result is unambiguous.
+    //
+    // "One conflict story" is a claim about the UI path — the same banner and
+    // the same Ask Claude to reconcile, whatever produced the conflict — not
+    // a requirement that the two mergers disagree in the same places. This one
+    // being the more permissive is a feature.
+    expect(merged(base, mine, theirs)).toBe(
+      T('---', 'title: Review', 'status: doing', 'due: 2026-09-09', '---', '', 'The body.'),
+    )
+  })
+
+  it('a task file gains the same frontmatter field on each side', () => {
+    const base = T('---', 'title: Review', 'status: todo', '---')
+    const [region] = conflicted(
+      base,
+      T('---', 'title: Review', 'status: doing', '---'),
+      T('---', 'title: Review', 'status: done', '---'),
+    )
+
+    // The genuine disagreement, and the one nothing should resolve for you.
+    expect(region!.mine.lines).toEqual(['status: doing'])
+    expect(region!.theirs.lines).toEqual(['status: done'])
+  })
+})
