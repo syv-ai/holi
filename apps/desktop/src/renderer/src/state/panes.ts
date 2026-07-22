@@ -13,6 +13,8 @@
  * `pinned` flag later is additive; guessing its promotion rules now is not.
  */
 
+import { atom } from 'jotai'
+
 export type Tab = { kind: 'note'; path: string } | { kind: 'board' }
 
 export interface Pane {
@@ -30,6 +32,11 @@ export interface Workspace {
 export function emptyWorkspace(): Workspace {
   return { panes: [{ tabs: [], active: -1 }], active: 0 }
 }
+
+/** Where the tabs actually live. Not persisted: whether tabs survive a restart
+ *  is an open product question, and `.holi/settings.local.json` is where the
+ *  answer would go (`notes-editor.md` §Panes). */
+export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 
 function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false

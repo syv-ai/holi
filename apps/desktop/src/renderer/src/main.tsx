@@ -1,16 +1,10 @@
 import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import { Panel } from './panel/Panel'
+import { App } from './App'
 import { flushAllBuffers } from './lib/buffer-registry'
 import { subscribeToVault } from './state/vaults'
 import './index.css'
-
-/**
- * Plan 5 in progress: still rendering the instrument panel. `App` takes over in
- * Task 10, once the shell it renders actually compiles — deleting the panel
- * first would leave no working surface at all.
- */
 
 /** One store for the app, so the push subscriptions below can outlive every
  *  component. A subscription owned by a component stops the moment that
@@ -37,7 +31,7 @@ window.holi.vault.onFlushRequest(() => {
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Provider store={store}>
-      <Panel />
+      <App />
     </Provider>
   </React.StrictMode>,
 )
