@@ -850,3 +850,48 @@ git commit -m "docs: what the first run of Holi actually did"
 - **Reminders.** They need N vaults live, which decision 2 explicitly does not build.
 - **Onboarding.** Blocked on the OAuth app (handoff §7), and it is plan 5's ritual.
 - **Squash on publish** (`vaults-sync.md` §Open question 3), **pausing auto-pull during an agent turn** (§Open question 5), **large-file warnings**, and **announcing a clean merge that touches the open file** (§Open question 4). All four want a measurement first.
+
+---
+
+## Outcome — completed 2026-07-22
+
+**Done, and the app runs.** 618 tests green (was 515). `main/index.ts`, `main/ipc.ts` and all of `main/vault/` typecheck clean; `electron-vite build` succeeds. A window opens, adopts a vault, watches it, commits it, pulls it, publishes it, and flushes on quit — all verified by hand against a local bare repo with **no GitHub OAuth app**, exactly as decision 5 predicted.
+
+Typecheck ended at **109 errors, not the ~70 predicted**, and the increase is honest: deleting the dead `window.holi` declarations from `global.d.ts` exposed the renderer files that had been type-checking against a lie (`AgentPanel` 1 → 20, `Shell` 9 → 18, `SignIn` and `state/session` 0 → 3 each). Every one of them is plan 5's.
+
+### Four bugs the app found that the tests did not
+
+The first run was worth more than the plan predicted, and all four are of the same kind: things no unit test was shaped to ask.
+
+1. **A vault could be dirty the moment it opened and nothing noticed for up to 30 seconds.** Seeding writes `AGENTS.md` and friends *before* the watcher exists, so no filesystem event ever fires for them — and with the commit driven only by the watcher and the heal tick, the first open of every adopted repo left the tree uncommitted, and therefore unmergeable (FR-7), until the next heal. A session that quit mid-edit reopened the same way. `openActiveVault` now runs a commit check as its last step.
+
+2. **`resume()` could not clear a conflict, so a conflicted vault was stranded forever.** FR-12's auto-pull pause is sticky on purpose, but nothing cleared it — not even FR-18's reconcile, which is the documented way out. The banner would stay up and no pull would ever be attempted again, *even after the user had resolved the conflict by hand*. Found because the acceptance run's own fixture had a real unresolved conflict and the interval pull never fired; the first reading was "auto-pull is broken", and it took checking `sync.state` to see FR-12 working correctly on a vault with no exit.
+
+3. **The conflict banner outranked the branch pause.** A vault on a feature branch still announced `conflict: README.md`, as though it were otherwise operating normally. Both facts are true and only one state can be shown; the pause is the one that costs something to miss, because it means autosave is off and edits are piling up uncommitted while the indicator implies they are safe. Reordered, with a test.
+
+4. **`index.lock` contention is real.** A user's `git checkout` fails outright if it lands while Holi's loop holds the index — no retry, just `fatal: Unable to create index.lock`. It flaked a test ~40% of the time at an 80 ms heal interval. In production the window is ~300 ms out of every 30 s, so it is small but not zero, and `vaults-sync.md` deliberately makes the clone shared and legible. **Not fixed** — the test now retries the way a person would. See open questions.
+
+### Three test-side findings
+
+- **macOS replays FSEvents from just before a watcher becomes ready.** `ignoreInitial` suppresses chokidar's own initial walk, not the OS's replay window, so building a vault and watching it in the same tick delivers the setup writes as events. Five watcher tests failed on it. Measured: 0 ms leaks one event, 50 ms is clean; fixtures settle 150 ms. Harmless in production precisely because decision 6 made the signal idempotent.
+- **Ten writes arrive as 14 events in two batches ~50 ms apart.** A 30 ms debounce splits the burst; 100 ms does not. This is the measurement behind the shipped 200 ms, and it is why the coalescing test runs at the production value.
+- **Eight commit tests failed against correct code.** One commit cycle is `status` → `commitAll` → `status`, roughly ten git processes, and it regularly exceeds 400 ms. The tempting fix was a longer sleep, which `vitest.config.ts` warns against by name; instead every positive assertion waits on the **condition** via `waitFor()`. Fixed sleeps survive only for absence assertions.
+
+### One bug in the code the plan wrote badly
+
+**The pull in-flight guard was checked before an `await` and set after two.** Every tick arriving while `status()` resolved walked straight through, and with an interval shorter than a fetch that is all of them. It presented as four unrelated 5-second timeouts. The guard is now claimed synchronously, and `syncing` stays a separate display-only flag.
+
+### Deviations from the plan
+
+- **`ensureClone` gained a `url` parameter** (defaulting to the remote's GitHub URL) and `RouterDeps` gained `cloneUrlFor` alongside it. The plan assumed the URL was always derivable from `owner/repo`; it is not, for GitHub Enterprise or for a local bare repo — which is what makes the whole engine testable without a token.
+- **`RouterDeps` also gained `vaultRoot`**, rather than the router calling `vaultRoot()` itself, so it has no ambient dependency on the environment.
+- **`trpc-call.ts` is new and tested**, against the plan's "no unit test in Task 10". It is pure — `server-client.ts`, which used to own `callProcedure`/`toEnvelope`, was deleted in the pivot — and the envelope is where a `NOT_FOUND` would silently become indistinguishable from a crash.
+- **Test fixtures moved to `test/helpers/git-fixtures.ts`.** They were already exported from `git.test.ts` for reuse, but importing one test file from another makes Vitest register its whole suite again — ~28 s of real git, twice.
+- **`cdp.mjs` is committed** at `apps/desktop/cdp.mjs`. Plan 5 inherits a working headless rig.
+- **`vaults.create` was not exercised end to end.** It needs `session.api.createRepo`, which needs the OAuth app. Covered by a router test with the API stubbed; the clone/seed/commit/push half rides the same `addVault` path everything else proved.
+
+### Open questions this created
+
+1. **`up-to-date` is still reported while the working tree is dirty.** FR-22 says the state must never say synced when it isn't. After fix 1 the window is bounded by `commitQuietMs` (~3 s of typing), and FR-21's vocabulary has no word for "saving". Inventing one is a product decision, not an implementation one — hence this note rather than a new state.
+2. **`index.lock` contention** (bug 4). Options: leave it (a developer knows what the message means), retry inside `git.ts`, or hold off the loop while an agent turn is running — which `vaults-sync.md` §Edge cases already raises for a different reason. Worth one measurement before choosing.
+3. **The focus-triggered pull was never verified in the app.** `Page.bringToFront` over CDP does not make Electron emit `focus` on an already-focused window, and the code path is covered only by unit tests. Worth checking by hand in plan 5.

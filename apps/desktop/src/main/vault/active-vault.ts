@@ -188,9 +188,17 @@ export async function openActiveVault(args: {
    */
   function computeState(status: RepoStatus): SyncState {
     if (manualPause !== null) return { kind: 'paused', reason: manualPause }
-    if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
+    // Being blocked outranks the conflict banner, which is not the order it was
+    // written in — running the app showed a vault on a feature branch still
+    // announcing a conflict, as though it were otherwise working normally.
+    //
+    // Of the two facts, the pause is the one that costs something to miss. An
+    // unnoticed conflict is a teammate's change *waiting*, still there when you
+    // switch back; an unnoticed pause means autosave is off and your edits are
+    // piling up uncommitted while the indicator implies they are safe.
     const blocked = blockedReason(status)
     if (blocked !== null) return { kind: 'paused', reason: blocked }
+    if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
     if (syncing !== null) return { kind: syncing }
     if (offline) return { kind: 'offline' }
     return status.ahead > 0 ? { kind: 'ahead', count: status.ahead } : { kind: 'up-to-date' }
@@ -313,11 +321,23 @@ export async function openActiveVault(args: {
 
   const pullTimer = setInterval(() => void maybePull(), timings.pullIntervalMs)
 
-  // The state the vault opens in. Without this a freshly opened vault reports
-  // `up-to-date` until the first tick, which is a claim rather than a reading —
-  // and FR-22 is specifically that the indicator must never say synced when it
-  // is not.
-  await refreshState()
+  /**
+   * A vault can be dirty the moment it opens, and nothing will report it.
+   *
+   * Seeding writes `AGENTS.md` and friends *before* this function is called, so
+   * no filesystem event ever fires for them; a session that quit mid-edit
+   * reopens the same way. With the commit driven only by the watcher and the
+   * heal tick, the first open of every adopted repo therefore left the tree
+   * uncommitted — and unmergeable (FR-7) — for up to a whole heal interval.
+   *
+   * Found by running the app rather than by a test, which is the point of
+   * running it.
+   *
+   * This also establishes the opening sync state, and it is a reading rather
+   * than a claim: FR-22 is specifically that the indicator must never say
+   * synced when it is not.
+   */
+  await maybeCommit()
 
   return {
     remote: args.remote,
@@ -365,7 +385,15 @@ export async function openActiveVault(args: {
     },
     resume() {
       manualPause = null
+      // The conflict pause has to go too, and this is the ONLY thing that
+      // clears it. FR-12 makes it sticky on purpose — otherwise the loop
+      // re-runs the same doomed merge every interval — but sticky with no way
+      // out strands the vault: the banner stays up forever and no pull is ever
+      // attempted again, even once the conflict has actually been resolved.
+      // FR-18's "resumes normal operation" is this line.
+      conflictPaths = null
       void maybeCommit()
+      void maybePull()
     },
     async close() {
       closed = true

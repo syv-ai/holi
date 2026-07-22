@@ -213,6 +213,32 @@ describe('ActiveVault — commit', () => {
     expect((await active.repo.status()).dirty).toBe(false) // FR-7
   })
 
+  it('commits a tree that was ALREADY dirty when the vault opened', async () => {
+    // Found by running the app. Seeding writes AGENTS.md and friends before the
+    // watcher exists, so no filesystem event ever fires for them — and with the
+    // commit driven only by the watcher and the heal tick, the first open of
+    // every adopted repo left the tree unmergeable for up to a whole heal
+    // interval. A vault quit mid-edit reopens the same way.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await writeFile(join(dir, 'left-behind.md'), 'from before we were watching\n', 'utf8')
+    await sleep(QUIESCE)
+    const before = await count(dir)
+
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      // Both loops effectively off: if this commits, it is because opening did.
+      timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    expect(await count(dir)).toBe(before + 1)
+    expect((await active.repo.status()).dirty).toBe(false)
+  })
+
   it('commits nothing, and complains about nothing, when the tree is clean', async () => {
     // The normal outcome of an idle timer. `commitAll` returns null here and
     // that is not an error — logged as one, the console fills at 2 lines a
@@ -401,6 +427,32 @@ describe('ActiveVault — sync', () => {
     return { active, snaps, dir, teammate }
   }
 
+  /**
+   * A git command run by someone *else* against a repo Holi is also using.
+   *
+   * Retries on `index.lock`, because that is what the contention actually looks
+   * like: Holi's loop holds the index for the length of a commit, and a command
+   * arriving inside that window fails outright rather than waiting. This test
+   * hit it about 40% of the time at an 80 ms heal interval.
+   *
+   * It is a real property of the design, not a test artifact — `vaults-sync.md`
+   * makes the clone deliberately legible, and the agent has Bash. In production
+   * the heal tick is 30 s and a commit is ~300 ms, so the window is small, but
+   * it is not zero and a person who just wanted to switch branch would simply
+   * try again. So does this.
+   */
+  async function userGit(dir: string, args: string[]): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await plainGit(dir, args)
+        return
+      } catch (err) {
+        if (attempt >= 20 || !/index\.lock/.test(String(err))) throw err
+        await sleep(50)
+      }
+    }
+  }
+
   /** The teammate publishes. */
   async function theyPublish(teammate: string, rel: string, text: string) {
     await writeFile(join(teammate, rel), text, 'utf8')
@@ -480,6 +532,59 @@ describe('ActiveVault — sync', () => {
     await waitFor('a commit despite the banner', async () => (await count(dir)) === before + 1)
     // The banner survives the commit rather than being overwritten by it.
     expect(active.syncState().kind).toBe('conflict')
+  })
+
+  it('reports the pause, not the conflict, when a conflicted vault goes off-branch', async () => {
+    // Found by running the app. Both facts are true at once and only one state
+    // can be shown; the pause is the one that costs something to miss, because
+    // it means autosave is off and edits are piling up uncommitted while the
+    // indicator implies they are safe. The conflict is still there — and shown
+    // again — the moment the branch comes back.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80, healIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'ours'])
+    await waitFor('the conflict', () => active.syncState().kind === 'conflict')
+
+    await userGit(dir, ['checkout', '-b', 'spike/idea'])
+    await waitFor('the pause to take over', () => active.syncState().kind === 'paused')
+    expect((active.syncState() as { reason: string }).reason).toContain('spike/idea')
+
+    await userGit(dir, ['checkout', 'main'])
+    await waitFor('the conflict to come back', () => active.syncState().kind === 'conflict')
+  })
+
+  it('resume() clears the conflict and lets auto-pull start again', async () => {
+    // FR-18: a reconcile "resumes normal operation once the tree is clean".
+    // Found by running the app: FR-12's pause is sticky by design, so if
+    // nothing ever clears it the vault is stranded — the banner stays up
+    // forever and no pull is ever attempted again, even after the conflict has
+    // actually been resolved. resume() is the only way back, so it has to
+    // clear BOTH pauses, not just the manual one.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80, healIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'ours'])
+    await waitFor('the conflict', () => active.syncState().kind === 'conflict')
+
+    // Resolve it the way a developer would, in a terminal.
+    await userGit(dir, ['fetch', 'origin'])
+    await userGit(dir, ['merge', '-X', 'ours', 'origin/main'])
+
+    // Until resume(), the vault is stranded: it will never look again.
+    await sleep(300)
+    expect(active.syncState().kind).toBe('conflict')
+
+    active.resume()
+    await waitFor('sync to recover', () => active.syncState().kind !== 'conflict')
+
+    // And it really is syncing again, not just displaying differently.
+    await theyPublish(teammate, 'after-recovery.md', 'arrived\n')
+    await waitFor('a pull after recovering', async () =>
+      (await readFile(join(dir, 'after-recovery.md'), 'utf8').catch(() => null)) !== null,
+    )
   })
 
   it('publish pulls first, so both sides survive', async () => {
@@ -580,11 +685,11 @@ describe('ActiveVault — sync', () => {
     // needing anyone to notice.
     const { active, dir } = await withTeammate({ pullIntervalMs: 60_000, healIntervalMs: 80 })
 
-    await plainGit(dir, ['checkout', '-b', 'spike/idea'])
+    await userGit(dir, ['checkout', '-b', 'spike/idea'])
     await waitFor('the pause', () => active.syncState().kind === 'paused')
     expect((active.syncState() as { reason: string }).reason).toContain('spike/idea')
 
-    await plainGit(dir, ['checkout', 'main'])
+    await userGit(dir, ['checkout', 'main'])
     await waitFor('sync to resume by itself', () => active.syncState().kind !== 'paused')
   })
 
