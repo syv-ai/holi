@@ -104,6 +104,7 @@ describe('status', () => {
       ahead: 0,
       behind: 0,
       dirty: false,
+      dirtyPaths: [],
       merging: false,
       detached: false,
       unborn: false,
@@ -120,6 +121,69 @@ describe('status', () => {
     const dir = await makeClone(await makeRemote())
     await writeFile(join(dir, 'new-note.md'), 'hi\n', 'utf8')
     expect((await openRepo(dir).status()).dirty).toBe(true)
+  })
+
+  it('names nothing dirty in a clean tree', async () => {
+    // `dirtyPaths` is empty exactly when `dirty` is false — the commit loop
+    // reads one and builds the message from the other, so they must not be able
+    // to disagree.
+    const status = await openRepo(await makeClone(await makeRemote())).status()
+    expect(status.dirty).toBe(false)
+    expect(status.dirtyPaths).toEqual([])
+  })
+
+  it('names a modified tracked file', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'README.md'), '# Changed\n', 'utf8')
+    expect((await openRepo(dir).status()).dirtyPaths).toEqual(['README.md'])
+  })
+
+  it('names an untracked file — the new note is the common case', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'new-note.md'), 'hi\n', 'utf8')
+    expect((await openRepo(dir).status()).dirtyPaths).toEqual(['new-note.md'])
+  })
+
+  it('names a file inside a new directory', async () => {
+    const dir = await makeClone(await makeRemote())
+    await mkdir(join(dir, 'projects', 'q2'), { recursive: true })
+    await writeFile(join(dir, 'projects/q2/roadmap.md'), 'plans\n', 'utf8')
+    expect((await openRepo(dir).status()).dirtyPaths).toEqual(['projects/q2/roadmap.md'])
+  })
+
+  it('names a renamed file ONCE, not twice', async () => {
+    // The porcelain-v2 `-z` trap. A rename is a `2 ` record whose path field is
+    // followed by ANOTHER NUL-separated field holding the original path — so a
+    // naive `split('\0')` walk reads that original path as an entry of its own
+    // and emits a file that is not dirty at all. It costs nothing while `dirty`
+    // is a boolean and produces a phantom the moment paths are collected.
+    const dir = await makeClone(await makeRemote())
+    await plainGit(dir, ['mv', 'README.md', 'GUIDE.md'])
+    expect((await openRepo(dir).status()).dirtyPaths).toEqual(['GUIDE.md'])
+  })
+
+  it('names a path containing a space', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'my notes.md'), 'hi\n', 'utf8')
+    expect((await openRepo(dir).status()).dirtyPaths).toEqual(['my notes.md'])
+  })
+
+  it('names an unmerged file once', async () => {
+    // Left mid-merge on purpose: `pull()` aborts, so the only way to observe an
+    // unmerged (`u `) record is to run the merge raw. A reconcile runs the app
+    // inside exactly this state.
+    const remote = await makeRemote()
+    const ours = await makeClone(remote)
+    const theirs = await makeClone(remote, 'teammate')
+    await commitFile(theirs, 'README.md', '# Theirs\n')
+    await plainGit(theirs, ['push', 'origin', 'main'])
+    await commitFile(ours, 'README.md', '# Ours\n')
+    await plainGit(ours, ['fetch', 'origin'])
+    await plainGit(ours, ['merge', 'origin/main']).catch(() => {}) // conflicts, by design
+
+    const status = await openRepo(ours).status()
+    expect(status.merging).toBe(true)
+    expect(status.dirtyPaths).toEqual(['README.md'])
   })
 
   it('counts commits waiting to publish', async () => {

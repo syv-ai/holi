@@ -6,8 +6,25 @@
  * identity of a vault is its `remote`; `path` is just where this machine put it.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { VaultEntry } from '@holi/shared'
+
+/**
+ * The managed vault root: `~/Holi`, and every clone sits at `<root>/owner/repo`.
+ *
+ * `homedir()` rather than Electron's `app.getPath('home')` — they agree, and
+ * this module is reached by the test suite, which must never load Electron.
+ *
+ * `HOLI_VAULT_ROOT` overrides it, and that is a necessity rather than a feature:
+ * without it every `electron-vite dev` run and every headless test would clone
+ * into the user's real `~/Holi`, beside their real vaults.
+ */
+export function vaultRoot(): string {
+  // An empty override is treated as absent. `join('', 'syv/notes')` is a
+  // relative path, which would put vaults wherever the process happens to be.
+  return process.env['HOLI_VAULT_ROOT'] || join(homedir(), 'Holi')
+}
 
 /** `owner/repo`, the form the GitHub API and `git clone` both speak. */
 const REMOTE_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/

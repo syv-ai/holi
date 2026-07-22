@@ -1,8 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
-import { VaultRegistry, clonePathFor, isRemote, repoName } from '../src/main/vault/registry'
+import { afterAll, afterEach, describe, expect, it } from 'vitest'
+import { VaultRegistry, clonePathFor, isRemote, repoName, vaultRoot } from '../src/main/vault/registry'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -35,6 +35,38 @@ describe('isRemote', () => {
     expect(isRemote('/owner/repo')).toBe(false)
     expect(isRemote('owner/')).toBe(false)
     expect(isRemote('owner')).toBe(false)
+  })
+})
+
+describe('vaultRoot', () => {
+  const saved = process.env['HOLI_VAULT_ROOT']
+  afterEach(() => {
+    if (saved === undefined) delete process.env['HOLI_VAULT_ROOT']
+    else process.env['HOLI_VAULT_ROOT'] = saved
+  })
+
+  it('defaults to ~/Holi', () => {
+    delete process.env['HOLI_VAULT_ROOT']
+    // Asserted against homedir() rather than a literal: the point is that it
+    // sits in the user's home where Finder and a terminal can both reach it.
+    expect(vaultRoot()).toBe(join(homedir(), 'Holi'))
+  })
+
+  it('honours HOLI_VAULT_ROOT', () => {
+    // Not a feature — a necessity. Without it every `electron-vite dev` run and
+    // every headless test clones into the real ~/Holi beside real vaults.
+    process.env['HOLI_VAULT_ROOT'] = '/tmp/holi-dev'
+    expect(vaultRoot()).toBe('/tmp/holi-dev')
+  })
+
+  it('ignores an empty override rather than rooting vaults at the filesystem', () => {
+    process.env['HOLI_VAULT_ROOT'] = ''
+    expect(vaultRoot()).toBe(join(homedir(), 'Holi'))
+  })
+
+  it('composes with clonePathFor', () => {
+    process.env['HOLI_VAULT_ROOT'] = '/tmp/holi-dev'
+    expect(clonePathFor(vaultRoot(), 'syv-ai/1brain')).toBe('/tmp/holi-dev/syv-ai/1brain')
   })
 })
 

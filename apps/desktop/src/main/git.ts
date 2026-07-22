@@ -108,6 +108,14 @@ export interface RepoStatus {
   ahead: number
   behind: number
   dirty: boolean
+  /**
+   * Vault-relative paths of everything changed, untracked or unmerged. Empty
+   * exactly when `dirty` is false.
+   *
+   * FR-4's commit message is built from this: `Update <path>` for one file, a
+   * count for several. Without it the loop knows only *that* something changed.
+   */
+  dirtyPaths: string[]
   /** A merge is in progress — the state a reconcile runs inside. */
   merging: boolean
   detached: boolean
@@ -183,6 +191,19 @@ export function classifyPushFailure(
   const refRejected = stdout.split('\n').some((line) => line.startsWith('!'))
   if (refRejected && /non-fast-forward|fetch first|stale info/i.test(stdout)) return 'non-fast-forward'
   return null
+}
+
+/**
+ * The path field of a `--porcelain=v2 -z` entry: everything after the first `n`
+ * space-separated fields.
+ *
+ * Counted rather than taken from the last space, because git tracks paths with
+ * spaces in them and the field counts are fixed per record type: 8 for `1`
+ * (ordinary), 9 for `2` (rename/copy — it carries an extra score field), 10 for
+ * `u` (unmerged, which lists three stages), 1 for `?` and `!`.
+ */
+function pathAfter(record: string, n: number): string {
+  return record.split(' ').slice(n).join(' ')
 }
 
 /** The result of a command allowed to fail. */
@@ -450,13 +471,30 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     let behind = 0
     let detached = false
     let unborn = false
-    let dirty = false
+    const dirtyPaths: string[] = []
 
-    for (const record of raw.split('\0')) {
+    const records = raw.split('\0')
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i]!
       if (record === '') continue
       if (!record.startsWith('# ')) {
         // Any entry at all — changed, untracked or unmerged — means dirty.
-        dirty = true
+        //
+        // The path is the remainder after a fixed number of space-separated
+        // fields, counted rather than found by the last space: git tracks paths
+        // containing spaces and a `lastIndexOf(' ')` would truncate them.
+        const kind = record[0]
+        if (kind === '1') dirtyPaths.push(pathAfter(record, 8))
+        else if (kind === '2') {
+          dirtyPaths.push(pathAfter(record, 9))
+          // A rename's ORIGINAL path is a second NUL-separated field belonging
+          // to this same record. Consume it, or the next loop reads it as an
+          // entry of its own and reports a file that is not dirty at all.
+          i++
+        } else if (kind === 'u') dirtyPaths.push(pathAfter(record, 10))
+        else if (kind === '?') dirtyPaths.push(pathAfter(record, 1))
+        // `!` (ignored) cannot appear without --ignored, and must never count
+        // as dirty if it ever did — that is what .gitignore is for.
         continue
       }
       const [key, ...rest] = record.slice(2).split(' ')
@@ -492,7 +530,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       defaultBranch: await defaultBranch(),
       ahead,
       behind,
-      dirty,
+      dirty: dirtyPaths.length > 0,
+      dirtyPaths,
       merging: await isMerging(),
       detached,
       unborn,
