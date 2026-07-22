@@ -75,6 +75,50 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
 })
 
 /**
+ * FR-7: clone a repo the user already has, and open it.
+ *
+ * `vaults.add` clones into the managed root, seeds, registers, and opens in one
+ * procedure — so the snapshot it returns is the vault that is now live, and the
+ * list is re-read because the vault would otherwise be open and missing from
+ * the dropdown at the same time.
+ *
+ * Deliberately does **not** swallow a refusal. A clone fails for reasons the
+ * user can act on — no network, no access, a repo that is not there — and a
+ * silent failure leaves the dropdown unchanged with nothing saying why.
+ */
+export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
+  const snapshot = await trpc.vaults.add.mutate({ remote })
+  set(activeRemoteAtom, remote)
+  set(snapshotAtom, snapshot)
+  set(activeDocAtom, null)
+  await set(loadVaultsAtom)
+})
+
+/**
+ * FR-8: a new private repo, seeded, committed, pushed, opened.
+ *
+ * The push is not optional and the router does it rather than the caller: a
+ * vault that exists only locally is not one anybody can be invited to.
+ *
+ * **`owner` is required here even though the router makes it optional.**
+ * `vaults.create` answers with a snapshot rather than the repo, so the only way
+ * the renderer can name the vault it just made is by knowing the owner up
+ * front — and defaulting to the signed-in account would mean *guessing* the
+ * remote and opening the wrong one. The UI always has a login to supply.
+ */
+export const createVaultAtom = atom(
+  null,
+  async (_get, set, input: { name: string; owner: string }) => {
+    const snapshot = await trpc.vaults.create.mutate(input)
+    const remote = `${input.owner}/${input.name}`
+    set(activeRemoteAtom, remote)
+    set(snapshotAtom, snapshot)
+    set(activeDocAtom, null)
+    await set(loadVaultsAtom)
+  },
+)
+
+/**
  * Subscribe to everything main pushes, for the lifetime of the app.
  *
  * Established once where the store is created — **not** from a component

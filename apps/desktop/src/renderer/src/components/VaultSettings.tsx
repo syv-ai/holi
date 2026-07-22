@@ -16,10 +16,17 @@ import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { sessionAtom, signOutAtom } from '../state/session'
-import { activeRemoteAtom } from '../state/vaults'
+import { activeRemoteAtom, vaultsAtom } from '../state/vaults'
+
+/** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git` — this one is for a
+ *  human to click, not for git to clone. A vault whose origin is a local path
+ *  (a test fixture) still renders its remote; the link simply will not resolve,
+ *  which is the honest outcome for a vault that is not on GitHub. */
+const originUrl = (remote: string) => `https://github.com/${remote}`
 
 export function VaultSettings({ onClose }: { onClose: () => void }) {
   const remote = useAtomValue(activeRemoteAtom)
+  const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
   const session = useAtomValue(sessionAtom)
   const signOut = useSetAtom(signOutAtom)
   const [members, setMembers] = useState<{
@@ -51,7 +58,27 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
 
       <section className="space-y-1">
         <h3 className="font-medium">Vault</h3>
-        <p className="text-neutral-400">{remote ?? 'no vault open'}</p>
+        {entry === undefined ? (
+          <p className="text-neutral-400">no vault open</p>
+        ) : (
+          <>
+            {/* Where it actually points. A vault IS its remote, and until now
+                nothing in the app said which one — you could not tell a vault
+                backed by GitHub from one backed by a local fixture. */}
+            <button
+              className="block max-w-full truncate text-left text-sky-400 hover:underline"
+              title={originUrl(entry.remote)}
+              onClick={() => void window.holi.openExternal(originUrl(entry.remote))}
+            >
+              {entry.remote}
+            </button>
+            {/* FR-15 promises the clones survive a sign-out and that the user is
+                told where they are. This is where they are told. */}
+            <p className="truncate text-[11px] text-neutral-500" title={entry.path}>
+              {entry.path}
+            </p>
+          </>
+        )}
         {members && (
           <p className={members.visibility === 'public' ? 'text-amber-400' : 'text-neutral-500'}>
             {members.visibility}

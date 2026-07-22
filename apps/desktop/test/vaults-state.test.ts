@@ -12,6 +12,8 @@ import type { VaultSnapshot } from '@holi/shared'
 import { installFakeHoli, type FakeHoli } from './helpers/fake-holi'
 import {
   activeRemoteAtom,
+  addVaultAtom,
+  createVaultAtom,
   loadVaultsAtom,
   openVaultAtom,
   snapshotAtom,
@@ -79,5 +81,57 @@ describe('vaults', () => {
     // read could only disagree with it.
     expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['other.md'])
     expect(holi.calls.map((c) => c.path)).toEqual(['vaults.open'])
+  })
+})
+
+/**
+ * FR-7 and FR-8. Both procedures existed, were tested, and had no caller at all
+ * — the shell listed vaults and opened them, and offered no way for one to get
+ * into the list. Found by signing in on a clean machine and finding nothing to
+ * click.
+ */
+describe('getting a vault in the first place', () => {
+  it('adds an existing repo and makes it the open vault', async () => {
+    holi = installFakeHoli((op) => {
+      if (op.path === 'vaults.add') return snapshot('README.md')
+      if (op.path === 'vaults.list') return [entry('syv-ai/notes')]
+      return undefined
+    })
+    const store = createStore()
+
+    await store.set(addVaultAtom, 'syv-ai/notes')
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/notes')
+    expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['README.md'])
+    // The list has to be re-read, or the vault that was just added is open and
+    // absent from the dropdown at the same time.
+    expect(store.get(vaultsAtom).map((v) => v.remote)).toEqual(['syv-ai/notes'])
+  })
+
+  it('creates a new vault and opens it', async () => {
+    holi = installFakeHoli((op) => {
+      if (op.path === 'vaults.create') return snapshot('AGENTS.md', 'README.md')
+      if (op.path === 'vaults.list') return [entry('syv-ai/fresh')]
+      return undefined
+    })
+    const store = createStore()
+
+    await store.set(createVaultAtom, { name: 'fresh', owner: 'syv-ai' })
+
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/fresh')
+    expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['AGENTS.md', 'README.md'])
+  })
+
+  it('surfaces a refusal instead of leaving a half-open vault', async () => {
+    // `vaults.add` throws when the clone fails — no network, no access, a name
+    // that does not exist. Swallowing it would leave the dropdown unchanged and
+    // nothing on screen saying why.
+    holi = installFakeHoli(() => {
+      throw new Error('could not clone syv-ai/nope')
+    })
+    const store = createStore()
+
+    await expect(store.set(addVaultAtom, 'syv-ai/nope')).rejects.toThrow(/could not clone/)
+    expect(store.get(activeRemoteAtom)).toBeNull()
   })
 })

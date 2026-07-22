@@ -15,6 +15,7 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
+import { AddVault } from './AddVault'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
@@ -42,6 +43,7 @@ export function Shell() {
   const loadVaults = useSetAtom(loadVaultsAtom)
   const openVault = useSetAtom(openVaultAtom)
   const [showSettings, setShowSettings] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
 
   useEffect(() => {
@@ -64,7 +66,7 @@ export function Shell() {
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-64 flex-col border-r border-neutral-900">
+        <aside className="relative flex w-64 flex-col border-r border-neutral-900">
           <div className="flex items-center gap-1 p-2">
             <select
               className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm"
@@ -80,12 +82,20 @@ export function Shell() {
             </select>
             <button
               className="rounded bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-700"
+              title="add or create a vault"
+              onClick={() => setShowAdd((v) => !v)}
+            >
+              +
+            </button>
+            <button
+              className="rounded bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-700"
               title="vault settings"
               onClick={() => setShowSettings((v) => !v)}
             >
               ⚙
             </button>
           </div>
+          {showAdd && <AddVault onClose={() => setShowAdd(false)} />}
 
           {/* FR-21 puts the state beside the vault name, because that is where
               you look to know which vault you are in. */}
