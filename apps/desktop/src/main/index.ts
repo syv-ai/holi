@@ -1,44 +1,49 @@
-import { app, BrowserWindow } from 'electron'
+/**
+ * The app: one window, one signed-in GitHub session, one open vault.
+ *
+ * Read the order in `whenReady` as a dependency chain — the session must exist
+ * before the host, because the host hands git a closure over its token; the
+ * host must exist before the router, because half the router is about the open
+ * vault; and the window must exist before anything pushes to it.
+ *
+ * **Nothing here may import a module that no longer exists.** `electron-vite`
+ * resolves imports even though it does not typecheck, so an unresolvable import
+ * anywhere on this path is the one thing that stops a window opening at all.
+ * That is why the agent is not wired up: `agent/agent-manager.ts` still imports
+ * the deleted `server-client`, and the drawer is plan 5's work.
+ */
 import { join } from 'node:path'
-import { createAgentManager } from './agent/agent-manager'
-import { createUserStream } from './events/user-stream'
+import { app, BrowserWindow } from 'electron'
+import { createSession } from './github/electron'
 import { registerIpc } from './ipc'
-import { createReminderNotifier } from './reminders/notifier'
-import { createServerClient, type ServerClient } from './server-client'
-import { electronSessionStore, type SessionStore } from './session'
-import { createVaultManager } from './vault/vault-manager'
+import { createRouter } from './router'
+import { createVaultHost } from './vault/active-vault'
+import { VaultRegistry, vaultRoot } from './vault/registry'
 
+// Declared before the launch check below, which starts `main()` synchronously:
+// a `let` referenced from inside it while still in its temporal dead zone would
+// throw during startup, which is the worst possible place for one.
 let mainWindow: BrowserWindow | null = null
 
 /**
- * Dev-only: land on a vault instead of the empty sign-in screen. If there's no
- * cached session, mint one from the server's `auth.devSession` bootstrap and
- * save it, so the renderer's first `auth.get` is already signed in. Bounded
- * retry because the server may still be booting under `pnpm dev`. Never runs in
- * a packaged build; a failure just falls back to the manual dev-token field.
+ * A second launch must not happen at all.
+ *
+ * `prd/vaults-sync.md` names the hazard as "the app opened twice would race on
+ * commits" and asks for a lock on the clone — but one Holi process owns every
+ * vault, so excluding a second *app* is exactly excluding a second writer on
+ * every clone, and it covers vaults that are not even open, which a per-clone
+ * lock could not. A lockfile would also need stale-lock handling, and getting
+ * that wrong locks someone out of their own vault after a single crash.
+ *
+ * Must be claimed BEFORE `whenReady`.
  */
-async function maybeDevSignIn(store: SessionStore, client: ServerClient): Promise<void> {
-  if (app.isPackaged || store.load()) return
-  for (let attempt = 0; attempt < 12; attempt++) {
-    try {
-      const { token, user } = await client.auth.devSession.mutate()
-      store.save({
-        token,
-        userId: user.id,
-        email: user.email,
-        name: user.name,
-        cachedAt: new Date().toISOString(),
-      })
-      console.log(`[dev] auto-signed in as ${user.email}`)
-      return
-    } catch {
-      await new Promise((r) => setTimeout(r, 800)) // server still coming up
-    }
-  }
-  console.warn('[dev] auto sign-in failed (server unreachable) — use the dev-token field')
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  void main()
 }
 
-function createWindow(): void {
+function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -58,73 +63,88 @@ function createWindow(): void {
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  return win
 }
 
-app.whenReady().then(async () => {
-  const store = electronSessionStore()
-  const client = createServerClient(() => store.load()?.token ?? null)
-  await maybeDevSignIn(store, client)
+async function main(): Promise<void> {
+  app.on('second-instance', () => {
+    // Someone tried to launch Holi again — show them the one they have.
+    if (mainWindow === null) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
+
+  await app.whenReady()
+
+  // After whenReady: the keychain is not available before it.
+  const session = await createSession()
+  const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
+
   const send = (channel: string, payload: unknown) =>
     mainWindow?.webContents.send(channel, payload)
-  const reminderNotifier = createReminderNotifier({ getWindow: () => mainWindow, send })
-  const vaultManager = createVaultManager({
-    store,
-    // The board and the tree are fed from the one SSE stream main owns — one connection
-    // per signed-in user (D50). The renderer never opens its own.
-    send,
-    onReminders: (vaultId, event) => reminderNotifier.raise(vaultId, event),
+
+  const host = createVaultHost({
+    registry,
+    // A GETTER, not a string. Read lazily on every git operation, so a sign-out
+    // takes effect on the next pull rather than the next restart.
+    gitDeps: { token: () => session.token() },
+    onSnapshot: (snapshot) => send('vault:snapshot', snapshot),
+    onSyncState: (state) => send('vault:sync', state),
   })
-  const userStream = createUserStream({
-    getToken: () => store.load()?.token ?? null,
-    client,
-    onEnvelope: (channel, vaultId, event) => vaultManager.handleEnvelope(channel, vaultId, event),
-    onReconnect: () => {
-      vaultManager.handleReconnect()
-      // The renderer's tree and switcher have no reconcile of their own, and there is no
-      // resume cursor on the wire — so a gap is the one moment they can silently go
-      // stale on exactly the path this slice exists to fix. Refetch both.
-      send('stream:resync', {})
+
+  const router = createRouter({
+    registry,
+    session,
+    host,
+    vaultRoot: vaultRoot(),
+    openExternal: async (url) => {
+      const { shell } = await import('electron')
+      await shell.openExternal(url)
     },
   })
-  const agentManager = createAgentManager({
-    client,
-    vaultManager,
-    getWindow: () => mainWindow,
+
+  registerIpc({ router })
+
+  const win = createWindow()
+  // FR-9: pull on focus. The interval exists for the case where the window
+  // never loses focus at all.
+  win.on('focus', () => host.active()?.onFocus())
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      const next = createWindow()
+      next.on('focus', () => host.active()?.onFocus())
+    }
   })
-  vaultManager.setObserver(agentManager.observer)
-  registerIpc({ store, vaultManager, agentManager, userStream, send })
-  // A cached session or a dev auto-sign-in means we are already signed in; the other
-  // routes in (Google, a pasted dev token) start it from `registerIpc`.
-  if (store.load()) userStream.start()
-  // Quit has to WAIT for the doc state to hit disk (D59). `before-quit` is synchronous:
-  // fire the teardown off unawaited and the app can exit before it finishes, which loses
-  // whatever the persist debounce was still holding — i.e. the edit the user just made,
-  // the exact thing this exists to keep. So: veto the first quit, flush, then quit for
-  // real. `quitting` makes the second pass fall through, or this vetoes forever.
+
+  /**
+   * Quit has to WAIT for the flush.
+   *
+   * `before-quit` is synchronous: fire the teardown unawaited and the app can
+   * exit before it finishes, losing whatever the commit debounce was still
+   * holding — which is precisely the edit the user just made. So veto the first
+   * quit, flush, then quit for real. `quitting` makes the second pass fall
+   * through, or this vetoes forever.
+   */
   let quitting = false
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
     quitting = true
-    userStream.stop()
     void (async () => {
       try {
-        await vaultManager.flushPersist()
-        await agentManager.dispose()
-        await vaultManager.deactivate()
+        // `close()` commits the open vault before letting go of it (FR-6).
+        await host.close()
       } catch (err) {
         console.error('[quit] teardown failed:', err)
       } finally {
-        // Always quit, even if teardown threw — a failed flush must not trap the app.
+        // Always quit, even if the flush threw — a failed teardown must not
+        // trap someone in an app they are trying to leave.
         app.quit()
       }
     })()
   })
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
