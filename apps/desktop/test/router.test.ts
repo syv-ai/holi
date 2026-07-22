@@ -1,9 +1,15 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { promisify } from 'node:util'
 import { parseTaskFile } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
+import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
+import { makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createRouter } from '../src/main/router'
+
+const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
 import { TokenStore, type SafeStorageLike, type StoredAuth } from '../src/main/github/token-store'
 import { VaultRegistry } from '../src/main/vault/registry'
@@ -22,17 +28,28 @@ const storage: SafeStorageLike = {
   decryptString: (buf) => Buffer.from(buf.toString('utf8').slice(4), 'base64').toString('utf8'),
 }
 
-/** A signed-out session over a real store, for the suites that do not care. */
-async function idleSession(base: string): Promise<GitHubSession> {
+/**
+ * A session over a real store. Signed out unless `auth` is given — most suites
+ * do not care, and the ones that do stub `session.api` directly rather than
+ * scripting a network.
+ */
+async function idleSession(base: string, auth?: StoredAuth): Promise<GitHubSession> {
+  const store = new TokenStore(join(base, 'github-auth.enc'), storage)
+  if (auth) await store.write(auth)
   return GitHubSession.load({
-    store: new TokenStore(join(base, 'github-auth.enc'), storage),
+    store,
     fetch: (() => {
       throw new Error('no network in this rig')
     }) as unknown as typeof globalThis.fetch,
   })
 }
 
-async function rig(files: Record<string, string> = {}) {
+const hosts: VaultHost[] = []
+afterAll(async () => {
+  for (const h of hosts) await h.close().catch(() => {})
+})
+
+async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   const base = await mkdtemp(join(tmpdir(), 'holi-rt-'))
   dirs.push(base)
   const root = join(base, 'clone')
@@ -50,14 +67,27 @@ async function rig(files: Record<string, string> = {}) {
     name: '1brain',
     lastOpenedAt: '2026-07-01T00:00:00Z',
   })
+  const session = await idleSession(base, auth)
+  // Timers are effectively off: these tests drive the vault explicitly, and a
+  // background loop firing mid-assertion is noise, not coverage. The loop's own
+  // behaviour is tested in active-vault.test.ts.
+  const host = createVaultHost({
+    registry,
+    onSnapshot: () => {},
+    onSyncState: () => {},
+    timings: { pullIntervalMs: 3_600_000, healIntervalMs: 3_600_000, commitQuietMs: 3_600_000 },
+  })
+  hosts.push(host)
   const caller = createRouter({
     registry,
-    session: await idleSession(base),
+    session,
+    host,
+    vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry }
+  return { caller, root, registry, host, session, base }
 }
 
 describe('vaults', () => {
@@ -79,6 +109,12 @@ describe('vaults', () => {
     await expect(caller.notes.read({ remote: 'nope/nope', path: 'a.md' })).rejects.toThrow(
       /no such vault/,
     )
+  })
+
+  it('open makes the vault active, so the loop is running behind the snapshot', async () => {
+    const { caller, host } = await rig({ 'a.md': '# A\n' })
+    await caller.vaults.open({ remote: REMOTE })
+    expect(host.active()?.remote).toBe(REMOTE)
   })
 
   it('remove deregisters the vault but leaves the clone on disk', async () => {
@@ -488,7 +524,15 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
 
   const registry = new VaultRegistry(join(base, 'vaults.json'))
   const openExternal = vi.fn(async () => {})
-  const caller = createRouter({ registry, session, openExternal }).createCaller({})
+  const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+  hosts.push(host)
+  const caller = createRouter({
+    registry,
+    session,
+    host,
+    vaultRoot: join(base, 'Holi'),
+    openExternal,
+  }).createCaller({})
   return { caller, session, store, openExternal }
 }
 
@@ -722,5 +766,166 @@ describe('github', () => {
     expect(await caller.github.orgs()).toEqual([
       { login: 'syv-ai', avatarUrl: 'https://a.test/9.png' },
     ])
+  })
+})
+
+describe('vaults.add', () => {
+  it('clones, seeds, registers and opens', async () => {
+    const { caller, host, base } = await rig()
+    const origin = await makeRemote()
+
+    const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+
+    // The repo's own content plus the managed files, because seeding happens on
+    // the way in rather than at some later activation.
+    expect(snap.docs.map((d) => d.path).sort()).toEqual([
+      'AGENTS.md',
+      'CLAUDE.md',
+      'MEMORY.md',
+      'README.md',
+    ])
+    const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
+    expect(entry?.path).toBe(join(base, 'Holi', 'syv-ai', 'notes'))
+    expect(host.active()?.remote).toBe('syv-ai/notes')
+    // Seeded on the way in, so a repo that was never a Holi vault is protected
+    // before its first commit can carry a machine-local file.
+    expect(await readFile(join(entry!.path, '.gitignore'), 'utf8')).toContain('USER.md')
+    expect(await readFile(join(entry!.path, 'AGENTS.md'), 'utf8')).toContain('# Agent rules')
+  })
+
+  it('adopts a clone that is already at the managed path', async () => {
+    const { caller, base } = await rig()
+    const origin = await makeRemote()
+    const dest = join(base, 'Holi', 'syv-ai', 'notes')
+    await mkdir(join(base, 'Holi', 'syv-ai'), { recursive: true })
+    await exec('git', ['clone', origin, dest])
+    await writeFile(join(dest, 'unpublished.md'), 'never left this machine\n', 'utf8')
+
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+
+    expect(await readFile(join(dest, 'unpublished.md'), 'utf8')).toBe('never left this machine\n')
+  })
+
+  it('refuses an occupied path that is not ours, and registers nothing', async () => {
+    const { caller, base } = await rig()
+    const dest = join(base, 'Holi', 'syv-ai', 'notes')
+    await mkdir(dest, { recursive: true })
+    await writeFile(join(dest, 'someones-work.txt'), 'do not delete me\n', 'utf8')
+
+    await expect(
+      caller.vaults.add({ remote: 'syv-ai/notes', url: await makeRemote() }),
+    ).rejects.toThrow(/not a Holi clone/)
+
+    expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+    expect(await readFile(join(dest, 'someones-work.txt'), 'utf8')).toBe('do not delete me\n')
+  })
+
+  it('refuses a malformed remote', async () => {
+    const { caller } = await rig()
+    await expect(caller.vaults.add({ remote: '../../etc' })).rejects.toThrow()
+  })
+
+  it('does not register a vault whose clone failed', async () => {
+    // A half-registered vault is one the switcher can never open.
+    const { caller } = await rig()
+    await expect(
+      caller.vaults.add({ remote: 'syv-ai/notes', url: '/nowhere/at/all.git' }),
+    ).rejects.toThrow()
+    expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+  })
+})
+
+describe('vaults.create', () => {
+  it('creates the repo, seeds it, commits and publishes', async () => {
+    const { caller, session, base } = await rig({}, seeded())
+    const origin = await makeRemote()
+    vi.spyOn(session.api, 'createRepo').mockResolvedValue({
+      remote: 'syv-ai/fresh',
+      private: true,
+      visibility: 'private',
+      pushedAt: '2026-07-22T00:00:00Z',
+      defaultBranch: 'main',
+      canPush: true,
+      owner: { login: 'syv-ai', kind: 'org' },
+    })
+
+    const snap = await caller.vaults.create({ name: 'fresh', owner: 'syv-ai', url: origin })
+
+    expect(session.api.createRepo).toHaveBeenCalledWith({ name: 'fresh', owner: 'syv-ai' })
+    expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
+    // FR-8: seeded, committed AND pushed, so the vault exists for everyone else.
+    const dest = join(base, 'Holi', 'syv-ai', 'fresh')
+    expect(await plainGit(dest, ['status', '--porcelain'])).toBe('')
+    expect(await plainGit(dest, ['rev-list', '--count', 'origin/main'])).not.toBe('0')
+  })
+})
+
+describe('sync', () => {
+  it('reports the active vault’s state', async () => {
+    const { caller, host, base } = await rig()
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: await makeRemote() })
+    expect(host.active()).not.toBeNull()
+
+    const state = await caller.sync.state()
+    expect(['up-to-date', 'ahead']).toContain(state.kind)
+    expect(base).toBeTruthy()
+  })
+
+  it('commitNow commits the working tree', async () => {
+    const { caller, base } = await rig()
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: await makeRemote() })
+    const dest = join(base, 'Holi', 'syv-ai', 'notes')
+
+    // Commit the seed first, so the next commit is about the note alone.
+    await caller.sync.commitNow()
+
+    await caller.notes.create({ remote: 'syv-ai/notes', path: 'fresh.md', text: '# Fresh\n' })
+    await caller.sync.commitNow()
+
+    expect(await plainGit(dest, ['status', '--porcelain'])).toBe('')
+    expect(await plainGit(dest, ['log', '-1', '--format=%s'])).toBe('Update fresh.md')
+  })
+
+  it('publish sends local commits to the remote', async () => {
+    const { caller, base } = await rig()
+    const origin = await makeRemote()
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    const dest = join(base, 'Holi', 'syv-ai', 'notes')
+
+    await caller.notes.create({ remote: 'syv-ai/notes', path: 'ship.md', text: '# Ship\n' })
+    await caller.sync.commitNow()
+    expect(await caller.sync.publish()).toMatchObject({ kind: 'pushed' })
+
+    const check = await makeClone(origin, 'check')
+    expect(await readFile(join(check, 'ship.md'), 'utf8')).toBe('# Ship\n')
+    expect(dest).toBeTruthy()
+  })
+
+  it('publish reports a conflicting pre-publish pull as a conflict, not a push failure', async () => {
+    // FR-15. The user's work stays local and intact, and the reconcile path —
+    // not an error toast — is what they are handed.
+    const { caller, base } = await rig()
+    const origin = await makeRemote()
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
+    const dest = join(base, 'Holi', 'syv-ai', 'notes')
+
+    const teammate = await makeClone(origin, 'teammate')
+    await writeFile(join(teammate, 'README.md'), '# Theirs\n', 'utf8')
+    await plainGit(teammate, ['add', '-A'])
+    await plainGit(teammate, ['commit', '-m', 'theirs'])
+    await plainGit(teammate, ['push', 'origin', 'main'])
+
+    await caller.notes.write({ remote: 'syv-ai/notes', path: 'README.md', text: '# Ours\n' })
+    await caller.sync.commitNow()
+
+    expect(await caller.sync.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+    expect(await readFile(join(dest, 'README.md'), 'utf8')).toBe('# Ours\n')
+  })
+
+  it('refuses when no vault is active, rather than dereferencing null', async () => {
+    const { caller } = await rig()
+    await expect(caller.sync.state()).rejects.toThrow(/no vault is open/)
+    await expect(caller.sync.commitNow()).rejects.toThrow(/no vault is open/)
+    await expect(caller.sync.publish()).rejects.toThrow(/no vault is open/)
   })
 })

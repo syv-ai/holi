@@ -27,12 +27,16 @@ import {
   type VaultEntry,
   type VaultRelPath,
 } from '@holi/shared'
+import { ensureSeeded } from './agent/seed-content'
+import { remoteUrl } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
+import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
+import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
-import { isRemote, type VaultRegistry } from './vault/registry'
+import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 
 const t = initTRPC.create()
 
@@ -54,6 +58,20 @@ export interface PublicViewer {
 export interface RouterDeps {
   registry: VaultRegistry
   session: GitHubSession
+  /** Which vault is open, and everything running behind it. */
+  host: VaultHost
+  /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
+   *  tests. Passed in rather than read from `vaultRoot()` here so the router
+   *  has no ambient dependency on the environment. */
+  vaultRoot: string
+  /**
+   * Where to clone a remote *from*. Defaults to its credential-free GitHub URL.
+   *
+   * A seam rather than a constant because the URL is not always derivable from
+   * `owner/repo`: a GitHub Enterprise host is a different origin, and a local
+   * bare repo is how the sync engine is exercised without a token at all.
+   */
+  cloneUrlFor?: (remote: string) => string
   /**
    * Electron's `shell.openExternal`, injected rather than imported so this
    * module keeps typechecking and testing under plain Node.
@@ -119,6 +137,41 @@ function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? localToday
+  const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
+
+  /** The open vault, or a refusal. Every `sync.*` procedure goes through here so
+   *  "nothing is open" is one message rather than a null dereference. */
+  function activeOrThrow(): ActiveVault {
+    const active = deps.host.active()
+    if (active === null) {
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'no vault is open' })
+    }
+    return active
+  }
+
+  /**
+   * Clone-or-adopt, seed, register, open. The order matters at both ends:
+   * nothing is registered until the clone is really there (a half-registered
+   * vault is one the switcher can never open), and the seed runs before the
+   * vault goes live so the `.gitignore` is in place before any commit can be.
+   */
+  async function addVault(remote: string, url: string | undefined): Promise<VaultSnapshot> {
+    const { repo } = await ensureClone({
+      root: deps.vaultRoot,
+      remote,
+      url: url ?? cloneUrlFor(remote),
+      deps: { token: () => deps.session.token() },
+    })
+    await ensureSeeded(repo.root)
+    await deps.registry.add({
+      remote,
+      path: repo.root,
+      name: repoName(remote),
+      lastOpenedAt: now(),
+    })
+    const active = await deps.host.open(remote)
+    return active.snapshot()
+  }
 
   /** remote -> the clone's root on this machine. Every path-taking procedure
    * goes through here, so an unknown vault fails once, in one place. */
@@ -276,14 +329,48 @@ export function createRouter(deps: RouterDeps) {
     open: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
-        const root = await rootFor(input.remote)
+        // Opening is what starts the watcher and the sync loop — the snapshot
+        // is a by-product, and comes from the vault that is now live rather
+        // than from a second read that could already disagree with it.
+        await rootFor(input.remote)
         await deps.registry.touch(input.remote, now())
-        return scanVault(root)
+        const active = await deps.host.open(input.remote)
+        return active.snapshot()
+      }),
+
+    add: t.procedure
+      .input(fields({ remote: 'string', url: 'string?' }))
+      // FR-7: clone the chosen repo into the managed root and open it.
+      .mutation(({ input }) => addVault(safeRemote(input.remote), input.url)),
+
+    create: t.procedure
+      .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
+      // FR-8: a private repo, seeded, committed, pushed, opened.
+      .mutation(async ({ input }): Promise<VaultSnapshot> => {
+        const repo = await gh(() =>
+          deps.session.api.createRepo({ name: input.name, owner: input.owner }),
+        )
+        const snapshot = await addVault(repo.remote, input.url)
+        // The seed is the repo's first commit, and it has to leave the machine:
+        // a "vault" that exists only locally is not one anybody can be invited
+        // to. This is the one place Holi pushes without being asked.
+        const active = deps.host.active()
+        if (active !== null) {
+          await active.commitNow()
+          await active.publish()
+        }
+        return snapshot
       }),
 
     snapshot: t.procedure
       .input(fields({ remote: 'string' }))
-      .query(async ({ input }): Promise<VaultSnapshot> => scanVault(await rootFor(input.remote))),
+      .query(async ({ input }): Promise<VaultSnapshot> => {
+        // The live vault's cache when it is the one being asked about — a
+        // second walk could only disagree with what the renderer already has.
+        const active = deps.host.active()
+        if (active?.remote === input.remote) return active.snapshot()
+        return scanVault(await rootFor(input.remote))
+      }),
 
     remove: t.procedure
       .input(fields({ remote: 'string' }))
@@ -461,7 +548,33 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ auth, github, vaults, notes, tasks })
+  const sync = t.router({
+    /** The push channel carries changes; this is the initial read. */
+    state: t.procedure.query((): SyncState => activeOrThrow().syncState()),
+
+    /** ⌘S. FR-4 calls it a real commit point rather than a placebo. */
+    commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
+
+    /** FR-13/FR-14: pull, then push. A conflicting pre-publish pull comes back
+     *  as a conflict and pushes nothing (FR-15) — the caller renders the
+     *  reconcile offer, not an error. */
+    publish: t.procedure.mutation(() => activeOrThrow().publish()),
+
+    /** FR-18's first step. The reconcile itself needs the agent drawer. */
+    pause: t.procedure
+      .input(fields({ reason: 'string' }))
+      .mutation(({ input }) => {
+        activeOrThrow().pause(input.reason)
+        return { ok: true as const }
+      }),
+
+    resume: t.procedure.mutation(() => {
+      activeOrThrow().resume()
+      return { ok: true as const }
+    }),
+  })
+
+  return t.router({ auth, github, vaults, notes, tasks, sync })
 }
 
 /**
