@@ -12,7 +12,7 @@
  */
 import { atom } from 'jotai'
 import type { DocMeta } from '@holi/shared'
-import { selectedTaskIdAtom } from './tasks'
+import { selectedTaskPathAtom } from './tasks'
 import { activeDocAtom } from './vaults'
 
 export type MainView = 'notes' | 'board'
@@ -29,8 +29,10 @@ export const openDocAtom = atom(null, (_get, set, doc: DocMeta) => {
 
 /** Open a task, wherever you are — `openDocAtom`'s twin, and for the same reason. The
  * detail panel is mounted inside `BoardView`, so selecting a task from the notes editor
- * (a `[[task:<id>]]` chip) without moving the pane would set state nothing renders. */
-export const openTaskAtom = atom(null, (_get, set, taskId: string) => {
-  set(selectedTaskIdAtom, taskId)
+ * (a `[[projects/task.foo.md]]` chip) without moving the pane would set state nothing
+ * renders. The chip carries a path because the path is the task's identity — there are
+ * no opaque task ids to resolve (glossary §Task). */
+export const openTaskAtom = atom(null, (_get, set, path: string) => {
+  set(selectedTaskPathAtom, path)
   set(viewAtom, 'board')
 })
