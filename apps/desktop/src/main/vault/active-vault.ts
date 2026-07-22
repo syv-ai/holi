@@ -25,7 +25,7 @@
  */
 import type { VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, PushResult, RepoStatus } from '../git'
-import { openRepo } from '../git'
+import { isIndexLockError, openRepo } from '../git'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
@@ -338,7 +338,13 @@ export async function openActiveVault(args: {
       // about: a laptop on a plane hits this every interval. Recorded as a flag
       // rather than set directly, so the `finally` below cannot overwrite it.
       console.error('[vault] pull failed:', err)
-      offline = true
+      // Every failure in this block lands here, and most of them really are the
+      // network — but a lock the user's own git held for 200 ms is not, and it
+      // survived five retries only because something is genuinely busy. FR-16
+      // makes this point about push: a permission failure must never be dressed
+      // as a network one. The inverse costs just as much, sending someone to
+      // look at their wifi for a problem that ended before they looked.
+      if (!isIndexLockError(err)) offline = true
       return null
     } finally {
       syncing = null

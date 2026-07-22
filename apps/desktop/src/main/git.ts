@@ -244,8 +244,16 @@ export async function runGit(cwd: string, args: string[], opts: RunOpts = {}): P
  * conflict latches FR-12's sticky pause on a race that will be over in 200 ms.
  */
 export function isIndexLockFailure(outcome: { ok: boolean; stderr: string }): boolean {
-  return !outcome.ok && /index\.lock/.test(outcome.stderr)
+  return !outcome.ok && INDEX_LOCK.test(outcome.stderr)
 }
+
+/** The same question, asked of a `GitError` that was thrown rather than an
+ *  outcome that was returned — which is the form it reaches a `catch` in. */
+export function isIndexLockError(err: unknown): boolean {
+  return err instanceof GitError && INDEX_LOCK.test(err.stderr)
+}
+
+const INDEX_LOCK = /index\.lock/
 
 /** Long enough to outlast a commit — measured at ~215 ms on an 800-file vault —
  *  and short enough that a stale lock is reported rather than waited on. */

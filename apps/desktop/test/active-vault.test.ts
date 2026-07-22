@@ -13,7 +13,7 @@
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
-import { openRepo } from '../src/main/git'
+import { GitError, openRepo } from '../src/main/git'
 import {
   createVaultHost,
   openActiveVault,
@@ -675,6 +675,46 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(teammate, 'mid-sentence.md'), 'utf8')).toBe(
       'the words I just typed\n',
     )
+  })
+
+  it('does not call a lost index.lock "offline"', async () => {
+    // Every failure inside the pull lands in one catch, and that catch says
+    // offline — right for a laptop on a plane, wrong for a lock the user's own
+    // git held for 200 ms. FR-16 makes the same point about push: a permission
+    // failure must never be confused with a network one, and the inverse is
+    // just as bad. Telling someone their vault is offline sends them to look at
+    // their wifi for a problem that is already over.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let pulls = 0
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        pull: async () => {
+          pulls += 1
+          throw new GitError(
+            'git merge failed (128): fatal: Unable to create index.lock: File exists.',
+            128,
+            "fatal: Unable to create '/x/.git/index.lock': File exists.\n",
+          )
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    active.onFocus()
+    // Both waits matter: the first proves the failing pull really happened, so
+    // the assertion cannot pass by never having pulled at all.
+    await waitFor('the pull to fail', () => pulls === 1)
+    await waitFor('the state to settle after it', () => active.syncState().kind !== 'pulling')
+
+    expect(active.syncState().kind).not.toBe('offline')
   })
 
   it('a focus arriving during a pull does not spend the throttle window', async () => {
