@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { PathSafetyError, vaultRelPath } from '../src/path-safety'
+import {
+  LOCAL_ONLY_IGNORE_LINES,
+  PathSafetyError,
+  isLocalOnlyPath,
+  vaultRelPath,
+} from '../src/path-safety'
 
 describe('vaultRelPath (pure lexical validation)', () => {
   it('accepts a plain relative path and returns it unchanged', () => {
@@ -46,5 +51,39 @@ describe('vaultRelPath (pure lexical validation)', () => {
     expect(vaultRelPath('.claude/settings.json')).toBe('.claude/settings.json')
     expect(vaultRelPath('AGENTS.md')).toBe('AGENTS.md')
     expect(vaultRelPath('nøter/æøå.md')).toBe('nøter/æøå.md')
+  })
+})
+
+describe('LOCAL_ONLY_IGNORE_LINES', () => {
+  /** A minimal gitignore matcher, covering only the forms this constant uses.
+   *  Enough to prove the lines and the predicate agree. */
+  const ignoredBy = (lines: readonly string[], path: string) =>
+    lines.some((line) => {
+      const base = path.split('/').at(-1)!
+      if (!line.includes('*')) return path === line || base === line
+      const re = new RegExp(`^${line.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`)
+      return re.test(base)
+    })
+
+  it('ignores exactly what isLocalOnlyPath refuses to treat as vault content', () => {
+    // These two must not drift. `commitAll` runs `git add -A` and git knows
+    // nothing about isLocalOnlyPath, so a line missing here publishes a
+    // machine-local file to every collaborator.
+    for (const path of [
+      'USER.md',
+      '.holi/settings.local.json',
+      '.holi/context.local.json',
+      'CLAUDE.local.md',
+    ]) {
+      expect(isLocalOnlyPath(path)).toBe(true)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(true)
+    }
+  })
+
+  it('does not ignore ordinary vault content', () => {
+    for (const path of ['AGENTS.md', 'MEMORY.md', 'notes/user.md', 'projects/local-plans.md']) {
+      expect(isLocalOnlyPath(path)).toBe(false)
+      expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
+    }
   })
 })

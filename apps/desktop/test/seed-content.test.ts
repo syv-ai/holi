@@ -1,17 +1,19 @@
-import { spawn } from 'node:child_process'
-import { createServer, type Server } from 'node:http'
+import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+import { LOCAL_ONLY_IGNORE_LINES } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
-import { ensureSeeded, SEED_FILES } from '../src/main/agent/seed-content'
+import { GITIGNORE, ensureSeeded, SEED_FILES } from '../src/main/agent/seed-content'
+
+const exec = promisify(execFile)
 
 // no __dirname under vitest's ESM transform
 const HOOKS_DIR = fileURLToPath(new URL('../src/main/agent/hooks/', import.meta.url))
 
 const dirs: string[] = []
-const servers: Server[] = []
 
 async function tempDir(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-seed-'))
@@ -20,7 +22,6 @@ async function tempDir(): Promise<string> {
 }
 
 afterEach(async () => {
-  for (const s of servers.splice(0)) await new Promise((r) => s.close(r))
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
 })
 
@@ -42,32 +43,6 @@ function runHook(name: string, opts: { env?: Record<string, string>; cwd?: strin
     child.on('close', (code) => resolve({ stdout, code }))
     child.stdin.end(opts.stdin ?? '')
   })
-}
-
-/** Capture server standing in for the McpServer's hook routes. */
-async function captureServer(): Promise<{
-  endpoint: string
-  calls: Array<{ path: string; auth?: string; body: any }>
-}> {
-  const calls: Array<{ path: string; auth?: string; body: any }> = []
-  const server = createServer((req, res) => {
-    const chunks: Buffer[] = []
-    req.on('data', (c) => chunks.push(c))
-    req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString('utf8')
-      calls.push({
-        path: req.url ?? '',
-        auth: req.headers.authorization,
-        body: raw ? JSON.parse(raw) : null,
-      })
-      res.writeHead(204).end()
-    })
-  })
-  servers.push(server)
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-  const address = server.address()
-  if (!address || typeof address === 'string') throw new Error('no port')
-  return { endpoint: `http://127.0.0.1:${address.port}`, calls }
 }
 
 describe('SEED_FILES', () => {
@@ -105,20 +80,14 @@ describe('SEED_FILES', () => {
 describe('ensureSeeded', () => {
   it('seeds every managed file into a fresh working dir', async () => {
     const root = await tempDir()
-    const written = await ensureSeeded(root, new Set())
-    expect(written.sort()).toEqual(Object.keys(SEED_FILES).sort())
+    const written = await ensureSeeded(root)
+    // The .gitignore is written too, but it is not in SEED_FILES: it is the one
+    // managed file that is merged line-wise rather than created-if-missing.
+    expect(written.sort()).toEqual([GITIGNORE, ...Object.keys(SEED_FILES)].sort())
     expect(await readFile(join(root, 'CLAUDE.md'), 'utf8')).toBe(SEED_FILES['CLAUDE.md'])
     expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
       SEED_FILES['.claude/hooks/user-prompt-submit.mjs'],
     )
-  })
-
-  it('skips files that are already vault docs', async () => {
-    const root = await tempDir()
-    const written = await ensureSeeded(root, new Set(['CLAUDE.md', 'AGENTS.md']))
-    expect(written).not.toContain('CLAUDE.md')
-    expect(written).not.toContain('AGENTS.md')
-    expect(written).toContain('MEMORY.md')
   })
 
   it('never overwrites an existing file, and is idempotent', async () => {
@@ -126,12 +95,97 @@ describe('ensureSeeded', () => {
     await mkdir(root, { recursive: true })
     await writeFile(join(root, 'AGENTS.md'), '# my rules\n')
 
-    const first = await ensureSeeded(root, new Set())
+    const first = await ensureSeeded(root)
     expect(first).not.toContain('AGENTS.md')
     expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe('# my rules\n')
 
-    const second = await ensureSeeded(root, new Set())
+    const second = await ensureSeeded(root)
     expect(second).toEqual([]) // everything is on disk now
+  })
+
+  it('does not seed USER.md — it is machine-local', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await expect(readFile(join(root, 'USER.md'), 'utf8')).rejects.toThrow()
+  })
+})
+
+describe('ensureSeeded — the .gitignore', () => {
+  const lines = async (root: string) =>
+    (await readFile(join(root, '.gitignore'), 'utf8')).split('\n').filter(Boolean)
+
+  it('creates one carrying every local-only line', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    for (const line of LOCAL_ONLY_IGNORE_LINES) expect(await lines(root)).toContain(line)
+  })
+
+  it('APPENDS to a .gitignore that already exists, keeping what was there', async () => {
+    // Decision 10's hole, and the reason .gitignore is not create-if-missing
+    // like the rest. An adopted repo usually already has one, so ours would
+    // never be written — and `commitAll` runs `git add -A`, which means USER.md
+    // reaches the shared history on the very first commit.
+    const root = await tempDir()
+    await writeFile(join(root, '.gitignore'), 'node_modules\ndist\n')
+
+    const written = await ensureSeeded(root)
+
+    expect(written).toContain('.gitignore')
+    expect(await lines(root)).toContain('node_modules')
+    expect(await lines(root)).toContain('dist')
+    for (const line of LOCAL_ONLY_IGNORE_LINES) expect(await lines(root)).toContain(line)
+  })
+
+  it('does not duplicate lines that are already there', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await ensureSeeded(root)
+
+    const all = await lines(root)
+    for (const line of LOCAL_ONLY_IGNORE_LINES) {
+      expect(all.filter((l) => l === line)).toHaveLength(1)
+    }
+  })
+
+  it('reports nothing to write when the lines are already present', async () => {
+    const root = await tempDir()
+    await writeFile(join(root, '.gitignore'), `${LOCAL_ONLY_IGNORE_LINES.join('\n')}\n`)
+    expect(await ensureSeeded(root)).not.toContain('.gitignore')
+  })
+
+  it('does not join onto a file with no trailing newline', async () => {
+    // `USER.mdnode_modules` ignores nothing and looks like it ignores something.
+    const root = await tempDir()
+    await writeFile(join(root, '.gitignore'), 'node_modules')
+
+    await ensureSeeded(root)
+
+    expect(await lines(root)).toContain('node_modules')
+    for (const line of LOCAL_ONLY_IGNORE_LINES) expect(await lines(root)).toContain(line)
+  })
+
+  it('keeps a machine-local file out of a commit — the leak this exists to stop', async () => {
+    // The assertion the whole task is for. Everything else here is mechanism.
+    const root = await tempDir()
+    await exec('git', ['init', '-b', 'main', root])
+    await exec('git', ['-C', root, 'config', 'user.email', 'test@holi.invalid'])
+    await exec('git', ['-C', root, 'config', 'user.name', 'Holi Test'])
+
+    await ensureSeeded(root)
+    await writeFile(join(root, 'USER.md'), 'private notes about the user\n')
+    await mkdir(join(root, '.holi'), { recursive: true })
+    await writeFile(join(root, '.holi/settings.local.json'), '{"machine":"local"}\n')
+    await writeFile(join(root, 'shared.md'), 'this one should travel\n')
+
+    await exec('git', ['-C', root, 'add', '-A'])
+    await exec('git', ['-C', root, 'commit', '-m', 'first'])
+    const { stdout } = await exec('git', ['-C', root, 'show', '--name-only', '--format=', 'HEAD'])
+    const committed = stdout.split('\n').filter(Boolean)
+
+    expect(committed).toContain('shared.md')
+    expect(committed).toContain('AGENTS.md')
+    expect(committed).not.toContain('USER.md')
+    expect(committed).not.toContain('.holi/settings.local.json')
   })
 })
 
@@ -152,8 +206,8 @@ describe('hook scripts', () => {
         focusedPath: 'notes/plan.md',
         openPaths: ['notes/plan.md', 'notes/other.md'],
         relatedTasks: [
-          { id: 't1', title: 'Draft proposal', status: 'todo', due: '2026-07-20' },
-          { id: 't2', title: 'Review', status: 'doing' },
+          { path: 'projects/task.draft-proposal.md', title: 'Draft proposal', status: 'todo', due: '2026-07-20' },
+          { path: 'task.review.md', title: 'Review', status: 'doing' },
         ],
         backrefPaths: ['notes/other.md'],
       }),
@@ -166,8 +220,10 @@ describe('hook scripts', () => {
     expect(run.stdout).toContain('Active notes:\n- notes/plan.md\n- notes/other.md')
     expect(run.stdout).toContain('Focused note: `notes/plan.md` (use `Read` to view its contents)')
     expect(run.stdout).toContain('# Related non-complete tasks')
-    expect(run.stdout).toContain('- [todo] Draft proposal (id=t1, due=2026-07-20)')
-    expect(run.stdout).toContain('- [doing] Review (id=t2)')
+    expect(run.stdout).toContain(
+      '- [todo] Draft proposal ([[projects/task.draft-proposal.md]], due=2026-07-20)',
+    )
+    expect(run.stdout).toContain('- [doing] Review ([[task.review.md]])')
     expect(run.stdout).toContain('# Related notes (backreferences)\n- [[notes/other.md]]')
     expect(run.stdout).toContain('\n\n***\n\n')
   })

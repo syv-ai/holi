@@ -51,3 +51,15 @@ export function isLocalOnlyPath(path: string): boolean {
   const base = path.split('/').at(-1) ?? path
   return /\.local\./.test(base)
 }
+
+/**
+ * The `.gitignore` lines corresponding, exactly, to `isLocalOnlyPath`.
+ *
+ * **These two must not drift, which is why they live together.** The vault
+ * store honours `isLocalOnlyPath`, but git has never heard of it — and the sync
+ * engine commits with `git add -A`. So this list, written into every vault's
+ * `.gitignore`, is the only thing standing between a machine-local file and a
+ * commit published to every collaborator. A line missing here is a private file
+ * in someone else's clone.
+ */
+export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['USER.md', '*.local.*']

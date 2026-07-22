@@ -75,7 +75,9 @@ if (context?.focusedPath) {
   else {
     for (const t of tasks) {
       const due = t.due ? `, due=${t.due}` : ''
-      taskLines.push(`- [${t.status}] ${t.title} (id=${t.id}${due})`)
+      // A task is a file and its identity is its path — there are no task ids
+      // (D60). Rendered as a wiki-link so it is one the model can follow.
+      taskLines.push(`- [${t.status}] ${t.title} ([[${t.path}]]${due})`)
     }
   }
   sections.push(taskLines.join('\n'))
