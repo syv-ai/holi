@@ -58,8 +58,13 @@ export interface ApiDeps {
   /**
    * FR-14. Called on a **401 and nothing else**. A 403 is a repo you lack
    * access to, a rate limit, or SAML — none of them mean the token is dead.
+   *
+   * Awaited before the error is thrown, so a caller handling the rejection
+   * always sees a session that already reflects the sign-out. The alternative —
+   * firing it and moving on — makes the ordering depend on how the caller
+   * happens to yield.
    */
-  onUnauthorized?: () => void
+  onUnauthorized?: () => void | Promise<void>
   fetch?: typeof globalThis.fetch
   baseUrl?: string
 }
@@ -230,7 +235,7 @@ export class GitHubApi {
     const message = typeof body.message === 'string' ? body.message : res.statusText
     const err = classify(res, message)
 
-    if (err.kind === 'unauthorized') this.#deps.onUnauthorized?.()
+    if (err.kind === 'unauthorized') await this.#deps.onUnauthorized?.()
     throw err
   }
 }
