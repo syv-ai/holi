@@ -4,7 +4,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language'
 import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
-import { defaultKeymap, indentWithTab } from '@codemirror/commands'
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
@@ -27,12 +27,21 @@ export interface EditorDeps {
   nav: () => LinkNav
 }
 
-/** The trimmed stack (notes-editor PRD FR-1) minus what other tasks add
- * (yCollab arrives per-doc in EditorPane). CM history is intentionally absent
- * — Y.UndoManager owns undo (FR-4). One shared `autocompletion` instance hosts
- * every completion source (mentions now; slash + tables join it). */
+/**
+ * The trimmed stack (notes-editor PRD FR-1).
+ *
+ * **CodeMirror's own history is back.** It was deliberately absent while
+ * `Y.UndoManager` owned undo, and the CRDT went with D60 — so without this,
+ * ⌘Z did nothing at all. Whether an external reload should be undoable is a
+ * separate and still-open question (`notes-editor.md` §Open question 3): a
+ * `merge3` result arriving as one big change is undoable here, which is not
+ * obviously right, but silently having no undo is obviously wrong.
+ *
+ * One shared `autocompletion` instance hosts every completion source.
+ */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
   return [
+    history(),
     drawSelection(),
     dropCursor(),
     indentOnInput(),
@@ -65,6 +74,10 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
       // ⌘D: select the word, then each press adds the next matching occurrence.
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab, // Tab indents the line/selection, ⇧Tab dedents
+      // Before defaultKeymap, which binds Mod-z to a no-op undo when no history
+      // extension is present — the shape this file shipped in while the CRDT
+      // owned undo.
+      ...historyKeymap,
       ...defaultKeymap,
     ]),
     editorTheme,

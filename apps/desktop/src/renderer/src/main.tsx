@@ -1,16 +1,43 @@
+import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { Panel } from './panel/Panel'
+import { flushAllBuffers } from './lib/buffer-registry'
+import { subscribeToVault } from './state/vaults'
 import './index.css'
 
 /**
- * Plan 4 renders the instrument panel, not `App`. The real shell cannot boot:
- * `Shell.tsx` and `EditorPane.tsx` import modules the D60 pivot deleted, and
- * vite resolves imports even though it does not typecheck. `App.tsx` is left on
- * disk, unimported, for plan 5 to restore.
+ * Plan 5 in progress: still rendering the instrument panel. `App` takes over in
+ * Task 10, once the shell it renders actually compiles — deleting the panel
+ * first would leave no working surface at all.
  */
+
+/** One store for the app, so the push subscriptions below can outlive every
+ *  component. A subscription owned by a component stops the moment that
+ *  component is conditionally rendered away, and the vault then goes quietly
+ *  stale rather than visibly broken. */
+const store = createStore()
+subscribeToVault(store)
+
+/**
+ * Main is quitting and wants the buffer on disk before it commits (FR-6).
+ *
+ * Subscribed here rather than in the editor, because it has to answer even when
+ * no editor is open — a window sitting on the sign-in screen still gets asked,
+ * and silence costs a second on every quit. `flushAllBuffers` resolves
+ * immediately when nothing is registered.
+ *
+ * The ack fires unconditionally. Main waits one second and then quits either
+ * way, so a failed write must not also cost the pause.
+ */
+window.holi.vault.onFlushRequest(() => {
+  void flushAllBuffers().finally(() => window.holi.vault.flushDone())
+})
+
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <Panel />
+    <Provider store={store}>
+      <Panel />
+    </Provider>
   </React.StrictMode>,
 )

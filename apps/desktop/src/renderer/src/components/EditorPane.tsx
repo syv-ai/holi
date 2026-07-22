@@ -1,145 +1,187 @@
+/**
+ * One note, one buffer, one file.
+ *
+ * The CRDT is gone and nothing replaced it: `yCollab`, the awareness channel
+ * and the presence colours all served concurrent editing, which is deferred
+ * (`vision.md`). What replaced it is much smaller — an autosave that writes the
+ * buffer, and `decideReload` for when the file changes underneath.
+ *
+ * **`base` is the text this editor last loaded or saved**, and advancing it on
+ * save is what makes the editor's own write a non-event: by the time the
+ * watcher reports it, `disk === base`. See `lib/editor-reload.ts`, which is
+ * where that decision actually lives.
+ *
+ * Task mentions are **not** wired here. The mention layer still writes
+ * `[[task:<id>]]`, and a task link is an ordinary path wiki-link now
+ * (`glossary.md` §Task — "there are no opaque task ids"). Rather than emit
+ * links in a grammar the product has abandoned, `@` completes notes only until
+ * the tasks surface returns.
+ */
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { yCollab } from 'y-codemirror.next'
-import * as Y from 'yjs'
-import { agentEditingIn, openDoc, presenceColor } from '../collab/provider'
-import type { MentionData } from '../editor/mentions'
-import type { LinkNav } from '../editor/links'
 import { baseEditorExtensions } from '../editor/extensions'
+import type { LinkNav } from '../editor/links'
+import type { MentionData } from '../editor/mentions'
+import { registerBuffer } from '../lib/buffer-registry'
+import { decideReload } from '../lib/editor-reload'
 import { trpc } from '../lib/trpc'
-import { sessionAtom } from '../state/session'
-import { agentEditingAtom, syncStatusAtom } from '../state/sync'
-import { resolveRelated, tasksAtom } from '../state/tasks'
-import { activeDocAtom, activeVaultIdAtom, docsAtom } from '../state/vaults'
-import { openDocAtom, openTaskAtom } from '../state/view'
+import { activeRemoteAtom, snapshotAtom } from '../state/vaults'
 
-export function EditorPane() {
-  const activeDoc = useAtomValue(activeDocAtom)
-  const session = useAtomValue(sessionAtom)
-  const { docs } = useAtomValue(docsAtom)
-  const tasks = useAtomValue(tasksAtom)
-  const vaultId = useAtomValue(activeVaultIdAtom)
-  const setSyncStatus = useSetAtom(syncStatusAtom)
-  const setAgentEditing = useSetAtom(agentEditingAtom)
-  const openDocInPane = useSetAtom(openDocAtom)
-  const openTaskInPane = useSetAtom(openTaskAtom)
+/** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
+ *  purpose: the file has to be there before the commit timer decides to look. */
+const SAVE_QUIET_MS = 600
+
+export function EditorPane({
+  path,
+  onOpenNote,
+  onConflict,
+}: {
+  path: string | null
+  onOpenNote: (path: string) => void
+  onConflict: (path: string) => void
+}) {
+  const remote = useAtomValue(activeRemoteAtom)
+  const snapshot = useAtomValue(snapshotAtom)
   const hostRef = useRef<HTMLDivElement>(null)
+
+  /** The text last loaded or saved. The whole write-attribution design rests on
+   *  this being advanced by the save, before the watcher reports it. */
+  const baseRef = useRef('')
+  const viewRef = useRef<EditorView | null>(null)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Read on demand by the editor's pull-based seams, so a snapshot arriving
+  // mid-edit does not rebuild the EditorView and drop the caret.
   const docPaths = useRef(new Set<string>())
-  docPaths.current = new Set(docs.map((d) => d.path))
-
-  // Task-chip titles, resolved through the same join the relations row uses (D57) —
-  // including its `[deleted task]` tombstone, so a chip and a relation cannot disagree
-  // about whether a task is gone. A ref for the same reason as `mentionRef`: the chip
-  // reads it on demand, and rebuilding the view on every task event would drop the caret.
-  const tasksRef = useRef(tasks)
-  tasksRef.current = tasks
-
-  // Live mention data + link target, kept fresh each render and read on demand by
-  // the pull-based completion source (the editor is built once per open doc).
+  docPaths.current = new Set(snapshot.docs.map((d) => d.path))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
-  mentionRef.current = {
-    notes: docs.map((d) => ({ path: d.path })),
-    tasks: [...tasks.values()].map((t) => ({ id: t.id, title: t.title, status: t.status })),
-  }
-  const linkRef = useRef<{ vaultId: string | null; docId: string | null }>({
-    vaultId: null,
-    docId: null,
-  })
-  linkRef.current = { vaultId, docId: activeDoc?.id ?? null }
-
-  // Clicking a link opens the target (FR-6/FR-7). A ref, not an effect dep: rebuilding
-  // the whole EditorView because the doc list changed would drop the caret mid-edit.
+  mentionRef.current = { notes: snapshot.docs.map((d) => ({ path: d.path })), tasks: [] }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openTask: () => {}, openExternal: () => {} })
   navRef.current = {
-    openNote: (path) => {
-      const doc = docs.find((d) => d.path === path)
-      // A link can point at a note that doesn't exist yet — the chip already renders it
-      // as missing, so a click on it should do nothing rather than invent a doc.
-      if (doc) openDocInPane(doc)
-    },
-    // Same bargain as openNote: a chip for a deleted task renders as a tombstone, so
-    // clicking it does nothing rather than opening an empty detail panel.
-    openTask: (id) => {
-      if (tasksRef.current.has(id)) openTaskInPane(id)
-    },
+    // A link can point at a note that does not exist yet; the chip already
+    // renders it as missing, so a click does nothing rather than inventing one.
+    openNote: (target) => docPaths.current.has(target) && onOpenNote(target),
+    openTask: () => {},
     openExternal: (url) => void window.holi.openExternal(url),
   }
 
   useEffect(() => {
-    if (!activeDoc || !hostRef.current || !session) return
+    if (path === null || remote === null || hostRef.current === null) return
     let disposed = false
-    let view: EditorView | null = null
-    let sessionHandle: Awaited<ReturnType<typeof openDoc>> | null = null
-    let stopWatchingAgent: (() => void) | null = null
+    const host = hostRef.current
 
-    void openDoc(activeDoc.id, setSyncStatus).then((handle) => {
-      if (disposed) {
-        handle.destroy()
-        return
-      }
-      sessionHandle = handle
-      handle.setUser({
-        name: session.name ?? session.email,
-        color: presenceColor(session.userId),
-      })
+    /** Write the buffer if it differs from what is on disk, and advance `base`
+     *  in the same breath — the order is the point. */
+    const save = async (): Promise<void> => {
+      const view = viewRef.current
+      if (view === null || disposed) return
+      const text = view.state.doc.toString()
+      if (text === baseRef.current) return
+      baseRef.current = text
+      await trpc.notes.write.mutate({ remote, path, text })
+    }
 
-      // Main stamps `agentEditing` on its own awareness while a turn writes to this doc
-      // (D37); it reaches us across the link (D59). Read it off awareness rather than
-      // inventing a second channel — the signal already crosses, it just had no consumer.
-      const { awareness } = handle
-      const readAgentEditing = (): void =>
-        setAgentEditing(agentEditingIn(awareness.getStates(), awareness.clientID))
-      awareness.on('change', readAgentEditing)
-      stopWatchingAgent = () => awareness.off('change', readAgentEditing)
-      // A turn already in flight when we opened the note fires no 'change' of its own.
-      readAgentEditing()
+    const scheduleSave = () => {
+      if (saveTimer.current !== null) clearTimeout(saveTimer.current)
+      saveTimer.current = setTimeout(() => void save(), SAVE_QUIET_MS)
+    }
 
-      const undoManager = new Y.UndoManager(handle.text)
-      view = new EditorView({
+    void trpc.notes.read.query({ remote, path }).then((text) => {
+      if (disposed) return
+      baseRef.current = text
+      const view = new EditorView({
         state: EditorState.create({
-          doc: handle.text.toString(),
+          doc: text,
           extensions: [
             ...baseEditorExtensions({
-              docExists: (path) => docPaths.current.has(path),
-              // `docs` is only consulted for note refs — a task ref resolves against the
-              // task map alone.
-              taskInfo: (id) => {
-                const [ref] = resolveRelated([{ kind: 'task', id }], [], tasksRef.current)
-                return { label: ref!.label, missing: ref!.missing }
-              },
+              docExists: (p) => docPaths.current.has(p),
+              taskInfo: () => ({ label: 'task', missing: true }),
               mentionData: () => mentionRef.current,
-              onTaskMention: (taskId) => {
-                const { vaultId: vid, docId } = linkRef.current
-                if (!vid || !docId) return
-                // Idempotent server-side (D27: note linked by stable doc id, not path).
-                void trpc.tasks.link
-                  .mutate({ vaultId: vid, taskId, related: { kind: 'note', id: docId } })
-                  .catch(() => {})
-              },
+              onTaskMention: () => {},
               nav: () => navRef.current,
             }),
-            yCollab(handle.text, handle.awareness, { undoManager }),
+            EditorView.updateListener.of((update) => {
+              if (update.docChanged) scheduleSave()
+            }),
           ],
         }),
-        parent: hostRef.current!,
+        parent: host,
       })
+      viewRef.current = view
       view.focus()
     })
 
+    // ⌘S is a real commit point, not a placebo (FR-4): it writes, then asks
+    // main to commit rather than waiting out the idle timer.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        void save().then(() => trpc.sync.commitNow.mutate())
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+
+    // FR-6: window blur is a flush point. So is the unmount below, which covers
+    // tab close and vault switch.
+    const onBlur = () => void save()
+    window.addEventListener('blur', onBlur)
+
+    const unregister = registerBuffer(save)
+
     return () => {
       disposed = true
-      stopWatchingAgent?.()
-      view?.destroy()
-      sessionHandle?.destroy()
-      setSyncStatus('offline')
-      // The marker is about the doc we're leaving, not the one we're opening.
-      setAgentEditing(false)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('blur', onBlur)
+      unregister()
+      if (saveTimer.current !== null) clearTimeout(saveTimer.current)
+      // Flush before tearing down: this fires on tab close and vault switch,
+      // and the buffer is the one thing that does not survive either.
+      const view = viewRef.current
+      if (view !== null) {
+        const text = view.state.doc.toString()
+        if (text !== baseRef.current) void trpc.notes.write.mutate({ remote, path, text })
+        view.destroy()
+      }
+      viewRef.current = null
     }
-  }, [activeDoc, session, setSyncStatus, setAgentEditing])
+  }, [path, remote])
 
-  if (!activeDoc) {
+  /**
+   * The vault changed somewhere. Re-read our own file and decide.
+   *
+   * The snapshot push carries no path — it is the whole vault, every time — so
+   * this runs on every change to anything. That is cheap and it is correct:
+   * `decideReload` returns `none` for the overwhelming majority, including this
+   * editor's own save.
+   */
+  useEffect(() => {
+    if (path === null || remote === null) return
+    let cancelled = false
+    void trpc.notes.read.query({ remote, path }).then((disk) => {
+      const view = viewRef.current
+      if (cancelled || view === null) return
+      const decision = decideReload(baseRef.current, view.state.doc.toString(), disk)
+      if (decision.kind === 'none') return
+      if (decision.kind === 'conflict') return onConflict(path)
+      // A clean reload and a successful merge both replace the buffer and both
+      // advance `base` — the merged text is now what this editor last saw, even
+      // though it is not yet what is on disk. The pending save writes it.
+      baseRef.current = decision.text
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: decision.text },
+      })
+      if (decision.kind === 'merged') {
+        void trpc.notes.write.mutate({ remote, path, text: decision.text })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [snapshot, path, remote, onConflict])
+
+  if (path === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
         select or create a note
