@@ -24,7 +24,7 @@
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
 import type { VaultSnapshot } from '@holi/shared'
-import type { GitRepo, PullResult, PushResult } from '../git'
+import type { GitRepo, PullResult, PushResult, RepoStatus } from '../git'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
 
@@ -87,6 +87,33 @@ export interface ActiveVault {
   close(): Promise<void>
 }
 
+/**
+ * Why sync must not run right now, or null.
+ *
+ * FR-2 refuses rather than "fixing" a repo it does not own the state of — and
+ * decision 11 narrows that to *sync*: the vault stays open, readable and
+ * editable, because someone who checked out a branch in a terminal should not
+ * lose access to their notes, and "mid-operation" includes a merge they are
+ * resolving by hand, which is the moment they would most want to see them.
+ *
+ * `unborn` is deliberately NOT a reason: a repo `github.createRepo` just made
+ * has no commits, and its first autosave has to land.
+ */
+function blockedReason(status: RepoStatus): string | null {
+  if (status.detached) return 'detached HEAD — sync paused'
+  if (status.merging) return 'a merge is in progress — sync paused'
+  if (status.defaultBranch !== null && status.branch !== status.defaultBranch) {
+    return `on ${status.branch}, not ${status.defaultBranch} — sync paused`
+  }
+  return null
+}
+
+/** FR-4: `Update <path>` for one file, a count for several. Unremarkable on
+ *  purpose — these are the journal, and publishes are the landmarks. */
+function commitMessage(paths: string[]): string {
+  return paths.length === 1 ? `Update ${paths[0]}` : `Update ${paths.length} files`
+}
+
 export async function openActiveVault(args: {
   remote: string
   repo: GitRepo
@@ -101,6 +128,11 @@ export async function openActiveVault(args: {
   let cached: VaultSnapshot = await scanVault(root)
   let state: SyncState = { kind: 'up-to-date' }
   let scanning = false
+  let committing = false
+  let commitTimer: NodeJS.Timeout | null = null
+  /** Set by `pause()` — a reconcile. Distinct from the status-derived pause,
+   *  which clears itself the moment the user switches back to the branch. */
+  let manualPause: string | null = null
 
   function setState(next: SyncState): void {
     // Only on a real change: the panel would otherwise re-render on every tick.
@@ -124,16 +156,74 @@ export async function openActiveVault(args: {
     }
   }
 
+  /** What the repo says, when nothing is in flight. */
+  function idleState(status: RepoStatus): SyncState {
+    return status.ahead > 0 ? { kind: 'ahead', count: status.ahead } : { kind: 'up-to-date' }
+  }
+
+  /**
+   * The commit half of the loop, and the place decision 8 lives.
+   *
+   * It asks `git status` rather than trusting what the watcher reported: a
+   * dropped filesystem event then delays a commit by one heal tick instead of
+   * losing it. That matters because an uncommitted file breaks FR-7's "clean
+   * between commits by construction", and a tree that is not clean is a tree
+   * the next pull cannot merge.
+   */
+  async function maybeCommit(): Promise<string | null> {
+    if (closed || committing || manualPause !== null) return null
+    committing = true
+    try {
+      const status = await args.repo.status()
+      const blocked = blockedReason(status)
+      if (blocked !== null) {
+        setState({ kind: 'paused', reason: blocked })
+        return null
+      }
+      // Not an error, and must not be logged as one: an idle timer on a vault
+      // nobody is touching finds a clean tree every time.
+      if (!status.dirty) {
+        setState(idleState(status))
+        return null
+      }
+      const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths))
+      setState(idleState(await args.repo.status()))
+      return sha
+    } catch (err) {
+      console.error('[vault] commit failed:', err)
+      return null
+    } finally {
+      committing = false
+    }
+  }
+
+  function scheduleCommit(): void {
+    if (closed) return
+    if (commitTimer !== null) clearTimeout(commitTimer)
+    commitTimer = setTimeout(() => {
+      commitTimer = null
+      void maybeCommit()
+    }, timings.commitQuietMs)
+  }
+
   const watcher: VaultWatcher = await watchVault({
     root,
     debounceMs: timings.rescanDebounceMs,
-    onChange: () => void rescan(),
+    onChange: () => {
+      // The tree updates promptly; the commit waits for the edits to stop. Two
+      // debounces off one signal, because they answer different questions.
+      void rescan()
+      scheduleCommit()
+    },
   })
 
   // The backstop. Deliberately does the same work the watcher triggers, rather
   // than something cheaper: the whole point is that it does not trust what the
   // watcher did or did not say.
-  const heal = setInterval(() => void rescan(), timings.healIntervalMs)
+  const heal = setInterval(() => {
+    void rescan()
+    void maybeCommit()
+  }, timings.healIntervalMs)
 
   return {
     remote: args.remote,
@@ -142,18 +232,32 @@ export async function openActiveVault(args: {
     snapshot: () => cached,
     syncState: () => state,
     refresh: rescan,
-    commitNow: () => {
-      throw new Error('not implemented')
+    commitNow() {
+      // ⌘S, a vault switch, and quit. Skips the timer entirely — FR-4 calls it
+      // a real commit point rather than a placebo.
+      if (commitTimer !== null) {
+        clearTimeout(commitTimer)
+        commitTimer = null
+      }
+      return maybeCommit()
     },
     publish: () => {
       throw new Error('not implemented')
     },
     onFocus: () => {},
-    pause: (reason) => setState({ kind: 'paused', reason }),
-    resume: () => setState({ kind: 'up-to-date' }),
+    pause(reason) {
+      manualPause = reason
+      setState({ kind: 'paused', reason })
+    },
+    resume() {
+      manualPause = null
+      void maybeCommit()
+    },
     async close() {
       closed = true
       clearInterval(heal)
+      if (commitTimer !== null) clearTimeout(commitTimer)
+      commitTimer = null
       await watcher.close()
     },
   }
