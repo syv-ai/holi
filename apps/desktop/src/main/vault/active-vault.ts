@@ -453,7 +453,15 @@ export async function openActiveVault(args: {
         offline = false
         // FR-15: a conflicting pre-publish pull hands off to the reconcile path
         // with nothing pushed and the user's work local and intact.
-        if (result.kind === 'conflict') conflictPaths = result.paths
+        //
+        // Except when it names nothing — see `maybePull`, which has refused to
+        // latch that since plan 4 and for the same reason. A merge refused
+        // before it starts (the tree went dirty under it, or a git the user ran
+        // took the index) reports no unmerged paths, and latching FR-12's
+        // sticky pause on it disables auto-pull permanently for a conflict that
+        // does not exist and no reconcile can clear. The result still goes back
+        // to the caller: the publish genuinely did not happen.
+        if (result.kind === 'conflict' && result.paths.length > 0) conflictPaths = result.paths
         return result
       } finally {
         syncing = null

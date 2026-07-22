@@ -677,6 +677,39 @@ describe('ActiveVault — sync', () => {
     )
   })
 
+  it('does not strand the vault on a publish conflict that names no paths', async () => {
+    // `maybePull` already refuses to latch this: `git merge` reports unmerged
+    // paths only once it has really started merging, so a merge that is refused
+    // up front — a tree that went dirty, an index.lock lost to the user's own
+    // git — comes back as a conflict naming nothing. `publish()` never got the
+    // same guard, and FR-12's pause is sticky by design, so one transient race
+    // during a Publish disabled auto-pull permanently for a conflict that does
+    // not exist and that no reconcile can resolve.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const teammate = await makeClone(origin, 'teammate')
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: { ...real, publish: async () => ({ kind: 'conflict', paths: [] }) },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    expect(await active.publish()).toEqual({ kind: 'conflict', paths: [] })
+    expect(active.syncState().kind).not.toBe('conflict')
+
+    // The harm is not the banner, it is that auto-pull never runs again.
+    await theyPublish(teammate, 'after-the-race.md', 'arrived\n')
+    await waitFor('a pull after the empty conflict', async () => {
+      active.onFocus()
+      return (await readFile(join(dir, 'after-the-race.md'), 'utf8').catch(() => null)) !== null
+    })
+  })
+
   it('publish stops at a conflicting pull and pushes nothing', async () => {
     // FR-15: the user's work stays local and intact.
     const { active, dir, teammate } = await withTeammate()
