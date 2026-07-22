@@ -436,6 +436,19 @@ export async function openActiveVault(args: {
       syncing = 'publishing'
       await refreshState()
       try {
+        /**
+         * Publish is a commit point, like ⌘S (FR-4).
+         *
+         * The commit debounce restarts on every keystroke, so the tree is dirty
+         * for as long as someone keeps typing — and a publish that only pushes
+         * *commits* therefore pushes everything except the sentence they were
+         * in the middle of. "Publish" has to mean "publish my work".
+         *
+         * `duringPull` is the sequenced-not-concurrent escape: `pullInFlight` is
+         * already claimed above, and this commit runs before the merge rather
+         * than alongside it.
+         */
+        await maybeCommit(true)
         const result = await args.repo.publish()
         offline = false
         // FR-15: a conflicting pre-publish pull hands off to the reconcile path

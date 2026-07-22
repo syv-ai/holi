@@ -659,6 +659,24 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(dir, 'theirs.md'), 'utf8')).toBe('theirs\n')
   })
 
+  it('publish commits what is on disk first, so Publish means "publish my work"', async () => {
+    // The commit debounce restarts on every keystroke, so a user who presses
+    // Publish mid-sentence has a dirty tree — and `publish()` used to be pull
+    // then push, which pushes everything EXCEPT the sentence they just typed.
+    // FR-4 already calls ⌘S a real commit point; Publish is the same kind of
+    // moment, and FR-6 simply failed to list it.
+    const { active, dir, teammate } = await withTeammate()
+    await writeFile(join(dir, 'mid-sentence.md'), 'the words I just typed\n', 'utf8')
+
+    // No commitNow(): that is the whole point.
+    expect(await active.publish()).toMatchObject({ kind: 'pushed' })
+
+    await plainGit(teammate, ['pull', 'origin', 'main'])
+    expect(await readFile(join(teammate, 'mid-sentence.md'), 'utf8')).toBe(
+      'the words I just typed\n',
+    )
+  })
+
   it('publish stops at a conflicting pull and pushes nothing', async () => {
     // FR-15: the user's work stays local and intact.
     const { active, dir, teammate } = await withTeammate()
