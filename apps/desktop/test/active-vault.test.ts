@@ -677,6 +677,50 @@ describe('ActiveVault — sync', () => {
     )
   })
 
+  it('a focus arriving during a pull does not spend the throttle window', async () => {
+    // `onFocus` stamped the throttle and only then hit `maybePull`'s in-flight
+    // guard, so a focus that achieved nothing still bought 30 s of silence —
+    // and FR-9's "on window focus" quietly stopped holding for the next
+    // alt-tab, which is the one the user is waiting on.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    let pulls = 0
+    let release = () => {}
+    const firstPullHangs = new Promise<void>((r) => (release = r))
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        pull: async () => {
+          pulls += 1
+          if (pulls === 1) await firstPullHangs
+          return { kind: 'up-to-date' as const }
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, focusThrottleMs: 300 },
+    })
+    open.push(active)
+
+    active.onFocus()
+    await waitFor('the first pull to start', () => pulls === 1)
+    // Past the throttle, so this focus is entitled to a pull — and cannot have
+    // one, because the first is still fetching.
+    await sleep(400)
+    active.onFocus()
+
+    release()
+    await waitFor('the first pull to finish', () => active.syncState().kind !== 'pulling')
+    active.onFocus()
+
+    // Short, and deliberately shorter than the throttle: with the bug the
+    // window has been spent and no amount of waiting produces a second pull.
+    await waitFor('a pull on the focus after the fetch', () => pulls === 2, 250)
+  })
+
   it('does not strand the vault on a publish conflict that names no paths', async () => {
     // `maybePull` already refuses to latch this: `git merge` reports unmerged
     // paths only once it has really started merging, so a merge that is refused

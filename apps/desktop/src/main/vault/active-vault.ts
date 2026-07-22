@@ -470,6 +470,12 @@ export async function openActiveVault(args: {
       }
     },
     onFocus() {
+      // A fetch is already running, so this focus needs neither a pull nor a
+      // throttle window of its own. Stamping first and discovering the
+      // in-flight guard afterwards bought 30 s of silence for a focus that did
+      // nothing — and the alt-tab that then went unserved is the one the user
+      // was waiting on.
+      if (pullInFlight) return
       // FR-9. Throttled, or every alt-tab is a fetch.
       const now = Date.now()
       if (now - lastFocusPull < timings.focusThrottleMs) return
