@@ -14,7 +14,14 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { openRepo } from '../src/main/git'
-import { openActiveVault, type ActiveVault } from '../src/main/vault/active-vault'
+import {
+  createVaultHost,
+  openActiveVault,
+  type ActiveVault,
+  type SyncTimings,
+  type VaultHost,
+} from '../src/main/vault/active-vault'
+import { VaultRegistry } from '../src/main/vault/registry'
 import { cleanupFixtures, makeClone, makeRemote, plainGit, tmp } from './helpers/git-fixtures'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -594,5 +601,119 @@ describe('ActiveVault — sync', () => {
       ['up-to-date', 'ahead'].includes(active.syncState().kind),
     )
     expect((await active.repo.status()).merging).toBe(false)
+  })
+})
+
+describe('VaultHost', () => {
+  /** A registry holding two vaults, both real clones. */
+  async function twoVaults() {
+    const registry = new VaultRegistry(join(await tmp('holi-reg-'), 'vaults.json'))
+    const a = await makeClone(await makeRemote(), 'vault-a')
+    const b = await makeClone(await makeRemote(), 'vault-b')
+    const at = '2026-07-22T10:00:00Z'
+    await registry.add({ remote: 'syv-ai/a', path: a, name: 'a', lastOpenedAt: at })
+    await registry.add({ remote: 'syv-ai/b', path: b, name: 'b', lastOpenedAt: at })
+    await sleep(QUIESCE)
+    return { registry, a, b }
+  }
+
+  const hosts: VaultHost[] = []
+  afterAll(async () => {
+    for (const h of hosts) await h.close().catch(() => {})
+  })
+
+  function host(registry: VaultRegistry, timings: Partial<SyncTimings> = {}) {
+    const snaps = snapshots()
+    const h = createVaultHost({
+      registry,
+      onSnapshot: snaps.push,
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, ...timings },
+    })
+    hosts.push(h)
+    return { h, snaps }
+  }
+
+  it('opens a vault and makes it active', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+
+    const vault = await h.open('syv-ai/a')
+    expect(h.active()).toBe(vault)
+    expect(vault.remote).toBe('syv-ai/a')
+    expect(vault.snapshot().docs.map((d) => d.path)).toEqual(['README.md'])
+  })
+
+  it('tears the previous vault down when switching', async () => {
+    // Decision 2's entire content: exactly one watcher and one set of timers
+    // exist at a time, so a switch is a teardown rather than a leak.
+    const { registry, a } = await twoVaults()
+    const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
+
+    await h.open('syv-ai/a')
+    await h.open('syv-ai/b')
+    const before = snaps.count
+
+    // The first vault's watcher must be gone: writing into it pushes nothing.
+    await writeFile(join(a, 'orphan.md'), 'nobody is listening\n', 'utf8')
+    await sleep(SETTLE)
+
+    expect(snaps.count).toBe(before)
+    expect(h.active()?.remote).toBe('syv-ai/b')
+  })
+
+  it('commits a dirty vault before switching away from it', async () => {
+    // FR-6: work is flushed and committed on a vault switch. A tree left dirty
+    // is one the next pull cannot merge — and nothing is watching it any more
+    // to notice.
+    const { registry, a } = await twoVaults()
+    const { h } = host(registry, { commitQuietMs: 60_000 })
+
+    await h.open('syv-ai/a')
+    await writeFile(join(a, 'unsaved.md'), 'mid-sentence\n', 'utf8')
+    await h.open('syv-ai/b')
+
+    expect(await plainGit(a, ['log', '-1', '--format=%s'])).toBe('Update unsaved.md')
+    expect(await plainGit(a, ['status', '--porcelain'])).toBe('')
+  })
+
+  it('is idempotent for the vault already open', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+
+    const first = await h.open('syv-ai/a')
+    expect(await h.open('syv-ai/a')).toBe(first)
+  })
+
+  it('refuses a remote that is not registered', async () => {
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+    await expect(h.open('someone/unknown')).rejects.toThrow(/someone\/unknown/)
+  })
+
+  it('leaves nothing running after close()', async () => {
+    const { registry, a } = await twoVaults()
+    const { h, snaps } = host(registry, { rescanDebounceMs: 30, healIntervalMs: 50 })
+
+    await h.open('syv-ai/a')
+    await h.close()
+    const before = snaps.count
+
+    await writeFile(join(a, 'after.md'), 'too late\n', 'utf8')
+    await sleep(SETTLE)
+
+    expect(snaps.count).toBe(before)
+    expect(h.active()).toBeNull()
+  })
+
+  it('serialises concurrent opens rather than racing two vaults into one slot', async () => {
+    // Two clicks in the switcher, or a click during a slow open. Unserialised,
+    // both openActiveVault calls run and only one is ever closed — leaking the
+    // other's watcher and timers for the life of the process.
+    const { registry } = await twoVaults()
+    const { h } = host(registry)
+
+    await Promise.all([h.open('syv-ai/a'), h.open('syv-ai/b')])
+    expect(h.active()?.remote).toBe('syv-ai/b')
   })
 })

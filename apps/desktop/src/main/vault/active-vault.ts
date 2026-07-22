@@ -24,7 +24,9 @@
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
 import type { VaultSnapshot } from '@holi/shared'
-import type { GitRepo, PullResult, PushResult, RepoStatus } from '../git'
+import type { GitDeps, GitRepo, PullResult, PushResult, RepoStatus } from '../git'
+import { openRepo } from '../git'
+import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
 
@@ -373,5 +375,76 @@ export async function openActiveVault(args: {
       commitTimer = null
       await watcher.close()
     },
+  }
+}
+
+/**
+ * Which vault is open. Decision 2's "one at a time" lives here and nowhere
+ * else, so this is the single seam an N-vault future would change.
+ */
+export interface VaultHost {
+  active(): ActiveVault | null
+  /** Closes the current vault first. Idempotent for the vault already open. */
+  open(remote: string): Promise<ActiveVault>
+  close(): Promise<void>
+}
+
+export function createVaultHost(args: {
+  registry: VaultRegistry
+  gitDeps?: GitDeps
+  onSnapshot: (snapshot: VaultSnapshot) => void
+  onSyncState: (state: SyncState) => void
+  timings?: Partial<SyncTimings>
+}): VaultHost {
+  let current: ActiveVault | null = null
+  /**
+   * Opens are serialised through this chain rather than allowed to interleave.
+   * Two clicks in the switcher, or a click during a slow open, would otherwise
+   * run two `openActiveVault` calls and close only one — leaking the other's
+   * watcher and timers for the life of the process.
+   */
+  let queue: Promise<unknown> = Promise.resolve()
+
+  function serialise<T>(fn: () => Promise<T>): Promise<T> {
+    const run = queue.then(fn, fn)
+    // The chain must survive a rejected open, or one bad remote wedges the
+    // switcher permanently.
+    queue = run.catch(() => {})
+    return run
+  }
+
+  async function closeCurrent(): Promise<void> {
+    if (current === null) return
+    const vault = current
+    current = null
+    // FR-6: flush before letting go. Nothing is watching this tree once the
+    // vault is closed, so a dirty file left here is one nobody will notice —
+    // and a tree that is not clean is one the next pull cannot merge.
+    await vault.commitNow().catch((err) => console.error('[vault] flush on switch failed:', err))
+    await vault.close()
+  }
+
+  return {
+    active: () => current,
+
+    open: (remote) =>
+      serialise(async () => {
+        if (current?.remote === remote) return current
+        await closeCurrent()
+
+        const entry = (await args.registry.list()).find((e) => e.remote === remote)
+        if (!entry) throw new Error(`no such vault: ${remote}`)
+
+        current = await openActiveVault({
+          remote,
+          repo: openRepo(entry.path, args.gitDeps),
+          onSnapshot: args.onSnapshot,
+          onSyncState: args.onSyncState,
+          timings: args.timings,
+        })
+        return current
+      }),
+
+    close: () => serialise(closeCurrent),
   }
 }
