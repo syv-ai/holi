@@ -13,7 +13,8 @@
  * the deleted `server-client`, and the drawer is plan 5's work.
  */
 import { join } from 'node:path'
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { requestFlush, type FlushChannel } from './flush'
 import { createSession } from './github/electron'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
@@ -133,6 +134,12 @@ async function main(): Promise<void> {
     quitting = true
     void (async () => {
       try {
+        // FR-6's flush points are a flush THEN a commit, and only the renderer
+        // can do the first half — `host.close()` commits what is on disk, and
+        // the editor's newest words are not there until it writes them. Every
+        // other flush point is renderer-initiated; quit is the one main starts,
+        // so it is the one that has to ask.
+        await requestFlush(flushChannel(mainWindow))
         // `close()` commits the open vault before letting go of it (FR-6).
         await host.close()
       } catch (err) {
@@ -144,6 +151,30 @@ async function main(): Promise<void> {
       }
     })()
   })
+}
+
+/**
+ * `requestFlush`'s channel, over the one window.
+ *
+ * A window that is gone or destroyed has no buffer left to lose, so it answers
+ * at once rather than making the quit sit out the full timeout for a renderer
+ * that cannot possibly reply.
+ */
+function flushChannel(win: BrowserWindow | null): FlushChannel {
+  const target = win !== null && !win.isDestroyed() ? win : null
+  return {
+    send() {
+      target?.webContents.send('vault:flush')
+    },
+    onDone(cb) {
+      if (target === null) {
+        queueMicrotask(cb)
+        return () => {}
+      }
+      ipcMain.once('vault:flush-done', cb)
+      return () => ipcMain.removeListener('vault:flush-done', cb)
+    },
+  }
 }
 
 app.on('window-all-closed', () => {

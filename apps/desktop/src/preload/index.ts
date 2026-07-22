@@ -28,12 +28,28 @@ const onSnapshot = pushChannel<unknown>('vault:snapshot')
  * reconciling, or paused. Pushed on change only. */
 const onSyncState = pushChannel<unknown>('vault:sync')
 
+/**
+ * The one thing main ASKS the renderer, rather than telling it.
+ *
+ * A commit commits what is on disk, and the editor's newest words are in a
+ * buffer until it writes them — so every durable moment is a flush then a
+ * commit (`docs/glossary.md` §Flush). The renderer starts that sequence itself
+ * for ⌘S, publish, tab close, vault switch and blur; quit is the one main
+ * starts, because only main knows it is happening.
+ *
+ * Main gives up after a second, so `flushDone()` is a courtesy, not a lock: a
+ * renderer that never answers delays a quit, it does not prevent one.
+ */
+const onFlushRequest = pushChannel<void>('vault:flush')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
   vault: {
     onSnapshot,
     onSyncState,
+    onFlushRequest,
+    flushDone: () => ipcRenderer.send('vault:flush-done'),
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
 })

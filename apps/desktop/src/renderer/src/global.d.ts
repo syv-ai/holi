@@ -17,6 +17,16 @@ declare global {
         /** Each returns its unsubscribe closure. */
         onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
         onSyncState(cb: (state: SyncState) => void): () => void
+        /**
+         * Main is quitting and wants the buffer on disk before it commits.
+         * Write every dirty buffer, then call `flushDone()`.
+         *
+         * The only question main asks the renderer, and the only push that
+         * expects a reply. Main waits one second and then quits regardless, so
+         * a slow answer costs the newest words, not the quit.
+         */
+        onFlushRequest(cb: () => void): () => void
+        flushDone(): void
       }
       openExternal(url: string): Promise<void>
     }
