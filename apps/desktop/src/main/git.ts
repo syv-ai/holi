@@ -235,17 +235,47 @@ export async function runGit(cwd: string, args: string[], opts: RunOpts = {}): P
 }
 
 /**
+ * Did this command lose the race for `.git/index.lock`?
+ *
+ * Worth naming rather than matching inline, because the *caller* has to be able
+ * to tell this apart from the failures that share its shape. A merge that
+ * cannot take the index reports no unmerged paths, which is indistinguishable
+ * from a merge that was refused for any other reason — and calling either one a
+ * conflict latches FR-12's sticky pause on a race that will be over in 200 ms.
+ */
+export function isIndexLockFailure(outcome: { ok: boolean; stderr: string }): boolean {
+  return !outcome.ok && /index\.lock/.test(outcome.stderr)
+}
+
+/** Long enough to outlast a commit — measured at ~215 ms on an 800-file vault —
+ *  and short enough that a stale lock is reported rather than waited on. */
+const LOCK_ATTEMPTS = 5
+const LOCK_BACKOFF_MS = 80
+
+/**
  * Run one git command and report how it went without throwing.
  *
  * Failure is an ordinary outcome for several operations here — a merge that
  * conflicts, a push that is rejected — and each carries information in its exit
  * code that an exception would flatten into a message.
+ *
+ * **Except losing `index.lock`, which is retried rather than reported.** The
+ * vault clone is deliberately legible and the agent has `Bash`, so a git the
+ * user ran can hold the index while this one wants it — and git itself does not
+ * retry, it fails. Measured: `git status` neither takes the lock nor fails on
+ * it, so the contended window is only the commit and the merge. Waiting it out
+ * here is the direction we control; the reverse direction (our loop failing the
+ * user's `git checkout`) is accepted and documented.
  */
-export async function tryGit(
-  cwd: string,
-  args: string[],
-  opts: RunOpts = {},
-): Promise<GitOutcome> {
+export async function tryGit(cwd: string, args: string[], opts: RunOpts = {}): Promise<GitOutcome> {
+  for (let attempt = 1; ; attempt++) {
+    const outcome = await runGitOnce(cwd, args, opts)
+    if (attempt >= LOCK_ATTEMPTS || !isIndexLockFailure(outcome)) return outcome
+    await new Promise((resolve) => setTimeout(resolve, LOCK_BACKOFF_MS))
+  }
+}
+
+async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<GitOutcome> {
   const gitPath = opts.gitPath ?? 'git'
   const askpass = await ensureAskpass()
   return new Promise((resolve, reject) => {

@@ -638,6 +638,37 @@ describe('runGit', () => {
     expect(err.stderr).not.toBe('')
   })
 
+  it('waits out an index.lock held by someone else instead of failing', async () => {
+    // The clone is deliberately legible (`prd/vaults-sync.md`) and the agent has
+    // Bash, so a git command the user ran can hold the index while Holi's loop
+    // wants it. Measured on an 800-file vault: `git status` neither takes the
+    // lock nor fails on it, `git add`+`git commit` holds it ~215 ms, and a
+    // command that arrives inside that window fails outright — git does not
+    // retry. This is the direction we control, so this side waits.
+    const repo = await makeClone(await makeRemote())
+    await writeFile(join(repo, 'note.md'), 'text\n', 'utf8')
+    const lock = join(repo, '.git', 'index.lock')
+    await writeFile(lock, '', 'utf8')
+    // Released while the retries are still going, the way a real one would be.
+    setTimeout(() => void rm(lock).catch(() => {}), 120)
+
+    expect(await openRepo(repo).commitAll('Update note.md')).not.toBeNull()
+  })
+
+  it('gives up on a lock that is never released, rather than hanging', async () => {
+    // A lock nobody drops is a stale one, and the loop must come back to report
+    // that rather than block a quit behind it.
+    const repo = await makeClone(await makeRemote())
+    await writeFile(join(repo, 'note.md'), 'text\n', 'utf8')
+    await writeFile(join(repo, '.git', 'index.lock'), '', 'utf8')
+
+    const err = await openRepo(repo)
+      .commitAll('Update note.md')
+      .catch((e) => e)
+    expect(err).toBeInstanceOf(GitError)
+    expect(err.stderr).toMatch(/index\.lock/)
+  })
+
   it('reports a missing binary as GitMissingError, not as a failed command', async () => {
     // Every user is assumed to be a developer, so git is assumed present — but
     // the failure when it is not must be advice, not a stack trace.
