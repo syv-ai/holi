@@ -273,7 +273,7 @@ export interface SessionDeps {
 - Create: `apps/desktop/src/main/github/token-store.ts`
 - Create: `apps/desktop/test/github-token-store.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 A `fakeStorage()` helper for the whole file: implements `SafeStorageLike` with a reversible transform (base64 of the plaintext, prefixed with a marker) and a settable `available` flag. It must **not** be the identity function — a store that "works" by writing plaintext would pass an identity-backed test, which is the one failure this module exists to prevent.
 
@@ -287,18 +287,18 @@ A `fakeStorage()` helper for the whole file: implements `SafeStorageLike` with a
 - `throws EncryptionUnavailableError rather than writing plaintext` — `available = false`; assert the type **and** that no file was created.
 - `clear removes the entry` — write, clear, read is `null`; and clearing when nothing is stored is a no-op, because sign-out can be pressed twice.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
 Run: `pnpm exec vitest run test/github-token-store.test.ts --root apps/desktop`
 Expected: FAIL — `TokenStore is not a constructor`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `{ v: 1, data: base64 }` JSON envelope over `encryptString(JSON.stringify(auth))`. Write via the temp-file-then-`rename` dance `registry.ts` already uses, so a crash mid-write cannot leave a half-file. `read` returns `null` for every parse or decrypt failure.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/main/github/token-store.ts apps/desktop/test/github-token-store.test.ts
@@ -313,7 +313,7 @@ git commit -m "feat(desktop): the token lives in the keychain or it does not liv
 - Create: `apps/desktop/src/main/github/device-flow.ts`
 - Create: `apps/desktop/test/github-device-flow.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 A `fakeFetch(script)` helper for the whole file: takes an array of `{ status, body, headers? }` handed out in order, and records every request (`url`, `method`, `headers`, `body`) for assertion. Later files reuse this shape — keep it simple enough to copy rather than exporting a shared test util that three suites then couple to.
 
@@ -330,15 +330,15 @@ A `fakeFetch(script)` helper for the whole file: takes an array of `{ status, bo
 - `returns cancelled and stops polling after cancel()` — assert **no further requests** are made after the call. The count is the assertion; a resolved promise over a live loop passes a weaker test.
 - `surfaces a 404 on the device-code endpoint as advice` — assert the message names the device-flow setting on the OAuth app, because this is what an unconfigured app looks like and it reads like a typo.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `POST https://github.com/login/device/code`, then poll `POST https://github.com/login/oauth/access_token` with `grant_type=urn:ietf:params:oauth:grant-type:device_code`. Both with `Accept: application/json`. Branch on the body's `error` field on every response regardless of status; treat an unrecognised `error` as a throw, since an unknown grant state is not a state to guess at. `cancel()` flips a flag the loop checks after each sleep **and** before each request.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit** — `feat(desktop): sign in with a code you read off the screen`
+- [x] **Step 5: Commit** — `feat(desktop): sign in with a code you read off the screen`
 
 ---
 
@@ -348,7 +348,7 @@ A `fakeFetch(script)` helper for the whole file: takes an array of `{ status, bo
 - Create: `apps/desktop/src/main/github/api.ts`
 - Create: `apps/desktop/test/github-api.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `describe('GitHubApi')` — requests:
 - `sends the token, the accept header and the api version` — assert all three on a `viewer()` call.
@@ -373,15 +373,15 @@ Errors:
 - `classifies 404 as not-found`.
 - `never puts the token in the error` — assert the thrown error's `message` and `JSON.stringify(err)` contain no part of the token.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 One private `request()` doing headers, timeout, status classification and JSON parsing; one `paginate()` over it following `Link`. Public methods are mappers. Classify in this order: **401 → rate-limit → SAML → other 403 → 404 → other**, because two of those are 403s and the order is the correctness.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit** — `feat(desktop): read GitHub, and say which kind of no it was`
+- [x] **Step 5: Commit** — `feat(desktop): read GitHub, and say which kind of no it was`
 
 ---
 
@@ -389,7 +389,7 @@ One private `request()` doing headers, timeout, status classification and JSON p
 
 **Files:** modify `api.ts`, `github-api.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `collaborators()`:
 - `maps a collaborator list to the shared Collaborator type` — `permissions` → the single `permission` string. GitHub returns **both** a `permissions` object and a `role_name`; take the highest true permission from the object so the mapping is total and does not depend on a role vocabulary GitHub can extend.
@@ -408,10 +408,10 @@ One private `request()` doing headers, timeout, status classification and JSON p
 - `creates under an org when one is given` — assert `POST /orgs/{org}/repos`.
 - `surfaces a name collision as a plain error` — GitHub returns 422; assert the message names the repo, since "already exists" is a thing the user can fix themselves.
 
-- [ ] **Step 2: Run and watch fail**
-- [ ] **Step 3: Implement** — three mappers over the existing `request`/`paginate`.
-- [ ] **Step 4: Run and watch pass**
-- [ ] **Step 5: Commit** — `feat(desktop): a repo is a vault, and its collaborators are its members`
+- [x] **Step 2: Run and watch fail**
+- [x] **Step 3: Implement** — three mappers over the existing `request`/`paginate`.
+- [x] **Step 4: Run and watch pass**
+- [x] **Step 5: Commit** — `feat(desktop): a repo is a vault, and its collaborators are its members`
 
 ---
 
@@ -423,7 +423,7 @@ One private `request()` doing headers, timeout, status classification and JSON p
 
 This is where FR-14 and FR-15 actually happen; the earlier tasks only make them possible.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `describe('GitHubSession')`:
 - `loads signed out when the store is empty` — `viewer` is `null`, `token()` is `null`.
@@ -438,15 +438,15 @@ This is where FR-14 and FR-15 actually happen; the earlier tasks only make them 
 - `onChange fires on sign-in, sign-out and a 401, and unsubscribes` — plan 4's sync orchestrator hangs off this.
 - `token() is a live getter` — capture `const t = () => session.token()` **before** sign-in, assert it returns the token after. This is precisely how `openRepo` will hold it, so it is the shape worth testing.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `load()` reads the store; `signIn()` calls `startDeviceFlow`, wraps `wait()` so a `granted` result fetches the viewer, writes the store and fires `onChange` before resolving. `onUnauthorized` (401 only) clears store and viewer and fires `onChange`. The client id resolves as `deps.clientId ?? process.env.HOLI_GITHUB_CLIENT_ID ?? CLIENT_ID`, with `CLIENT_ID` an exported constant carrying a comment that it is a placeholder until the OAuth app is registered.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit** — `feat(desktop): one session, and a sign-out that takes effect now`
+- [x] **Step 5: Commit** — `feat(desktop): one session, and a sign-out that takes effect now`
 
 ---
 
@@ -460,7 +460,7 @@ Without this the plan builds a module nobody can call. `RouterDeps` already carr
 
 `openExternal` is injected rather than imported because it is Electron's `shell.openExternal`, and `router.ts` typechecks and tests under plain Node today — that is worth keeping. It covers two requirements that would otherwise have no home: **FR-2** (main opens `github.com/login/device` in the *system* browser, so the grant reuses the user's existing GitHub session and no credential ever enters the app's web context) and **FR-11** ("add someone" deep-links to the repo's collaborators settings page, because Holi does not implement invitation).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `router.test.ts`, a `describe('auth')` against a session built on a fake store and fake fetch, with a recording `openExternal`:
 - `auth.status returns the viewer, or null when signed out`.
@@ -474,17 +474,17 @@ In `router.test.ts`, a `describe('auth')` against a session built on a fake stor
 - `github.repos surfaces saml-required with its url` — assert the TRPCError carries the SSO URL, because a generic FORBIDDEN here is the unhelpful message the PRD calls out by name.
 - `github.repos fails clearly when signed out` — UNAUTHORIZED, not an unauthenticated request that 401s its way to the same place by accident.
 
-- [ ] **Step 2: Run and watch fail**
+- [x] **Step 2: Run and watch fail**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Eight procedures. Map `GitHubApiError.kind` → `TRPCError` codes in one place at the router edge; the `ssoUrl` rides in the message, since it is advice for a human. **The renderer-facing type must be a hand-written projection** (`{ login, name, avatarUrl }`), never `StoredAuth` minus a field — an `Omit<StoredAuth, 'token'>` silently re-includes whatever is added to `StoredAuth` later.
 
 Both `openExternal` call sites validate before they interpolate. `auth.signIn` passes through a URL GitHub gave us; `github.openCollaboratorSettings` builds one from a remote the renderer supplied, so it goes through `isRemote` first — the same rule every path from the renderer already follows in `safe()`.
 
-- [ ] **Step 4: Run and watch pass**
+- [x] **Step 4: Run and watch pass**
 
-- [ ] **Step 5: Commit** — `feat(desktop): the renderer can ask who you are, and nothing more`
+- [x] **Step 5: Commit** — `feat(desktop): the renderer can ask who you are, and nothing more`
 
 ---
 
@@ -492,26 +492,42 @@ Both `openExternal` call sites validate before they interpolate. `auth.signIn` p
 
 **Files:** modify `apps/desktop/src/main/index.ts` **only if it already compiles** — see below.
 
-- [ ] **Step 1: Check whether `main/index.ts` is repairable**
+- [x] **Step 1: Check whether `main/index.ts` is repairable**
 
 Run: `cd apps/desktop && pnpm exec tsc --noEmit 2>&1 | grep 'main/index.ts'`
 
 It carries 7 errors and imports several modules that no longer exist. **If it does not compile, stop and do not repair it here** — it is plan 4's rewrite, and dragging it forward turns this plan into that one. Instead:
 
-- [ ] **Step 2: Leave a construction site plan 4 can pick up**
+- [x] **Step 2: Leave a construction site plan 4 can pick up**
 
 Add to `session.ts` a documented factory — `createSession(userDataDir)` — that builds `new TokenStore(join(userDataDir, 'github-auth.enc'), safeStorage)` with `safeStorage` imported from `electron`. Keep it the **only** line in the package that imports `electron`, and keep it out of every path the tests take, so the suite still runs under plain Node.
 
 Note in a comment that it must be called **after `app.whenReady()`** — `isEncryptionAvailable()` is not reliable before it, and a sign-in that fails on the first launch of the day and works on the second is a miserable bug to find.
 
-- [ ] **Step 3: Verify the suite still runs under Node**
+- [x] **Step 3: Verify the suite still runs under Node**
 
 Run: `pnpm exec vitest run --root apps/desktop`
 Expected: all green, no `electron` import error.
 
-- [ ] **Step 4: Commit** — `feat(desktop): the keychain the app will actually use`
+- [x] **Step 4: Commit** — `feat(desktop): the keychain the app will actually use`
 
 ---
+
+## Outcome — completed 2026-07-22
+
+**85 new tests, all green.** Suite went 394 → 479 (`packages/shared` 113 · `apps/desktop` 366). Typecheck **still exactly 106 errors**, in the same fourteen files, none of them new.
+
+Five things the plan did not anticipate, corrected in place:
+
+1. **`createSession` moved out of `session.ts` into `github/electron.ts`.** The plan put it at the bottom of `session.ts`, which the suite imports — and a static `import … from 'electron'` is a module-load side effect. It *passed*, because Electron's Node entry point resolves and exports a path string, so `app` and `safeStorage` come back undefined and nothing calls them. That is luck, not isolation: it would break on an image where the resolution differs, for a reason with nothing to do with the code. A separate file makes the property structural. The definition of done below is amended accordingly.
+2. **`onUnauthorized` is awaited.** The plan had it as `() => void`, fired and forgotten. Then the ordering of "the 401 rejection surfaces" against "the session has actually cleared" depends on how the caller happens to yield, which is not something a test should have to know. Awaiting it inside `#send` means a caller handling the rejection always sees a session that already reflects the sign-out.
+3. **Sign-in needed four procedures, not one.** The device flow is two-phase and a tRPC procedure returns once, so `signIn` stashes the flow and `awaitSignIn` long-polls it, with `cancelSignIn` to stop. The plan's eight procedures became ten.
+4. **`Repo.visibility` needed a fallback.** GitHub sends `visibility` and `private` both; an unrecognised `visibility` now falls back to the boolean rather than defaulting to a string, because "public" is the wrong guess to make about a repo GitHub called private.
+5. **One test of mine was wrong and the code was right.** `status never returns the accountId` searched the serialized result for `583231` — which fails no matter what, because GitHub embeds the account id in the avatar URL (`/u/583231?v=4`). Replaced with an assertion on the projection's keys, which is what the claim actually was.
+
+One honest note on the TDD loop: **four of Task 4's eleven tests passed the moment they were written.** Task 3 had to implement `collaborators()` for its "a 403 does not sign you out" test, so the mapping already existed. Seven were red.
+
+`main/index.ts` was confirmed a corpse (Task 7 Step 1) and left alone — it imports `./events/user-stream`, `./reminders/notifier`, `./server-client` and `./session`, none of which exist. That is plan 4.
 
 ## Definition of done
 
@@ -519,7 +535,7 @@ Expected: all green, no `electron` import error.
 - `pnpm -r typecheck` shows **no new errors**. The `github/` modules are new files whose only in-repo dependents are `router.ts` (which typechecks clean today) — so they must typecheck clean too, and the count must not rise above 106.
 - No test makes a network request.
 - The token appears in no router result, no error message, and no log line.
-- `main/github/session.ts` is the only file outside plan 4's scope that imports `electron`.
+- ~~`main/github/session.ts`~~ **`main/github/electron.ts`** is the only file in `github/` that imports `electron`, and no test imports it. (Amended — see Outcome 1.)
 
 ## Not in this plan
 
