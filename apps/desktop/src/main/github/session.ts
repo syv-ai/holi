@@ -18,14 +18,24 @@ import { startDeviceFlow, type DeviceFlow, type DeviceFlowResult } from './devic
 import { TokenStore, type StoredAuth } from './token-store'
 
 /**
- * The OAuth app's client id.
+ * The OAuth app's client id — `Holi`, owned by the **syv-ai** org.
  *
- * **Placeholder.** No GitHub OAuth app is registered for Holi yet; replace this
- * with the real one and make sure *Enable Device Flow* is ticked on it, or the
- * device-code endpoint answers 404. A public client's id is not a secret —
- * that is the premise of the device flow — so a constant is its correct home.
+ * A public client's id is not a secret; that is the premise of the device flow,
+ * and it ships inside the binary either way. A constant is its correct home.
+ *
+ * Owned by the org rather than by a person so it outlives any one account, and
+ * so it stays auto-approved for `syv-ai` if third-party application access
+ * restrictions are ever turned on there — where the vaults live.
+ *
+ * **If the device-code endpoint ever answers 404, the *Enable Device Flow*
+ * checkbox has been un-ticked.** It is off by default, the 404 reads exactly
+ * like a wrong URL, and that misreading cost this project several sessions.
+ * The one-line check:
+ *
+ *     curl -s -X POST https://github.com/login/device/code \
+ *       -H "Accept: application/json" -d "client_id=$CLIENT_ID&scope=repo"
  */
-export const CLIENT_ID = 'Iv1.0000000000000000'
+export const CLIENT_ID = 'Ov23liwgXQvw5gAGwqAL'
 
 /**
  * `repo` for the vault, `read:user` for the identity in the UI, and `read:org`
