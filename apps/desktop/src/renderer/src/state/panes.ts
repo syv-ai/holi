@@ -87,6 +87,26 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
   })
 }
 
+/**
+ * Point every open tab at a renamed note's new path (FR-11).
+ *
+ * A rename moves bytes, not tabs — indices and the active selection are
+ * untouched, so the user stays on whatever they were looking at, now under its
+ * new name. Spans all panes, not just the active one: a note can be open in
+ * more than one, and a missed tab would point at a path that no longer exists.
+ */
+export function retargetTab(workspace: Workspace, from: string, to: string): Workspace {
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane) => ({
+      ...pane,
+      tabs: pane.tabs.map((tab) =>
+        tab.kind === 'note' && tab.path === from ? { kind: 'note', path: to } : tab,
+      ),
+    })),
+  }
+}
+
 /** What the editor should be showing, or null when the pane is empty. */
 export function activeTab(workspace: Workspace): Tab | null {
   const pane = workspace.panes[workspace.active]

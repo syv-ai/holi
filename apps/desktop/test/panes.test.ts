@@ -12,6 +12,7 @@ import {
   closeTab,
   emptyWorkspace,
   openTab,
+  retargetTab,
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
@@ -66,5 +67,22 @@ describe('closeTab', () => {
     expect(w.panes).toHaveLength(1)
     expect(paths(w)).toEqual([])
     expect(activeTab(w)).toBeNull()
+  })
+})
+
+describe('retargetTab', () => {
+  it('swaps a renamed note tab in place, leaving indices and other tabs alone', () => {
+    let w = emptyWorkspace()
+    for (const path of ['a.md', 'x.md']) w = openTab(w, { kind: 'note', path })
+    // x.md is active at index 1; renaming a.md must not move the active tab.
+    const next = retargetTab(w, 'a.md', 'sub/b.md')
+
+    expect(paths(next)).toEqual(['sub/b.md', 'x.md'])
+    expect(activeTab(next)).toEqual({ kind: 'note', path: 'x.md' })
+  })
+
+  it('is a no-op when the renamed path is not open', () => {
+    const w = openTab(emptyWorkspace(), { kind: 'note', path: 'a.md' })
+    expect(retargetTab(w, 'ghost.md', 'other.md')).toEqual(w)
   })
 })

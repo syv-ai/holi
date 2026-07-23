@@ -1,7 +1,9 @@
 import { atom, type createStore } from 'jotai'
 import type { DocMeta, VaultEntry, VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
+import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
+import { retargetTab, workspaceAtom } from './panes'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -157,9 +159,28 @@ export const deleteNoteAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-// `renameNoteAtom` / `renameFolderAtom` are deliberately absent, exactly as
-// `notes.rename` is absent from the router: a rename must move the file AND
-// rewrite every inbound `[[wiki-link]]` in one pass, and shipping the move half
-// alone would silently break every link. `loadBackrefsAtom` and `createVaultAtom`
-// went with the procedures they called — backrefs is a grep now, and creating a
-// vault means cloning a GitHub repo (prd/auth-identity.md), not a server insert.
+/**
+ * Rename a note: move the file, rewrite inbound links, follow the open tab (FR-11).
+ *
+ * The order is the correctness: flush the live buffer and commit a clean
+ * restore point *before* the multi-file edit, so every step after is
+ * recoverable (there is no transaction — prd/notes-editor.md §Rename). Then the
+ * rename, then a second commit so it lands as one commit on safe ground. The
+ * open tab and active doc follow the file to its new path — a missed tab points
+ * at something that no longer exists.
+ */
+export const renameNoteAtom = atom(
+  null,
+  async (get, set, { from, to }: { from: string; to: string }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    await flushAllBuffers()
+    await trpc.sync.commitNow.mutate()
+    await trpc.notes.rename.mutate({ remote, from, to })
+    set(workspaceAtom, retargetTab(get(workspaceAtom), from, to))
+    const wasActive = get(activeDocAtom)?.path === from
+    await set(loadSnapshotAtom)
+    if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
+    await trpc.sync.commitNow.mutate()
+  },
+)
