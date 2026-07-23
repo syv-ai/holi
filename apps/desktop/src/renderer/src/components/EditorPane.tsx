@@ -38,10 +38,14 @@ export function EditorPane({
   path,
   onOpenNote,
   onConflict,
+  onEdit,
 }: {
   path: string | null
   onOpenNote: (path: string) => void
   onConflict: (path: string) => void
+  /** Fired the first time the buffer changes for this open note — the rule that
+   *  promotes a preview tab to pinned (FR-15), so editing never loses your place. */
+  onEdit?: () => void
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -52,6 +56,9 @@ export function EditorPane({
   const baseRef = useRef('')
   const viewRef = useRef<EditorView | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Whether `onEdit` has fired for this open note — reset per open, so the
+   *  promote-on-edit rule fires once, not once per keystroke. */
+  const editedRef = useRef(false)
 
   // Read on demand by the editor's pull-based seams, so a snapshot arriving
   // mid-edit does not rebuild the EditorView and drop the caret.
@@ -71,6 +78,7 @@ export function EditorPane({
   useEffect(() => {
     if (path === null || remote === null || hostRef.current === null) return
     let disposed = false
+    editedRef.current = false
     const host = hostRef.current
 
     /** Write the buffer if it differs from disk, advancing `base` in the same
@@ -125,7 +133,12 @@ export function EditorPane({
               nav: () => navRef.current,
             }),
             EditorView.updateListener.of((update) => {
-              if (update.docChanged) scheduleSave()
+              if (!update.docChanged) return
+              scheduleSave()
+              if (!editedRef.current) {
+                editedRef.current = true
+                onEdit?.()
+              }
             }),
           ],
         }),
