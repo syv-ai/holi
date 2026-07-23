@@ -27,7 +27,13 @@ export const editorTheme = EditorView.baseTheme({
   },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
   '.cm-quote-mark': { color: '#737373' },
-  '.cm-md-link': { color: '#7dd3fc', textDecoration: 'underline', cursor: 'pointer' },
+  // No pointer by default: a markdown link is editable text and a plain click
+  // places the caret — only ⌘/Ctrl-click navigates (links.ts). The cursor is
+  // therefore gated on the modifier actually being held, so it never advertises
+  // a click that does nothing. Wiki-link chips below keep theirs: a plain click
+  // on one does navigate.
+  '.cm-md-link': { color: '#7dd3fc', textDecoration: 'underline' },
+  '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
   // compact HR (FR-3b: thin rule, minimal margins — not a chunky block)
   '.cm-hr': {
