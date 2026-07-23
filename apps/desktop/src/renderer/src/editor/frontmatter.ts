@@ -29,10 +29,8 @@ import {
   drawSelection,
   EditorView,
   keymap,
-  ViewPlugin,
   WidgetType,
   type DecorationSet,
-  type ViewUpdate,
 } from '@codemirror/view'
 import { splitFrontmatter } from '@holi/shared'
 import { frontmatterRegion, frontmatterYamlValid } from './frontmatter-region'
@@ -82,16 +80,26 @@ function keyCount(body: string): number {
   return body.split('\n').filter((l) => /^\S.*:/.test(l)).length
 }
 
-function statusDot(body: string): HTMLElement {
-  const dot = document.createElement('span')
+/** Paint an existing dot for the body's validity — shared by the initial render
+ *  and the live refresh, so the two can never disagree. */
+function paintDot(dot: HTMLElement, body: string): void {
   const valid = frontmatterYamlValid(regionTextFrom(body))
   dot.className = `cm-fm-dot ${valid ? 'cm-fm-dot-ok' : 'cm-fm-dot-bad'}`
   dot.title = valid ? 'frontmatter is valid YAML' : 'frontmatter is not valid YAML'
+}
+
+function statusDot(body: string): HTMLElement {
+  const dot = document.createElement('span')
+  paintDot(dot, body)
   return dot
 }
 
 class FrontmatterWidget extends WidgetType {
   private nested: EditorView | null = null
+  /** The revealed header's status dot, kept so a nested edit can repaint it in
+   *  place — the widget itself maps rather than rebuilds on its own write (to
+   *  keep the nested caret), so nothing else would refresh the dot live. */
+  private dot: HTMLElement | null = null
 
   constructor(
     readonly expanded: boolean,
@@ -134,7 +142,8 @@ class FrontmatterWidget extends WidgetType {
     header.type = 'button'
     header.className = 'cm-fm-header'
     header.setAttribute('data-frontmatter-header', '')
-    header.appendChild(statusDot(this.body))
+    this.dot = statusDot(this.body)
+    header.appendChild(this.dot)
     const label = document.createElement('span')
     label.textContent = '▾ frontmatter'
     header.appendChild(label)
@@ -161,7 +170,12 @@ class FrontmatterWidget extends WidgetType {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return
-          this.writeBack(view, u.state.doc.toString())
+          const body = u.state.doc.toString()
+          this.writeBack(view, body)
+          // Repaint the dot here: the write-back is our own edit, so the widget
+          // maps instead of rebuilding and `statusDot` would otherwise stay
+          // frozen — the FR-16 red/green feedback has to be live while you type.
+          if (this.dot !== null) paintDot(this.dot, body)
         }),
         EditorView.theme({ '&': { backgroundColor: 'transparent' }, '.cm-content': { padding: 0 } }),
       ],
@@ -183,6 +197,7 @@ class FrontmatterWidget extends WidgetType {
   override destroy(): void {
     this.nested?.destroy()
     this.nested = null
+    this.dot = null
   }
 
   override ignoreEvent(): boolean {
@@ -210,37 +225,34 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   return Decoration.set([range])
 }
 
-const frontmatterView = ViewPlugin.fromClass(
-  class {
-    decorations: DecorationSet
-
-    constructor(readonly view: EditorView) {
-      this.decorations = frontmatterDecorations(view.state)
-    }
-
-    update(update: ViewUpdate): void {
-      const ownEdit = update.transactions.some((tr) => tr.annotation(frontmatterEdit))
-      const toggled = update.transactions.some((tr) =>
-        tr.effects.some((e) => e.is(toggleFrontmatter)),
-      )
-      if (ownEdit && !toggled) {
-        // Our own write-back: map, do not rebuild, so the nested editor lives.
-        this.decorations = this.decorations.map(update.changes)
-        return
-      }
-      if (update.docChanged || toggled) {
-        this.decorations = frontmatterDecorations(update.state)
-      }
-    }
+/**
+ * The block-replace lives in a **StateField**, not a ViewPlugin: CodeMirror
+ * forbids block decorations from plugins (`RangeError: Block decorations may not
+ * be specified via plugins`), which aborts EditorView construction — so a note
+ * with frontmatter would open blank. The table widget provides its block decos
+ * the same way (a StateField), and this is the difference between the two.
+ *
+ * The map-don't-rebuild rule is preserved: our own write-back maps the existing
+ * set through the change so the nested editor keeps its caret; a genuine change
+ * (edit from the root, toggle, external reload) recomputes from scratch.
+ */
+const frontmatterDecoField = StateField.define<DecorationSet>({
+  create: (state) => frontmatterDecorations(state),
+  update(deco, tr) {
+    const ownEdit = tr.annotation(frontmatterEdit)
+    const toggled = tr.effects.some((e) => e.is(toggleFrontmatter))
+    // Our own write-back: map, do not rebuild, so the nested editor lives.
+    if (ownEdit && !toggled) return deco.map(tr.changes)
+    if (tr.docChanged || toggled) return frontmatterDecorations(tr.state)
+    return deco
   },
-  {
-    decorations: (v) => v.decorations,
+  provide: (f) => [
+    EditorView.decorations.from(f),
     // Atomic: the caret cannot land inside the replaced region; it is edited
     // only through the nested editor. The guard the table widget relies on too.
-    provide: (plugin) =>
-      EditorView.atomicRanges.of((view) => view.plugin(plugin)?.decorations ?? Decoration.none),
-  },
-)
+    EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
+  ],
+})
 
 const frontmatterTheme = EditorView.baseTheme({
   '.cm-fm': { margin: '0 0 0.75rem 0' },
@@ -277,6 +289,6 @@ const frontmatterTheme = EditorView.baseTheme({
  *  the block-replace owns the region's rendering. */
 export const frontmatterExtension: Extension = [
   frontmatterExpandedField,
-  frontmatterView,
+  frontmatterDecoField,
   frontmatterTheme,
 ]
