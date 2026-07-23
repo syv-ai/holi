@@ -26,9 +26,9 @@ import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import {
   activeTab,
   closeTab,
+  openBoard,
   openPinned,
   openPreview,
-  openTab,
   pinActive,
   pinTab,
   workspaceAtom,
@@ -141,6 +141,7 @@ export function Shell() {
             <span className={`text-[11px] ${TONE[label.tone]}`}>{label.text}</span>
             <button
               className="rounded bg-neutral-800 px-2 py-0.5 text-[11px] hover:bg-neutral-700"
+              title="Push your local commits to the vault's GitHub remote"
               onClick={() => {
                 setBanner(null)
                 void trpc.sync.publish
@@ -185,7 +186,8 @@ export function Shell() {
             </button>
             <button
               className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
-              onClick={() => setWorkspace((w) => openTab(w, { kind: 'board' }))}
+              title="task board"
+              onClick={() => setWorkspace((w) => openBoard(w))}
             >
               board
             </button>
@@ -209,6 +211,7 @@ export function Shell() {
                   // A preview tab reads italic (VS Code); double-clicking it
                   // pins it, the same promotion editing performs.
                   className={t.kind === 'note' && t.preview ? 'italic' : undefined}
+                  title={t.kind === 'board' ? 'task board' : t.path}
                   onClick={() =>
                     setWorkspace((w) => ({
                       ...w,
@@ -221,6 +224,7 @@ export function Shell() {
                 </button>
                 <button
                   className="text-neutral-600 hover:text-neutral-300"
+                  title="close tab"
                   onClick={() => setWorkspace((w) => closeTab(w, i))}
                 >
                   ✕

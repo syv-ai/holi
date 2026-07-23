@@ -57,7 +57,9 @@ export function FileTree({
           value={newPath}
           onChange={(e) => setNewPath(e.target.value)}
         />
-        <button className="rounded bg-neutral-800 px-2 text-xs hover:bg-neutral-700">+</button>
+        <button title="create note" className="rounded bg-neutral-800 px-2 text-xs hover:bg-neutral-700">
+          +
+        </button>
       </form>
       {error && <p className="px-2 pb-1 text-xs text-red-400">{error}</p>}
       <div className="holi-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
@@ -168,6 +170,7 @@ function TreeRow({
     >
       <button
         className="min-w-0 flex-1 truncate py-0.5 text-left"
+        title={`${node.path} — click to preview, double-click to keep open`}
         // Single-click previews (reuses one tab); double-click pins. Both fire
         // on a double-click, and openPreview→openPinned lands pinned — correct.
         onClick={() => onOpenPreview(node.path)}

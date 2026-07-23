@@ -88,7 +88,14 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
 
       <section className="space-y-2">
         <h3 className="font-medium">Collaborators</h3>
-        {error !== null && <p className="text-xs text-red-400">{error}</p>}
+        {/* A refusal is ordinary (signed out, no scope, local-fixture vault). Say
+            what to do rather than surfacing a bare GitHub "Not Found", which
+            reads like a crash. The raw message stays in the tooltip. */}
+        {error !== null && (
+          <p className="text-xs text-neutral-500" title={error}>
+            Can't load collaborators — sign in to GitHub with access to this repo.
+          </p>
+        )}
         {members === null && error === null && <p className="text-xs text-neutral-500">loading…</p>}
         <ul className="space-y-1 text-neutral-400">
           {members?.collaborators.map((c) => (

@@ -77,7 +77,7 @@ function Card({
         onDragStart(task)
       }}
       onClick={() => select(task.path)}
-      className="cursor-grab rounded border border-neutral-800 bg-neutral-900 p-2 text-xs active:cursor-grabbing"
+      className="cursor-grab rounded-md border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-100 shadow-sm hover:border-neutral-600 active:cursor-grabbing"
     >
       <div className="flex items-start gap-2">
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
@@ -106,7 +106,7 @@ function Card({
           {task.tags.map((t) => (
             <span
               key={t}
-              className="rounded border border-neutral-700 bg-neutral-800 px-1 text-[10px] text-neutral-400"
+              className="rounded border border-neutral-600 bg-neutral-700 px-1 text-[10px] text-neutral-200"
             >
               {t}
             </span>
@@ -201,6 +201,11 @@ function Grid(): React.JSX.Element {
   const all = everything.filter((t) => matchesFilter(t, filter, today))
   const lanes = laneOrder(all.map(laneOf))
 
+  // "hide done" drops the whole Done column, not just its cards — an empty
+  // column that can never fill reads as a layout bug, not a filter.
+  const columns = filter.hideDone ? COLUMNS.filter((c) => c.status !== 'done') : COLUMNS
+  const gridTemplateColumns = `8rem repeat(${columns.length}, minmax(0, 1fr))`
+
   const cell = (lane: string, status: TaskStatus) =>
     all.filter((t) => t.status === status && laneOf(t) === lane)
 
@@ -213,20 +218,20 @@ function Grid(): React.JSX.Element {
 
   return (
     <div className="flex-1 overflow-auto p-3" onDragEnd={() => setDragLane(null)}>
-      <div className="grid grid-cols-[8rem_repeat(3,minmax(0,1fr))] gap-2">
+      <div className="grid gap-2" style={{ gridTemplateColumns }}>
         <div />
-        {COLUMNS.map((c) => (
-          <div key={c.status} className="px-1 pb-1 text-xs font-medium text-neutral-400">
+        {columns.map((c) => (
+          <div key={c.status} className="px-1 pb-1 text-xs font-semibold text-neutral-200">
             {c.label}
           </div>
         ))}
 
         {lanes.map((lane) => (
           <div key={lane || ROOT_LANE} className="contents">
-            <div className="truncate pt-2 text-xs text-neutral-500" title={laneLabel(lane)}>
+            <div className="truncate pt-2 text-xs font-medium text-neutral-400" title={laneLabel(lane)}>
               {laneLabel(lane)}
             </div>
-            {COLUMNS.map((c) => {
+            {columns.map((c) => {
               // Only the lane the drag started in accepts it: the horizontal axis is
               // a file move, and that needs the link rewrite it does not have yet.
               const accepts = dragLane === null || dragLane === lane
@@ -236,7 +241,7 @@ function Grid(): React.JSX.Element {
                   data-cell={`${c.status}:${lane}`}
                   onDragOver={(e) => accepts && e.preventDefault()}
                   onDrop={(e) => drop(e, lane, c.status)}
-                  className={`min-h-16 space-y-1.5 rounded border border-neutral-900 bg-neutral-950/60 p-1.5 ${
+                  className={`min-h-16 space-y-1.5 rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5 ${
                     accepts ? '' : 'opacity-40'
                   }`}
                 >

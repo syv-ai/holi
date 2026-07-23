@@ -121,14 +121,18 @@ class FrontmatterWidget extends WidgetType {
     wrap.setAttribute('data-frontmatter', this.expanded ? 'expanded' : 'collapsed')
 
     if (!this.expanded) {
+      // Collapsed is deliberately near-invisible: a bare chevron, no box, no
+      // "N fields" label — the frontmatter is metadata, and hidden means hidden
+      // until you reach for it. The status dot rides along (tiny) so invalid
+      // YAML still shows even while collapsed.
       const pill = document.createElement('button')
       pill.type = 'button'
       pill.className = 'cm-fm-pill'
       pill.setAttribute('data-frontmatter-pill', '')
+      pill.title = `frontmatter · ${keyCount(this.body)} field${keyCount(this.body) === 1 ? '' : 's'}`
       pill.appendChild(statusDot(this.body))
       const label = document.createElement('span')
-      const n = keyCount(this.body)
-      label.textContent = `▸ frontmatter · ${n} field${n === 1 ? '' : 's'}`
+      label.textContent = '▸'
       pill.appendChild(label)
       pill.onmousedown = (e) => {
         e.preventDefault()
@@ -255,8 +259,22 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 })
 
 const frontmatterTheme = EditorView.baseTheme({
-  '.cm-fm': { margin: '0 0 0.75rem 0' },
-  '.cm-fm-pill, .cm-fm-header': {
+  '.cm-fm': { margin: '0 0 0.5rem 0' },
+  // Collapsed: a bare chevron, no box — just the affordance, nothing else.
+  '.cm-fm-pill': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.35rem',
+    padding: '0.1rem 0.15rem',
+    fontSize: '0.75rem',
+    color: '#6b6b6b',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+  },
+  '.cm-fm-pill:hover': { color: '#a3a3a3' },
+  // Expanded: the header keeps its box, so the reveal reads as an opened panel.
+  '.cm-fm-header': {
     display: 'inline-flex',
     alignItems: 'center',
     gap: '0.4rem',

@@ -66,6 +66,22 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
+ * Open the board — always the leftmost tab (index 0).
+ *
+ * The board is the one non-note surface and there is only ever one of it, so it
+ * gets a fixed home rather than landing wherever it was opened. If it is already
+ * open, focus it in place (do not move it); otherwise insert it at the front and
+ * the notes slide right.
+ */
+export function openBoard(workspace: Workspace): Workspace {
+  return updatePane(workspace, (pane) => {
+    const existing = pane.tabs.findIndex((t) => t.kind === 'board')
+    if (existing !== -1) return { ...pane, active: existing }
+    return { tabs: [{ kind: 'board' }, ...pane.tabs], active: 0 }
+  })
+}
+
+/**
  * Close a tab in the active pane.
  *
  * The active tab follows the *document*, not the index. Closing a tab to the
