@@ -2,6 +2,7 @@ import { atom, type createStore } from 'jotai'
 import type { DocMeta, VaultEntry, VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import { flushAllBuffers } from '../lib/buffer-registry'
+import { scaffoldNoteText } from '../lib/scaffold'
 import { trpc } from '../lib/trpc'
 import { retargetTab, workspaceAtom } from './panes'
 
@@ -144,7 +145,10 @@ export function subscribeToVault(store: JotaiStore): () => void {
 export const createNoteAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  await trpc.notes.create.mutate({ remote, path })
+  // New notes open with starter frontmatter (title + created) so the metadata
+  // is there from the start. Local date, to match how the daily note is dated.
+  const isoDate = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD, local
+  await trpc.notes.create.mutate({ remote, path, text: scaffoldNoteText(path, isoDate) })
   await set(loadSnapshotAtom)
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
