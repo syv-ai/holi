@@ -20,10 +20,13 @@ import { backrefsFor, createNoteAtom, deleteNoteAtom, renameNoteAtom, snapshotAt
 
 export function FileTree({
   activePath,
-  onOpen,
+  onOpenPreview,
+  onOpenPinned,
 }: {
   activePath: string | null
-  onOpen: (path: string) => void
+  // Single-click opens a preview tab; double-click pins it (FR-15).
+  onOpenPreview: (path: string) => void
+  onOpenPinned: (path: string) => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
   const tree = useMemo(() => buildTree(snapshot.docs.map((d) => d.path)), [snapshot])
@@ -59,7 +62,7 @@ export function FileTree({
       {error && <p className="px-2 pb-1 text-xs text-red-400">{error}</p>}
       <div className="holi-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
         {tree.map((node) => (
-          <TreeRow key={node.path} node={node} depth={0} activePath={activePath} onOpen={onOpen} />
+          <TreeRow key={node.path} node={node} depth={0} activePath={activePath} onOpenPreview={onOpenPreview} onOpenPinned={onOpenPinned} />
         ))}
         {tree.length === 0 && <p className="px-2 text-xs text-neutral-500">no notes yet</p>}
       </div>
@@ -71,12 +74,14 @@ function TreeRow({
   node,
   depth,
   activePath,
-  onOpen,
+  onOpenPreview,
+  onOpenPinned,
 }: {
   node: TreeNode
   depth: number
   activePath: string | null
-  onOpen: (path: string) => void
+  onOpenPreview: (path: string) => void
+  onOpenPinned: (path: string) => void
 }) {
   const deleteNote = useSetAtom(deleteNoteAtom)
   const renameNote = useSetAtom(renameNoteAtom)
@@ -106,7 +111,7 @@ function TreeRow({
         </div>
         {open &&
           node.children.map((c) => (
-            <TreeRow key={c.path} node={c} depth={depth + 1} activePath={activePath} onOpen={onOpen} />
+            <TreeRow key={c.path} node={c} depth={depth + 1} activePath={activePath} onOpenPreview={onOpenPreview} onOpenPinned={onOpenPinned} />
           ))}
       </div>
     )
@@ -163,7 +168,10 @@ function TreeRow({
     >
       <button
         className="min-w-0 flex-1 truncate py-0.5 text-left"
-        onClick={() => onOpen(node.path)}
+        // Single-click previews (reuses one tab); double-click pins. Both fire
+        // on a double-click, and openPreview→openPinned lands pinned — correct.
+        onClick={() => onOpenPreview(node.path)}
+        onDoubleClick={() => onOpenPinned(node.path)}
       >
         {node.name}
       </button>

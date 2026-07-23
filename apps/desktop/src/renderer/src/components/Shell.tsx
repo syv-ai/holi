@@ -22,7 +22,16 @@ import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
 import { syncLabel } from '../lib/sync-label'
 import { trpc } from '../lib/trpc'
-import { activeTab, closeTab, openTab, workspaceAtom } from '../state/panes'
+import {
+  activeTab,
+  closeTab,
+  openPinned,
+  openPreview,
+  openTab,
+  pinActive,
+  pinTab,
+  workspaceAtom,
+} from '../state/panes'
 import { sessionAtom } from '../state/session'
 import {
   activeRemoteAtom,
@@ -53,7 +62,10 @@ export function Shell() {
   const tab = activeTab(workspace)
   const pane = workspace.panes[workspace.active]!
   const label = syncLabel(syncState)
-  const open = (path: string) => setWorkspace((w) => openTab(w, { kind: 'note', path }))
+  // Single-click / link-nav opens a preview tab (browsing costs one tab);
+  // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
+  const open = (path: string) => setWorkspace((w) => openPreview(w, path))
+  const openPin = (path: string) => setWorkspace((w) => openPinned(w, path))
 
   /** A vault switch is a teardown in main — the old watcher and timers stop —
    *  so the tabs over the old vault have to go with it. */
@@ -129,7 +141,11 @@ export function Shell() {
             </p>
           )}
 
-          <FileTree activePath={tab?.kind === 'note' ? tab.path : null} onOpen={open} />
+          <FileTree
+            activePath={tab?.kind === 'note' ? tab.path : null}
+            onOpenPreview={open}
+            onOpenPinned={openPin}
+          />
 
           <button
             className="m-2 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
@@ -153,12 +169,16 @@ export function Shell() {
                 }`}
               >
                 <button
+                  // A preview tab reads italic (VS Code); double-clicking it
+                  // pins it, the same promotion editing performs.
+                  className={t.kind === 'note' && t.preview ? 'italic' : undefined}
                   onClick={() =>
                     setWorkspace((w) => ({
                       ...w,
                       panes: w.panes.map((p, pi) => (pi === w.active ? { ...p, active: i } : p)),
                     }))
                   }
+                  onDoubleClick={() => setWorkspace((w) => pinTab(w, i))}
                 >
                   {t.kind === 'board' ? 'board' : t.path.split('/').at(-1)}
                 </button>
@@ -178,6 +198,7 @@ export function Shell() {
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}
               onOpenNote={open}
+              onEdit={() => setWorkspace((w) => pinActive(w))}
               onConflict={(path) =>
                 // The ordinary reconcile affordance is the agent drawer
                 // (FR-18), which is plan 6. Until it exists, say so plainly
