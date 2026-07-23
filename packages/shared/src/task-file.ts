@@ -271,7 +271,7 @@ function titleOf(value: unknown, path: string): string {
 
 /** `yaml: null` means the file had no frontmatter fence at all — a valid task
  * whose body is the whole file. */
-function splitFrontmatter(text: string): { yaml: string | null; body: string } {
+export function splitFrontmatter(text: string): { yaml: string | null; body: string } {
   const normalized = text.replace(/\r\n/g, '\n')
   if (!normalized.startsWith('---\n')) return { yaml: null, body: normalized.trim() }
 
