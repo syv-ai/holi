@@ -155,7 +155,11 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
         <input
           defaultValue={task.tags.join(', ')}
           key={`${task.path}:tags`}
-          placeholder="comma, separated"
+          placeholder="comma, separated — Enter to save"
+          // Commit on Enter as well as blur: an input that only saves when you
+          // click away reads as broken, because typing then looking at the card
+          // shows nothing. Enter blurs, which runs the same save.
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           onBlur={(e) =>
             save({
               tags: e.target.value
@@ -175,6 +179,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           defaultValue={task.reminder ?? ''}
           key={`${task.path}:reminder`}
           placeholder="1d | 2w | 2026-07-20T09:00"
+          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           onBlur={(e) =>
             save({ reminder: e.target.value.trim() === '' ? null : e.target.value.trim() })
           }
