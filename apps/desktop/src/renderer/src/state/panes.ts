@@ -15,7 +15,14 @@
 
 import { atom } from 'jotai'
 
-export type Tab = { kind: 'note'; path: string } | { kind: 'board' }
+/**
+ * A tab is not a note (architecture.md). The `preview` flag ports VS Code's
+ * two-state model: a preview tab (italic) is the single one that a single-click
+ * *replaces* rather than adding to, so browsing a vault costs one tab. Absent or
+ * false means pinned. The board tab has no flag — it is pinned by construction,
+ * being unique.
+ */
+export type Tab = { kind: 'note'; path: string; preview?: boolean } | { kind: 'board' }
 
 export interface Pane {
   tabs: Tab[]
@@ -88,6 +95,61 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
 }
 
 /**
+ * Single-click open: reuse the one preview tab (FR-15).
+ *
+ * If the note is already open, just focus it — clicking it again does not change
+ * whether it is pinned. Otherwise, if a preview tab exists, replace it in place
+ * (browsing costs one tab); if none does, add one. The new tab is a *preview*.
+ */
+export function openPreview(workspace: Workspace, path: string): Workspace {
+  return updatePane(workspace, (pane) => {
+    const existing = pane.tabs.findIndex(
+      (t) => t.kind === 'note' && t.path === path,
+    )
+    if (existing !== -1) return { ...pane, active: existing }
+    const previewIdx = pane.tabs.findIndex((t) => t.kind === 'note' && t.preview)
+    const tab: Tab = { kind: 'note', path, preview: true }
+    if (previewIdx !== -1) {
+      return { ...pane, tabs: pane.tabs.map((t, i) => (i === previewIdx ? tab : t)), active: previewIdx }
+    }
+    return { tabs: [...pane.tabs, tab], active: pane.tabs.length }
+  })
+}
+
+/** Double-click open (or open-and-pin): a pinned tab, focused. Pins the tab in
+ *  place if it was already open as a preview. */
+export function openPinned(workspace: Workspace, path: string): Workspace {
+  return updatePane(workspace, (pane) => {
+    const existing = pane.tabs.findIndex((t) => t.kind === 'note' && t.path === path)
+    if (existing !== -1) {
+      return {
+        ...pane,
+        tabs: pane.tabs.map((t, i) => (i === existing ? { kind: 'note', path } : t)),
+        active: existing,
+      }
+    }
+    return { tabs: [...pane.tabs, { kind: 'note', path }], active: pane.tabs.length }
+  })
+}
+
+/** Promote a tab to pinned — the double-click-a-tab and edit-a-preview rules.
+ *  No-op if the index is out of range or the tab is not a preview note. */
+export function pinTab(workspace: Workspace, index: number): Workspace {
+  return updatePane(workspace, (pane) => {
+    const tab = pane.tabs[index]
+    if (tab === undefined || tab.kind !== 'note' || !tab.preview) return pane
+    return { ...pane, tabs: pane.tabs.map((t, i) => (i === index ? { kind: 'note', path: tab.path } : t)) }
+  })
+}
+
+/** Pin whatever is active — the "editing promotes a preview tab" rule, so you
+ *  can never lose your place by clicking away from something you typed in. */
+export function pinActive(workspace: Workspace): Workspace {
+  const pane = workspace.panes[workspace.active]
+  return pane === undefined ? workspace : pinTab(workspace, pane.active)
+}
+
+/**
  * Point every open tab at a renamed note's new path (FR-11).
  *
  * A rename moves bytes, not tabs — indices and the active selection are
@@ -101,7 +163,7 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
     panes: workspace.panes.map((pane) => ({
       ...pane,
       tabs: pane.tabs.map((tab) =>
-        tab.kind === 'note' && tab.path === from ? { kind: 'note', path: to } : tab,
+        tab.kind === 'note' && tab.path === from ? { ...tab, path: to } : tab,
       ),
     })),
   }

@@ -11,7 +11,11 @@ import {
   activeTab,
   closeTab,
   emptyWorkspace,
+  openPinned,
+  openPreview,
   openTab,
+  pinActive,
+  pinTab,
   retargetTab,
   type Workspace,
 } from '../src/renderer/src/state/panes'
@@ -84,5 +88,58 @@ describe('retargetTab', () => {
   it('is a no-op when the renamed path is not open', () => {
     const w = openTab(emptyWorkspace(), { kind: 'note', path: 'a.md' })
     expect(retargetTab(w, 'ghost.md', 'other.md')).toEqual(w)
+  })
+
+  it('preserves the preview flag across a rename', () => {
+    const w = openPreview(emptyWorkspace(), 'a.md')
+    const next = retargetTab(w, 'a.md', 'b.md')
+    expect(next.panes[0]!.tabs).toEqual([{ kind: 'note', path: 'b.md', preview: true }])
+  })
+})
+
+const tabs = (w: Workspace) => w.panes[0]!.tabs
+
+describe('preview vs pinned', () => {
+  it('replaces the preview tab when browsing, so it costs one tab', () => {
+    let w = openPreview(emptyWorkspace(), 'a.md')
+    w = openPreview(w, 'b.md')
+    expect(tabs(w)).toEqual([{ kind: 'note', path: 'b.md', preview: true }])
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'b.md', preview: true })
+  })
+
+  it('focuses an already-open path instead of duplicating it', () => {
+    let w = openPinned(emptyWorkspace(), 'a.md')
+    w = openPreview(w, 'b.md') // pinned a.md + preview b.md
+    w = openPreview(w, 'a.md') // clicking a.md again just focuses it
+    expect(tabs(w)).toEqual([
+      { kind: 'note', path: 'a.md' },
+      { kind: 'note', path: 'b.md', preview: true },
+    ])
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'a.md' })
+  })
+
+  it('keeps a pinned tab and adds a preview beside it', () => {
+    let w = openPinned(emptyWorkspace(), 'a.md')
+    w = openPreview(w, 'b.md')
+    expect(tabs(w)).toEqual([
+      { kind: 'note', path: 'a.md' },
+      { kind: 'note', path: 'b.md', preview: true },
+    ])
+  })
+
+  it('pinActive clears the preview flag on the active tab', () => {
+    const w = pinActive(openPreview(emptyWorkspace(), 'a.md'))
+    expect(tabs(w)).toEqual([{ kind: 'note', path: 'a.md' }])
+  })
+
+  it('openPinned pins an existing preview tab in place', () => {
+    let w = openPreview(emptyWorkspace(), 'a.md')
+    w = openPinned(w, 'a.md')
+    expect(tabs(w)).toEqual([{ kind: 'note', path: 'a.md' }])
+  })
+
+  it('pinTab is a no-op on an out-of-range index', () => {
+    const w = openPreview(emptyWorkspace(), 'a.md')
+    expect(pinTab(w, 5)).toEqual(w)
   })
 })
