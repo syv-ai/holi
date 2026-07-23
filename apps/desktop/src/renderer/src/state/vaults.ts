@@ -148,7 +148,7 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   // New notes open with starter frontmatter (title + created) so the metadata
   // is there from the start. Local date, to match how the daily note is dated.
   const isoDate = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD, local
-  await trpc.notes.create.mutate({ remote, path, text: scaffoldNoteText(path, isoDate) })
+  await trpc.notes.create.mutate({ remote, path, text: scaffoldNoteText(isoDate) })
   await set(loadSnapshotAtom)
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
