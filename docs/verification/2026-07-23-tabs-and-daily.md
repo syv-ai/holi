@@ -12,7 +12,7 @@ Companion to `docs/plans/2026-07-23-tabs-and-daily.md`. Tracks the manual/visual
 
 - [x] `panes.ts` preview/pinned transitions — unit tests (`openPreview` reuses one tab, `openPinned`, `pinTab`, `pinActive`, `retargetTab` preserves preview).
 - [x] App boots with the tab wiring on the boot path — Shell renders (vault dropdown, tree, tab strip), no renderer errors.
-- [ ] _(daily router procs — filled in as Part B lands, trpc-level e2e)_
+- [x] **Daily create + sweep, e2e on real git/fs** (`verify-tabs-daily.sh`, 2026-07-23): `getOrCreateDaily` made today's `DD-MM-YYYY.md` at root with the daily frontmatter; `sweepDaily` deleted the untouched unreferenced prior-day stub, archived the prior-day daily-with-body into `journal/`, and left today's note at root; re-run was a no-op. **Bonus:** the renderer's on-open effect (B5) ran the whole flow itself when the vault opened, so `openTodaysDailyAtom`/`sweepDailyAtom` are proven wired — the explicit proc calls afterwards were idempotent no-ops.
 
 ---
 
@@ -28,14 +28,14 @@ Companion to `docs/plans/2026-07-23-tabs-and-daily.md`. Tracks the manual/visual
 
 ## Part B — Daily Notes
 
-### Router procs (trpc-level, signed-out OK — fill from `verify-tabs-daily.sh`)
-- [ ] `notes.getOrCreateDaily` creates `DD-MM-YYYY.md` at root with the deterministic seed; a second call returns `created:false` (same file).
-- [ ] `notes.sweepDaily` deletes an untouched, unreferenced prior-day daily; archives a prior-day daily with body into `journal/` (link-rewritten); leaves today's and non-`type: daily-note` files alone; re-run is a no-op.
+### Router procs (trpc-level, signed-out OK — via `verify-tabs-daily.sh`)
+- [x] `notes.getOrCreateDaily` creates `DD-MM-YYYY.md` at root with the deterministic seed; a second call returns `created:false` (same file).
+- [x] `notes.sweepDaily` deletes an untouched, unreferenced prior-day daily; archives a prior-day daily with body into `journal/` (link-rewritten); leaves today's and non-`type: daily-note` files alone; re-run is a no-op.
 
 ### UI (behind sign-in)
 - [ ] **Land on today on personal-vault open.** Opening a personal vault creates today's daily (if absent) and navigates to it.
 - [ ] **No daily in shared vaults.** Opening a vault with >1 collaborator does NOT create a daily.
-- [ ] **Offline defaults personal.** With no network / signed-out github, opening a vault still creates today's daily (default-personal).
+- [x] **Offline defaults personal.** The e2e ran signed-out — `github.collaborators` throws, `isPersonalVault` defaults to personal, and the daily was still created on open. Proven.
 - [ ] **Sidebar "Today".** The Today entry opens today's daily (creating if needed).
 - [ ] **⌘⇧D shortcut** opens today's daily.
 - [ ] **Empty-state CTA.** With zero tabs, "Open today's daily note" recovers.

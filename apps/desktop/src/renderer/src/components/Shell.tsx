@@ -14,7 +14,7 @@
  * exist is worse than no shortcut.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { AddVault } from './AddVault'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
@@ -22,6 +22,7 @@ import { FileTree } from './FileTree'
 import { VaultSettings } from './VaultSettings'
 import { syncLabel } from '../lib/sync-label'
 import { trpc } from '../lib/trpc'
+import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import {
   activeTab,
   closeTab,
@@ -51,13 +52,38 @@ export function Shell() {
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const loadVaults = useSetAtom(loadVaultsAtom)
   const openVault = useSetAtom(openVaultAtom)
+  const openDaily = useSetAtom(openTodaysDailyAtom)
+  const sweepDaily = useSetAtom(sweepDailyAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
+  /** The vault we last ran the daily create+sweep for, so opening it does not
+   *  re-land you on today's note every render. */
+  const lastDailyRemote = useRef<string | null>(null)
 
   useEffect(() => {
     void loadVaults()
   }, [loadVaults])
+
+  // FR-4/FR-5: on personal-vault open, land on today's note then sweep prior
+  // days. Both no-op for shared vaults. Once per remote.
+  useEffect(() => {
+    if (!activeRemote || lastDailyRemote.current === activeRemote) return
+    lastDailyRemote.current = activeRemote
+    void openDaily().then(() => sweepDaily())
+  }, [activeRemote, openDaily, sweepDaily])
+
+  // FR-6: ⌘⇧D jumps to today's daily (creating it if needed).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault()
+        void openDaily()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openDaily])
 
   const tab = activeTab(workspace)
   const pane = workspace.panes[workspace.active]!
@@ -147,12 +173,23 @@ export function Shell() {
             onOpenPinned={openPin}
           />
 
-          <button
-            className="m-2 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
-            onClick={() => setWorkspace((w) => openTab(w, { kind: 'board' }))}
-          >
-            board
-          </button>
+          <div className="flex gap-2 p-2">
+            <button
+              className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+              // FR-6: opens today's daily (personal vaults only; the atom no-ops
+              // otherwise). Also the empty-state recovery path — always here.
+              title="today's daily note (⌘⇧D)"
+              onClick={() => void openDaily()}
+            >
+              today
+            </button>
+            <button
+              className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+              onClick={() => setWorkspace((w) => openTab(w, { kind: 'board' }))}
+            >
+              board
+            </button>
+          </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">
