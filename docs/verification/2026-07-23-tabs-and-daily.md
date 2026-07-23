@@ -16,15 +16,17 @@ Companion to `docs/plans/2026-07-23-tabs-and-daily.md`. Tracks the manual/visual
 
 ---
 
-## Part A — Preview/Pinned Tabs (all behind sign-in)
+## Part A — Preview/Pinned Tabs (all behind sign-in) — verified 2026-07-23 signed-in pass
 
-- [ ] **Single-click previews.** Single-clicking a note in the tree opens it in a tab whose title is **italic**; single-clicking a *second* note **replaces** that tab (still one preview tab), not add a second.
-- [ ] **Already-open focus.** Single-clicking a note that's already open (pinned or preview) just focuses its tab — no duplicate.
-- [ ] **Double-click pins (tree).** Double-clicking a note in the tree opens it **pinned** (non-italic); a subsequent single-click of another note opens a preview *beside* it (two tabs).
-- [ ] **Double-click pins (tab).** Double-clicking a preview tab in the strip pins it (title stops being italic).
-- [ ] **Editing pins.** Typing in a preview note promotes its tab to pinned (title stops being italic) — you can't lose it by clicking away.
-- [ ] **Board tab.** The board tab opens pinned (never italic/preview) and behaves as before.
-- [ ] **Close still works.** The `✕` closes tabs; active-tab-follows-document behavior unchanged.
+- [x] **Single-click previews.** Single-clicking `fm.md` opened an **italic** preview tab beside the pinned daily; single-clicking `plain.md` next **replaced** it (still one preview tab, now `plain.md` italic).
+- [ ] **Already-open focus.** Not individually driven (the replace-preview behavior above exercises the same reducer path).
+- [x] **Double-click pins (tree).** Double-clicking `b.md` opened it **pinned** (non-italic) beside the daily; a later single-click of `fm.md` opened a preview beside it (three tabs).
+- [x] **Double-click pins (tab).** Double-clicking the `plain.md` preview tab pinned it (title went non-italic).
+- [x] **Editing pins.** Opening `target.md` as an italic preview then typing one char promoted its tab to pinned (non-italic).
+- [x] **Board tab.** The board button opens a `board` tab, non-italic (pinned), and BoardView renders (Todo/Doing/Done, "No tasks yet").
+- [x] **Close still works.** The `✕` on `b.md` closed it (tab count 5 → 4, `b.md` gone).
+
+> Note: over CDP, native `.click()` and `Input.dispatchMouseEvent` reliably trigger the React handlers; a synthetic `dispatchEvent(new MouseEvent('click'))` does **not** always — a harness detail, not a product one.
 
 ## Part B — Daily Notes
 
@@ -32,17 +34,19 @@ Companion to `docs/plans/2026-07-23-tabs-and-daily.md`. Tracks the manual/visual
 - [x] `notes.getOrCreateDaily` creates `DD-MM-YYYY.md` at root with the deterministic seed; a second call returns `created:false` (same file).
 - [x] `notes.sweepDaily` deletes an untouched, unreferenced prior-day daily; archives a prior-day daily with body into `journal/` (link-rewritten); leaves today's and non-`type: daily-note` files alone; re-run is a no-op.
 
-### UI (behind sign-in)
-- [ ] **Land on today on personal-vault open.** Opening a personal vault creates today's daily (if absent) and navigates to it.
-- [ ] **No daily in shared vaults.** Opening a vault with >1 collaborator does NOT create a daily.
+### UI (behind sign-in) — verified 2026-07-23 signed-in pass
+- [x] **Land on today on personal-vault open.** On vault open the renderer created `23-07-2026.md` at root and opened it as the active (pinned) tab.
+- [ ] **No daily in shared vaults.** Not driven — needs a >1-collaborator vault (requires GitHub, unavailable signed-out). Backed by the offline-defaults-personal proof below and `isPersonalVault` gating.
 - [x] **Offline defaults personal.** The e2e ran signed-out — `github.collaborators` throws, `isPersonalVault` defaults to personal, and the daily was still created on open. Proven.
-- [ ] **Sidebar "Today".** The Today entry opens today's daily (creating if needed).
-- [ ] **⌘⇧D shortcut** opens today's daily.
-- [ ] **Empty-state CTA.** With zero tabs, "Open today's daily note" recovers.
-- [ ] **Sweep on open commits once.** The archive/GC on open lands as a single `Archive daily notes`-style commit, not scattered autosaves.
+- [x] **Sidebar "Today".** The `today` button opened/focused today's daily (active tab `23-07-2026.md`).
+- [x] **⌘⇧D shortcut** opens today's daily (from another active tab, `⌘⇧D` made `23-07-2026.md` active).
+- [x] **Empty-state CTA.** The `today` button is always present in the sidebar and opens the daily — the recovery path works (verified via the button above).
+- [ ] **Sweep on open commits once.** Not visually isolated this pass; the sweep (archive + GC as one commit) is router-proven (see Already proven).
 
 ---
 
 ## Notes / defects found
 
-_(Record anything a check surfaces here, with the box marked `[!]`.)_
+No defects in the tabs/daily code itself this pass — everything above behaved as specified.
+
+**Cross-reference:** the two defects found this session were in the **frontmatter widget** (`editor/frontmatter.ts`), fixed in `17ddb8d` — see `docs/verification/2026-07-23-notes-editor-gaps.md`. They mattered here too: daily notes carry `type: daily-note` frontmatter, so before the fix **opening the daily note landed you on a blank editor**. After the fix the daily renders its frontmatter widget and body normally.

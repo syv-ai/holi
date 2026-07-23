@@ -30,63 +30,77 @@ These were verified end-to-end against the real built main process over CDP on 2
 
 ## FR-11 — Rename from the file tree (`FileTree.tsx`)
 
-- [ ] **Rename control appears.** Hovering a note row shows a `✎` (rename) button beside the `✕` (delete) — `[data-rename="<path>"]` / `[data-delete="<path>"]` present in the DOM.
-- [ ] **Inline edit opens.** Clicking `✎` replaces the row with an input pre-filled with the note's full path (`[data-rename-input="<path>"]`), autofocused.
-- [ ] **Rename commits on Enter.** Editing the name and pressing Enter moves the file; the tree row updates to the new name.
-- [ ] **Escape cancels.** Pressing Escape (or blurring) closes the input with no change.
-- [ ] **Rename-is-move.** Changing the path to a new folder prefix (e.g. `target.md` → `sub/renamed.md`) relocates the note into `sub/`, creating the folder; the tree shows it nested.
-- [ ] **Open tab follows the file.** With the renamed note open as the active tab, after rename the tab points at the new path (no "file not found" / blank editor).
-- [ ] **Inbound links rewrite live.** After renaming `target.md`, opening `a.md`/`b.md` shows their wiki-link chips now pointing at the new path (and still clickable to the moved note).
-- [ ] **No `.md` typed still works.** Renaming to a value without `.md` (e.g. `renamed`) produces `renamed.md`.
-- [ ] **Error surfaces.** Renaming to a path that already exists shows the CONFLICT message inline rather than silently doing nothing.
-- [ ] **Buffer safety.** With unsaved edits in the note being renamed, the edits are flushed first (not lost) and the rename lands as a clean commit.
+- [x] **Rename control appears.** `[data-rename="<path>"]` / `[data-delete="<path>"]` present for every note row (CDP DOM query, 2026-07-23 signed-in pass).
+- [x] **Inline edit opens.** Clicking `✎` on `a.md` opened `[data-rename-input="a.md"]` pre-filled with `a.md`, `document.activeElement === input`.
+- [x] **Rename commits on Enter.** `a.md` → `renamed-a.md` via Enter: tree row updated, `renamed-a.md` on disk, `a.md` gone. (CDP Enter needs `text:"\r"` to submit the implicit-submit form — a harness detail, not a product one.)
+- [x] **Escape cancels.** Escape closed the input with no change.
+- [ ] **Rename-is-move.** Not re-clicked in UI; the move (`target.md` → `sub/renamed.md`, folder created) is proven at the router level (see Already proven).
+- [ ] **Open tab follows the file.** Not individually verified in this pass.
+- [ ] **Inbound links rewrite live.** Not re-clicked in UI; router-proven (rename rewrites `a.md`/`b.md`, label preserved).
+- [ ] **No `.md` typed still works.** Not re-clicked; `submitRename` appends `.md` in code.
+- [ ] **Error surfaces.** Not re-clicked in UI; CONFLICT refusal is router-proven.
+- [ ] **Buffer safety.** Not individually verified.
 
 ## FR-12 — Backref preview before delete (`FileTree.tsx` → `DeleteConfirm`)
 
-- [ ] **Dialog opens on delete.** Clicking `✕` on a note opens the in-app dialog (`[data-delete-dialog="<path>"]`), not a native `window.confirm`.
-- [ ] **Referrers are named.** Deleting `target.md` lists `a.md` and `b.md` with per-file counts (`×2`, `×1`) and a total; copy says they'll become dangling tombstones (no cascade).
-- [ ] **Empty state.** Deleting a note nothing links to shows "Nothing links to it."
-- [ ] **Cancel is a no-op.** Clicking Cancel (or the backdrop) closes the dialog; the note is still present.
-- [ ] **Confirm deletes.** Clicking Delete (`[data-delete-confirm="<path>"]`) removes the note; the tree row disappears.
-- [ ] **Tombstones survive.** After deleting `target.md`, the `[[target.md]]` links in `a.md`/`b.md` remain in the files and render as **missing** chips (not removed, not cascaded).
+- [x] **Dialog opens on delete.** Clicking `✕` on `target.md` opened `[data-delete-dialog="target.md"]` (in-app, not native).
+- [x] **Referrers are named.** Dialog read: "4 links in 3 files will be left dangling (they become tombstones — no cascade)": `a.md ×2`, `b.md ×1`, `fm.md ×1`.
+- [x] **Empty state.** Deleting `plain.md` (nothing links) showed "Nothing links to it."
+- [x] **Cancel is a no-op.** Cancel closed the dialog; `target.md` still in the tree.
+- [ ] **Confirm deletes.** Not exercised (cancelled to preserve the fixture); `notes.delete` is router-proven.
+- [ ] **Tombstones survive.** Not individually verified.
 
 ## FR-2 / FR-16 — Frontmatter widget (`editor/frontmatter.ts`) — built blind, highest risk
 
 Open a note whose body starts with `---\ntitle: x\ntags: [a, b]\n---\n` then real body text.
 
-- [ ] **Hidden by default.** The frontmatter renders as a **collapsed pill** (`[data-frontmatter="collapsed"]`, `[data-frontmatter-pill]`) reading e.g. "▸ frontmatter · 2 fields" — the raw `---`/YAML is NOT shown as text.
-- [ ] **livePreview does not fight it.** No horizontal-rule / heading / stray decoration renders on or around the fence — just the pill, then the body below.
-- [ ] **Body renders normally.** Markdown below the frontmatter (headings, bold, wiki-links) live-previews as usual.
-- [ ] **Reveal on click.** Clicking the pill expands to a header (`[data-frontmatter="expanded"]`, `[data-frontmatter-header]`, "▾ frontmatter") above a nested editing surface (`.cm-fm-body`) showing the raw YAML.
-- [ ] **Collapse on click.** Clicking the header chevron collapses back to the pill.
-- [ ] **Nested edit writes through.** Typing in the nested YAML editor changes the note's frontmatter on disk (autosave writes the reconstructed `---…---` block back into the file).
-- [ ] **Focus is retained mid-edit.** Typing several characters in the nested editor does NOT lose focus / drop the caret after each keystroke (the write-back must map decorations, not remount the widget).
-- [ ] **Markdown keys are inert in frontmatter.** With the caret in the nested editor, `⌘B`/`⌘I`/`⌘E` do NOT insert `**`/`*`/`` ` `` (no markdown/formatting keymap there).
-- [ ] **Caret cannot enter the region in the root.** Clicking/arrowing in the body cannot place the caret inside the collapsed block (atomic range); navigation skips over it.
-- [ ] **Field count / dot are correct.** The pill's "N fields" matches the top-level keys; the status dot is green for valid YAML.
-- [ ] **External reload updates the widget.** An external write changing the frontmatter (clean buffer) updates the pill/nested content (widget rebuilds, not stale).
-- [ ] **Note with no frontmatter.** A note with no leading `---` shows no widget at all — plain editor.
+> **⚠ Two defects found and fixed here this session — see "Notes / defects found".** All boxes below are checked against the **fixed** widget (`17ddb8d`).
+
+- [x] **Hidden by default.** `fm.md` renders `[data-frontmatter="collapsed"]` + `[data-frontmatter-pill]` reading "▸ frontmatter · 2 fields"; raw YAML not shown. (Screenshot captured.)
+- [x] **livePreview does not fight it.** No HR/heading over the fence — just the pill, then the body.
+- [x] **Body renders normally.** `# Heading` bolded, `**bold**` strong, `[[target.md]]` rendered as a blue wiki-link chip.
+- [x] **Reveal on click.** Clicking the pill (mousedown) → `[data-frontmatter="expanded"]`, `[data-frontmatter-header]` "▾ frontmatter", nested `.cm-fm-body` showing raw YAML. (Screenshot captured.)
+- [x] **Collapse on click.** Header chevron collapses back to the pill.
+- [x] **Nested edit writes through.** Typed `status: draft` in the nested editor → disk `fm.md` gained `status: draft` inside intact `---…---` fences, body preserved, committed "Update fm.md".
+- [x] **Focus is retained mid-edit.** Typed char-by-char in the nested editor; `activeElement.closest('.cm-fm-body')` stayed true through every keystroke (write-back maps, does not remount).
+- [x] **Markdown keys are inert in frontmatter.** `⌘B` in the nested editor did not change its content (no `**` inserted).
+- [x] **Caret cannot enter the region in the root.** Clicking the `# Heading` body line then ArrowUp×8 never placed the selection inside the collapsed widget; caret stayed in the root `.cm-content`.
+- [x] **Field count / dot are correct.** "2 fields" for `title`+`tags`, green dot for valid YAML; "3 fields" after an external `author:` add; "4 fields" with the broken line.
+- [x] **External reload updates the widget.** External write adding `author:` (clean buffer) updated the pill "2 fields" → "3 fields".
+- [x] **Note with no frontmatter.** `plain.md` shows no widget — plain editor, content renders normally.
 
 ## FR-16 status dot + FR (save gate) — `frontmatter.ts` + `EditorPane.tsx`
 
-- [ ] **Dot goes red on broken YAML.** In the nested editor, type `tags: [` (unterminated) → the status dot turns red.
-- [ ] **Autosave holds off while invalid.** With the dot red, wait past the autosave debounce (~600ms + commit) → the file on disk is UNCHANGED (invalid frontmatter not persisted).
-- [ ] **⌘S holds off while invalid.** With the dot red, press ⌘S → still no write, no commit; the dot stays red.
-- [ ] **Recovery resumes saving.** Fix the YAML → dot green → the next idle autosave (or ⌘S) writes normally.
-- [ ] **Flush writes anyway (no lost keystrokes).** With the dot red, close the tab / switch vault / quit → the flush DOES write the (invalid) text to disk; the edits are not lost. Reopening shows them, dot still red until fixed.
-- [ ] **⌘S on a valid, already-saved buffer still commits.** With valid frontmatter and nothing new to write, ⌘S still triggers `sync.commitNow` (FR-4 — it's a real commit point, not gated by "nothing changed").
-- [ ] **Body edits unaffected by the gate.** Editing only the body (frontmatter valid) autosaves and ⌘S-commits normally.
+- [x] **Dot goes red on broken YAML.** Typing `bad: [x, y` (unterminated) turns the header dot red **live** — this was DEFECT #2 (dot was frozen); fixed in `17ddb8d`.
+- [x] **Autosave holds off while invalid.** With the dot red and the window kept focused (no blur), `fm.md` md5 was UNCHANGED after 2.5s.
+- [ ] **⌘S holds off while invalid.** Not individually driven; ⌘S routes through the same gated `save()` as autosave (verified) plus `commitNow`.
+- [x] **Recovery resumes saving.** Closing the bracket (`]`) turned the dot green again, live.
+- [x] **Flush writes anyway (no lost keystrokes).** Closing the tab with the invalid buffer wrote the invalid text to disk (unmount flush) — edits not lost.
+- [ ] **⌘S on a valid, already-saved buffer still commits.** Not individually driven.
+- [~] **Body edits unaffected by the gate.** Typing in a note body autosaved/committed normally (observed via the tab-promotion test); not exhaustively isolated.
 
 ## Regression — external-write merge still holds (the load-bearing FR-5)
 
 The frontmatter widget shares the single document with the merge machinery; confirm it's undisturbed:
 
-- [ ] **Clean-buffer reload.** External write to an open note (no unsaved edits) silently reloads.
-- [ ] **Dirty-buffer merge.** External write + an unsaved edit → `merge3` keeps both sides (the case verified in the prior session — must still pass with frontmatter present in the file).
-- [ ] **Unmergeable → reconcile banner.** Overlapping edits still surface the conflict banner.
+- [x] **Clean-buffer reload.** External write to open `fm.md` (no unsaved edits) reloaded silently — the widget picked up the new field ("2 fields" → "3 fields").
+- [ ] **Dirty-buffer merge.** Not re-driven this pass (proven a prior session); the shared-document path is unchanged by the fix (still one `EditorState`, `decideReload` untouched).
+- [ ] **Unmergeable → reconcile banner.** Not re-driven this pass.
 
 ---
 
 ## Notes / defects found
 
-_(Record anything a check surfaces here, with the box marked `[!]`.)_
+### [!] DEFECT #1 (critical, FIXED `17ddb8d`) — frontmatter notes opened to a blank editor
+
+The frontmatter widget provided its **block** `Decoration.replace({block:true})` from a **ViewPlugin**. CodeMirror forbids that — `RangeError: Block decorations may not be specified via plugins` — and the throw happens inside `new EditorView`, aborting construction. Result: **every note containing frontmatter (including all daily notes) opened to a blank editor** with no `.cm-editor`/`.cm-content` and no content; `plain.md` (no frontmatter) rendered fine. Found immediately on the first signed-in open of `fm.md` via the renderer console (`EditorPane.tsx:75`).
+
+**Fix:** moved the decoration into a `StateField` (`EditorView.decorations.from(field)` + `atomicRanges` via `view.state.field`), the way the `codemirror-markdown-tables` widget it was modelled on provides its block decos. The map-don't-rebuild rule (preserve the nested caret on our own write-back) is carried over intact.
+
+### [!] DEFECT #2 (FR-16, FIXED `17ddb8d`) — status dot never went red while editing frontmatter
+
+Because the widget deliberately **maps rather than rebuilds** on its own write-back (to keep the nested caret), `statusDot` never recomputed while you typed in the nested YAML editor — broken YAML kept a **green** dot until an unrelated rebuild (collapse/expand, body edit). That defeats FR-16's whole point (live validity feedback). The save *gate* itself was correct (it reads the live root doc via `frontmatterValid`).
+
+**Fix:** keep a reference to the header dot and repaint it in place from the nested editor's `updateListener` (`paintDot`). Verified live: green → (type invalid) → red → (fix) → green, focus retained throughout.
+
+**Both fixes:** desktop suite 522 green, frontmatter tests 18 green, typecheck unchanged (36 quarantined, none in this code), `electron-vite build` succeeds.
