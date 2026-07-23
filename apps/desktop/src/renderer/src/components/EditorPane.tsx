@@ -17,7 +17,7 @@
  * links in a grammar the product has abandoned, `@` completes notes only until
  * the tasks surface returns.
  */
-import { EditorState } from '@codemirror/state'
+import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
@@ -125,8 +125,9 @@ export function EditorPane({
         state: EditorState.create({
           doc: text,
           // Open the caret in the body, never to the left of the frontmatter
-          // widget (there is nothing to edit above it).
-          selection: { anchor: bodyStart(text) },
+          // widget (there is nothing to edit above it). `assoc: 1` binds it to
+          // the body line rather than to the widget's side of the seam.
+          selection: EditorSelection.cursor(bodyStart(text), 1),
           extensions: [
             ...baseEditorExtensions({
               docExists: (p) => docPaths.current.has(p),

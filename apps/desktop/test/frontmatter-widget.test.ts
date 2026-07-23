@@ -46,7 +46,10 @@ describe('frontmatterDecorations', () => {
     const decos = specs(frontmatterDecorations(stateFor(DOC)))
     expect(decos).toHaveLength(1)
     expect(decos[0]!.from).toBe(0)
-    expect(decos[0]!.to).toBe(17) // through the newline after the closing ---
+    // The end of the closing `---` line — NOT 17, the start of the body line.
+    // A block replace has to end at a line end; ending it one past that put the
+    // first body position inside the widget's row and parked the caret there.
+    expect(decos[0]!.to).toBe(16)
     expect(decos[0]!.spec.block).toBe(true)
     expect((decos[0]!.spec.widget as { expanded: boolean }).expanded).toBe(false)
   })

@@ -28,6 +28,33 @@ export function frontmatterRegion(doc: string): { from: number; to: number } | n
 }
 
 /**
+ * The same block, as a **decoration** range: `frontmatterRegion` minus its
+ * trailing newline.
+ *
+ * The two differ by exactly one character and the difference is load-bearing. A
+ * `Decoration.replace({block: true})` is meant to cover whole lines — start at a
+ * line start, end at a line *end*. Ending it at `region.to` instead ends it at
+ * the start of the following line, so the first body position belongs to the
+ * widget's row: the caret rendered on the frontmatter, right-most in it, and
+ * grew to the widget's height when the block was revealed. Clamping the caret to
+ * `region.to` could not help, because `region.to` was the wrong side of the
+ * boundary.
+ *
+ * Parsing and write-back keep the newline — `regionTextFrom` reconstructs it and
+ * `writeBack` replaces `[region.from, region.to]`, so a region that stopped
+ * short would leave a stray blank line behind on every keystroke. Only what
+ * CodeMirror is asked to *replace* drops it.
+ */
+export function frontmatterBlockRange(doc: string): { from: number; to: number } | null {
+  const region = frontmatterRegion(doc)
+  if (region === null) return null
+  // The one case with no newline to drop: the fence runs to the end of the
+  // document, so its line end already IS `to`.
+  const to = doc[region.to - 1] === '\n' ? region.to - 1 : region.to
+  return { from: region.from, to }
+}
+
+/**
  * Does the document's frontmatter parse as YAML? `true` when there is no fence
  * (nothing to be invalid) or the YAML parses; `false` on a parse throw or an
  * unterminated fence (which `splitFrontmatter` throws on). This is the exact

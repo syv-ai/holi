@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  frontmatterBlockRange,
   frontmatterRegion,
   frontmatterYamlValid,
 } from '../src/renderer/src/editor/frontmatter-region'
@@ -31,6 +32,33 @@ describe('frontmatterRegion', () => {
 
   it('is null for an unterminated fence', () => {
     expect(frontmatterRegion('---\ntitle: x\nnever closes')).toBeNull()
+  })
+})
+
+describe('frontmatterBlockRange', () => {
+  /**
+   * The block-replace range is the *region minus its trailing newline*, and the
+   * difference is the whole of bug #1. A block decoration is supposed to end at
+   * a line end; ending it at the start of the next line instead makes the first
+   * body position render inside the widget's row, so the caret sat on the
+   * frontmatter — right-most in it, and growing to the widget's height on
+   * reveal. Parsing and write-back keep the newline (`frontmatterRegion`); only
+   * what CodeMirror is asked to replace drops it.
+   */
+  it('stops at the end of the closing fence line, not the start of the body', () => {
+    const doc = '---\ntitle: x\n---\nbody line'
+    expect(frontmatterRegion(doc)).toEqual({ from: 0, to: 17 })
+    expect(frontmatterBlockRange(doc)).toEqual({ from: 0, to: 16 })
+  })
+
+  it('runs to end of document when the fence is all there is', () => {
+    const doc = '---\ntitle: x\n---'
+    // No trailing newline to drop — the fence's line end IS the document end.
+    expect(frontmatterBlockRange(doc)).toEqual({ from: 0, to: doc.length })
+  })
+
+  it('is null when there is no frontmatter', () => {
+    expect(frontmatterBlockRange('# Heading\n\nbody')).toBeNull()
   })
 })
 

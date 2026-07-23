@@ -35,7 +35,11 @@ import {
   type DecorationSet,
 } from '@codemirror/view'
 import { splitFrontmatter } from '@holi/shared'
-import { frontmatterRegion, frontmatterYamlValid } from './frontmatter-region'
+import {
+  frontmatterBlockRange,
+  frontmatterRegion,
+  frontmatterYamlValid,
+} from './frontmatter-region'
 
 /** Flip the reveal state. The pill and the header chevron both dispatch this. */
 export const toggleFrontmatter = StateEffect.define<boolean>()
@@ -217,13 +221,17 @@ class FrontmatterWidget extends WidgetType {
  */
 export function frontmatterDecorations(state: EditorState): DecorationSet {
   const doc = state.doc.toString()
-  const region = frontmatterRegion(doc)
-  if (region === null) return Decoration.none
+  // `frontmatterBlockRange`, not `frontmatterRegion`: the decoration stops at
+  // the closing fence's line END, so the first body position stays on the first
+  // body line rather than being swallowed into the widget's row. See the long
+  // comment there — this one character is the whole of the stray-caret bug.
+  const block = frontmatterBlockRange(doc)
+  if (block === null) return Decoration.none
   const expanded = state.field(frontmatterExpandedField, false) ?? false
   const widget = new FrontmatterWidget(expanded, frontmatterBody(doc))
   const range: Range<Decoration> = Decoration.replace({ widget, block: true }).range(
-    region.from,
-    region.to,
+    block.from,
+    block.to,
   )
   return Decoration.set([range])
 }
@@ -323,7 +331,10 @@ const caretBelowFrontmatter = EditorState.transactionFilter.of((tr) => {
   // (select-all, a drag) is left alone so those still work — the block just
   // cannot be edited, via the change filter.
   if (!(sel.ranges.length === 1 && sel.main.empty && sel.main.from < region.to)) return tr
-  return [tr, { selection: EditorSelection.cursor(region.to) }]
+  // `assoc: 1` — bind the caret to the character AFTER it. `region.to` is the
+  // seam between the widget's last line and the first body line, and a caret
+  // that associates backwards there renders on the widget's side of it.
+  return [tr, { selection: EditorSelection.cursor(region.to, 1) }]
 })
 
 /** The whole frontmatter feature, one extension. Register AFTER livePreview so
