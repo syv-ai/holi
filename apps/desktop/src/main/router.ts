@@ -17,7 +17,6 @@ import {
   nextDueCatchup,
   parseTaskFile,
   parseTaskPatch,
-  rewriteWikiLinks,
   serializeTaskFile,
   shiftForRollover,
   taskFilePath,
@@ -36,7 +35,8 @@ import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { moveDocFile, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 
@@ -571,15 +571,7 @@ export function createRouter(deps: RouterDeps) {
         if (await exists(root, to)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
-        const referrers = await scanBackrefs(root, from)
-        for (const ref of referrers) {
-          const rel = safe(ref.path)
-          const text = await readFile(absPathFor(root, rel), 'utf8')
-          const { text: rewritten } = rewriteWikiLinks(text, from, to)
-          await writeAtomic(root, rel, rewritten)
-        }
-        await moveDocFile(root, from, to)
-        return { rewritten: referrers }
+        return renameNote(root, from, to)
       }),
   })
 
