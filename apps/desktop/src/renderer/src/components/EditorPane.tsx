@@ -22,7 +22,7 @@ import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions } from '../editor/extensions'
-import { frontmatterValid } from '../editor/frontmatter'
+import { bodyStart, frontmatterValid } from '../editor/frontmatter'
 import type { LinkNav } from '../editor/links'
 import type { MentionData } from '../editor/mentions'
 import { registerBuffer } from '../lib/buffer-registry'
@@ -124,6 +124,9 @@ export function EditorPane({
       const view = new EditorView({
         state: EditorState.create({
           doc: text,
+          // Open the caret in the body, never to the left of the frontmatter
+          // widget (there is nothing to edit above it).
+          selection: { anchor: bodyStart(text) },
           extensions: [
             ...baseEditorExtensions({
               docExists: (p) => docPaths.current.has(p),

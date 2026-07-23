@@ -17,9 +17,11 @@
  */
 import {
   Annotation,
+  EditorSelection,
+  EditorState,
   StateEffect,
   StateField,
-  type EditorState,
+  Transaction,
   type Extension,
   type Range,
 } from '@codemirror/state'
@@ -80,26 +82,24 @@ function keyCount(body: string): number {
   return body.split('\n').filter((l) => /^\S.*:/.test(l)).length
 }
 
-/** Paint an existing dot for the body's validity — shared by the initial render
- *  and the live refresh, so the two can never disagree. */
-function paintDot(dot: HTMLElement, body: string): void {
+/** The chevron IS the status indicator now — no separate orb. Neutral normally,
+ *  red when the YAML won't parse; the field count lives in its tooltip. Shared by
+ *  the initial render and the live refresh so the two can never disagree. */
+function paintChevron(el: HTMLElement, body: string): void {
   const valid = frontmatterYamlValid(regionTextFrom(body))
-  dot.className = `cm-fm-dot ${valid ? 'cm-fm-dot-ok' : 'cm-fm-dot-bad'}`
-  dot.title = valid ? 'frontmatter is valid YAML' : 'frontmatter is not valid YAML'
-}
-
-function statusDot(body: string): HTMLElement {
-  const dot = document.createElement('span')
-  paintDot(dot, body)
-  return dot
+  el.classList.toggle('cm-fm-invalid', !valid)
+  const n = keyCount(body)
+  el.title = valid
+    ? `frontmatter · ${n} field${n === 1 ? '' : 's'}`
+    : 'frontmatter — invalid YAML'
 }
 
 class FrontmatterWidget extends WidgetType {
   private nested: EditorView | null = null
-  /** The revealed header's status dot, kept so a nested edit can repaint it in
-   *  place — the widget itself maps rather than rebuilds on its own write (to
-   *  keep the nested caret), so nothing else would refresh the dot live. */
-  private dot: HTMLElement | null = null
+  /** The revealed chevron, kept so a nested edit can recolour it in place — the
+   *  widget maps rather than rebuilds on its own write (to keep the nested caret),
+   *  so nothing else would refresh the invalid-YAML cue live. */
+  private chevron: HTMLElement | null = null
 
   constructor(
     readonly expanded: boolean,
@@ -121,19 +121,14 @@ class FrontmatterWidget extends WidgetType {
     wrap.setAttribute('data-frontmatter', this.expanded ? 'expanded' : 'collapsed')
 
     if (!this.expanded) {
-      // Collapsed is deliberately near-invisible: a bare chevron, no box, no
-      // "N fields" label — the frontmatter is metadata, and hidden means hidden
-      // until you reach for it. The status dot rides along (tiny) so invalid
-      // YAML still shows even while collapsed.
+      // Collapsed is just a bare chevron — no orb, no label, no box. The chevron
+      // reddens if the YAML is invalid; the field count is in its tooltip.
       const pill = document.createElement('button')
       pill.type = 'button'
       pill.className = 'cm-fm-pill'
       pill.setAttribute('data-frontmatter-pill', '')
-      pill.title = `frontmatter · ${keyCount(this.body)} field${keyCount(this.body) === 1 ? '' : 's'}`
-      pill.appendChild(statusDot(this.body))
-      const label = document.createElement('span')
-      label.textContent = '▸'
-      pill.appendChild(label)
+      pill.textContent = '▸'
+      paintChevron(pill, this.body)
       pill.onmousedown = (e) => {
         e.preventDefault()
         view.dispatch({ effects: toggleFrontmatter.of(true) })
@@ -142,24 +137,28 @@ class FrontmatterWidget extends WidgetType {
       return wrap
     }
 
-    const header = document.createElement('button')
-    header.type = 'button'
-    header.className = 'cm-fm-header'
-    header.setAttribute('data-frontmatter-header', '')
-    this.dot = statusDot(this.body)
-    header.appendChild(this.dot)
-    const label = document.createElement('span')
-    label.textContent = '▾ frontmatter'
-    header.appendChild(label)
-    header.onmousedown = (e) => {
+    // Expanded reads as ONE widget: a collapse chevron sitting to the left of the
+    // YAML, no "frontmatter" title, no border, no box — just the fields.
+    const row = document.createElement('div')
+    row.className = 'cm-fm-reveal'
+
+    const chevron = document.createElement('button')
+    chevron.type = 'button'
+    chevron.className = 'cm-fm-chevron'
+    chevron.setAttribute('data-frontmatter-header', '')
+    chevron.textContent = '▾'
+    paintChevron(chevron, this.body)
+    this.chevron = chevron
+    chevron.onmousedown = (e) => {
       e.preventDefault()
       view.dispatch({ effects: toggleFrontmatter.of(false) })
     }
-    wrap.appendChild(header)
+    row.appendChild(chevron)
 
     const host = document.createElement('div')
     host.className = 'cm-fm-body'
-    wrap.appendChild(host)
+    row.appendChild(host)
+    wrap.appendChild(row)
 
     // A PLAIN editor over the YAML body: basic editing + history only. No
     // markdown, no live-preview, no formatting keymap — that is the whole point
@@ -176,10 +175,10 @@ class FrontmatterWidget extends WidgetType {
           if (!u.docChanged) return
           const body = u.state.doc.toString()
           this.writeBack(view, body)
-          // Repaint the dot here: the write-back is our own edit, so the widget
-          // maps instead of rebuilding and `statusDot` would otherwise stay
-          // frozen — the FR-16 red/green feedback has to be live while you type.
-          if (this.dot !== null) paintDot(this.dot, body)
+          // Recolour the chevron here: the write-back is our own edit, so the
+          // widget maps instead of rebuilding and the cue would otherwise stay
+          // frozen — the invalid-YAML feedback has to be live while you type.
+          if (this.chevron !== null) paintChevron(this.chevron, body)
         }),
         EditorView.theme({ '&': { backgroundColor: 'transparent' }, '.cm-content': { padding: 0 } }),
       ],
@@ -201,7 +200,7 @@ class FrontmatterWidget extends WidgetType {
   override destroy(): void {
     this.nested?.destroy()
     this.nested = null
-    this.dot = null
+    this.chevron = null
   }
 
   override ignoreEvent(): boolean {
@@ -260,47 +259,71 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 
 const frontmatterTheme = EditorView.baseTheme({
   '.cm-fm': { margin: '0 0 0.5rem 0' },
-  // Collapsed: a bare chevron, no box — just the affordance, nothing else.
+  // Collapsed: a bare chevron, nothing else.
   '.cm-fm-pill': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '0.35rem',
-    padding: '0.1rem 0.15rem',
-    fontSize: '0.75rem',
+    padding: '0.05rem 0.15rem',
+    fontSize: '0.8rem',
+    lineHeight: '1.2',
     color: '#6b6b6b',
     background: 'transparent',
     border: 'none',
     cursor: 'pointer',
   },
-  '.cm-fm-pill:hover': { color: '#a3a3a3' },
-  // Expanded: the header keeps its box, so the reveal reads as an opened panel.
-  '.cm-fm-header': {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '0.4rem',
-    padding: '0.15rem 0.5rem',
-    fontSize: '0.75rem',
-    color: '#a3a3a3',
-    background: '#1c1c1c',
-    border: '1px solid #2a2a2a',
-    borderRadius: '0.375rem',
+  // Expanded: one borderless unit — the chevron sits to the left of the YAML,
+  // no title, no box. The chevron aligns to the first line.
+  '.cm-fm-reveal': { display: 'flex', alignItems: 'flex-start', gap: '0.4rem' },
+  '.cm-fm-chevron': {
+    padding: '0',
+    paddingTop: '0.05rem',
+    fontSize: '0.8rem',
+    lineHeight: '1.4',
+    color: '#6b6b6b',
+    background: 'transparent',
+    border: 'none',
     cursor: 'pointer',
   },
-  '.cm-fm-body': {
-    marginTop: '0.25rem',
-    border: '1px solid #2a2a2a',
-    borderRadius: '0.375rem',
-    padding: '0.25rem 0.5rem',
-    background: '#141414',
-  },
-  '.cm-fm-dot': {
-    width: '0.5rem',
-    height: '0.5rem',
-    borderRadius: '9999px',
-    display: 'inline-block',
-  },
-  '.cm-fm-dot-ok': { background: '#4ade80' },
-  '.cm-fm-dot-bad': { background: '#f87171' },
+  '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
+  '.cm-fm-body': { flex: '1', minWidth: '0' },
+  // Invalid YAML reddens the chevron — the only status cue, and it wins on hover.
+  '.cm-fm-pill.cm-fm-invalid, .cm-fm-chevron.cm-fm-invalid': { color: '#f87171' },
+})
+
+/** Where the editable body starts — just past the frontmatter block, or 0 when
+ *  there is none. EditorPane seeds the initial caret here so it never opens to
+ *  the left of the widget. */
+export function bodyStart(doc: string): number {
+  return frontmatterRegion(doc)?.to ?? 0
+}
+
+/**
+ * The block is edited only through the nested editor — never from the root. Two
+ * guards make that true, because the atomic-range facet alone leaves the
+ * top-of-document boundary reachable (caret to the left of the widget) and lets
+ * a Backspace at the edge delete the whole block as an atomic unit:
+ *
+ *  - a **change filter** drops any *user* edit that touches the region. It keys
+ *    on `userEvent`, so programmatic reloads/merges (no userEvent) and our own
+ *    write-back (`frontmatterEdit`) pass untouched — the load-bearing
+ *    external-reload machinery is not affected.
+ *  - a **transaction filter** pushes any root caret that lands at or before the
+ *    block down to just after it. There is nothing to edit above the frontmatter.
+ */
+const protectFrontmatter = EditorState.changeFilter.of((tr) => {
+  const region = frontmatterRegion(tr.startState.doc.toString())
+  if (region === null) return true
+  if (tr.annotation(frontmatterEdit) || tr.annotation(Transaction.userEvent) === undefined) return true
+  return [region.from, region.to]
+})
+
+const caretBelowFrontmatter = EditorState.transactionFilter.of((tr) => {
+  const region = frontmatterRegion(tr.newDoc.toString())
+  if (region === null) return tr
+  const sel = tr.newSelection
+  // Only nudge a bare caret that lands at or before the block; a real selection
+  // (select-all, a drag) is left alone so those still work — the block just
+  // cannot be edited, via the change filter.
+  if (!(sel.ranges.length === 1 && sel.main.empty && sel.main.from < region.to)) return tr
+  return [tr, { selection: EditorSelection.cursor(region.to) }]
 })
 
 /** The whole frontmatter feature, one extension. Register AFTER livePreview so
@@ -309,4 +332,6 @@ export const frontmatterExtension: Extension = [
   frontmatterExpandedField,
   frontmatterDecoField,
   frontmatterTheme,
+  protectFrontmatter,
+  caretBelowFrontmatter,
 ]
