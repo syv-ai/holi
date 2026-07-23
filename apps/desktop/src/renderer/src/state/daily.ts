@@ -1,104 +1,64 @@
 /**
- * Daily notes, client side — resolve *this device's* date, ask the server for today's
- * note, land on it.
+ * Daily notes, renderer side — path-based, personal-gated, offline-complete.
  *
- * The correctness boundary is the server's unique `(vault_id, path)` index, not anything
- * here (D45). The in-flight cache below only coalesces redundant call sites into one
- * round-trip; if it were removed entirely the feature would still be correct, just
- * chattier. That is the opposite of the old repo, where a per-process promise cache was
- * the *only* thing standing between you and a duplicate note — and it could not see your
- * other laptop.
+ * The correctness boundary is no longer a server's unique index (D45, gone): the
+ * main proc does a deterministic if-not-exists-write, so two of your devices
+ * mint an identical blob at an identical path and git merges them silently. All
+ * this layer does is decide *whether* to ask (personal vaults only) and land you
+ * on the result.
  */
 import { atom } from 'jotai'
-import type { DocMeta } from '@holi/shared'
 import { trpc } from '../lib/trpc'
-import { activeDocAtom, activeVaultIdAtom, loadDocsAtom, vaultsAtom } from './vaults'
+import { openPinned, workspaceAtom } from './panes'
+import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /**
- * This device's local date as `YYYY-MM-DD`.
- *
- * **Not** `toISOString()`: that formats UTC, so for anyone east of it between local
- * midnight and UTC midnight it returns *yesterday* — and you would land on (and mint)
- * the wrong note. The old repo's `toIsoDate` read the local getters for exactly this
- * reason. `shared/dates.ts`'s `formatDate` is UTC-based and is for epoch math, not for
- * asking a device what day it is.
+ * A vault is personal unless we positively know it has more than one GitHub
+ * collaborator (`daily-notes.md` OQ#2, resolved). Checked via `github.collaborators`
+ * when online; any failure — offline, signed out — defaults to **personal**, the
+ * common case and the one that keeps daily notes working on a plane. Auto-creating
+ * a daily in a *shared* vault is the harm this guards against, and that only
+ * happens on a positive >1 answer.
  */
-export function localIsoDate(now: Date = new Date()): string {
-  const y = String(now.getFullYear()).padStart(4, '0')
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
+export async function isPersonalVault(remote: string): Promise<boolean> {
+  try {
+    const { collaborators } = await trpc.github.collaborators.query({ remote })
+    return collaborators.length <= 1
+  } catch {
+    return true
+  }
 }
 
-/** The date is in the key so a session spanning local midnight asks for tomorrow's note
- * rather than serving yesterday's from cache (ported intent). */
-export const dailyCacheKey = (vaultId: string, localDate: string): string =>
-  `${vaultId}/${localDate}`
-
-const inflight = new Map<string, Promise<DocMeta>>()
-
 /**
- * Get-or-create today's daily note for the active vault and open it. Resolves to null
- * when there is nothing to do (no vault, a shared vault, or the server is unreachable).
- *
- * Personal-vault only, by design: with a single owner there is exactly one author and
- * one clock, so there is no one to race and no second timezone to disagree with.
+ * Get-or-create today's daily for the active vault and land on it (FR-4).
+ * Returns the path, or null when there is nothing to do (no vault, or a shared
+ * one). Opens the note **pinned** — you are here to write in it, not browse it.
  */
-export const openTodaysDailyNoteAtom = atom(null, async (get, set): Promise<DocMeta | null> => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return null
-  const vault = get(vaultsAtom).find((v) => v.id === vaultId)
-  if (vault?.kind !== 'personal') return null
+export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return null
+  if (!(await isPersonalVault(remote))) return null
 
-  const localDate = localIsoDate()
-  const key = dailyCacheKey(vaultId, localDate)
-
-  let pending = inflight.get(key)
-  if (!pending) {
-    pending = trpc.notes.getOrCreateDaily
-      .mutate({ vaultId, localDate })
-      .then(async ({ doc, created }) => {
-        // Only a mint changes the tree; an adoption is already in it.
-        if (created) await set(loadDocsAtom)
-        return doc
-      })
-      .catch((err: unknown) => {
-        // Drop the entry so the next activation retries, rather than handing every
-        // future caller the same stale rejection forever (ported fix).
-        inflight.delete(key)
-        throw err
-      })
-    inflight.set(key, pending)
-  }
-
-  try {
-    const doc = await pending
-    set(activeDocAtom, doc)
-    return doc
-  } catch (err) {
-    // Offline or server error: land on nothing and carry on (D45). A missing daily note
-    // is a non-event — you get it on reconnect, and nothing was lost because there was
-    // nothing in it yet.
-    console.warn('[daily] could not open today’s note:', err)
-    return null
-  }
+  const { path, created } = await trpc.notes.getOrCreateDaily.mutate({ remote })
+  if (created) await set(loadSnapshotAtom)
+  set(workspaceAtom, openPinned(get(workspaceAtom), path))
+  set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
+  return path
 })
 
-/** Archive prior-day notes + GC stubs. Fire-and-forget: it must never block landing on
- * today's note, and it is idempotent, so a failure just retries next activation. */
-export const sweepDailyNotesAtom = atom(null, async (get, set) => {
-  const vaultId = get(activeVaultIdAtom)
-  if (!vaultId) return
-  const vault = get(vaultsAtom).find((v) => v.id === vaultId)
-  if (vault?.kind !== 'personal') return
-  try {
-    const { archived, deleted } = await trpc.notes.sweepDaily.mutate({
-      vaultId,
-      localDate: localIsoDate(),
-    })
-    // Notes moved into journal/ or reaped — the tree on screen is now stale.
-    if (archived > 0 || deleted > 0) await set(loadDocsAtom)
-  } catch (err) {
-    console.warn('[daily] sweep failed (retries next activation):', err)
+/**
+ * Archive prior-day notes + GC stubs (FR-5), then commit — once. The sweep is
+ * the one place a background process rewrites the vault's shape, so it lands as
+ * a single deliberate commit rather than scattered autosaves (§Archiving).
+ * No-op on shared vaults and when nothing changed.
+ */
+export const sweepDailyAtom = atom(null, async (get, set) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  if (!(await isPersonalVault(remote))) return
+  const { archived, deleted } = await trpc.notes.sweepDaily.mutate({ remote })
+  if (archived > 0 || deleted > 0) {
+    await set(loadSnapshotAtom)
+    await trpc.sync.commitNow.mutate()
   }
 })
