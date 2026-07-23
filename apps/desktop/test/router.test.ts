@@ -141,6 +141,34 @@ describe('notes', () => {
     expect(await readFile(join(root, 'projects/q2/new.md'), 'utf8')).toBe('hi')
   })
 
+  /**
+   * The write-then-read contract, and the whole of the "new note does nothing"
+   * bug. The renderer creates a note and immediately re-reads the snapshot to
+   * find it; `vaults.snapshot` answers from `ActiveVault`'s cache, which used to
+   * be refreshed only by the filesystem watcher — and chokidar drops `add`
+   * events on macOS (see watcher.ts), so the note stayed invisible until the
+   * 30-second heal tick. Creating it again then failed with "already exists" for
+   * a file the user could not see.
+   *
+   * The watcher is deliberately still a hint here: these assertions run well
+   * inside its debounce, so only an explicit refresh can make them pass.
+   */
+  it('makes a created note visible to the very next snapshot read', async () => {
+    const { caller } = await rig({ 'a.md': '# A\n' })
+    await caller.vaults.open({ remote: REMOTE })
+    await caller.notes.create({ remote: REMOTE, path: 'fresh.md', text: '# Fresh\n' })
+    const snap = await caller.vaults.snapshot({ remote: REMOTE })
+    expect(snap.docs.map((d) => d.path).sort()).toEqual(['a.md', 'fresh.md'])
+  })
+
+  it('makes a deleted note gone from the very next snapshot read', async () => {
+    const { caller } = await rig({ 'a.md': '# A\n', 'b.md': '# B\n' })
+    await caller.vaults.open({ remote: REMOTE })
+    await caller.notes.delete({ remote: REMOTE, path: 'b.md' })
+    const snap = await caller.vaults.snapshot({ remote: REMOTE })
+    expect(snap.docs.map((d) => d.path)).toEqual(['a.md'])
+  })
+
   it('refuses to create over an existing note', async () => {
     const { caller } = await rig({ 'a.md': 'mine\n' })
     await expect(

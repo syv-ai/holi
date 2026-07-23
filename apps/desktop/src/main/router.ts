@@ -142,6 +142,44 @@ export function createRouter(deps: RouterDeps) {
   const today = deps.today ?? localToday
   const cloneUrlFor = deps.cloneUrlFor ?? remoteUrl
 
+  /**
+   * A write must be visible to the very next read.
+   *
+   * `vaults.snapshot` answers from `ActiveVault`'s cache, and that cache was
+   * refreshed only by the filesystem watcher — which is documented as a *hint*
+   * and genuinely drops `add` events on macOS. So the renderer's create-then-
+   * re-read (`createNoteAtom`) raced a debounce it could not see: the new note
+   * did not appear, creating it again failed with "already exists" for a file
+   * the user had no way to know was there, and it finally surfaced on a later
+   * heal tick.
+   *
+   * Rescanning here rather than in `vaults.snapshot` keeps the read cheap and
+   * the cache meaningful — a read is answered from memory, and a *write* is what
+   * invalidates it. That is also why this is a middleware and not a line at the
+   * end of each mutation: the next write procedure gets it without remembering
+   * to.
+   *
+   * It refreshes even when the mutation failed, on purpose. "Already exists" is
+   * precisely the case where the caller's picture of the vault is wrong, so that
+   * is the worst possible moment to skip the resync.
+   */
+  const refreshesVault = t.middleware(async (opts) => {
+    const result = await opts.next()
+    if (opts.type !== 'mutation') return result
+    const raw = (await opts.getRawInput()) as { remote?: unknown } | null
+    const active = deps.host.active()
+    // Only the live vault has a cache to go stale; a write to any other vault is
+    // read straight off disk by `vaults.snapshot` anyway.
+    if (active !== null && active.remote === raw?.remote) {
+      await active.refresh().catch((err) => console.error('[router] post-write rescan:', err))
+    }
+    return result
+  })
+
+  /** Every procedure that writes into a vault. Use this rather than
+   *  `t.procedure` so the cache cannot be left behind — see `refreshesVault`. */
+  const vaultMutation = t.procedure.use(refreshesVault)
+
   /** The open vault, or a refusal. Every `sync.*` procedure goes through here so
    *  "nothing is open" is one message rather than a null dereference. */
   function activeOrThrow(): ActiveVault {
@@ -418,7 +456,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   const tasks = t.router({
-    create: t.procedure
+    create: vaultMutation
       .input(fields({ remote: 'string', folder: 'string?', title: 'string', status: 'string?' }))
       .mutation(async ({ input }): Promise<{ path: string }> => {
         const root = await rootFor(input.remote)
@@ -439,7 +477,7 @@ export function createRouter(deps: RouterDeps) {
         return { path: rel }
       }),
 
-    update: t.procedure
+    update: vaultMutation
       .input((raw: unknown) => ({
         ...fields({ remote: 'string', path: 'string' })(raw),
         patch: patchOrThrow((raw as { patch?: unknown }).patch ?? {}),
@@ -464,7 +502,7 @@ export function createRouter(deps: RouterDeps) {
      * next occurrence is. A patch would silently skip the roll and the series
      * would end wherever someone happened to tick the box.
      */
-    complete: t.procedure
+    complete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }): Promise<Task> => {
         const root = await rootFor(input.remote)
@@ -476,7 +514,7 @@ export function createRouter(deps: RouterDeps) {
         return next
       }),
 
-    delete: t.procedure
+    delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
         await removeDocFile(await rootFor(input.remote), safe(input.path))
@@ -520,14 +558,14 @@ export function createRouter(deps: RouterDeps) {
         return text
       }),
 
-    write: t.procedure
+    write: vaultMutation
       .input(fields({ remote: 'string', path: 'string', text: 'string' }))
       .mutation(async ({ input }) => {
         await writeAtomic(await rootFor(input.remote), safe(input.path), input.text)
         return { ok: true as const }
       }),
 
-    create: t.procedure
+    create: vaultMutation
       .input(fields({ remote: 'string', path: 'string', text: 'string?' }))
       .mutation(async ({ input }) => {
         const root = await rootFor(input.remote)
@@ -543,7 +581,7 @@ export function createRouter(deps: RouterDeps) {
         return { path: rel }
       }),
 
-    delete: t.procedure
+    delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
         await removeDocFile(await rootFor(input.remote), safe(input.path))
@@ -563,7 +601,7 @@ export function createRouter(deps: RouterDeps) {
     // rewrite runs before the move, so a mid-run failure leaves the source in
     // place and visible in `git status` (there is no transaction — prd §Rename).
     // Commits are the renderer's job (it flushes and commits around this call).
-    rename: t.procedure
+    rename: vaultMutation
       .input(fields({ remote: 'string', from: 'string', to: 'string' }))
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
         const root = await rootFor(input.remote)
@@ -578,7 +616,7 @@ export function createRouter(deps: RouterDeps) {
     // FR-4: create today's daily note if absent and hand back its path. The
     // personal-vault gate lives in the renderer (it owns the collaborators
     // call); this proc just does the deterministic if-not-exists-write.
-    getOrCreateDaily: t.procedure
+    getOrCreateDaily: vaultMutation
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<{ path: string; created: boolean }> => {
         return getOrCreateDaily(await rootFor(input.remote), today())
@@ -586,7 +624,7 @@ export function createRouter(deps: RouterDeps) {
 
     // FR-5: archive prior-day dailies into journal/ and GC untouched stubs. Does
     // not commit — the renderer batches the sweep into one commit (§Archiving).
-    sweepDaily: t.procedure
+    sweepDaily: vaultMutation
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<{ archived: number; deleted: number }> => {
         return sweepDaily(await rootFor(input.remote), today())
