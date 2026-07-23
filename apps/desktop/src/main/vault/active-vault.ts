@@ -408,6 +408,22 @@ export async function openActiveVault(args: {
    */
   await maybeCommit()
 
+  /**
+   * Announce the opening state, whatever it turned out to be.
+   *
+   * `setState` deliberately pushes only on a change, and a fresh vault starts
+   * its local `state` at `up-to-date` — so opening a *clean* vault decided
+   * nothing had changed and pushed nothing at all. That is fine for one vault
+   * and wrong for two: the renderer holds a single sync state for the whole app,
+   * so it went on displaying the vault it had just switched away from, and an
+   * empty vault inherited "31 to publish" from the one before it.
+   *
+   * Unconditional rather than routed through `setState`, because the value being
+   * equal to the last one is exactly the case that needs sending: the renderer's
+   * copy belongs to a different vault entirely.
+   */
+  if (!closed) args.onSyncState(state)
+
   return {
     remote: args.remote,
     root,
@@ -570,7 +586,15 @@ export function createVaultHost(args: {
 
     open: (remote) =>
       serialise(async () => {
-        if (current?.remote === remote) return current
+        if (current?.remote === remote) {
+          // Idempotent, but not silent. Re-opening the vault that is already
+          // open is how the renderer asks for a fresh picture of it — after its
+          // own reload, say — and returning without a word leaves it showing
+          // whatever it last had, which may be another vault's state or the
+          // `up-to-date` an empty atom starts life with.
+          args.onSyncState(current.syncState())
+          return current
+        }
         await closeCurrent()
 
         const entry = (await args.registry.list()).find((e) => e.remote === remote)

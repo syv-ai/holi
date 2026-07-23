@@ -930,6 +930,33 @@ describe('VaultHost', () => {
     return { h, snaps }
   }
 
+  /**
+   * Opening a vault must ANNOUNCE its sync state, even when that state is the
+   * boring one.
+   *
+   * `setState` only pushes on a change, and a fresh `ActiveVault` starts its
+   * local `state` at `up-to-date` — so opening a clean vault decided nothing had
+   * changed and pushed nothing at all. The renderer holds one sync state for the
+   * whole app, so it kept displaying the *previous* vault's: switching from a
+   * vault with 31 unpublished commits to an empty one still read "31 to
+   * publish". FR-22 is that the indicator must never claim a state that is not
+   * true, and that cuts both ways.
+   */
+  it('announces the opening sync state, even when nothing changed', async () => {
+    const { registry } = await twoVaults()
+    const seen: string[] = []
+    const h = createVaultHost({
+      registry,
+      onSnapshot: () => {},
+      onSyncState: (s) => seen.push(s.kind),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    await h.open('syv-ai/a')
+    expect(seen).toContain('up-to-date')
+  })
+
   it('opens a vault and makes it active', async () => {
     const { registry } = await twoVaults()
     const { h } = host(registry)
