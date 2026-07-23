@@ -149,6 +149,17 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
 })
 
+/** What links to `path` — the delete-preview fetch (FR-12). Empty, and no call,
+ * when nothing is open: the dialog has nothing to warn about anyway. */
+export const backrefsFor = atom(
+  null,
+  async (get, _set, path: string): Promise<{ path: string; count: number }[]> => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return []
+    return trpc.notes.backrefs.query({ remote, path })
+  },
+)
+
 /** Clears the editor when it is the open note being deleted — otherwise the pane
  * holds a doc that no longer exists. */
 export const deleteNoteAtom = atom(null, async (get, set, path: string) => {
