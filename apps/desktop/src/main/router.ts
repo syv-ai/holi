@@ -17,6 +17,7 @@ import {
   nextDueCatchup,
   parseTaskFile,
   parseTaskPatch,
+  rewriteWikiLinks,
   serializeTaskFile,
   shiftForRollover,
   taskFilePath,
@@ -28,13 +29,14 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
+import { scanBackrefs } from './vault/backrefs'
 import { remoteUrl } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import { moveDocFile, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 
@@ -545,6 +547,39 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }) => {
         await removeDocFile(await rootFor(input.remote), safe(input.path))
         return { ok: true as const }
+      }),
+
+    // FR-12: what links here, so a delete can name what it will turn into
+    // tombstones rather than silently dangling. The same scan rename rewrites.
+    backrefs: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<{ path: string; count: number }[]> => {
+        return scanBackrefs(await rootFor(input.remote), safe(input.path))
+      }),
+
+    // FR-11: move the file AND rewrite every inbound [[link]] in one pass. The
+    // move-half alone silently breaks links, so the two are one procedure. The
+    // rewrite runs before the move, so a mid-run failure leaves the source in
+    // place and visible in `git status` (there is no transaction — prd §Rename).
+    // Commits are the renderer's job (it flushes and commits around this call).
+    rename: t.procedure
+      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
+      .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
+        const root = await rootFor(input.remote)
+        const from = safe(input.from)
+        const to = safe(input.to)
+        if (await exists(root, to)) {
+          throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
+        }
+        const referrers = await scanBackrefs(root, from)
+        for (const ref of referrers) {
+          const rel = safe(ref.path)
+          const text = await readFile(absPathFor(root, rel), 'utf8')
+          const { text: rewritten } = rewriteWikiLinks(text, from, to)
+          await writeAtomic(root, rel, rewritten)
+        }
+        await moveDocFile(root, from, to)
+        return { rewritten: referrers }
       }),
   })
 

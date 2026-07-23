@@ -165,6 +165,40 @@ describe('notes', () => {
       ok: true,
     })
   })
+
+  it('backrefs names each referrer and its count', async () => {
+    const { caller } = await rig({
+      'a.md': '[[b.md]] and [[b.md|Alias]]',
+      'c.md': 'one [[b.md]] here',
+      'b.md': 'the target',
+    })
+    expect(await caller.notes.backrefs({ remote: REMOTE, path: 'b.md' })).toEqual([
+      { path: 'a.md', count: 2 },
+      { path: 'c.md', count: 1 },
+    ])
+  })
+
+  it('rename moves the file and rewrites inbound links, leaving task chips alone', async () => {
+    const { caller, root } = await rig({
+      'old.md': 'the body',
+      'ref.md': 'see [[old.md]] and [[old.md|Alias]] and [[task:t1]]',
+    })
+    const result = await caller.notes.rename({ remote: REMOTE, from: 'old.md', to: 'sub/new.md' })
+
+    expect(result).toEqual({ rewritten: [{ path: 'ref.md', count: 2 }] })
+    await expect(caller.notes.read({ remote: REMOTE, path: 'old.md' })).rejects.toThrow()
+    expect(await readFile(join(root, 'sub/new.md'), 'utf8')).toBe('the body')
+    expect(await readFile(join(root, 'ref.md'), 'utf8')).toBe(
+      'see [[sub/new.md]] and [[sub/new.md|Alias]] and [[task:t1]]',
+    )
+  })
+
+  it('rename refuses to clobber an existing destination', async () => {
+    const { caller } = await rig({ 'old.md': 'a', 'taken.md': 'b' })
+    await expect(
+      caller.notes.rename({ remote: REMOTE, from: 'old.md', to: 'taken.md' }),
+    ).rejects.toThrow(/already exists/)
+  })
 })
 
 describe('tasks', () => {
