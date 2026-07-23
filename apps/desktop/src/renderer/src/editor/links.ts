@@ -14,9 +14,14 @@
  *    un-renders it to raw `[[path]]`, where clicks are ordinary text clicks again. So
  *    "click navigates" can never fight "click to edit" — the two never coexist.
  *
- *  - A **markdown link** is a `Decoration.mark` over real, editable text. A plain click
- *    there means *put my caret in it*, so navigation takes ⌘/Ctrl-click — the same bargain
- *    VS Code strikes, and the only one that leaves the link text editable.
+ *  - A **markdown link** is a `Decoration.mark` over real, editable text, but it only
+ *    carries `data-href` on a **non-active** line — the moment your caret is on the line
+ *    live-preview un-renders it to raw `[text](url)`, where a click is ordinary text again.
+ *    So a plain click on the *rendered* link navigates (the handler prevents the default,
+ *    so the line never activates); to edit the link text you click into the line first,
+ *    which reveals the raw markdown. ⌘/Ctrl-click was the original bargain, but any click
+ *    on the line un-rendered the link before the modifier could land — navigation you
+ *    could not actually reach. Plain-click matches wiki-links and is what a link should do.
  */
 import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
@@ -50,18 +55,17 @@ export interface ClickTargets {
 
 /** The pure routing decision — a headless core, per the slash-command shape. The DOM
  * lookup is the adapter's problem; the branches worth being sure about are here. */
-export function resolveLinkClick({
-  wikiTarget,
-  taskTarget,
-  href,
-  modifier,
-}: ClickTargets): LinkAction {
+export function resolveLinkClick({ wikiTarget, taskTarget, href }: ClickTargets): LinkAction {
   // A chip wins over any enclosing link: it is the innermost thing you clicked, and it
   // is a widget, so there is no caret to place inside it. A chip is note-kind or
   // task-kind and never both, so the order between these two is not a precedence rule.
   if (taskTarget) return { kind: 'task', id: taskTarget }
   if (wikiTarget) return { kind: 'note', path: wikiTarget }
-  if (!href || !modifier) return null
+  // A rendered markdown link navigates on a plain click. `data-href` is only present on
+  // a non-active (rendered) line, so this never fires on raw `[text](url)` text you are
+  // editing — the modifier requirement is gone because the un-render-on-active-line
+  // behaviour made it unreachable in practice.
+  if (!href) return null
   // Only http(s) leaves the app. A relative href is a vault path, so it routes internally
   // like a wiki-link rather than handing the OS something it cannot open.
   return /^https?:\/\//i.test(href) ? { kind: 'external', url: href } : { kind: 'note', path: href }

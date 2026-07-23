@@ -18,26 +18,31 @@ describe('resolveLinkClick (FR-6 wiki-links, FR-7 markdown links)', () => {
     })
   })
 
-  // A markdown link is real editable text: a plain click must keep placing the caret,
-  // or you could never edit the link text.
-  it('leaves a markdown link alone without a modifier', () => {
-    expect(resolveLinkClick({ href: 'https://example.com', modifier: false })).toBeNull()
-  })
-
-  it('opens an http(s) markdown link externally on ⌘/Ctrl-click', () => {
-    expect(resolveLinkClick({ href: 'https://example.com', modifier: true })).toEqual({
+  // A rendered markdown link (data-href present only on a non-active line) navigates on
+  // a plain click, like a wiki-link — the modifier requirement made navigation
+  // unreachable, because any click un-rendered the link before ⌘ could land.
+  it('opens an http(s) markdown link externally on a plain click', () => {
+    expect(resolveLinkClick({ href: 'https://example.com', modifier: false })).toEqual({
       kind: 'external',
       url: 'https://example.com',
     })
-    expect(resolveLinkClick({ href: 'HTTP://Example.com', modifier: true })).toEqual({
+    expect(resolveLinkClick({ href: 'HTTP://Example.com', modifier: false })).toEqual({
       kind: 'external',
       url: 'HTTP://Example.com',
     })
   })
 
+  // A modifier still works — it is simply no longer required.
+  it('still opens on ⌘/Ctrl-click', () => {
+    expect(resolveLinkClick({ href: 'https://example.com', modifier: true })).toEqual({
+      kind: 'external',
+      url: 'https://example.com',
+    })
+  })
+
   // A relative href is a vault path — handing it to the OS would open nothing.
   it('routes a relative markdown link internally, not to the OS', () => {
-    expect(resolveLinkClick({ href: 'notes/b.md', modifier: true })).toEqual({
+    expect(resolveLinkClick({ href: 'notes/b.md', modifier: false })).toEqual({
       kind: 'note',
       path: 'notes/b.md',
     })
