@@ -3,7 +3,20 @@ import { EditorView } from '@codemirror/view'
 export const editorTheme = EditorView.baseTheme({
   '&': { height: '100%', fontSize: '14px' },
   '.cm-scroller': { fontFamily: 'ui-monospace, SF Mono, monospace', lineHeight: '1.6' },
-  '.cm-content': { padding: '16px 0', maxWidth: '48rem', margin: '0 auto', caretColor: '#e5e5e5' },
+  /**
+   * Left-aligned, NOT centred (`margin: 0 auto` was here and is deliberately
+   * gone).
+   *
+   * A centred column moves its own centre whenever the pane resizes, so opening
+   * the right sidebar slid the text you were reading 88px to the left — the
+   * editor is supposed to get *narrower*, not shift. Anchoring the column to the
+   * left makes the sidebar take width off the right-hand end only, and the words
+   * under the caret stay where they were.
+   *
+   * The horizontal padding is the other half: with the pane narrower than the
+   * column, `maxWidth` stops applying and the text ran flush to both edges.
+   */
+  '.cm-content': { padding: '16px 24px', maxWidth: '48rem', caretColor: '#e5e5e5' },
 
   // drawSelection() draws its own cursor and hides the native one, so caretColor
   // alone is invisible — the drawn cursor is a border-left element, style it.
