@@ -21,8 +21,14 @@ import type {
   Task,
   TaskStatus,
 } from '@holi/shared'
+import { EditorState } from '@codemirror/state'
+import { EditorView, placeholder } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
+import { baseEditorExtensions } from '../editor/extensions'
+import type { LinkNav } from '../editor/links'
+import type { MentionData } from '../editor/mentions'
+import { openNoteTabAtom } from '../state/panes'
 import {
   completeTaskAtom,
   deleteTaskAtom,
@@ -32,6 +38,7 @@ import {
   selectedTaskPathAtom,
   tasksAtom,
 } from '../state/tasks'
+import { snapshotAtom } from '../state/vaults'
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -51,10 +58,9 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
   const del = useSetAtom(deleteTaskAtom)
   const close = useSetAtom(selectedTaskPathAtom)
 
-  // `description` is the file's markdown body — a plain textarea, debounced.
-  const [description, setDescription] = useState(task.description)
+  // `description` is the file's markdown body — a full note editor now (@ mentions,
+  // [[wiki-links]], live preview), held by CodeMirror rather than React state.
   const [title, setTitle] = useState(task.title)
-  useEffect(() => setDescription(task.description), [task.path, task.description])
   useEffect(() => setTitle(task.title), [task.path, task.title])
 
   const save = (p: Record<string, unknown>) => void patch(task.path, p)
@@ -63,7 +69,6 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
   // once autosave commits land, commit it — on every character.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onDescription = (v: string) => {
-    setDescription(v)
     if (timer.current) clearTimeout(timer.current)
     // Sent as '' rather than null: an empty body is the field's empty state, not
     // an absent field, and `parseTaskPatch` refuses to "clear" what cannot be unset.
@@ -189,14 +194,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
 
       <RecurrenceRows task={task} save={save} />
 
-      <textarea
-        value={description}
-        data-detail-description
-        onChange={(e) => onDescription(e.target.value)}
-        placeholder="description — [[wiki-links]] are how a task links to a note"
-        rows={8}
-        className="mt-1 rounded border border-neutral-800 bg-neutral-900 p-2 text-xs placeholder:text-neutral-600 focus:border-neutral-700 focus:outline-none"
-      />
+      <TaskDescriptionEditor key={task.path} initial={task.description} onChange={onDescription} />
 
       <button
         onClick={() => void del(task.path)}
@@ -205,6 +203,81 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
         delete task
       </button>
     </aside>
+  )
+}
+
+/**
+ * The task description as a full note editor.
+ *
+ * The description IS the task file's markdown body, so it gets the same editor
+ * the notes do — `@`-mentions, `[[wiki-links]]` that render as chips and click
+ * through to the note, live preview — rather than a plain textarea. Deps come
+ * from the vault snapshot the same pull-based way EditorPane wires them; a
+ * wiki-link click opens the note as a tab (`openNoteTabAtom`), switching the
+ * view off the board.
+ *
+ * Mounts once per task (keyed by `task.path` at the call site): the description
+ * is last-write-wins with no version, so external edits are not streamed into an
+ * open editor — switching tasks remounts with fresh text.
+ */
+function TaskDescriptionEditor({
+  initial,
+  onChange,
+}: {
+  initial: string
+  onChange: (v: string) => void
+}): React.JSX.Element {
+  const snapshot = useAtomValue(snapshotAtom)
+  const openNote = useSetAtom(openNoteTabAtom)
+  const hostRef = useRef<HTMLDivElement>(null)
+
+  // Read on demand so a snapshot arriving mid-edit does not rebuild the view.
+  const docPaths = useRef(new Set<string>())
+  docPaths.current = new Set(snapshot.docs.map((d) => d.path))
+  const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
+  mentionRef.current = { notes: snapshot.docs.map((d) => ({ path: d.path })), tasks: [] }
+  const navRef = useRef<LinkNav>({ openNote: () => {}, openTask: () => {}, openExternal: () => {} })
+  navRef.current = {
+    openNote: (target) => docPaths.current.has(target) && openNote(target),
+    openTask: () => {},
+    openExternal: (url) => void window.holi.openExternal(url),
+  }
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  useEffect(() => {
+    if (hostRef.current === null) return
+    const view = new EditorView({
+      state: EditorState.create({
+        doc: initial,
+        extensions: [
+          ...baseEditorExtensions({
+            docExists: (p) => docPaths.current.has(p),
+            taskInfo: () => ({ label: 'task', missing: true }),
+            mentionData: () => mentionRef.current,
+            onTaskMention: () => {},
+            nav: () => navRef.current,
+          }),
+          placeholder('description — @ to mention a note, [[wiki-links]] to link'),
+          EditorView.updateListener.of((u) => {
+            if (u.docChanged) onChangeRef.current(u.state.doc.toString())
+          }),
+        ],
+      }),
+      parent: hostRef.current,
+    })
+    return () => view.destroy()
+    // Mount once; the call site keys this component by task.path so a task
+    // switch remounts it with fresh text.
+
+  }, [])
+
+  return (
+    <div
+      ref={hostRef}
+      data-detail-description
+      className="mt-1 min-h-[10rem] overflow-hidden rounded border border-neutral-800 bg-neutral-900 text-xs focus-within:border-neutral-700"
+    />
   )
 }
 
