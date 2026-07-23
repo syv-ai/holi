@@ -14,6 +14,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
+import { collaboratorsErrorText, errorCodeOf } from '../lib/collaborators-error'
 import { trpc } from '../lib/trpc'
 import { sessionAtom, signOutAtom } from '../state/session'
 import { activeRemoteAtom, vaultsAtom } from '../state/vaults'
@@ -33,18 +34,27 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
     visibility: string
     collaborators: Collaborator[]
   } | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  /** The sentence to show, plus the raw refusal for the tooltip — kept together
+   *  so they can never describe two different failures. */
+  const [error, setError] = useState<{ text: string; raw: string } | null>(null)
 
   useEffect(() => {
     if (remote === null) return
     setError(null)
+    setMembers(null)
     void trpc.github.collaborators
       .query({ remote })
       .then(setMembers)
-      // A refusal here is ordinary — no network, or a token without the scope —
-      // and the panel says so rather than rendering an empty member list, which
-      // would read as "nobody else has access".
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      // A refusal here is ordinary — a vault that is not on GitHub, no network,
+      // or a token without the scope — and *which* one decides what the user
+      // should do about it. The panel says so rather than rendering an empty
+      // member list, which would read as "nobody else has access".
+      .catch((err: unknown) =>
+        setError({
+          text: collaboratorsErrorText(errorCodeOf(err), remote),
+          raw: err instanceof Error ? err.message : String(err),
+        }),
+      )
   }, [remote])
 
   return (
@@ -88,12 +98,13 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
 
       <section className="space-y-2">
         <h3 className="font-medium">Collaborators</h3>
-        {/* A refusal is ordinary (signed out, no scope, local-fixture vault). Say
-            what to do rather than surfacing a bare GitHub "Not Found", which
-            reads like a crash. The raw message stays in the tooltip. */}
+        {/* A refusal is ordinary (signed out, no scope, local-fixture vault) and
+            the copy names which one — a bare GitHub "Not Found" reads like a
+            crash, and the old catch-all blamed sign-in for all four. The raw
+            message stays in the tooltip. */}
         {error !== null && (
-          <p className="text-xs text-neutral-500" title={error}>
-            Can't load collaborators — sign in to GitHub with access to this repo.
+          <p className="text-xs text-neutral-500" title={error.raw}>
+            {error.text}
           </p>
         )}
         {members === null && error === null && <p className="text-xs text-neutral-500">loading…</p>}
