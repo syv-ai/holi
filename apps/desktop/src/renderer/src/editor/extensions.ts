@@ -8,6 +8,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
+import { frontmatterExtension } from './frontmatter'
 import { docExistsFacet, livePreview, taskInfoFacet, type TaskChipInfo } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
@@ -54,6 +55,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     taskInfoFacet.of(deps.taskInfo),
     livePreview,
+    // After livePreview: the block-replace owns the frontmatter region, and
+    // livePreview is told to skip it (FR-2 hide / FR-16 reveal).
+    frontmatterExtension,
     linkClickHandler(deps.nav),
     // Nested in-cell editors mutate the same doc — verify live that these
     // transactions compose with yCollab (FR-10 risk), no binding bypass.

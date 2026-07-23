@@ -22,6 +22,7 @@ import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions } from '../editor/extensions'
+import { frontmatterValid } from '../editor/frontmatter'
 import type { LinkNav } from '../editor/links'
 import type { MentionData } from '../editor/mentions'
 import { registerBuffer } from '../lib/buffer-registry'
@@ -72,15 +73,36 @@ export function EditorPane({
     let disposed = false
     const host = hostRef.current
 
-    /** Write the buffer if it differs from what is on disk, and advance `base`
-     *  in the same breath — the order is the point. */
-    const save = async (): Promise<void> => {
+    /** Write the buffer if it differs from disk, advancing `base` in the same
+     *  breath — the order is the point. **Unconditional:** used by the flush
+     *  registry (quit, and rename's pre-flush) and the unmount below, where
+     *  losing keystrokes is worse than a note with temporarily-invalid
+     *  frontmatter — git has it either way (notes-editor.md §Frontmatter). */
+    const flush = async (): Promise<void> => {
       const view = viewRef.current
       if (view === null || disposed) return
       const text = view.state.doc.toString()
       if (text === baseRef.current) return
       baseRef.current = text
       await trpc.notes.write.mutate({ remote, path, text })
+    }
+
+    /** The gated save behind autosave and ⌘S: hold off entirely while the
+     *  frontmatter YAML is invalid (the FR-16 dot is red), so a half-typed
+     *  `tags: [` is never the autosaved — or "committed" — state. Returns
+     *  whether the caller may proceed (true when valid, false when held off);
+     *  a valid buffer that simply had nothing new to write still returns true,
+     *  so ⌘S on it still commits (FR-4). */
+    const save = async (): Promise<boolean> => {
+      const view = viewRef.current
+      if (view === null || disposed) return false
+      if (!frontmatterValid(view.state)) return false
+      const text = view.state.doc.toString()
+      if (text !== baseRef.current) {
+        baseRef.current = text
+        await trpc.notes.write.mutate({ remote, path, text })
+      }
+      return true
     }
 
     const scheduleSave = () => {
@@ -114,21 +136,25 @@ export function EditorPane({
     })
 
     // ⌘S is a real commit point, not a placebo (FR-4): it writes, then asks
-    // main to commit rather than waiting out the idle timer.
+    // main to commit rather than waiting out the idle timer. Invalid frontmatter
+    // holds off both — no write, no commit — until the YAML parses again.
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        void save().then(() => trpc.sync.commitNow.mutate())
+        void save().then((ok) => {
+          if (ok) void trpc.sync.commitNow.mutate()
+        })
       }
     }
     window.addEventListener('keydown', onKeyDown)
 
     // FR-6: window blur is a flush point. So is the unmount below, which covers
-    // tab close and vault switch.
-    const onBlur = () => void save()
+    // tab close and vault switch. Both use the unconditional flush — a blur or a
+    // tab-close must not drop keystrokes just because the YAML is mid-edit.
+    const onBlur = () => void flush()
     window.addEventListener('blur', onBlur)
 
-    const unregister = registerBuffer(save)
+    const unregister = registerBuffer(flush)
 
     return () => {
       disposed = true

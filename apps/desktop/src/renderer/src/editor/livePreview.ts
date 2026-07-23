@@ -15,6 +15,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view'
 import { parseWikiLinks } from '@holi/shared'
+import { frontmatterRegion } from './frontmatter-region'
 import { WikiLinkChip } from './wikiLinkChips'
 
 /** Doc-path existence lookup for chip styling; wired from server metadata. */
@@ -71,6 +72,11 @@ export function activeLines(state: EditorState): Set<number> {
 export function buildDecorations(state: EditorState, from: number, to: number): DecorationSet {
   const active = activeLines(state)
   const isActive = (pos: number) => active.has(state.doc.lineAt(pos).number)
+  // The frontmatter widget owns [0, fmEnd) as one atomic block-replace, so
+  // nothing here may decorate inside it — GFM parses the leading `---` lines as
+  // thematic breaks, and an HR (or a stray heading/paragraph mark) fighting the
+  // block is exactly the mess the widget exists to remove.
+  const fmEnd = frontmatterRegion(state.doc.toString())?.to ?? 0
   // Collect first (tree iteration + regex scan), sort, then feed the builder
   const ranges: { from: number; to: number; deco: Decoration }[] = []
 
@@ -189,11 +195,10 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }
 
-  ranges.sort(
-    (a, b) => a.from - b.from || a.to - b.to || (a.deco.spec.widget ? 1 : -1),
-  )
+  const kept = ranges.filter((r) => r.from >= fmEnd)
+  kept.sort((a, b) => a.from - b.from || a.to - b.to || (a.deco.spec.widget ? 1 : -1))
   const builder = new RangeSetBuilder<Decoration>()
-  for (const r of ranges) builder.add(r.from, r.to, r.deco)
+  for (const r of kept) builder.add(r.from, r.to, r.deco)
   return builder.finish()
 }
 
