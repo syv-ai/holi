@@ -29,6 +29,7 @@ import {
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import { scanBackrefs } from './vault/backrefs'
+import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { remoteUrl } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
@@ -572,6 +573,23 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
         return renameNote(root, from, to)
+      }),
+
+    // FR-4: create today's daily note if absent and hand back its path. The
+    // personal-vault gate lives in the renderer (it owns the collaborators
+    // call); this proc just does the deterministic if-not-exists-write.
+    getOrCreateDaily: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }): Promise<{ path: string; created: boolean }> => {
+        return getOrCreateDaily(await rootFor(input.remote), today())
+      }),
+
+    // FR-5: archive prior-day dailies into journal/ and GC untouched stubs. Does
+    // not commit — the renderer batches the sweep into one commit (§Archiving).
+    sweepDaily: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }): Promise<{ archived: number; deleted: number }> => {
+        return sweepDaily(await rootFor(input.remote), today())
       }),
   })
 

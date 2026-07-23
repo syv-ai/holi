@@ -199,6 +199,27 @@ describe('notes', () => {
       caller.notes.rename({ remote: REMOTE, from: 'old.md', to: 'taken.md' }),
     ).rejects.toThrow(/already exists/)
   })
+
+  it('getOrCreateDaily creates today’s note once, using the local date', async () => {
+    const { caller, root } = await rig()
+    // The rig pins today to TODAY = 2026-07-21 → stem 21-07-2026.
+    expect(await caller.notes.getOrCreateDaily({ remote: REMOTE })).toEqual({
+      path: '21-07-2026.md',
+      created: true,
+    })
+    expect(await readFile(join(root, '21-07-2026.md'), 'utf8')).toContain('type: daily-note')
+    expect(await caller.notes.getOrCreateDaily({ remote: REMOTE })).toEqual({
+      path: '21-07-2026.md',
+      created: false,
+    })
+  })
+
+  it('sweepDaily deletes an untouched prior-day stub', async () => {
+    const { caller } = await rig({
+      '20-07-2026.md': '---\ntype: daily-note\ndate: 2026-07-20\n---\n\n# 20-07-2026\n\n',
+    })
+    expect(await caller.notes.sweepDaily({ remote: REMOTE })).toEqual({ archived: 0, deleted: 1 })
+  })
 })
 
 describe('tasks', () => {
