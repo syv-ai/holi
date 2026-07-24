@@ -10,6 +10,10 @@ type JotaiStore = ReturnType<typeof createStore>
 
 export const vaultsAtom = atom<VaultEntry[]>([])
 
+/** False until the first `loadVaults` resolves, so the App gate can tell an
+ *  empty list (first run) apart from a not-yet-loaded one. */
+export const vaultsLoadedAtom = atom(false)
+
 /** The open vault, as `owner/repo`. A vault has no id — the remote IS the
  * identity, and the clone's path is machine-local (types.ts §VaultEntry). */
 export const activeRemoteAtom = atom<string | null>(null)
@@ -50,6 +54,7 @@ export const loadVaultsAtom = atom(null, async (get, set) => {
   set(vaultsAtom, vaults)
   const active = get(activeRemoteAtom)
   if (!active && vaults[0]) set(activeRemoteAtom, vaults[0].remote)
+  set(vaultsLoadedAtom, true)
 })
 
 export const loadSnapshotAtom = atom(null, async (get, set) => {

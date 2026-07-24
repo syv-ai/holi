@@ -15,7 +15,7 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { AddVault } from './AddVault'
+import { OnboardingRitual } from './OnboardingRitual'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FileTree } from './FileTree'
@@ -35,13 +35,7 @@ import {
   workspaceAtom,
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
-import {
-  activeRemoteAtom,
-  loadVaultsAtom,
-  openVaultAtom,
-  syncStateAtom,
-  vaultsAtom,
-} from '../state/vaults'
+import { activeRemoteAtom, openVaultAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
 
@@ -51,7 +45,6 @@ export function Shell() {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const syncState = useAtomValue(syncStateAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
-  const loadVaults = useSetAtom(loadVaultsAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
@@ -61,10 +54,6 @@ export function Shell() {
   /** The vault we last ran the daily create+sweep for, so opening it does not
    *  re-land you on today's note every render. */
   const lastDailyRemote = useRef<string | null>(null)
-
-  useEffect(() => {
-    void loadVaults()
-  }, [loadVaults])
 
   // FR-4/FR-5: on personal-vault open, land on today's note then sweep prior
   // days. Both no-op for shared vaults. Once per remote.
@@ -121,7 +110,9 @@ export function Shell() {
               ⚙
             </button>
           </div>
-          {showAdd && <AddVault onClose={() => setShowAdd(false)} />}
+          {showAdd && (
+            <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />
+          )}
 
           <FileTree
             activePath={tab?.kind === 'note' ? tab.path : null}
