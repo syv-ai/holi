@@ -62,6 +62,7 @@ export type Action =
   | { type: 'setOwner'; owner: string }
   | { type: 'submitStart' }
   | { type: 'fail'; error: string }
+  | { type: 'failInPlace'; error: string }
 
 export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
   switch (a.type) {
@@ -88,6 +89,11 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, submitting: true, error: null }
     case 'fail':
       return { ...s, submitting: false, error: a.error, act: 2, view: 'form' }
+    case 'failInPlace':
+      // A join reject stays exactly where it happened — the picker — with the
+      // message shown, rather than bouncing to the naming form (which reads as
+      // an unexplained reset). Used for adopt; `fail` is the create-path bounce.
+      return { ...s, submitting: false, error: a.error }
     default:
       return s
   }

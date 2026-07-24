@@ -47,6 +47,12 @@ describe('reduce', () => {
     expect(failed).toMatchObject({ act: 2, view: 'form', submitting: false, error: 'nope' })
   })
 
+  it('failInPlace shows the error without leaving the current act/view (join adopt)', () => {
+    const onJoin = reduce(reduce(s0, { type: 'advance' }), { type: 'toJoin' })
+    const failed = reduce({ ...onJoin, submitting: true }, { type: 'failInPlace', error: 'no push' })
+    expect(failed).toMatchObject({ act: 2, view: 'join', submitting: false, error: 'no push' })
+  })
+
   it('atFloor is true only on the form at the starting act', () => {
     expect(atFloor(initialState('add-vault', 'x'), 'add-vault')).toBe(true)
     expect(atFloor({ ...initialState('add-vault', 'x'), view: 'join' }, 'add-vault')).toBe(false)

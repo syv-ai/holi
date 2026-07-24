@@ -127,12 +127,15 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
     }
   }
 
-  // Adopt a repo the user already has push to. On failure the flow bounces back
-  // to the naming form (the reducer's only error path) with the message shown.
-  const run = (fn: () => Promise<unknown>) =>
-    fn().catch((err: unknown) =>
-      dispatch({ type: 'fail', error: err instanceof Error ? err.message : String(err) })
+  // Adopt a repo the user was added to. On failure we stay on the picker with
+  // the message shown (a bounce to the naming form would read as an unexplained
+  // reset). Success unmounts us via the App gate / Shell refresh.
+  const run = (fn: () => Promise<unknown>) => {
+    dispatch({ type: 'submitStart' })
+    return fn().catch((err: unknown) =>
+      dispatch({ type: 'failInPlace', error: err instanceof Error ? err.message : String(err) })
     )
+  }
 
   // Keyboard choreography. Space advances from Act 1; Enter advances (or, at the
   // threshold, submits); Esc walks backward and ultimately dismisses.
