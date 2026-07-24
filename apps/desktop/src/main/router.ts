@@ -432,10 +432,6 @@ export function createRouter(deps: RouterDeps) {
         const repo = await gh(() =>
           deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
         )
-        // Mark it a vault so it reads as one in the picker and passes the adopt
-        // guard. A separate write from creation: it can fail on its own, and a
-        // repo without the topic is recoverable, not a broken vault.
-        await gh(() => deps.session.api.markVault(repo.remote))
         const snapshot = await addVault(repo.remote, input.url)
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
@@ -446,6 +442,12 @@ export function createRouter(deps: RouterDeps) {
           await active.commitNow()
           await active.pushNow()
         }
+        // Mark it a vault ONLY here — after its content has been pushed. The
+        // topic is what the picker filters on, so setting it before the push
+        // (as this once did) is exactly what leaves a topic'd-but-empty repo in
+        // everyone's "join" list that the adopt guard then rightly refuses. A
+        // repo carrying the topic now means a repo with a vault on the remote.
+        await gh(() => deps.session.api.markVault(repo.remote))
         return snapshot
       }),
 
