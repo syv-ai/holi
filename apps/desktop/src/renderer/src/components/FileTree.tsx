@@ -20,10 +20,11 @@ import {
 import { useTree } from '@headless-tree/react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ExplorerHeader } from './tree/ExplorerHeader'
 import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
 import { joinPath, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
-import { renameNoteAtom, snapshotAtom } from '../state/vaults'
+import { activeRemoteAtom, renameNoteAtom, snapshotAtom } from '../state/vaults'
 
 export function FileTree({
   activePath,
@@ -35,9 +36,13 @@ export function FileTree({
   onOpenPinned: (path: string) => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
+  const activeRemote = useAtomValue(activeRemoteAtom)
   const renameNote = useSetAtom(renameNoteAtom)
   // Transient folders (spec §Empty folders): client-only until a note lands.
   const [pendingFolders] = useState<string[]>([])
+  // An inline-create row: kind + the folder it is created under (rendered in a
+  // later task; the header buttons seed it here).
+  const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
 
   const data = useMemo(
     () => buildTreeData(snapshot.docs.map((d) => d.path), pendingFolders),
@@ -87,6 +92,12 @@ export function FileTree({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <ExplorerHeader
+        title={activeRemote?.split('/').at(-1) ?? 'vault'}
+        onNewFile={() => setPending({ kind: 'file', parent: '' })}
+        onNewFolder={() => setPending({ kind: 'folder', parent: '' })}
+        onCollapseAll={() => tree.collapseAll()}
+      />
       <div
         className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"
         {...tree.getContainerProps()}
