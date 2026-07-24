@@ -24,7 +24,40 @@ import { ExplorerHeader } from './tree/ExplorerHeader'
 import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
 import { joinPath, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
-import { activeRemoteAtom, renameNoteAtom, snapshotAtom } from '../state/vaults'
+import { activeRemoteAtom, createNoteAtom, renameNoteAtom, snapshotAtom } from '../state/vaults'
+
+/** The inline editable row shown when creating a file or folder. Escape cancels,
+ *  Enter commits, blur cancels — matching the tree's rename input. */
+function PendingRow({
+  kind,
+  onCommit,
+  onCancel,
+}: {
+  kind: 'file' | 'folder'
+  onCommit: (name: string) => void
+  onCancel: () => void
+}) {
+  const [value, setValue] = useState('')
+  return (
+    <div className="flex h-[22px] items-center gap-1 pr-2" style={{ paddingLeft: '8px' }}>
+      <span className="flex w-4 shrink-0 justify-center text-neutral-500">
+        {kind === 'folder' ? <FolderIcon /> : <MarkdownIcon />}
+      </span>
+      <input
+        autoFocus
+        className="min-w-0 flex-1 rounded border border-sky-700 bg-neutral-900 px-1 text-sm outline-none"
+        placeholder={kind === 'folder' ? 'folder name' : 'note name'}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel()
+          if (e.key === 'Enter' && value.trim()) onCommit(value.trim())
+        }}
+        onBlur={onCancel}
+      />
+    </div>
+  )
+}
 
 export function FileTree({
   activePath,
@@ -38,8 +71,9 @@ export function FileTree({
   const snapshot = useAtomValue(snapshotAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const renameNote = useSetAtom(renameNoteAtom)
+  const createNote = useSetAtom(createNoteAtom)
   // Transient folders (spec §Empty folders): client-only until a note lands.
-  const [pendingFolders] = useState<string[]>([])
+  const [pendingFolders, setPendingFolders] = useState<string[]>([])
   // An inline-create row: kind + the folder it is created under (rendered in a
   // later task; the header buttons seed it here).
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
@@ -90,6 +124,13 @@ export function FileTree({
     tree.rebuildTree()
   }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A transient folder becomes real once the snapshot carries a note inside it;
+  // drop it from the pending set so it is not double-represented.
+  useEffect(() => {
+    const paths = snapshot.docs.map((d) => d.path)
+    setPendingFolders((f) => f.filter((folder) => !paths.some((p) => p.startsWith(`${folder}/`))))
+  }, [snapshot])
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
@@ -102,6 +143,20 @@ export function FileTree({
         className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"
         {...tree.getContainerProps()}
       >
+        {pending && (
+          <PendingRow
+            kind={pending.kind}
+            onCancel={() => setPending(null)}
+            onCommit={(name) => {
+              if (pending.kind === 'folder') {
+                setPendingFolders((f) => [...f, joinPath(pending.parent, name)])
+              } else {
+                void createNote(joinPath(pending.parent, withMdExtension(name)))
+              }
+              setPending(null)
+            }}
+          />
+        )}
         {tree
           .getItems()
           .filter((item) => item.getId() !== ROOT_ID)
