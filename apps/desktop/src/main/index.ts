@@ -140,7 +140,18 @@ async function main(): Promise<void> {
         // other flush point is renderer-initiated; quit is the one main starts,
         // so it is the one that has to ask.
         await requestFlush(flushChannel(mainWindow))
-        // `close()` commits the open vault before letting go of it (FR-6).
+        // Quit is a leave point (D61): commit the flushed buffer, then get it
+        // off-machine before the window closes. Best-effort with a 1s budget —
+        // `pushNow` never rejects, and an unreachable remote must not hang quit;
+        // the work is committed on disk, and the next launch drains what did not
+        // make it out. Order is flush -> commit -> push -> close.
+        const vault = host.active()
+        if (vault !== null) {
+          await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
+          await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
+        }
+        // `close()` commits the open vault again (a clean no-op) before letting
+        // go of it (FR-6).
         await host.close()
       } catch (err) {
         console.error('[quit] teardown failed:', err)
