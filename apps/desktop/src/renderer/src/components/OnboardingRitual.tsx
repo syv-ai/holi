@@ -180,7 +180,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
 
   const ownerOptions = session ? [session.login, ...orgs.filter((o) => o !== session.login)] : orgs
   const alreadyAdded = new Set(known.map((v) => v.remote))
+  // Only actual vaults, not every code repo: adopting a non-vault would seed
+  // Holi files into someone's codebase. Marked by the `holi-vault` topic.
   const matches = (repos ?? [])
+    .filter((r) => r.isVault)
     .filter((r) => r.remote.toLowerCase().includes(search.toLowerCase()))
     .filter((r) => !alreadyAdded.has(r.remote))
     .slice(0, 40)

@@ -15,6 +15,18 @@
 import type { Collaborator } from '@holi/shared'
 import { isRemote } from '../vault/registry'
 
+/**
+ * The GitHub repo topic that marks a repo as a Holi vault.
+ *
+ * A vault IS a repo (D60), but not every repo you can push to is a vault — most
+ * are ordinary code. The topic is set on creation and rides back in the repos
+ * listing for free, so the "join a vault" picker can show only real vaults
+ * without a per-repo probe, and `vaults.add` can refuse to seed a code repo
+ * (which would otherwise commit `AGENTS.md`/`.claude/` into it). The durable
+ * on-disk twin of this flag is `.holi/vault.json`, written by the seed.
+ */
+export const HOLI_VAULT_TOPIC = 'holi-vault'
+
 export interface Viewer {
   /** FR-6: the identity key. A login is display only — it can be renamed. */
   accountId: number
@@ -43,6 +55,9 @@ export interface Repo {
    */
   canPush: boolean
   owner: { login: string; kind: 'user' | 'org' }
+  /** Whether the repo carries the `holi-vault` topic — i.e. is a Holi vault
+   *  rather than an ordinary code repo. Drives the "join a vault" filter. */
+  isVault: boolean
 }
 
 /** An organization the viewer belongs to — an owner "New vault" can offer. */
@@ -190,6 +205,23 @@ export class GitHubApi {
     }
   }
 
+  /**
+   * Stamp the `holi-vault` topic onto a freshly-created repo, so it reads as a
+   * vault in the listing and passes the `vaults.add` guard.
+   *
+   * `PUT /topics` *replaces* the topic set — safe here because this only ever
+   * runs on a repo Holi just created, which has none. It is deliberately not
+   * folded into `createRepo`: creation is the GitHub write, marking is a second
+   * one that can fail on its own (and a repo without the topic is a recoverable
+   * state, not a broken vault).
+   */
+  async markVault(remote: string): Promise<void> {
+    await this.#request(`${this.#base}/repos/${assertRemote(remote)}/topics`, {
+      method: 'PUT',
+      body: JSON.stringify({ names: [HOLI_VAULT_TOPIC] }),
+    })
+  }
+
   async #request(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
     const res = await this.#send(url, init)
     return (await res.json()) as Record<string, unknown>
@@ -328,6 +360,9 @@ function toRepo(raw: Record<string, unknown>): Repo {
       login: String(owner.login),
       kind: owner.type === 'Organization' ? 'org' : 'user',
     },
+    // `topics` rides in the repo payload by default under the pinned Accept
+    // header, so this costs nothing on top of the listing GitHub already sends.
+    isVault: Array.isArray(raw.topics) && raw.topics.includes(HOLI_VAULT_TOPIC),
   }
 }
 

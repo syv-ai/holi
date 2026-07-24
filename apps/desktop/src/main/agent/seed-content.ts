@@ -108,8 +108,17 @@ const SETTINGS_JSON =
     2,
   ) + '\n'
 
+/**
+ * The durable, in-repo marker that a repo is a Holi vault. Its GitHub twin is
+ * the `holi-vault` topic (github/api.ts) — the topic is the cheap discovery
+ * index the picker filters on; this file is the record that travels with the
+ * clone, and the natural home for vault-level metadata as it accrues.
+ */
+const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
+
 /** Written only when absent. Never updated, so a member's edit survives. */
 export const SEED_FILES: Record<string, string> = {
+  '.holi/vault.json': VAULT_MARKER,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,

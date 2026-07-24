@@ -50,10 +50,15 @@ describe('SEED_FILES', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
+      '.holi/vault.json',
       'AGENTS.md',
       'CLAUDE.md',
       'MEMORY.md',
     ])
+  })
+
+  it('.holi/vault.json is the durable vault marker', () => {
+    expect(JSON.parse(SEED_FILES['.holi/vault.json']!)).toEqual({ version: 1 })
   })
 
   it('CLAUDE.md is exactly the AGENTS.md import shim', () => {

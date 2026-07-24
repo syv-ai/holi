@@ -11,7 +11,8 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (auth PRD §Access model).
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
   nextDueCatchup,
@@ -107,6 +108,16 @@ function localToday(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+/** Whether a clone carries the `.holi/vault.json` marker — i.e. it is a Holi
+ * vault rather than an arbitrary repo. The durable on-disk twin of the
+ * `holi-vault` GitHub topic (github/api.ts). */
+async function isVaultClone(root: string): Promise<boolean> {
+  return readFile(join(root, '.holi', 'vault.json'), 'utf8').then(
+    () => true,
+    () => false,
+  )
+}
+
 /** A tiny validator, so the router keeps its input contract without pulling in a
  * schema library for four shapes. Each one throws on anything it did not ask
  * for; tRPC turns that into a BAD_REQUEST. */
@@ -196,13 +207,30 @@ export function createRouter(deps: RouterDeps) {
    * vault is one the switcher can never open), and the seed runs before the
    * vault goes live so the `.gitignore` is in place before any commit can be.
    */
-  async function addVault(remote: string, url: string | undefined): Promise<VaultSnapshot> {
-    const { repo } = await ensureClone({
+  async function addVault(
+    remote: string,
+    url: string | undefined,
+    opts: { requireVault?: boolean } = {},
+  ): Promise<VaultSnapshot> {
+    const { repo, outcome } = await ensureClone({
       root: deps.vaultRoot,
       remote,
       url: url ?? cloneUrlFor(remote),
       deps: { token: () => deps.session.token() },
     })
+    // Joining an existing vault (not creating one) — refuse anything that is not
+    // already a vault. `ensureSeeded` below would otherwise write `AGENTS.md`,
+    // `.claude/` and friends into a plain code repo and the auto-push would carry
+    // them upstream, quietly turning someone's codebase into a half-vault. The
+    // marker is the `.holi/vault.json` the seed commits at creation. A repo we
+    // just cloned for this is removed on refusal so nothing is left behind; a
+    // pre-existing adopted path is left exactly as we found it.
+    if (opts.requireVault && !(await isVaultClone(repo.root))) {
+      if (outcome.kind === 'cloned') await rm(repo.root, { recursive: true, force: true })
+      throw new Error(
+        `${remote} is not a Holi vault. Create a new vault instead of adopting this repo.`,
+      )
+    }
     await ensureSeeded(repo.root)
     await deps.registry.add({
       remote,
@@ -393,8 +421,9 @@ export function createRouter(deps: RouterDeps) {
 
     add: t.procedure
       .input(fields({ remote: 'string', url: 'string?' }))
-      // FR-7: clone the chosen repo into the managed root and open it.
-      .mutation(({ input }) => addVault(safeRemote(input.remote), input.url)),
+      // FR-7: clone the chosen repo into the managed root and open it — but only
+      // if it is already a vault (see `addVault`'s `requireVault`).
+      .mutation(({ input }) => addVault(safeRemote(input.remote), input.url, { requireVault: true })),
 
     create: t.procedure
       .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
@@ -403,6 +432,10 @@ export function createRouter(deps: RouterDeps) {
         const repo = await gh(() =>
           deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
         )
+        // Mark it a vault so it reads as one in the picker and passes the adopt
+        // guard. A separate write from creation: it can fail on its own, and a
+        // repo without the topic is recoverable, not a broken vault.
+        await gh(() => deps.session.api.markVault(repo.remote))
         const snapshot = await addVault(repo.remote, input.url)
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited

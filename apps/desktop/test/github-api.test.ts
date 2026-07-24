@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { GitHubApi, GitHubApiError, type ApiDeps } from '../src/main/github/api'
+import { GitHubApi, GitHubApiError, HOLI_VAULT_TOPIC, type ApiDeps } from '../src/main/github/api'
 
 interface Recorded {
   url: string
@@ -175,6 +175,23 @@ describe('GitHubApi.repos', () => {
     expect(repos.map((r) => r.owner)).toEqual([
       { login: 'syv-ai', kind: 'org' },
       { login: 'nthomsencph', kind: 'user' },
+    ])
+  })
+
+  it('flags a repo as a vault only when it carries the holi-vault topic', async () => {
+    const t = api([
+      {
+        body: [
+          repo({ full_name: 'a/vault', topics: [HOLI_VAULT_TOPIC, 'notes'] }),
+          repo({ full_name: 'a/code', topics: ['typescript'] }),
+          repo({ full_name: 'a/bare' }), // no topics field at all
+        ],
+      },
+    ])
+    expect((await t.client.repos()).map((r) => [r.remote, r.isVault])).toEqual([
+      ['a/vault', true],
+      ['a/code', false],
+      ['a/bare', false],
     ])
   })
 
@@ -360,6 +377,24 @@ describe('GitHubApi.createRepo', () => {
     ])
 
     await expect(t.client.createRepo({ name: 'vault' })).rejects.toThrow(/vault/)
+  })
+})
+
+describe('GitHubApi.markVault', () => {
+  it('PUTs the holi-vault topic onto the repo', async () => {
+    const t = api([{ body: { names: [HOLI_VAULT_TOPIC] } }])
+
+    await t.client.markVault('nthomsencph/vault')
+
+    const req = t.requests[0]
+    expect(new URL(req.url).pathname).toBe('/repos/nthomsencph/vault/topics')
+    expect(req.method).toBe('PUT')
+    expect(req.body).toEqual({ names: [HOLI_VAULT_TOPIC] })
+  })
+
+  it('rejects a remote that is not owner/repo', async () => {
+    const t = api([{ body: {} }])
+    await expect(t.client.markVault('../../etc')).rejects.toThrow()
   })
 })
 

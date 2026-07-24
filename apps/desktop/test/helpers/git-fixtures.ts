@@ -11,7 +11,7 @@
  * GitHub, with no network and no credentials.
  */
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -62,6 +62,27 @@ export async function makeRemote(): Promise<string> {
   const seed = join(base, 'seed')
   await exec('git', ['clone', bare, seed])
   await writeFile(join(seed, 'README.md'), '# Vault\n', 'utf8')
+  // The `.holi/vault.json` marker, so these origins read as real Holi vaults —
+  // `vaults.add` refuses to adopt (and seed) anything without it. Kept in the
+  // one seed commit so commit-count and log assertions are unaffected.
+  await mkdir(join(seed, '.holi'), { recursive: true })
+  await writeFile(join(seed, '.holi', 'vault.json'), '{\n  "version": 1\n}\n', 'utf8')
+  await plainGit(seed, ['add', '-A'])
+  await plainGit(seed, ['commit', '-m', 'seed'])
+  await plainGit(seed, ['push', 'origin', 'main'])
+  return bare
+}
+
+/** A bare remote that is NOT a Holi vault — a plain code repo, for the tests
+ * that assert `vaults.add` refuses to adopt one. */
+export async function makeNonVaultRemote(): Promise<string> {
+  const base = await tmp('holi-git-plain-')
+  const bare = join(base, 'origin.git')
+  await exec('git', ['init', '--bare', '-b', 'main', bare])
+
+  const seed = join(base, 'seed')
+  await exec('git', ['clone', bare, seed])
+  await writeFile(join(seed, 'README.md'), '# Just code\n', 'utf8')
   await plainGit(seed, ['add', '-A'])
   await plainGit(seed, ['commit', '-m', 'seed'])
   await plainGit(seed, ['push', 'origin', 'main'])

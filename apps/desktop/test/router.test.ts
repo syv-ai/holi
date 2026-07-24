@@ -6,7 +6,7 @@ import { promisify } from 'node:util'
 import { parseTaskFile } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
-import { makeClone, makeRemote, plainGit } from './helpers/git-fixtures'
+import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createRouter } from '../src/main/router'
 
 const exec = promisify(execFile)
@@ -870,10 +870,29 @@ describe('vaults.add', () => {
     const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
     expect(entry?.path).toBe(join(base, 'Holi', 'syv-ai', 'notes'))
     expect(host.active()?.remote).toBe('syv-ai/notes')
-    // Seeded on the way in, so a repo that was never a Holi vault is protected
-    // before its first commit can carry a machine-local file.
+    // Seeded on the way in, so the `.gitignore` is in place before the first
+    // commit can carry a machine-local file.
     expect(await readFile(join(entry!.path, '.gitignore'), 'utf8')).toContain('USER.md')
     expect(await readFile(join(entry!.path, 'AGENTS.md'), 'utf8')).toContain('# Agent rules')
+  })
+
+  it('refuses to adopt a repo that is not a Holi vault, and registers nothing', async () => {
+    // The picker filters to vaults, but a remote can reach this procedure
+    // directly. Adopting seeds the clone, so a plain code repo (no `.holi`
+    // marker) must be refused before the seed can commit `AGENTS.md`/`.claude/`
+    // into it — otherwise the next auto-push corrupts someone's codebase.
+    const { caller, base } = await rig()
+    const origin = await makeNonVaultRemote()
+
+    await expect(
+      caller.vaults.add({ remote: 'syv-ai/just-code', url: origin }),
+    ).rejects.toThrow(/not a Holi vault/)
+
+    expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
+    // The clone made to inspect it is removed, so a refused adopt leaves nothing.
+    await expect(
+      readFile(join(base, 'Holi', 'syv-ai', 'just-code', 'README.md'), 'utf8'),
+    ).rejects.toThrow()
   })
 
   it('adopts a clone that is already at the managed path', async () => {
@@ -930,11 +949,15 @@ describe('vaults.create', () => {
       defaultBranch: 'main',
       canPush: true,
       owner: { login: 'syv-ai', kind: 'org' },
+      isVault: true,
     })
+    const markVault = vi.spyOn(session.api, 'markVault').mockResolvedValue()
 
     const snap = await caller.vaults.create({ name: 'fresh', owner: 'syv-ai', url: origin })
 
     expect(session.api.createRepo).toHaveBeenCalledWith({ name: 'fresh', owner: 'syv-ai' })
+    // The new repo is stamped a vault, so it reads as one and passes the guard.
+    expect(markVault).toHaveBeenCalledWith('syv-ai/fresh')
     expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
     // FR-8: seeded, committed AND pushed, so the vault exists for everyone else.
     // The push is automatic (open-drain + the explicit kick in vaults.create),
@@ -966,7 +989,9 @@ describe('vaults.create', () => {
       defaultBranch: 'main',
       canPush: true,
       owner: { login: 'nthomsencph', kind: 'user' },
+      isVault: true,
     })
+    vi.spyOn(session.api, 'markVault').mockResolvedValue()
 
     await caller.vaults.create({ name: 'fresh', owner: 'nthomsencph', url: origin })
 
