@@ -25,7 +25,7 @@ import { ExplorerHeader } from './tree/ExplorerHeader'
 import { TreeContextMenu, type MenuItem } from './tree/TreeContextMenu'
 import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
-import { joinPath, parentOf, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
+import { basename, joinPath, parentOf, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
 import {
   activeRemoteAtom,
   backrefsFor,
@@ -154,6 +154,32 @@ export function FileTree({
         },
       },
     },
+    // Drag a note onto a folder to move it there — a path change, so it reuses
+    // the link-rewriting rename. No sibling reordering (files are alpha-sorted).
+    // Phase 1: files only; dragging folders / atomic multi-move is Phase 2.
+    canReorder: false,
+    canDrag: (items) => items.every((i) => !i.isFolder()),
+    canDrop: (items, target) => {
+      const dest = target.item
+      if (!dest.isFolder()) return false
+      const destPath = dest.getId() === ROOT_ID ? '' : dest.getId()
+      return items.every((i) => {
+        if (i.isFolder()) return false
+        const from = i.getId()
+        const parent = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : ''
+        return parent !== destPath // not already in this folder
+      })
+    },
+    onDrop: async (items, target) => {
+      const destPath = target.item.getId() === ROOT_ID ? '' : target.item.getId()
+      // Sequential, not parallel: each move flushes and commits, and racing
+      // commits corrupts the working tree.
+      for (const i of items) {
+        const from = i.getId()
+        const to = joinPath(destPath, basename(from))
+        if (to !== from) await renameNote({ from, to })
+      }
+    },
     features: [
       syncDataLoaderFeature,
       selectionFeature,
@@ -266,6 +292,8 @@ export function FileTree({
                   ? 'bg-neutral-800 text-neutral-100'
                   : 'text-neutral-300 hover:bg-neutral-800/60',
                 isOpen ? 'text-sky-300' : '',
+                // The folder a dragged note would drop into.
+                item.isDragTarget() ? 'bg-sky-500/20 ring-1 ring-inset ring-sky-500/60' : '',
               ].join(' ')}
             >
               <span className="flex w-4 shrink-0 justify-center text-neutral-500">
