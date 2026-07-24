@@ -4,7 +4,7 @@ import type { SyncState } from '../../../main/vault/active-vault'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { scaffoldNoteText } from '../lib/scaffold'
 import { trpc } from '../lib/trpc'
-import { retargetTab, workspaceAtom } from './panes'
+import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -213,5 +213,75 @@ export const renameNoteAtom = atom(
     await set(loadSnapshotAtom)
     if (wasActive) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === to) ?? null)
     await trpc.sync.commitNow.mutate()
+  },
+)
+
+/**
+ * Batch move (folder rename/delete-to-move, drag, cut+paste). Same order as
+ * `renameNoteAtom`, one commit-pair for the whole batch: flush the live buffer
+ * and commit a clean restore point, run the single-pass `notes.move`, retarget
+ * every open tab, reload the snapshot, follow the active doc, commit again.
+ */
+export const moveNotesAtom = atom(
+  null,
+  async (get, set, { moves }: { moves: { from: string; to: string }[] }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || moves.length === 0) return
+    await flushAllBuffers()
+    await trpc.sync.commitNow.mutate()
+    await trpc.notes.move.mutate({ remote, moves })
+    set(workspaceAtom, retargetTabs(get(workspaceAtom), moves))
+    const active = get(activeDocAtom)
+    const moved = active ? moves.find((m) => m.from === active.path) : undefined
+    await set(loadSnapshotAtom)
+    if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
+    await trpc.sync.commitNow.mutate()
+  },
+)
+
+/**
+ * Batch copy (Duplicate, Copy+Paste). No link rewrite and no tab retarget — the
+ * originals stay put — but the same commit-pair ordering, and the flush ensures a
+ * copy of a note being edited includes the latest keystrokes.
+ */
+export const copyNotesAtom = atom(
+  null,
+  async (get, set, { copies }: { copies: { from: string; to: string }[] }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || copies.length === 0) return
+    await flushAllBuffers()
+    await trpc.sync.commitNow.mutate()
+    await trpc.notes.copy.mutate({ remote, copies })
+    await set(loadSnapshotAtom)
+    await trpc.sync.commitNow.mutate()
+  },
+)
+
+/**
+ * Batch delete (file, folder, multi-selection). Clears the editor if the open
+ * note is among them and closes every deleted tab, so the pane never holds a doc
+ * that no longer exists. One commit-pair, like the others.
+ */
+export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: string[] }) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote || paths.length === 0) return
+  await flushAllBuffers()
+  await trpc.sync.commitNow.mutate()
+  await trpc.notes.deleteMany.mutate({ remote, paths })
+  const gone = new Set(paths)
+  if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
+  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
+  await set(loadSnapshotAtom)
+  await trpc.sync.commitNow.mutate()
+})
+
+/** What links into a set — the folder / multi-selection delete preview (FR-12
+ *  generalized). Empty, and no call, for an empty set. */
+export const backrefsForMany = atom(
+  null,
+  async (get, _set, paths: string[]): Promise<{ path: string; count: number }[]> => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || paths.length === 0) return []
+    return trpc.notes.backrefsMany.query({ remote, paths })
   },
 )
