@@ -1,7 +1,7 @@
 # File tree — VS Code-style explorer + CRUD
 
 **Date:** 2026-07-24
-**Status:** Design approved, pre-plan
+**Status:** Delivered — Phase 1 (`docs/plans/2026-07-24-file-tree-vscode.md`) + Phase 2 (`docs/plans/2026-07-25-file-tree-vscode-phase2.md`)
 **Area:** `apps/desktop` renderer (file tree) + `main/router.ts` notes procedures
 
 ## Goal
