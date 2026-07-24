@@ -130,6 +130,30 @@ export function FileTree({
       const to = joinPath(parent, withMdExtension(value.trim()))
       if (value.trim() && to !== from) void renameNote({ from, to })
     },
+    // Delete / Backspace on the focused file opens the backref preview (files
+    // only in Phase 1). arrow-nav / typeahead / F2 come free with the features.
+    hotkeys: {
+      customDelete: {
+        hotkey: 'Delete',
+        handler: (_e, t) => {
+          const focused = t.getFocusedItem()
+          if (focused && !focused.isFolder()) {
+            const path = focused.getId()
+            void getBackrefs(path).then((refs) => setConfirming({ path, refs }))
+          }
+        },
+      },
+      customBackspace: {
+        hotkey: 'Backspace',
+        handler: (_e, t) => {
+          const focused = t.getFocusedItem()
+          if (focused && !focused.isFolder()) {
+            const path = focused.getId()
+            void getBackrefs(path).then((refs) => setConfirming({ path, refs }))
+          }
+        },
+      },
+    },
     features: [
       syncDataLoaderFeature,
       selectionFeature,
