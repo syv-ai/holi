@@ -4,6 +4,20 @@
  * — the static prototype is the visual source of truth. */
 
 .onboarding-ritual {
+  /* Self-contained theme tokens. The ritual is a deliberately dark, full-screen
+   * ceremony that owns its own palette rather than inheriting the app theme —
+   * ported from the old repo's dark tokens (holi src/styles/tokens.css). Only
+   * the five tokens this stylesheet actually references are defined here. */
+  --background: 0 0% 9%;
+  --foreground: 0 0% 82%;
+  --muted-foreground: 0 0% 62%;
+  --primary: 152 32% 52%;
+  --primary-hover: 152 36% 60%;
+  --border: 0 0% 14%;
+  --surface-1: 0 0% 12%;
+  --surface-2: 0 0% 15%;
+  --destructive: 8 50% 58%;
+
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -914,4 +928,57 @@
       inset 0 0 0 1px hsl(var(--primary) / 0.32),
       0 0 0 18px hsl(var(--primary) / 0);
   }
+}
+
+/* ── Join sub-view (overlays Act 2 with the repo picker) ─────────────
+ * New in the Electron port — the old ritual had no join path. Styled to
+ * sit inside the same act-2 stage, reusing the ritual's dark tokens. */
+.onboarding-ritual .obrit-join {
+  width: 100%;
+  max-width: 520px;
+}
+.onboarding-ritual .obrit-join-list {
+  margin-top: 14px;
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.onboarding-ritual .obrit-join-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 140ms;
+}
+.onboarding-ritual .obrit-join-row:hover:not(:disabled) {
+  background: hsl(0 0% 100% / 0.05);
+}
+.onboarding-ritual .obrit-join-row:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.onboarding-ritual .obrit-join-remote {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.onboarding-ritual .obrit-join-vis {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: hsl(38 55% 60%);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
