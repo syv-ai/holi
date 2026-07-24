@@ -443,9 +443,21 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    */
   async function push(): Promise<PushResult> {
     const target = (await defaultBranch()) ?? (await status()).branch
-    const waiting = Number(
-      await runGit(root, ['rev-list', '--count', `origin/${target}..HEAD`], opts).catch(() => '0'),
+    // A repo created empty (`auto_init: false`, then pushed to) has no
+    // `origin/<target>` ref yet, so `origin/<target>..HEAD` *errors* — which
+    // means "this branch does not exist upstream", i.e. every local commit is
+    // waiting, NOT "nothing to push". Swallowing that error as 0 is what left
+    // brand-new vaults silently unpushed and unclonable. Distinguish the two by
+    // checking the ref exists before counting against it.
+    const hasUpstream = await runGit(
+      root,
+      ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${target}`],
+      opts,
     )
+      .then(() => true)
+      .catch(() => false)
+    const range = hasUpstream ? `origin/${target}..HEAD` : 'HEAD'
+    const waiting = Number(await runGit(root, ['rev-list', '--count', range], opts).catch(() => '0'))
     if (waiting === 0) return { kind: 'nothing-to-push' }
 
     const res = await tryGit(

@@ -367,6 +367,24 @@ describe('push', () => {
     expect(await openRepo(dir).push()).toEqual({ kind: 'nothing-to-push' })
   })
 
+  it('pushes the whole history to an empty remote (a new vault), not nothing', async () => {
+    // FR-8: "New vault" makes an empty GitHub repo (auto_init:false), so there
+    // is no `origin/main` to diff HEAD against. The entire local history is
+    // waiting — the push must send it. Regression: `origin/main..HEAD` errored
+    // on the missing ref and was swallowed as "nothing to push", leaving every
+    // new vault silently local and unclonable.
+    const base = await tmp('holi-git-emptyremote-')
+    const bare = join(base, 'origin.git')
+    await exec('git', ['init', '--bare', '-b', 'main', bare])
+    const dir = await makeClone(bare)
+    await commitFile(dir, 'seed.md', 'seed\n')
+
+    expect(await openRepo(dir).push()).toEqual({ kind: 'pushed', commits: 1 })
+    // The remote really received it — a fresh clone sees the seed.
+    const check = await makeClone(bare, 'check')
+    expect(await readFile(join(check, 'seed.md'), 'utf8')).toBe('seed\n')
+  })
+
   it('distinguishes a non-fast-forward rejection', async () => {
     // FR-14 hands this to the pull that was going to happen anyway, so it must
     // be told apart from a permission failure rather than lumped in with it.
