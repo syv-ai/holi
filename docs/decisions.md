@@ -33,7 +33,26 @@ The living docs are the truth; this file is only the staging area.
 
 ---
 
-## Number allocation — **next free is D61**
+## D61 — Sync pushes automatically. There is no Publish.
+
+**Context.** D60 point 2 landed sync as "auto-pull, **explicit** push": edits become local commits, but they only reach the remote when the user clicks **Publish**. That leaves the user holding a chore whose value is near-zero — nobody benefits from choosing *when* a half-typed sentence reaches the remote. The two things a push actually buys, off-machine durability and teammates seeing your work, are both satisfied by a latency of *tens of seconds*, which a machine decides better than a person. Removing publish also removes a phantom from the version-history slice: a publish leaves **no commit of its own** (a push creates no object), so it could never be a row in a `git log` timeline; with publish gone, the timeline is just the log.
+
+**Decision.** Agreed with Nicolai 2026-07-24. D60 point 2 is amended from "explicit push" to **automatic push**:
+
+1. **Commit and push cadences are decoupled.** Commit stays as D60 set it (3s idle debounce + leave points + ⌘S, local, clean tree). Push runs on its **own coalescing debounce (~15s quiet)** as a background operation, so continuous typing collapses into a handful of pushes.
+2. **Immediate best-effort push on the moments a user leaves work behind**: ⌘S (an explicit "save this"), window blur / tab close / vault switch (fire-and-forget), quit (**~1s courtesy budget**, reusing the flush-on-quit shape), vault open (drains a killed quit or an offline session), after a successful pull, and on focus.
+3. **Push-failure taxonomy.** *Network* → stay local, retry next tick, show `offline — N waiting`. *Non-fast-forward* → **optimistic recovery**: pull inline then retry; a conflicting pull routes to the existing conflict/reconcile path (so a rejection is just one more way to discover a conflict). *Permission* → surfaced as exactly that (FR-16 survives), never conflated with offline.
+4. **The Publish button, the `publish()` operation, the `sync.publish` procedure, the `publishing` SyncState, and the `N to publish` state are all deleted.** The only time unpushed work is shown is when a push is *failing* — the honest reading of FR-22.
+
+**Why the cadence and not push-on-every-commit-tick.** Sub-second freshness on the remote has no user value, and pushing on the 3s commit tick means ~1,200 pushes in a pathological hour of typing — not a rate-limit problem (git-over-HTTPS doesn't consume the REST quota) but real *churn*: process spawns, tiny commits piling on the remote, every teammate's pull loop merging them. The ~15s coalesce + leave points give "durable off-machine within seconds of stepping away" at ~1/10th the operations.
+
+**Rejected.** *Push literally on the commit tick* — the churn above for freshness nobody can perceive. *Always pull before every push (keep FR-14 ordering literally)* — a fetch+merge every push tick makes the pull interval meaningless; optimistic push-then-recover is cheaper and lands in the same conflict path. *Keep Publish as an optional manual "sync now"* — it re-introduces the concept and the button we're deleting for a reassurance the automatic cadence + vault-open drain already provide. *Record pushed shas to mark publishes in history* — costs machine-local state that would make each teammate's timeline for the same file differ; there is nothing to mark once publish is not a concept.
+
+*This entry stays in the inbox until the code matches it. Design detail in `specs/2026-07-24-auto-push-drop-publish-design.md`.*
+
+---
+
+## Number allocation — **next free is D62**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
