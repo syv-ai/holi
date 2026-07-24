@@ -104,3 +104,32 @@ export function rewriteWikiLinks(
   if (count === 0) return { text, count: 0 }
   return { text: out + text.slice(cursor), count }
 }
+
+/**
+ * Rewrite every note link whose target is a key of `moves` to that key's value,
+ * in ONE pass over the ORIGINAL map — the batch-move primitive (spec §Backend).
+ *
+ * The single pass is the correctness. A link `[[a.md]]` under a map that also
+ * moves `b.md` must resolve to `map.get('a.md')` and stop there, even when that
+ * value is itself a key (`a→b`, `b→c`): chaining it on to `c` is precisely the
+ * double-rewrite that applying N single-target `rewriteWikiLinks` in sequence
+ * produces. Labels are preserved; task chips and untargeted links are untouched.
+ */
+export function rewriteWikiLinksMulti(
+  text: string,
+  moves: Map<string, string>,
+): { text: string; count: number } {
+  const links = parseWikiLinks(text)
+  let out = ''
+  let cursor = 0
+  let count = 0
+  for (const link of links) {
+    if (link.kind !== 'note') continue
+    const to = moves.get(link.target)
+    if (to === undefined) continue
+    out += text.slice(cursor, link.start) + formatWikiLink(to, link.label)
+    cursor = link.end
+    count += 1
+  }
+  return count === 0 ? { text, count: 0 } : { text: out + text.slice(cursor), count }
+}

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { formatWikiLink, parseWikiLinks, rewriteWikiLinks } from '../src/wiki-links'
+import {
+  formatWikiLink,
+  parseWikiLinks,
+  rewriteWikiLinks,
+  rewriteWikiLinksMulti,
+} from '../src/wiki-links'
 
 describe('parseWikiLinks', () => {
   it('parses a single note link with positions', () => {
@@ -68,5 +73,28 @@ describe('rewriteWikiLinks (the D12 rename primitive)', () => {
     const { text: out, count } = rewriteWikiLinks('[[ old/a.md | L ]]', 'old/a.md', 'new/b.md')
     expect(out).toBe('[[new/b.md|L]]')
     expect(count).toBe(1)
+  })
+})
+
+describe('rewriteWikiLinksMulti', () => {
+  it('rewrites each targeted link once, from the ORIGINAL map (no chaining)', () => {
+    // a→b and b→c in the SAME batch: the [[a.md]] link must become [[b.md]],
+    // NOT be chained on to [[c.md]]. This is the property N sequential renames
+    // cannot hold — the whole reason move is one pass over a full map.
+    const map = new Map([
+      ['a.md', 'b.md'],
+      ['b.md', 'c.md'],
+    ])
+    const { text, count } = rewriteWikiLinksMulti('see [[a.md]] and [[b.md|Old]]', map)
+    expect(text).toBe('see [[b.md]] and [[c.md|Old]]')
+    expect(count).toBe(2)
+  })
+
+  it('leaves untargeted links and task chips alone, and returns the input unchanged at count 0', () => {
+    const map = new Map([['a.md', 'z.md']])
+    expect(rewriteWikiLinksMulti('[[keep.md]] and [[task:t1]]', map)).toEqual({
+      text: '[[keep.md]] and [[task:t1]]',
+      count: 0,
+    })
   })
 })
