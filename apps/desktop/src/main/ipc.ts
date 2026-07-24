@@ -28,4 +28,12 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   ipcMain.handle('holi:openExternal', async (_event, url: string) => {
     await shell.openExternal(url)
   })
+
+  // The system FILE manager, not the browser. `openExternal` is URL-only and
+  // will not reveal a path on disk; this is its sibling for a vault's local
+  // clone (FR-15). It *reveals* — opens the parent with the folder selected —
+  // rather than opening the folder itself, so the user sees the vault in place.
+  ipcMain.handle('holi:openPath', (_event, path: string) => {
+    shell.showItemInFolder(path)
+  })
 }

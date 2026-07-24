@@ -29,6 +29,9 @@ declare global {
         flushDone(): void
       }
       openExternal(url: string): Promise<void>
+      /** Reveal a local path — a vault's clone folder — in the system file
+       *  manager (Finder on macOS), selected in its parent. */
+      openPath(path: string): Promise<void>
     }
   }
 }

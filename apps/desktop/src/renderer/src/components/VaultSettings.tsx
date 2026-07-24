@@ -25,6 +25,22 @@ import { activeRemoteAtom, vaultsAtom } from '../state/vaults'
  *  which is the honest outcome for a vault that is not on GitHub. */
 const originUrl = (remote: string) => `https://github.com/${remote}`
 
+/** A collaborator's — or the signed-in user's — GitHub profile. Same honesty
+ *  caveat as `originUrl`: a login is always a real GitHub account, so this
+ *  always resolves. */
+const userUrl = (login: string) => `https://github.com/${login}`
+
+/** The GitHub mark, inline. This app ships no icon library (the onboarding port
+ *  had to strip lucide/shadcn), so the one place that needs a logo carries its
+ *  own SVG. `currentColor` lets it inherit the subtle button's text colour. */
+function GitHubMark() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+    </svg>
+  )
+}
+
 export function VaultSettings({ onClose }: { onClose: () => void }) {
   const remote = useAtomValue(activeRemoteAtom)
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
@@ -72,21 +88,32 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           <p className="text-neutral-400">no vault open</p>
         ) : (
           <>
-            {/* Where it actually points. A vault IS its remote, and until now
-                nothing in the app said which one — you could not tell a vault
-                backed by GitHub from one backed by a local fixture. */}
-            <button
-              className="block max-w-full truncate text-left text-sky-400 hover:underline"
-              title={originUrl(entry.remote)}
-              onClick={() => void window.holi.openExternal(originUrl(entry.remote))}
-            >
-              {entry.remote}
-            </button>
-            {/* FR-15 promises the clones survive a sign-out and that the user is
-                told where they are. This is where they are told. */}
-            <p className="truncate text-[11px] text-neutral-500" title={entry.path}>
-              {entry.path}
-            </p>
+            {/* Where the vault points, and where its clone lives on disk —
+                labelled and styled alike so they read as one pair. A vault IS
+                its remote (until now nothing said which one); the local path is
+                the clone FR-15 promises survives a sign-out, and this is where
+                the user is told where it is. Both are links: the remote opens
+                GitHub, the path reveals the folder in Finder. */}
+            <div className="flex items-baseline gap-2">
+              <span className="shrink-0 text-neutral-500">Remote:</span>
+              <button
+                className="min-w-0 truncate text-left text-sky-400 hover:underline"
+                title={originUrl(entry.remote)}
+                onClick={() => void window.holi.openExternal(originUrl(entry.remote))}
+              >
+                {entry.remote}
+              </button>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="shrink-0 text-neutral-500">Local:</span>
+              <button
+                className="min-w-0 truncate text-left text-sky-400 hover:underline"
+                title={entry.path}
+                onClick={() => void window.holi.openPath(entry.path)}
+              >
+                {entry.path}
+              </button>
+            </div>
           </>
         )}
         {members && (
@@ -97,7 +124,22 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
       </section>
 
       <section className="space-y-2">
-        <h3 className="font-medium">Collaborators</h3>
+        {/* Manage sits inline with the header, subtle and right-aligned — Holi
+            does not implement invitation (FR-11), it just points at the flow
+            that does, so the control is a quiet deep-link, not a primary action. */}
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium">Collaborators</h3>
+          <button
+            disabled={remote === null}
+            className="flex items-center gap-1.5 text-xs text-neutral-500 transition-colors hover:text-neutral-300 disabled:pointer-events-none disabled:opacity-40"
+            onClick={() => {
+              if (remote !== null) void trpc.github.openCollaboratorSettings.mutate({ remote })
+            }}
+          >
+            Manage…
+            <GitHubMark />
+          </button>
+        </div>
         {/* A refusal is ordinary (signed out, no scope, local-fixture vault) and
             the copy names which one — a bare GitHub "Not Found" reads like a
             crash, and the old catch-all blamed sign-in for all four. The raw
@@ -108,20 +150,20 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           </p>
         )}
         {members === null && error === null && <p className="text-xs text-neutral-500">loading…</p>}
-        <ul className="space-y-1 text-neutral-400">
+        <ul className="space-y-1">
           {members?.collaborators.map((c) => (
-            <li key={c.accountId}>{c.login}</li>
+            <li key={c.accountId}>
+              {/* Each collaborator links to their GitHub profile. */}
+              <button
+                className="text-neutral-400 transition-colors hover:text-sky-400 hover:underline"
+                title={userUrl(c.login)}
+                onClick={() => void window.holi.openExternal(userUrl(c.login))}
+              >
+                {c.login}
+              </button>
+            </li>
           ))}
         </ul>
-        <button
-          disabled={remote === null}
-          className="rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700 disabled:opacity-50"
-          onClick={() => {
-            if (remote !== null) void trpc.github.openCollaboratorSettings.mutate({ remote })
-          }}
-        >
-          Manage on GitHub…
-        </button>
       </section>
 
       {/* Account actions live here, not in the footer: the footer reports state,
@@ -129,7 +171,18 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
       <section className="mt-auto space-y-2 border-t border-neutral-900 pt-4">
         <h3 className="font-medium">Account</h3>
         <div className="flex items-center justify-between">
-          <p className="text-neutral-400">{session?.login}</p>
+          {/* The signed-in user, linked to their GitHub profile. */}
+          {session?.login ? (
+            <button
+              className="text-neutral-400 transition-colors hover:text-sky-400 hover:underline"
+              title={userUrl(session.login)}
+              onClick={() => void window.holi.openExternal(userUrl(session.login))}
+            >
+              {session.login}
+            </button>
+          ) : (
+            <p className="text-neutral-400">{session?.login}</p>
+          )}
           <button
             className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700"
             // FR-15: this drops the keychain entry and leaves every clone where

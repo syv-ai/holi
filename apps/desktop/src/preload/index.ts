@@ -52,4 +52,5 @@ contextBridge.exposeInMainWorld('holi', {
     flushDone: () => ipcRenderer.send('vault:flush-done'),
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
+  openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
 })
