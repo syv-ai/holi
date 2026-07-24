@@ -20,11 +20,21 @@ import {
 import { useTree } from '@headless-tree/react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { DeleteConfirm } from './tree/DeleteConfirm'
 import { ExplorerHeader } from './tree/ExplorerHeader'
+import { TreeContextMenu, type MenuItem } from './tree/TreeContextMenu'
 import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
-import { joinPath, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
-import { activeRemoteAtom, createNoteAtom, renameNoteAtom, snapshotAtom } from '../state/vaults'
+import { joinPath, parentOf, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
+import {
+  activeRemoteAtom,
+  backrefsFor,
+  createNoteAtom,
+  deleteNoteAtom,
+  renameNoteAtom,
+  snapshotAtom,
+  vaultsAtom,
+} from '../state/vaults'
 
 /** The inline editable row shown when creating a file or folder. Escape cancels,
  *  Enter commits, blur cancels — matching the tree's rename input. */
@@ -70,8 +80,18 @@ export function FileTree({
 }) {
   const snapshot = useAtomValue(snapshotAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const vaults = useAtomValue(vaultsAtom)
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
+  const deleteNote = useSetAtom(deleteNoteAtom)
+  const getBackrefs = useSetAtom(backrefsFor)
+  // Right-click menu at a cursor position, and the delete-preview dialog.
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string; isFolder: boolean } | null>(
+    null,
+  )
+  const [confirming, setConfirming] = useState<{ path: string; refs: { path: string; count: number }[] } | null>(
+    null,
+  )
   // Transient folders (spec §Empty folders): client-only until a note lands.
   const [pendingFolders, setPendingFolders] = useState<string[]>([])
   // An inline-create row: kind + the folder it is created under (rendered in a
@@ -131,6 +151,39 @@ export function FileTree({
     setPendingFolders((f) => f.filter((folder) => !paths.some((p) => p.startsWith(`${folder}/`))))
   }, [snapshot])
 
+  const entry = vaults.find((v) => v.remote === activeRemote)
+  // Copy Path / Reveal in Finder need the absolute clone path; the tree only
+  // knows vault-relative paths.
+  const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
+  // Look before you leap: name what links here so the delete is informed (FR-12).
+  const startDelete = (path: string) =>
+    void getBackrefs(path).then((refs) => setConfirming({ path, refs }))
+
+  const buildMenu = (path: string, isFolder: boolean): (MenuItem | 'separator')[] => {
+    const folderParent = isFolder ? path : parentOf(path)
+    return [
+      { label: 'New File…', onSelect: () => setPending({ kind: 'file', parent: folderParent }) },
+      { label: 'New Folder…', onSelect: () => setPending({ kind: 'folder', parent: folderParent }) },
+      'separator',
+      // Folder rename/delete are Phase 2 (they fan out to N notes); Phase 1 acts
+      // on files only.
+      ...(isFolder
+        ? []
+        : ([
+            {
+              label: 'Rename…',
+              kbd: 'F2',
+              onSelect: () => tree.getItemInstance(path).startRenaming(),
+            },
+            { label: 'Delete', kbd: '⌫', danger: true, onSelect: () => startDelete(path) },
+          ] as MenuItem[])),
+      ...(isFolder ? [] : (['separator'] as const)),
+      { label: 'Copy Path', onSelect: () => void navigator.clipboard.writeText(absPathFor(path)) },
+      { label: 'Copy Relative Path', onSelect: () => void navigator.clipboard.writeText(path) },
+      { label: 'Reveal in Finder', onSelect: () => void window.holi.openPath(absPathFor(path)) },
+    ]
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
@@ -178,6 +231,10 @@ export function FileTree({
               onDoubleClick={() => {
                 if (!isFolder) onOpenPinned(id)
               }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setMenu({ x: e.clientX, y: e.clientY, path: id, isFolder })
+              }}
               style={{ paddingLeft: `${level * 12 + 8}px` }}
               className={[
                 'flex h-[22px] items-center gap-1 rounded pr-2 outline-none transition-colors',
@@ -201,8 +258,12 @@ export function FileTree({
                   autoFocus
                   className="min-w-0 flex-1 rounded border border-sky-700 bg-neutral-900 px-1 text-sm outline-none"
                   onFocus={(e) => {
-                    const [s, end] = renameBasenameRange(e.currentTarget.value)
-                    e.currentTarget.setSelectionRange(s, end)
+                    // Defer past headless-tree's own focus handling (which puts the
+                    // caret at the end) so the basename — not the extension — ends
+                    // up selected, as in VS Code.
+                    const el = e.currentTarget
+                    const [s, end] = renameBasenameRange(el.value)
+                    setTimeout(() => el.setSelectionRange(s, end), 0)
                   }}
                 />
               ) : (
@@ -215,6 +276,27 @@ export function FileTree({
           <p className="px-2 text-xs text-neutral-500">no notes yet</p>
         )}
       </div>
+
+      {menu && (
+        <TreeContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={buildMenu(menu.path, menu.isFolder)}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {confirming && (
+        <DeleteConfirm
+          path={confirming.path}
+          refs={confirming.refs}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            const path = confirming.path
+            setConfirming(null)
+            void deleteNote(path)
+          }}
+        />
+      )}
     </div>
   )
 }
