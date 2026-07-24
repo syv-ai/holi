@@ -54,7 +54,7 @@ Each of these is a feature of the design, not an omission:
 - I set a recurring task (weekly, Mon/Wed/Fri); completing it rewrites `due` to the next occurrence and returns it to Todo.
 - I set a reminder "1d" on a due-dated task; Holi raises a native notification the day before at 09:00.
 - I ask the agent "make me a task to review the Q2 doc, due Friday, high priority"; it writes a file and it appears on my board.
-- I publish; my teammates' boards show the task after their next pull.
+- I add a task; it pushes on its own; my teammates' boards show it after their next pull.
 
 ## Data & shape
 
@@ -201,7 +201,7 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 
 ## Dependencies
 
-- **[`../architecture.md`](../architecture.md)** — the sync engine (auto-pull, autosave commits, publish, reconcile) that carries every task write between machines.
+- **[`../architecture.md`](../architecture.md)** — the sync engine (auto-pull, autosave commits, auto-push, reconcile) that carries every task write between machines.
 - **[`notes-editor.md`](notes-editor.md)** — the `[[wiki-link]]` grammar tasks use for all linking, and the rename/link-rewrite pass a lane move depends on.
 - **[`agent.md`](agent.md)** — the agent's native-tools-only surface.
 

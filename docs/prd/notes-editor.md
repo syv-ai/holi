@@ -46,7 +46,7 @@ Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and PDF/docx prev
 - *As someone reorganizing*, I rename a note (or ask the agent to) and every `[[link]]` pointing at it updates.
 - *As someone deleting a note*, I'm shown what references it before I confirm.
 - *As the agent*, I `Read`/`Edit`/`Write` notes with my native tools — they are just files — and the open editor picks up my changes without losing what the user was typing.
-- *As a teammate*, I publish; you pull; my note appears in your tree.
+- *As a teammate*, I edit a note; it pushes on its own; you pull; my note appears in your tree.
 
 ---
 
@@ -194,7 +194,7 @@ A grep over the vault for `[[<path>` — no index, no `link_index` table, no mai
 - **Rename.** File-tree rename or agent → links rewritten → open editors reload the changed text.
 - **Delete.** File-tree delete → dialog lists referencing files → confirm.
 - **New note / folder.** Create at a validated path → editor opens.
-- **Sync status.** One indicator per vault (up to date / N to publish / pulling / reconciling). Never a conflict dialog — a conflict is a banner and an offer of help, not a modal demanding a choice.
+- **Sync status.** One indicator per vault (up to date / pulling / offline — N waiting / no write access / conflict / reconciling / paused). Never a conflict dialog — a conflict is a banner and an offer of help, not a modal demanding a choice.
 
 ---
 
@@ -211,7 +211,7 @@ A grep over the vault for `[[<path>` — no index, no `link_index` table, no mai
 ---
 
 ## Dependencies
-- **[`../architecture.md`](../architecture.md)** — the sync engine: autosave commits, auto-pull, publish, and the reconcile path this PRD hands unmergeable overlaps to.
+- **[`../architecture.md`](../architecture.md)** — the sync engine: autosave commits, auto-push, auto-pull, and the reconcile path this PRD hands unmergeable overlaps to.
 - **[`agent.md`](agent.md)** — the agent writes notes with native tools; its writes arrive here as ordinary external writes.
 - **[`tasks.md`](tasks.md)** — task files are markdown in the same tree; task chips read their frontmatter.
 

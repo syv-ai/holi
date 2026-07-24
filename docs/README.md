@@ -8,12 +8,12 @@ The living documentation for Holi. The PRDs, architecture, and vision are the **
 | [vision.md](vision.md) | What Holi is, product principles, the shape of v1 |
 | [architecture.md](architecture.md) | The whole system: the vault as a git repo, sync, the agent, security |
 | [decisions.md](decisions.md) | **Decision inbox** — new load-bearing decisions land here first, then get consolidated natively into the docs above and the inbox is purged (cycle repeats) |
-| [glossary.md](glossary.md) | Canonical terms (vault, task, publish, reconcile, autosave commit…) |
+| [glossary.md](glossary.md) | Canonical terms (vault, task, push, reconcile, autosave commit…) |
 
 ## PRDs (v1 pillars)
 | PRD | Owns |
 |---|---|
-| [prd/vaults-sync.md](prd/vaults-sync.md) | Vaults as clones, autosave commits, auto-pull, publish, conflicts + reconcile, history |
+| [prd/vaults-sync.md](prd/vaults-sync.md) | Vaults as clones, autosave commits, auto-pull, auto-push, conflicts + reconcile, history |
 | [prd/auth-identity.md](prd/auth-identity.md) | GitHub device-flow sign-in, the token, collaborators as membership, the access model |
 | [prd/notes-editor.md](prd/notes-editor.md) | CodeMirror live-preview editor, file persistence, external writes, wiki-links, rename, tree, tabs |
 | [prd/tasks.md](prd/tasks.md) | `task.*.md` files, the board, swim lanes by folder, recurrence + local reminders |

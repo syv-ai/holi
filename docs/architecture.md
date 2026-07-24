@@ -14,7 +14,7 @@ How Holi fits together. This is the technical spine — the map; each PRD in [`p
 │  ┌───────────────┐  ┌──────────────┐            ┌───────────────────────────┐     │
 │  │ Editor (CM6,  │  │ Task board,  │            │ Sync engine               │     │
 │  │ file-backed)  │  │ drawers, UI  │            │  auto-pull · autosave     │     │
-│  └──────┬────────┘  └──────┬───────┘            │  commits · publish        │     │
+│  └──────┬────────┘  └──────┬───────┘            │  commits · auto-push      │     │
 │         │                  │  tRPC over IPC     │  · reconcile              │     │
 │  ┌──────▼──────────────────▼───────┐            ├───────────────────────────┤     │
 │  │ preload / contextBridge          │◄──────────┤ Vault store               │     │
@@ -70,12 +70,12 @@ Holi never adopts a checkout you maintain yourself: it **auto-commits**, and poi
 
 **Why git, when git was explicitly rejected before.** It was rejected as a *client↔client sync engine for live collaboration* — a judgement that stands, and is exactly why concurrent editing is deferred rather than attempted over git. What it is being used for here is different: durable, shared, asynchronous storage with history and access control, which is the thing git is best at. The old app's git failure modes came from **auto-committing every 30 s and never pulling**, not from git.
 
-### Sync: automatic inbound, explicit outbound
+### Sync: automatic in both directions
 Full design: [`prd/vaults-sync.md`](prd/vaults-sync.md).
 
 - **Autosave commits.** Edits become local commits on an idle debounce or ⌘S. The working tree is therefore **always clean**, so a pull can always merge; a crash loses nothing; and the commit journal *is* the undo history.
+- **Auto-push.** Those commits push on a short coalescing timer and on the leave points (⌘S, blur, tab close, vault switch, quit), so work is off-machine within seconds of stopping — no Publish step (D61). A non-fast-forward rejection recovers by pulling then retrying; a network failure shows *offline — N waiting*; a permission rejection shows *no write access*.
 - **Auto-pull, merging.** Holi fetches and merges on an interval and on focus. **Merge, never rebase** — with dozens of unpushed autosave commits, a rebase replays each and can conflict repeatedly on the same hunk, a failure mode manufactured entirely by autosave granularity.
-- **Publish.** Push is explicit. Your work leaves the machine when you say so.
 - **Reconcile.** A conflicting merge is **aborted immediately**, restoring a clean tree, and surfaces a banner offering **Ask Claude to reconcile** — which pauses autosave, re-runs the merge for real, and hands it to the agent in the drawer. *Ignore the banner and you keep working on an unbroken vault.*
 
 ### The file tree and the watcher

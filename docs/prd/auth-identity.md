@@ -48,7 +48,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 - As a user, I create a new vault; Holi creates a private repo and clones it.
 - As a user, I open the members panel and see who has access, straight from GitHub.
 - As a user, I want to add a teammate, so Holi opens the repo's GitHub collaborators page — it does not pretend to own that flow.
-- As a user, I publish and my push succeeds because GitHub says I may. If I've been removed, the push fails and Holi tells me clearly.
+- As a user, my work pushes automatically and the push succeeds because GitHub says I may. If I've been removed, the push fails and Holi tells me clearly.
 - As a user, I sign out; the token leaves the keychain and Holi stops touching the remotes. My clones stay on disk unless I say otherwise.
 
 ---
@@ -80,7 +80,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 
 ### Offline
 16. **FR-16** Holi **works fully offline with no session check at all**. The clone is the vault; the editor, board, agent, and reminders are local. This is a substantial simplification over the previous design's 30-day offline grace window, which existed because a server owned the truth.
-17. **FR-17** Offline, pull and publish are unavailable and the vault shows its sync state as offline. Local commits accumulate and publish when the network returns.
+17. **FR-17** Offline, pull and push are unavailable and the vault shows its sync state as **offline — N waiting**. Local commits accumulate and push automatically when the network returns.
 
 ---
 
@@ -143,7 +143,7 @@ As FR-8: create a private repo, seed, commit, push, open. Seeding matters more t
 
 ### Losing access
 1. A teammate is removed from the repo on GitHub.
-2. Their next auto-pull or publish fails with a permission error.
+2. Their next auto-pull or auto-push fails with a permission error.
 3. Holi reports it plainly, stops syncing that vault, and leaves the clone and its unpublished commits alone. Their local copy still opens and still edits — it is a folder of markdown on their machine, and pretending otherwise would be theatre.
 
 **This is the honest description of the access model** and it should be stated in the product, not just here: **removing someone stops future sync; it does not reach back and remove what they already have.** That was true of any git-backed system, and it was true of the old design too the moment a clone existed.
