@@ -32,3 +32,29 @@ export async function scanBackrefs(
   }
   return out.sort((a, b) => a.path.localeCompare(b.path))
 }
+
+/**
+ * Files OUTSIDE `targets` that link INTO the set, with how many such links each
+ * has — the delete preview for a folder or multi-selection (FR-12 generalized).
+ *
+ * Links that ORIGINATE from within the set are excluded: an internal link
+ * between two notes being deleted together is not a tombstone anyone is left
+ * with, so counting it would over-warn.
+ */
+export async function scanBackrefsMany(
+  root: string,
+  targets: string[],
+): Promise<{ path: string; count: number }[]> {
+  const set = new Set(targets)
+  const out: { path: string; count: number }[] = []
+  for (const path of await listFiles(root)) {
+    if (!path.endsWith('.md') || set.has(path)) continue
+    const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
+    if (text === null) continue
+    const count = parseWikiLinks(text).filter(
+      (link) => link.kind === 'note' && set.has(link.target),
+    ).length
+    if (count > 0) out.push({ path, count })
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path))
+}
