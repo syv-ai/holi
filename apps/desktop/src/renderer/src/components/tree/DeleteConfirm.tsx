@@ -1,16 +1,17 @@
 /**
- * The FR-12 delete preview: name every file that links here and how many times,
- * so deleting is a decision with the tombstones-to-be in view. An in-app dialog
- * rather than `window.confirm` — the warning is a list, and Electron's native
- * confirm cannot render one.
+ * The FR-12 delete preview, generalized to a set. Names how many external links
+ * across how many files will be left dangling (they become tombstones — no
+ * cascade), so deleting a file, a folder, or a multi-selection is a decision made
+ * with the fallout in view. The caller passes a human `label` and the external
+ * `refs` (folder-internal links are already excluded by `backrefsMany`).
  */
 export function DeleteConfirm({
-  path,
+  label,
   refs,
   onCancel,
   onConfirm,
 }: {
-  path: string
+  label: string
   refs: { path: string; count: number }[]
   onCancel: () => void
   onConfirm: () => void
@@ -22,12 +23,12 @@ export function DeleteConfirm({
       onClick={onCancel}
     >
       <div
-        data-delete-dialog={path}
+        data-delete-dialog={label}
         className="w-80 rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-200 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <p className="mb-2">
-          Delete <span className="font-mono text-neutral-100">{path}</span>?
+          Delete <span className="font-mono text-neutral-100">{label}</span>?
         </p>
         {refs.length === 0 ? (
           <p className="mb-3 text-xs text-neutral-500">Nothing links to it.</p>
@@ -56,7 +57,7 @@ export function DeleteConfirm({
             Cancel
           </button>
           <button
-            data-delete-confirm={path}
+            data-delete-confirm={label}
             className="rounded bg-red-900/60 px-2 py-1 text-xs text-red-200 hover:bg-red-900"
             onClick={onConfirm}
           >
