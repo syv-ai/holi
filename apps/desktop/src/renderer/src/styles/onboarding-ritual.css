@@ -251,7 +251,11 @@
 
 .onboarding-ritual .obrit-act-inner {
   width: 100%;
-  max-width: 560px;
+  /* Wide enough that a medium vault title stays on one line: the Act-3
+   * "Welcome to <slug>." heading is a 50px block that wraps at the old 560px
+   * cap. The prose ledes keep their own narrower caps (440/380px) below —
+   * only the titles want this room. */
+  max-width: 860px;
 }
 
 /* ── Shared typography ───────────────────────────────────────────── */
