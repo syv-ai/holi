@@ -33,7 +33,7 @@ Authentication is built; onboarding is not. A signed-in user with no vaults land
 
 ## Trigger & placement
 
-- **First-run gate — `App.tsx`.** Currently: `session === undefined → null; session === null → <SignIn/>; else <Shell/>`. Add a branch: when `session` is present and `vaults.length === 0`, render `<OnboardingRitual mode="first-run" />` instead of `<Shell/>`. Requires the vault list to be loaded at the App level (today `Shell` loads it via `loadVaultsAtom`; the gate needs `vaultsAtom` populated before it decides — App loads it, or reads it after Shell's load. See Open questions §1).
+- **First-run gate — `App.tsx`.** Currently: `session === undefined → null; session === null → <SignIn/>; else <Shell/>`. The initial `loadVaults()` lifts to `App` (Resolved decision 1). Add a branch: once the session is present, gate on the vault list — while it's still loading show a brief "loading" state; when loaded and `vaults.length === 0`, render `<OnboardingRitual mode="first-run" />`; otherwise `<Shell/>`.
 - **Add-vault mode — `Shell.tsx`.** The "+" that today toggles `<AddVault>` instead renders `<OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />`.
 - **Success path.** `createVaultAtom`/`addVaultAtom` already `set(activeRemoteAtom, remote)`, refresh `snapshotAtom`, and `await loadVaultsAtom`. So on success in first-run mode, `vaults.length` becomes 1 → the gate flips false → `Shell` renders the now-open vault. The ritual needs no "open" call of its own.
 
@@ -53,9 +53,11 @@ Authentication is built; onboarding is not. A signed-in user with no vaults land
 - `continue` / `enter` advances to Act 3 when the slug is non-empty. Back/`Esc` → Act 1 (first-run) or dismiss (add-vault).
 
 **Act 3 · Threshold**
-- Eyebrow "YOUR VAULT IS READY", display "Welcome to \<name>.", sub: *"Created under \<owner> · your team can clone it now."*
-- *Open vault →* → `createVaultAtom({ name, owner })`. While pending: spinner + "Creating". On rejection: capture `err` message, bounce to Act 2, show inline error.
+- Eyebrow "YOUR VAULT IS READY", display "Welcome to \<slug>." (the repo name — see Naming decision), sub: *"Created under \<owner> · your team can clone it now."*
+- *Open vault →* → `createVaultAtom({ name: slug, owner })`. While pending: spinner + "Creating". On rejection: capture `err` message, bounce to Act 2, show inline error.
 - (The old daily-note preview card is dropped — the real landing is handled by `Shell`.)
+
+**Naming: the vault name *is* the repo name.** The typed name is slugified once (`Q2 Planning` → `q2-planning`) and that slug is what's submitted as the repo name **and** what's shown everywhere the vault is named — Act 3's welcome, the caption, and the vault switcher. There is no separate "display name": the rest of the app already names a vault by its repo name (`repoName(remote)`), so keeping a prettier typed name would diverge from the switcher the moment onboarding ends. One name, and it matches the remote.
 
 ## Join sub-view (from Act 2)
 
@@ -74,7 +76,8 @@ Authentication is built; onboarding is not. A signed-in user with no vaults land
 - `renderer/src/styles/onboarding-ritual.css` — ported near-verbatim from the old repo (917 lines of self-contained `.obrit-*` / `.onboarding-ritual` visual polish: vignette/ember/grain, crossfades, dots). Imported by the component (Vite supports `.css` imports; `main.tsx` already imports `index.css`).
 
 **Edited**
-- `App.tsx` — the first-run gate (and ensure `vaultsAtom` is loaded before it decides — §Open questions 1).
+- `App.tsx` — lift the initial `loadVaults()` here, add the first-run gate.
+- `Shell.tsx` — drop the initial `loadVaults()` trigger (now App's job); keep reacting to `vaultsAtom`.
 - `Shell.tsx` — swap the "+" from `<AddVault>` to `<OnboardingRitual mode="add-vault" …>`; drop the `AddVault` import.
 
 **Deleted**
@@ -111,8 +114,11 @@ Vitest runs in the **`node` environment — no jsdom**, so rendered React/DOM is
 
 ---
 
+## Resolved decisions
+
+1. **`vaultsAtom` loads at the App level.** The first-run gate needs the vault list before it can decide, so the initial `loadVaults()` lifts from `Shell` to `App` (which already lifts `loadSession`). A brief "loading vaults" state — mirroring the keychain `session === undefined` state — covers the gap before the gate resolves. `Shell` no longer triggers the initial load (it still reacts to `vaultsAtom`).
+2. **The vault name is the repo name (the slug).** One name, slugified once, submitted as the repo name and shown everywhere — see the Naming decision under Act 3.
+
 ## Open questions (non-blocking)
 
-1. **Where `vaultsAtom` loads.** The App-level gate needs the vault list loaded before it can decide first-run. Today `Shell` triggers `loadVaultsAtom`. Cleanest: lift the initial `loadVaults()` to `App` (it already lifts `loadSession`), so the gate reads a populated list. A brief "loading vaults" state (like the keychain `session === undefined` state) covers the gap.
-2. **Slug vs. GitHub repo-name rules.** `slugify` lowercases and dashes; GitHub also allows `_` and `.`. The create call passes `name` (the raw trimmed name) as the repo name today via `createVaultAtom`. Decide whether the ritual submits the slug or the raw name — lean: submit the **slug** as the repo name (predictable remote, matches the caption), and keep the display name as typed for Act 3's "Welcome to \<name>".
-3. **CSS scope.** The ported 917-line file is global. Its classes are all `obrit-`/`onboarding-ritual`-prefixed, so collision risk is low; no CSS-module conversion for v1.
+- **CSS scope.** The ported 917-line file is global. Its classes are all `obrit-`/`onboarding-ritual`-prefixed, so collision risk is low; no CSS-module conversion for v1.
