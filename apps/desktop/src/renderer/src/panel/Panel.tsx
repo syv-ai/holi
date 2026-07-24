@@ -37,8 +37,8 @@ const styles = {
 function describe(state: SyncState | null): string {
   if (state === null) return '—'
   switch (state.kind) {
-    case 'ahead':
-      return `${state.count} to publish`
+    case 'offline':
+      return state.count > 0 ? `offline — ${state.count} waiting` : 'offline'
     case 'conflict':
       return `conflict: ${state.paths.join(', ')}`
     case 'paused':
@@ -114,8 +114,8 @@ export function Panel() {
         <button disabled={!active || busy} onClick={() => run('sync.commitNow', () => trpc.sync.commitNow.mutate())}>
           Commit now
         </button>
-        <button disabled={!active || busy} onClick={() => run('sync.publish', () => trpc.sync.publish.mutate())}>
-          Publish
+        <button disabled={!active || busy} onClick={() => run('sync.pushNow', () => trpc.sync.pushNow.mutate())}>
+          Push now
         </button>
         <button disabled={!active || busy} onClick={() => run('vaults.snapshot', async () => {
           setSnapshot(await trpc.vaults.snapshot.query({ remote: active! }))

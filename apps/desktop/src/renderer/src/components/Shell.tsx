@@ -102,22 +102,6 @@ export function Shell() {
     void openVault(remote)
   }
 
-  /** Push local commits to the remote (git push). Lives in the footer beside the
-   *  sync state, where "where am I, and is it saved elsewhere" belongs together. */
-  const push = () => {
-    setBanner(null)
-    void trpc.sync.publish
-      .mutate()
-      .then((r) => {
-        // A conflicting pre-publish pull pushes nothing and leaves the work
-        // local and intact. Calling that "failed" would imply something was lost.
-        if (r.kind === 'conflict') {
-          setBanner(`${r.paths.length} files conflict — nothing was pushed`)
-        }
-      })
-      .catch((err: unknown) => setBanner(err instanceof Error ? err.message : String(err)))
-  }
-
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <div className="flex min-h-0 flex-1">
@@ -224,8 +208,9 @@ export function Shell() {
         {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
       </div>
 
-      {/* The publish banner sits above the footer, next to the Push button that
-          raises it — a conflict message belongs beside the control it answers. */}
+      {/* The reconcile banner sits above the footer, beside the sync state it
+          qualifies — an unmergeable external write to the open note raises it
+          (EditorPane's onConflict), the one thing left that a user must answer. */}
       {banner !== null && (
         <p className="border-t border-amber-900/60 bg-amber-950/40 px-3 py-1.5 text-[11px] text-amber-100">
           {banner}
@@ -233,16 +218,10 @@ export function Shell() {
       )}
 
       {/* Sync state lives bottom-left: "where am I and is it saved elsewhere" is
-          one glance. Push is the only action here; sign out lives in settings. */}
+          one glance. There is no Push button — push is automatic (D61) — so the
+          footer only reports; sign out lives in settings. */}
       <footer className="flex items-center justify-between gap-3 border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">
         <div className="flex min-w-0 items-center gap-2">
-          <button
-            className="shrink-0 rounded bg-neutral-800 px-2 py-0.5 text-[11px] text-neutral-200 hover:bg-neutral-700"
-            title="Push your local commits to the vault's GitHub remote (git push)"
-            onClick={push}
-          >
-            Push
-          </button>
           <span className={`truncate ${TONE[label.tone]}`}>{label.text}</span>
         </div>
         <span className="shrink-0 truncate">

@@ -155,11 +155,15 @@ export function EditorPane({
     // ⌘S is a real commit point, not a placebo (FR-4): it writes, then asks
     // main to commit rather than waiting out the idle timer. Invalid frontmatter
     // holds off both — no write, no commit — until the YAML parses again.
+    //
+    // It also pushes: ⌘S is an explicit "save this", so getting it off-machine
+    // matches the intent (D61). The commit must resolve before the push, or the
+    // push races ahead of the very edit ⌘S just committed.
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         void save().then((ok) => {
-          if (ok) void trpc.sync.commitNow.mutate()
+          if (ok) void trpc.sync.commitNow.mutate().then(() => trpc.sync.pushNow.mutate())
         })
       }
     }

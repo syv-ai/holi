@@ -24,8 +24,8 @@ function pushChannel<T>(channel: string) {
  */
 const onSnapshot = pushChannel<unknown>('vault:snapshot')
 
-/** Up to date, N to publish, pulling, publishing, offline, conflict,
- * reconciling, or paused. Pushed on change only. */
+/** Up to date, pulling, offline (with a waiting count), no write access,
+ * conflict, reconciling, or paused. Pushed on change only. */
 const onSyncState = pushChannel<unknown>('vault:sync')
 
 /**
