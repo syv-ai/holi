@@ -250,6 +250,18 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /**
+   * Which `owner` to hand `createRepo`. GitHub can only create a repo under the
+   * signed-in user (`POST /user/repos`, no owner) or an org they belong to
+   * (`POST /orgs/{org}/repos`) — there is no "create under another user". So an
+   * owner that IS the viewer must collapse to `undefined`; otherwise the org
+   * endpoint 404s on the personal-account name, which is exactly what the
+   * onboarding owner picker sends by default.
+   */
+  function repoOwner(owner: string | undefined): string | undefined {
+    return owner && owner !== deps.session.viewer?.login ? owner : undefined
+  }
+
+  /**
    * Every GitHub call goes through here, so the mapping from *which kind of no*
    * to what the renderer is told lives in one place.
    *
@@ -360,7 +372,7 @@ export function createRouter(deps: RouterDeps) {
     createRepo: t.procedure
       .input(fields({ name: 'string', owner: 'string?' }))
       .mutation(({ input }): Promise<Repo> =>
-        gh(() => deps.session.api.createRepo({ name: input.name, owner: input.owner })),
+        gh(() => deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) })),
       ),
   })
 
@@ -389,7 +401,7 @@ export function createRouter(deps: RouterDeps) {
       // FR-8: a private repo, seeded, committed, pushed, opened.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
         const repo = await gh(() =>
-          deps.session.api.createRepo({ name: input.name, owner: input.owner }),
+          deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
         )
         const snapshot = await addVault(repo.remote, input.url)
         // The seed is the repo's first commit, and it has to leave the machine:

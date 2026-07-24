@@ -949,6 +949,29 @@ describe('vaults.create', () => {
     }
     expect(pushed).toBe(true)
   })
+
+  it('creates under the personal account via /user/repos, not the org endpoint', async () => {
+    // Regression: the owner picker defaults to the signed-in user, but GitHub
+    // has no "create under another user" — only `/user/repos` (no owner) or
+    // `/orgs/{org}/repos`. Passing the viewer's own login as `owner` used to hit
+    // the org endpoint and 404. The router must collapse a self-owner to
+    // undefined so a personal-account vault can be created at all.
+    const { caller, session } = await rig({}, seeded())
+    const origin = await makeRemote()
+    vi.spyOn(session.api, 'createRepo').mockResolvedValue({
+      remote: 'nthomsencph/fresh',
+      private: true,
+      visibility: 'private',
+      pushedAt: '2026-07-22T00:00:00Z',
+      defaultBranch: 'main',
+      canPush: true,
+      owner: { login: 'nthomsencph', kind: 'user' },
+    })
+
+    await caller.vaults.create({ name: 'fresh', owner: 'nthomsencph', url: origin })
+
+    expect(session.api.createRepo).toHaveBeenCalledWith({ name: 'fresh', owner: undefined })
+  })
 })
 
 describe('sync', () => {
