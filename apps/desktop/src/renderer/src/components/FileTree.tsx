@@ -1,22 +1,29 @@
 /**
- * The vault, as rows.
+ * The vault as a VS Code-style explorer.
  *
- * Driven entirely by the pushed snapshot: main walks the directory, pushes the
- * whole vault, and this projects it. Nothing here refetches, and nothing here
- * holds a second copy — a note that arrives by pull, by the agent, or from
- * another window simply appears.
+ * Pure projection of `snapshotAtom` (plus a client-only `pendingFolders` set for
+ * transient folders, added in a later task). headless-tree owns
+ * selection/focus/expansion/keyboard; every mutation runs through our atoms so
+ * the link-rewrite rename and backref/tombstone delete stay ours.
  *
- * **Rename** moves the file and rewrites inbound `[[links]]` in one pass (FR-11,
- * `renameNoteAtom`); **delete** first previews what links here (FR-12,
- * `backrefsFor`) so it can name what it will turn into tombstones. Both use an
- * inline/in-app surface rather than `window.prompt`/`confirm`: Electron's
- * Chromium does not support `prompt`, and the delete preview has a list to show
- * that a native confirm cannot.
+ * The data loader reads from a ref kept current every render, and a `rebuildTree`
+ * effect re-reads when the snapshot changes — the snapshot is replaced wholesale,
+ * so the tree must be told to invalidate rather than diffing frames.
  */
+import {
+  dragAndDropFeature,
+  hotkeysCoreFeature,
+  renamingFeature,
+  selectionFeature,
+  syncDataLoaderFeature,
+} from '@headless-tree/core'
+import { useTree } from '@headless-tree/react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useMemo, useState } from 'react'
-import { buildTree, type TreeNode } from '../lib/tree'
-import { backrefsFor, createNoteAtom, deleteNoteAtom, renameNoteAtom, snapshotAtom } from '../state/vaults'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
+import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
+import { joinPath, renameBasenameRange, withMdExtension } from '../lib/tree-paths'
+import { renameNoteAtom, snapshotAtom } from '../state/vaults'
 
 export function FileTree({
   activePath,
@@ -24,274 +31,123 @@ export function FileTree({
   onOpenPinned,
 }: {
   activePath: string | null
-  // Single-click opens a preview tab; double-click pins it (FR-15).
   onOpenPreview: (path: string) => void
   onOpenPinned: (path: string) => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
-  const tree = useMemo(() => buildTree(snapshot.docs.map((d) => d.path)), [snapshot])
-  const createNote = useSetAtom(createNoteAtom)
-  const [newPath, setNewPath] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const renameNote = useSetAtom(renameNoteAtom)
+  // Transient folders (spec §Empty folders): client-only until a note lands.
+  const [pendingFolders] = useState<string[]>([])
+
+  const data = useMemo(
+    () => buildTreeData(snapshot.docs.map((d) => d.path), pendingFolders),
+    [snapshot, pendingFolders],
+  )
+  // The data loader closures read from here so they always see the latest data,
+  // regardless of when headless-tree captured the config.
+  const dataRef = useRef<Record<string, TreeItemData>>(data)
+  dataRef.current = data
+
+  const tree = useTree<TreeItemData>({
+    rootItemId: ROOT_ID,
+    // The synthetic root must be expanded or its children never enter getItems().
+    initialState: { expandedItems: [ROOT_ID] },
+    getItemName: (item) => dataRef.current[item.getId()]?.name ?? '',
+    isItemFolder: (item) => dataRef.current[item.getId()]?.isFolder ?? false,
+    dataLoader: {
+      getItem: (id) => dataRef.current[id] ?? { name: '', isFolder: false, children: [] },
+      getChildren: (id) => dataRef.current[id]?.children ?? [],
+    },
+    indent: 12,
+    // Keyboard Enter / other primary triggers open a preview tab.
+    onPrimaryAction: (item) => {
+      if (!item.isFolder()) onOpenPreview(item.getId())
+    },
+    canRename: (item) => !item.isFolder(),
+    onRename: (item, value) => {
+      const from = item.getId()
+      const slash = from.lastIndexOf('/')
+      const parent = slash === -1 ? '' : from.slice(0, slash)
+      const to = joinPath(parent, withMdExtension(value.trim()))
+      if (value.trim() && to !== from) void renameNote({ from, to })
+    },
+    features: [
+      syncDataLoaderFeature,
+      selectionFeature,
+      hotkeysCoreFeature,
+      dragAndDropFeature,
+      renamingFeature,
+    ],
+  })
+
+  // Re-read the whole tree when the snapshot changes (wholesale replace model).
+  useEffect(() => {
+    tree.rebuildTree()
+  }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <form
-        className="flex gap-1 p-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          const path = newPath.trim()
-          if (!path) return
-          setError(null)
-          // Surfaced, not voided: `notes.create` refuses a taken path with
-          // CONFLICT rather than clobbering it, and swallowing that leaves a row
-          // that never appears and nothing saying why.
-          void createNote(path.endsWith('.md') ? path : `${path}.md`)
-            .then(() => setNewPath(''))
-            .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-        }}
-      >
-        <input
-          className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs"
-          placeholder="new note path…"
-          value={newPath}
-          onChange={(e) => setNewPath(e.target.value)}
-        />
-        <button title="create note" className="rounded bg-neutral-800 px-2 text-xs hover:bg-neutral-700">
-          +
-        </button>
-      </form>
-      {error && <p className="px-2 pb-1 text-xs text-red-400">{error}</p>}
-      <div className="holi-scroll min-h-0 flex-1 overflow-y-auto px-1 pb-2 text-sm">
-        {tree.map((node) => (
-          <TreeRow key={node.path} node={node} depth={0} activePath={activePath} onOpenPreview={onOpenPreview} onOpenPinned={onOpenPinned} />
-        ))}
-        {tree.length === 0 && <p className="px-2 text-xs text-neutral-500">no notes yet</p>}
-      </div>
-    </div>
-  )
-}
-
-function TreeRow({
-  node,
-  depth,
-  activePath,
-  onOpenPreview,
-  onOpenPinned,
-}: {
-  node: TreeNode
-  depth: number
-  activePath: string | null
-  onOpenPreview: (path: string) => void
-  onOpenPinned: (path: string) => void
-}) {
-  const deleteNote = useSetAtom(deleteNoteAtom)
-  const renameNote = useSetAtom(renameNoteAtom)
-  const getBackrefs = useSetAtom(backrefsFor)
-  const [open, setOpen] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [renaming, setRenaming] = useState(false)
-  const [renameValue, setRenameValue] = useState('')
-  // null = no dialog open; an array (possibly empty) = "confirm deleting, and
-  // here is what links to it". FR-12: the warning is the list, not just a Y/N.
-  const [confirming, setConfirming] = useState<{ path: string; count: number }[] | null>(null)
-  const pad = { paddingLeft: `${depth * 12 + 8}px` }
-
-  if (node.kind === 'folder') {
-    return (
-      <div>
-        <div
-          className="group flex items-center rounded text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-          style={pad}
-        >
-          <button
-            className="min-w-0 flex-1 truncate py-0.5 text-left"
-            onClick={() => setOpen((o) => !o)}
-          >
-            {open ? '▾' : '▸'} {node.name}
-          </button>
-        </div>
-        {open &&
-          node.children.map((c) => (
-            <TreeRow key={c.path} node={c} depth={depth + 1} activePath={activePath} onOpenPreview={onOpenPreview} onOpenPinned={onOpenPinned} />
-          ))}
-      </div>
-    )
-  }
-
-  const isActive = activePath === node.path
-
-  const submitRename = () => {
-    const raw = renameValue.trim()
-    const to = raw.endsWith('.md') ? raw : `${raw}.md`
-    setRenaming(false)
-    if (!raw || to === node.path) return
-    setError(null)
-    void renameNote({ from: node.path, to }).catch((err: unknown) =>
-      setError(err instanceof Error ? err.message : String(err)),
-    )
-  }
-
-  if (renaming) {
-    return (
-      <form
-        style={pad}
-        className="flex py-0.5"
-        onSubmit={(e) => {
-          e.preventDefault()
-          submitRename()
-        }}
-      >
-        <input
-          // rename-to-path IS move: a different folder prefix relocates the note.
-          autoFocus
-          data-rename-input={node.path}
-          className="min-w-0 flex-1 rounded border border-neutral-700 bg-neutral-900 px-1 text-sm"
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && setRenaming(false)}
-          onBlur={() => setRenaming(false)}
-        />
-      </form>
-    )
-  }
-
-  return (
-    <div
-      // The open note is marked here, not only in the header — the tree is
-      // where you look to know where you are. Hover sits a step below the
-      // active row so the two read as one scale of emphasis, not a competition.
-      className={`group flex items-center rounded transition-colors ${
-        isActive
-          ? 'bg-neutral-800 text-neutral-100'
-          : 'text-neutral-300 hover:bg-neutral-800/60 hover:text-neutral-100'
-      }`}
-      style={pad}
-    >
-      <button
-        className="min-w-0 flex-1 truncate py-0.5 text-left"
-        title={`${node.path} — click to preview, double-click to keep open`}
-        // Single-click previews (reuses one tab); double-click pins. Both fire
-        // on a double-click, and openPreview→openPinned lands pinned — correct.
-        onClick={() => onOpenPreview(node.path)}
-        onDoubleClick={() => onOpenPinned(node.path)}
-      >
-        {node.name}
-      </button>
-      <span
-        role="button"
-        title="rename"
-        data-rename={node.path}
-        className="hidden shrink-0 px-1 text-[10px] text-neutral-500 hover:text-neutral-200 group-hover:block"
-        onClick={(e) => {
-          e.stopPropagation()
-          setRenameValue(node.path)
-          setRenaming(true)
-        }}
-      >
-        ✎
-      </span>
-      <span
-        role="button"
-        title="delete"
-        data-delete={node.path}
-        className="hidden shrink-0 px-1 pr-2 text-[10px] text-neutral-500 hover:text-red-400 group-hover:block"
-        onClick={(e) => {
-          e.stopPropagation()
-          setError(null)
-          // Look before you leap: name what links here so the delete is an
-          // informed one (FR-12). Dangling refs survive as tombstones — no
-          // cascade — but the user gets to see them first.
-          void getBackrefs(node.path)
-            .then((refs) => setConfirming(refs))
-            .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
-        }}
-      >
-        ✕
-      </span>
-      {error && <p className="px-2 text-[10px] text-red-400">{error}</p>}
-      {confirming !== null && (
-        <DeleteConfirm
-          path={node.path}
-          refs={confirming}
-          onCancel={() => setConfirming(null)}
-          onConfirm={() => {
-            setConfirming(null)
-            void deleteNote(node.path).catch((err: unknown) =>
-              setError(err instanceof Error ? err.message : String(err)),
-            )
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
-/**
- * The FR-12 delete preview: name every file that links here and how many times,
- * so deleting is a decision with the tombstones-to-be in view. An in-app dialog
- * rather than `window.confirm` — the warning is a list, and Electron's native
- * confirm cannot render one.
- */
-function DeleteConfirm({
-  path,
-  refs,
-  onCancel,
-  onConfirm,
-}: {
-  path: string
-  refs: { path: string; count: number }[]
-  onCancel: () => void
-  onConfirm: () => void
-}) {
-  const total = refs.reduce((n, r) => n + r.count, 0)
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onCancel}
-    >
       <div
-        data-delete-dialog={path}
-        className="w-80 rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-200 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
+        className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"
+        {...tree.getContainerProps()}
       >
-        <p className="mb-2">
-          Delete <span className="font-mono text-neutral-100">{path}</span>?
-        </p>
-        {refs.length === 0 ? (
-          <p className="mb-3 text-xs text-neutral-500">Nothing links to it.</p>
-        ) : (
-          <div className="mb-3">
-            <p className="mb-1 text-xs text-neutral-400">
-              {total} link{total === 1 ? '' : 's'} in {refs.length} file
-              {refs.length === 1 ? '' : 's'} will be left dangling (they become tombstones — no
-              cascade):
-            </p>
-            <ul className="max-h-40 overflow-y-auto text-xs">
-              {refs.map((r) => (
-                <li key={r.path} className="flex justify-between font-mono text-neutral-300">
-                  <span className="truncate">{r.path}</span>
-                  <span className="ml-2 shrink-0 text-neutral-500">×{r.count}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
+        {tree
+          .getItems()
+          .filter((item) => item.getId() !== ROOT_ID)
+          .map((item) => {
+          const id = item.getId()
+          const isFolder = item.isFolder()
+          const isOpen = activePath === id
+          const level = item.getItemMeta().level
+          const rowProps = item.getProps()
+          const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
+          return (
+            <div
+              key={id}
+              {...rowProps}
+              onClick={(e) => {
+                origClick?.(e)
+                if (!isFolder) onOpenPreview(id)
+              }}
+              onDoubleClick={() => {
+                if (!isFolder) onOpenPinned(id)
+              }}
+              style={{ paddingLeft: `${level * 12 + 8}px` }}
+              className={[
+                'flex h-[22px] items-center gap-1 rounded pr-2 outline-none transition-colors',
+                item.isSelected()
+                  ? 'bg-neutral-800 text-neutral-100'
+                  : 'text-neutral-300 hover:bg-neutral-800/60',
+                isOpen ? 'text-sky-300' : '',
+              ].join(' ')}
+            >
+              <span className="flex w-4 shrink-0 justify-center text-neutral-500">
+                {isFolder ? <ChevronIcon open={item.isExpanded()} /> : null}
+              </span>
+              <span
+                className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-sky-400' : 'text-neutral-500'}`}
+              >
+                {isFolder ? <FolderIcon /> : <MarkdownIcon />}
+              </span>
+              {item.isRenaming() ? (
+                <input
+                  {...item.getRenameInputProps()}
+                  autoFocus
+                  className="min-w-0 flex-1 rounded border border-sky-700 bg-neutral-900 px-1 text-sm outline-none"
+                  onFocus={(e) => {
+                    const [s, end] = renameBasenameRange(e.currentTarget.value)
+                    e.currentTarget.setSelectionRange(s, end)
+                  }}
+                />
+              ) : (
+                <span className="min-w-0 flex-1 truncate">{item.getItemName()}</span>
+              )}
+            </div>
+          )
+        })}
+        {tree.getItems().filter((item) => item.getId() !== ROOT_ID).length === 0 && (
+          <p className="px-2 text-xs text-neutral-500">no notes yet</p>
         )}
-        <div className="flex justify-end gap-2">
-          <button
-            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-            onClick={onCancel}
-          >
-            Cancel
-          </button>
-          <button
-            data-delete-confirm={path}
-            className="rounded bg-red-900/60 px-2 py-1 text-xs text-red-200 hover:bg-red-900"
-            onClick={onConfirm}
-          >
-            Delete
-          </button>
-        </div>
       </div>
     </div>
   )
