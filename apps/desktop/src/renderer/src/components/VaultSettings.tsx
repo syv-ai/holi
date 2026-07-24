@@ -30,6 +30,17 @@ const originUrl = (remote: string) => `https://github.com/${remote}`
  *  always resolves. */
 const userUrl = (login: string) => `https://github.com/${login}`
 
+/** The clone path, shortened for display. A vault always lives at
+ *  `<managed-root>/<owner>/<repo>`, and the tail is exactly the remote — so the
+ *  segment before it is the managed root's own folder (`Holi`). Show from there,
+ *  dropping the long home-directory prefix. The full path stays in the tooltip
+ *  and still drives the Finder reveal. */
+const displayLocalPath = (fullPath: string, remote: string): string => {
+  const parts = fullPath.split('/')
+  const rootLeaf = parts[parts.length - remote.split('/').length - 1]
+  return rootLeaf ? `${rootLeaf}/${remote}` : fullPath
+}
+
 /** The GitHub mark, inline. This app ships no icon library (the onboarding port
  *  had to strip lucide/shadcn), so the one place that needs a logo carries its
  *  own SVG. `currentColor` lets it inherit the subtle button's text colour. */
@@ -88,31 +99,37 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           <p className="text-neutral-400">no vault open</p>
         ) : (
           <>
-            {/* Where the vault points, and where its clone lives on disk —
-                labelled and styled alike so they read as one pair. A vault IS
+            {/* Where the vault points, and where its clone lives on disk. Each
+                value sits on its own line under a small label so a long remote
+                or path has the full panel width before it truncates. A vault IS
                 its remote (until now nothing said which one); the local path is
-                the clone FR-15 promises survives a sign-out, and this is where
-                the user is told where it is. Both are links: the remote opens
-                GitHub, the path reveals the folder in Finder. */}
-            <div className="flex items-baseline gap-2">
-              <span className="shrink-0 text-neutral-500">Remote:</span>
-              <button
-                className="min-w-0 truncate text-left text-sky-400 hover:underline"
-                title={originUrl(entry.remote)}
-                onClick={() => void window.holi.openExternal(originUrl(entry.remote))}
-              >
-                {entry.remote}
-              </button>
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="shrink-0 text-neutral-500">Local:</span>
-              <button
-                className="min-w-0 truncate text-left text-sky-400 hover:underline"
-                title={entry.path}
-                onClick={() => void window.holi.openPath(entry.path)}
-              >
-                {entry.path}
-              </button>
+                the clone FR-15 promises survives a sign-out. Both are links: the
+                remote opens GitHub, the path reveals the folder in Finder. */}
+            <div className="space-y-2">
+              <div className="space-y-0.5">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+                  Remote
+                </div>
+                <button
+                  className="block max-w-full truncate text-left text-sky-400 hover:underline"
+                  title={originUrl(entry.remote)}
+                  onClick={() => void window.holi.openExternal(originUrl(entry.remote))}
+                >
+                  {entry.remote}
+                </button>
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-[10px] font-medium uppercase tracking-wider text-neutral-500">
+                  Local
+                </div>
+                <button
+                  className="block max-w-full truncate text-left text-sky-400 hover:underline"
+                  title={entry.path}
+                  onClick={() => void window.holi.openPath(entry.path)}
+                >
+                  {displayLocalPath(entry.path, entry.remote)}
+                </button>
+              </div>
             </div>
           </>
         )}
