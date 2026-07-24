@@ -192,6 +192,44 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
   }
 }
 
+/** `retargetTab` for a whole batch (FR-11, folder/multi-move). One map, applied
+ *  across all panes; a tab whose path is a `from` follows to its `to`. */
+export function retargetTabs(workspace: Workspace, moves: { from: string; to: string }[]): Workspace {
+  const map = new Map(moves.map((m) => [m.from, m.to]))
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane) => ({
+      ...pane,
+      tabs: pane.tabs.map((tab) =>
+        tab.kind === 'note' && map.has(tab.path) ? { ...tab, path: map.get(tab.path)! } : tab,
+      ),
+    })),
+  }
+}
+
+/**
+ * Close every tab pointing at a deleted path, in every pane.
+ *
+ * The active selection follows the *document*: if what was active survives, the
+ * user stays on it (its index is re-found after the removals); if it was one of
+ * the deleted, the pane falls back to the nearest surviving neighbour, and an
+ * emptied pane stays as the empty-editor state (`active: -1`), never disappears.
+ */
+export function closeTabsForPaths(workspace: Workspace, paths: string[]): Workspace {
+  const gone = (t: Tab) => t.kind === 'note' && paths.includes(t.path)
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane) => {
+      if (!pane.tabs.some(gone)) return pane
+      const activeTab = pane.tabs[pane.active]
+      const tabs = pane.tabs.filter((t) => !gone(t))
+      if (tabs.length === 0) return { tabs, active: -1 }
+      if (activeTab !== undefined && !gone(activeTab)) return { tabs, active: tabs.indexOf(activeTab) }
+      return { tabs, active: Math.max(0, Math.min(pane.active, tabs.length - 1)) }
+    }),
+  }
+}
+
 /** What the editor should be showing, or null when the pane is empty. */
 export function activeTab(workspace: Workspace): Tab | null {
   const pane = workspace.panes[workspace.active]

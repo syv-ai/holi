@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import {
   activeTab,
   closeTab,
+  closeTabsForPaths,
   emptyWorkspace,
   openPinned,
   openPreview,
@@ -17,6 +18,7 @@ import {
   pinActive,
   pinTab,
   retargetTab,
+  retargetTabs,
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
@@ -141,5 +143,41 @@ describe('preview vs pinned', () => {
   it('pinTab is a no-op on an out-of-range index', () => {
     const w = openPreview(emptyWorkspace(), 'a.md')
     expect(pinTab(w, 5)).toEqual(w)
+  })
+})
+
+describe('retargetTabs', () => {
+  it('points every open tab at its moved path, across panes, leaving others alone', () => {
+    let w = emptyWorkspace()
+    w = openTab(w, { kind: 'note', path: 'a.md' })
+    w = openTab(w, { kind: 'note', path: 'keep.md' })
+    w = retargetTabs(w, [{ from: 'a.md', to: 'sub/a.md' }])
+    expect(w.panes[0]!.tabs).toEqual([
+      { kind: 'note', path: 'sub/a.md' },
+      { kind: 'note', path: 'keep.md' },
+    ])
+  })
+})
+
+describe('closeTabsForPaths', () => {
+  it('closes deleted tabs and keeps the user on a surviving document', () => {
+    let w = emptyWorkspace()
+    w = openTab(w, { kind: 'note', path: 'a.md' }) // idx 0
+    w = openTab(w, { kind: 'note', path: 'b.md' }) // idx 1
+    w = openTab(w, { kind: 'note', path: 'c.md' }) // idx 2, active
+    w = closeTabsForPaths(w, ['a.md']) // delete one to the left of active
+    expect(w.panes[0]!.tabs).toEqual([
+      { kind: 'note', path: 'b.md' },
+      { kind: 'note', path: 'c.md' },
+    ])
+    expect(w.panes[0]!.active).toBe(1) // still on c.md
+  })
+
+  it('falls back to a neighbour when the active tab is deleted, and empties cleanly', () => {
+    let w = emptyWorkspace()
+    w = openTab(w, { kind: 'note', path: 'a.md' })
+    w = openTab(w, { kind: 'note', path: 'b.md' }) // active
+    expect(closeTabsForPaths(w, ['b.md']).panes[0]!.active).toBe(0)
+    expect(closeTabsForPaths(w, ['a.md', 'b.md']).panes[0]).toEqual({ tabs: [], active: -1 })
   })
 })
