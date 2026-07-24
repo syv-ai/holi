@@ -394,11 +394,12 @@ export function createRouter(deps: RouterDeps) {
         const snapshot = await addVault(repo.remote, input.url)
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
-        // to. This is the one place Holi pushes without being asked.
+        // to. Push is automatic now, but a brand-new repo should not wait out the
+        // coalesce timer to become shareable, so kick it explicitly.
         const active = deps.host.active()
         if (active !== null) {
           await active.commitNow()
-          await active.publish()
+          await active.pushNow()
         }
         return snapshot
       }),
@@ -638,10 +639,13 @@ export function createRouter(deps: RouterDeps) {
     /** ⌘S. FR-4 calls it a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
-    /** FR-13/FR-14: pull, then push. A conflicting pre-publish pull comes back
-     *  as a conflict and pushes nothing (FR-15) — the caller renders the
-     *  reconcile offer, not an error. */
-    publish: t.procedure.mutation(() => activeOrThrow().publish()),
+    /** ⌘S's second half: push the just-committed work now (`prd/vaults-sync.md`
+     *  §Pushing). Best-effort — a non-fast-forward recovers into the conflict
+     *  path, a network failure surfaces as `offline`; the renderer only kicks it. */
+    pushNow: t.procedure.mutation(async () => {
+      await activeOrThrow().pushNow()
+      return { ok: true as const }
+    }),
 
     /** FR-18's first step. The reconcile itself needs the agent drawer. */
     pause: t.procedure

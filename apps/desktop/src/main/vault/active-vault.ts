@@ -24,27 +24,34 @@
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
 import type { VaultSnapshot } from '@holi/shared'
-import type { GitDeps, GitRepo, PullResult, PushResult, RepoStatus } from '../git'
+import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
 
 /**
- * FR-21's display vocabulary, plus two this design needs:
+ * FR-21's display vocabulary.
  *
- *   - `publishing`, because a publish is a pull *and* a push and calling it
- *     `pulling` would be a lie at the moment it matters most.
+ * Push is automatic (`prd/vaults-sync.md` §Pushing), so there is no `publishing`
+ * state and no resting "N to publish": the remote is current within seconds by
+ * design, and an unpushed count is information only when a push is *failing*.
+ * That is why the count rides `offline` rather than a state of its own —
+ *
+ *   - `offline` carries `count` because the one time unpushed commits matter is
+ *     when the network is gone and they are piling up; FR-22 forbids saying
+ *     "synced" then, and a bare "offline" hides how much is waiting.
+ *   - `no-access`, because FR-16 requires a push rejected for *permission* to be
+ *     reported as exactly that, never dressed as a network failure.
  *   - `paused`, because a vault on another branch stays open and readable while
  *     sync is off (FR-2 constrains sync, not open) and the user has to be told
  *     which of those two things is true.
  */
 export type SyncState =
   | { kind: 'up-to-date' }
-  | { kind: 'ahead'; count: number }
   | { kind: 'pulling' }
-  | { kind: 'publishing' }
-  | { kind: 'offline' }
+  | { kind: 'offline'; count: number }
+  | { kind: 'no-access' }
   | { kind: 'conflict'; paths: string[] }
   | { kind: 'reconciling' }
   | { kind: 'paused'; reason: string }
@@ -59,6 +66,14 @@ export interface SyncTimings {
   pullIntervalMs: number
   /** So alt-tabbing does not fetch in a loop. */
   focusThrottleMs: number
+  /** Quiet before a coalesced background push. Longer than the commit debounce:
+   *  a landed commit is already durable on disk, so nothing is lost by batching
+   *  a burst of them into one push. `prd/vaults-sync.md` §Pushing. */
+  pushQuietMs: number
+  /** How long quit and a vault switch will wait for a best-effort push before
+   *  giving up — the work is already committed, so an unreachable remote must
+   *  never hang either. Mirrors the flush-on-quit courtesy budget. */
+  pushBudgetMs: number
 }
 
 export const DEFAULT_TIMINGS: SyncTimings = {
@@ -67,6 +82,8 @@ export const DEFAULT_TIMINGS: SyncTimings = {
   healIntervalMs: 30_000,
   pullIntervalMs: 180_000,
   focusThrottleMs: 30_000,
+  pushQuietMs: 15_000,
+  pushBudgetMs: 1_000,
 }
 
 export interface ActiveVault {
@@ -80,7 +97,14 @@ export interface ActiveVault {
   refresh(): Promise<void>
   /** Commit whatever is dirty, now — ⌘S, vault switch, quit. */
   commitNow(): Promise<string | null>
-  publish(): Promise<PullResult | PushResult>
+  /**
+   * Push local commits now, best-effort. Recovers from a non-fast-forward
+   * rejection by pulling inline and retrying (a conflicting pull routes to the
+   * conflict path); records `offline` on a network failure and `no-access` on a
+   * permission rejection. **Never rejects** — it catches internally, so it is
+   * safe to `Promise.race` against a timeout on quit and vault switch.
+   */
+  pushNow(): Promise<void>
   /** Window focus (FR-9). Throttled internally. */
   onFocus(): void
   /** FR-8/FR-18: a reconcile stops both loops. */
@@ -132,17 +156,27 @@ export async function openActiveVault(args: {
   let scanning = false
   let committing = false
   let commitTimer: NodeJS.Timeout | null = null
+  let pushTimer: NodeJS.Timeout | null = null
   /** Set by `pause()` — a reconcile. Distinct from the status-derived pause,
    *  which clears itself the moment the user switches back to the branch. */
   let manualPause: string | null = null
-  let syncing: 'pulling' | 'publishing' | null = null
+  let syncing: 'pulling' | null = null
   /** Claimed synchronously by `maybePull`. Separate from `syncing`, which is
    *  for display and is only set once a pull is really going to happen. */
   let pullInFlight = false
+  /** Claimed synchronously by `pushNow`, so two pushes cannot run one `git push`
+   *  against the same refs. Its recovery pull releases this before delegating to
+   *  `maybePull` (see there) — that is why `maybePull`'s guard does NOT check it. */
+  let pushInFlight = false
   let lastFocusPull = 0
   /** The last network attempt failed. A flag rather than a state, so the
    *  `finally` that clears `syncing` cannot overwrite it. */
   let offline = false
+  /** A push was rejected because the user cannot write to the remote (FR-16).
+   *  Its own flag, and its own state, because "you lost write access" and
+   *  "you are offline" send someone to two entirely different places. Cleared
+   *  only by a push that succeeds. */
+  let permissionDenied = false
   /**
    * The conflict banner, and it is **sticky** (FR-17): ignore it and you keep
    * working on a clean tree, so it must survive every autosave commit that
@@ -184,7 +218,7 @@ export async function openActiveVault(args: {
    *     commit would silently clear a banner the user has not dealt with
    *     (FR-17 — it is non-blocking, not transient).
    *   - Being on the wrong branch outranks progress reporting: nothing is
-   *     going to happen, so "N to publish" would be a promise we do not keep.
+   *     going to happen, so an `offline` count would be a promise we do not keep.
    */
   function computeState(status: RepoStatus): SyncState {
     if (manualPause !== null) return { kind: 'paused', reason: manualPause }
@@ -199,9 +233,17 @@ export async function openActiveVault(args: {
     const blocked = blockedReason(status)
     if (blocked !== null) return { kind: 'paused', reason: blocked }
     if (conflictPaths !== null) return { kind: 'conflict', paths: conflictPaths }
-    if (syncing !== null) return { kind: syncing }
-    if (offline) return { kind: 'offline' }
-    return status.ahead > 0 ? { kind: 'ahead', count: status.ahead } : { kind: 'up-to-date' }
+    if (syncing !== null) return { kind: 'pulling' }
+    // A permission refusal outranks offline: it does not clear when the network
+    // returns, and telling someone to check their wifi for a rights problem
+    // wastes exactly the time FR-16 exists to save.
+    if (permissionDenied) return { kind: 'no-access' }
+    if (offline) return { kind: 'offline', count: status.ahead }
+    // Resting ahead>0 is a bounded transient — the coalesced push has not fired
+    // yet — and is deliberately NOT surfaced (FR-22 is about not lying, and
+    // "not synced for the next few seconds" while a push is queued is not a
+    // state worth a flickering counter). The count appears only when offline.
+    return { kind: 'up-to-date' }
   }
 
   async function refreshState(): Promise<void> {
@@ -232,6 +274,12 @@ export async function openActiveVault(args: {
      * half-done. The pull path calls this deliberately (to satisfy FR-7 before
      * merging) and passes `duringPull`, which is the one case that is safe
      * because it is sequenced rather than concurrent.
+     *
+     * A plain `git push` is deliberately NOT guarded against here: it does not
+     * take the index lock, so a commit landing during one is safe (the commit
+     * just rides the next push). The push's recovery *pull* does lock the index,
+     * but it sets `pullInFlight` — which this already respects — so that case is
+     * covered without blocking a commit during an ordinary push.
      */
     if (pullInFlight && !duringPull) return null
     committing = true
@@ -245,6 +293,10 @@ export async function openActiveVault(args: {
       }
       const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths))
       await refreshState()
+      // A commit that landed is work the remote does not have yet. Arm the
+      // coalescer rather than pushing now, so a burst of commits (a board drag,
+      // an agent turn) becomes one push. The leave points push immediately.
+      if (sha !== null) schedulePush()
       return sha
     } catch (err) {
       console.error('[vault] commit failed:', err)
@@ -331,7 +383,13 @@ export async function openActiveVault(args: {
       // updates itself because the merge wrote files and the watcher saw it,
       // but rescan directly too: a merge is exactly the burst most likely to
       // land inside a coalescing window.
-      if (result.kind === 'merged') await rescan()
+      if (result.kind === 'merged') {
+        await rescan()
+        // A merge writes a merge commit, which the remote does not have — push
+        // it. Coalesced rather than immediate because we are inside the pull's
+        // `pullInFlight` guard here; `pushNow` would decline until it clears.
+        schedulePush()
+      }
       return result
     } catch (err) {
       // Offline is the ordinary case here, not an exception worth shouting
@@ -353,13 +411,6 @@ export async function openActiveVault(args: {
     }
   }
 
-  /** Wait for an in-flight pull to finish. Polled rather than promise-chained:
-   *  there is exactly one pull at a time, and a chain would have to be threaded
-   *  through every early return in `maybePull`. */
-  async function waitForIdlePull(): Promise<void> {
-    for (let i = 0; pullInFlight && i < 600; i++) await new Promise((r) => setTimeout(r, 50))
-  }
-
   function scheduleCommit(): void {
     if (closed) return
     if (commitTimer !== null) clearTimeout(commitTimer)
@@ -367,6 +418,74 @@ export async function openActiveVault(args: {
       commitTimer = null
       void maybeCommit()
     }, timings.commitQuietMs)
+  }
+
+  /** Coalesce a burst of commits into one background push. Re-armed on every
+   *  landed commit, so continuous typing pushes a handful of times rather than
+   *  once per idle debounce. `prd/vaults-sync.md` §Pushing. */
+  function schedulePush(): void {
+    if (closed) return
+    if (pushTimer !== null) clearTimeout(pushTimer)
+    pushTimer = setTimeout(() => {
+      pushTimer = null
+      void pushNow()
+    }, timings.pushQuietMs)
+  }
+
+  /**
+   * Push local commits now, best-effort — the automatic replacement for the old
+   * Publish (`prd/vaults-sync.md` §Pushing). Called by the coalescer, the leave
+   * points (⌘S, vault switch, quit), and after coming back to the app.
+   *
+   * The failure taxonomy is the whole point (D61):
+   *   - **non-fast-forward** → optimistic recovery: pull inline, then retry once.
+   *     A conflicting pull routes into the existing conflict path via `maybePull`
+   *     — a push rejection is just one more way to discover a conflict.
+   *   - **network** → `offline`; the coalescer, focus and the pull loop retry.
+   *   - **permission** → `no-access` (FR-16), never dressed as offline.
+   *
+   * Never throws: every path is caught, so quit and vault switch can race it
+   * against a timeout without risking an unhandled rejection.
+   */
+  async function pushNow(): Promise<void> {
+    // A reconcile owns the tree; a sticky conflict means the remote has moved
+    // under us and only a reconcile clears it — pushing into either is wrong.
+    if (closed || manualPause !== null || conflictPaths !== null) return
+    // Single-flight against itself, the pull loop, and a commit — all of which
+    // touch refs or the index. Claimed synchronously, before the first await.
+    if (pushInFlight || pullInFlight || committing) return
+    pushInFlight = true
+    try {
+      let result = await args.repo.push()
+      if (result.kind === 'rejected' && result.reason === 'non-fast-forward') {
+        // The remote moved. Release the push guard so `maybePull`'s own
+        // synchronous claim of `pullInFlight` can take over — there is no await
+        // between here and that claim, so no other push can slip through the gap.
+        pushInFlight = false
+        const pulled = await maybePull()
+        // Anything but a clean merge (a conflict, or a declined tick) is now
+        // owned by `maybePull`'s state — do not retry or the state fights it.
+        if (pulled?.kind !== 'merged') return
+        pushInFlight = true
+        result = await args.repo.push()
+      }
+      if (result.kind === 'pushed' || result.kind === 'nothing-to-push') {
+        offline = false
+        permissionDenied = false
+      } else if (result.kind === 'rejected' && result.reason === 'permission') {
+        permissionDenied = true
+      }
+      // A second non-fast-forward here (someone pushed again in the last few
+      // milliseconds) is left for the next tick rather than looped on.
+    } catch (err) {
+      console.error('[vault] push failed:', err)
+      // Mirrors `maybePull`: a lock the user's own git briefly held is contention,
+      // not the network, and calling it offline sends someone to check their wifi.
+      if (!isIndexLockError(err)) offline = true
+    } finally {
+      pushInFlight = false
+      await refreshState()
+    }
   }
 
   const watcher: VaultWatcher = await watchVault({
@@ -416,13 +535,19 @@ export async function openActiveVault(args: {
    * nothing had changed and pushed nothing at all. That is fine for one vault
    * and wrong for two: the renderer holds a single sync state for the whole app,
    * so it went on displaying the vault it had just switched away from, and an
-   * empty vault inherited "31 to publish" from the one before it.
+   * empty vault inherited a stale count from the one before it.
    *
    * Unconditional rather than routed through `setState`, because the value being
    * equal to the last one is exactly the case that needs sending: the renderer's
    * copy belongs to a different vault entirely.
    */
   if (!closed) args.onSyncState(state)
+
+  // Drain anything a killed quit or a prior offline session left unpushed. The
+  // opening `maybeCommit` above may also have just committed a dirty-on-open
+  // tree; either way, get it to the remote. Fire-and-forget — an unreachable
+  // remote must not delay the vault being usable.
+  void pushNow()
 
   return {
     remote: args.remote,
@@ -440,57 +565,7 @@ export async function openActiveVault(args: {
       }
       return maybeCommit()
     },
-    async publish() {
-      // FR-13/FR-14. `publish()` in the engine pulls first, so the one call
-      // site cannot forget to.
-      //
-      // It claims the same in-flight guard `maybePull` does, and must: a
-      // publish pulls, so without this an interval tick and a Publish click can
-      // have two `git merge`s running on one repo at once. They then fight over
-      // MERGE_HEAD — one abort tears down the other's merge, and the loser
-      // reports "There is no merge to abort" for a merge it was in the middle
-      // of. Rare in production at a three-minute interval, and unpleasant.
-      if (pullInFlight) {
-        // A pull is already merging; let it finish rather than racing it.
-        await waitForIdlePull()
-      }
-      pullInFlight = true
-      syncing = 'publishing'
-      await refreshState()
-      try {
-        /**
-         * Publish is a commit point, like ⌘S (FR-4).
-         *
-         * The commit debounce restarts on every keystroke, so the tree is dirty
-         * for as long as someone keeps typing — and a publish that only pushes
-         * *commits* therefore pushes everything except the sentence they were
-         * in the middle of. "Publish" has to mean "publish my work".
-         *
-         * `duringPull` is the sequenced-not-concurrent escape: `pullInFlight` is
-         * already claimed above, and this commit runs before the merge rather
-         * than alongside it.
-         */
-        await maybeCommit(true)
-        const result = await args.repo.publish()
-        offline = false
-        // FR-15: a conflicting pre-publish pull hands off to the reconcile path
-        // with nothing pushed and the user's work local and intact.
-        //
-        // Except when it names nothing — see `maybePull`, which has refused to
-        // latch that since plan 4 and for the same reason. A merge refused
-        // before it starts (the tree went dirty under it, or a git the user ran
-        // took the index) reports no unmerged paths, and latching FR-12's
-        // sticky pause on it disables auto-pull permanently for a conflict that
-        // does not exist and no reconcile can clear. The result still goes back
-        // to the caller: the publish genuinely did not happen.
-        if (result.kind === 'conflict' && result.paths.length > 0) conflictPaths = result.paths
-        return result
-      } finally {
-        syncing = null
-        pullInFlight = false
-        await refreshState()
-      }
-    },
+    pushNow,
     onFocus() {
       // A fetch is already running, so this focus needs neither a pull nor a
       // throttle window of its own. Stamping first and discovering the
@@ -502,7 +577,10 @@ export async function openActiveVault(args: {
       const now = Date.now()
       if (now - lastFocusPull < timings.focusThrottleMs) return
       lastFocusPull = now
-      void maybePull()
+      // Pull, then drain the backlog: coming back to the app is exactly when an
+      // offline session's unpushed commits should leave. `pushNow` declines
+      // while the pull is in flight, so it runs after — hence the chain.
+      void maybePull().then(() => pushNow())
     },
     pause(reason) {
       manualPause = reason
@@ -530,6 +608,8 @@ export async function openActiveVault(args: {
       clearInterval(pullTimer)
       if (commitTimer !== null) clearTimeout(commitTimer)
       commitTimer = null
+      if (pushTimer !== null) clearTimeout(pushTimer)
+      pushTimer = null
       await watcher.close()
     },
   }
@@ -570,6 +650,10 @@ export function createVaultHost(args: {
     return run
   }
 
+  /** The switch/quit push budget, shared with the vault's own timings so a test
+   *  can shrink it. `pushNow` never rejects, so the race only guards latency. */
+  const pushBudgetMs = args.timings?.pushBudgetMs ?? DEFAULT_TIMINGS.pushBudgetMs
+
   async function closeCurrent(): Promise<void> {
     if (current === null) return
     const vault = current
@@ -578,6 +662,11 @@ export function createVaultHost(args: {
     // vault is closed, so a dirty file left here is one nobody will notice —
     // and a tree that is not clean is one the next pull cannot merge.
     await vault.commitNow().catch((err) => console.error('[vault] flush on switch failed:', err))
+    // A vault switch is a leave point: get the just-committed work to the remote
+    // before this vault stops running. Budgeted, because switching must not hang
+    // on an unreachable remote — the work is committed on disk regardless, and
+    // the next open of this vault drains whatever did not make it out.
+    await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, pushBudgetMs))])
     await vault.close()
   }
 

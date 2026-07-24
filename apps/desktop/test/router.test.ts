@@ -919,7 +919,7 @@ describe('vaults.add', () => {
 })
 
 describe('vaults.create', () => {
-  it('creates the repo, seeds it, commits and publishes', async () => {
+  it('creates the repo, seeds it, commits and pushes', async () => {
     const { caller, session, base } = await rig({}, seeded())
     const origin = await makeRemote()
     vi.spyOn(session.api, 'createRepo').mockResolvedValue({
@@ -937,9 +937,17 @@ describe('vaults.create', () => {
     expect(session.api.createRepo).toHaveBeenCalledWith({ name: 'fresh', owner: 'syv-ai' })
     expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
     // FR-8: seeded, committed AND pushed, so the vault exists for everyone else.
+    // The push is automatic (open-drain + the explicit kick in vaults.create),
+    // and can land a moment after create() returns — so poll origin/main rather
+    // than assuming it is there the instant the mutation resolves.
     const dest = join(base, 'Holi', 'syv-ai', 'fresh')
     expect(await plainGit(dest, ['status', '--porcelain'])).toBe('')
-    expect(await plainGit(dest, ['rev-list', '--count', 'origin/main'])).not.toBe('0')
+    let pushed = false
+    for (let i = 0; i < 100 && !pushed; i++) {
+      pushed = (await plainGit(dest, ['rev-list', '--count', 'origin/main']).catch(() => '0')) !== '0'
+      if (!pushed) await new Promise((r) => setTimeout(r, 20))
+    }
+    expect(pushed).toBe(true)
   })
 })
 
@@ -950,7 +958,9 @@ describe('sync', () => {
     expect(host.active()).not.toBeNull()
 
     const state = await caller.sync.state()
-    expect(['up-to-date', 'ahead']).toContain(state.kind)
+    // Resting ahead>0 is not surfaced now that push is automatic — a freshly
+    // added vault settles at up-to-date (or, briefly, pulling on the open fetch).
+    expect(['up-to-date', 'pulling']).toContain(state.kind)
     expect(base).toBeTruthy()
   })
 
@@ -969,7 +979,7 @@ describe('sync', () => {
     expect(await plainGit(dest, ['log', '-1', '--format=%s'])).toBe('Update fresh.md')
   })
 
-  it('publish sends local commits to the remote', async () => {
+  it('pushNow sends local commits to the remote', async () => {
     const { caller, base } = await rig()
     const origin = await makeRemote()
     await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
@@ -977,20 +987,40 @@ describe('sync', () => {
 
     await caller.notes.create({ remote: 'syv-ai/notes', path: 'ship.md', text: '# Ship\n' })
     await caller.sync.commitNow()
-    expect(await caller.sync.publish()).toMatchObject({ kind: 'pushed' })
+    expect(await caller.sync.pushNow()).toEqual({ ok: true })
+
+    // Wait until dest's commits are all on origin (nothing ahead) before cloning
+    // the checker — the explicit pushNow can no-op if the seed's open-drain push
+    // is still in flight, and the coalescer's retry lands a beat later.
+    for (let i = 0; i < 200; i++) {
+      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(() => '1')
+      if (ahead === '0') break
+      await new Promise((r) => setTimeout(r, 20))
+    }
 
     const check = await makeClone(origin, 'check')
     expect(await readFile(join(check, 'ship.md'), 'utf8')).toBe('# Ship\n')
     expect(dest).toBeTruthy()
   })
 
-  it('publish reports a conflicting pre-publish pull as a conflict, not a push failure', async () => {
-    // FR-15. The user's work stays local and intact, and the reconcile path —
-    // not an error toast — is what they are handed.
+  it('pushNow leaves a conflicting divergence in the conflict state, pushing nothing', async () => {
+    // FR-15. A non-fast-forward push recovers by pulling; a real conflict routes
+    // to the reconcile path, and the user's work stays local and intact.
     const { caller, base } = await rig()
     const origin = await makeRemote()
     await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
     const dest = join(base, 'Holi', 'syv-ai', 'notes')
+
+    // Push is automatic now, so the vault's seed reaches origin on its own — wait
+    // until it has (nothing left ahead) before the teammate branches, or the
+    // seed's push races the teammate's and one of them is rejected non-ff.
+    await caller.sync.commitNow()
+    await caller.sync.pushNow()
+    for (let i = 0; i < 200; i++) {
+      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(() => '1')
+      if (ahead === '0') break
+      await new Promise((r) => setTimeout(r, 20))
+    }
 
     const teammate = await makeClone(origin, 'teammate')
     await writeFile(join(teammate, 'README.md'), '# Theirs\n', 'utf8')
@@ -1001,7 +1031,8 @@ describe('sync', () => {
     await caller.notes.write({ remote: 'syv-ai/notes', path: 'README.md', text: '# Ours\n' })
     await caller.sync.commitNow()
 
-    expect(await caller.sync.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+    await caller.sync.pushNow()
+    expect(await caller.sync.state()).toEqual({ kind: 'conflict', paths: ['README.md'] })
     expect(await readFile(join(dest, 'README.md'), 'utf8')).toBe('# Ours\n')
   })
 
@@ -1009,6 +1040,6 @@ describe('sync', () => {
     const { caller } = await rig()
     await expect(caller.sync.state()).rejects.toThrow(/no vault is open/)
     await expect(caller.sync.commitNow()).rejects.toThrow(/no vault is open/)
-    await expect(caller.sync.publish()).rejects.toThrow(/no vault is open/)
+    await expect(caller.sync.pushNow()).rejects.toThrow(/no vault is open/)
   })
 })

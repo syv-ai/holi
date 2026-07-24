@@ -1,10 +1,11 @@
 /**
  * FR-21's vocabulary, and nothing beyond it.
  *
- * The words are fixed by the requirement: up to date, N to publish, pulling,
- * offline, conflict, reconciling — plus `publishing` and `paused`, which plan 4
- * added and its doc justifies. A test per kind, because the failure mode here
- * is not a crash, it is a vault confidently reporting the wrong thing.
+ * Push is automatic (`prd/vaults-sync.md` §Pushing), so there is no "N to
+ * publish" and no `publishing`: the words are up to date, pulling, offline
+ * (with the waiting count), no write access, conflict, reconciling, paused. A
+ * test per kind, because the failure mode here is not a crash, it is a vault
+ * confidently reporting the wrong thing.
  */
 import { describe, expect, it } from 'vitest'
 import { syncLabel } from '../src/renderer/src/lib/sync-label'
@@ -14,25 +15,28 @@ describe('syncLabel', () => {
     expect(syncLabel({ kind: 'up-to-date' })).toEqual({ text: 'up to date', tone: 'quiet' })
   })
 
-  it('counts what is waiting to publish', () => {
-    // FR-13: the control shows how many commits are waiting, and nothing else
-    // is asked of the user.
-    expect(syncLabel({ kind: 'ahead', count: 3 })).toEqual({ text: '3 to publish', tone: 'quiet' })
+  it('names how much is waiting when offline', () => {
+    // The count matters only when a push is failing: online, unpushed commits
+    // are a transient nobody needs to see.
+    expect(syncLabel({ kind: 'offline', count: 3 })).toEqual({
+      text: 'offline — 3 waiting',
+      tone: 'warn',
+    })
   })
 
-  it('does not say "1 to publishs"', () => {
-    expect(syncLabel({ kind: 'ahead', count: 1 }).text).toBe('1 to publish')
+  it('drops the count when offline with nothing waiting', () => {
+    expect(syncLabel({ kind: 'offline', count: 0 })).toEqual({ text: 'offline', tone: 'warn' })
   })
 
-  it('distinguishes pulling from publishing', () => {
-    // Calling a publish "pulling" would be a lie at the moment it matters most:
-    // a publish is the one thing that leaves the machine.
+  it('reports a permission refusal as its own thing, not offline (FR-16)', () => {
+    expect(syncLabel({ kind: 'no-access' })).toEqual({ text: 'no write access', tone: 'warn' })
+  })
+
+  it('says pulling while a fetch-and-merge runs', () => {
     expect(syncLabel({ kind: 'pulling' })).toEqual({ text: 'pulling', tone: 'busy' })
-    expect(syncLabel({ kind: 'publishing' })).toEqual({ text: 'publishing', tone: 'busy' })
   })
 
-  it('warns on offline, conflict and reconciling', () => {
-    expect(syncLabel({ kind: 'offline' })).toEqual({ text: 'offline', tone: 'warn' })
+  it('warns on conflict and reconciling', () => {
     expect(syncLabel({ kind: 'reconciling' })).toEqual({ text: 'reconciling', tone: 'warn' })
     expect(syncLabel({ kind: 'conflict', paths: ['a.md', 'b.md'] })).toEqual({
       text: '2 files conflict',

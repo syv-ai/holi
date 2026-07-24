@@ -26,14 +26,19 @@ export function syncLabel(state: SyncState): SyncLabel {
   switch (state.kind) {
     case 'up-to-date':
       return { text: 'up to date', tone: 'quiet' }
-    case 'ahead':
-      return { text: `${state.count} to publish`, tone: 'quiet' }
     case 'pulling':
       return { text: 'pulling', tone: 'busy' }
-    case 'publishing':
-      return { text: 'publishing', tone: 'busy' }
     case 'offline':
-      return { text: 'offline', tone: 'warn' }
+      // Push is automatic, so unpushed commits are only worth naming when the
+      // network is stopping them (`prd/vaults-sync.md` §State display). The
+      // count is what tells you how much is waiting; a bare "offline" hides it.
+      return {
+        text: state.count > 0 ? `offline — ${state.count} waiting` : 'offline',
+        tone: 'warn',
+      }
+    case 'no-access':
+      // FR-16: a permission refusal is its own thing, not a network failure.
+      return { text: 'no write access', tone: 'warn' }
     case 'conflict':
       // FR-17 wants the count named on the banner; the dropdown has room for
       // the number but not the paths, and the banner carries those.

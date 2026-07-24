@@ -498,13 +498,74 @@ describe('ActiveVault — sync', () => {
     await waitFor('a settled state', () => active.syncState().kind === 'up-to-date')
   })
 
-  it('reports how many commits are waiting to publish', async () => {
-    // FR-21's "N to publish".
-    const { active, dir } = await withTeammate({ rescanDebounceMs: 30, commitQuietMs: 60 })
-    await writeFile(join(dir, 'mine.md'), 'x\n', 'utf8')
+  it('pushes a landed commit to the remote on the coalesce timer', async () => {
+    // Push is automatic: a committed change reaches the remote without anyone
+    // clicking anything (`prd/vaults-sync.md` §Pushing).
+    const { active, dir, teammate } = await withTeammate({
+      rescanDebounceMs: 30,
+      commitQuietMs: 60,
+      pushQuietMs: 120,
+    })
+    await writeFile(join(dir, 'mine.md'), 'auto-pushed\n', 'utf8')
 
-    await waitFor('the ahead count', () => active.syncState().kind === 'ahead')
-    expect(active.syncState()).toEqual({ kind: 'ahead', count: 1 })
+    await waitFor('the commit to reach origin', async () => {
+      await plainGit(teammate, ['fetch', 'origin'])
+      const log = await plainGit(teammate, ['log', 'origin/main', '--oneline']).catch(() => '')
+      return log.includes('mine.md')
+    })
+    await waitFor('the vault to settle up-to-date', () => active.syncState().kind === 'up-to-date')
+  })
+
+  it('shows offline with the waiting count when a push cannot reach the remote', async () => {
+    // The one time unpushed commits are worth naming: the network is gone and
+    // they are piling up. FR-22 forbids saying "synced" then, and a bare
+    // "offline" hides how much is waiting.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        status: async () => ({ ...(await real.status()), ahead: 2 }),
+        push: async () => {
+          throw new GitError('could not resolve host: github.com', 128, 'could not resolve host')
+        },
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.pushNow()
+    await waitFor('offline with the waiting count', () =>
+      JSON.stringify(active.syncState()) === JSON.stringify({ kind: 'offline', count: 2 }),
+    )
+  })
+
+  it('reports a permission rejection as no-access, not offline (FR-16)', async () => {
+    // "You lost write access" and "you are offline" send someone to two
+    // entirely different places, so they must never be the same word.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await sleep(QUIESCE)
+    const real = openRepo(dir)
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: {
+        ...real,
+        push: async () => ({ kind: 'rejected' as const, reason: 'permission' as const }),
+      },
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await active.pushNow()
+    await waitFor('the no-access state', () => active.syncState().kind === 'no-access')
   })
 
   it('reports a conflict, leaves the tree clean, and stops retrying', async () => {
@@ -548,7 +609,8 @@ describe('ActiveVault — sync', () => {
     // then fails with "nothing to commit". Waiting for a clean tree is both
     // deterministic and closer to what actually happens.
     await waitFor('our edit to be autosaved', async () => !(await active.repo.status()).dirty)
-    expect(await active.publish()).toMatchObject({ kind: 'conflict' })
+    // The auto-pull loop reaches the divergence and reports the conflict itself.
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
 
     const before = await count(dir)
     await writeFile(join(dir, 'carrying-on.md'), 'still working\n', 'utf8')
@@ -564,15 +626,13 @@ describe('ActiveVault — sync', () => {
     // indicator implies they are safe. The conflict is still there — and shown
     // again — the moment the branch comes back.
     // Auto-pull stays OFF and the conflict is established with an explicit
-    // publish(), which pulls first and hits exactly the same code path. Racing
-    // an 80 ms pull interval against the test's own git guarantees index.lock
-    // collisions — the vault's `git merge` and the test's `git checkout` cannot
-    // both hold the index — and that contention is the subject of a different
-    // finding, not of this test.
-    // BOTH background loops are off and every step is driven explicitly. A tick
-    // running git while the test also runs git collides on index.lock — a real
-    // property of a shared clone, recorded as its own finding, but pure noise
-    // here. commitNow() forces the fresh status read this test is about.
+    // pushNow(), whose non-fast-forward recovery pulls and hits exactly the same
+    // conflict path. Racing an 80 ms pull interval against the test's own git
+    // guarantees index.lock collisions — the vault's `git merge` and the test's
+    // `git checkout` cannot both hold the index — and that contention is the
+    // subject of a different finding, not of this test.
+    // BOTH background loops are off and every step is driven explicitly.
+    // commitNow() forces the fresh status read this test is about.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 60_000,
       healIntervalMs: 60_000,
@@ -581,7 +641,8 @@ describe('ActiveVault — sync', () => {
     await theyPublish(teammate, 'README.md', '# Theirs\n')
     await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
     await active.commitNow()
-    expect(await active.publish()).toMatchObject({ kind: 'conflict' })
+    await active.pushNow()
+    expect(active.syncState().kind).toBe('conflict')
 
     await plainGit(dir, ['checkout', '-b', 'spike/idea'])
     await active.commitNow()
@@ -604,7 +665,7 @@ describe('ActiveVault — sync', () => {
     // a second process acting on a repo Holi is also using. With the loop at
     // 80 ms these collide on `index.lock` often enough to flake ~1 run in 3.
     // Same reasoning as the test above: the conflict is established with an
-    // explicit publish() so the loop is not running git while the test is.
+    // explicit pushNow() so the loop is not running git while the test is.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 60_000,
       healIntervalMs: 60_000,
@@ -619,7 +680,8 @@ describe('ActiveVault — sync', () => {
     await theyPublish(teammate, 'README.md', '# Theirs\n')
     await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
     await active.commitNow()
-    expect(await active.publish()).toMatchObject({ kind: 'conflict' })
+    await active.pushNow()
+    expect(active.syncState().kind).toBe('conflict')
 
     // Resolve it the way a developer would, in a terminal.
     await plainGit(dir, ['fetch', 'origin'])
@@ -643,38 +705,21 @@ describe('ActiveVault — sync', () => {
     })
   })
 
-  it('publish pulls first, so both sides survive', async () => {
-    // FR-14: a non-fast-forward rejection is not worth surfacing when the fix
-    // is the pull that was going to happen anyway.
+  it('recovers from a non-fast-forward push by pulling then retrying', async () => {
+    // The remote moved under us. Rather than surface a rejection, pushNow pulls
+    // and retries — both sides survive (`prd/vaults-sync.md` §Pushing). A push
+    // rejection is just one more way to discover a divergence.
     const { active, dir, teammate } = await withTeammate()
     await theyPublish(teammate, 'theirs.md', 'theirs\n')
     await writeFile(join(dir, 'mine.md'), 'mine\n', 'utf8')
     await active.commitNow()
 
-    const result = await active.publish()
+    await active.pushNow()
 
-    expect(result.kind).toBe('pushed')
+    expect(active.syncState().kind).toBe('up-to-date')
     await plainGit(teammate, ['pull', 'origin', 'main'])
     expect(await readFile(join(teammate, 'mine.md'), 'utf8')).toBe('mine\n')
     expect(await readFile(join(dir, 'theirs.md'), 'utf8')).toBe('theirs\n')
-  })
-
-  it('publish commits what is on disk first, so Publish means "publish my work"', async () => {
-    // The commit debounce restarts on every keystroke, so a user who presses
-    // Publish mid-sentence has a dirty tree — and `publish()` used to be pull
-    // then push, which pushes everything EXCEPT the sentence they just typed.
-    // FR-4 already calls ⌘S a real commit point; Publish is the same kind of
-    // moment, and FR-6 simply failed to list it.
-    const { active, dir, teammate } = await withTeammate()
-    await writeFile(join(dir, 'mid-sentence.md'), 'the words I just typed\n', 'utf8')
-
-    // No commitNow(): that is the whole point.
-    expect(await active.publish()).toMatchObject({ kind: 'pushed' })
-
-    await plainGit(teammate, ['pull', 'origin', 'main'])
-    expect(await readFile(join(teammate, 'mid-sentence.md'), 'utf8')).toBe(
-      'the words I just typed\n',
-    )
   })
 
   it('does not call a lost index.lock "offline"', async () => {
@@ -761,29 +806,38 @@ describe('ActiveVault — sync', () => {
     await waitFor('a pull on the focus after the fetch', () => pulls === 2, 250)
   })
 
-  it('does not strand the vault on a publish conflict that names no paths', async () => {
-    // `maybePull` already refuses to latch this: `git merge` reports unmerged
-    // paths only once it has really started merging, so a merge that is refused
-    // up front — a tree that went dirty, an index.lock lost to the user's own
-    // git — comes back as a conflict naming nothing. `publish()` never got the
-    // same guard, and FR-12's pause is sticky by design, so one transient race
-    // during a Publish disabled auto-pull permanently for a conflict that does
-    // not exist and that no reconcile can resolve.
+  it('does not strand the vault when a push-recovery pull conflicts but names no paths', async () => {
+    // A non-fast-forward push triggers a recovery pull; when that merge is
+    // refused before it starts — a tree that went dirty, an index.lock lost to
+    // the user's own git — it comes back naming nothing. `maybePull` already
+    // refuses to latch FR-12's sticky pause on that, and pushNow inherits it by
+    // delegating: otherwise one transient race would disable auto-pull forever.
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     const teammate = await makeClone(origin, 'teammate')
     await sleep(QUIESCE)
     const real = openRepo(dir)
+    // The push stays rejected non-fast-forward; the FIRST recovery pull names no
+    // paths (the transient race), later pulls are real so the vault can recover.
+    let pulls = 0
     const active = await openActiveVault({
       remote: 'syv-ai/notes',
-      repo: { ...real, publish: async () => ({ kind: 'conflict', paths: [] }) },
+      repo: {
+        ...real,
+        push: async () => ({ kind: 'rejected' as const, reason: 'non-fast-forward' as const }),
+        pull: async () => {
+          pulls += 1
+          if (pulls === 1) return { kind: 'conflict' as const, paths: [] }
+          return real.pull()
+        },
+      },
       onSnapshot: () => {},
       onSyncState: () => {},
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
     })
     open.push(active)
 
-    expect(await active.publish()).toEqual({ kind: 'conflict', paths: [] })
+    await active.pushNow()
     expect(active.syncState().kind).not.toBe('conflict')
 
     // The harm is not the banner, it is that auto-pull never runs again.
@@ -794,14 +848,16 @@ describe('ActiveVault — sync', () => {
     })
   })
 
-  it('publish stops at a conflicting pull and pushes nothing', async () => {
-    // FR-15: the user's work stays local and intact.
+  it('reports a real conflict during a push recovery and pushes nothing', async () => {
+    // FR-15 preserved: the user's work stays local and intact, the remote is
+    // untouched, and the tree is left clean for the reconcile path.
     const { active, dir, teammate } = await withTeammate()
     await theyPublish(teammate, 'README.md', '# Theirs\n')
     await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
     await active.commitNow()
 
-    expect(await active.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+    await active.pushNow()
+    expect(active.syncState()).toEqual({ kind: 'conflict', paths: ['README.md'] })
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Ours\n')
     expect((await active.repo.status()).merging).toBe(false)
   })
@@ -893,9 +949,7 @@ describe('ActiveVault — sync', () => {
     await waitFor('their note, exactly once', async () =>
       (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
     )
-    await waitFor('a settled state', () =>
-      ['up-to-date', 'ahead'].includes(active.syncState().kind),
-    )
+    await waitFor('a settled state', () => active.syncState().kind === 'up-to-date')
     expect((await active.repo.status()).merging).toBe(false)
   })
 })
@@ -938,9 +992,9 @@ describe('VaultHost', () => {
    * local `state` at `up-to-date` — so opening a clean vault decided nothing had
    * changed and pushed nothing at all. The renderer holds one sync state for the
    * whole app, so it kept displaying the *previous* vault's: switching from a
-   * vault with 31 unpublished commits to an empty one still read "31 to
-   * publish". FR-22 is that the indicator must never claim a state that is not
-   * true, and that cuts both ways.
+   * vault stuck offline to an empty one still read the offline count from the
+   * one before it. FR-22 is that the indicator must never claim a state that is
+   * not true, and that cuts both ways.
    */
   it('announces the opening sync state, even when nothing changed', async () => {
     const { registry } = await twoVaults()

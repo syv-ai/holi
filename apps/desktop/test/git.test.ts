@@ -445,42 +445,6 @@ describe('classifyPushFailure', () => {
   })
 })
 
-describe('publish', () => {
-  it('pulls before pushing, so a moved remote is not an error', async () => {
-    // FR-14. Without the pull-first rule this is the non-fast-forward rejection
-    // from the test above — and there is nothing for a user to do about it that
-    // the app could not do itself.
-    const remote = await makeRemote()
-    const dir = await makeClone(remote)
-    const teammate = await makeClone(remote, 'teammate')
-    await commitFile(teammate, 'theirs.md', 'theirs\n')
-    await plainGit(teammate, ['push', 'origin', 'main'])
-    await commitFile(dir, 'ours.md', 'ours\n')
-
-    expect((await openRepo(dir).publish()).kind).toBe('pushed')
-    const check = await makeClone(remote, 'check')
-    expect(await readFile(join(check, 'ours.md'), 'utf8')).toBe('ours\n')
-    expect(await readFile(join(check, 'theirs.md'), 'utf8')).toBe('theirs\n')
-  })
-
-  it('stops at a conflicting pull and pushes nothing', async () => {
-    // FR-15: the user's work stays local and intact, and the remote is untouched.
-    const remote = await makeRemote()
-    const dir = await makeClone(remote)
-    const teammate = await makeClone(remote, 'teammate')
-    await commitFile(teammate, 'README.md', '# Theirs\n')
-    await plainGit(teammate, ['push', 'origin', 'main'])
-    await commitFile(dir, 'README.md', '# Ours\n')
-
-    const repo = openRepo(dir)
-    expect(await repo.publish()).toEqual({ kind: 'conflict', paths: ['README.md'] })
-    expect((await repo.status()).dirty).toBe(false)
-
-    const check = await makeClone(remote, 'check')
-    expect(await readFile(join(check, 'README.md'), 'utf8')).toBe('# Theirs\n')
-  })
-})
-
 describe('log', () => {
   it('returns commits newest first, with sha, subject, date and author', async () => {
     const dir = await makeClone(await makeRemote())

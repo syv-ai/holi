@@ -150,10 +150,10 @@ export interface GitRepo {
   log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
+  /** Push local commits to the default branch. The caller recovers from a
+   * non-fast-forward rejection by pulling and retrying (`active-vault.ts`
+   * §pushNow) — there is no publish combinator, because push is automatic. */
   push(): Promise<PushResult>
-  /** FR-14: pull, then push. A conflicting pre-publish pull returns the
-   * PullResult and pushes nothing. */
-  publish(): Promise<PullResult | PushResult>
   /** FR-20. A no-op when no merge is in progress. */
   abortMerge(): Promise<void>
   /** Stage everything and commit. Returns the new sha, or **null** when the tree
@@ -466,20 +466,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
   }
 
-  /**
-   * FR-14: publish pulls first.
-   *
-   * A non-fast-forward rejection is not worth showing a user when the fix is the
-   * pull that was going to happen anyway — so the rule lives here, once, rather
-   * than at every call site that might forget it. A conflicting pull returns its
-   * own result and pushes nothing (FR-15): the work stays local and intact.
-   */
-  async function publish(): Promise<PullResult | PushResult> {
-    const pulled = await pull()
-    if (pulled.kind === 'conflict') return pulled
-    return push()
-  }
-
   async function commitAll(message: string): Promise<string | null> {
     if (!(await isDirty())) return null
     // `-A` so deletions and untracked files ride along: a deleted note is a
@@ -595,7 +581,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, log, commitAll, pull, push, publish, abortMerge }
+  return { root, status, log, commitAll, pull, push, abortMerge }
 }
 
 /**
