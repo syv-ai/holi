@@ -24,34 +24,37 @@ export function buildTreeData(
   paths: string[],
   pendingFolders: string[] = [],
 ): Record<string, TreeItemData> {
-  const data: Record<string, TreeItemData> = {
-    [ROOT_ID]: { name: '', isFolder: true, children: [] },
-  }
+  const root: TreeItemData = { name: '', isFolder: true, children: [] }
+  const data: Record<string, TreeItemData> = { [ROOT_ID]: root }
 
-  const ensureFolder = (path: string): void => {
-    if (data[path]) return
-    data[path] = { name: baseName(path), isFolder: true, children: [] }
+  // Returns the folder node so callers hold a reference rather than re-indexing
+  // (keeps the whole function clean under `noUncheckedIndexedAccess`).
+  const ensureFolder = (path: string): TreeItemData => {
+    const existing = data[path]
+    if (existing) return existing
+    const node: TreeItemData = { name: baseName(path), isFolder: true, children: [] }
+    data[path] = node
     const slash = path.lastIndexOf('/')
-    const parent = slash === -1 ? ROOT_ID : path.slice(0, slash)
-    if (parent !== ROOT_ID) ensureFolder(parent)
-    data[parent].children.push(path)
+    const parent = slash === -1 ? root : ensureFolder(path.slice(0, slash))
+    parent.children.push(path)
+    return node
   }
 
   for (const folder of pendingFolders) ensureFolder(folder)
 
   for (const path of paths) {
     const slash = path.lastIndexOf('/')
-    const parent = slash === -1 ? ROOT_ID : path.slice(0, slash)
-    if (parent !== ROOT_ID) ensureFolder(parent)
+    const parent = slash === -1 ? root : ensureFolder(path.slice(0, slash))
     data[path] = { name: path.slice(slash + 1), isFolder: false, children: [] }
-    data[parent].children.push(path)
+    parent.children.push(path)
   }
 
-  data[ROOT_ID].children = data[ROOT_ID].children.filter((id) => !HIDDEN_ROOTS.has(data[id].name))
+  const nameOf = (id: string): string => data[id]?.name ?? ''
+  root.children = root.children.filter((id) => !HIDDEN_ROOTS.has(nameOf(id)))
 
-  const rank = (id: string) => (data[id].isFolder ? 0 : 1)
+  const rank = (id: string) => (data[id]?.isFolder ? 0 : 1)
   for (const item of Object.values(data)) {
-    item.children.sort((a, b) => rank(a) - rank(b) || data[a].name.localeCompare(data[b].name))
+    item.children.sort((a, b) => rank(a) - rank(b) || nameOf(a).localeCompare(nameOf(b)))
   }
 
   return data
