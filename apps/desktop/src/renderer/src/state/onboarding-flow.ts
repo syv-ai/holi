@@ -62,7 +62,6 @@ export type Action =
   | { type: 'setOwner'; owner: string }
   | { type: 'submitStart' }
   | { type: 'created' }
-  | { type: 'fail'; error: string }
   | { type: 'failInPlace'; error: string }
 
 export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
@@ -92,12 +91,10 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       // The repo now exists and is pushed — advance to the threshold, which can
       // truthfully say so. Only reached from act 2 (naming), after create.
       return { ...s, act: 3, submitting: false, error: null }
-    case 'fail':
-      return { ...s, submitting: false, error: a.error, act: 2, view: 'form' }
     case 'failInPlace':
-      // A join reject stays exactly where it happened — the picker — with the
-      // message shown, rather than bouncing to the naming form (which reads as
-      // an unexplained reset). Used for adopt; `fail` is the create-path bounce.
+      // A submit failure (create, or a join adopt) stays exactly where it
+      // happened — the naming form or the picker — with the message shown,
+      // rather than navigating away, which reads as an unexplained reset.
       return { ...s, submitting: false, error: a.error }
     default:
       return s

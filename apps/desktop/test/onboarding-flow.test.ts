@@ -42,11 +42,6 @@ describe('reduce', () => {
     expect(reduce({ ...s0, act: 2 }, { type: 'back', mode: 'add-vault' }).act).toBe(2) // add-vault floor
   })
 
-  it('fail bounces to the naming act with the message', () => {
-    const failed = reduce({ ...s0, act: 3, submitting: true }, { type: 'fail', error: 'nope' })
-    expect(failed).toMatchObject({ act: 2, view: 'form', submitting: false, error: 'nope' })
-  })
-
   it('created advances to the threshold and clears the pending state', () => {
     const naming = reduce(reduce(s0, { type: 'advance' }), { type: 'setName', name: 'notes' })
     const submitting = reduce(naming, { type: 'submitStart' })

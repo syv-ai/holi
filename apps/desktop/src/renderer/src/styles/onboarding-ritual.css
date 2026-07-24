@@ -1016,3 +1016,13 @@
   color: hsl(var(--primary));
   white-space: nowrap;
 }
+
+/* Join picker: repo-list load failure, with a retry (a timeout must not
+ * tear down the ritual — it stays here). */
+.onboarding-ritual .obrit-join-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import type { Repo } from '../../../main/github/api'
 import { trpc } from '../lib/trpc'
@@ -47,6 +47,9 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
 
   const [orgs, setOrgs] = useState<string[]>([])
   const [repos, setRepos] = useState<Repo[] | null>(null)
+  /** Non-null when the repo list failed to load — kept local to the join view
+   *  (with a retry) rather than aborting the whole ritual. */
+  const [reposError, setReposError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   /** The `owner/repo` of the vault just created — set on success so the
    *  threshold can show and copy the live remote. */
@@ -66,16 +69,23 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
       .catch(() => {})
   }, [])
 
-  // Fetch the repo list the first time the join view opens, then keep it.
-  useEffect(() => {
-    if (s.view !== 'join' || repos !== null) return
+  // Load the repo list for the join picker. A failure (a timeout, a flaky
+  // network) stays *here* — shown in the picker with a retry — rather than
+  // tearing down to the naming form and losing the user's place.
+  const loadRepos = useCallback(() => {
+    setReposError(null)
     void trpc.github.repos
       .query()
       .then(setRepos)
       .catch((err: unknown) =>
-        dispatch({ type: 'fail', error: err instanceof Error ? err.message : String(err) })
+        setReposError(err instanceof Error ? err.message : String(err))
       )
-  }, [s.view, repos])
+  }, [])
+
+  // Fetch the first time the join view opens, then keep it.
+  useEffect(() => {
+    if (s.view === 'join' && repos === null && reposError === null) loadRepos()
+  }, [s.view, repos, reposError, loadRepos])
 
   // Auto-focus the giant input whenever Act 2's naming form becomes active.
   useEffect(() => {
@@ -350,7 +360,17 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                     spellCheck={false}
                   />
                   <div className="obrit-join-list holi-scroll">
-                    {repos === null && <p className="obrit-field-caption">loading repos…</p>}
+                    {repos === null && reposError === null && (
+                      <p className="obrit-field-caption">loading repos…</p>
+                    )}
+                    {reposError !== null && (
+                      <div className="obrit-join-error">
+                        <p className="obrit-field-caption is-warn">couldn't load your repos.</p>
+                        <button type="button" className="obrit-btn is-ghost" onClick={loadRepos}>
+                          retry
+                        </button>
+                      </div>
+                    )}
                     {repos !== null &&
                       matches.map((repo) => (
                         <button
