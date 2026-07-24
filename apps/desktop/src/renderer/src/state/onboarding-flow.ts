@@ -61,6 +61,7 @@ export type Action =
   | { type: 'setName'; name: string }
   | { type: 'setOwner'; owner: string }
   | { type: 'submitStart' }
+  | { type: 'created' }
   | { type: 'fail'; error: string }
   | { type: 'failInPlace'; error: string }
 
@@ -87,6 +88,10 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, owner: a.owner }
     case 'submitStart':
       return { ...s, submitting: true, error: null }
+    case 'created':
+      // The repo now exists and is pushed — advance to the threshold, which can
+      // truthfully say so. Only reached from act 2 (naming), after create.
+      return { ...s, act: 3, submitting: false, error: null }
     case 'fail':
       return { ...s, submitting: false, error: a.error, act: 2, view: 'form' }
     case 'failInPlace':

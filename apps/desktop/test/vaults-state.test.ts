@@ -108,7 +108,7 @@ describe('getting a vault in the first place', () => {
     expect(store.get(vaultsAtom).map((v) => v.remote)).toEqual(['syv-ai/notes'])
   })
 
-  it('creates a new vault and opens it', async () => {
+  it('creates a new vault, sets it active, and returns the remote without refreshing the list', async () => {
     holi = installFakeHoli((op) => {
       if (op.path === 'vaults.create') return snapshot('AGENTS.md', 'README.md')
       if (op.path === 'vaults.list') return [entry('syv-ai/fresh')]
@@ -116,10 +116,15 @@ describe('getting a vault in the first place', () => {
     })
     const store = createStore()
 
-    await store.set(createVaultAtom, { name: 'fresh', owner: 'syv-ai' })
+    const remote = await store.set(createVaultAtom, { name: 'fresh', owner: 'syv-ai' })
 
+    expect(remote).toBe('syv-ai/fresh')
     expect(store.get(activeRemoteAtom)).toBe('syv-ai/fresh')
     expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['AGENTS.md', 'README.md'])
+    // The list is deliberately NOT re-read here — the ritual shows a success
+    // step before entering, and refreshing would unmount it by flipping the
+    // first-run gate. Entry (loadVaults) is a separate, explicit step.
+    expect(store.get(vaultsAtom)).toEqual([])
   })
 
   it('surfaces a refusal instead of leaving a half-open vault', async () => {

@@ -106,23 +106,34 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
  * FR-8: a new private repo, seeded, committed, pushed, opened.
  *
  * The push is not optional and the router does it rather than the caller: a
- * vault that exists only locally is not one anybody can be invited to.
+ * vault that exists only locally is not one anybody can be invited to. So by the
+ * time this resolves the repo genuinely exists on GitHub and is clonable — which
+ * is what lets the ritual's threshold say so truthfully.
+ *
+ * **Deliberately does NOT refresh the vault list.** The onboarding ritual shows
+ * a "created — here's the remote" step *before* entering, and the first-run gate
+ * flips to the Shell the moment `vaultsAtom` becomes non-empty. So loading the
+ * list here would unmount the ritual mid-success; the explicit `loadVaults` on
+ * "Open vault" is what enters. The active remote + snapshot are set now so that
+ * entry is instant.
  *
  * **`owner` is required here even though the router makes it optional.**
  * `vaults.create` answers with a snapshot rather than the repo, so the only way
  * the renderer can name the vault it just made is by knowing the owner up
  * front — and defaulting to the signed-in account would mean *guessing* the
  * remote and opening the wrong one. The UI always has a login to supply.
+ *
+ * Returns the `owner/repo` remote so the caller can show it without re-deriving.
  */
 export const createVaultAtom = atom(
   null,
-  async (_get, set, input: { name: string; owner: string }) => {
+  async (_get, set, input: { name: string; owner: string }): Promise<string> => {
     const snapshot = await trpc.vaults.create.mutate(input)
     const remote = `${input.owner}/${input.name}`
     set(activeRemoteAtom, remote)
     set(snapshotAtom, snapshot)
     set(activeDocAtom, null)
-    await set(loadVaultsAtom)
+    return remote
   },
 )
 

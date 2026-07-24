@@ -982,3 +982,37 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+/* ── Threshold: the created repo's remote, click-to-copy ─────────────
+ * Shown only once the vault genuinely exists (create resolved), so the
+ * URL is live and clonable. Centered by the threshold's text-align. */
+.onboarding-ritual .obrit-repo-url {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding: 10px 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  background: hsl(0 0% 100% / 0.02);
+  cursor: pointer;
+  transition:
+    border-color 160ms,
+    background 160ms;
+}
+.onboarding-ritual .obrit-repo-url:hover {
+  border-color: hsl(var(--primary) / 0.5);
+  background: hsl(0 0% 100% / 0.04);
+}
+.onboarding-ritual .obrit-repo-url-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: hsl(var(--muted-foreground));
+}
+.onboarding-ritual .obrit-repo-url-copy {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: hsl(var(--primary));
+  white-space: nowrap;
+}

@@ -3,7 +3,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import type { Repo } from '../../../main/github/api'
 import { trpc } from '../lib/trpc'
 import { sessionAtom } from '../state/session'
-import { addVaultAtom, createVaultAtom, vaultsAtom } from '../state/vaults'
+import { addVaultAtom, createVaultAtom, loadVaultsAtom, vaultsAtom } from '../state/vaults'
 import {
   atFloor,
   canAdvance,
@@ -33,6 +33,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   const known = useAtomValue(vaultsAtom)
   const createVault = useSetAtom(createVaultAtom)
   const addVault = useSetAtom(addVaultAtom)
+  const loadVaults = useSetAtom(loadVaultsAtom)
 
   const [s, dispatch] = useReducer(reduce, undefined, () =>
     initialState(mode, session?.login ?? '')
@@ -47,6 +48,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   const [orgs, setOrgs] = useState<string[]>([])
   const [repos, setRepos] = useState<Repo[] | null>(null)
   const [search, setSearch] = useState('')
+  /** The `owner/repo` of the vault just created — set on success so the
+   *  threshold can show and copy the live remote. */
+  const [createdRemote, setCreatedRemote] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const nameRef = useRef<HTMLInputElement>(null)
 
@@ -102,6 +107,9 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   }
 
   const back = () => {
+    // The threshold is terminal: the vault already exists, so there is nothing
+    // to go back to — only "Open vault" forward.
+    if (s.act === 3) return
     if (s.view === 'join') {
       dispatch({ type: 'toForm' })
       return
@@ -115,16 +123,37 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
     if (onDismiss) onDismiss()
   }
 
+  // Create the vault from the naming act. On success the repo genuinely exists
+  // and is pushed (the router commits + pushes before returning), so we advance
+  // to the threshold, which can now say so truthfully and show the live remote.
+  // On failure we stay on the naming form with the message shown.
   const submit = async () => {
-    if (s.submitting) return
+    if (s.submitting || !canAdvance(s)) return
     dispatch({ type: 'submitStart' })
     try {
-      await createVault({ name: slug, owner: s.owner })
-      // No success handling — the App gate unmounts us on `vaults.length` change.
+      const remote = await createVault({ name: slug, owner: s.owner })
+      setCreatedRemote(remote)
+      runExit(2)
+      dispatch({ type: 'created' })
     } catch (err) {
-      runExit(3)
-      dispatch({ type: 'fail', error: err instanceof Error ? err.message : String(err) })
+      dispatch({ type: 'failInPlace', error: err instanceof Error ? err.message : String(err) })
     }
+  }
+
+  // "Open vault" on the threshold. The repo already exists and is active; this
+  // just refreshes the list — which flips the first-run gate to the Shell — and
+  // dismisses the add-vault popover if that is how we were opened.
+  const enter = async () => {
+    await loadVaults()
+    onDismiss?.()
+  }
+
+  const copyRemote = () => {
+    if (!createdRemote) return
+    void navigator.clipboard.writeText(`https://github.com/${createdRemote}`).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    })
   }
 
   // Adopt a repo the user was added to. On failure we stay on the picker with
@@ -137,15 +166,16 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
     )
   }
 
-  // Keyboard choreography. Space advances from Act 1; Enter advances (or, at the
-  // threshold, submits); Esc walks backward and ultimately dismisses.
+  // Keyboard choreography. Space advances from Act 1; Enter creates from the
+  // naming act and enters from the threshold; Esc walks backward and ultimately
+  // dismisses.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const inField = e.target instanceof HTMLInputElement
       if (inField) {
         if (e.key === 'Enter' && s.act === 2 && s.view === 'form' && canAdvance(s)) {
           e.preventDefault()
-          advance()
+          void submit()
         }
         if (e.key === 'Escape') {
           e.preventDefault()
@@ -158,7 +188,8 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
         advance()
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        if (s.act === 3) void submit()
+        if (s.act === 3) void enter()
+        else if (s.act === 2 && s.view === 'form') void submit()
         else advance()
       } else if (e.key === 'Escape') {
         e.preventDefault()
@@ -303,6 +334,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                         join one you've been added to
                       </button>
                     </div>
+                    {s.error && <div className="obrit-error">{s.error}</div>}
                   </div>
                 </>
               ) : (
@@ -367,21 +399,22 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                 Created under {s.owner} · your team can clone it now.
               </p>
 
-              <div className="obrit-cta-row">
+              {createdRemote && (
                 <button
                   type="button"
-                  className="obrit-btn"
-                  onClick={() => void submit()}
-                  disabled={s.submitting}
+                  className="obrit-repo-url"
+                  onClick={copyRemote}
+                  title="copy the repo URL"
                 >
-                  {s.submitting ? (
-                    'Creating…'
-                  ) : (
-                    <>
-                      Open vault
-                      <span aria-hidden>→</span>
-                    </>
-                  )}
+                  <span className="obrit-repo-url-text">github.com/{createdRemote}</span>
+                  <span className="obrit-repo-url-copy">{copied ? 'copied ✓' : '⧉ copy'}</span>
+                </button>
+              )}
+
+              <div className="obrit-cta-row">
+                <button type="button" className="obrit-btn" onClick={() => void enter()}>
+                  Open vault
+                  <span aria-hidden>→</span>
                 </button>
               </div>
 
@@ -407,7 +440,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
 
         <footer className="obrit-foot">
           <div className="obrit-foot-side">
-            {s.view === 'form' && (s.act > startingAct(mode) || dismissible) && (
+            {s.view === 'form' && s.act !== 3 && (s.act > startingAct(mode) || dismissible) && (
               <button type="button" className="obrit-btn is-ghost" onClick={back}>
                 <span aria-hidden>←</span>
                 {s.act > startingAct(mode) ? 'back' : 'dismiss'}
@@ -417,17 +450,25 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
           <div className="obrit-foot-side is-right">
             {s.act === 2 && s.view === 'form' && (
               <>
-                <span className="obrit-keyhint">
-                  press <span className="obrit-kbd-inline">enter</span>
-                </span>
+                {!s.submitting && (
+                  <span className="obrit-keyhint">
+                    press <span className="obrit-kbd-inline">enter</span>
+                  </span>
+                )}
                 <button
                   type="button"
                   className={`obrit-btn ${continueWaking ? 'is-waking' : ''}`}
-                  onClick={advance}
-                  disabled={continueDisabled}
+                  onClick={() => void submit()}
+                  disabled={continueDisabled || s.submitting}
                 >
-                  continue
-                  <span aria-hidden>→</span>
+                  {s.submitting ? (
+                    'creating…'
+                  ) : (
+                    <>
+                      create vault
+                      <span aria-hidden>→</span>
+                    </>
+                  )}
                 </button>
               </>
             )}

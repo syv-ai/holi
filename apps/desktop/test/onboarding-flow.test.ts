@@ -47,6 +47,13 @@ describe('reduce', () => {
     expect(failed).toMatchObject({ act: 2, view: 'form', submitting: false, error: 'nope' })
   })
 
+  it('created advances to the threshold and clears the pending state', () => {
+    const naming = reduce(reduce(s0, { type: 'advance' }), { type: 'setName', name: 'notes' })
+    const submitting = reduce(naming, { type: 'submitStart' })
+    const done = reduce(submitting, { type: 'created' })
+    expect(done).toMatchObject({ act: 3, submitting: false, error: null })
+  })
+
   it('failInPlace shows the error without leaving the current act/view (join adopt)', () => {
     const onJoin = reduce(reduce(s0, { type: 'advance' }), { type: 'toJoin' })
     const failed = reduce({ ...onJoin, submitting: true }, { type: 'failInPlace', error: 'no push' })
