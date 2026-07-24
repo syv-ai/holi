@@ -29,7 +29,9 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
-import { scanBackrefs } from './vault/backrefs'
+import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
+import { copyNotes } from './vault/copy'
+import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { remoteUrl } from './git'
 import { GitHubApiError, type Repo } from './github/api'
@@ -146,6 +148,40 @@ function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
     }
     return out as never
   }
+}
+
+/** Batch inputs the string-only `fields` helper cannot express. Each throws on a
+ *  bad shape; tRPC turns that into a BAD_REQUEST. The RETURN type is the client's
+ *  input contract (tRPC infers it), so the keys here are what callers pass. */
+function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: string }[] {
+  if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
+  const arr = (raw as Record<string, unknown>)[key]
+  if (!Array.isArray(arr)) throw new Error(`${key} must be an array`)
+  return arr.map((p) => {
+    if (p === null || typeof p !== 'object') throw new Error(`each ${key} entry must be an object`)
+    const { from, to } = p as Record<string, unknown>
+    if (typeof from !== 'string' || typeof to !== 'string') {
+      throw new Error(`${key} entries need string from and to`)
+    }
+    return { from, to }
+  })
+}
+
+function movesInput(raw: unknown): { remote: string; moves: { from: string; to: string }[] } {
+  return { ...fields({ remote: 'string' })(raw), moves: pairsOf(raw, 'moves') }
+}
+
+function copiesInput(raw: unknown): { remote: string; copies: { from: string; to: string }[] } {
+  return { ...fields({ remote: 'string' })(raw), copies: pairsOf(raw, 'copies') }
+}
+
+function pathsInput(raw: unknown): { remote: string; paths: string[] } {
+  const { remote } = fields({ remote: 'string' })(raw)
+  const paths = (raw as Record<string, unknown>).paths
+  if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string')) {
+    throw new Error('paths must be an array of strings')
+  }
+  return { remote, paths: paths as string[] }
 }
 
 export function createRouter(deps: RouterDeps) {
@@ -659,6 +695,67 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
         return renameNote(root, from, to)
+      }),
+
+    // Batch move: one commit-pair from the renderer, one single-pass link
+    // rewrite here. The renderer expands a folder to its file list before
+    // calling; each `to` outside the moved set must be free (a swap-shaped chain,
+    // where a `to` IS another move's `from`, is allowed — that is the whole
+    // reason it is one procedure).
+    move: vaultMutation
+      .input(movesInput)
+      .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
+        const root = await rootFor(input.remote)
+        const fromSet = new Set(input.moves.map((m) => m.from))
+        for (const m of input.moves) {
+          safe(m.from)
+          const to = safe(m.to)
+          if (!fromSet.has(m.to) && (await exists(root, to))) {
+            throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${m.to}` })
+          }
+        }
+        return moveNotes(root, input.moves)
+      }),
+
+    // Batch copy: verbatim, no link rewrite (spec §Cut/Copy). Refuses to clobber
+    // and reports a missing source rather than writing an empty file.
+    copy: vaultMutation
+      .input(copiesInput)
+      .mutation(async ({ input }): Promise<{ copied: string[] }> => {
+        const root = await rootFor(input.remote)
+        for (const c of input.copies) {
+          const from = safe(c.from)
+          const to = safe(c.to)
+          if (!(await exists(root, from))) {
+            throw new TRPCError({ code: 'NOT_FOUND', message: c.from })
+          }
+          if (await exists(root, to)) {
+            throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${c.to}` })
+          }
+        }
+        await copyNotes(root, input.copies)
+        return { copied: input.copies.map((c) => c.to) }
+      }),
+
+    // Batch delete: file, folder (expanded by the renderer) or multi-selection.
+    // Lands as one commit-pair (the renderer wraps it); a missing path is not an
+    // error, matching single delete.
+    deleteMany: vaultMutation
+      .input(pathsInput)
+      .mutation(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        for (const p of input.paths) await removeDocFile(root, safe(p))
+        return { ok: true as const }
+      }),
+
+    // FR-12 generalized: the delete preview for a folder or multi-selection.
+    backrefsMany: t.procedure
+      .input(pathsInput)
+      .query(async ({ input }): Promise<{ path: string; count: number }[]> => {
+        return scanBackrefsMany(
+          await rootFor(input.remote),
+          input.paths.map((p) => safe(p)),
+        )
       }),
 
     // FR-4: create today's daily note if absent and hand back its path. The

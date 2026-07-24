@@ -228,6 +228,89 @@ describe('notes', () => {
     ).rejects.toThrow(/already exists/)
   })
 
+  it('move renames many files and rewrites inbound links in one pass', async () => {
+    const { caller, root } = await rig({
+      'projects/a.md': 'A',
+      'projects/b.md': 'B',
+      'index.md': '[[projects/a.md]] and [[projects/b.md]]',
+    })
+    await caller.notes.move({
+      remote: REMOTE,
+      moves: [
+        { from: 'projects/a.md', to: 'work/a.md' },
+        { from: 'projects/b.md', to: 'work/b.md' },
+      ],
+    })
+    expect(await readFile(join(root, 'work/a.md'), 'utf8')).toBe('A')
+    expect(await readFile(join(root, 'index.md'), 'utf8')).toBe('[[work/a.md]] and [[work/b.md]]')
+  })
+
+  it('move refuses to clobber a destination outside the moved set', async () => {
+    const { caller } = await rig({ 'a.md': 'a', 'taken.md': 'b' })
+    await expect(
+      caller.notes.move({ remote: REMOTE, moves: [{ from: 'a.md', to: 'taken.md' }] }),
+    ).rejects.toThrow(/already exists/)
+  })
+
+  it('move allows a destination that is itself a source in the same batch (a swap-shaped chain)', async () => {
+    const { caller, root } = await rig({ 'a.md': 'A', 'b.md': 'B' })
+    await caller.notes.move({
+      remote: REMOTE,
+      moves: [
+        { from: 'a.md', to: 'b.md' },
+        { from: 'b.md', to: 'c.md' },
+      ],
+    })
+    expect(await readFile(join(root, 'b.md'), 'utf8')).toBe('A')
+    expect(await readFile(join(root, 'c.md'), 'utf8')).toBe('B')
+  })
+
+  it('copy duplicates without rewriting links, and refuses to clobber', async () => {
+    const { caller, root } = await rig({ 'a.md': 'body [[x.md]]', 'taken.md': 'mine' })
+    const result = await caller.notes.copy({ remote: REMOTE, copies: [{ from: 'a.md', to: 'dup.md' }] })
+    expect(result).toEqual({ copied: ['dup.md'] })
+    expect(await readFile(join(root, 'dup.md'), 'utf8')).toBe('body [[x.md]]')
+    await expect(
+      caller.notes.copy({ remote: REMOTE, copies: [{ from: 'a.md', to: 'taken.md' }] }),
+    ).rejects.toThrow(/already exists/)
+  })
+
+  it('copy reports a missing source rather than writing an empty file', async () => {
+    const { caller } = await rig()
+    await expect(
+      caller.notes.copy({ remote: REMOTE, copies: [{ from: 'ghost.md', to: 'dup.md' }] }),
+    ).rejects.toThrow(/ghost/)
+  })
+
+  it('deleteMany removes every path in one call', async () => {
+    const { caller } = await rig({ 'a.md': 'A', 'b.md': 'B', 'c.md': 'C' })
+    await caller.notes.deleteMany({ remote: REMOTE, paths: ['a.md', 'b.md'] })
+    await expect(caller.notes.read({ remote: REMOTE, path: 'a.md' })).rejects.toThrow()
+    await expect(caller.notes.read({ remote: REMOTE, path: 'b.md' })).rejects.toThrow()
+    expect(await caller.notes.read({ remote: REMOTE, path: 'c.md' })).toBe('C')
+  })
+
+  it('backrefsMany names external referrers and excludes links inside the set', async () => {
+    const { caller } = await rig({
+      'p/a.md': 'links [[p/b.md]]',
+      'p/b.md': 'other',
+      'outside.md': '[[p/a.md]] and [[p/b.md]]',
+    })
+    expect(await caller.notes.backrefsMany({ remote: REMOTE, paths: ['p/a.md', 'p/b.md'] })).toEqual([
+      { path: 'outside.md', count: 2 },
+    ])
+  })
+
+  it('the batch procedures guard paths just like the single ones', async () => {
+    const { caller } = await rig()
+    await expect(
+      caller.notes.move({ remote: REMOTE, moves: [{ from: '../evil.md', to: 'x.md' }] }),
+    ).rejects.toThrow()
+    await expect(
+      caller.notes.deleteMany({ remote: REMOTE, paths: ['../evil.md'] }),
+    ).rejects.toThrow()
+  })
+
   it('getOrCreateDaily creates today’s note once, using the local date', async () => {
     const { caller, root } = await rig()
     // The rig pins today to TODAY = 2026-07-21 → stem 21-07-2026.
