@@ -20,13 +20,13 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { DeleteConfirm } from './tree/DeleteConfirm'
 import { ExplorerHeader } from './tree/ExplorerHeader'
 import { TreeContextMenu, type MenuItem } from './tree/TreeContextMenu'
-import { ChevronIcon, DocIcon, FileIcon, FolderIcon, ImageIcon, MarkdownIcon, PdfIcon } from './tree/icons'
+import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
+import { fileIconFor } from './tree/file-icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
 import {
   basename,
@@ -348,23 +348,6 @@ export function FileTree({
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
 
-  // The leaf glyph follows the file's kind so a .png reads as an image, a .pdf as
-  // a PDF, and anything text-ish as a plain file — markdown keeps its own mark.
-  const leafIcon = (path: string) => {
-    switch (fileKind(path)) {
-      case 'markdown':
-        return <MarkdownIcon />
-      case 'image':
-        return <ImageIcon />
-      case 'pdf':
-        return <PdfIcon />
-      case 'doc':
-        return <DocIcon />
-      default:
-        return <FileIcon />
-    }
-  }
-
   const buildMenu = (path: string, isFolder: boolean, targets: string[]): (MenuItem | 'separator')[] => {
     const folderDest = isFolder ? path : parentOf(path)
     const multi = targets.length > 1
@@ -472,7 +455,7 @@ export function FileTree({
                 <span
                   className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-sky-400' : 'text-neutral-500'}`}
                 >
-                  {isFolder ? <FolderIcon /> : leafIcon(id)}
+                  {isFolder ? <FolderIcon /> : fileIconFor(id)}
                 </span>
                 {item.isRenaming() ? (
                   <input

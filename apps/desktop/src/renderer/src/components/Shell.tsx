@@ -183,15 +183,14 @@ export function Shell() {
 
           {tab?.kind === 'board' ? (
             <BoardView />
-          ) : tab?.kind === 'note' && ['image', 'pdf', 'doc'].includes(fileKind(tab.path)) ? (
-            // Rich files we can't yet render open a typed placeholder rather than
-            // going through the text editor (which would garble a binary).
-            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'image' | 'pdf' | 'doc'} />
+          ) : tab?.kind === 'note' && fileKind(tab.path) !== 'markdown' ? (
+            // Every non-markdown file opens a typed placeholder for now — a real
+            // per-type editor/viewer replaces it later (spec §Arbitrary files).
+            // Markdown is the only thing with a first-class editor today.
+            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'text' | 'image' | 'pdf' | 'doc'} />
           ) : (
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}
-              // A non-markdown text file (.json/.csv/…) edits in the plain stack.
-              plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
               onOpenNote={open}
               onEdit={() => setWorkspace((w) => pinActive(w))}
               onConflict={(path) =>

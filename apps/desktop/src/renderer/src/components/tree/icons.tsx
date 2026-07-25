@@ -63,3 +63,35 @@ export function DocIcon() {
     </svg>
   )
 }
+
+export function BracesIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M6.2 2.3c-1.3.1-1.8.8-1.8 2v1.8c0 .6-.3.9-.9.9v1.9c.6 0 .9.3.9.9v1.8c0 1.2.6 1.9 1.8 2v-1.4c-.4-.1-.5-.4-.5-1v-1.7c0-.7-.3-1.1-.8-1.4.5-.3.8-.7.8-1.4V4.7c0-.6.1-.9.5-1V2.3zm3.6 0v1.4c.4.1.5.4.5 1v1.7c0 .7.3 1.1.8 1.4-.5.3-.8.7-.8 1.4v1.7c0 .6-.1.9-.5 1v1.4c1.2-.1 1.8-.8 1.8-2V9.8c0-.6.3-.9.9-.9V7c-.6 0-.9-.3-.9-.9V4.3c0-1.2-.5-1.9-1.8-2z" />
+    </svg>
+  )
+}
+
+export function CodeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M5.7 4.2 6.8 5 4 8l2.8 3-1.1.8L2 8l3.7-3.8zm4.6 0L14 8l-3.7 3.8L9.2 11 12 8 9.2 5l1.1-.8zM8.9 2.7l1.3.4-3 10-1.3-.4 3-10z" />
+    </svg>
+  )
+}
+
+export function TableIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M2 3h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm0 2v2h4V5H2zm5 0v2h7V5H7zM2 8v2h4V8H2zm5 0v2h7V8H7zm-5 3v1h4v-1H2zm5 0v1h7v-1H7z" />
+    </svg>
+  )
+}
+
+export function ConfigIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M2 4.3h4.1a2 2 0 0 1 3.8 0H14v1.4H9.9a2 2 0 0 1-3.8 0H2V4.3zm12 4H9.9a2 2 0 0 0-3.8 0H2v1.4h4.1a2 2 0 0 0 3.8 0H14V8.3zM2 12.3h4.1a2 2 0 0 1 3.8 0H14v1.4H9.9a2 2 0 0 1-3.8 0H2v-1.4z" />
+    </svg>
+  )
+}
