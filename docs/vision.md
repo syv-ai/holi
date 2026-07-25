@@ -6,7 +6,7 @@ Holi is a document- and task-management system for individuals and small teams, 
 
 Every vault is a GitHub repo, and auth and access rights work through GitHub. Every user of Holi can have n vaults, with each being a private repo that can be shared with other individuals. The foremost value of Holi is that teams can have shared vaults. 
 
-For each vault, a user can also add integrations, namely to Google Drive - an important mirror for documents for Syv.ai.
+For each vault, a user will be able to add integrations — most importantly a Google Drive mirror for documents, an important channel for Syv.ai. That integration is **deferred beyond v1** (see *Beyond v1*): adding an integration during the release whose purpose is trimming scope is how a release stops shipping.
 
 An example of a shared vault (still work in progress and not refactored to work for Holi): https://github.com/syv-ai/1brain
 
@@ -33,6 +33,7 @@ A signed-in employee opens Holi and sees their latest used vault. They open a sh
 ## Beyond v1
 
 - PDF/docx preview
+- Google Drive mirror for vault documents
 - Google Gmail + Calendar sync (native to a Google-Workspace company)
 - Typst export (turn any doc into a branded syv.ai document).
 - Agent-authored HTML apps/widgets

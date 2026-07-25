@@ -59,15 +59,10 @@ export interface Collaborator {
   permission: 'admin' | 'maintain' | 'write' | 'triage' | 'read'
 }
 
-/** What a vault is doing. Exactly one of these is true at a time, and it must
- * never claim to be up to date when it isn't. */
-export type SyncState =
-  | { kind: 'up-to-date' }
-  | { kind: 'ahead'; commits: number }
-  | { kind: 'pulling' }
-  | { kind: 'offline'; commits: number }
-  | { kind: 'conflict'; paths: string[] }
-  | { kind: 'reconciling'; paths: string[] }
+// `SyncState` is not defined here. Main computes the vault's sync state, so the
+// live union lives next to `computeState` in the desktop app
+// (`main/vault/active-vault.ts`); a second copy here only drifted — it still
+// carried the removed `ahead` kind. Deleted 2026-07-25 (D60/D61).
 
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
 export type RecurrenceWeekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'

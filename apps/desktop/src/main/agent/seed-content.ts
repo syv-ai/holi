@@ -63,8 +63,9 @@ file **is** the note, the task, and the record.
 
 ## How your edits reach other people
 
-Edits are committed automatically, a few seconds after they stop. Those commits
-stay on this machine until the user presses **Publish**.
+Edits are committed automatically, a few seconds after they stop, and those
+commits push to GitHub on their own — there is no Publish step. Sync is
+automatic in both directions.
 
 - **Do not run \`git commit\`, \`git push\`, \`git pull\`, or switch branches.**
   Holi is doing this, and a branch checkout pauses sync until it is undone.
