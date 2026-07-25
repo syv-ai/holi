@@ -87,3 +87,30 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     editorTheme,
   ]
 }
+
+/**
+ * The editor stack for a plain (non-markdown) text file — a `.json`, `.csv`,
+ * `.env` and the like (spec §Arbitrary files). Same theme and editing keymap as
+ * the notes editor, but NONE of the markdown-specific layers: no live-preview
+ * decorations, no frontmatter widget, no wiki-link chips, no `@`/slash/table
+ * completion, no ⌘B-style markdown formatting. It is just text.
+ */
+export function plainTextExtensions(): Extension[] {
+  return [
+    history(),
+    drawSelection(),
+    dropCursor(),
+    indentOnInput(),
+    bracketMatching(),
+    indentUnit.of('    '),
+    EditorView.lineWrapping,
+    EditorState.allowMultipleSelections.of(true),
+    keymap.of([
+      { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
+      indentWithTab,
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    editorTheme,
+  ]
+}

@@ -15,9 +15,11 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
+import { fileKind } from '@holi/shared'
 import { OnboardingRitual } from './OnboardingRitual'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
+import { FilePlaceholder } from './FilePlaceholder'
 import { FileTree } from './FileTree'
 import { VaultPicker } from './VaultPicker'
 import { VaultSettings } from './VaultSettings'
@@ -181,9 +183,15 @@ export function Shell() {
 
           {tab?.kind === 'board' ? (
             <BoardView />
+          ) : tab?.kind === 'note' && ['image', 'pdf', 'doc'].includes(fileKind(tab.path)) ? (
+            // Rich files we can't yet render open a typed placeholder rather than
+            // going through the text editor (which would garble a binary).
+            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'image' | 'pdf' | 'doc'} />
           ) : (
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}
+              // A non-markdown text file (.json/.csv/…) edits in the plain stack.
+              plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
               onOpenNote={open}
               onEdit={() => setWorkspace((w) => pinActive(w))}
               onConflict={(path) =>

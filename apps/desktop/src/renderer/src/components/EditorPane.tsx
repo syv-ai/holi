@@ -21,7 +21,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { baseEditorExtensions } from '../editor/extensions'
+import { baseEditorExtensions, plainTextExtensions } from '../editor/extensions'
 import { bodyStart, frontmatterValid } from '../editor/frontmatter'
 import type { LinkNav } from '../editor/links'
 import type { MentionData } from '../editor/mentions'
@@ -39,6 +39,7 @@ export function EditorPane({
   onOpenNote,
   onConflict,
   onEdit,
+  plain = false,
 }: {
   path: string | null
   onOpenNote: (path: string) => void
@@ -46,6 +47,10 @@ export function EditorPane({
   /** Fired the first time the buffer changes for this open note — the rule that
    *  promotes a preview tab to pinned (FR-15), so editing never loses your place. */
   onEdit?: () => void
+  /** A non-markdown text file: swap in the plain editing stack, open the caret at
+   *  the top, and never hold off the save on frontmatter (it has none). The
+   *  save/flush/reload machinery is otherwise identical. */
+  plain?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -104,7 +109,9 @@ export function EditorPane({
     const save = async (): Promise<boolean> => {
       const view = viewRef.current
       if (view === null || disposed) return false
-      if (!frontmatterValid(view.state)) return false
+      // The frontmatter hold-off is markdown-only; a plain text file has no
+      // frontmatter and always saves.
+      if (!plain && !frontmatterValid(view.state)) return false
       const text = view.state.doc.toString()
       if (text !== baseRef.current) {
         baseRef.current = text
@@ -126,16 +133,19 @@ export function EditorPane({
           doc: text,
           // Open the caret in the body, never to the left of the frontmatter
           // widget (there is nothing to edit above it). `assoc: 1` binds it to
-          // the body line rather than to the widget's side of the seam.
-          selection: EditorSelection.cursor(bodyStart(text), 1),
+          // the body line rather than to the widget's side of the seam. A plain
+          // file has no frontmatter widget, so open at the top.
+          selection: EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
           extensions: [
-            ...baseEditorExtensions({
-              docExists: (p) => docPaths.current.has(p),
-              taskInfo: () => ({ label: 'task', missing: true }),
-              mentionData: () => mentionRef.current,
-              onTaskMention: () => {},
-              nav: () => navRef.current,
-            }),
+            ...(plain
+              ? plainTextExtensions()
+              : baseEditorExtensions({
+                  docExists: (p) => docPaths.current.has(p),
+                  taskInfo: () => ({ label: 'task', missing: true }),
+                  mentionData: () => mentionRef.current,
+                  onTaskMention: () => {},
+                  nav: () => navRef.current,
+                })),
             EditorView.updateListener.of((update) => {
               if (!update.docChanged) return
               scheduleSave()
@@ -193,7 +203,7 @@ export function EditorPane({
       }
       viewRef.current = null
     }
-  }, [path, remote])
+  }, [path, remote, plain])
 
   /**
    * The vault changed somewhere. Re-read our own file and decide.
