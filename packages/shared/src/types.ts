@@ -40,6 +40,16 @@ export interface DocMeta {
   updatedAt: string
 }
 
+/** A non-markdown file the vault carries (spec §Arbitrary files). Not a note —
+ *  it has no `kind`, no frontmatter, and never participates in wiki-links; the
+ *  scanner keeps it out of `docs` precisely so backrefs/rename stay markdown. */
+export interface FileMeta {
+  /** Vault-relative, '/'-separated. */
+  path: string
+  /** File mtime, ISO. */
+  updatedAt: string
+}
+
 /** A repo collaborator, straight from the GitHub API. Holi defines no roles. */
 export interface Collaborator {
   /** GitHub's numeric account id — stable across a login rename. */
@@ -123,6 +133,8 @@ export interface VaultSnapshot {
   docs: DocMeta[]
   tasks: Task[]
   broken: BrokenTask[]
+  /** Non-markdown files, kept separate from notes so link-aware ops stay md-only. */
+  files: FileMeta[]
 }
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */

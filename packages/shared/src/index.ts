@@ -1,4 +1,5 @@
 export * from './types'
+export * from './file-kind'
 export * from './path-safety'
 export * from './wiki-links'
 export * from './reminder'
