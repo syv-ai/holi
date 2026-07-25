@@ -12,6 +12,7 @@
  */
 import {
   dragAndDropFeature,
+  expandAllFeature,
   hotkeysCoreFeature,
   renamingFeature,
   selectionFeature,
@@ -323,6 +324,8 @@ export function FileTree({
       hotkeysCoreFeature,
       dragAndDropFeature,
       renamingFeature,
+      // Provides tree.collapseAll() for the explorer header button.
+      expandAllFeature,
     ],
   })
 
