@@ -47,23 +47,34 @@ export function Shell() {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const syncState = useAtomValue(syncStateAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
+  const setActiveRemote = useSetAtom(activeRemoteAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
-  /** The vault we last ran the daily create+sweep for, so opening it does not
-   *  re-land you on today's note every render. */
-  const lastDailyRemote = useRef<string | null>(null)
+  /** The vault already opened in main, so a re-render — or `openVault` itself
+   *  re-setting `activeRemoteAtom` to the same value — does not re-open it. */
+  const openedRemote = useRef<string | null>(null)
 
-  // FR-4/FR-5: on personal-vault open, land on today's note then sweep prior
-  // days. Both no-op for shared vaults. Once per remote.
+  // Open the active vault in main, then land on today's daily and sweep prior
+  // days (FR-4/FR-5). One effect, once per remote, deliberately sequential.
+  //
+  // This is the ONLY caller of `vaults.open`, so cold start (the vault
+  // `loadVaults` selects) and an explicit switch both open through here. The bug
+  // this fixes: nothing opened the boot vault, so main's watcher never started
+  // and the tree stayed empty until you manually switched. Daily runs *after*
+  // open so it wins the race for the active doc; both no-op on shared vaults.
   useEffect(() => {
-    if (!activeRemote || lastDailyRemote.current === activeRemote) return
-    lastDailyRemote.current = activeRemote
-    void openDaily().then(() => sweepDaily())
-  }, [activeRemote, openDaily, sweepDaily])
+    if (!activeRemote || openedRemote.current === activeRemote) return
+    openedRemote.current = activeRemote
+    void (async () => {
+      await openVault(activeRemote)
+      await openDaily()
+      await sweepDaily()
+    })()
+  }, [activeRemote, openVault, openDaily, sweepDaily])
 
   // FR-6: ⌘⇧D jumps to today's daily (creating it if needed).
   useEffect(() => {
@@ -86,11 +97,14 @@ export function Shell() {
   const openPin = (path: string) => setWorkspace((w) => openPinned(w, path))
 
   /** A vault switch is a teardown in main — the old watcher and timers stop —
-   *  so the tabs over the old vault have to go with it. */
+   *  so the tabs over the old vault have to go with it. Setting the active
+   *  remote is all that is needed: the open effect above picks it up and runs
+   *  the same open → daily → sweep sequence as cold start. */
   const switchVault = (remote: string) => {
+    if (remote === activeRemote) return
     setWorkspace(() => ({ panes: [{ tabs: [], active: -1 }], active: 0 }))
     setBanner(null)
-    void openVault(remote)
+    setActiveRemote(remote)
   }
 
   return (
