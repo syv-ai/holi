@@ -416,7 +416,10 @@ export function FileTree({
               if (pending.kind === 'folder') {
                 setPendingFolders((f) => [...f, joinPath(pending.parent, name)])
               } else {
-                void createNote(joinPath(pending.parent, withMdExtension(name)))
+                // Open the created file once it lands — a non-md file is not in
+                // `docs`, so opening a tab explicitly is what surfaces it.
+                const path = joinPath(pending.parent, withMdExtension(name))
+                void createNote(path).then(() => onOpenPreview(path))
               }
               setPending(null)
             }}

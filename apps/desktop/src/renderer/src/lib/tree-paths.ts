@@ -11,13 +11,12 @@ export const parentOf = (path: string): string => {
 export const joinPath = (parent: string, name: string): string =>
   parent ? `${parent}/${name}` : name
 
-/** Force a `.md` note name. The vault is markdown-only (the scanner ingests only
- *  `*.md`), so a foreign extension like `hello.json` would be written to disk yet
- *  never appear in the tree — an invisible file that then collides on the next
- *  attempt. Append rather than replace (Obsidian-style): `hello.json` →
- *  `hello.json.md`, `note` → `note.md`, `note.md` unchanged. */
+/** A New File / rename name, defaulted to markdown. The vault is mostly markdown,
+ *  so a bare name becomes a note (`note` → `note.md`); but a typed extension is
+ *  kept literally — the vault holds arbitrary files now, so `hello.json` is a real
+ *  JSON file, not a coerced note (spec §Arbitrary files). */
 export const withMdExtension = (name: string): string =>
-  name.endsWith('.md') ? name : `${name}.md`
+  /\.[^./]+$/.test(name) ? name : `${name}.md`
 
 /** The [start, end] of the basename minus its extension — what a rename input
  *  should pre-select so the user edits the name, not the `.md` (VS Code). */

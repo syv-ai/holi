@@ -16,13 +16,13 @@ describe('tree-paths', () => {
     expect(joinPath('', 'a.md')).toBe('a.md')
     expect(joinPath('projects', 'a.md')).toBe('projects/a.md')
   })
-  it('ensures a .md note name — the vault is markdown-only, so a foreign extension would vanish', () => {
+  it('appends .md only when NO extension is present — a typed extension is kept literally', () => {
     expect(withMdExtension('note')).toBe('note.md')
     expect(withMdExtension('note.md')).toBe('note.md')
-    // A non-.md name would be written but dropped by the md-only scanner (an
-    // invisible file that then collides on retry) — so append, Obsidian-style.
-    expect(withMdExtension('hello.json')).toBe('hello.json.md')
-    expect(withMdExtension('a.canvas')).toBe('a.canvas.md')
+    // A typed extension is a real file of that type now (the vault holds any
+    // file), so it is kept literally rather than coerced to markdown.
+    expect(withMdExtension('hello.json')).toBe('hello.json')
+    expect(withMdExtension('data.csv')).toBe('data.csv')
   })
   it('basename and parentOf', () => {
     expect(basename('projects/a.md')).toBe('a.md')
