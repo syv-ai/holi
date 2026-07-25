@@ -1,5 +1,7 @@
 # PRD (Phase 2 stub): Typst export — branded syv.ai documents
 
+> **Pulled forward by D62 (2026-07-25).** No longer strictly phase-2: D62 makes markdown→PDF via Typst the *primary* PDF path (author markdown, emit branded PDF), delivered as a seeded **`.claude/skills/md-to-pdf` vault skill** ported near-directly from `syv-ai/1brain`'s `.claude/skills/md-to-pdf` — an agent skill, not an in-app export UI. This resolves the "where rendering runs" open question below toward *shell out to `typst` from a vault skill*. Gets its own spec + plan.
+
 > Deferred to **Phase 2** (after Google mail/calendar). Stub only. This is a **new pillar** — nothing like it exists in the old codebase.
 
 ## Summary

@@ -1,5 +1,7 @@
 # PRD (Phase 2 stub): Import conversion + viewing archived originals
 
+> **⚠️ Superseded by D62 (2026-07-25).** The convert-on-entry + archive framing below is dead. Under D62 the vault is text-first *by authorship* (markdown is the source; PDFs are **outputs** rendered from it via Typst, not inputs to convert), binaries live in the vault as ordinary committed files, the `.docx`-import pipeline is dropped, and in-place PDF viewing stays deferred. Blob-storage/reference-file offloading (below, "where originals live") survives D62 as the deferred vault-size answer. Kept for that one open question and as a record; do not build the import pipeline.
+
 > Deferred to **Phase 2** (first item after v1). Stub only — to be fleshed out when v1 lands. This is not a "PDF/docx preview" feature — the vault is text by construction.
 
 ## Summary

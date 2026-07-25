@@ -41,7 +41,32 @@ Residue to retire when those land: the `[[task:<id>]]` chip grammar (`wiki-links
 
 ---
 
-## Number allocation — **next free is D62**
+## D62 — The vault is text-first by authorship; binaries are assets it holds and emits.
+
+**Context.** v1 shipped arbitrary-file support: any non-markdown file lives in the vault, shows in the tree with a typed icon, and opens a typed `FilePlaceholder` (`VaultSnapshot.files`, `fileKind()`). That was Nicolai's explicit ask ("obviously we need other file types"), but it landed in tension with `prd/_phase2-pdf-docx-preview.md`, which declares the vault *"text by construction"* and prescribes converting incoming PDFs/`.docx` to markdown on entry with the original archived to object storage. Two irreconcilable stances about what a binary in the vault *is* — a first-class document to render, or a source to convert-and-archive — with every downstream file surface (in-place viewers vs. an import pipeline) forking on the answer.
+
+**Decision.** Agreed with Nicolai 2026-07-25.
+
+1. **"Text by construction" is refined, not retired.** It is an *authoring* principle — markdown is the source of truth, and what the agent writes — not a claim that only text may exist in the vault. The working document is always markdown; the finished, sendable artifact (a client proposal) is rendered *from* it.
+2. **Binary assets are allowed and persisted as ordinary committed files.** Images that markdown references, and PDFs, live in the vault as-is. There is no convert-on-entry and no forced archival of an incoming binary.
+3. **Images are first-class and render.** Inline in the editor's live preview (`![](path)` and `[[path]]`), and a standalone image view replaces the typed placeholder for image kinds. This is near-term work.
+4. **PDFs are outputs first.** The primary PDF path is markdown→PDF via **Typst**, delivered as a seeded **`.claude/skills/md-to-pdf` vault skill** (ported near-directly from `syv-ai/1brain`'s `.claude/skills/md-to-pdf`), agent-invokable — not an in-app feature, in keeping with D60's "ops become vault skills". Rendered or incoming PDFs may sit in the vault; **in-place PDF viewing is deferred** (open externally for now).
+5. **This supersedes `_phase2-pdf-docx-preview.md`'s convert-on-entry + archive framing.** The direction is reversed — author markdown, emit PDF — and the `.docx`-import pipeline is dropped unless a concrete need reappears.
+6. **Non-markdown files stay out of the link graph.** They remain out of `docs` so link-aware ops (rename, backrefs, move) are markdown-only, exactly as shipped; images and PDFs are assets referenced by path, not wiki-linkable notes.
+
+**Also settled.** Assets are **committed straight to git for now**; **vault-size management via blob storage + reference files** (Git LFS, or a lightweight reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a measured problem rather than an anticipated one. The near-term build this authorizes — inline images, a standalone image viewer, and the md→PDF Typst vault skill — gets its own spec and plan; recording this decision does not build it.
+
+**Why.** The convert-on-entry model was written before Typst was the plan and before the daily reality was clear: Syv's rich documents are *produced* by the vault (an agent drafts markdown, then renders a branded PDF), not *imported* into it. Forcing an incoming PDF through a lossy pdf→markdown converter and hiding the original in object storage is machinery serving a direction the work does not flow in. Keeping binaries as plain committed files is the honest, zero-infrastructure default; the blob-storage escape hatch is real but is scope bought before measurement asks for it — the same discipline D60 applied to the deleted index.
+
+**Rejected.** *Render every binary in place (retire text-by-construction).* Makes the agent blind — a PDF it cannot read is a document it cannot help with — and puts binary bloat in git with no authoring story. *Honor the PRD literally (convert incoming pdf/docx→markdown + archive).* Builds an import pipeline and an object-storage dependency for a flow that runs the other way, and archives away originals users may need intact. *Two co-equal representations of one document (binary + markdown companion, both truth).* Raises "which is truth" on every edit and sync; markdown-as-source with PDF-as-output keeps a single truth.
+
+**Consolidates into** (once the near-term surfaces exist): `vision.md` (binaries as assets the vault emits), `prd/notes-editor.md` (inline images + image viewer), `prd/_phase2-typst-export.md` (pulled forward, vault-skill delivery), and `prd/_phase2-pdf-docx-preview.md` (rewritten or retired — the convert-on-entry framing is dead).
+
+*This entry stays in the inbox until the code matches it.*
+
+---
+
+## Number allocation — **next free is D63**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
