@@ -18,7 +18,7 @@ export const vaultsLoadedAtom = atom(false)
  * identity, and the clone's path is machine-local (types.ts §VaultEntry). */
 export const activeRemoteAtom = atom<string | null>(null)
 
-const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [] }
+const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 
 /**
  * The whole vault, as last read off disk.

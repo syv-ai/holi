@@ -20,7 +20,7 @@ import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import { trpc } from '../lib/trpc'
 
-const EMPTY: VaultSnapshot = { docs: [], tasks: [], broken: [] }
+const EMPTY: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 
 const styles = {
   page: { font: '13px ui-monospace, SFMono-Regular, Menlo, monospace', padding: 12 },

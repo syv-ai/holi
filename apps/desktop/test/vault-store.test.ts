@@ -107,6 +107,18 @@ describe('scanVault', () => {
 
   it('is empty, not an error, on a vault with nothing in it', async () => {
     const root = await vault({})
-    await expect(scanVault(root)).resolves.toEqual({ docs: [], tasks: [], broken: [] })
+    await expect(scanVault(root)).resolves.toEqual({ docs: [], tasks: [], broken: [], files: [] })
+  })
+
+  it('lists non-markdown files separately from notes, ignoring junk', async () => {
+    const root = await vault({
+      'note.md': '# Note',
+      'data.json': '{"a":1}',
+      'sub/pic.png': 'binary-ish',
+      '.DS_Store': 'junk',
+    })
+    const snap = await scanVault(root)
+    expect(snap.docs.map((d) => d.path)).toEqual(['note.md'])
+    expect(snap.files.map((f) => f.path).sort()).toEqual(['data.json', 'sub/pic.png'])
   })
 })

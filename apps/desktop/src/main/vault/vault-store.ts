@@ -42,11 +42,24 @@ function isDaily(text: string): boolean {
 
 /** Everything the vault holds, read fresh off disk. */
 export async function scanVault(root: string): Promise<VaultSnapshot> {
-  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [] }
+  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 
-  const files = (await listFiles(root)).filter((rel) => rel.endsWith('.md') && !isIgnoredPath(rel))
+  const all = (await listFiles(root)).filter((rel) => !isIgnoredPath(rel))
 
-  for (const path of files) {
+  for (const path of all) {
+    const mtime = () =>
+      stat(`${root}/${path}`)
+        .then((s) => s.mtime.toISOString())
+        .catch(() => new Date(0).toISOString())
+
+    // Non-markdown: a plain file entry. No read, no parse — it is not a note, so
+    // it stays out of `docs` and the link-aware ops (backrefs/rename) never see
+    // it (spec §Arbitrary files).
+    if (!path.endsWith('.md')) {
+      snapshot.files.push({ path, updatedAt: await mtime() })
+      continue
+    }
+
     const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
     // A file that vanished between the walk and the read is not an error: the
     // watcher is about to tell us about it anyway.
@@ -62,11 +75,7 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
       continue
     }
 
-    const updatedAt = await stat(`${root}/${path}`)
-      .then((s) => s.mtime.toISOString())
-      .catch(() => new Date(0).toISOString())
-
-    snapshot.docs.push({ path, kind: isDaily(text) ? 'daily' : 'note', updatedAt })
+    snapshot.docs.push({ path, kind: isDaily(text) ? 'daily' : 'note', updatedAt: await mtime() })
   }
 
   return snapshot

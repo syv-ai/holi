@@ -34,6 +34,7 @@ const snapshot = (...paths: string[]): VaultSnapshot => ({
   docs: paths.map((path) => ({ path, kind: 'note' as const, updatedAt: '2026-07-22T00:00:00Z' })),
   tasks: [],
   broken: [],
+  files: [],
 })
 
 const entry = (remote: string) => ({

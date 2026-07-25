@@ -22,7 +22,7 @@ afterEach(() => {
   holi = null
 })
 
-const emptySnapshot = (): VaultSnapshot => ({ docs: [], tasks: [], broken: [] })
+const emptySnapshot = (): VaultSnapshot => ({ docs: [], tasks: [], broken: [], files: [] })
 
 describe('moveNotesAtom', () => {
   it('flushes, commits, moves, commits — and retargets the open tabs', async () => {

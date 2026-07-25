@@ -27,6 +27,7 @@ const snap = (path: string): VaultSnapshot => ({
   docs: [{ path, kind: 'note', updatedAt: '2026-07-21T00:00:00Z' }],
   tasks: [],
   broken: [],
+  files: [],
 })
 
 describe('openTodaysDailyAtom', () => {
