@@ -8,6 +8,8 @@ import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createRouter } from '../src/main/router'
+import { resolveTypstBin } from '../src/main/pdf/typst-bin'
+import plainTemplateTyp from '../src/main/agent/templates/plain/template.typ?raw'
 
 const exec = promisify(execFile)
 import { GitHubSession } from '../src/main/github/session'
@@ -1206,4 +1208,37 @@ describe('pdf', () => {
       },
     ])
   })
+
+  it('render rejects a meta value that is not a string', async () => {
+    const { caller } = await rig({ ...TEMPLATE_FILES, 'note.md': '# Hi\n' })
+    await expect(
+      caller.pdf.render({
+        remote: REMOTE,
+        path: 'note.md',
+        template: 'plain',
+        meta: { date: 5 } as never,
+      }),
+    ).rejects.toThrow(/meta/)
+  })
+
+  it('render writes to the given outPath and threads meta through (needs typst)', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return // no typst — skip, don't fail
+    const { caller, base } = await rig({
+      '.holi/templates/plain/template.json': JSON.stringify({ name: 'Plain', fields: [] }),
+      '.holi/templates/plain/template.typ': plainTemplateTyp,
+      'note.md': '---\ntitle: T\n---\n\n## Heading\n\nBody.\n',
+    })
+    const outPath = join(base, 'chosen.pdf')
+    const { pdfPath } = await caller.pdf.render({
+      remote: REMOTE,
+      path: 'note.md',
+      template: 'plain',
+      outPath,
+      meta: { date: '2026-07-26', recipient: 'ACME' },
+    })
+    expect(pdfPath).toBe(outPath)
+    const bytes = await readFile(outPath)
+    expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
 })

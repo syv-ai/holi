@@ -194,6 +194,38 @@ function pathsInput(raw: unknown): { remote: string; paths: string[] } {
   return { remote, paths: paths as string[] }
 }
 
+/** The Convert-to-PDF render input. The three string fields ride the string-only
+ * `fields` helper; `meta` (the template's declared fields → user values) and the
+ * optional `outPath` (an absolute destination the native save dialog chose) do
+ * not, so they are validated here — the same split `movesInput`/`pathsInput` use.
+ * `outPath` absent → the procedure defaults to Downloads (the agent path). */
+function renderPdfInput(raw: unknown): {
+  remote: string
+  path: string
+  template: string
+  outPath?: string
+  meta?: Record<string, string>
+} {
+  const base = fields({ remote: 'string', path: 'string', template: 'string', outPath: 'string?' })(
+    raw,
+  )
+  return { ...base, meta: metaOf(raw) }
+}
+
+/** A flat string→string metadata map from the render input. Missing → `{}`. Any
+ *  non-string value throws (tRPC → BAD_REQUEST) rather than reaching `typst`. */
+function metaOf(raw: unknown): Record<string, string> {
+  const m = (raw as Record<string, unknown>).meta
+  if (m === undefined || m === null) return {}
+  if (typeof m !== 'object') throw new Error('meta must be an object')
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(m as Record<string, unknown>)) {
+    if (typeof v !== 'string') throw new Error(`meta value for ${k} must be a string`)
+    out[k] = v
+  }
+  return out
+}
+
 export function createRouter(deps: RouterDeps) {
   const now = deps.now ?? (() => new Date().toISOString())
   const today = deps.today ?? localToday
@@ -847,11 +879,12 @@ export function createRouter(deps: RouterDeps) {
         },
       ),
 
-    // Render `path` through `template` to a PDF in Downloads; return its path.
-    // Not a vaultMutation — the output goes to Downloads, not the vault, so
-    // there is no snapshot to refresh.
+    // Render `path` through `template` to a PDF and return its path. Writes to
+    // `outPath` when given (the native save dialog's choice); otherwise defaults
+    // to Downloads (the agent path). Not a vaultMutation — the output goes
+    // outside the vault, so there is no snapshot to refresh.
     render: t.procedure
-      .input(fields({ remote: 'string', path: 'string', template: 'string' }))
+      .input(renderPdfInput)
       .mutation(async ({ input }): Promise<{ pdfPath: string }> => {
         const root = await rootFor(input.remote)
         const noteAbs = absPathFor(root, safe(input.path))
@@ -864,8 +897,14 @@ export function createRouter(deps: RouterDeps) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'typst is not available' })
         }
         const base = input.path.split('/').at(-1)!.replace(/\.(md|markdown)$/i, '')
-        const outPath = join(deps.downloadsDir, `${base}.pdf`)
-        await renderPdf({ typstBin, templateDir: tpl.dir, notePath: noteAbs, outPath, meta: {} })
+        const outPath = input.outPath ?? join(deps.downloadsDir, `${base}.pdf`)
+        await renderPdf({
+          typstBin,
+          templateDir: tpl.dir,
+          notePath: noteAbs,
+          outPath,
+          meta: input.meta ?? {},
+        })
         return { pdfPath: outPath }
       }),
   })
