@@ -132,6 +132,8 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.openExternal(url)
     },
+    downloadsDir: app.getPath('downloads'),
+    typstCacheDir: join(app.getPath('userData'), 'typst'),
   })
 
   registerIpc({ router })

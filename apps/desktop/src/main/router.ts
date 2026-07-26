@@ -43,6 +43,9 @@ import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
+import { listTemplates } from './pdf/templates'
+import { renderPdf } from './pdf/render'
+import { resolveTypstBin } from './pdf/typst-bin'
 
 const t = initTRPC.create()
 
@@ -88,6 +91,13 @@ export interface RouterDeps {
    * repo's collaborator settings, because Holi does not implement invitation.
    */
   openExternal: (url: string) => Promise<void>
+  /** Absolute dir the Convert-to-PDF output is written to (the user's Downloads).
+   *  Injected rather than read from electron here so the router stays
+   *  typecheckable and testable under plain Node. */
+  downloadsDir: string
+  /** Where a downloaded typst binary is cached (userData/typst). Injected for
+   *  the same reason; the resolver only reads it, never electron. */
+  typstCacheDir: string
   /** Wall-clock, injected so `lastOpenedAt` is testable. */
   now?: () => string
   /**
@@ -805,7 +815,44 @@ export function createRouter(deps: RouterDeps) {
     }),
   })
 
-  return t.router({ auth, github, vaults, notes, tasks, sync })
+  const pdf = t.router({
+    // The vault's templates, for the Convert picker. Slice 1 only needs
+    // name/slug/description; the full `fields` shape drives slice 2's inputs.
+    templates: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(async ({ input }): Promise<{ name: string; slug: string; description: string }[]> => {
+        const root = await rootFor(input.remote)
+        return (await listTemplates(root)).map(({ name, slug, description }) => ({
+          name,
+          slug,
+          description,
+        }))
+      }),
+
+    // Render `path` through `template` to a PDF in Downloads; return its path.
+    // Not a vaultMutation — the output goes to Downloads, not the vault, so
+    // there is no snapshot to refresh.
+    render: t.procedure
+      .input(fields({ remote: 'string', path: 'string', template: 'string' }))
+      .mutation(async ({ input }): Promise<{ pdfPath: string }> => {
+        const root = await rootFor(input.remote)
+        const noteAbs = absPathFor(root, safe(input.path))
+        const tpl = (await listTemplates(root)).find((t) => t.slug === input.template)
+        if (tpl === undefined) {
+          throw new TRPCError({ code: 'NOT_FOUND', message: `template ${input.template}` })
+        }
+        const typstBin = await resolveTypstBin({ cacheDir: deps.typstCacheDir })
+        if (typstBin === null) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'typst is not available' })
+        }
+        const base = input.path.split('/').at(-1)!.replace(/\.(md|markdown)$/i, '')
+        const outPath = join(deps.downloadsDir, `${base}.pdf`)
+        await renderPdf({ typstBin, templateDir: tpl.dir, notePath: noteAbs, outPath, meta: {} })
+        return { pdfPath: outPath }
+      }),
+  })
+
+  return t.router({ auth, github, vaults, notes, tasks, sync, pdf })
 }
 
 /**

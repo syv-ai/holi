@@ -84,6 +84,8 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     host,
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
+    downloadsDir: join(base, 'Downloads'),
+    typstCacheDir: join(base, 'typst'),
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
@@ -698,6 +700,8 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     host,
     vaultRoot: join(base, 'Holi'),
     openExternal,
+    downloadsDir: join(base, 'Downloads'),
+    typstCacheDir: join(base, 'typst'),
   }).createCaller({})
   return { caller, session, store, openExternal }
 }
