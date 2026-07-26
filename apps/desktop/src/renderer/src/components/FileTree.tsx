@@ -20,8 +20,10 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
+import { fileKind } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ConvertToPdfDialog } from './ConvertToPdfDialog'
 import { DeleteConfirm } from './tree/DeleteConfirm'
 import { ExplorerHeader } from './tree/ExplorerHeader'
 import { TreeContextMenu, type MenuItem } from './tree/TreeContextMenu'
@@ -116,6 +118,8 @@ export function FileTree({
     paths: string[]
     refs: { path: string; count: number }[]
   } | null>(null)
+  // The vault-relative path of the note whose Convert-to-PDF dialog is open.
+  const [converting, setConverting] = useState<string | null>(null)
   const [pendingFolders, setPendingFolders] = useState<string[]>([])
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
   // Cut/Copy staging (spec §Cut/Copy). Cut dims its rows; paste consumes a cut,
@@ -369,6 +373,12 @@ export function FileTree({
       { label: 'Duplicate', kbd: '⌘D', onSelect: () => duplicate(targets) },
     )
     if (!multi) {
+      if (fileKind(path) === 'markdown') {
+        items.push('separator', {
+          label: 'Convert to PDF…',
+          onSelect: () => setConverting(path),
+        })
+      }
       items.push(
         'separator',
         { label: 'Copy Path', onSelect: () => void navigator.clipboard.writeText(absPathFor(path)) },
@@ -497,6 +507,13 @@ export function FileTree({
             setConfirming(null)
             void deleteMany({ paths })
           }}
+        />
+      )}
+      {converting !== null && activeRemote !== null && (
+        <ConvertToPdfDialog
+          remote={activeRemote}
+          path={converting}
+          onClose={() => setConverting(null)}
         />
       )}
     </div>
