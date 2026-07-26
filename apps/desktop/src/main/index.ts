@@ -9,8 +9,11 @@
  * **Nothing here may import a module that no longer exists.** `electron-vite`
  * resolves imports even though it does not typecheck, so an unresolvable import
  * anywhere on this path is the one thing that stops a window opening at all.
- * That is why the agent is not wired up: `agent/agent-manager.ts` still imports
- * the deleted `server-client`, and the drawer is plan 5's work.
+ *
+ * The agent is wired here: `createAgentManager` over the vault `host`, its
+ * `agent-pty:*`/`agent:*` seam registered alongside the tRPC one. It sits after
+ * the router because it shares the host, and before the window because its
+ * `getWindow` closure reads `mainWindow` lazily.
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -22,6 +25,8 @@ import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
+import { createAgentManager } from './agent/agent-manager'
+import { registerAgentIpc } from './agent-ipc'
 
 // Declared before the launch check below, which starts `main()` synchronously:
 // a `let` referenced from inside it while still in its temporal dead zone would
@@ -138,6 +143,12 @@ async function main(): Promise<void> {
 
   registerIpc({ router })
 
+  // The vault agent: one live `claude` per user, in the active vault's clone.
+  // `getWindow` is lazy — the window is created just below and is up long before
+  // the agent streams anything, so registering the seam here is safe.
+  const agent = createAgentManager({ host, getWindow: () => mainWindow })
+  registerAgentIpc({ agent })
+
   const win = createWindow()
   // FR-9: pull on focus. The interval exists for the case where the window
   // never loses focus at all.
@@ -166,6 +177,9 @@ async function main(): Promise<void> {
     quitting = true
     void (async () => {
       try {
+        // Kill the agent's PTY (and its process group) before we flush and
+        // commit — nothing the session was mid-writing should race the teardown.
+        await agent.dispose().catch((err) => console.error('[quit] agent dispose failed:', err))
         // FR-6's flush points are a flush THEN a commit, and only the renderer
         // can do the first half — `host.close()` commits what is on disk, and
         // the editor's newest words are not there until it writes them. Every
