@@ -28,7 +28,7 @@ An example of a shared vault (still work in progress and not refactored to work 
 
 ## The shape of v1
 
-A signed-in employee opens Holi and sees their latest used vault. They open a shared vault. They hit a shortcut, the **assistant drawer** slides up with a live Claude session that can read and edit the vault. They flip to the **task board** — a clean Todo/Doing/Done board with swim lanes by folder — and drag a task to Doing. 
+A signed-in employee opens Holi and sees their latest used vault. They open a shared vault. They hit ⌘J, the **assistant drawer** opens from the right with a live Claude session that can read and edit the vault. They flip to the **task board** — a clean Todo/Doing/Done board with swim lanes by folder — and drag a task to Doing. 
 
 ## Beyond v1
 

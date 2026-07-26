@@ -4,7 +4,7 @@ The in-app Claude Code instance. This PRD covers its runtime, config, context in
 
 **Standing principle: build only what Claude Code doesn't already do, and work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Native Claude Code already provides the interactive UX, the file tools, the config layering, and the history; every subsystem below exists only because it clears that bar.
 
-**What Holi builds is now exactly two things: the prompt content and the PTY runtime.** The MCP op surface is gone, and so is the file↔CRDT bridge. Both existed because the vault's truth was not the files the agent was editing. It is now, so the agent needs no adapter to be a full participant — it edits the vault the same way you do, with the tools it already has.
+**What Holi builds is now essentially one thing: the PTY runtime and its drawer.** No MCP op surface, no file↔CRDT bridge, and — sharpened in the 2026-07-26 revision — **no prompt content**: Holi injects nothing into `--append-system-prompt`, and the per-turn hook injects only the *current focused file*. Claude Code stays pure; everything it needs to know lives in `AGENTS.md`/`CLAUDE.md` (read natively from the cwd) and in `.claude/skills/`, and the agent discovers vault state (tasks, backrefs, sync) with its own native tools. The agent edits the vault the same way you do, with the tools it already has.
 
 ---
 
@@ -12,9 +12,9 @@ The in-app Claude Code instance. This PRD covers its runtime, config, context in
 
 Each employee's Electron app spawns **their own `claude`** in a **node-pty** PTY, authenticated with **their** Claude account, pointed at the vault's **clone directory**, rendered live in an **xterm.js drawer**. The agent works the vault with its native `Read/Write/Edit/Bash/Glob/Grep` tools, and that is the entire integration: its writes are file writes, picked up by the editor's watcher and the sync engine like any other.
 
-Fresh per-turn context (active note, linked tasks, memory fill-state) is injected through a **`UserPromptSubmit` hook**; the base system prompt ships once via `--append-system-prompt` at launch. Config layering is **pure CC-native** — the repo's `.claude/` is the shared layer, the user's own `~/.claude` is the personal layer, Holi composes and syncs nothing. History is **`claude --resume`** — CC's own session picker, full-fidelity replay in the terminal; conversations stay machine-local.
+Holi builds **no prompt content**. `--append-system-prompt` is empty; vault conventions live in `AGENTS.md` (which CC reads natively via a `CLAUDE.md` shim) and capabilities are `.claude/skills/`. The only per-turn injection, through a **`UserPromptSubmit` hook**, is **the current focused note/file** — the one piece of state the agent cannot discover itself; it gets tasks, backrefs, and sync-state with native `Glob`/`grep`/`git`. Config layering is **pure CC-native** — the repo's `.claude/` is the shared layer, the user's own `~/.claude` is the personal layer, Holi composes and syncs nothing. History is **`claude --resume`** — CC's own session picker, full-fidelity replay in the terminal; conversations stay machine-local.
 
-The agent also gains one role it did not have before: it is the **conflict resolver**. When a pull cannot merge, Holi hands the merge to the agent rather than to a three-pane diff UI.
+It renders in a **right-hand resizable drawer** (`AgentPanel`), toggled with **⌘J** and opened automatically by the reconcile flow. The agent also gains one role it did not have before: it is the **conflict resolver**. When a pull cannot merge, Holi hands the merge to the agent rather than to a three-pane diff UI.
 
 ## Assumptions
 
@@ -32,8 +32,9 @@ These are load-bearing — they dissolved several risks outright:
 - Per-employee cost attribution via per-user auth.
 - The agent edits vault files with native tools and **nothing mediates it**.
 - The agent is the **merge repair tool**: one click hands a failed merge to the local agent to reconcile in the terminal.
-- Port the old prompt content (the `agent_context` strings), memory budgets, and fill-indicator UX.
+- **Zero prompt engineering**: no built system prompt, no per-turn context beyond the current focused file. Conventions live in `AGENTS.md`; capabilities are skills.
 - **Zero tool surface**: no MCP server, no ops, no bearer token.
+- The agent can render a note to PDF via the bundled Typst (`$TYPST_BIN`) and the seeded `md-to-pdf` skill.
 
 **Non-goals (v1)**
 - No headless/server-side agent, no stream-json parsing for the live view.
@@ -66,7 +67,8 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 - Binary: resolve `claude` on `PATH`; surface a clear "Claude CLI not found" error if absent.
 - Working directory: **the vault's clone directory** — a real git repo, which is also why the agent can run git commands against it directly.
 - **No `CLAUDE_CONFIG_DIR` override** — the agent runs against the user's own `~/.claude`.
-- `--append-system-prompt <base prompt>` at launch (see Per-turn context).
+- **No `--append-system-prompt` content** (empty) — conventions come from `AGENTS.md`/`CLAUDE.md`, which CC reads natively (see Per-turn context).
+- **`TYPST_BIN`** in the env when a typst binary is resolvable (find-only at spawn, non-blocking; see Rendering PDFs).
 - Env hygiene, ported from the template: strip `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` (so a Holi launched from a Claude shell doesn't refuse), inherit a usable `PATH` + `HOME` (GUI-launched Electron ships a stripped PATH and can't find node/ripgrep otherwise), set `TERM=xterm-256color`.
 - **No `--mcp-config` and no `--strict-mcp-config`.** There is no Holi MCP server to declare. A vault may still configure its own MCP servers in `.claude/`, natively, and Holi does not interfere.
 - **Never `--dangerously-skip-permissions`** — native prompts are the permission UX.
@@ -96,7 +98,7 @@ Holi builds **no config composition and no per-user config sync**. The layering 
 **Why:** a composed per-launch config dir and a per-user config-sync subsystem are machinery CC already provides for free. **Rejected:** the composed three-tier config dir and the per-user config-sync subsystem.
 
 **Shared (committed to the repo).**
-- `.claude/` — persona (`SOUL.md`/`IDENTITY.md`), shared **skills** and **commands**, and `settings.json` with **seeded permission defaults** plus the `UserPromptSubmit` hook config.
+- `.claude/` — shared **skills** and **commands**, and `settings.json` with **seeded permission defaults** plus the `UserPromptSubmit` hook config (which emits only the focused-note line). (Persona files are deferred — see Per-turn context.)
 - `AGENTS.md` (the user's "System"), imported by a Holi-managed `CLAUDE.md` shim.
 - `MEMORY.md` (the shared vault scratchpad).
 
@@ -117,23 +119,21 @@ Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.md
 
 ## Per-turn context & system prompt
 
-Two prompt payloads, both porting `services/agent_context.rs` content (hooks are CC-native, so this passes the standing-principle filter):
+**Holi builds no prompt content.** This is the sharpest application of the standing principle, decided in the 2026-07-26 revision after the old repo over-engineered the agent on top of Claude Code. CC already reads `CLAUDE.md` (→ `@AGENTS.md`) from the cwd, already has native file/git/web tools, and already supports skills and `--resume`. So Holi builds none of it.
 
-**1. Base system prompt — once, at launch, via `--append-system-prompt`.** Built by the port of `build_system_prompt`. Ordered blocks: identity layers (**IDENTITY then SOUL**), a Tools note, an "asking the user" note, agenda heuristics, then the Holi base — memory guidance (USER.md/MEMORY.md, when-to-save), skills guidance, the vault-system section (daily notes, recurrence, wiki-link rename, managed root files), output formatting, scripting, and the vault top-level directory tree. Capped at ~48k tokens with a truncation marker.
+**1. Base system prompt — none.** `--append-system-prompt` is **empty**; there is no `build_system_prompt` port. Everything the old prompt carried moves to a place CC already reads or the agent already discovers:
+- **Vault conventions** — the task-file convention (`task.<name>.md`, frontmatter keys, folder-is-the-lane, `done`-rolls-a-recurring-task), wiki-link rename, daily notes/recurrence, managed root files, the sync model, and **memory guidance** (USER.md/MEMORY.md, budgets, when-to-save) — live in **`AGENTS.md`** (read natively via the `CLAUDE.md` shim).
+- **Capabilities** are **`.claude/skills/`**, not prompt prose.
+- **The vault tree** is not injected; the agent `Glob`s it when it needs it.
+- **Persona** (the old IDENTITY/SOUL injection) is dropped for v1; if wanted later it goes in a CC-native file (`CLAUDE.md`/`CLAUDE.local.md`), not a Holi injection.
 
-**Adjust in the port:** drop the `safe`/`power_user` permission-mode section; retarget memory/skill guidance from `mcp__holi__memory_*` / `skill_*` tools to **native file edits**; drop the `apps` section (post-v1); and **replace the task-ops guidance with the task file convention** — `task.<name>.md`, its frontmatter keys, the folder-is-the-lane rule, and the `done`-rolls-a-recurring-task rule. That convention is now the *only* thing the agent needs to know about tasks, and it belongs in the prompt precisely because it is a convention rather than a tool signature.
+**2. Per-turn context — one line, via a `UserPromptSubmit` hook.** The hook injects exactly one thing: **the current focused note/file** — "Focused note: `path`." That is the single piece of state the agent genuinely cannot get itself (it is editor-UI focus, which only Holi holds). Everything else the agent discovers with native tools on demand: **tasks** via `Glob **/task.*.md`, **backreferences** via `grep [[focused]]`, **sync-state** via `git status`/`git log` (it can run git — see below). No fill-indicators, no related-tasks list, no backref list, no sync-state block.
 
-**2. Per-turn context — every prompt, via a `UserPromptSubmit` hook** configured in the repo's `.claude/settings.json`. You can't transparently prepend a `<system>` block to what a user types into an interactive TUI; the hook is the native mechanism. The old `build_per_turn_prefix` moves into the hook — a small Node/TS script that emits:
-- **USER.md / MEMORY.md fill indicators** — `[31% — 1,240/4,000 chars]`, the port of `fill_indicator`. Hard budgets **USER.md 4,000 / MEMORY.md 5,000 chars**.
-- **Active + open notes** — "Focused note: `path` (use `Read` to view)."
-- **Related non-complete tasks** for the focused note and **backreferencing notes** (`[[links]]` into the focused note).
-- **The vault's sync state** — new, and worth the line: whether the vault has unpublished commits or is mid-reconcile changes what the agent should do next, and it is the kind of thing an agent will otherwise cheerfully make worse.
+**Why so little:** every injected block is bespoke surface that duplicates a native capability and drifts from it. The focused file is the sole exception because it is UI state only Holi holds.
 
-**Rejected:** system-prompt-only context (goes stale within a session as the user switches notes) and an MCP resource pulled on demand (not guaranteed present; the model may forget to fetch it).
+**Hook data source.** Electron main keeps a tiny **focus snapshot file** (`.holi/context.local.json`) fresh on every note switch, carrying just the focused note path; the hook reads it and emits the one line. No grep, no memory-counting, no server — sub-millisecond, so it never stalls a turn.
 
-**Hook data source.** The hook needs the current focus + memory state. Electron main keeps a **focus snapshot file** fresh on every note switch; the hook reads that file, reads `USER.md`/`MEMORY.md` for the fill counts, and — now that everything is local — simply **greps the vault** for related tasks and backrefs instead of querying a server. That removes the open question the old design carried about transport and auth: there is nothing to authenticate to.
-
-**Dedup.** Port the `PER_TURN_UNCHANGED_MARKER` optimization only if it proves worth it; in one long-lived, prompt-cached session the win is small.
+**Rejected:** the old rich system prompt + per-turn prefix (`build_system_prompt`/`build_per_turn_prefix`, fill-indicators, related tasks, backrefs, sync-state injection). This is precisely the "agent engineering on top of Claude Code" the old repo overdid; it is deleted, not ported.
 
 ## Tool surface: native only
 
@@ -160,6 +160,14 @@ Two prompt payloads, both porting `services/agent_context.rs` content (hooks are
 - **The blast radius grew in one specific way, and it should be named.** The agent has always had native `Bash`, but the vault directory is now a git repo with a push credential reachable from it. A destructive git command (`reset --hard`, `push --force`) is expressible where before the client had no `.git` at all. Mitigations: the clone is Holi-managed and contains nothing else, `git` is subject to the same native permission prompts as any command, and the remote's default branch can be protected on GitHub. **Not mitigated by:** trying to block git commands from the agent — it needs them for reconcile, and a blocklist that the reconcile flow must punch through is not a boundary.
 - **Prompt injection via shared vault content** is a documented, accepted **residual risk** for v1. **Rejected:** sandboxed-bash by default (friction on legitimate dev tasks; it gets turned off), and treating shared vaults as hostile input.
 
+## Git coexistence — Holi pauses while the agent works
+
+The vault is a **regular git repo** and the agent may run **any** git it likes — commit, push, pull, resolve a merge. The one hazard is two git actors on one repo: Holi's own sync loop (autosave-commit on a quiet timer, periodic pull, push) and the agent. They must not contend on `.git/index.lock`, and an agent rebase/branch-switch must not strand Holi's loop.
+
+**Rule: while the agent is *working* (mid-turn), Holi suspends its sync loop; it resumes after the turn goes idle (with a short settle).** So at any moment there is a single active git actor. Holi keys this off the working/idle status it already tracks from PTY activity. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
+
+`AGENTS.md` states this to the agent plainly: *git is yours; Holi pauses its own sync while you work, and reconciles when you're done.* This **supersedes** the old AGENTS.md prohibition on the agent running git.
+
 ## The agent as merge resolver
 
 This replaces the old bridge/turn-protocol/reconcile section, and is much smaller than what it replaces.
@@ -168,35 +176,63 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Conflict resolution is where the agent earns its place.** When an auto-pull hits a textual conflict, Holi aborts the merge and offers **Ask Claude to reconcile**. Accepting it:
 
-1. **Pauses autosave and auto-pull** for that vault, so nothing writes underneath the resolution.
+1. **Pauses autosave and auto-pull** for that vault (the same suspend as Git coexistence, held for the whole reconcile rather than just a turn), so nothing writes underneath the resolution.
 2. **Re-runs the merge for real**, leaving the conflict in the working tree.
-3. **Opens the drawer** with a seeded prompt naming the conflicted paths and the two branches.
-4. The agent resolves with native tools and git, **in front of the user**, who can watch and answer if it asks.
+3. **Opens the drawer** and starts the session with a **seeded first message** (the `prompt` field on `agent-pty:start`) naming the conflicted paths and the two branches — the user does not type it.
+4. The agent resolves the `<<<<<`/`=====`/`>>>>>` markers with native tools and **finishes the merge itself** (`git add` + commit), **in front of the user**, who can watch and answer if it asks.
 5. On a clean tree, Holi resumes normal operation.
 
 **Why this rather than a conflict UI:** a three-pane merge editor is a large build that resolves conflicts *positionally*, which is exactly the wrong level for prose and for YAML frontmatter. An agent resolves on meaning, in a surface the user already has open. **Why user-triggered only:** no unattended rewrites and no token spend without opt-in — and a merge the user did not ask anyone to touch is one they can still resolve themselves in the terminal.
 
 **Why this is safe to hand to an agent at all:** it operates inside git, mid-merge, on a repo whose pre-merge state is a commit. The worst outcome is recoverable with `git merge --abort`.
 
+## Rendering PDFs
+
+The agent can turn a note into a PDF with the **same Typst engine** the UI's "Convert to PDF" uses — one env var and one skill, no new machinery.
+
+- **`$TYPST_BIN`** — Holi resolves the typst binary at agent spawn (find-only: `TYPST_BIN` env → cached download → `PATH`; **non-blocking**, never downloads on the spawn path) and, when found, sets it in the agent's env. A fire-and-forget `ensureTypst` caches it for the next spawn if the machine has never rendered. If it is unset, the skill's fallback says to run one UI Convert (or retry) to install typst.
+- **The seeded `md-to-pdf` skill** (`.claude/skills/md-to-pdf/`) documents the template model (`.holi/templates/<slug>/`), the six-type field schema, the `doc(notePath, meta, assets)` contract, and the render recipe: compose a wrapper that imports the template's `doc` and calls it, then `"$TYPST_BIN" compile wrapper.typ <out>.pdf --root /`. The agent writes typed `meta` literals directly.
+- **PDFs are outputs, never committed** — the skill writes them to a non-tracked path and reports it.
+
+This lands as a late slice, once the agent is live. The typed-template mechanism it builds on already exists (see `../specs/2026-07-26-typed-template-fields-design.md`).
+
 ## What ports from the old codebase
 
 Port to TypeScript, adapted as noted above:
 
 - The **PTY/xterm template** — `services/agents/login_pty.rs` (spawn, env hygiene, reader loop, child-wait, resize; process-group cancellation from `runtime.rs`).
-- The **prompt content** — `services/agent_context.rs`: `build_system_prompt` and `build_per_turn_prefix` (→ the `UserPromptSubmit` hook), memory budgets, `fill_indicator`.
 - The auth probe (`claude_config::is_authenticated`) and the login-PTY fallback flow.
 
-**Explicitly not ported:** the per-run bearer-token MCP handshake (`mcp_server.rs` / `mcp_handshake.rs`) and the ops. There is no MCP surface to hand-shake into.
+**Explicitly not ported:** the per-run bearer-token MCP handshake (`mcp_server.rs` / `mcp_handshake.rs`) and the ops (no MCP surface to hand-shake into); and **the prompt content** — `build_system_prompt`, `build_per_turn_prefix`, memory budgets, `fill_indicator`. Holi builds no prompt content now; vault conventions live in `AGENTS.md` and the per-turn hook emits only the focused-note line.
 
 ## Edge cases & risks
 
-- **The agent commits or pushes on its own.** It has `Bash` and a repo, so it can. Decide whether the system prompt tells it to leave git to Holi (recommended: yes, except during reconcile) — otherwise autosave and the agent will race to author the same commit.
+- **The agent commits or pushes on its own.** Resolved: this is allowed and expected — the vault is a regular repo. The race with autosave is prevented not by forbidding git but by the **Git coexistence** rule: Holi suspends its sync loop while the agent is working. The residual sharp edge is a mid-turn agent `git checkout <branch>`/rebase that outlives the turn; `AGENTS.md` notes that a branch switch pauses sync until undone.
 - **Prompt injection via shared content** — accepted residual risk. Native permission prompts + seeded egress gating + git history bound the blast radius.
 - **Hook latency** — the `UserPromptSubmit` hook runs on *every* prompt; a slow grep stalls the user's turn. Budget it (target < ~50 ms) and degrade to "context unavailable" rather than block. A vault-wide grep per turn is the thing to measure first.
 - **`claude` missing or unauthenticated** — clear error + the fallback login PTY flow.
 - **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session, and some CC config is read at launch only; may need a "restart session to pick up config changes" nudge (open question).
 - **Terminal resize / reflow** — xterm + node-pty resize wiring must stay in sync; test drawer resize under active output.
 - **The agent editing during a reconcile** — the reconcile flow pauses autosave, but the *user* can still type. Decide whether the editor goes read-only while a reconcile is in progress (leaning: yes, for the conflicted files only).
+
+## Wiring state & build order
+
+The agent is **fully built but orphaned** — `createAgentManager` is never called, there is no `agent` IPC/preload surface, and `AgentPanel` is mounted nowhere. `main/index.ts` keeps it off the startup path because `agent-manager.ts` still imports the deleted `server-client` (an unresolvable import there stops the window opening).
+
+Three modules are **pre-D60 stale**, and this revision decides their fate:
+- **`system-prompt.ts`** (the 191-line `build_system_prompt`) — **deleted**. No prompt is built.
+- **`context-snapshot.ts`** — **shrunk to a focus-writer**: it writes only the focused note path to `.holi/context.local.json`. The task-record / `docId` / `RelatedRef` / backref logic is deleted; the agent discovers those natively.
+- **The `server-client` dependency** — **deleted, not reimplemented.** Under focus-only context the manager no longer needs `listTasks`/`backrefs`, so the two calls that blocked startup simply go away.
+
+The renderer also imports a non-existent `activeVaultIdAtom`; replace with `activeRemoteAtom` (a vault's identity is its remote under D60).
+
+**Build order (tracer-first):**
+1. **Spine + strip stale machinery** — delete the `server-client` dep and the stale prompt/context code; add the `agent` IPC/preload bridge (`agent-pty:{data,exit,start,write,resize,kill}` + `agent:status`) and the typed `window.holi.agent`; mount `AgentPanel` + ⌘J; instantiate `createAgentManager` in `index.ts`; `activeVaultIdAtom`→`activeRemoteAtom`. Empty `--append-system-prompt`; focus-only hook. Result: a live session in the drawer that edits the vault.
+2. **Git coexistence** — Holi pauses its sync loop while the agent works; update `AGENTS.md`.
+3. **Merge resolver** — conflict detection → "Ask Claude to reconcile" → seeded `prompt` on `start`.
+4. **PDF capability** — `$TYPST_BIN` + the seeded `md-to-pdf` skill.
+
+Each slice gets its own plan.
 
 ## Dependencies
 
@@ -207,9 +243,7 @@ Port to TypeScript, adapted as noted above:
 
 ## Open questions
 
-- **Should the agent touch git at all outside reconcile?** Leaning: the system prompt tells it not to commit or push, because Holi owns that cadence — but it must stay free to *read* history (`git log`, `git show`), which is genuinely useful in a vault.
 - **`--resume` drawer UX.** Does relaunching the PTY with `--resume` inside the drawer feel native, or does the affordance need `--resume <id>` shortcuts for recent sessions?
-- **Per-turn dedup value.** Is `PER_TURN_UNCHANGED_MARKER` worth porting? Measure before building.
 - **Shared-config pickup.** Which shared `.claude/` files does CC read at launch only vs per-use? Determines whether a pulled config change needs a restart nudge.
 - **Rename misses.** Does the rename skill lose links often enough to justify moving rename into the app as a slash command?
 
