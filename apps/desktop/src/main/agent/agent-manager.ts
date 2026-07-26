@@ -28,8 +28,8 @@ import { TerminalMirror } from './terminal-mirror'
 
 export interface AgentStatus {
   running: boolean
-  /** A turn is open — Claude is mid-edit. Wired from PTY activity in slice 2
-   *  (git coexistence); false for now. */
+  /** A turn is open — Claude is mid-edit. Derived from PTY activity (slice 2,
+   *  git coexistence): output ⇒ working; quiet for `idleMs` ⇒ idle. */
   working: boolean
   /** Synced agent config changed under a live session. Its D60 detection source
    *  was deleted; a "restart to pick up config" nudge is a PRD open question, so
@@ -44,6 +44,9 @@ export interface AgentManagerDeps {
   spawnPty?: SpawnPty
   resolveBin?: () => string | null
   killGraceMs?: number
+  /** How long the PTY stream must be quiet before a turn counts as idle (the
+   *  PRD's "short settle"). Default 1500ms; tune live. */
+  idleMs?: number
   log?: (msg: string) => void
 }
 
@@ -75,6 +78,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
    * the mirror only, so nothing is streamed to a window that can't show it —
    * and nothing arrives twice on attach. */
   let attached = false
+  const idleMs = deps.idleMs ?? 1500
+  let working = false
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
 
   const send = (channel: string, payload: unknown) => {
     deps.getWindow()?.webContents.send(channel, payload)
@@ -82,18 +88,55 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
 
   const status = (): AgentStatus => ({
     running: session !== null,
-    working: false,
+    working,
     configStale: false,
     authenticated: isClaudeAuthenticated(),
   })
 
   const pushStatus = () => send('agent:status', status())
 
+  /**
+   * PTY output means the agent is mid-turn. Each chunk resets an idle timer;
+   * when it fires — the stream has been quiet for `idleMs` — the turn is over.
+   * This is the PTY-activity signal the PRD keys git coexistence off (no turn
+   * hooks). See the plan's "known limitations": a silent permission-wait can
+   * look idle, which is acceptable because sync commits are edit-triggered.
+   */
+  function noteActivity(): void {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      idleTimer = null
+      setWorking(false)
+    }, idleMs)
+    if (!working) setWorking(true)
+  }
+
+  /**
+   * While the agent works, suspend the vault's sync loop so the two git actors
+   * never contend on `.git/index.lock`; resume (which catches up commits + pulls)
+   * when the turn goes idle. The same pause/resume the reconcile flow will hold.
+   */
+  function setWorking(next: boolean): void {
+    if (next === working) return
+    working = next
+    if (next) deps.host.active()?.pause('the assistant is working')
+    else deps.host.active()?.resume()
+    pushStatus()
+  }
+
   async function teardown(): Promise<void> {
     const current = session
     if (!current) return
     session = null // guard the double-stop: the PTY exit path tears down too
     attached = false
+    if (idleTimer) {
+      clearTimeout(idleTimer)
+      idleTimer = null
+    }
+    if (working) {
+      working = false
+      deps.host.active()?.resume() // don't leave the vault paused behind a dead session
+    }
     current.snapshot.stop()
     await current.runtime.kill()
     current.mirror.dispose()
@@ -131,6 +174,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {
+      noteActivity() // PTY output = the agent is mid-turn (git-coexistence signal)
       terminal.write(data) // the mirror is the record; the renderer is a view
       if (attached) send('agent-pty:data', data)
     })
