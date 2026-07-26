@@ -1,87 +1,116 @@
 /**
  * VS Code-style per-type file icons for the tree — a recognizable glyph in a
- * type colour, so a `.json` reads yellow, a `.ts` blue, an image teal, at a
- * glance. Still inline SVG (no icon-font dependency), but colour-carrying rather
- * than monochrome: the type is the signal, distinct from the row's
- * selection/open tint (which colours the text, not these).
+ * type colour, so a `.json` reads yellow, a `.ts` blue, a `.typ` teal at a
+ * glance. Real technology glyphs from simple-icons where one exists (Markdown,
+ * JSON, JavaScript, TypeScript, Python, Typst, …), with lucide fallbacks for the
+ * generic kinds (plain file, image, spreadsheet, archive).
+ *
+ * Colours are a curated, dark-friendly palette — NOT each brand's own hex, since
+ * several (JSON is black, TOML brown) would vanish on the dark UI. The colour is
+ * the type signal; it is passed to the glyph, distinct from the row's text tint.
  *
  * The mapping is by extension and independent of `fileKind` (which is coarser,
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
-import type { JSX } from 'react'
+import type { ComponentType, JSX } from 'react'
+import { File, FileArchive, FileSpreadsheet, FileText, Image, Presentation, Settings2, Table } from 'lucide-react'
 import {
-  BracesIcon,
-  CodeIcon,
-  ConfigIcon,
-  DocIcon,
-  FileIcon,
-  ImageIcon,
-  MarkdownIcon,
-  PdfIcon,
-  TableIcon,
-} from './icons'
+  SiCss,
+  SiDotenv,
+  SiGnubash,
+  SiGo,
+  SiGraphql,
+  SiHtml5,
+  SiJavascript,
+  SiJson,
+  SiJupyter,
+  SiLess,
+  SiMarkdown,
+  SiMdx,
+  SiPython,
+  SiReact,
+  SiRuby,
+  SiRust,
+  SiSass,
+  SiSqlite,
+  SiToml,
+  SiTypescript,
+  SiTypst,
+  SiXml,
+  SiYaml,
+} from '@icons-pack/react-simple-icons'
 
-type Glyph = () => JSX.Element
+/** lucide `LucideIcon` and simple-icons `IconType` are both forwardRef exotic
+ *  components; `ComponentType<any>` is the common slot that accepts either. The
+ *  render below only ever passes `size` + `color`, which both honour. */
+type IconCmp = ComponentType<any>
 
-/** [glyph, colour] per extension. Colours track VS Code's Seti palette loosely. */
-const BY_EXT: Record<string, [Glyph, string]> = {
-  md: [MarkdownIcon, '#6b9fff'],
-  markdown: [MarkdownIcon, '#6b9fff'],
-  json: [BracesIcon, '#f5c542'],
-  jsonc: [BracesIcon, '#f5c542'],
-  js: [CodeIcon, '#f5c542'],
-  jsx: [CodeIcon, '#f5c542'],
-  mjs: [CodeIcon, '#f5c542'],
-  cjs: [CodeIcon, '#f5c542'],
-  ts: [CodeIcon, '#4fc3f7'],
-  tsx: [CodeIcon, '#4fc3f7'],
-  py: [CodeIcon, '#4fc3f7'],
-  go: [CodeIcon, '#4fc3f7'],
-  rb: [CodeIcon, '#ef5350'],
-  rs: [CodeIcon, '#ff8a65'],
-  sh: [CodeIcon, '#a5d6a7'],
-  bash: [CodeIcon, '#a5d6a7'],
-  sql: [CodeIcon, '#b388ff'],
-  html: [CodeIcon, '#ff7043'],
-  htm: [CodeIcon, '#ff7043'],
-  css: [CodeIcon, '#42a5f5'],
-  scss: [CodeIcon, '#42a5f5'],
-  less: [CodeIcon, '#42a5f5'],
-  yaml: [ConfigIcon, '#b388ff'],
-  yml: [ConfigIcon, '#b388ff'],
-  toml: [ConfigIcon, '#b388ff'],
-  ini: [ConfigIcon, '#b388ff'],
-  env: [ConfigIcon, '#b388ff'],
-  conf: [ConfigIcon, '#b388ff'],
-  xml: [ConfigIcon, '#b388ff'],
-  csv: [TableIcon, '#66bb6a'],
-  tsv: [TableIcon, '#66bb6a'],
-  xls: [TableIcon, '#66bb6a'],
-  xlsx: [TableIcon, '#66bb6a'],
-  ods: [TableIcon, '#66bb6a'],
-  doc: [DocIcon, '#4a90d9'],
-  docx: [DocIcon, '#4a90d9'],
-  odt: [DocIcon, '#4a90d9'],
-  rtf: [DocIcon, '#4a90d9'],
-  pages: [DocIcon, '#4a90d9'],
-  ppt: [DocIcon, '#ff7043'],
-  pptx: [DocIcon, '#ff7043'],
-  key: [DocIcon, '#ff7043'],
-  pdf: [PdfIcon, '#ef5350'],
-  png: [ImageIcon, '#26a69a'],
-  jpg: [ImageIcon, '#26a69a'],
-  jpeg: [ImageIcon, '#26a69a'],
-  gif: [ImageIcon, '#26a69a'],
-  webp: [ImageIcon, '#26a69a'],
-  bmp: [ImageIcon, '#26a69a'],
-  ico: [ImageIcon, '#26a69a'],
-  avif: [ImageIcon, '#26a69a'],
-  svg: [ImageIcon, '#ffb74d'],
-  txt: [FileIcon, '#b0bec5'],
-  log: [FileIcon, '#b0bec5'],
-  zip: [FileIcon, '#cfa06a'],
-  tar: [FileIcon, '#cfa06a'],
-  gz: [FileIcon, '#cfa06a'],
+/** [glyph, colour] per extension. Colours are dark-friendly, loosely tracking
+ *  each type's identity (JS yellow, TS/CSS blue, Rust orange, …). */
+const BY_EXT: Record<string, [IconCmp, string]> = {
+  md: [SiMarkdown, '#6b9fff'],
+  markdown: [SiMarkdown, '#6b9fff'],
+  mdx: [SiMdx, '#f9ac00'],
+  json: [SiJson, '#f5c542'],
+  jsonc: [SiJson, '#f5c542'],
+  js: [SiJavascript, '#f5c542'],
+  mjs: [SiJavascript, '#f5c542'],
+  cjs: [SiJavascript, '#f5c542'],
+  jsx: [SiReact, '#61dafb'],
+  ts: [SiTypescript, '#4fc3f7'],
+  tsx: [SiReact, '#61dafb'],
+  py: [SiPython, '#4fc3f7'],
+  ipynb: [SiJupyter, '#ff8a65'],
+  go: [SiGo, '#29b6f6'],
+  rb: [SiRuby, '#ef5350'],
+  rs: [SiRust, '#ff8a65'],
+  sh: [SiGnubash, '#a5d6a7'],
+  bash: [SiGnubash, '#a5d6a7'],
+  sql: [SiSqlite, '#b388ff'],
+  graphql: [SiGraphql, '#e535ab'],
+  gql: [SiGraphql, '#e535ab'],
+  html: [SiHtml5, '#ff7043'],
+  htm: [SiHtml5, '#ff7043'],
+  css: [SiCss, '#42a5f5'],
+  scss: [SiSass, '#e57399'],
+  sass: [SiSass, '#e57399'],
+  less: [SiLess, '#42a5f5'],
+  yaml: [SiYaml, '#b388ff'],
+  yml: [SiYaml, '#b388ff'],
+  toml: [SiToml, '#b388ff'],
+  env: [SiDotenv, '#f5c542'],
+  xml: [SiXml, '#8bc34a'],
+  typ: [SiTypst, '#26c6da'],
+  ini: [Settings2, '#b388ff'],
+  conf: [Settings2, '#b388ff'],
+  csv: [Table, '#66bb6a'],
+  tsv: [Table, '#66bb6a'],
+  xls: [FileSpreadsheet, '#66bb6a'],
+  xlsx: [FileSpreadsheet, '#66bb6a'],
+  ods: [FileSpreadsheet, '#66bb6a'],
+  doc: [FileText, '#4a90d9'],
+  docx: [FileText, '#4a90d9'],
+  odt: [FileText, '#4a90d9'],
+  rtf: [FileText, '#4a90d9'],
+  pages: [FileText, '#4a90d9'],
+  ppt: [Presentation, '#ff7043'],
+  pptx: [Presentation, '#ff7043'],
+  key: [Presentation, '#ff7043'],
+  pdf: [FileText, '#ef5350'],
+  png: [Image, '#26a69a'],
+  jpg: [Image, '#26a69a'],
+  jpeg: [Image, '#26a69a'],
+  gif: [Image, '#26a69a'],
+  webp: [Image, '#26a69a'],
+  bmp: [Image, '#26a69a'],
+  ico: [Image, '#26a69a'],
+  avif: [Image, '#26a69a'],
+  svg: [Image, '#ffb74d'],
+  txt: [File, '#b0bec5'],
+  log: [File, '#b0bec5'],
+  zip: [FileArchive, '#cfa06a'],
+  tar: [FileArchive, '#cfa06a'],
+  gz: [FileArchive, '#cfa06a'],
 }
 
 /** The tinted, type-appropriate leaf icon for a vault file path. */
@@ -89,10 +118,6 @@ export function fileIconFor(path: string): JSX.Element {
   const base = path.slice(path.lastIndexOf('/') + 1)
   const dot = base.lastIndexOf('.')
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
-  const [Glyph, color] = BY_EXT[ext] ?? [FileIcon, '#90a4ae']
-  return (
-    <span style={{ color }}>
-      <Glyph />
-    </span>
-  )
+  const [Icon, color] = BY_EXT[ext] ?? [File, '#90a4ae']
+  return <Icon size={14} color={color} />
 }

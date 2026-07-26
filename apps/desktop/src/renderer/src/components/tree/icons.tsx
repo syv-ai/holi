@@ -1,13 +1,10 @@
 /**
- * The tree's icon set, from lucide-react. These thin wrappers keep stable names
- * and a no-arg (or `{open}`) signature so `file-icons.tsx` and the tree don't
- * care that the glyphs are lucide. All inherit `currentColor` (lucide strokes
- * with it), so `file-icons.tsx` can tint them per file type.
- *
- * lucide has no dedicated markdown/pdf/word glyph, so those text-document kinds
- * share `FileText` — the *colour* is the type signal here, per file-icons.tsx.
+ * The tree's structural icons: the expand chevron, the folder glyph, and the
+ * markdown glyph used by the new-file pending row. Per-file-type leaf icons live
+ * in `file-icons.tsx`. All inherit `currentColor` so they follow the row's tint.
  */
-import { Braces, ChevronRight, Code, File, FileText, Folder, Image, Settings2, Table } from 'lucide-react'
+import { SiMarkdown } from '@icons-pack/react-simple-icons'
+import { ChevronRight, Folder } from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -24,37 +21,5 @@ export function FolderIcon() {
 }
 
 export function MarkdownIcon() {
-  return <FileText size={14} aria-hidden="true" />
-}
-
-export function FileIcon() {
-  return <File size={14} aria-hidden="true" />
-}
-
-export function ImageIcon() {
-  return <Image size={14} aria-hidden="true" />
-}
-
-export function PdfIcon() {
-  return <FileText size={14} aria-hidden="true" />
-}
-
-export function DocIcon() {
-  return <FileText size={14} aria-hidden="true" />
-}
-
-export function BracesIcon() {
-  return <Braces size={14} aria-hidden="true" />
-}
-
-export function CodeIcon() {
-  return <Code size={14} aria-hidden="true" />
-}
-
-export function TableIcon() {
-  return <Table size={14} aria-hidden="true" />
-}
-
-export function ConfigIcon() {
-  return <Settings2 size={14} aria-hidden="true" />
+  return <SiMarkdown size={14} color="currentColor" aria-hidden="true" />
 }

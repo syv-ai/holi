@@ -6,24 +6,24 @@
  * stays in-app, in the vault, and syncs like everything else.
  */
 import type { FileKind } from '@holi/shared'
-import { DocIcon, FileIcon, ImageIcon, PdfIcon } from './tree/icons'
+import { File, FileText, Image, type LucideIcon } from 'lucide-react'
 
 type OpenableKind = Exclude<FileKind, 'markdown'>
 
-function describe(path: string, kind: OpenableKind): { label: string; Icon: () => JSX.Element; note: string } {
+function describe(path: string, kind: OpenableKind): { label: string; Icon: LucideIcon; note: string } {
   switch (kind) {
     case 'image':
-      return { label: 'Image', Icon: ImageIcon, note: 'Image preview is coming soon.' }
+      return { label: 'Image', Icon: Image, note: 'Image preview is coming soon.' }
     case 'pdf':
-      return { label: 'PDF', Icon: PdfIcon, note: 'PDF preview is coming soon.' }
+      return { label: 'PDF', Icon: FileText, note: 'PDF preview is coming soon.' }
     case 'doc':
-      return { label: 'Document', Icon: DocIcon, note: 'Document preview is coming soon.' }
+      return { label: 'Document', Icon: FileText, note: 'Document preview is coming soon.' }
     default: {
       const dot = path.lastIndexOf('.')
       const ext = dot > path.lastIndexOf('/') ? path.slice(dot + 1).toUpperCase() : ''
       return {
         label: ext ? `${ext} file` : 'File',
-        Icon: FileIcon,
+        Icon: File,
         note: 'In-app editing for this file type is coming soon.',
       }
     }
@@ -35,8 +35,8 @@ export function FilePlaceholder({ path, kind }: { path: string; kind: OpenableKi
   const name = path.slice(path.lastIndexOf('/') + 1)
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 text-neutral-500">
-      <div className="scale-[2.5] text-neutral-600">
-        <Icon />
+      <div className="text-neutral-600">
+        <Icon size={40} strokeWidth={1.5} />
       </div>
       <p className="mt-2 font-mono text-sm text-neutral-300">{name}</p>
       <p className="text-xs">
