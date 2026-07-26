@@ -1,16 +1,13 @@
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createAgentManager, type AgentManager } from '../src/main/agent/agent-manager'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import type { PtyProcess } from '../src/main/agent/agent-runtime'
-import type { ServerClient } from '../src/main/server-client'
-import type { VaultManager } from '../src/main/vault/vault-manager'
-import type { VaultMirror } from '../src/main/vault/vault-mirror'
+import type { ActiveVault, VaultHost } from '../src/main/vault/active-vault'
 
-const VAULT = 'v-1'
-const NOTE_ID = 'doc-1'
+const VAULT = 'owner/repo'
 const NOTE_PATH = 'notes/plan.md'
 
 class FakePty implements PtyProcess {
@@ -47,13 +44,8 @@ interface Rig {
   workRoot: string
   sent: Array<{ channel: string; payload: any }>
   spawns: Array<{ file: string; args: string[]; opts: { cwd: string; env: Record<string, string> } }>
+  host: { setActive(v: string | null): void }
   pty(): FakePty
-  mirror: {
-    signalled: string[]
-    endOpenTurnsCalls: number
-  }
-  calls: Array<{ path: string; input: any }>
-  fakeMirror: VaultMirror
 }
 
 const cleanups: Array<() => Promise<void>> = []
@@ -61,57 +53,29 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn()
 })
 
-async function rig(opts: { bin?: string | null } = {}): Promise<Rig> {
+async function rig(opts: { bin?: string | null; active?: string | null } = {}): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
   const workRoot = join(dir, 'work')
   await mkdir(workRoot, { recursive: true })
+  await mkdir(join(workRoot, '.holi'), { recursive: true })
 
-  const sent: Array<{ channel: string; payload: any }> = []
+  const sent: Rig['sent'] = []
   const spawns: Rig['spawns'] = []
   const ptys: FakePty[] = []
-  const signalled: string[] = []
-  let endOpenTurnsCalls = 0
-  const calls: Array<{ path: string; input: any }> = []
 
-  const fakeMirror = {
-    docIdForPath: (rel: string) => (rel === NOTE_PATH ? NOTE_ID : null),
-    pathForDocId: (id: string) => (id === NOTE_ID ? NOTE_PATH : null),
-    knownPaths: () => [NOTE_PATH],
-    bridgeForPath: (rel: string) =>
-      rel === NOTE_PATH ? { signalTurnOpen: () => void signalled.push(rel) } : null,
-    endOpenTurns: () => void (endOpenTurnsCalls += 1),
-  } as unknown as VaultMirror
-
-  let active: string | null = VAULT
-  const vaultManager = {
-    workRootFor: () => workRoot,
-    activeVaultId: () => active,
-    activeMirror: () => (active ? fakeMirror : null),
-    setActive: (v: string | null) => (active = v),
-  } as unknown as VaultManager & { setActive(v: string | null): void }
-
-  const taskShaped = { id: 't1', vaultId: VAULT, title: 'x', status: 'todo', tags: [], related: [] }
-  const proc = (path: string) => ({
-    query: async (input: unknown) => (calls.push({ path, input }), []),
-    mutate: async (input: unknown) => (calls.push({ path, input }), taskShaped),
-  })
-  const client = {
-    tasks: {
-      list: proc('tasks.list'),
-      get: proc('tasks.get'),
-      create: proc('tasks.create'),
-      update: proc('tasks.update'),
-      complete: proc('tasks.complete'),
-      link: proc('tasks.link'),
-      unlink: proc('tasks.unlink'),
-      delete: proc('tasks.delete'),
+  let activeRemote: string | null = opts.active === undefined ? VAULT : opts.active
+  const host = {
+    active: (): ActiveVault | null =>
+      activeRemote === null ? null : ({ remote: activeRemote, root: workRoot } as unknown as ActiveVault),
+    open: async () => {
+      throw new Error('not used in these tests')
     },
-    notes: { rename: proc('notes.rename'), backrefs: proc('notes.backrefs') },
-  } as unknown as ServerClient
+    close: async () => {},
+    setActive: (v: string | null) => (activeRemote = v),
+  } as unknown as VaultHost & { setActive(v: string | null): void }
 
   const manager = createAgentManager({
-    client,
-    vaultManager,
+    host,
     getWindow: () =>
       ({ webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } }) as never,
     spawnPty: (file, args, o) => {
@@ -121,7 +85,6 @@ async function rig(opts: { bin?: string | null } = {}): Promise<Rig> {
       return pty
     },
     resolveBin: () => (opts.bin === undefined ? '/bin/fake-claude' : opts.bin),
-    settleMs: 20,
     killGraceMs: 20,
     log: () => {},
   })
@@ -131,27 +94,11 @@ async function rig(opts: { bin?: string | null } = {}): Promise<Rig> {
     await rm(dir, { recursive: true, force: true })
   })
 
-  return {
-    manager,
-    workRoot,
-    sent,
-    spawns,
-    calls,
-    fakeMirror,
-    pty: () => ptys.at(-1)!,
-    mirror: {
-      signalled,
-      get endOpenTurnsCalls() {
-        return endOpenTurnsCalls
-      },
-    },
-    // @ts-expect-error test-only handle for the inactive-vault case
-    vaultManager,
-  } as Rig & { vaultManager: { setActive(v: string | null): void } }
+  return { manager, workRoot, sent, spawns, host, pty: () => ptys.at(-1)! }
 }
 
 describe('AgentManager', () => {
-  it('spawns claude in the working dir with the prompt and no skip-permissions', async () => {
+  it('spawns claude in the working dir with no system prompt and no skip-permissions', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
 
@@ -159,10 +106,7 @@ describe('AgentManager', () => {
     expect(spawn.file).toBe('/bin/fake-claude')
     expect(spawn.opts.cwd).toBe(r.workRoot)
     expect(spawn.args).not.toContain('--dangerously-skip-permissions')
-
-    const prompt = spawn.args[spawn.args.indexOf('--append-system-prompt') + 1]!
-    expect(prompt).toContain('## Tools')
-    expect(prompt).toContain('## Vault top-level layout')
+    expect(spawn.args).not.toContain('--append-system-prompt') // pure Claude Code
     expect(r.manager.status().running).toBe(true)
   })
 
@@ -177,31 +121,16 @@ describe('AgentManager', () => {
     expect(spawn.opts.env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
 
-  it('picks up IDENTITY.md and SOUL.md from the working copy', async () => {
-    const r = await rig()
-    await mkdir(join(r.workRoot, '.claude'), { recursive: true })
-    await writeFile(join(r.workRoot, '.claude/IDENTITY.md'), '# IDENTITY\n\nPairing on Holi.')
-    await writeFile(join(r.workRoot, '.claude/SOUL.md'), '# SOUL\n\nCurious.')
-
-    await r.manager.start({ vaultId: VAULT })
-    const prompt = r.spawns[0]!.args[r.spawns[0]!.args.indexOf('--append-system-prompt') + 1]!
-    expect(prompt.indexOf('# IDENTITY')).toBeGreaterThanOrEqual(0)
-    expect(prompt.indexOf('# SOUL')).toBeGreaterThan(prompt.indexOf('# IDENTITY'))
-  })
-
   it('holds PTY output in the mirror until a renderer attaches, then streams', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
 
-    // nothing is attached yet: output must not be streamed at a window that
-    // cannot show it — but it must not be lost either
     r.pty().emit('before the panel mounted\r\n')
     expect(r.sent.filter((s) => s.channel === 'agent-pty:data')).toEqual([])
 
     const replayed = await r.manager.attach()
     expect(replayed).toContain('before the panel mounted')
 
-    // and from here it streams live, without re-sending what was replayed
     r.pty().emit('after attach')
     expect(r.sent.filter((s) => s.channel === 'agent-pty:data')).toEqual([
       { channel: 'agent-pty:data', payload: 'after attach' },
@@ -252,68 +181,36 @@ describe('AgentManager', () => {
     expect(r.manager.status().running).toBe(true)
   })
 
-  it('onDeactivating kills the session before the mirror goes down', async () => {
+  it('kill tears the session down and reports not running', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
     expect(r.manager.status().running).toBe(true)
 
-    await r.manager.observer.onDeactivating(VAULT)
+    await r.manager.kill()
     expect(r.manager.status().running).toBe(false)
+    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.running).toBe(false)
   })
 
-  it('tracks the working flag from turn activity', async () => {
+  it('setFocus writes the focus file the hook reads — focused path only', async () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT })
-    r.manager.observer.onTurnActivity(1)
-    expect(r.manager.status().working).toBe(true)
-    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.working).toBe(true)
-
-    r.manager.observer.onTurnActivity(0)
-    expect(r.manager.status().working).toBe(false)
-  })
-
-  it('flags configStale only for synced agent config, and clears it on restart', async () => {
-    const r = await rig()
-    await r.manager.start({ vaultId: VAULT })
-
-    r.manager.observer.onMaterialize('notes/plan.md')
-    expect(r.manager.status().configStale).toBe(false)
-
-    r.manager.observer.onMaterialize('.claude/settings.json')
-    expect(r.manager.status().configStale).toBe(true)
-
-    await r.manager.start({ vaultId: VAULT })
-    expect(r.manager.status().configStale).toBe(false)
-  })
-
-  it('does not flag configStale when no session is running', async () => {
-    const r = await rig()
-    r.manager.observer.onMaterialize('AGENTS.md')
-    expect(r.manager.status().configStale).toBe(false)
-  })
-
-  it('setFocus writes the context file the hook reads', async () => {
-    const r = await rig()
-    await r.manager.observer.onActivated(VAULT, r.fakeMirror)
     r.manager.setFocus({ focusedPath: NOTE_PATH, openPaths: [NOTE_PATH] })
 
     await new Promise((res) => setTimeout(res, 300))
-    const ctx = JSON.parse(await readFile(join(r.workRoot, CONTEXT_FILE), 'utf8'))
+    const raw = await readFile(join(r.workRoot, CONTEXT_FILE), 'utf8')
+    const ctx = JSON.parse(raw)
     expect(ctx.focusedPath).toBe(NOTE_PATH)
-    expect(r.calls.some((c) => c.path === 'tasks.list')).toBe(true)
-    expect(r.calls.some((c) => c.path === 'notes.backrefs')).toBe(true)
+    expect(ctx.openPaths).toEqual([NOTE_PATH])
+    // the D60 writer carries no server-derived context
+    expect(raw).not.toContain('relatedTasks')
+    expect(raw).not.toContain('backrefPaths')
   })
 
-  it('a tasks SSE event refreshes the snapshot', async () => {
+  it('setFocus before a session is a no-op (no throw, no file)', async () => {
     const r = await rig()
-    await r.manager.observer.onActivated(VAULT, r.fakeMirror)
     r.manager.setFocus({ focusedPath: NOTE_PATH, openPaths: [] })
-    await new Promise((res) => setTimeout(res, 300))
-    const before = r.calls.filter((c) => c.path === 'tasks.list').length
-
-    r.manager.observer.onTasksEvent({ type: 'deleted', taskId: 'gone' })
-    await new Promise((res) => setTimeout(res, 300))
-    expect(r.calls.filter((c) => c.path === 'tasks.list').length).toBe(before + 1)
+    await new Promise((res) => setTimeout(res, 200))
+    await expect(readFile(join(r.workRoot, CONTEXT_FILE), 'utf8')).rejects.toThrow()
   })
 
   it('fails readably when the CLI is missing', async () => {
@@ -323,9 +220,9 @@ describe('AgentManager', () => {
   })
 
   it('refuses to start against a vault that is not active', async () => {
-    const r = (await rig()) as Rig & { vaultManager: { setActive(v: string | null): void } }
-    await expect(r.manager.start({ vaultId: 'other-vault' })).rejects.toThrow(/not active/)
-    r.vaultManager.setActive(null)
+    const r = await rig()
+    await expect(r.manager.start({ vaultId: 'someone/else' })).rejects.toThrow(/not active/)
+    r.host.setActive(null)
     await expect(r.manager.start({ vaultId: VAULT })).rejects.toThrow(/not active/)
   })
 })

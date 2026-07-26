@@ -1,22 +1,20 @@
 /**
  * Session orchestration: owns the one live `claude` session — its PTY, its
- * terminal mirror, its context snapshot — and keeps it tied to the active
- * vault.
+ * terminal mirror, and the focus file the per-turn hook reads — and ties it to
+ * the active vault.
  *
- * The MCP server and the turn-protocol hooks it hosted are gone (D60): the
- * agent's whole surface is now its native tools on the vault's files.
+ * Pure Claude Code (prd/agent.md): no MCP surface, no built system prompt, no
+ * turn protocol, no presence. The agent's whole surface is its native tools on
+ * the vault's files; Holi's only per-turn injection is the focused-note line,
+ * written by the focus writer. The vault coupling is a single `VaultHost.active()`
+ * read — the clone dir is the cwd, and its being a real git repo is why the
+ * agent can run git against it directly.
  *
  * NOTE: no runtime `electron` import (types only). The window arrives through
  * `getWindow()`, so this module loads under vitest.
  */
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
-import type { Task } from '@holi/shared'
-import type { ServerClient } from '../server-client'
-import { toVaultRel } from '../vault/vault-files'
-import type { VaultMirror } from '../vault/vault-mirror'
-import type { TasksEvent, VaultManager, VaultObserver } from '../vault/vault-manager'
+import type { VaultHost } from '../vault/active-vault'
 import {
   AgentRuntime,
   buildAgentArgs,
@@ -25,16 +23,8 @@ import {
   resolveClaudeBin,
   type SpawnPty,
 } from './agent-runtime'
-import { ContextSnapshot } from './context-snapshot'
-import { buildSystemPrompt, readVaultTree } from './system-prompt'
+import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { TerminalMirror } from './terminal-mirror'
-
-/** Agent config the whole vault shares — a synced change to any of it means the
- * running session is working from a stale prompt/hook set. */
-const CONFIG_PATHS = ['.claude/', 'CLAUDE.md', 'AGENTS.md']
-
-/** Let the last write's watcher event land before we merge the turn. */
-const DEFAULT_SETTLE_MS = 300
 
 /** The panel fits and resizes immediately after start; this is just the seed. */
 const SPAWN_COLS = 80
@@ -42,31 +32,33 @@ const SPAWN_ROWS = 24
 
 export interface AgentStatus {
   running: boolean
+  /** A turn is open — Claude is mid-edit. Wired from PTY activity in slice 2
+   *  (git coexistence); false for now. */
   working: boolean
+  /** Synced agent config changed under a live session. Its D60 detection source
+   *  was deleted; a "restart to pick up config" nudge is a PRD open question, so
+   *  false for now. */
   configStale: boolean
   authenticated: boolean
 }
 
 export interface AgentManagerDeps {
-  client: ServerClient
-  vaultManager: VaultManager
+  host: VaultHost
   getWindow(): BrowserWindow | null
   spawnPty?: SpawnPty
   resolveBin?: () => string | null
-  settleMs?: number
   killGraceMs?: number
   log?: (msg: string) => void
 }
 
 export interface AgentManager {
-  observer: VaultObserver
   start(args: { vaultId: string; resume?: boolean }): Promise<{ ok: true }>
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(): Promise<{ ok: true }>
   /** Renderer (re)attach: replayable terminal state, and open the data tap. */
   attach(): Promise<string>
-  setFocus(focus: { focusedPath: string | null; openPaths: string[] }): void
+  setFocus(focus: FocusInput): void
   status(): AgentStatus
   dispose(): Promise<void>
 }
@@ -75,19 +67,14 @@ interface Session {
   vaultId: string
   runtime: AgentRuntime
   mirror: TerminalMirror
+  snapshot: ContextSnapshot
 }
 
 export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
-  const settleMs = deps.settleMs ?? DEFAULT_SETTLE_MS
   const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
 
   let session: Session | null = null
-  let mirror: VaultMirror | null = null
-  let snapshot: ContextSnapshot | null = null
-  let working = false
-  let configStale = false
-  let stopTimer: ReturnType<typeof setTimeout> | null = null
   /** False until a renderer has taken the terminal state: PTY output goes to
    * the mirror only, so nothing is streamed to a window that can't show it —
    * and nothing arrives twice on attach. */
@@ -99,8 +86,8 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
 
   const status = (): AgentStatus => ({
     running: session !== null,
-    working,
-    configStale,
+    working: false,
+    configStale: false,
     authenticated: isClaudeAuthenticated(),
   })
 
@@ -110,23 +97,17 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     const current = session
     if (!current) return
     session = null // guard the double-stop: the PTY exit path tears down too
-    working = false
     attached = false
-    if (stopTimer) {
-      clearTimeout(stopTimer)
-      stopTimer = null
-    }
+    current.snapshot.stop()
     await current.runtime.kill()
     current.mirror.dispose()
   }
 
   async function start({ vaultId, resume }: { vaultId: string; resume?: boolean }): Promise<{ ok: true }> {
-    if (deps.vaultManager.activeVaultId() !== vaultId) {
+    const vault = deps.host.active()
+    if (!vault || vault.remote !== vaultId) {
       throw new Error('vault is not active — open it first')
     }
-    const live = deps.vaultManager.activeMirror()
-    if (!live) throw new Error('vault is not active — open it first')
-    mirror = live
 
     await teardown() // restart semantics: one session at a time
 
@@ -135,16 +116,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       throw new Error('Claude CLI not found on PATH — install it (https://claude.com/claude-code) and restart Holi')
     }
 
-    const workRoot = deps.vaultManager.workRootFor(vaultId)
-    const readIdentity = async (name: string) =>
-      readFile(join(workRoot, '.claude', name), 'utf8').catch(() => null)
-    const systemPrompt = buildSystemPrompt({
-      identity: await readIdentity('IDENTITY.md'),
-      soul: await readIdentity('SOUL.md'),
-      tree: await readVaultTree(workRoot),
-    })
-
+    const workRoot = vault.root
     const terminal = new TerminalMirror(SPAWN_COLS, SPAWN_ROWS)
+    const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {
       terminal.write(data) // the mirror is the record; the renderer is a view
@@ -159,19 +133,19 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     try {
       runtime.start({
         bin,
-        args: buildAgentArgs({ systemPrompt, resume }),
+        args: buildAgentArgs({ resume }), // no systemPrompt — pure Claude Code
         cwd: workRoot,
         env: buildAgentEnv(process.env),
         cols: SPAWN_COLS,
         rows: SPAWN_ROWS,
       })
     } catch (err) {
+      snapshot.stop()
       terminal.dispose()
       throw err
     }
 
-    session = { vaultId, runtime, mirror: terminal }
-    configStale = false
+    session = { vaultId, runtime, mirror: terminal, snapshot }
     pushStatus()
     return { ok: true }
   }
@@ -188,67 +162,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     return state
   }
 
-  /** PreToolUse: the write hasn't landed yet — open the turn so the pre-agent
-   * snapshot and presence marker precede it. */
-  function onPreToolUse(workRoot: string, filePath?: string): void {
-    if (!filePath || !mirror) return
-    const rel = toVaultRel(workRoot, filePath)
-    if (!rel) return // outside the vault (path safety) — not our business
-    mirror.bridgeForPath(rel)?.signalTurnOpen()
-  }
-
-  /** Stop: the agent is done. Settle first — the last write's watcher event may
-   * still be in flight, and merging before it lands would strand that edit. */
-  function onStop(): void {
-    if (stopTimer) clearTimeout(stopTimer)
-    stopTimer = setTimeout(() => {
-      stopTimer = null
-      mirror?.endOpenTurns()
-    }, settleMs)
-  }
-
-  const observer: VaultObserver = {
-    onActivated(vaultId, activeMirror) {
-      mirror = activeMirror
-      snapshot?.stop()
-      snapshot = new ContextSnapshot({
-        workRoot: deps.vaultManager.workRootFor(vaultId),
-        listTasks: () => deps.client.tasks.list.query({ vaultId, filter: {} } as never) as Promise<Task[]>,
-        backrefs: (path) => deps.client.notes.backrefs.query({ vaultId, path } as never),
-        docIdForPath: (rel) => activeMirror.docIdForPath(rel),
-        pathForDocId: (id) => activeMirror.pathForDocId(id),
-      })
-    },
-    async onDeactivating() {
-      // the agent dies BEFORE the mirror stops, so its open turns still merge
-      await teardown()
-      snapshot?.stop()
-      snapshot = null
-      mirror = null
-      pushStatus()
-    },
-    onTurnActivity(activeTurns) {
-      const next = activeTurns > 0
-      if (next === working) return
-      working = next
-      pushStatus()
-    },
-    onMaterialize(rel) {
-      if (!session || configStale) return
-      if (!CONFIG_PATHS.some((p) => (p.endsWith('/') ? rel.startsWith(p) : rel === p))) return
-      configStale = true
-      pushStatus()
-    },
-    onTasksEvent(_event: TasksEvent) {
-      // ContextSnapshot only needs to know *that* tasks moved — it re-reads the
-      // related-task list from the server. The task file projection is what
-      // consumes the payload (see TaskProjector).
-      snapshot?.onTasksEvent()
-    },
-  }
-
   return {
-    observer,
     start,
     attach,
     write: (data) => session?.runtime.write(data),
@@ -262,12 +176,12 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       pushStatus()
       return { ok: true }
     },
-    setFocus: (focus) => snapshot?.setFocus(focus),
+    // Focus is session-bound: the hook only matters while a session runs, and the
+    // writer targets the session's clone. Before a session starts this no-ops.
+    setFocus: (focus) => session?.snapshot.setFocus(focus),
     status,
     dispose: async () => {
       await teardown()
-      snapshot?.stop()
-      snapshot = null
     },
   }
 }
