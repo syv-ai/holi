@@ -80,9 +80,18 @@ Edits are committed automatically, a few seconds after they stop, and those
 commits push to GitHub on their own — there is no Publish step. Sync is
 automatic in both directions.
 
-- **Do not run \`git commit\`, \`git push\`, \`git pull\`, or switch branches.**
-  Holi is doing this, and a branch checkout pauses sync until it is undone.
-- If you need to know what changed, \`git log\` and \`git diff\` are safe.
+## Git is yours
+
+You may run git freely — \`commit\`, \`push\`, \`pull\`, resolve a merge. While you
+are working, Holi suspends its own auto-commit/pull loop and resumes it when your
+turn goes idle, so there is only ever one git actor and you never contend on
+\`.git/index.lock\`.
+
+- **Switching branches pauses Holi's sync until you switch back.** If you check
+  out another branch or leave a rebase in progress, Holi's loop stays paused
+  until the working tree returns to the default branch — so undo it when you're
+  done, or say so.
+- \`git log\` and \`git diff\` are always safe to run.
 
 ## Memory
 

@@ -67,6 +67,12 @@ describe('SEED_FILES', () => {
     expect(SEED_FILES['CLAUDE.md']).toBe('<rules>\n@AGENTS.md\n</rules>\n')
   })
 
+  it('AGENTS.md grants the agent git (coexistence), not the old prohibition', () => {
+    const agents = SEED_FILES['AGENTS.md']!
+    expect(agents).toContain('Git is yours')
+    expect(agents).not.toContain('Do not run') // the pre-coexistence prohibition
+  })
+
   it('settings.json wires the one surviving hook and gates network egress', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
