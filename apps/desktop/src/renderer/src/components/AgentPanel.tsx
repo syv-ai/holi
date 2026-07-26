@@ -9,7 +9,7 @@ import {
   MIN_AGENT_PANEL_WIDTH,
 } from '../lib/agent-panel-geometry'
 import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
-import { activeVaultIdAtom } from '../state/vaults'
+import { activeRemoteAtom } from '../state/vaults'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -32,7 +32,9 @@ function notice(term: Terminal, text: string) {
 export function AgentPanel() {
   const [open, setOpen] = useAtom(agentPanelOpenAtom)
   const [status, setStatus] = useAtom(agentStatusAtom)
-  const activeVaultId = useAtomValue(activeVaultIdAtom)
+  // A vault's identity is its remote (D60); it is the id the manager matches
+  // against `host.active().remote`.
+  const activeRemote = useAtomValue(activeRemoteAtom)
   const [width, setWidth] = useState(DEFAULT_AGENT_PANEL_WIDTH)
 
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -168,9 +170,9 @@ export function AgentPanel() {
   const startSession = useCallback(
     async (resume: boolean) => {
       const term = termRef.current
-      if (!activeVaultId || !term) return
+      if (!activeRemote || !term) return
       attachedRef.current = false
-      const res = await window.holi.agent.start({ vaultId: activeVaultId, resume })
+      const res = await window.holi.agent.start({ vaultId: activeRemote, resume })
       if (!res.ok) {
         term.write(`\r\n\x1b[31m${res.message}\x1b[0m\r\n`)
         return
@@ -181,7 +183,7 @@ export function AgentPanel() {
       setTimeout(() => term.write(HIDE_CURSOR), 500)
       setStatus(await window.holi.agent.status())
     },
-    [activeVaultId, setStatus],
+    [activeRemote, setStatus],
   )
 
   // opening the drawer builds the terminal (first time) and starts a session

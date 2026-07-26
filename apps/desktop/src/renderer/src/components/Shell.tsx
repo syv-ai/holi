@@ -9,15 +9,15 @@
  * is subscribed once at the root — so this component listens to nothing and
  * reads atoms instead.
  *
- * The agent drawer is plan 6; the history panel and daily notes are plan 7.
- * There is deliberately no ⌘J: a shortcut that toggles a drawer which does not
- * exist is worse than no shortcut.
+ * The agent drawer (⌘J) mounts here as a right-hand sibling of the editor; the
+ * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind } from '@holi/shared'
 import { OnboardingRitual } from './OnboardingRitual'
+import { AgentPanel } from './AgentPanel'
 import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FilePlaceholder } from './FilePlaceholder'
@@ -40,6 +40,7 @@ import {
   workspaceAtom,
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
+import { agentPanelOpenAtom } from '../state/agent'
 import { activeRemoteAtom, openVaultAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
@@ -54,6 +55,7 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
+  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
@@ -91,8 +93,29 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [openDaily])
 
+  // ⌘J toggles the agent drawer (prd/agent.md §Runtime).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        setAgentOpen((v) => !v)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setAgentOpen])
+
   const tab = activeTab(workspace)
   const pane = workspace.panes[workspace.active]!
+
+  // Feed the agent's per-turn hook the focused note — the one piece of state it
+  // cannot discover itself (editor-UI focus). Main writes it to
+  // `.holi/context.local.json`; a no-op when no session is running.
+  useEffect(() => {
+    const focusedPath = tab?.kind === 'note' ? tab.path : null
+    const openPaths = pane.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : []))
+    window.holi.agent.setFocus({ focusedPath, openPaths })
+  }, [tab, pane])
   const label = syncLabel(syncState)
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
@@ -224,6 +247,8 @@ export function Shell() {
             />
           )}
         </main>
+
+        <AgentPanel />
 
         {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
       </div>
