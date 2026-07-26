@@ -50,6 +50,8 @@ describe('SEED_FILES', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
+      '.holi/templates/plain/template.json',
+      '.holi/templates/plain/template.typ',
       '.holi/vault.json',
       'AGENTS.md',
       'CLAUDE.md',

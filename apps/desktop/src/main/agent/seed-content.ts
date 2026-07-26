@@ -24,6 +24,7 @@ import { join } from 'node:path'
 import { LOCAL_ONLY_IGNORE_LINES, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
+import plainTemplateTyp from './templates/plain/template.typ?raw'
 
 /** The old bootstrap's shim: CLAUDE.md is the file the CLI reads; AGENTS.md is
  * the file humans and other agents edit. One import keeps them in sync. */
@@ -129,9 +130,22 @@ const SETTINGS_JSON =
  */
 const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
 
+/** The Plain template's manifest — a clean, unbranded layout with no metadata
+ * fields (slice 1). Committed vault content under `.holi/templates/plain/`.
+ * Built via `JSON.stringify` (like VAULT_MARKER) so there is no `.json?raw`
+ * import dependency. */
+const PLAIN_MANIFEST =
+  JSON.stringify(
+    { name: 'Plain', description: 'A clean, unbranded document layout.', fields: [] },
+    null,
+    2,
+  ) + '\n'
+
 /** Written only when absent. Never updated, so a member's edit survives. */
 export const SEED_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
+  '.holi/templates/plain/template.json': PLAIN_MANIFEST,
+  '.holi/templates/plain/template.typ': plainTemplateTyp,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,
