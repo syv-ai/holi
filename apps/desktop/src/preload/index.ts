@@ -42,6 +42,13 @@ const onSyncState = pushChannel<unknown>('vault:sync')
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
+/** PTY bytes for the drawer's xterm to decode. */
+const onAgentData = pushChannel<Uint8Array | string>('agent-pty:data')
+/** The session ended. */
+const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
+/** running / working / configStale / authenticated — the header dot + hints. */
+const onAgentStatus = pushChannel<unknown>('agent:status')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -54,4 +61,17 @@ contextBridge.exposeInMainWorld('holi', {
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
   showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
+  agent: {
+    onData: onAgentData,
+    onExit: onAgentExit,
+    onStatus: onAgentStatus,
+    attach: (): Promise<string> => ipcRenderer.invoke('agent:attach'),
+    status: () => ipcRenderer.invoke('agent:status'),
+    start: (args: { vaultId: string; resume?: boolean }) => ipcRenderer.invoke('agent-pty:start', args),
+    kill: () => ipcRenderer.invoke('agent-pty:kill'),
+    write: (data: string) => ipcRenderer.send('agent-pty:write', data),
+    resize: (cols: number, rows: number) => ipcRenderer.send('agent-pty:resize', { cols, rows }),
+    setFocus: (focus: { focusedPath: string | null; openPaths: string[] }) =>
+      ipcRenderer.send('agent:focus', focus),
+  },
 })
