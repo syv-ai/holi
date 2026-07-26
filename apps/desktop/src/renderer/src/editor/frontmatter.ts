@@ -58,6 +58,45 @@ export const frontmatterExpandedField = StateField.define<boolean>({
   },
 })
 
+/** The file's last commit, for the collapsed summary — the author is the "last
+ *  edited by" and the date its "last updated". */
+export interface FrontmatterCommit {
+  /** ISO 8601 (git author date). */
+  date: string
+  /** Author name (git `%an`). */
+  author: string
+}
+
+/** Set by EditorPane once the file's last commit is fetched (async, over IPC);
+ *  null while it loads and for a file with no history yet. */
+export const setFrontmatterCommit = StateEffect.define<FrontmatterCommit | null>()
+
+export const frontmatterCommitField = StateField.define<FrontmatterCommit | null>({
+  create: () => null,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setFrontmatterCommit)) return e.value
+    return value
+  },
+})
+
+/** ISO date → `DD/MM/YY`. Empty string when it can't be parsed. */
+export function formatCommitDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${pad(d.getFullYear() % 100)}`
+}
+
+/** The collapsed pill's text: the body char count, plus "· Last updated
+ *  DD/MM/YY, Name" once the file's last commit is known. */
+export function frontmatterSummary(chars: number, commit: FrontmatterCommit | null): string {
+  const base = `${chars} char${chars === 1 ? '' : 's'}`
+  if (commit === null) return base
+  const date = formatCommitDate(commit.date)
+  if (date === '') return base
+  return `${base} · Last updated ${date}, ${commit.author}`
+}
+
 /** Does the document's frontmatter parse? The save gate (EditorPane) reads this
  *  to hold off autosave and ⌘S while it is false. */
 export function frontmatterValid(state: EditorState): boolean {
@@ -98,6 +137,13 @@ function paintChevron(el: HTMLElement, body: string): void {
     : 'frontmatter — invalid YAML'
 }
 
+/** Two commits are the same for the summary if both are null or share both
+ *  fields — cheap value equality for the widget's `eq`. */
+function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boolean {
+  if (a === null || b === null) return a === b
+  return a.date === b.date && a.author === b.author
+}
+
 class FrontmatterWidget extends WidgetType {
   private nested: EditorView | null = null
   /** The revealed chevron, kept so a nested edit can recolour it in place — the
@@ -108,15 +154,26 @@ class FrontmatterWidget extends WidgetType {
   constructor(
     readonly expanded: boolean,
     readonly body: string,
+    /** Body char count, for the collapsed summary. */
+    readonly chars: number,
+    /** The file's last commit, for the collapsed summary (null until fetched). */
+    readonly commit: FrontmatterCommit | null,
   ) {
     super()
   }
 
   /** Reuse the DOM (and the live nested editor) when nothing relevant changed.
    *  The write-back skips rebuild entirely; a genuine rebuild (toggle, external
-   *  reload) makes a widget that differs here and so replaces the DOM. */
+   *  reload) makes a widget that differs here and so replaces the DOM.
+   *
+   *  The collapsed-only summary fields (`chars`, `commit`) are compared ONLY
+   *  when collapsed: while expanded they must not force a remount, or every body
+   *  keystroke (which changes the char count) would tear down the nested editor
+   *  and drop its caret. */
   override eq(other: FrontmatterWidget): boolean {
-    return other.expanded === this.expanded && other.body === this.body
+    if (other.expanded !== this.expanded || other.body !== this.body) return false
+    if (this.expanded) return true
+    return other.chars === this.chars && commitEq(other.commit, this.commit)
   }
 
   override toDOM(view: EditorView): HTMLElement {
@@ -125,14 +182,24 @@ class FrontmatterWidget extends WidgetType {
     wrap.setAttribute('data-frontmatter', this.expanded ? 'expanded' : 'collapsed')
 
     if (!this.expanded) {
-      // Collapsed is just a bare chevron — no orb, no label, no box. The chevron
-      // reddens if the YAML is invalid; the field count is in its tooltip.
+      // Collapsed: a chevron followed by a one-line summary — "N chars · Last
+      // updated DD/MM/YY, Author". The chevron mark reddens if the YAML is
+      // invalid (the field count is in its tooltip); the summary stays neutral.
       const pill = document.createElement('button')
       pill.type = 'button'
       pill.className = 'cm-fm-pill'
       pill.setAttribute('data-frontmatter-pill', '')
-      pill.textContent = '▸'
-      paintChevron(pill, this.body)
+
+      const mark = document.createElement('span')
+      mark.className = 'cm-fm-mark'
+      mark.textContent = '▸'
+      paintChevron(mark, this.body)
+
+      const summary = document.createElement('span')
+      summary.className = 'cm-fm-summary'
+      summary.textContent = frontmatterSummary(this.chars, this.commit)
+
+      pill.append(mark, summary)
       pill.onmousedown = (e) => {
         e.preventDefault()
         view.dispatch({ effects: toggleFrontmatter.of(true) })
@@ -228,7 +295,12 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   const block = frontmatterBlockRange(doc)
   if (block === null) return Decoration.none
   const expanded = state.field(frontmatterExpandedField, false) ?? false
-  const widget = new FrontmatterWidget(expanded, frontmatterBody(doc))
+  // Body-only char count (everything past the frontmatter region), trimmed so a
+  // trailing newline isn't counted. Only shown collapsed, but computed here so
+  // the widget stays a pure render of what it is handed.
+  const chars = doc.slice(bodyStart(doc)).trim().length
+  const commit = state.field(frontmatterCommitField, false) ?? null
+  const widget = new FrontmatterWidget(expanded, frontmatterBody(doc), chars, commit)
   const range: Range<Decoration> = Decoration.replace({ widget, block: true }).range(
     block.from,
     block.to,
@@ -252,9 +324,11 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
   update(deco, tr) {
     const ownEdit = tr.annotation(frontmatterEdit)
     const toggled = tr.effects.some((e) => e.is(toggleFrontmatter))
+    const commitSet = tr.effects.some((e) => e.is(setFrontmatterCommit))
     // Our own write-back: map, do not rebuild, so the nested editor lives.
     if (ownEdit && !toggled) return deco.map(tr.changes)
-    if (tr.docChanged || toggled) return frontmatterDecorations(tr.state)
+    // A commit arriving (async, from EditorPane) refreshes the collapsed summary.
+    if (tr.docChanged || toggled || commitSet) return frontmatterDecorations(tr.state)
     return deco
   },
   provide: (f) => [
@@ -267,8 +341,11 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 
 const frontmatterTheme = EditorView.baseTheme({
   '.cm-fm': { margin: '0 0 0.5rem 0' },
-  // Collapsed: a bare chevron, nothing else.
+  // Collapsed: a chevron mark + a muted one-line summary, inline.
   '.cm-fm-pill': {
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: '0.35rem',
     padding: '0.05rem 0.15rem',
     fontSize: '0.8rem',
     lineHeight: '1.2',
@@ -277,6 +354,7 @@ const frontmatterTheme = EditorView.baseTheme({
     border: 'none',
     cursor: 'pointer',
   },
+  '.cm-fm-summary': { color: 'inherit' },
   // Expanded: one borderless unit — the chevron sits to the left of the YAML,
   // no title, no box. The chevron aligns to the first line.
   '.cm-fm-reveal': { display: 'flex', alignItems: 'flex-start', gap: '0.4rem' },
@@ -292,8 +370,9 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
   '.cm-fm-body': { flex: '1', minWidth: '0' },
-  // Invalid YAML reddens the chevron — the only status cue, and it wins on hover.
-  '.cm-fm-pill.cm-fm-invalid, .cm-fm-chevron.cm-fm-invalid': { color: '#f87171' },
+  // Invalid YAML reddens the chevron mark — the only status cue, and it wins on
+  // hover (an explicit colour on the mark overrides the inherited hover colour).
+  '.cm-fm-mark.cm-fm-invalid, .cm-fm-chevron.cm-fm-invalid': { color: '#f87171' },
 })
 
 /** Where the editable body starts — just past the frontmatter block, or 0 when
@@ -341,6 +420,7 @@ const caretBelowFrontmatter = EditorState.transactionFilter.of((tr) => {
  *  the block-replace owns the region's rendering. */
 export const frontmatterExtension: Extension = [
   frontmatterExpandedField,
+  frontmatterCommitField,
   frontmatterDecoField,
   frontmatterTheme,
   protectFrontmatter,

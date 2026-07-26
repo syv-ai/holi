@@ -652,6 +652,17 @@ export function createRouter(deps: RouterDeps) {
         return text
       }),
 
+    /** The file's last commit — author + date — for the collapsed frontmatter
+     *  summary. Null when the file has no history yet (new/untracked). Resolved
+     *  against the active vault's live repo; the editor only shows the active
+     *  vault, so a remote is not needed. */
+    lastCommit: t.procedure
+      .input(fields({ path: 'string' }))
+      .query(async ({ input }): Promise<{ date: string; author: string } | null> => {
+        const [commit] = await activeOrThrow().repo.log({ path: safe(input.path), limit: 1 })
+        return commit === undefined ? null : { date: commit.date, author: commit.author }
+      }),
+
     write: vaultMutation
       .input(fields({ remote: 'string', path: 'string', text: 'string' }))
       .mutation(async ({ input }) => {

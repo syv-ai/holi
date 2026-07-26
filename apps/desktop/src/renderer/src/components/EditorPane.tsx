@@ -22,7 +22,7 @@ import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '../editor/extensions'
-import { bodyStart, frontmatterValid } from '../editor/frontmatter'
+import { bodyStart, frontmatterValid, setFrontmatterCommit } from '../editor/frontmatter'
 import type { LinkNav } from '../editor/links'
 import type { MentionData } from '../editor/mentions'
 import { registerBuffer } from '../lib/buffer-registry'
@@ -161,6 +161,20 @@ export function EditorPane({
       })
       viewRef.current = view
       view.focus()
+
+      // The collapsed frontmatter summary needs the file's last commit (author +
+      // date). Fetch it after the view exists and dispatch it in; a null result
+      // (new/untracked file) just leaves the summary at the char count. Guarded
+      // so a fast tab switch can't write into a torn-down or replaced view.
+      if (!plain) {
+        void trpc.notes.lastCommit
+          .query({ path })
+          .then((commit) => {
+            if (disposed || viewRef.current !== view) return
+            view.dispatch({ effects: setFrontmatterCommit.of(commit) })
+          })
+          .catch(() => {})
+      }
     })
 
     // ⌘S is a real commit point, not a placebo (FR-4): it writes, then asks

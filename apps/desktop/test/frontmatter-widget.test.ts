@@ -12,10 +12,14 @@ import type { DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { buildDecorations } from '../src/renderer/src/editor/livePreview'
 import {
+  formatCommitDate,
+  frontmatterCommitField,
   frontmatterDecorations,
   frontmatterExpandedField,
+  frontmatterSummary,
   frontmatterValid,
   regionTextFrom,
+  setFrontmatterCommit,
   toggleFrontmatter,
 } from '../src/renderer/src/editor/frontmatter'
 
@@ -89,6 +93,50 @@ describe('livePreview yields the frontmatter region', () => {
     const decos = specs(buildDecorations(stateFor(doc), 0, doc.length))
     // the **bold** strong mark is below the region and must still render
     expect(decos.some((d) => (d.spec.class as string | undefined)?.includes('strong'))).toBe(true)
+  })
+})
+
+describe('formatCommitDate', () => {
+  it('formats an ISO date as DD/MM/YY', () => {
+    expect(formatCommitDate('2026-07-01T09:30:00Z')).toBe('01/07/26')
+  })
+  it('returns empty on an unparseable date', () => {
+    expect(formatCommitDate('not-a-date')).toBe('')
+  })
+})
+
+describe('frontmatterSummary', () => {
+  it('is just the char count when there is no commit (singular/plural)', () => {
+    expect(frontmatterSummary(14, null)).toBe('14 chars')
+    expect(frontmatterSummary(1, null)).toBe('1 char')
+  })
+  it('appends last-updated + author when a commit is known', () => {
+    expect(frontmatterSummary(14, { date: '2026-07-01T09:30:00Z', author: 'Nicolai' })).toBe(
+      '14 chars · Last updated 01/07/26, Nicolai',
+    )
+  })
+  it('falls back to the char count when the commit date is unparseable', () => {
+    expect(frontmatterSummary(14, { date: 'nope', author: 'Nicolai' })).toBe('14 chars')
+  })
+})
+
+describe('frontmatterDecorations summary data', () => {
+  it('carries the body-only char count and a null commit by default', () => {
+    const widget = specs(frontmatterDecorations(stateFor(DOC)))[0]!.spec.widget as {
+      chars: number
+      commit: unknown
+    }
+    expect(widget.chars).toBe('body paragraph'.length)
+    expect(widget.commit).toBeNull()
+  })
+
+  it('reflects a commit dispatched via setFrontmatterCommit', () => {
+    const commit = { date: '2026-07-01T09:30:00Z', author: 'Nicolai' }
+    const state = stateFor(DOC, [frontmatterCommitField])
+      .update({ effects: setFrontmatterCommit.of(commit) })
+      .state
+    const widget = specs(frontmatterDecorations(state))[0]!.spec.widget as { commit: unknown }
+    expect(widget.commit).toEqual(commit)
   })
 })
 
