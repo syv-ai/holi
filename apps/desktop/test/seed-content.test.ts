@@ -203,47 +203,30 @@ describe('hook scripts', () => {
     expect(run.code).toBe(0)
   })
 
-  it('user-prompt-submit renders fill indicators and the focused-note context', async () => {
+  it('user-prompt-submit emits only the focused-note line from context.local.json', async () => {
     const root = await tempDir()
-    await writeFile(join(root, 'USER.md'), 'x'.repeat(1240))
     await mkdir(join(root, '.holi'), { recursive: true })
     await writeFile(
       join(root, '.holi/context.local.json'),
-      JSON.stringify({
-        focusedPath: 'notes/plan.md',
-        openPaths: ['notes/plan.md', 'notes/other.md'],
-        relatedTasks: [
-          { path: 'projects/task.draft-proposal.md', title: 'Draft proposal', status: 'todo', due: '2026-07-20' },
-          { path: 'task.review.md', title: 'Review', status: 'doing' },
-        ],
-        backrefPaths: ['notes/other.md'],
-      }),
+      JSON.stringify({ focusedPath: 'notes/plan.md', openPaths: ['notes/plan.md', 'notes/other.md'] }),
     )
 
     const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
     expect(run.code).toBe(0)
-    expect(run.stdout).toContain('## Memory of the user (`USER.md`) [31% — 1,240/4,000 chars]')
-    expect(run.stdout).toContain('## Memory (`MEMORY.md`) [0% — empty]')
-    expect(run.stdout).toContain('Active notes:\n- notes/plan.md\n- notes/other.md')
-    expect(run.stdout).toContain('Focused note: `notes/plan.md` (use `Read` to view its contents)')
-    expect(run.stdout).toContain('# Related non-complete tasks')
-    expect(run.stdout).toContain(
-      '- [todo] Draft proposal ([[projects/task.draft-proposal.md]], due=2026-07-20)',
-    )
-    expect(run.stdout).toContain('- [doing] Review ([[task.review.md]])')
-    expect(run.stdout).toContain('# Related notes (backreferences)\n- [[notes/other.md]]')
-    expect(run.stdout).toContain('\n\n***\n\n')
+    // The one piece of state the agent cannot discover itself (prd/agent.md
+    // §Per-turn); everything else it finds natively, so nothing else is injected.
+    expect(run.stdout).toBe('Focused note: `notes/plan.md` (use `Read` to view its contents)')
+    expect(run.stdout).not.toContain('## Memory') // no fill indicators (D60)
+    expect(run.stdout).not.toContain('# Related') // no tasks/backrefs (D60)
   })
 
-  it('user-prompt-submit prints memory only when nothing is focused', async () => {
+  it('user-prompt-submit prints nothing when nothing is focused', async () => {
     const root = await tempDir()
     await writeFile(join(root, 'MEMORY.md'), 'Vault uses British English.')
+    // no .holi/context.local.json → nothing focused → nothing to inject
 
     const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
-    expect(run.stdout).toContain('## Memory of the user (`USER.md`) [0% — empty]')
-    expect(run.stdout).toContain('## Memory (`MEMORY.md`) [0% — 27/5,000 chars]')
-    expect(run.stdout).toContain('Vault uses British English.')
-    expect(run.stdout).not.toContain('Focused note:')
-    expect(run.stdout).not.toContain('# Related non-complete tasks')
+    expect(run.code).toBe(0)
+    expect(run.stdout).toBe('')
   })
 })
