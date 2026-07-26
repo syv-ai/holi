@@ -103,14 +103,17 @@ describe('buildAgentEnv', () => {
 })
 
 describe('buildAgentArgs', () => {
-  const base = { systemPrompt: 'BE HELPFUL' }
+  it('is bare by default — no prompt, no flags (interactive Claude Code)', () => {
+    expect(buildAgentArgs()).toEqual([])
+  })
 
-  it('appends the system prompt and nothing else', () => {
-    expect(buildAgentArgs(base)).toEqual(['--append-system-prompt', 'BE HELPFUL'])
+  it('never passes --append-system-prompt (Holi builds no prompt content)', () => {
+    expect(buildAgentArgs()).not.toContain('--append-system-prompt')
+    expect(buildAgentArgs({ resume: true })).not.toContain('--append-system-prompt')
   })
 
   it('declares no MCP config, and does not suppress the vault own (D60)', () => {
-    const args = buildAgentArgs(base)
+    const args = buildAgentArgs({ resume: true })
     expect(args).not.toContain('--mcp-config')
     // --strict-mcp-config would also disable MCP servers the VAULT configures
     // natively in .claude/, which it is entitled to do.
@@ -118,13 +121,12 @@ describe('buildAgentArgs', () => {
   })
 
   it('adds a bare --resume when asked (the CLI shows its native picker)', () => {
-    expect(buildAgentArgs({ ...base, resume: true })).toContain('--resume')
-    expect(buildAgentArgs({ ...base, resume: true }).at(-1)).toBe('--resume')
+    expect(buildAgentArgs({ resume: true })).toEqual(['--resume'])
   })
 
   it('never passes --dangerously-skip-permissions', () => {
     for (const resume of [true, false]) {
-      expect(buildAgentArgs({ ...base, resume })).not.toContain('--dangerously-skip-permissions')
+      expect(buildAgentArgs({ resume })).not.toContain('--dangerously-skip-permissions')
     }
   })
 })

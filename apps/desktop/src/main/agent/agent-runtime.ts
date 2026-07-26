@@ -57,20 +57,21 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 export interface AgentArgs {
-  systemPrompt: string
   /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
   resume?: boolean
 }
 
 /**
- * No `--mcp-config`/`--strict-mcp-config`: Holi declares no MCP servers, and
+ * The interactive `claude` invocation — deliberately bare. This is a normal
+ * terminal session, not a headless/`--print` run. Holi builds no prompt content,
+ * so there is NO `--append-system-prompt`: vault conventions live in `AGENTS.md`,
+ * which Claude Code reads natively from the cwd (prd/agent.md §Per-turn). And no
+ * `--mcp-config`/`--strict-mcp-config` — Holi declares no MCP servers, and
  * `--strict-mcp-config` would additionally suppress any the *vault* configures
- * natively in `.claude/` — which it is entitled to do.
+ * natively in `.claude/`, which it is entitled to do.
  */
-export function buildAgentArgs({ systemPrompt, resume }: AgentArgs): string[] {
-  const args = ['--append-system-prompt', systemPrompt]
-  if (resume) args.push('--resume')
-  return args
+export function buildAgentArgs({ resume }: AgentArgs = {}): string[] {
+  return resume ? ['--resume'] : []
 }
 
 /** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */
