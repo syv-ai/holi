@@ -14,8 +14,10 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
-import { parseWikiLinks } from '@holi/shared'
+import { fileKind, parseWikiLinks, resolveImageRef } from '@holi/shared'
 import { frontmatterRegion } from './frontmatter-region'
+import { ImageWidget } from './imageWidget'
+import { vaultAssetUrl } from '../lib/vault-asset'
 import { WikiLinkChip } from './wikiLinkChips'
 
 /** Doc-path existence lookup for chip styling; wired from server metadata. */
@@ -86,6 +88,8 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   const fmEnd = frontmatterRegion(state.doc.toString())?.to ?? 0
   // Collect first (tree iteration + regex scan), sort, then feed the builder
   const ranges: { from: number; to: number; deco: Decoration }[] = []
+  // The open note's path, so `![](img.png)` resolves note-relative in the walk below.
+  const notePath = state.facet(notePathFacet)
 
   syntaxTree(state).iterate({
     from,
@@ -177,6 +181,24 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           }
           break
         }
+        case 'Image': {
+          // ![alt](target). Rendered as the image unless the cursor is on this
+          // line (then the raw markdown shows, like every other widget).
+          if (activeHere) break
+          const text = state.sliceDoc(node.from, node.to)
+          const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(text)
+          if (m === null) break
+          const alt = m[1] ?? ''
+          const target = m[2] ?? ''
+          const ref = resolveImageRef(notePath, target)
+          const src = ref.kind === 'external' ? ref.url : vaultAssetUrl(ref.path)
+          ranges.push({
+            from: node.from,
+            to: node.to,
+            deco: Decoration.replace({ widget: new ImageWidget(src, alt) }),
+          })
+          break
+        }
       }
     },
   })
@@ -196,6 +218,16 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
       const info = taskInfo(link.target)
       // An explicit `|Label` wins over the live title — the author asked for those words.
       chip = new WikiLinkChip('task', link.target, link.label ?? info.label, !info.missing)
+    } else if (fileKind(link.target) === 'image') {
+      // [[img.png]] embeds are vault-relative (used as-is); render inline.
+      ranges.push({
+        from: start,
+        to: end,
+        deco: Decoration.replace({
+          widget: new ImageWidget(vaultAssetUrl(link.target), link.label ?? link.target),
+        }),
+      })
+      continue
     } else {
       chip = new WikiLinkChip('note', link.target, link.label ?? link.target, docExists(link.target))
     }
