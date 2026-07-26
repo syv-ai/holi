@@ -18,7 +18,7 @@ export function ExplorerHeader({
   onToggleHidden: () => void
 }) {
   return (
-    <div className="pointer-events-none absolute right-2 top-1 z-10 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
+    <div className="pointer-events-none absolute right-3 top-1 z-10 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
       <span className="flex shrink-0 items-center gap-0.5 rounded-md bg-neutral-900/90 px-1 py-0.5 text-neutral-400 shadow-sm ring-1 ring-neutral-800/60 backdrop-blur-sm">
         <button
           className="rounded p-1 hover:bg-neutral-800 hover:text-neutral-200"
