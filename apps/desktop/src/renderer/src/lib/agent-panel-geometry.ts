@@ -1,5 +1,7 @@
-/** ~80 terminal columns at fontSize 13 — below this the CLI's own UI wraps. */
-export const MIN_AGENT_PANEL_WIDTH = 660
+/** The narrowest the drawer drags to. The CLI's TUI wraps below ~80 columns,
+ *  but a squeezed-but-readable pane beats a hard floor — let the user tuck it
+ *  in when they want the editor to dominate. */
+export const MIN_AGENT_PANEL_WIDTH = 360
 
 /** The editor stays usable no matter how far the drawer is dragged open. */
 export const MIN_EDITOR_WIDTH = 480
