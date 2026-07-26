@@ -23,6 +23,8 @@ The 2026-07-27 handoff framed slice 1 as "delete the `server-client` dep and tho
 
 This does not require a new decision — the PRD already dictates "delete the turn-protocol/observer machinery; it is deleted, not ported." It only makes the slice bigger than one line.
 
+**Found during execution (not in the original task list):** two more test files exercised deleted behavior and were rewritten in place — (a) two behavioral tests in `test/seed-content.test.ts` that *run* the hook and asserted its old memory/tasks/backrefs output (now assert the focused-note line only), folded into Task 8; and (b) `test/context-snapshot.test.ts` (5 tests) which drove the old server-backed related-tasks/backref fetch (now asserts focused/open paths only), rewritten as a Task-9 fix. Net test-count effect: zero (both rewritten in place), so the **610** target held.
+
 ---
 
 ## Conventions (read once)
