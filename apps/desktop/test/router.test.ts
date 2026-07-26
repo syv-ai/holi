@@ -1225,7 +1225,10 @@ describe('pdf', () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst — skip, don't fail
     const { caller, base } = await rig({
-      '.holi/templates/plain/template.json': JSON.stringify({ name: 'Plain', fields: [] }),
+      '.holi/templates/plain/template.json': JSON.stringify({
+        name: 'Plain',
+        fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
+      }),
       '.holi/templates/plain/template.typ': plainTemplateTyp,
       'note.md': '---\ntitle: T\n---\n\n## Heading\n\nBody.\n',
     })

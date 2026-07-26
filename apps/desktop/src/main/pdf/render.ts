@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import type { TemplateField } from '@holi/shared'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
@@ -16,6 +17,8 @@ export interface RenderInput {
   notePath: string
   /** Absolute `.pdf` destination. */
   outPath: string
+  /** The template's declared fields — drives meta coercion in the wrapper. */
+  fields: TemplateField[]
   meta: Record<string, string>
 }
 
@@ -32,6 +35,7 @@ export async function renderPdf({
   templateDir,
   notePath,
   outPath,
+  fields,
   meta,
 }: RenderInput): Promise<void> {
   const work = await mkdtemp(join(tmpdir(), 'holi-typst-'))
@@ -39,7 +43,7 @@ export async function renderPdf({
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(
       wrapperPath,
-      composeWrapper({ templateDir, notePath, assetsDir: join(templateDir, 'assets'), meta }),
+      composeWrapper({ templateDir, notePath, assetsDir: join(templateDir, 'assets'), fields, meta }),
     )
     await exec(typstBin, ['compile', wrapperPath, outPath, '--root', '/'])
   } catch (err) {

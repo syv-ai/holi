@@ -904,6 +904,7 @@ export function createRouter(deps: RouterDeps) {
           templateDir: tpl.dir,
           notePath: noteAbs,
           outPath,
+          fields: tpl.fields,
           meta: input.meta ?? {},
         })
         return { pdfPath: outPath }

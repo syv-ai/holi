@@ -34,7 +34,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     )
     const outPath = join(root, 'out.pdf')
 
-    await renderPdf({ typstBin: typst, templateDir, notePath, outPath, meta: {} })
+    await renderPdf({ typstBin: typst, templateDir, notePath, outPath, fields: [], meta: {} })
 
     const bytes = await readFile(outPath)
     expect(bytes.length).toBeGreaterThan(0)
@@ -53,14 +53,26 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     const notePath = join(root, 'report.md')
     await writeFile(notePath, '---\ntitle: T\n---\n\n## Heading\n\nBody text.\n')
 
+    const fields = [
+      { key: 'date', label: 'Date', type: 'date', required: false },
+      { key: 'recipient', label: 'Recipient', type: 'text', required: false },
+    ] as const
     const emptyOut = join(root, 'empty.pdf')
     const metaOut = join(root, 'meta.pdf')
-    await renderPdf({ typstBin: typst, templateDir, notePath, outPath: emptyOut, meta: {} })
+    await renderPdf({
+      typstBin: typst,
+      templateDir,
+      notePath,
+      outPath: emptyOut,
+      fields: [...fields],
+      meta: {},
+    })
     await renderPdf({
       typstBin: typst,
       templateDir,
       notePath,
       outPath: metaOut,
+      fields: [...fields],
       meta: { date: '2026-07-26', recipient: 'ACME Corp' },
     })
 
@@ -68,5 +80,41 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     const withMeta = await readFile(metaOut)
     expect(withMeta.subarray(0, 5).toString('latin1')).toBe('%PDF-')
     expect(withMeta.length).toBeGreaterThan(empty.length)
+  }, 30_000)
+
+  it('compiles native number/checkbox/date values through a template', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await work()
+    const templateDir = join(root, '.holi/templates/t')
+    await mkdir(templateDir, { recursive: true })
+    await writeFile(
+      join(templateDir, 'template.typ'),
+      '#let doc(notePath, meta: (:), assets: "") = {\n' +
+        '  [Count: #(meta.count + 1)]\n' +
+        '  if meta.urgent [ #text(fill: red)[URGENT] ]\n' +
+        '  [ On #meta.day.display() ]\n' +
+        '}\n',
+    )
+    const notePath = join(root, 'n.md')
+    await writeFile(notePath, '# n\n')
+    const outPath = join(root, 'out.pdf')
+
+    await renderPdf({
+      typstBin: typst,
+      templateDir,
+      notePath,
+      outPath,
+      fields: [
+        { key: 'count', label: 'Count', type: 'number', required: false },
+        { key: 'urgent', label: 'Urgent', type: 'checkbox', required: false },
+        { key: 'day', label: 'Day', type: 'date', required: false },
+      ],
+      meta: { count: '4', urgent: 'true', day: '2026-07-26' },
+    })
+
+    const bytes = await readFile(outPath)
+    expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 })
