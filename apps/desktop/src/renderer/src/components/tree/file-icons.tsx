@@ -13,7 +13,7 @@
  * for choosing an editor). Unmapped extensions fall back to a neutral file.
  */
 import type { ComponentType, JSX } from 'react'
-import { File, FileArchive, FileSpreadsheet, FileText, Image, Presentation, Settings2, Table } from 'lucide-react'
+import { Braces, File, FileArchive, FileSpreadsheet, FileText, Image, Presentation, Settings2, Table } from 'lucide-react'
 import {
   SiCss,
   SiDotenv,
@@ -22,7 +22,6 @@ import {
   SiGraphql,
   SiHtml5,
   SiJavascript,
-  SiJson,
   SiJupyter,
   SiLess,
   SiMarkdown,
@@ -51,8 +50,8 @@ const BY_EXT: Record<string, [IconCmp, string]> = {
   md: [SiMarkdown, '#6b9fff'],
   markdown: [SiMarkdown, '#6b9fff'],
   mdx: [SiMdx, '#f9ac00'],
-  json: [SiJson, '#f5c542'],
-  jsonc: [SiJson, '#f5c542'],
+  json: [Braces, '#f5c542'],
+  jsonc: [Braces, '#f5c542'],
   js: [SiJavascript, '#f5c542'],
   mjs: [SiJavascript, '#f5c542'],
   cjs: [SiJavascript, '#f5c542'],
