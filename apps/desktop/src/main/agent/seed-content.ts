@@ -49,6 +49,18 @@ file **is** the note, the task, and the record.
   the same change. Find them with a grep for \`[[<path>\` before moving the file.
   A rename that skips this leaves dangling links, which render as tombstones.
 
+## Images
+
+- Images live in the vault as ordinary committed files (\`.png\`, \`.jpg\`,
+  \`.svg\`, …). Put the file where it belongs — usually beside the note that
+  uses it, or in an \`assets/\` folder near it.
+- Embed one with **standard markdown, note-relative**: \`![alt](logo.png)\`
+  resolves next to the current note; \`![alt](assets/logo.png)\` into a subfolder.
+  This is what renders on GitHub too — write portable paths, **never** a
+  \`holi-vault://\` URL (that is Holi's internal render scheme, not file content).
+- \`[[logo.png]]\` also embeds an image, but as a **vault-root** path (like every
+  \`[[link]]\`). Prefer \`![]()\` for images so the note stays standard markdown.
+
 ## Tasks
 
 - A task is a file named \`task.<name>.md\`, living in the folder it is about —
