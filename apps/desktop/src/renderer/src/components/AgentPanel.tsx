@@ -191,9 +191,13 @@ export function AgentPanel() {
     if (!open) return
     initTerminal() // no-op after the first show
     const term = termRef.current
-    syncSize()
     term?.write(DISABLE_FOCUS_REPORTING)
     term?.focus()
+    // Fit AFTER layout settles. The aside just flipped from `hidden` to `flex`,
+    // so the host has no final size this tick — a synchronous fit sizes the PTY
+    // to the seed 80×24 and only corrects on the next manual resize (the jump
+    // the user sees). Two rAFs let flex layout resolve, then fit to the real box.
+    requestAnimationFrame(() => requestAnimationFrame(() => syncSize()))
     if (!runningRef.current) {
       void startSession(false)
     } else if (!attachedRef.current) {
@@ -238,6 +242,13 @@ export function AgentPanel() {
     : status.running
       ? 'bg-green-500'
       : 'bg-neutral-600'
+  // Spell out what the dot means — green alone is ambiguous.
+  const state = status.working ? 'working…' : status.running ? 'running' : 'idle'
+  const stateTitle = status.working
+    ? 'Claude is working on your turn'
+    : status.running
+      ? 'session running — the vault assistant is live'
+      : 'no session — opens when you show the drawer (⌘J)'
 
   return (
     <aside
@@ -250,8 +261,11 @@ export function AgentPanel() {
         title="drag to resize"
       />
       <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} title={stateTitle} />
         <span className="text-neutral-300">Claude</span>
+        <span className="text-neutral-500" title={stateTitle}>
+          {state}
+        </span>
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}
