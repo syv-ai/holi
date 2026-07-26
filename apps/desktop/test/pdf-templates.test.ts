@@ -43,9 +43,38 @@ describe('listTemplates', () => {
     })
     const [t] = await listTemplates(root)
     expect(t.fields).toEqual([
-      { key: 'date', label: 'Date', required: true },
-      { key: 'to', label: 'to', required: false },
+      { key: 'date', label: 'Date', type: 'text', required: true },
+      { key: 'to', label: 'to', type: 'text', required: false },
     ])
+  })
+
+  it('parses type, default and options; unknown/missing type falls back to text', async () => {
+    const root = await vault()
+    await seed(root, 'typed', {
+      name: 'Typed',
+      fields: [
+        { key: 'when', label: 'When', type: 'date', default: 'today' },
+        { key: 'status', label: 'Status', type: 'select', options: ['Draft', 'Final'] },
+        { key: 'count', label: 'Count', type: 'number' },
+        { key: 'weird', label: 'Weird', type: 'nonsense' },
+        { key: 'plain', label: 'Plain' },
+      ],
+    })
+    const [t] = await listTemplates(root)
+    expect(t.fields).toEqual([
+      { key: 'when', label: 'When', type: 'date', required: false, default: 'today' },
+      { key: 'status', label: 'Status', type: 'select', required: false, options: ['Draft', 'Final'] },
+      { key: 'count', label: 'Count', type: 'number', required: false },
+      { key: 'weird', label: 'Weird', type: 'text', required: false },
+      { key: 'plain', label: 'Plain', type: 'text', required: false },
+    ])
+  })
+
+  it('a select with no usable options degrades to text', async () => {
+    const root = await vault()
+    await seed(root, 's', { name: 'S', fields: [{ key: 'x', type: 'select' }] })
+    const [t] = await listTemplates(root)
+    expect(t.fields).toEqual([{ key: 'x', label: 'x', type: 'text', required: false }])
   })
 
   it('skips a dir with no manifest and a dir with invalid JSON', async () => {

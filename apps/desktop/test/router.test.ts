@@ -1202,8 +1202,8 @@ describe('pdf', () => {
         slug: 'plain',
         description: 'Clean.',
         fields: [
-          { key: 'date', label: 'Date', required: false },
-          { key: 'recipient', label: 'Recipient', required: true },
+          { key: 'date', label: 'Date', type: 'text', required: false },
+          { key: 'recipient', label: 'Recipient', type: 'text', required: true },
         ],
       },
     ])

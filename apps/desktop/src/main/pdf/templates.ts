@@ -1,11 +1,6 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
-export interface TemplateField {
-  key: string
-  label: string
-  required: boolean
-}
+import type { TemplateField, TemplateFieldType } from '@holi/shared'
 
 export interface Template {
   /** Display name from the manifest. */
@@ -55,6 +50,15 @@ export async function listTemplates(vaultRoot: string): Promise<Template[]> {
   return templates.sort((a, b) => a.name.localeCompare(b.name))
 }
 
+const FIELD_TYPES: readonly TemplateFieldType[] = [
+  'text',
+  'textarea',
+  'date',
+  'select',
+  'number',
+  'checkbox',
+]
+
 function normalizeFields(raw: unknown): TemplateField[] {
   if (!Array.isArray(raw)) return []
   const out: TemplateField[] = []
@@ -62,10 +66,24 @@ function normalizeFields(raw: unknown): TemplateField[] {
     if (typeof f !== 'object' || f === null) continue
     const g = f as Record<string, unknown>
     if (typeof g.key !== 'string') continue
+    let type: TemplateFieldType =
+      typeof g.type === 'string' && (FIELD_TYPES as readonly string[]).includes(g.type)
+        ? (g.type as TemplateFieldType)
+        : 'text'
+    const options =
+      Array.isArray(g.options) && g.options.every((o) => typeof o === 'string')
+        ? (g.options as string[])
+        : undefined
+    // A select needs options to render a dropdown; without them, degrade to a
+    // text input rather than shipping an empty, unusable select.
+    if (type === 'select' && (options === undefined || options.length === 0)) type = 'text'
     out.push({
       key: g.key,
       label: typeof g.label === 'string' ? g.label : g.key,
+      type,
       required: g.required === true,
+      ...(typeof g.default === 'string' ? { default: g.default } : {}),
+      ...(type === 'select' && options !== undefined ? { options } : {}),
     })
   }
   return out
