@@ -1,7 +1,8 @@
 import { ChevronsDownUp, Eye, EyeOff, FilePlus, FolderPlus } from 'lucide-react'
 
-/** The explorer's action strip (the vault name lives in the picker above, not
- *  here). Icons are from lucide-react (the app's icon set). */
+/** The explorer's action buttons. Hidden until the tree is hovered (or focused),
+ *  then floated in as a small toolbar in the top-right — VS Code's section-action
+ *  pattern. The parent FileTree carries `group/explorer`. Icons are lucide. */
 export function ExplorerHeader({
   onNewFile,
   onNewFolder,
@@ -17,8 +18,8 @@ export function ExplorerHeader({
   onToggleHidden: () => void
 }) {
   return (
-    <div className="flex items-center justify-end px-2 py-1">
-      <span className="flex shrink-0 gap-0.5 text-neutral-500">
+    <div className="pointer-events-none absolute right-1 top-1 z-10 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
+      <span className="flex shrink-0 items-center gap-0.5 rounded-md bg-neutral-900/90 px-1 py-0.5 text-neutral-400 shadow-sm ring-1 ring-neutral-800/60 backdrop-blur-sm">
         <button
           className="rounded p-1 hover:bg-neutral-800 hover:text-neutral-200"
           title="New File"

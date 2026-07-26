@@ -403,7 +403,7 @@ export function FileTree({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
         onNewFile={() => setPending({ kind: 'file', parent: '' })}
         onNewFolder={() => setPending({ kind: 'folder', parent: '' })}
