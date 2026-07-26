@@ -26,10 +26,6 @@ import {
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { TerminalMirror } from './terminal-mirror'
 
-/** The panel fits and resizes immediately after start; this is just the seed. */
-const SPAWN_COLS = 80
-const SPAWN_ROWS = 24
-
 export interface AgentStatus {
   running: boolean
   /** A turn is open — Claude is mid-edit. Wired from PTY activity in slice 2
@@ -52,7 +48,7 @@ export interface AgentManagerDeps {
 }
 
 export interface AgentManager {
-  start(args: { vaultId: string; resume?: boolean }): Promise<{ ok: true }>
+  start(args: { vaultId: string; resume?: boolean; cols?: number; rows?: number }): Promise<{ ok: true }>
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(): Promise<{ ok: true }>
@@ -103,7 +99,19 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     current.mirror.dispose()
   }
 
-  async function start({ vaultId, resume }: { vaultId: string; resume?: boolean }): Promise<{ ok: true }> {
+  async function start({
+    vaultId,
+    resume,
+    cols,
+    rows,
+  }: {
+    vaultId: string
+    resume?: boolean
+    /** The drawer's fitted geometry. Absent (e.g. a reconcile-seeded start with
+     *  no renderer) → node-pty and xterm use their own native 80×24. */
+    cols?: number
+    rows?: number
+  }): Promise<{ ok: true }> {
     const vault = deps.host.active()
     if (!vault || vault.remote !== vaultId) {
       throw new Error('vault is not active — open it first')
@@ -117,7 +125,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     }
 
     const workRoot = vault.root
-    const terminal = new TerminalMirror(SPAWN_COLS, SPAWN_ROWS)
+    // Born at the caller's geometry: the mirror and the PTY share it, so the
+    // replayed state and Claude's own TUI both match the pane.
+    const terminal = new TerminalMirror(cols, rows)
     const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {
@@ -136,8 +146,8 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         args: buildAgentArgs({ resume }), // no systemPrompt — pure Claude Code
         cwd: workRoot,
         env: buildAgentEnv(process.env),
-        cols: SPAWN_COLS,
-        rows: SPAWN_ROWS,
+        cols,
+        rows,
       })
     } catch (err) {
       snapshot.stop()

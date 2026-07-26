@@ -172,7 +172,15 @@ export function AgentPanel() {
       const term = termRef.current
       if (!activeRemote || !term) return
       attachedRef.current = false
-      const res = await window.holi.agent.start({ vaultId: activeRemote, resume })
+      // Spawn at the terminal's current (already-fitted) geometry, not a seed
+      // size — Claude's TUI is then drawn at the pane's dimensions immediately,
+      // with no gutter and no resize-to-catch-up.
+      const res = await window.holi.agent.start({
+        vaultId: activeRemote,
+        resume,
+        cols: term.cols,
+        rows: term.rows,
+      })
       if (!res.ok) {
         term.write(`\r\n\x1b[31m${res.message}\x1b[0m\r\n`)
         return
@@ -193,22 +201,26 @@ export function AgentPanel() {
     const term = termRef.current
     term?.write(DISABLE_FOCUS_REPORTING)
     term?.focus()
-    // Fit AFTER layout settles. The aside just flipped from `hidden` to `flex`,
-    // so the host has no final size this tick — a synchronous fit sizes the PTY
-    // to the seed 80×24 and only corrects on the next manual resize (the jump
-    // the user sees). Two rAFs let flex layout resolve, then fit to the real box.
-    requestAnimationFrame(() => requestAnimationFrame(() => syncSize()))
-    if (!runningRef.current) {
-      void startSession(false)
-    } else if (!attachedRef.current) {
-      // a session that outlived this terminal (renderer reload) or was started
-      // while the drawer was shut — replay it from main's mirror
-      void (async () => {
-        const state = await window.holi.agent.attach()
-        if (state && term) term.write(state + HIDE_CURSOR)
-        attachedRef.current = true
-      })()
-    }
+    // The aside just flipped hidden→flex, so the host has no final size this
+    // tick. Wait for flex layout to resolve (two rAFs), fit the terminal to the
+    // real box, THEN start — so the PTY is born at the pane's geometry and fills
+    // it from the first paint, rather than spawning small and resizing to catch up.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        syncSize()
+        if (!runningRef.current) {
+          void startSession(false)
+        } else if (!attachedRef.current) {
+          // a session that outlived this terminal (renderer reload) or was
+          // started while the drawer was shut — replay it from main's mirror
+          void (async () => {
+            const state = await window.holi.agent.attach()
+            if (state && term) term.write(state + HIDE_CURSOR)
+            attachedRef.current = true
+          })()
+        }
+      }),
+    )
   }, [open, initTerminal, startSession, syncSize])
 
   const onDragStart = (e: MouseEvent) => {

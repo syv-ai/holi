@@ -19,8 +19,10 @@ export class TerminalMirror {
   private term: Terminal | null
   private addon: SerializeAddon
 
-  constructor(cols: number, rows: number) {
+  constructor(cols?: number, rows?: number) {
     this.term = new Terminal({
+      // Omitted → xterm's own native default (80×24). The caller passes the
+      // drawer's fitted geometry so the record matches the view.
       cols,
       rows,
       scrollback: SCROLLBACK,

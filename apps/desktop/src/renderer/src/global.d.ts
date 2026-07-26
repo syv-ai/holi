@@ -50,7 +50,14 @@ declare global {
         onStatus(cb: (status: AgentStatus) => void): () => void
         attach(): Promise<string>
         status(): Promise<AgentStatus>
-        start(args: { vaultId: string; resume?: boolean }): Promise<{ ok: boolean; message?: string }>
+        start(args: {
+          vaultId: string
+          resume?: boolean
+          /** Spawn the PTY at this geometry — the drawer's fitted size — so
+           *  Claude's TUI fills the pane from the first paint. */
+          cols?: number
+          rows?: number
+        }): Promise<{ ok: boolean; message?: string }>
         kill(): Promise<{ ok: true }>
         write(data: string): void
         resize(cols: number, rows: number): void

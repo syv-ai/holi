@@ -24,8 +24,9 @@ export interface PtyProcess {
 export interface SpawnPtyOptions {
   cwd: string
   env: Record<string, string>
-  cols: number
-  rows: number
+  /** Omitted → node-pty's own native default (80×24). */
+  cols?: number
+  rows?: number
 }
 
 export type SpawnPty = (file: string, args: string[], opts: SpawnPtyOptions) => PtyProcess
@@ -186,8 +187,9 @@ export class AgentRuntime {
     this.exitCbs.push(cb)
   }
 
-  start({ bin, args, cwd, env, cols = 80, rows = 24 }: StartArgs): void {
+  start({ bin, args, cwd, env, cols, rows }: StartArgs): void {
     if (this.pty) throw new Error('agent session already running')
+    // cols/rows pass straight through — undefined lets node-pty default natively.
     const pty = this.spawnPty(bin, args, { cwd, env, cols, rows })
     this.pty = pty
     pty.onData((data) => {
