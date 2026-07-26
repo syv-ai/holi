@@ -1,11 +1,7 @@
-import { useEffect, useState } from 'react'
+import { type TemplateField, initialValue } from '@holi/shared'
+import { useEffect, useMemo, useState } from 'react'
 import { trpc } from '../lib/trpc'
-
-interface TemplateField {
-  key: string
-  label: string
-  required: boolean
-}
+import { FieldWidget } from './pdf/FieldWidget'
 
 interface TemplateOption {
   name: string
@@ -15,12 +11,12 @@ interface TemplateOption {
 }
 
 /**
- * Convert-to-PDF, slice 2: pick a template, fill its declared metadata fields,
- * choose a destination via the native save dialog, Convert. The render writes to
- * the chosen path and is revealed in Finder (open-in-Preview is deliberately not
- * done — the save dialog already told the user where it went). Fixed-overlay +
- * stop-propagation card, the house modal pattern (see DeleteConfirm); driven by
- * the caller's useState.
+ * Convert-to-PDF: pick a template, fill its typed metadata fields (each rendered
+ * as the widget its declared type maps to — a date picker prefilled to today, a
+ * dropdown, a checkbox, …), choose a destination via the native save dialog,
+ * Convert. The render writes to the chosen path and is revealed in Finder. The
+ * house modal pattern (fixed overlay + stop-propagation card), driven by the
+ * caller's useState.
  */
 export function ConvertToPdfDialog({
   remote,
@@ -39,6 +35,12 @@ export function ConvertToPdfDialog({
   const name = path.split('/').at(-1) ?? path
   const selected = templates?.find((t) => t.slug === slug) ?? null
 
+  const today = useMemo(() => {
+    const d = new Date()
+    const p = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+  }, [])
+
   useEffect(() => {
     let live = true
     void trpc.pdf.templates
@@ -54,15 +56,24 @@ export function ConvertToPdfDialog({
     }
   }, [remote])
 
-  // Clear field values when the chosen template changes, so one template's
-  // inputs never leak into another's meta.
+  // Seed each field from its type/default whenever the chosen template changes,
+  // so a date field lands on today and one template's values never leak to another.
   useEffect(() => {
-    setValues({})
-  }, [slug])
+    const tpl = templates?.find((t) => t.slug === slug) ?? null
+    if (tpl === null) {
+      setValues({})
+      return
+    }
+    const seed: Record<string, string> = {}
+    for (const f of tpl.fields) seed[f.key] = initialValue(f, today)
+    setValues(seed)
+  }, [slug, templates, today])
 
   const convert = async () => {
     if (selected === null) return
-    const missing = selected.fields.filter((f) => f.required && (values[f.key] ?? '').trim() === '')
+    const missing = selected.fields.filter(
+      (f) => f.required && f.type !== 'checkbox' && (values[f.key] ?? '').trim() === '',
+    )
     if (missing.length > 0) {
       setError(
         `Fill required field${missing.length > 1 ? 's' : ''}: ${missing
@@ -81,7 +92,7 @@ export function ConvertToPdfDialog({
         return // user cancelled the save dialog
       }
       const meta: Record<string, string> = {}
-      for (const f of selected.fields) meta[f.key] = (values[f.key] ?? '').trim()
+      for (const f of selected.fields) meta[f.key] = values[f.key] ?? ''
       const { pdfPath } = await trpc.pdf.render.mutate({ remote, path, template: slug, outPath, meta })
       await window.holi.openPath(pdfPath)
       onClose()
@@ -134,16 +145,15 @@ export function ConvertToPdfDialog({
 
         {selected !== null &&
           selected.fields.map((f) => (
-            <label key={f.key} className="mb-3 block">
-              <span className="mb-1 block text-xs text-neutral-400">
+            <label key={f.key} className="mb-3 flex flex-col gap-1">
+              <span className="text-xs text-neutral-400">
                 {f.label}
-                {f.required && <span className="text-red-400"> *</span>}
+                {f.required && f.type !== 'checkbox' && <span className="text-red-400"> *</span>}
               </span>
-              <input
-                data-convert-field={f.key}
-                className="w-full rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-neutral-100"
+              <FieldWidget
+                field={f}
                 value={values[f.key] ?? ''}
-                onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
+                onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
               />
             </label>
           ))}
