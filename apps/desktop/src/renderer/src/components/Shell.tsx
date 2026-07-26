@@ -14,7 +14,7 @@
  * exist is worse than no shortcut.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { Settings } from 'lucide-react'
+import { Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind } from '@holi/shared'
 import { OnboardingRitual } from './OnboardingRitual'
@@ -22,6 +22,7 @@ import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FilePlaceholder } from './FilePlaceholder'
 import { FileTree } from './FileTree'
+import { fileIconFor } from './tree/file-icons'
 import { ImageViewer } from './ImageViewer'
 import { VaultPicker } from './VaultPicker'
 import { VaultSettings } from './VaultSettings'
@@ -175,7 +176,9 @@ export function Shell() {
                 <button
                   // A preview tab reads italic (VS Code); double-clicking it
                   // pins it, the same promotion editing performs.
-                  className={t.kind === 'note' && t.preview ? 'italic' : undefined}
+                  className={`flex items-center gap-1.5 ${
+                    t.kind === 'note' && t.preview ? 'italic' : ''
+                  }`}
                   title={t.kind === 'board' ? 'task board' : t.path}
                   onClick={() =>
                     setWorkspace((w) => ({
@@ -185,7 +188,8 @@ export function Shell() {
                   }
                   onDoubleClick={() => setWorkspace((w) => pinTab(w, i))}
                 >
-                  {t.kind === 'board' ? 'board' : t.path.split('/').at(-1)}
+                  {t.kind === 'board' ? <SquareKanban size={14} /> : fileIconFor(t.path)}
+                  <span>{t.kind === 'board' ? 'board' : t.path.split('/').at(-1)}</span>
                 </button>
                 <button
                   className="text-neutral-600 hover:text-neutral-300"
