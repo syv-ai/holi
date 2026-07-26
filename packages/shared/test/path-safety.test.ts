@@ -2,9 +2,34 @@ import { describe, expect, it } from 'vitest'
 import {
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
+  isHiddenPath,
   isLocalOnlyPath,
   vaultRelPath,
 } from '../src/path-safety'
+
+describe('isHiddenPath (explorer show/hide)', () => {
+  it('hides a dot-prefixed file or dir at the root', () => {
+    expect(isHiddenPath('.gitignore')).toBe(true)
+    expect(isHiddenPath('.holi/vault.json')).toBe(true)
+    expect(isHiddenPath('.claude/settings.json')).toBe(true)
+  })
+
+  it('hides a dot-prefixed segment at any depth', () => {
+    expect(isHiddenPath('projects/.secret/notes.md')).toBe(true)
+    expect(isHiddenPath('a/b/.foo')).toBe(true)
+  })
+
+  it('does not hide ordinary content', () => {
+    expect(isHiddenPath('notes/plan.md')).toBe(false)
+    expect(isHiddenPath('projects/q2/roadmap.md')).toBe(false)
+  })
+
+  it('always surfaces the managed markdown files (they are not dot-prefixed)', () => {
+    for (const p of ['AGENTS.md', 'CLAUDE.md', 'MEMORY.md']) {
+      expect(isHiddenPath(p)).toBe(false)
+    }
+  })
+})
 
 describe('vaultRelPath (pure lexical validation)', () => {
   it('accepts a plain relative path and returns it unchanged', () => {

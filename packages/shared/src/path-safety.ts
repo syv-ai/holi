@@ -63,3 +63,15 @@ export function isLocalOnlyPath(path: string): boolean {
  * in someone else's clone.
  */
 export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['USER.md', '*.local.*']
+
+/**
+ * Whether a vault-relative path is "hidden" in the explorer — true iff any
+ * `/`-segment starts with a dot (`.gitignore`, `.holi/…`, `.claude/…`, a nested
+ * `sub/.foo`). Display-only: the file tree's show/hide toggle keys off this, and
+ * the managed non-dot files (`AGENTS.md`, `CLAUDE.md`, `MEMORY.md`) are
+ * deliberately never hidden. Unrelated to `isLocalOnlyPath`, which is about what
+ * git must not commit; this is about what the tree shows.
+ */
+export function isHiddenPath(path: string): boolean {
+  return path.split('/').some((seg) => seg.startsWith('.'))
+}
