@@ -100,6 +100,10 @@ describe('buildAgentEnv', () => {
     expect(env.HOLI_AGENT_ENDPOINT).toBeUndefined()
     expect(env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
+
+  it('forces NO_FLICKER on — the embedded xterm flickers under the full-redraw renderer', () => {
+    expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
+  })
 })
 
 describe('buildAgentArgs', () => {

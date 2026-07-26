@@ -44,6 +44,12 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
  * It no longer hands the child an endpoint or a bearer: there is no MCP server
  * to reach (D60). The one surviving hook, `user-prompt-submit`, reads the
  * vault's own files and needs nothing from us.
+ *
+ * `CLAUDE_CODE_NO_FLICKER=1` is forced on for every in-app session: the default
+ * full-screen-redraw renderer flickers badly inside an embedded xterm.js, and
+ * NO_FLICKER swaps in a patch-only virtual viewport (docs:
+ * code.claude.com/docs/en/terminal-config). Set here rather than in the user's
+ * `~/.claude/settings.json`, which the PRD says Holi never touches.
  */
 export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   const env: Record<string, string> = {}
@@ -53,6 +59,7 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   delete env.CLAUDECODE
   delete env.CLAUDE_CODE_ENTRYPOINT
   env.TERM = 'xterm-256color'
+  env.CLAUDE_CODE_NO_FLICKER = '1'
   return env
 }
 
