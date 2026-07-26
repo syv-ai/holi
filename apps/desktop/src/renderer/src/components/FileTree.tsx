@@ -405,7 +405,6 @@ export function FileTree({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
-        title={activeRemote?.split('/').at(-1) ?? 'vault'}
         onNewFile={() => setPending({ kind: 'file', parent: '' })}
         onNewFolder={() => setPending({ kind: 'folder', parent: '' })}
         onCollapseAll={() => tree.collapseAll()}

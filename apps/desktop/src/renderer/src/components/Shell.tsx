@@ -14,6 +14,7 @@
  * exist is worse than no shortcut.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { Settings } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind } from '@holi/shared'
 import { OnboardingRitual } from './OnboardingRitual'
@@ -112,20 +113,13 @@ export function Shell() {
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <div className="flex min-h-0 flex-1">
         <aside className="relative flex w-64 flex-col border-r border-neutral-900">
-          <div className="flex items-center gap-1 p-2">
+          <div className="flex h-11 items-center px-2">
             <VaultPicker
               vaults={vaults}
               activeRemote={activeRemote}
               onSelect={switchVault}
               onAddVault={() => setShowAdd(true)}
             />
-            <button
-              className="shrink-0 rounded bg-neutral-800 px-2 py-1 text-sm hover:bg-neutral-700"
-              title="vault settings"
-              onClick={() => setShowSettings((v) => !v)}
-            >
-              ⚙
-            </button>
           </div>
           {showAdd && (
             <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />
@@ -137,7 +131,7 @@ export function Shell() {
             onOpenPinned={openPin}
           />
 
-          <div className="flex gap-2 p-2">
+          <div className="flex items-center gap-2 p-2">
             <button
               className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
               // FR-6: opens today's daily (personal vaults only; the atom no-ops
@@ -154,17 +148,25 @@ export function Shell() {
             >
               board
             </button>
+            <button
+              className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+              title="vault settings"
+              aria-label="vault settings"
+              onClick={() => setShowSettings((v) => !v)}
+            >
+              <Settings size={16} />
+            </button>
           </div>
         </aside>
 
         <main className="flex min-w-0 flex-1 flex-col">
           {/* One pane, one strip. The state is panes[] → tabs[] so a split is a
               second pane later rather than a rewrite. */}
-          <div className="flex items-center gap-1 border-b border-neutral-900 px-2 py-1">
+          <div className="flex h-11 items-center gap-1 px-2">
             {pane.tabs.map((t, i) => (
               <span
                 key={t.kind === 'note' ? t.path : 'board'}
-                className={`flex items-center gap-1 rounded px-2 py-0.5 text-xs ${
+                className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   i === pane.active
                     ? 'bg-neutral-800 text-neutral-100'
                     : 'text-neutral-500 hover:text-neutral-300'

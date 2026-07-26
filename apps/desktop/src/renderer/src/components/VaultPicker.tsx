@@ -10,6 +10,7 @@
  * Closes on outside-click and Escape. Deliberately minimal — no keyboard arrow
  * navigation yet; the list is short and click-driven.
  */
+import { ChevronDown } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 export function VaultPicker({
@@ -48,13 +49,13 @@ export function VaultPicker({
         type="button"
         data-vault-picker
         title="switch vault"
-        className="flex w-full items-center justify-between gap-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-sm hover:border-neutral-700"
+        className="flex w-full items-center gap-1 px-2 py-1 text-sm font-bold text-neutral-100 hover:text-neutral-300"
         onClick={() => setOpen((o) => !o)}
       >
         <span className="truncate">
           {active?.name ?? (vaults.length ? 'select vault' : 'no vaults')}
         </span>
-        <span className="shrink-0 text-neutral-500">▾</span>
+        <ChevronDown size={18} strokeWidth={2.5} className="shrink-0" />
       </button>
 
       {open && (
