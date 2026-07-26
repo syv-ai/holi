@@ -32,6 +32,10 @@ declare global {
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */
       openPath(path: string): Promise<void>
+      /** Native "save as" for the Convert-to-PDF output. Presents a save sheet
+       *  defaulting to `defaultName` under Downloads; resolves to the chosen
+       *  absolute path, or null if the user cancelled. */
+      showSaveDialog(defaultName: string): Promise<string | null>
     }
   }
 }

@@ -12,7 +12,8 @@
  * exists, and `holi:auth:*` moved into the router when GitHub became identity.
  */
 import type { AnyRouter } from '@trpc/server'
-import { ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { join } from 'node:path'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
 
 export function registerIpc(deps: { router: AnyRouter }): void {
@@ -36,4 +37,22 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   ipcMain.handle('holi:openPath', (_event, path: string) => {
     shell.showItemInFolder(path)
   })
+
+  // The native SAVE sheet for Convert-to-PDF (slice 2). Only main can present a
+  // native dialog, so the renderer asks here, gets back an absolute path (or
+  // null on cancel), and hands it to `pdf.render`. Defaults to the note's name
+  // under Downloads; tied to the calling window so it is a sheet, not a floating
+  // dialog.
+  ipcMain.handle(
+    'holi:showSaveDialog',
+    async (event, defaultName: string): Promise<string | null> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const opts = {
+        defaultPath: join(app.getPath('downloads'), defaultName),
+        filters: [{ name: 'PDF', extensions: ['pdf'] }],
+      }
+      const result = win ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      return result.canceled || result.filePath === undefined ? null : result.filePath
+    },
+  )
 }

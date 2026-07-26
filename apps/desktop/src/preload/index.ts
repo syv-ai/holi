@@ -53,4 +53,5 @@ contextBridge.exposeInMainWorld('holi', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
+  showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
 })
