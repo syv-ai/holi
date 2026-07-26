@@ -12,9 +12,11 @@
  * That is why the agent is not wired up: `agent/agent-manager.ts` still imports
  * the deleted `server-client`, and the drawer is plan 5's work.
  */
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
+import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
@@ -38,6 +40,17 @@ let mainWindow: BrowserWindow | null = null
  *
  * Must be claimed BEFORE `whenReady`.
  */
+// Privileged custom scheme for vault binary assets (images). `standard` so URLs
+// parse with a host + path; `secure`/`supportFetchAPI`/`stream` so <img> and
+// fetch treat it like https and can stream large files. Must be declared before
+// app-ready, so it lives at module top level, not in main().
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'holi-vault',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+])
+
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -91,6 +104,23 @@ async function main(): Promise<void> {
     gitDeps: { token: () => session.token() },
     onSnapshot: (snapshot) => send('vault:snapshot', snapshot),
     onSyncState: (state) => send('vault:sync', state),
+  })
+
+  // Serve `holi-vault://vault/<vaultRelPath>` from the active vault, read-only.
+  // Resolving against the active vault (not a remote in the URL) is safe: there
+  // is exactly one ActiveVault and a vault switch resets the workspace, so the
+  // open note is always in the active vault.
+  protocol.handle('holi-vault', async (request) => {
+    const vault = host.active()
+    if (vault === null) return new Response(null, { status: 404 })
+    const abs = assetAbsPath(vault.root, request.url)
+    if (abs === null) return new Response(null, { status: 403 })
+    try {
+      const bytes = await readFile(abs)
+      return new Response(bytes, { headers: { 'content-type': mimeFor(abs) } })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
   })
 
   const router = createRouter({
