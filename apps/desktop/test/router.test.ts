@@ -1178,3 +1178,32 @@ describe('sync', () => {
     await expect(caller.sync.pushNow()).rejects.toThrow(/no vault is open/)
   })
 })
+
+describe('pdf', () => {
+  const TEMPLATE_FILES = {
+    '.holi/templates/plain/template.json': JSON.stringify({
+      name: 'Plain',
+      description: 'Clean.',
+      fields: [
+        { key: 'date', label: 'Date', required: false },
+        { key: 'recipient', label: 'Recipient', required: true },
+      ],
+    }),
+    '.holi/templates/plain/template.typ': '#let doc(p, meta: (:), assets: "") = []',
+  }
+
+  it('templates returns each template with its declared fields', async () => {
+    const { caller } = await rig(TEMPLATE_FILES)
+    expect(await caller.pdf.templates({ remote: REMOTE })).toEqual([
+      {
+        name: 'Plain',
+        slug: 'plain',
+        description: 'Clean.',
+        fields: [
+          { key: 'date', label: 'Date', required: false },
+          { key: 'recipient', label: 'Recipient', required: true },
+        ],
+      },
+    ])
+  })
+})

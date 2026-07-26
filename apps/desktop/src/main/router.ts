@@ -43,7 +43,7 @@ import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
-import { listTemplates } from './pdf/templates'
+import { listTemplates, type TemplateField } from './pdf/templates'
 import { renderPdf } from './pdf/render'
 import { ensureTypst } from './pdf/typst-bin'
 
@@ -827,18 +827,25 @@ export function createRouter(deps: RouterDeps) {
   })
 
   const pdf = t.router({
-    // The vault's templates, for the Convert picker. Slice 1 only needs
-    // name/slug/description; the full `fields` shape drives slice 2's inputs.
+    // The vault's templates, for the Convert picker + its metadata inputs.
+    // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
     templates: t.procedure
       .input(fields({ remote: 'string' }))
-      .query(async ({ input }): Promise<{ name: string; slug: string; description: string }[]> => {
-        const root = await rootFor(input.remote)
-        return (await listTemplates(root)).map(({ name, slug, description }) => ({
-          name,
-          slug,
-          description,
-        }))
-      }),
+      .query(
+        async ({
+          input,
+        }): Promise<
+          { name: string; slug: string; description: string; fields: TemplateField[] }[]
+        > => {
+          const root = await rootFor(input.remote)
+          return (await listTemplates(root)).map(({ name, slug, description, fields }) => ({
+            name,
+            slug,
+            description,
+            fields,
+          }))
+        },
+      ),
 
     // Render `path` through `template` to a PDF in Downloads; return its path.
     // Not a vaultMutation — the output goes to Downloads, not the vault, so
