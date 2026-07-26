@@ -45,7 +45,7 @@ import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 import { listTemplates } from './pdf/templates'
 import { renderPdf } from './pdf/render'
-import { resolveTypstBin } from './pdf/typst-bin'
+import { ensureTypst } from './pdf/typst-bin'
 
 const t = initTRPC.create()
 
@@ -841,7 +841,7 @@ export function createRouter(deps: RouterDeps) {
         if (tpl === undefined) {
           throw new TRPCError({ code: 'NOT_FOUND', message: `template ${input.template}` })
         }
-        const typstBin = await resolveTypstBin({ cacheDir: deps.typstCacheDir })
+        const typstBin = await ensureTypst({ cacheDir: deps.typstCacheDir })
         if (typstBin === null) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'typst is not available' })
         }
