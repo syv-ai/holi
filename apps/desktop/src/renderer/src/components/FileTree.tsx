@@ -20,8 +20,8 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { fileKind, isHiddenPath } from '@holi/shared'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ConvertToPdfDialog } from './ConvertToPdfDialog'
 import { DeleteConfirm } from './tree/DeleteConfirm'
@@ -49,6 +49,7 @@ import {
   deleteManyAtom,
   moveNotesAtom,
   renameNoteAtom,
+  showHiddenByVaultAtom,
   snapshotAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -99,6 +100,13 @@ export function FileTree({
   const snapshot = useAtomValue(snapshotAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
+  const [showHiddenByVault, setShowHiddenByVault] = useAtom(showHiddenByVaultAtom)
+  // Per-vault "show hidden files" flag; a vault never toggled defaults to hidden.
+  const showHidden = activeRemote !== null && showHiddenByVault[activeRemote] === true
+  const toggleHidden = () => {
+    if (activeRemote === null) return
+    setShowHiddenByVault({ ...showHiddenByVault, [activeRemote]: !showHidden })
+  }
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const moveNotes = useSetAtom(moveNotesAtom)
@@ -132,7 +140,12 @@ export function FileTree({
     () => [...snapshot.docs.map((d) => d.path), ...snapshot.files.map((f) => f.path)],
     [snapshot],
   )
-  const data = useMemo(() => buildTreeData(docPaths, pendingFolders), [docPaths, pendingFolders])
+  // Hidden (dot-prefixed) entries are filtered out unless the per-vault toggle is
+  // on. Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never hidden.
+  const data = useMemo(() => {
+    const visible = showHidden ? docPaths : docPaths.filter((p) => !isHiddenPath(p))
+    return buildTreeData(visible, pendingFolders)
+  }, [docPaths, pendingFolders, showHidden])
 
   // headless-tree captures config closures once; these refs keep the handlers
   // reading the latest values.
@@ -396,6 +409,8 @@ export function FileTree({
         onNewFile={() => setPending({ kind: 'file', parent: '' })}
         onNewFolder={() => setPending({ kind: 'folder', parent: '' })}
         onCollapseAll={() => tree.collapseAll()}
+        hiddenShown={showHidden}
+        onToggleHidden={toggleHidden}
       />
       <div
         className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"

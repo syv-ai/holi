@@ -1,4 +1,5 @@
 import { atom, type createStore } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import type { DocMeta, VaultEntry, VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import { flushAllBuffers } from '../lib/buffer-registry'
@@ -17,6 +18,14 @@ export const vaultsLoadedAtom = atom(false)
 /** The open vault, as `owner/repo`. A vault has no id — the remote IS the
  * identity, and the clone's path is machine-local (types.ts §VaultEntry). */
 export const activeRemoteAtom = atom<string | null>(null)
+
+/**
+ * Per-vault "show hidden files" preference, persisted across launches. One
+ * localStorage key holds a `{ [remote]: boolean }` map; a vault absent from it
+ * defaults to hidden (`false`). Display-only — it gates the tree's `isHiddenPath`
+ * filter and touches nothing about scanning, opening, or sync.
+ */
+export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
 const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 

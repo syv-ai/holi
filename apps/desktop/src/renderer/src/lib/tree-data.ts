@@ -15,9 +15,6 @@ export interface TreeItemData {
   children: string[]
 }
 
-/** Vault-managed roots hidden from the tree by default (D6). */
-const HIDDEN_ROOTS = new Set(['.claude', '.holi', 'AGENTS.md', 'MEMORY.md', 'CLAUDE.md'])
-
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 
 export function buildTreeData(
@@ -49,8 +46,9 @@ export function buildTreeData(
     parent.children.push(path)
   }
 
+  // Hidden-entry filtering (dotfiles) happens upstream in FileTree, keyed off the
+  // per-vault show/hide toggle, so this stays a pure projection of the paths given.
   const nameOf = (id: string): string => data[id]?.name ?? ''
-  root.children = root.children.filter((id) => !HIDDEN_ROOTS.has(nameOf(id)))
 
   const rank = (id: string) => (data[id]?.isFolder ? 0 : 1)
   for (const item of Object.values(data)) {
