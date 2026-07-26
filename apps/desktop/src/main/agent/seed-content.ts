@@ -130,13 +130,21 @@ const SETTINGS_JSON =
  */
 const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
 
-/** The Plain template's manifest — a clean, unbranded layout with no metadata
- * fields (slice 1). Committed vault content under `.holi/templates/plain/`.
- * Built via `JSON.stringify` (like VAULT_MARKER) so there is no `.json?raw`
- * import dependency. */
+/** The Plain template's manifest — a clean, unbranded layout with two optional
+ * metadata fields (Date, Recipient) that the Convert dialog renders as inputs
+ * and template.typ prints as a small header. Committed vault content under
+ * `.holi/templates/plain/`. Built via `JSON.stringify` (like VAULT_MARKER) so
+ * there is no `.json?raw` import dependency. */
 const PLAIN_MANIFEST =
   JSON.stringify(
-    { name: 'Plain', description: 'A clean, unbranded document layout.', fields: [] },
+    {
+      name: 'Plain',
+      description: 'A clean, unbranded document layout.',
+      fields: [
+        { key: 'date', label: 'Date', required: false },
+        { key: 'recipient', label: 'Recipient', required: false },
+      ],
+    },
     null,
     2,
   ) + '\n'

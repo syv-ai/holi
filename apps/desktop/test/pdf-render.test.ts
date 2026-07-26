@@ -40,4 +40,33 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     expect(bytes.length).toBeGreaterThan(0)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
+
+  it('renders declared metadata (Date/Recipient) as a header — larger than an empty-meta render', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return // no typst on this machine — skip, don't fail
+
+    const root = await work()
+    const templateDir = join(root, '.holi/templates/plain')
+    await mkdir(join(templateDir, 'assets'), { recursive: true })
+    await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
+
+    const notePath = join(root, 'report.md')
+    await writeFile(notePath, '---\ntitle: T\n---\n\n## Heading\n\nBody text.\n')
+
+    const emptyOut = join(root, 'empty.pdf')
+    const metaOut = join(root, 'meta.pdf')
+    await renderPdf({ typstBin: typst, templateDir, notePath, outPath: emptyOut, meta: {} })
+    await renderPdf({
+      typstBin: typst,
+      templateDir,
+      notePath,
+      outPath: metaOut,
+      meta: { date: '2026-07-26', recipient: 'ACME Corp' },
+    })
+
+    const empty = await readFile(emptyOut)
+    const withMeta = await readFile(metaOut)
+    expect(withMeta.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+    expect(withMeta.length).toBeGreaterThan(empty.length)
+  }, 30_000)
 })
