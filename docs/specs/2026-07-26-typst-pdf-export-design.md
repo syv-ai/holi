@@ -9,7 +9,7 @@ Turn any markdown note into a branded PDF through a **Typst template**. Two fron
 
 ## Decisions locked (2026-07-26)
 
-- **Bundle Typst** with the app (per-platform binary) — the UI button must work with zero user setup.
+- **Download typst on first use** (updated 2026-07-26, supersedes the earlier "bundle the binary" decision). The UI button must work with zero user *setup*, but there is no packaging pipeline yet (no electron-builder, no `extraResources`), and a per-platform binary is ~39 MB × 3 ≈ 117 MB of git bloat if committed. Instead, a `resolveTypstBin()` seam resolves the binary in order **`TYPST_BIN` env → a cached download under `userData` → `PATH`** (dev). On the first Convert with no cached binary, Holi downloads the pinned typst release for the host platform into `userData`, verifies it (`typst --version` == pinned), and caches it. This is zero-setup for the user, keeps the repo small, and sidesteps the packaged-GUI `PATH` problem (a Finder/Dock-launched app does not inherit the shell `PATH`). A one-time network fetch is already unavoidable — Typst fetches the `@preview/cmarker` package from the network on the first compile regardless.
 - **Typst-only, no Python.** The markdown preprocessing 1brain did in `render.py` (strip frontmatter, renumber headings, indent contract clauses, expand `@@FIG@@`/`@@SIG@@`) moves **into the Typst template** (Typst already reads markdown via `cmarker` and does regex/string ops). The only runtime dependency is the bundled `typst`.
 - **Seed a generic 'Plain' template** into every vault, so Convert-to-PDF works out of the box and serves as a copy-to-customize starter. The **Syv-branded template lives in the Syv vault**, not universally seeded.
 - **Per-vault templates are committed content** (below).
@@ -48,11 +48,11 @@ One procedure, `pdf.render({ notePath, template, meta }) → { pdfPath }` (or by
 
 1. Resolve the template dir under `.holi/templates/<template>/` (via the active vault root + `vaultRelPath` guard).
 2. Compose a small Typst **wrapper** in a temp dir: `#import "<abs>/template.typ": doc` then `#doc("<abs note path>", meta: <meta dict>, assets: "<abs assets dir>")`.
-3. Invoke the **bundled** `typst compile wrapper.typ <out.pdf> --root /` (the wrapper uses absolute paths; `--root /` lets Typst read the note + assets). Fonts are found via `--font-path <assets>/fonts` when the template ships fonts.
+3. Invoke the resolved `typst compile wrapper.typ <out.pdf> --root /` (the wrapper uses absolute paths; `--root /` lets Typst read the note + assets — the note and template live in different dirs than the temp wrapper, so a narrower root won't span them). Fonts are found via `--font-path <assets>/fonts` when the template ships fonts.
 4. Return the output path/bytes.
 
 - **All markdown preprocessing lives in `template.typ`** — it `read()`s the note, strips YAML frontmatter, removes manual heading numbers, indents clause paragraphs, and expands `@@FIG:…@@` / `@@SIG:…@@` tokens (the Syv template ports 1brain's logic; the Plain template does the minimum). This keeps the engine a dumb "compose wrapper + run typst" with no per-template knowledge.
-- **Bundled typst path:** a helper resolves dev (`node_modules`/a checked-in bin) vs packaged (`process.resourcesPath`) — the standard electron-builder `extraResources` pattern. The binary is selected per platform/arch.
+- **typst path:** `resolveTypstBin()` resolves the binary in order **`TYPST_BIN` env → cached download under `userData` → `PATH`**. When nothing is cached and it is not on `PATH`, Holi downloads the pinned release for the host platform/arch on first use (see Decisions locked). No committed binary, no `extraResources`.
 
 ## Output location
 
@@ -75,7 +75,7 @@ A seeded `.claude/skills/md-to-pdf/SKILL.md` documents the capability for the ag
 
 ## Slice decomposition (tracer-first)
 
-1. **Template model + Plain default + bundled typst + render engine + a minimal Convert command.** The tracer bullet: a real markdown note → a PDF via the Plain template, end to end (no fancy dialog — a template picker + Convert is enough). Proves bundling, discovery, and the wrapper/compile path.
+1. **Template model + Plain default + typst resolver (download-on-first-use) + render engine + a minimal Convert command.** The tracer bullet: a real markdown note → a PDF via the Plain template, end to end (no fancy dialog — a template picker + Convert is enough). Proves discovery, the wrapper/compile path, and the `resolveTypstBin()` seam. In dev the resolver rides `PATH`; the download path is built and wired but only end-to-end-verifiable once a packaged build exists.
 2. **The Convert dialog UX** — metadata fields from the manifest, error surfacing, save-dialog + open.
 3. **The Syv template** — port 1brain's layout/figures/fonts (English), including base64 binary seeding *for that template's assets* (added to the Syv vault). Reuses the binary-seed mechanism only if we seed it; otherwise it is just committed vault files.
 4. **The agent front door** — the seeded `md-to-pdf` skill + typst-path exposure; re-add the AGENTS.md "PDFs are outputs" line.
@@ -91,8 +91,8 @@ Each slice is independently shippable and gets its own plan. Slice 1 is the next
 ## Non-goals / open questions
 
 - **Non-goals (this pillar):** a WYSIWYG template designer; round-tripping PDF→markdown; annotations; committing PDFs into the vault by default.
-- **Open:** exact typst-path exposure to the agent (env var vs a tiny Holi shim); whether Plain bundles a font or rides Typst defaults; per-platform typst binary sourcing/versioning in the build.
+- **Open:** exact typst-path exposure to the agent (env var vs a tiny Holi shim — likely `TYPST_BIN`, which `resolveTypstBin()` already honors); whether Plain bundles a font or rides Typst defaults; supply-chain hardening of the first-use download (sha256-pin the release archive per platform/version, vs the slice-1 `typst --version` functional check); Windows `.zip` vs unix `.tar.xz` extraction in the downloader (slice 1 implements the host platform; other platforms are unverifiable until packaging exists).
 
 ## Supersedes
 
-`prd/_phase2-typst-export.md` (the stub) — this is its realization. That stub's "where rendering runs" open question is resolved: **bundled, in-app, Typst-only.**
+`prd/_phase2-typst-export.md` (the stub) — this is its realization. That stub's "where rendering runs" open question is resolved: **in-app, Typst-only, binary downloaded on first use.**
