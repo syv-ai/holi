@@ -23,6 +23,13 @@ export const docExistsFacet = Facet.define<(path: string) => boolean, (path: str
   combine: (values) => values[0] ?? (() => true),
 })
 
+/** The open note's vault path, so live-preview can resolve note-relative image
+ *  targets (`![](img.png)`). Static per editor instance — the view is rebuilt
+ *  per doc (EditorPane), so there is nothing to keep live here. */
+export const notePathFacet = Facet.define<string, string>({
+  combine: (values) => values[0] ?? '',
+})
+
 /** What a `[[task:<id>]]` chip should say, and whether its target is gone (D27's
  * tombstone). Resolved by the renderer against `tasksAtom` — the editor never joins. */
 export interface TaskChipInfo {

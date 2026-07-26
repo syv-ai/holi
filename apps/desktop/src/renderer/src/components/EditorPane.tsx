@@ -145,6 +145,7 @@ export function EditorPane({
                   mentionData: () => mentionRef.current,
                   onTaskMention: () => {},
                   nav: () => navRef.current,
+                  notePath: path,
                 })),
             EditorView.updateListener.of((update) => {
               if (!update.docChanged) return

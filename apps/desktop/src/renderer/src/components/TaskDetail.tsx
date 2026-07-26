@@ -194,7 +194,12 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
 
       <RecurrenceRows task={task} save={save} />
 
-      <TaskDescriptionEditor key={task.path} initial={task.description} onChange={onDescription} />
+      <TaskDescriptionEditor
+        key={task.path}
+        notePath={task.path}
+        initial={task.description}
+        onChange={onDescription}
+      />
 
       <button
         onClick={() => void del(task.path)}
@@ -221,9 +226,11 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
  * open editor — switching tasks remounts with fresh text.
  */
 function TaskDescriptionEditor({
+  notePath,
   initial,
   onChange,
 }: {
+  notePath: string
   initial: string
   onChange: (v: string) => void
 }): React.JSX.Element {
@@ -257,6 +264,7 @@ function TaskDescriptionEditor({
             mentionData: () => mentionRef.current,
             onTaskMention: () => {},
             nav: () => navRef.current,
+            notePath,
           }),
           placeholder('description — @ to mention a note, [[wiki-links]] to link'),
           EditorView.updateListener.of((u) => {

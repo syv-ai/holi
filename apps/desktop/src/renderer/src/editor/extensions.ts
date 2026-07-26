@@ -9,7 +9,7 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
-import { docExistsFacet, livePreview, taskInfoFacet, type TaskChipInfo } from './livePreview'
+import { docExistsFacet, livePreview, notePathFacet, taskInfoFacet, type TaskChipInfo } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
 import { editorTheme } from './theme'
@@ -26,6 +26,8 @@ export interface EditorDeps {
   onTaskMention: (taskId: string) => void
   /** Where a clicked link goes (FR-6/FR-7). */
   nav: () => LinkNav
+  /** The open note's vault path, for note-relative image resolution. */
+  notePath: string
 }
 
 /**
@@ -54,6 +56,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     markdown({ base: markdownLanguage }),
     docExistsFacet.of(deps.docExists),
     taskInfoFacet.of(deps.taskInfo),
+    notePathFacet.of(deps.notePath),
     livePreview,
     // After livePreview: the block-replace owns the frontmatter region, and
     // livePreview is told to skip it (FR-2 hide / FR-16 reveal).
