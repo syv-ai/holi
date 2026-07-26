@@ -141,8 +141,8 @@ const PLAIN_MANIFEST =
       name: 'Plain',
       description: 'A clean, unbranded document layout.',
       fields: [
-        { key: 'date', label: 'Date', required: false },
-        { key: 'recipient', label: 'Recipient', required: false },
+        { key: 'date', label: 'Date', type: 'date', required: false },
+        { key: 'recipient', label: 'Recipient', type: 'text', required: false },
       ],
     },
     null,
