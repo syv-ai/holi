@@ -50,6 +50,9 @@ importers:
       '@holi/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@icons-pack/react-simple-icons':
+        specifier: ^13.13.0
+        version: 13.13.0(react@18.3.1)
       '@lezer/common':
         specifier: ^1.5.2
         version: 1.5.2
@@ -634,6 +637,12 @@ packages:
       '@headless-tree/core': '*'
       react: '*'
       react-dom: '*'
+
+  '@icons-pack/react-simple-icons@13.13.0':
+    resolution: {integrity: sha512-B5HhQMIpcSH4z8IZ8HFhD59CboHceKYMpPC9kAwGyKntvPdyJJv26DLu4Z1wAjcCLyrJhf11tMhiQGom9Rxb9g==}
+    engines: {node: '>=24', pnpm: '>=10'}
+    peerDependencies:
+      react: ^16.13 || ^17 || ^18 || ^19
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -2786,6 +2795,10 @@ snapshots:
       '@headless-tree/core': 1.7.0
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
+
+  '@icons-pack/react-simple-icons@13.13.0(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
