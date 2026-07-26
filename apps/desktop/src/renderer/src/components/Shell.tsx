@@ -21,6 +21,7 @@ import { BoardView } from './BoardView'
 import { EditorPane } from './EditorPane'
 import { FilePlaceholder } from './FilePlaceholder'
 import { FileTree } from './FileTree'
+import { ImageViewer } from './ImageViewer'
 import { VaultPicker } from './VaultPicker'
 import { VaultSettings } from './VaultSettings'
 import { syncLabel } from '../lib/sync-label'
@@ -197,11 +198,12 @@ export function Shell() {
 
           {tab?.kind === 'board' ? (
             <BoardView />
+          ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
+            <ImageViewer path={tab.path} />
           ) : tab?.kind === 'note' && fileKind(tab.path) !== 'markdown' ? (
-            // Every non-markdown file opens a typed placeholder for now — a real
-            // per-type editor/viewer replaces it later (spec §Arbitrary files).
-            // Markdown is the only thing with a first-class editor today.
-            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'text' | 'image' | 'pdf' | 'doc'} />
+            // Non-image, non-markdown files open a typed placeholder for now — a
+            // real per-type viewer replaces it later (spec §Arbitrary files).
+            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'text' | 'pdf' | 'doc'} />
           ) : (
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}
