@@ -1,97 +1,60 @@
-/** Monochrome inline SVGs for the Holi-native tree skin — no icon-font
- *  dependency (the app ships none). All inherit `currentColor`. */
+/**
+ * The tree's icon set, from lucide-react. These thin wrappers keep stable names
+ * and a no-arg (or `{open}`) signature so `file-icons.tsx` and the tree don't
+ * care that the glyphs are lucide. All inherit `currentColor` (lucide strokes
+ * with it), so `file-icons.tsx` can tint them per file type.
+ *
+ * lucide has no dedicated markdown/pdf/word glyph, so those text-document kinds
+ * share `FileText` — the *colour* is the type signal here, per file-icons.tsx.
+ */
+import { Braces, ChevronRight, Code, File, FileText, Folder, Image, Settings2, Table } from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg
-      width="12"
-      height="12"
-      viewBox="0 0 16 16"
-      fill="currentColor"
+    <ChevronRight
+      size={12}
       aria-hidden="true"
       style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}
-    >
-      <path d="M6 4l4 4-4 4V4z" />
-    </svg>
+    />
   )
 }
 
 export function FolderIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M1.5 3.5A1.5 1.5 0 0 1 3 2h3l1.5 1.5H13A1.5 1.5 0 0 1 14.5 5v6.5A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5v-8z" />
-    </svg>
-  )
+  return <Folder size={14} aria-hidden="true" />
 }
 
 export function MarkdownIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M2.5 3h11A1.5 1.5 0 0 1 15 4.5v7A1.5 1.5 0 0 1 13.5 13h-11A1.5 1.5 0 0 1 1 11.5v-7A1.5 1.5 0 0 1 2.5 3zm1 3v4h1.4V8.2L6.2 10l1.3-1.8V10h1.4V6H7.5L6.2 7.9 4.9 6H3.5zm7.3 0v2.1H9.6L11.5 11l1.9-2.9h-1.2V6h-1.4z" />
-    </svg>
-  )
+  return <FileText size={14} aria-hidden="true" />
 }
 
 export function FileIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M4 1.5h5L13 5.5v8A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4 1.5zm5 1v3h3l-3-3z" />
-    </svg>
-  )
+  return <File size={14} aria-hidden="true" />
 }
 
 export function ImageIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M2.5 3h11A1.5 1.5 0 0 1 15 4.5v7A1.5 1.5 0 0 1 13.5 13h-11A1.5 1.5 0 0 1 1 11.5v-7A1.5 1.5 0 0 1 2.5 3zm2 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-2 6h11l-3.5-4-2.5 3-1.5-1.5L2.5 11z" />
-    </svg>
-  )
+  return <Image size={14} aria-hidden="true" />
 }
 
 export function PdfIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M4 1.5h5L13 5.5v8A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4 1.5zm1 8v3h1.2v-1h.6a1 1 0 0 0 0-2H5zm1.2 1H6.8a.3.3 0 0 1 0 .6H6.2v-.6zM9 9.5v3h1a1.5 1.5 0 0 0 0-3H9zm1.2 1h-.2v1H10a.5.5 0 0 0 0-1z" />
-    </svg>
-  )
+  return <FileText size={14} aria-hidden="true" />
 }
 
 export function DocIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M4 1.5h5L13 5.5v8A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4 1.5zM5 8h6v1H5V8zm0 2h6v1H5v-1zm0-4h3v1H5V6z" />
-    </svg>
-  )
+  return <FileText size={14} aria-hidden="true" />
 }
 
 export function BracesIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M6.2 2.3c-1.3.1-1.8.8-1.8 2v1.8c0 .6-.3.9-.9.9v1.9c.6 0 .9.3.9.9v1.8c0 1.2.6 1.9 1.8 2v-1.4c-.4-.1-.5-.4-.5-1v-1.7c0-.7-.3-1.1-.8-1.4.5-.3.8-.7.8-1.4V4.7c0-.6.1-.9.5-1V2.3zm3.6 0v1.4c.4.1.5.4.5 1v1.7c0 .7.3 1.1.8 1.4-.5.3-.8.7-.8 1.4v1.7c0 .6-.1.9-.5 1v1.4c1.2-.1 1.8-.8 1.8-2V9.8c0-.6.3-.9.9-.9V7c-.6 0-.9-.3-.9-.9V4.3c0-1.2-.5-1.9-1.8-2z" />
-    </svg>
-  )
+  return <Braces size={14} aria-hidden="true" />
 }
 
 export function CodeIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M5.7 4.2 6.8 5 4 8l2.8 3-1.1.8L2 8l3.7-3.8zm4.6 0L14 8l-3.7 3.8L9.2 11 12 8 9.2 5l1.1-.8zM8.9 2.7l1.3.4-3 10-1.3-.4 3-10z" />
-    </svg>
-  )
+  return <Code size={14} aria-hidden="true" />
 }
 
 export function TableIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M2 3h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm0 2v2h4V5H2zm5 0v2h7V5H7zM2 8v2h4V8H2zm5 0v2h7V8H7zm-5 3v1h4v-1H2zm5 0v1h7v-1H7z" />
-    </svg>
-  )
+  return <Table size={14} aria-hidden="true" />
 }
 
 export function ConfigIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-      <path d="M2 4.3h4.1a2 2 0 0 1 3.8 0H14v1.4H9.9a2 2 0 0 1-3.8 0H2V4.3zm12 4H9.9a2 2 0 0 0-3.8 0H2v1.4h4.1a2 2 0 0 0 3.8 0H14V8.3zM2 12.3h4.1a2 2 0 0 1 3.8 0H14v1.4H9.9a2 2 0 0 1-3.8 0H2v-1.4z" />
-    </svg>
-  )
+  return <Settings2 size={14} aria-hidden="true" />
 }

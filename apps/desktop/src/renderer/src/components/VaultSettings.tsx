@@ -41,9 +41,9 @@ const displayLocalPath = (fullPath: string, remote: string): string => {
   return rootLeaf ? `${rootLeaf}/${remote}` : fullPath
 }
 
-/** The GitHub mark, inline. This app ships no icon library (the onboarding port
- *  had to strip lucide/shadcn), so the one place that needs a logo carries its
- *  own SVG. `currentColor` lets it inherit the subtle button's text colour. */
+/** The GitHub mark, inline. The app's icon set is lucide-react, but lucide
+ *  dropped brand marks (there is no `Github` glyph), so this one brand logo
+ *  carries its own SVG. `currentColor` lets it inherit the button's text colour. */
 function GitHubMark() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
