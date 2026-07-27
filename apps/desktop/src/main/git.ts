@@ -150,6 +150,12 @@ export interface GitRepo {
   log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
+  /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
+   * in the tree for the reconcile flow (`prd/agent.md` §merge resolver). Unlike
+   * `pull()`, which announces a conflict by aborting, this re-materialises it so
+   * the agent has something to resolve. Re-fetches, so it merges the current
+   * remote state, not a stale one. */
+  remerge(): Promise<PullResult>
   /** Push local commits to the default branch. The caller recovers from a
    * non-fast-forward rejection by pulling and retrying (`active-vault.ts`
    * §pushNow) — there is no publish combinator, because push is automatic. */
@@ -396,6 +402,36 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   /**
+   * The reconcile primitive: like `pull()`, but on a conflict it does **not**
+   * abort — the conflict markers and MERGE_HEAD are left in the tree so the
+   * agent (running inside this state) can resolve them and finish the merge.
+   */
+  async function remerge(): Promise<PullResult> {
+    const target = (await defaultBranch()) ?? 'HEAD'
+    await runGit(root, ['fetch', 'origin'], opts)
+
+    const before = await runGit(root, ['rev-parse', 'HEAD'], opts)
+    const incoming = await runGit(root, ['rev-list', '--count', `HEAD..origin/${target}`], opts)
+    if (incoming === '0') return { kind: 'up-to-date' }
+
+    const merge = await tryGit(root, ['merge', '--no-edit', `origin/${target}`], opts)
+    if (!merge.ok) {
+      const raw = await runGit(root, ['diff', '--name-only', '--diff-filter=U', '-z'], opts).catch(
+        () => '',
+      )
+      const paths = raw.split('\0').filter((p) => p !== '')
+      // No abortMerge() — leave the conflicted tree in place for the reconcile.
+      return { kind: 'conflict', paths }
+    }
+
+    const after = await runGit(root, ['rev-parse', 'HEAD'], opts)
+    return {
+      kind: 'merged',
+      commits: Number(await runGit(root, ['rev-list', '--count', `${before}..${after}`], opts)),
+    }
+  }
+
+  /**
    * The file's — or the vault's — history. There is no snapshot store; git's
    * object store is the snapshot store, and autosave commits are what give it
    * resolution.
@@ -593,7 +629,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, log, commitAll, pull, push, abortMerge }
+  return { root, status, log, commitAll, pull, remerge, push, abortMerge }
 }
 
 /**

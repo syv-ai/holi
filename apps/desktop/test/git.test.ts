@@ -348,6 +348,30 @@ describe('pull', () => {
     expect(await plainGit(ours, ['cat-file', '-t', before])).toBe('commit')
     expect(await plainGit(ours, ['merge-base', '--is-ancestor', before, 'HEAD'])).toBe('')
   })
+
+  it('remerge() re-runs the merge and LEAVES the conflict in the tree', async () => {
+    // The reconcile primitive. Unlike pull(), it does NOT abort — the agent
+    // needs the <<<<<<< markers and MERGE_HEAD in place to resolve the merge.
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'README.md', '# Theirs\n')
+    await commitFile(ours, 'README.md', '# Ours\n')
+
+    const repo = openRepo(ours)
+    expect(await repo.remerge()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+
+    const after = await repo.status()
+    expect(after.merging).toBe(true) // pull() would have left this false
+    expect(await readFile(join(ours, 'README.md'), 'utf8')).toContain('<<<<<<<')
+  })
+
+  it('remerge() merges cleanly when the sides do not conflict', async () => {
+    const { ours, theirs } = await pair()
+    await publish(theirs, 'theirs.md', 'theirs\n')
+    await commitFile(ours, 'ours.md', 'ours\n')
+
+    expect((await openRepo(ours).remerge()).kind).toBe('merged')
+    expect((await openRepo(ours).status()).merging).toBe(false)
+  })
 })
 
 describe('push', () => {
