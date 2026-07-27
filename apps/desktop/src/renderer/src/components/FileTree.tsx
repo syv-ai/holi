@@ -20,14 +20,14 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, isHiddenPath } from '@holi/shared'
+import { fileKind, isHiddenPath, isTaskFilePath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ConvertToPdfDialog } from './ConvertToPdfDialog'
 import { DeleteConfirm } from './tree/DeleteConfirm'
 import { ExplorerHeader } from './tree/ExplorerHeader'
 import { TreeContextMenu, type MenuItem } from './tree/TreeContextMenu'
-import { ChevronIcon, FolderIcon, MarkdownIcon } from './tree/icons'
+import { ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './tree/icons'
 import { fileIconFor } from './tree/file-icons'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '../lib/tree-data'
 import {
@@ -50,6 +50,7 @@ import {
   moveNotesAtom,
   renameNoteAtom,
   showHiddenByVaultAtom,
+  showTasksByVaultAtom,
   snapshotAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -107,6 +108,13 @@ export function FileTree({
     if (activeRemote === null) return
     setShowHiddenByVault({ ...showHiddenByVault, [activeRemote]: !showHidden })
   }
+  const [showTasksByVault, setShowTasksByVault] = useAtom(showTasksByVaultAtom)
+  // Per-vault "show task files in the tree" flag; off unless a vault opts in.
+  const showTasks = activeRemote !== null && showTasksByVault[activeRemote] === true
+  const toggleTasks = () => {
+    if (activeRemote === null) return
+    setShowTasksByVault({ ...showTasksByVault, [activeRemote]: !showTasks })
+  }
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const moveNotes = useSetAtom(moveNotesAtom)
@@ -136,9 +144,15 @@ export function FileTree({
 
   // The tree projects notes AND non-markdown files (spec §Arbitrary files); the
   // scanner keeps them in separate lists so link-aware ops stay markdown-only.
+  // Task files join only when the per-vault toggle is on — the board owns them by
+  // default (prd/tasks.md §Open questions: tasks in the tree).
   const docPaths = useMemo(
-    () => [...snapshot.docs.map((d) => d.path), ...snapshot.files.map((f) => f.path)],
-    [snapshot],
+    () => [
+      ...snapshot.docs.map((d) => d.path),
+      ...snapshot.files.map((f) => f.path),
+      ...(showTasks ? snapshot.tasks.map((t) => t.path) : []),
+    ],
+    [snapshot, showTasks],
   )
   // Hidden (dot-prefixed) entries are filtered out unless the per-vault toggle is
   // on. Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never hidden.
@@ -410,6 +424,8 @@ export function FileTree({
         onCollapseAll={() => tree.collapseAll()}
         hiddenShown={showHidden}
         onToggleHidden={toggleHidden}
+        tasksShown={showTasks}
+        onToggleTasks={toggleTasks}
       />
       <div
         className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"
@@ -479,7 +495,7 @@ export function FileTree({
                 <span
                   className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-sky-400' : 'text-neutral-500'}`}
                 >
-                  {isFolder ? <FolderIcon /> : fileIconFor(id)}
+                  {isFolder ? <FolderIcon /> : isTaskFilePath(id) ? <TaskIcon /> : fileIconFor(id)}
                 </span>
                 {item.isRenaming() ? (
                   <input

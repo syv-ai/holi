@@ -29,6 +29,12 @@ export const activeRemoteAtom = atom<string | null>(null)
  */
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
+/** Per-vault "show task files in the tree" flag, off by default — the board owns
+ * tasks, so the tree stays notes-only until you opt a vault in. Purely a view
+ * filter: task files are always scanned into `snapshot.tasks`; this only decides
+ * whether they also render as leaves in the file tree (with a task glyph). */
+export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
+
 const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 
 /**

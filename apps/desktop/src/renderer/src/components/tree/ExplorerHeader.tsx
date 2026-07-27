@@ -1,4 +1,4 @@
-import { ChevronsDownUp, Eye, EyeOff, FilePlus, FolderPlus } from 'lucide-react'
+import { ChevronsDownUp, Eye, EyeOff, FilePlus, FolderPlus, ListTodo } from 'lucide-react'
 
 /** The explorer's action buttons. Hidden until the tree is hovered (or focused),
  *  then floated in as a small toolbar in the top-right — VS Code's section-action
@@ -9,6 +9,8 @@ export function ExplorerHeader({
   onCollapseAll,
   hiddenShown,
   onToggleHidden,
+  tasksShown,
+  onToggleTasks,
 }: {
   onNewFile: () => void
   onNewFolder: () => void
@@ -16,6 +18,9 @@ export function ExplorerHeader({
   /** Whether hidden (dot-prefixed) entries are currently shown. */
   hiddenShown: boolean
   onToggleHidden: () => void
+  /** Whether task files (`task.*.md`) are shown in the tree. */
+  tasksShown: boolean
+  onToggleTasks: () => void
 }) {
   return (
     <div className="pointer-events-none absolute right-3 top-1 z-10 opacity-0 transition-opacity duration-150 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
@@ -43,6 +48,17 @@ export function ExplorerHeader({
           onClick={onCollapseAll}
         >
           <ChevronsDownUp size={15} />
+        </button>
+        <button
+          className={`rounded p-1 hover:bg-neutral-800 hover:text-neutral-200 ${
+            tasksShown ? 'text-neutral-200' : ''
+          }`}
+          title={tasksShown ? 'Hide task files' : 'Show task files'}
+          aria-label={tasksShown ? 'Hide task files' : 'Show task files'}
+          aria-pressed={tasksShown}
+          onClick={onToggleTasks}
+        >
+          <ListTodo size={15} />
         </button>
         <button
           className={`rounded p-1 hover:bg-neutral-800 hover:text-neutral-200 ${

@@ -4,7 +4,7 @@
  * in `file-icons.tsx`. All inherit `currentColor` so they follow the row's tint.
  */
 import { SiMarkdown } from '@icons-pack/react-simple-icons'
-import { ChevronRight, Folder } from 'lucide-react'
+import { ChevronRight, Folder, SquareCheck } from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -22,4 +22,10 @@ export function FolderIcon() {
 
 export function MarkdownIcon() {
   return <SiMarkdown size={14} color="currentColor" aria-hidden="true" />
+}
+
+/** A task file's leaf glyph — a checkbox, tinted apart from the markdown/file
+ * icons so a `task.*.md` reads as a task at a glance rather than just another note. */
+export function TaskIcon() {
+  return <SquareCheck size={14} color="#34d399" aria-hidden="true" />
 }
