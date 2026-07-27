@@ -25,7 +25,8 @@ import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
-import { createAgentManager } from './agent/agent-manager'
+import { createAgentManager, type AgentManager } from './agent/agent-manager'
+import { createHookServer } from './agent/hook-server'
 import { registerAgentIpc } from './agent-ipc'
 
 // Declared before the launch check below, which starts `main()` synchronously:
@@ -146,7 +147,22 @@ async function main(): Promise<void> {
   // The vault agent: one live `claude` per user, in the active vault's clone.
   // `getWindow` is lazy — the window is created just below and is up long before
   // the agent streams anything, so registering the seam here is safe.
-  const agent = createAgentManager({ host, getWindow: () => mainWindow })
+  //
+  // Git coexistence: the hook server learns turn start/end from the agent's own
+  // Claude Code hooks and drives the manager's pause/resume. The forward ref is
+  // safe — its callbacks fire only at runtime, long after `agent` is assigned.
+  let agent: AgentManager
+  const hookServer = createHookServer({
+    onTurnStart: () => agent.setTurnActive(true),
+    onTurnEnd: () => agent.setTurnActive(false),
+  })
+  await hookServer.start()
+  agent = createAgentManager({
+    host,
+    getWindow: () => mainWindow,
+    hookPort: () => hookServer.port(),
+    hookToken: () => hookServer.token(),
+  })
   registerAgentIpc({ agent })
 
   const win = createWindow()
@@ -180,6 +196,7 @@ async function main(): Promise<void> {
         // Kill the agent's PTY (and its process group) before we flush and
         // commit — nothing the session was mid-writing should race the teardown.
         await agent.dispose().catch((err) => console.error('[quit] agent dispose failed:', err))
+        await hookServer.stop().catch((err) => console.error('[quit] hook server stop failed:', err))
         // FR-6's flush points are a flush THEN a commit, and only the renderer
         // can do the first half — `host.close()` commits what is on disk, and
         // the editor's newest words are not there until it writes them. Every
