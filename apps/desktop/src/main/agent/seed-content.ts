@@ -3,10 +3,12 @@
  * files private, the CLAUDE.md shim, the shared agent instructions, and the
  * per-turn context hook.
  *
- * **Seeding runs on every vault open, not just at creation** (auth PRD FR-8
- * seeds a *new* vault; adoption needs it just as much). Create-if-missing makes
- * that safe: the first person to open a vault seeds it, everyone else no-ops,
- * and a member who edits `AGENTS.md` keeps their edit forever.
+ * **Seeding runs when a vault is created or adopted (`vaults.add`/`vaults.create`
+ * → `ensureSeeded`), NOT on every subsequent open** (`vaults.open` does not
+ * re-seed). Create-if-missing makes that safe and gives managed files simple
+ * "born-with-the-vault" semantics: the file is written once, at birth, and a
+ * member who edits — or deletes — it keeps that change (a plain open never
+ * resurrects it; only re-adding the same vault would rewrite a missing one).
  *
  * **`.gitignore` is the exception, and the reason this module matters.** An
  * adopted repo usually already has one, so create-if-missing would silently
