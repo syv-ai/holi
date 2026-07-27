@@ -20,7 +20,7 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, isHiddenPath, isTaskFilePath } from '@holi/shared'
+import { fileKind, isHiddenPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ConvertToPdfDialog } from './ConvertToPdfDialog'
@@ -154,6 +154,12 @@ export function FileTree({
     ],
     [snapshot, showTasks],
   )
+  // Task-by-path, so a task leaf can show a status glyph and strike a done name.
+  const taskByPath = useMemo(
+    () => new Map(snapshot.tasks.map((t) => [t.path, t])),
+    [snapshot],
+  )
+
   // Hidden (dot-prefixed) entries are filtered out unless the per-vault toggle is
   // on. Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never hidden.
   const data = useMemo(() => {
@@ -457,6 +463,7 @@ export function FileTree({
             const isOpen = activePath === id
             const level = item.getItemMeta().level
             const isCut = clipboard?.mode === 'cut' && clipboard.paths.includes(id)
+            const task = taskByPath.get(id)
             const rowProps = item.getProps()
             const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
             return (
@@ -495,7 +502,13 @@ export function FileTree({
                 <span
                   className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-sky-400' : 'text-neutral-500'}`}
                 >
-                  {isFolder ? <FolderIcon /> : isTaskFilePath(id) ? <TaskIcon /> : fileIconFor(id)}
+                  {isFolder ? (
+                    <FolderIcon />
+                  ) : task ? (
+                    <TaskIcon status={task.status} />
+                  ) : (
+                    fileIconFor(id)
+                  )}
                 </span>
                 {item.isRenaming() ? (
                   <input
@@ -509,7 +522,13 @@ export function FileTree({
                     }}
                   />
                 ) : (
-                  <span className="min-w-0 flex-1 truncate">{item.getItemName()}</span>
+                  <span
+                    className={`min-w-0 flex-1 truncate ${
+                      task?.status === 'done' ? 'text-neutral-500 line-through' : ''
+                    }`}
+                  >
+                    {item.getItemName()}
+                  </span>
                 )}
               </div>
             )

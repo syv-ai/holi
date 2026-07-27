@@ -42,7 +42,7 @@ import {
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
-import { createTaskDialogAtom } from '../state/tasks'
+import { createTaskDialogAtom, openTaskCountAtom } from '../state/tasks'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
@@ -59,6 +59,7 @@ export function Shell() {
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const [createTaskMode, setCreateTaskMode] = useAtom(createTaskDialogAtom)
+  const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -183,11 +184,16 @@ export function Shell() {
               today
             </button>
             <button
-              className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
-              title="task board"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+              title={`task board — ${openTaskCount} open`}
               onClick={() => setWorkspace((w) => openBoard(w))}
             >
               board
+              {openTaskCount > 0 && (
+                <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] leading-4 text-neutral-200">
+                  {openTaskCount}
+                </span>
+              )}
             </button>
             <button
               className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"

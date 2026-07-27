@@ -32,6 +32,12 @@ export const tasksAtom = atom<Map<string, Task>>(
  * omitting one from the board is indistinguishable from data loss. */
 export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
 
+/** How many tasks are still open (not done) — the badge on the board button, so
+ * "how much is on my plate" is one glance without opening the board. */
+export const openTaskCountAtom = atom(
+  (get) => get(snapshotAtom).tasks.filter((t) => t.status !== 'done').length,
+)
+
 /** Today, as YYYY-MM-DD. Held in state so virtual labels stay pure and testable
  * and the board re-renders when the day turns rather than reading the clock
  * inline. Local, not UTC — the same frame the roll-forward uses. */
