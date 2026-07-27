@@ -3,8 +3,10 @@ import { atomWithStorage } from 'jotai/utils'
 import type { DocMeta, VaultEntry, VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import { flushAllBuffers } from '../lib/buffer-registry'
+import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { scaffoldNoteText } from '../lib/scaffold'
 import { trpc } from '../lib/trpc'
+import { agentPanelOpenAtom, agentSeedPromptAtom } from './agent'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -212,6 +214,19 @@ export const deleteNoteAtom = atom(null, async (get, set, path: string) => {
  * open tab and active doc follow the file to its new path — a missed tab points
  * at something that no longer exists.
  */
+/**
+ * "Ask Claude to reconcile" (FR-18). Re-materialise the conflict in the working
+ * tree (main re-runs the merge), then open the drawer and seed the agent's first
+ * turn with the conflicted paths. If the merge now applies cleanly (no paths),
+ * the banner is already cleared and there is nothing to hand the agent.
+ */
+export const reconcileAtom = atom(null, async (_get, set) => {
+  const { paths } = await trpc.sync.reconcile.mutate()
+  if (paths.length === 0) return
+  set(agentSeedPromptAtom, buildReconcilePrompt(paths))
+  set(agentPanelOpenAtom, true)
+})
+
 export const renameNoteAtom = atom(
   null,
   async (get, set, { from, to }: { from: string; to: string }) => {

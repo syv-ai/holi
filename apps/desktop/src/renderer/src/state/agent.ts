@@ -19,3 +19,8 @@ export const AGENT_STATUS_IDLE: AgentStatus = {
 
 export const agentPanelOpenAtom = atom(false)
 export const agentStatusAtom = atom<AgentStatus>(AGENT_STATUS_IDLE)
+
+/** A pending reconcile seed: set by the "Ask Claude to reconcile" button, it asks
+ *  AgentPanel to (re)start the session with this as its first message, then clears
+ *  itself. Null when there is no reconcile in flight. */
+export const agentSeedPromptAtom = atom<string | null>(null)

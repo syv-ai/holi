@@ -8,7 +8,7 @@ import {
   DEFAULT_AGENT_PANEL_WIDTH,
   MIN_AGENT_PANEL_WIDTH,
 } from '../lib/agent-panel-geometry'
-import { agentPanelOpenAtom, agentStatusAtom } from '../state/agent'
+import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '../state/agent'
 import { activeRemoteAtom } from '../state/vaults'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
@@ -35,7 +35,15 @@ export function AgentPanel() {
   // A vault's identity is its remote (D60); it is the id the manager matches
   // against `host.active().remote`.
   const activeRemote = useAtomValue(activeRemoteAtom)
+  const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
   const [width, setWidth] = useState(DEFAULT_AGENT_PANEL_WIDTH)
+  /** True once the xterm is built and painted, so the reconcile-seed effect knows
+   *  it can (re)start a session. A ref is not reactive — this state is. */
+  const [terminalReady, setTerminalReady] = useState(false)
+  /** Read by the open-effect's rAF so it skips its own auto-start when a reconcile
+   *  seed is pending (the seed effect owns that start). */
+  const seedPromptRef = useRef<string | null>(null)
+  seedPromptRef.current = seedPrompt
 
   const hostRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
@@ -97,6 +105,7 @@ export function AgentPanel() {
     term.open(host)
     termRef.current = term
     fitRef.current = fit
+    setTerminalReady(true) // the reconcile-seed effect waits on this
 
     const selection = term.onSelectionChange(() => {
       const selected = term.getSelection()
@@ -168,18 +177,19 @@ export function AgentPanel() {
   }, [setStatus])
 
   const startSession = useCallback(
-    async (resume: boolean) => {
+    async (resume: boolean, prompt?: string) => {
       const term = termRef.current
       if (!activeRemote || !term) return
       attachedRef.current = false
       // Spawn at the terminal's current (already-fitted) geometry, not a seed
       // size — Claude's TUI is then drawn at the pane's dimensions immediately,
-      // with no gutter and no resize-to-catch-up.
+      // with no gutter and no resize-to-catch-up. `prompt` seeds turn one (reconcile).
       const res = await window.holi.agent.start({
         vaultId: activeRemote,
         resume,
         cols: term.cols,
         rows: term.rows,
+        prompt,
       })
       if (!res.ok) {
         term.write(`\r\n\x1b[31m${res.message}\x1b[0m\r\n`)
@@ -208,7 +218,10 @@ export function AgentPanel() {
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         syncSize()
-        if (!runningRef.current) {
+        if (seedPromptRef.current !== null) {
+          // A reconcile seed is pending — the seed effect owns the (re)start so
+          // the prompt lands on turn one. Don't race it with a bare session.
+        } else if (!runningRef.current) {
           void startSession(false)
         } else if (!attachedRef.current) {
           // a session that outlived this terminal (renderer reload) or was
@@ -222,6 +235,23 @@ export function AgentPanel() {
       }),
     )
   }, [open, initTerminal, startSession, syncSize])
+
+  // Reconcile: the "Ask Claude to reconcile" button set a seed prompt (and opened
+  // the drawer). Once the terminal is built, (re)start the session so the merge
+  // instruction is turn one — restarting even if one is already running, because
+  // the seed cannot be injected into a session mid-conversation. Then clear it.
+  useEffect(() => {
+    if (seedPrompt === null || !terminalReady) return
+    const term = termRef.current
+    if (!term) return
+    void (async () => {
+      if (runningRef.current) await window.holi.agent.kill()
+      term.reset()
+      attachedRef.current = false
+      await startSession(false, seedPrompt)
+      setSeedPrompt(null)
+    })()
+  }, [seedPrompt, terminalReady, startSession, setSeedPrompt])
 
   const onDragStart = (e: MouseEvent) => {
     e.preventDefault()

@@ -41,7 +41,7 @@ import {
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
-import { activeRemoteAtom, openVaultAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
+import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
 
@@ -56,6 +56,7 @@ export function Shell() {
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const reconcile = useSetAtom(reconcileAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
@@ -268,6 +269,15 @@ export function Shell() {
       <footer className="flex items-center justify-between gap-3 border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">
         <div className="flex min-w-0 items-center gap-2">
           <span className={`truncate ${TONE[label.tone]}`}>{label.text}</span>
+          {syncState.kind === 'conflict' && (
+            <button
+              className="shrink-0 rounded border border-amber-700/60 px-1.5 py-0.5 text-[11px] text-amber-300 hover:bg-amber-950/40"
+              title="Re-run the merge and hand the conflict to the vault assistant to resolve"
+              onClick={() => void reconcile()}
+            >
+              Ask Claude to reconcile
+            </button>
+          )}
         </div>
         <span className="shrink-0 truncate">
           {(activeRemote ?? 'no vault') + (session?.login ? ` · ${session.login}` : '')}
