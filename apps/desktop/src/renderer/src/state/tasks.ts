@@ -42,6 +42,11 @@ export const todayAtom = atom<string>(
 /** The task open in the detail view, by path. */
 export const selectedTaskPathAtom = atom<string | null>(null)
 
+/** Whether the ⌘T create-task dialog is open. A single global flag: the dialog is
+ * mounted once in the shell, the shortcut and the board's own entry points flip
+ * this rather than each owning a copy. */
+export const createTaskDialogOpenAtom = atom(false)
+
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.
 
@@ -110,6 +115,20 @@ export function laneOf(task: Task): string {
   return taskArea(task)
 }
 
+/** Every folder that exists in the vault, for the create-task dialog's folder
+ * picker — the ancestor folders of every file, unique and sorted, with the root
+ * excluded (it is offered separately as "(vault root)"). This lets a new task be
+ * filed into any existing folder without retyping, and — because a folder is a
+ * lane — into any existing lane. */
+export function taskCreateFolders(paths: Iterable<string>): string[] {
+  const folders = new Set<string>()
+  for (const path of paths) {
+    const parts = path.split('/')
+    for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join('/'))
+  }
+  return [...folders].sort((a, b) => a.localeCompare(b))
+}
+
 /** What a drop onto `(targetLane, targetStatus)` means for `task` — the branch a
  * card's drop takes, factored out of the board so it is pure and tested (a
  * diagonal is the subtle one: lane AND column change, and both must land as one
@@ -144,9 +163,10 @@ export const createTaskAtom = atom(
   null,
   async (get, set, input: { title: string; status: TaskStatus; folder: string }) => {
     const remote = get(activeRemoteAtom)
-    if (!remote) return
-    await trpc.tasks.create.mutate({ remote, ...input })
+    if (!remote) return null
+    const { path } = await trpc.tasks.create.mutate({ remote, ...input })
     await set(loadSnapshotAtom)
+    return path
   },
 )
 

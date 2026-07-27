@@ -7,6 +7,7 @@ import {
   laneLabel,
   laneOrder,
   matchesFilter,
+  taskCreateFolders,
 } from '../src/renderer/src/state/tasks'
 
 const TODAY = '2026-07-14'
@@ -96,6 +97,18 @@ describe('availableLabels', () => {
       task({ tags: ['ops'] }),
     ]
     expect(availableLabels(tasks, TODAY)).toEqual(['finance', 'ops', 'overdue', 'p1'])
+  })
+})
+
+describe('taskCreateFolders', () => {
+  it('lists every ancestor folder, unique and sorted, excluding the root', () => {
+    expect(
+      taskCreateFolders(['a.md', 'projects/q2/task.x.md', 'projects/b.md', 'personal/note.md']),
+    ).toEqual(['personal', 'projects', 'projects/q2'])
+  })
+
+  it('is empty when everything lives in the vault root', () => {
+    expect(taskCreateFolders(['a.md', 'task.b.md'])).toEqual([])
   })
 })
 
