@@ -66,7 +66,28 @@ Residue to retire when those land: the `[[task:<id>]]` chip grammar (`wiki-links
 
 ---
 
-## Number allocation — **next free is D63**
+## D63 — A task lane move is a note-style rename.
+
+**Context.** The board's drag semantics have two axes (`prd/tasks.md` §Board UX): vertical rewrites `status`, horizontal moves the card to another lane — and because a task's **path is its identity**, moving lanes moves the `task.<name>.md` file into the target folder, which must rewrite every inbound `[[wiki-link]]` in the same pass or it silently breaks them. The board shipped with only the vertical axis; a cross-lane cell refused the drop, citing "the link rewrite it does not have yet". But the rewrite pass already exists — `notes.rename` (`vault/rename.ts` → `renameNote`) does exactly one-file-move + inbound-`[[link]]`-rewrite, and the daily-note archive sweep already reuses it rather than forking a second path.
+
+**Decision.** Agreed with Nicolai 2026-07-27.
+
+1. **`tasks.move({ remote, path, folder, status? }) → Task` reuses `renameNote`.** A lane change *is* a rename, so it takes the same single link-rewriting pass notes own — no bespoke task-move path (the same discipline `daily-notes.md` §Archiving applied to the archive sweep).
+2. **The diagonal (lane + column in one gesture) lands as one write burst.** When a `status` rides along, it is written to the file **in place first**, then the single `renameNote` carries the final content to the destination — one route call, one autosave commit, so a card is never half-dropped. `status: done` routes through the existing `rollForward`, never a bare `done` write, so a recurring task advances instead of persisting done, exactly as the card checkbox does.
+3. **Identity slug is preserved, collisions refuse.** The destination keeps the dragged file's basename (not a re-slug of `title` — they are allowed to disagree, per §Open questions), and a destination that already exists throws `CONFLICT` (mirroring `notes.rename`) rather than silently suffixing, which would change an existing task's identity.
+4. **The board decides the branch with a pure `dropIntent` reducer** (`status` / `move` / `move`+status / `noop`), so the diagonal subtlety is tested in isolation rather than inline in the drop handler.
+
+**Why.** Path-as-identity already bought the link rewrite for notes; a task lane move is the same operation on a `task.*.md` file, so a second implementation would be duplicated machinery with its own divergence risk. Writing status-in-place-then-rename keeps the diagonal atomic without a transaction: the existing autosave debounce coalesces the burst into one commit, satisfying the PRD's "a drag is one commit" without new debounce code.
+
+**Rejected.** *A dedicated task-move helper that writes the destination directly* — re-implements `renameNote`'s backref-scan-and-rewrite loop for no gain, and drifts from it. *Auto-suffix on collision (like `freeTaskPath` does for create)* — create suffixes because a repeated title is normal; a move must not silently rename an existing task's identity. *Move then a separate status write for the diagonal* — two route calls risk two commits and a visibly half-dropped card.
+
+**Consolidates into** `prd/tasks.md` §Board UX (the horizontal/diagonal drag semantics are now built, not deferred).
+
+*This entry stays in the inbox until consolidated into the PRD.*
+
+---
+
+## Number allocation — **next free is D64**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
