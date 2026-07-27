@@ -55,7 +55,14 @@ export interface AgentManagerDeps {
 }
 
 export interface AgentManager {
-  start(args: { vaultId: string; resume?: boolean; cols?: number; rows?: number }): Promise<{ ok: true }>
+  start(args: {
+    vaultId: string
+    resume?: boolean
+    cols?: number
+    rows?: number
+    /** Seed the interactive session's first turn (the reconcile flow). */
+    prompt?: string
+  }): Promise<{ ok: true }>
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(): Promise<{ ok: true }>
@@ -153,6 +160,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     resume,
     cols,
     rows,
+    prompt,
   }: {
     vaultId: string
     resume?: boolean
@@ -160,6 +168,8 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
      *  no renderer) → node-pty and xterm use their own native 80×24. */
     cols?: number
     rows?: number
+    /** Seed the interactive session's first turn (the reconcile flow). */
+    prompt?: string
   }): Promise<{ ok: true }> {
     const vault = deps.host.active()
     if (!vault || vault.remote !== vaultId) {
@@ -192,7 +202,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     try {
       runtime.start({
         bin,
-        args: buildAgentArgs({ resume }), // no systemPrompt — pure Claude Code
+        args: buildAgentArgs({ resume, prompt }), // prompt seeds the reconcile turn; no systemPrompt
         cwd: workRoot,
         env: buildAgentEnv(process.env, {
           hookPort: deps.hookPort?.() ?? null,

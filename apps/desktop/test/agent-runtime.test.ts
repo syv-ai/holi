@@ -147,6 +147,12 @@ describe('buildAgentArgs', () => {
     expect(buildAgentArgs({ resume: true })).toEqual(['--resume'])
   })
 
+  it('appends a prompt as the last positional arg (seeds the interactive turn)', () => {
+    // `claude "<prompt>"` starts interactive and auto-submits it — the reconcile seed.
+    expect(buildAgentArgs({ prompt: 'resolve the merge' })).toEqual(['resolve the merge'])
+    expect(buildAgentArgs({})).toEqual([])
+  })
+
   it('never passes --dangerously-skip-permissions', () => {
     for (const resume of [true, false]) {
       expect(buildAgentArgs({ resume })).not.toContain('--dangerously-skip-permissions')

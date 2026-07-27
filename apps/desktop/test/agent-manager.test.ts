@@ -309,4 +309,10 @@ describe('AgentManager', () => {
     expect(spawn.opts.env.HOLI_HOOK_PORT).toBe('4242')
     expect(spawn.opts.env.HOLI_HOOK_TOKEN).toBe('tkn')
   })
+
+  it('seeds the session with a prompt (reconcile) as the last spawn arg', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT, prompt: 'resolve the merge conflict' })
+    expect(r.spawns[0]!.args).toContain('resolve the merge conflict')
+  })
 })

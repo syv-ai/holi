@@ -80,6 +80,10 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
 export interface AgentArgs {
   /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
   resume?: boolean
+  /** A first message to seed the interactive session with (the reconcile flow).
+   *  `claude "<prompt>"` starts interactive and auto-submits it as turn one — a
+   *  positional arg, NOT a system prompt and NOT a keystroke written into the TUI. */
+  prompt?: string
 }
 
 /**
@@ -91,8 +95,8 @@ export interface AgentArgs {
  * `--strict-mcp-config` would additionally suppress any the *vault* configures
  * natively in `.claude/`, which it is entitled to do.
  */
-export function buildAgentArgs({ resume }: AgentArgs = {}): string[] {
-  return resume ? ['--resume'] : []
+export function buildAgentArgs({ resume, prompt }: AgentArgs = {}): string[] {
+  return [...(resume ? ['--resume'] : []), ...(prompt ? [prompt] : [])]
 }
 
 /** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */
