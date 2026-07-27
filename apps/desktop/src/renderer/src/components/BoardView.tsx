@@ -3,11 +3,10 @@
  * One layout. Todo / Doing / Done, fixed; one swim lane per folder, because the
  * folder IS the lane. A cell is `(column, lane)`.
  *
- * **Only the vertical axis is a write.** Dragging between columns rewrites
- * `status`; dragging between lanes would move the file, and a move has to
- * rewrite every inbound `[[wiki-link]]` in the same pass or it silently breaks
- * them. Until that pass exists, a cross-lane cell simply is not a drop target —
- * the drag shows "no drop" rather than half-applying.
+ * **Both axes are writes.** Dragging between columns rewrites `status`; dragging
+ * between lanes moves the file into that folder and rewrites every inbound
+ * `[[wiki-link]]` in the same pass (`tasks.move`); a diagonal does both as one
+ * action. The branch is decided by `dropIntent`.
  *
  * There is no "N excluded" count anywhere, because nothing is hidden into
  * unselected buckets. The empty state distinguishes "no tasks" from "nothing
@@ -24,11 +23,13 @@ import {
   brokenTasksAtom,
   completeTaskAtom,
   createTaskAtom,
+  dropIntent,
   filterAtom,
   laneLabel,
   laneOf,
   laneOrder,
   matchesFilter,
+  moveTaskAtom,
   selectedTaskPathAtom,
   setTaskStatusAtom,
   tasksAtom,
@@ -50,13 +51,7 @@ const CHIP: Record<string, string> = {
   p3: 'bg-neutral-800 text-neutral-400 border-neutral-700',
 }
 
-function Card({
-  task,
-  onDragStart,
-}: {
-  task: Task
-  onDragStart: (task: Task) => void
-}): React.JSX.Element {
+function Card({ task }: { task: Task }): React.JSX.Element {
   const today = useAtomValue(todayAtom)
   const complete = useSetAtom(completeTaskAtom)
   const select = useSetAtom(selectedTaskPathAtom)
@@ -67,14 +62,11 @@ function Card({
     <div
       draggable
       data-task={task.path}
-      // The dragged path rides the drag itself, not React state. State would mean the
-      // drop handler only learns what is being dragged once a re-render has happened
-      // between the two events. dataTransfer IS the payload. (The lane goes through
-      // state as well as here, because dataTransfer is unreadable during dragover and
-      // that is where lane validity has to be decided.)
+      // The dragged path rides the drag itself, not React state: the drop handler
+      // looks the task up by path (its lane and status), so dataTransfer is the
+      // whole payload — no companion state to keep in sync.
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', task.path)
-        onDragStart(task)
       }}
       onClick={() => select(task.path)}
       className="cursor-grab rounded-md border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-100 shadow-sm hover:border-neutral-600 active:cursor-grabbing"
@@ -190,12 +182,9 @@ export function BoardView(): React.JSX.Element {
 function Grid(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
   const setStatus = useSetAtom(setTaskStatusAtom)
+  const move = useSetAtom(moveTaskAtom)
   const filter = useAtomValue(filterAtom)
   const today = useAtomValue(todayAtom)
-
-  // The lane the in-flight drag started in. dataTransfer cannot be read during
-  // dragover, and that is where a cross-lane cell has to refuse the drop.
-  const [dragLane, setDragLane] = useState<string | null>(null)
 
   const everything = [...tasks.values()]
   const all = everything.filter((t) => matchesFilter(t, filter, today))
@@ -209,15 +198,20 @@ function Grid(): React.JSX.Element {
   const cell = (lane: string, status: TaskStatus) =>
     all.filter((t) => t.status === status && laneOf(t) === lane)
 
+  // Both axes are live now: a same-lane drop rewrites status, a cross-lane drop
+  // moves the file (+ link rewrite), and a diagonal does both in one call. The
+  // dragged task is looked up by path, so the drop knows its current lane/status.
   const drop = (e: React.DragEvent, lane: string, status: TaskStatus) => {
-    setDragLane(null)
     const path = e.dataTransfer.getData('text/plain')
-    if (!path || laneOf({ path } as Task) !== lane) return
-    void setStatus(path, status)
+    const task = tasks.get(path)
+    if (!task) return
+    const intent = dropIntent(task, lane, status)
+    if (intent.kind === 'status') void setStatus(path, intent.status)
+    else if (intent.kind === 'move') void move(path, intent.folder, intent.status)
   }
 
   return (
-    <div className="flex-1 overflow-auto p-3" onDragEnd={() => setDragLane(null)}>
+    <div className="flex-1 overflow-auto p-3">
       <div className="grid gap-2" style={{ gridTemplateColumns }}>
         <div />
         {columns.map((c) => (
@@ -231,27 +225,21 @@ function Grid(): React.JSX.Element {
             <div className="truncate pt-2 text-xs font-medium text-neutral-400" title={laneLabel(lane)}>
               {laneLabel(lane)}
             </div>
-            {columns.map((c) => {
-              // Only the lane the drag started in accepts it: the horizontal axis is
-              // a file move, and that needs the link rewrite it does not have yet.
-              const accepts = dragLane === null || dragLane === lane
-              return (
-                <div
-                  key={c.status}
-                  data-cell={`${c.status}:${lane}`}
-                  onDragOver={(e) => accepts && e.preventDefault()}
-                  onDrop={(e) => drop(e, lane, c.status)}
-                  className={`min-h-16 space-y-1.5 rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5 ${
-                    accepts ? '' : 'opacity-40'
-                  }`}
-                >
-                  {cell(lane, c.status).map((t) => (
-                    <Card key={t.path} task={t} onDragStart={(d) => setDragLane(laneOf(d))} />
-                  ))}
-                  <QuickAdd status={c.status} folder={lane} />
-                </div>
-              )
-            })}
+            {columns.map((c) => (
+              // Every cell is a drop target: both axes are real writes now.
+              <div
+                key={c.status}
+                data-cell={`${c.status}:${lane}`}
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => drop(e, lane, c.status)}
+                className="min-h-16 space-y-1.5 rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5"
+              >
+                {cell(lane, c.status).map((t) => (
+                  <Card key={t.path} task={t} />
+                ))}
+                <QuickAdd status={c.status} folder={lane} />
+              </div>
+            ))}
           </div>
         ))}
       </div>
