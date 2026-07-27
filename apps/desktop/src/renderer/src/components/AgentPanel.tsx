@@ -254,6 +254,9 @@ export function AgentPanel() {
     : status.running
       ? 'bg-green-500'
       : 'bg-neutral-600'
+  // Spell out what the dot means — green alone is ambiguous. Driven by the
+  // hook-server turn signal now (reliable), so the word is back.
+  const state = status.working ? 'working…' : status.running ? 'running' : 'idle'
   const stateTitle = status.working
     ? 'Claude is working on your turn'
     : status.running
@@ -273,6 +276,9 @@ export function AgentPanel() {
       <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
         <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} title={stateTitle} />
         <span className="text-neutral-300">Claude</span>
+        <span className="text-neutral-500" title={stateTitle}>
+          {state}
+        </span>
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}
