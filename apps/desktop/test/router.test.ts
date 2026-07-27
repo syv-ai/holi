@@ -949,8 +949,10 @@ describe('vaults.add', () => {
     const snap = await caller.vaults.add({ remote: 'syv-ai/notes', url: origin })
 
     // The repo's own content plus the managed files, because seeding happens on
-    // the way in rather than at some later activation.
+    // the way in rather than at some later activation. The seeded md-to-pdf skill
+    // is markdown under .claude/, so — like every managed .md — it scans as a note.
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
+      '.claude/skills/md-to-pdf/SKILL.md',
       'AGENTS.md',
       'CLAUDE.md',
       'MEMORY.md',
