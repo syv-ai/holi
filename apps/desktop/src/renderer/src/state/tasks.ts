@@ -176,14 +176,27 @@ export const completeTaskAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-/** Moves a card between columns. The horizontal axis — moving a card to another
- * lane — is deliberately NOT here: it moves the file, which must rewrite inbound
- * wiki-links in the same pass, and shipping the move half alone would silently
- * break every link that pointed at the task. */
+/** Moves a card between columns — the vertical axis. The horizontal axis (moving
+ * a card to another lane) lives in `moveTaskAtom`, because it moves the file and
+ * must rewrite inbound wiki-links in the same pass. */
 export const setTaskStatusAtom = atom(null, async (get, set, path: string, status: TaskStatus) => {
   if (status === 'done') return set(completeTaskAtom, path)
   return set(patchTaskAtom, path, { status })
 })
+
+/** The horizontal axis: moves a card to another lane, which moves the file into
+ * that folder and rewrites inbound wiki-links in one pass (`tasks.move`). A
+ * `status` rides along for a diagonal drop, so lane + column land as one call —
+ * one write burst, one autosave commit, never a half-dropped card. */
+export const moveTaskAtom = atom(
+  null,
+  async (get, set, path: string, folder: string, status?: TaskStatus) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return
+    await trpc.tasks.move.mutate({ remote, path, folder, status })
+    await set(loadSnapshotAtom)
+  },
+)
 
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
