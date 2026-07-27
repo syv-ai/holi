@@ -566,6 +566,45 @@ describe('tasks.move', () => {
     )
   })
 
+  it('diagonal drop: moves lane AND rewrites status in one call', async () => {
+    const { caller } = await rig({
+      'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
+    })
+    const task = await caller.tasks.move({
+      remote: REMOTE,
+      path: 'task.foo.md',
+      folder: 'personal',
+      status: 'doing',
+    })
+    expect(task.path).toBe('personal/task.foo.md')
+    expect(task.status).toBe('doing')
+    await expect(caller.notes.read({ remote: REMOTE, path: 'task.foo.md' })).rejects.toThrow()
+  })
+
+  it('diagonal into Done rolls a recurring task forward, not persists done', async () => {
+    // Done routes through the single roll-forward path even on a lane move: the
+    // task advances to its next occurrence and returns to Todo, at the new path.
+    const { caller } = await rig({
+      'task.standup.md': [
+        '---',
+        'title: Standup',
+        'status: doing',
+        'due: 2026-07-20',
+        'recurrence: { frequency: weekly, interval: 1 }',
+        '---',
+      ].join('\n'),
+    })
+    const task = await caller.tasks.move({
+      remote: REMOTE,
+      path: 'task.standup.md',
+      folder: 'archive',
+      status: 'done',
+    })
+    expect(task.path).toBe('archive/task.standup.md')
+    expect(task.status).toBe('todo')
+    expect(task.due).toBe('2026-07-27')
+  })
+
   it('refuses to clobber a task already in the target lane', async () => {
     const { caller } = await rig({
       'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
