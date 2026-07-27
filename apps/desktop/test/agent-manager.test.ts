@@ -46,6 +46,8 @@ interface Rig {
   spawns: Array<{ file: string; args: string[]; opts: { cwd: string; env: Record<string, string> } }>
   host: { setActive(v: string | null): void }
   pty(): FakePty
+  paused: string[]
+  resumes(): number
 }
 
 const cleanups: Array<() => Promise<void>> = []
@@ -53,7 +55,7 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn()
 })
 
-async function rig(opts: { bin?: string | null; active?: string | null } = {}): Promise<Rig> {
+async function rig(opts: { bin?: string | null; active?: string | null; turnSafetyMs?: number } = {}): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
   const workRoot = join(dir, 'work')
   await mkdir(workRoot, { recursive: true })
@@ -63,10 +65,21 @@ async function rig(opts: { bin?: string | null; active?: string | null } = {}): 
   const spawns: Rig['spawns'] = []
   const ptys: FakePty[] = []
 
+  const paused: string[] = []
+  let resumes = 0
   let activeRemote: string | null = opts.active === undefined ? VAULT : opts.active
   const host = {
     active: (): ActiveVault | null =>
-      activeRemote === null ? null : ({ remote: activeRemote, root: workRoot } as unknown as ActiveVault),
+      activeRemote === null
+        ? null
+        : ({
+            remote: activeRemote,
+            root: workRoot,
+            pause: (reason: string) => paused.push(reason),
+            resume: () => {
+              resumes += 1
+            },
+          } as unknown as ActiveVault),
     open: async () => {
       throw new Error('not used in these tests')
     },
@@ -86,6 +99,9 @@ async function rig(opts: { bin?: string | null; active?: string | null } = {}): 
     },
     resolveBin: () => (opts.bin === undefined ? '/bin/fake-claude' : opts.bin),
     killGraceMs: 20,
+    hookPort: () => 4242,
+    hookToken: () => 'tkn',
+    turnSafetyMs: opts.turnSafetyMs,
     log: () => {},
   })
 
@@ -94,7 +110,16 @@ async function rig(opts: { bin?: string | null; active?: string | null } = {}): 
     await rm(dir, { recursive: true, force: true })
   })
 
-  return { manager, workRoot, sent, spawns, host, pty: () => ptys.at(-1)! }
+  return {
+    manager,
+    workRoot,
+    sent,
+    spawns,
+    host,
+    pty: () => ptys.at(-1)!,
+    paused,
+    resumes: () => resumes,
+  }
 }
 
 describe('AgentManager', () => {
@@ -224,5 +249,64 @@ describe('AgentManager', () => {
     await expect(r.manager.start({ vaultId: 'someone/else' })).rejects.toThrow(/not active/)
     r.host.setActive(null)
     await expect(r.manager.start({ vaultId: VAULT })).rejects.toThrow(/not active/)
+  })
+
+  it('setTurnActive pauses the vault on turn start and resumes on turn end', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+
+    r.manager.setTurnActive(true)
+    expect(r.manager.status().working).toBe(true)
+    expect(r.paused.length).toBe(1)
+    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.working).toBe(true)
+
+    r.manager.setTurnActive(false)
+    expect(r.manager.status().working).toBe(false)
+    expect(r.resumes()).toBe(1)
+  })
+
+  it('setTurnActive is idempotent — a repeated start pauses only once', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    r.manager.setTurnActive(true)
+    r.manager.setTurnActive(true)
+    expect(r.paused.length).toBe(1)
+  })
+
+  it('force-resumes at the safety cap when a turn never ends (Stop not guaranteed)', async () => {
+    const r = await rig({ turnSafetyMs: 30 })
+    await r.manager.start({ vaultId: VAULT })
+    r.manager.setTurnActive(true)
+    expect(r.manager.status().working).toBe(true)
+
+    await new Promise((res) => setTimeout(res, 60))
+    expect(r.manager.status().working).toBe(false)
+    expect(r.resumes()).toBeGreaterThan(0)
+  })
+
+  it('setTurnActive is a no-op with no live session — a stray hook cannot pause a vault', async () => {
+    const r = await rig()
+    r.manager.setTurnActive(true)
+    expect(r.paused.length).toBe(0)
+    expect(r.manager.status().working).toBe(false)
+  })
+
+  it('resumes the vault if the session dies mid-turn — never strand a paused vault', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    r.manager.setTurnActive(true)
+    const before = r.resumes()
+
+    await r.manager.kill()
+    expect(r.manager.status().working).toBe(false)
+    expect(r.resumes()).toBe(before + 1)
+  })
+
+  it('spawns the child with the hook port and token in its env', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    const spawn = r.spawns[0]!
+    expect(spawn.opts.env.HOLI_HOOK_PORT).toBe('4242')
+    expect(spawn.opts.env.HOLI_HOOK_TOKEN).toBe('tkn')
   })
 })

@@ -28,8 +28,8 @@ import { TerminalMirror } from './terminal-mirror'
 
 export interface AgentStatus {
   running: boolean
-  /** A turn is open — Claude is mid-edit. Wired from PTY activity in slice 2
-   *  (git coexistence); false for now. */
+  /** A turn is open — Claude is mid-turn. Driven by the hook server's turn
+   *  bracket (UserPromptSubmit → true, Stop → false), NOT by parsing PTY output. */
   working: boolean
   /** Synced agent config changed under a live session. Its D60 detection source
    *  was deleted; a "restart to pick up config" nudge is a PRD open question, so
@@ -44,6 +44,13 @@ export interface AgentManagerDeps {
   spawnPty?: SpawnPty
   resolveBin?: () => string | null
   killGraceMs?: number
+  /** The live hook-server port/token, injected into the child so its seeded
+   *  curl hooks can reach us. Read per-spawn (the server outlives sessions). */
+  hookPort?: () => number | null
+  hookToken?: () => string | null
+  /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
+   *  Default 600000 (10 min). */
+  turnSafetyMs?: number
   log?: (msg: string) => void
 }
 
@@ -55,6 +62,9 @@ export interface AgentManager {
   /** Renderer (re)attach: replayable terminal state, and open the data tap. */
   attach(): Promise<string>
   setFocus(focus: FocusInput): void
+  /** Turn bracket from the hook server: true on UserPromptSubmit, false on Stop.
+   *  Drives the vault pause/resume and status().working. No-op with no session. */
+  setTurnActive(active: boolean): void
   status(): AgentStatus
   dispose(): Promise<void>
 }
@@ -76,24 +86,63 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
    * and nothing arrives twice on attach. */
   let attached = false
 
+  const turnSafetyMs = deps.turnSafetyMs ?? 600_000
+  let working = false
+  let safetyTimer: ReturnType<typeof setTimeout> | null = null
+  const clearSafety = () => {
+    if (safetyTimer) {
+      clearTimeout(safetyTimer)
+      safetyTimer = null
+    }
+  }
+
   const send = (channel: string, payload: unknown) => {
     deps.getWindow()?.webContents.send(channel, payload)
   }
 
   const status = (): AgentStatus => ({
     running: session !== null,
-    working: false,
+    working,
     configStale: false,
     authenticated: isClaudeAuthenticated(),
   })
 
   const pushStatus = () => send('agent:status', status())
 
+  /**
+   * Turn bracket from the hook server (UserPromptSubmit → true, Stop → false).
+   * Suspends the vault's sync loop for the turn so the two git actors never
+   * contend on `.git/index.lock`, and resumes it (a catch-up commit + pull) when
+   * the turn ends. This is the hook-driven signal that replaced slice 2's
+   * reverted PTY-activity heuristic — see the git-coexistence plan.
+   */
+  function setTurnActive(active: boolean): void {
+    if (session === null) return // a stray/late hook must not pause an agent-less vault
+    if (active === working) return
+    working = active
+    if (active) {
+      deps.host.active()?.pause('the assistant is working')
+      // Stop is not guaranteed (interrupt/crash) — cap the pause so a turn that
+      // never signals its end can't strand the vault paused.
+      clearSafety()
+      safetyTimer = setTimeout(() => setTurnActive(false), turnSafetyMs)
+    } else {
+      clearSafety()
+      deps.host.active()?.resume()
+    }
+    pushStatus()
+  }
+
   async function teardown(): Promise<void> {
     const current = session
     if (!current) return
     session = null // guard the double-stop: the PTY exit path tears down too
     attached = false
+    clearSafety()
+    if (working) {
+      working = false
+      deps.host.active()?.resume() // never leave the vault paused behind a dead session
+    }
     current.snapshot.stop()
     await current.runtime.kill()
     current.mirror.dispose()
@@ -145,7 +194,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         bin,
         args: buildAgentArgs({ resume }), // no systemPrompt — pure Claude Code
         cwd: workRoot,
-        env: buildAgentEnv(process.env),
+        env: buildAgentEnv(process.env, {
+          hookPort: deps.hookPort?.() ?? null,
+          hookToken: deps.hookToken?.() ?? null,
+        }),
         cols,
         rows,
       })
@@ -189,6 +241,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // Focus is session-bound: the hook only matters while a session runs, and the
     // writer targets the session's clone. Before a session starts this no-ops.
     setFocus: (focus) => session?.snapshot.setFocus(focus),
+    setTurnActive,
     status,
     dispose: async () => {
       await teardown()
