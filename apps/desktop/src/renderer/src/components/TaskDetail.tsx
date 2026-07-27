@@ -40,7 +40,13 @@ import {
 } from '../state/tasks'
 import { snapshotAtom } from '../state/vaults'
 
-function Row({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
+export function Row({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}): React.JSX.Element {
   return (
     <label className="flex items-center gap-2 text-xs">
       <span className="w-20 shrink-0 text-neutral-500">{label}</span>
@@ -49,7 +55,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
   )
 }
 
-const input =
+export const taskFieldInput =
   'min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs focus:border-neutral-700 focus:outline-none'
 
 export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
@@ -122,7 +128,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
             if (next === 'done') void complete(task.path)
             else save({ status: next })
           }}
-          className={input}
+          className={taskFieldInput}
         >
           <option value="todo">todo</option>
           <option value="doing">doing</option>
@@ -136,7 +142,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           value={task.due ?? ''}
           data-detail-due
           onChange={(e) => save({ due: e.target.value === '' ? null : e.target.value })}
-          className={input}
+          className={taskFieldInput}
         />
       </Row>
 
@@ -147,7 +153,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           onChange={(e) =>
             save({ priority: e.target.value === '' ? null : (e.target.value as Priority) })
           }
-          className={input}
+          className={taskFieldInput}
         >
           <option value="">—</option>
           <option value="high">high</option>
@@ -173,7 +179,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
                 .filter(Boolean),
             })
           }
-          className={input}
+          className={taskFieldInput}
         />
       </Row>
 
@@ -188,7 +194,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           onBlur={(e) =>
             save({ reminder: e.target.value.trim() === '' ? null : e.target.value.trim() })
           }
-          className={input}
+          className={taskFieldInput}
         />
       </Row>
 
@@ -304,7 +310,7 @@ const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat',
  * Roll-forward happens on complete (`nextDueCatchup`, in the router), so nothing here
  * computes a date; this only states the rule.
  */
-function RecurrenceRows({
+export function RecurrenceRows({
   task,
   save,
 }: {
@@ -330,7 +336,7 @@ function RecurrenceRows({
               ? setRule(null)
               : setRule({ frequency: e.target.value as RecurrenceFrequency })
           }
-          className={input}
+          className={taskFieldInput}
         >
           <option value="">never</option>
           <option value="daily">daily</option>
@@ -349,7 +355,7 @@ function RecurrenceRows({
               value={rule.interval}
               data-detail-interval
               onChange={(e) => setRule({ interval: Math.max(1, Number(e.target.value) || 1) })}
-              className={input}
+              className={taskFieldInput}
             />
             <span className="shrink-0 text-neutral-500">
               {
@@ -402,7 +408,7 @@ function RecurrenceRows({
               onChange={(e) =>
                 setRule({ endDate: e.target.value === '' ? undefined : e.target.value })
               }
-              className={input}
+              className={taskFieldInput}
             />
           </Row>
 
