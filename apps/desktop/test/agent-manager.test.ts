@@ -48,6 +48,7 @@ interface Rig {
   pty(): FakePty
   paused: string[]
   resumes(): number
+  warmed(): number
 }
 
 const cleanups: Array<() => Promise<void>> = []
@@ -67,6 +68,7 @@ async function rig(opts: { bin?: string | null; active?: string | null; turnSafe
 
   const paused: string[] = []
   let resumes = 0
+  let warmed = 0
   let activeRemote: string | null = opts.active === undefined ? VAULT : opts.active
   const host = {
     active: (): ActiveVault | null =>
@@ -102,6 +104,10 @@ async function rig(opts: { bin?: string | null; active?: string | null; turnSafe
     hookPort: () => 4242,
     hookToken: () => 'tkn',
     turnSafetyMs: opts.turnSafetyMs,
+    resolveTypstBin: () => Promise.resolve('/fake/typst'),
+    warmTypst: () => {
+      warmed += 1
+    },
     log: () => {},
   })
 
@@ -119,6 +125,7 @@ async function rig(opts: { bin?: string | null; active?: string | null; turnSafe
     pty: () => ptys.at(-1)!,
     paused,
     resumes: () => resumes,
+    warmed: () => warmed,
   }
 }
 
@@ -314,5 +321,12 @@ describe('AgentManager', () => {
     const r = await rig()
     await r.manager.start({ vaultId: VAULT, prompt: 'resolve the merge conflict' })
     expect(r.spawns[0]!.args).toContain('resolve the merge conflict')
+  })
+
+  it('puts the resolved typst path in the child env and warms the cache', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    expect(r.spawns[0]!.opts.env.TYPST_BIN).toBe('/fake/typst')
+    expect(r.warmed()).toBe(1)
   })
 })

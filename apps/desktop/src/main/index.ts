@@ -27,6 +27,7 @@ import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { createHookServer } from './agent/hook-server'
+import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
 // Declared before the launch check below, which starts `main()` synchronously:
@@ -129,6 +130,9 @@ async function main(): Promise<void> {
     }
   })
 
+  // Shared by the UI's Convert-to-PDF router and the agent's $TYPST_BIN.
+  const typstCacheDir = join(app.getPath('userData'), 'typst')
+
   const router = createRouter({
     registry,
     session,
@@ -139,7 +143,7 @@ async function main(): Promise<void> {
       await shell.openExternal(url)
     },
     downloadsDir: app.getPath('downloads'),
-    typstCacheDir: join(app.getPath('userData'), 'typst'),
+    typstCacheDir,
   })
 
   registerIpc({ router })
@@ -162,6 +166,12 @@ async function main(): Promise<void> {
     getWindow: () => mainWindow,
     hookPort: () => hookServer.port(),
     hookToken: () => hookServer.token(),
+    // $TYPST_BIN for the md-to-pdf skill: find-only for the env, download-warm
+    // fire-and-forget so a machine that never rendered has typst next time.
+    resolveTypstBin: () => resolveTypstBin({ cacheDir: typstCacheDir }),
+    warmTypst: () => {
+      void ensureTypst({ cacheDir: typstCacheDir })
+    },
   })
   registerAgentIpc({ agent })
 

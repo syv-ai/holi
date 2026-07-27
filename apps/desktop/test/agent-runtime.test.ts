@@ -123,6 +123,12 @@ describe('buildAgentEnv', () => {
     expect(env.HOLI_HOOK_PORT).toBeUndefined()
     expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
   })
+
+  it('sets TYPST_BIN when the typst path is given, omits it otherwise', () => {
+    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: '/opt/typst' }).TYPST_BIN).toBe('/opt/typst')
+    expect(buildAgentEnv({ PATH: '/usr/bin' }).TYPST_BIN).toBeUndefined()
+    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: null }).TYPST_BIN).toBeUndefined()
+  })
 })
 
 describe('buildAgentArgs', () => {

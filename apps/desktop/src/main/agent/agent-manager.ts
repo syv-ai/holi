@@ -51,6 +51,12 @@ export interface AgentManagerDeps {
   /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
    *  Default 600000 (10 min). */
   turnSafetyMs?: number
+  /** Find-only typst path for the child's `$TYPST_BIN` (the md-to-pdf skill).
+   *  No download — the resolver only looks. Null when typst isn't installed. */
+  resolveTypstBin?: () => Promise<string | null>
+  /** Fire-and-forget: cache typst for next time if the machine has never
+   *  rendered. Never awaited — the download must not block the spawn path. */
+  warmTypst?: () => void
   log?: (msg: string) => void
 }
 
@@ -184,6 +190,11 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     }
 
     const workRoot = vault.root
+    // Find-only ($TYPST_BIN for the md-to-pdf skill) — a fast `which`, never a
+    // download. Then warm the cache fire-and-forget so a machine that has never
+    // rendered has typst next time; the download must never block this spawn.
+    const typstBin = (await deps.resolveTypstBin?.()) ?? null
+    deps.warmTypst?.()
     // Born at the caller's geometry: the mirror and the PTY share it, so the
     // replayed state and Claude's own TUI both match the pane.
     const terminal = new TerminalMirror(cols, rows)
@@ -207,6 +218,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         env: buildAgentEnv(process.env, {
           hookPort: deps.hookPort?.() ?? null,
           hookToken: deps.hookToken?.() ?? null,
+          typstBin,
         }),
         cols,
         rows,

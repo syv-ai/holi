@@ -57,6 +57,9 @@ export interface AgentEnvOpts {
    *  it live from `$HOLI_HOOK_PORT`; null/omitted leaves the child hook-less. */
   hookPort?: number | null
   hookToken?: string | null
+  /** The resolved typst binary (find-only). Set as `$TYPST_BIN` so the seeded
+   *  md-to-pdf skill can render with the same engine the UI's Convert uses. */
+  typstBin?: string | null
 }
 
 export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
@@ -74,6 +77,7 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   delete env.HOLI_HOOK_TOKEN
   if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
   if (opts.hookToken) env.HOLI_HOOK_TOKEN = opts.hookToken
+  if (opts.typstBin) env.TYPST_BIN = opts.typstBin
   return env
 }
 
