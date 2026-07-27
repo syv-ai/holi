@@ -8,6 +8,8 @@ interface TemplateOption {
   slug: string
   description: string
   fields: TemplateField[]
+  /** What parseFields had to degrade in this template's manifest. */
+  warnings: string[]
 }
 
 /**
@@ -141,6 +143,17 @@ export function ConvertToPdfDialog({
               ))}
             </select>
           </label>
+        )}
+
+        {selected !== null && selected.warnings.length > 0 && (
+          <div className="mb-3 rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-xs text-amber-100">
+            <p className="mb-1 font-medium">This template's manifest had issues (using safe defaults):</p>
+            <ul className="list-disc space-y-0.5 pl-4">
+              {selected.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {selected !== null &&
