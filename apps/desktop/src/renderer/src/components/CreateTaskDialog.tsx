@@ -1,6 +1,6 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   type CreateTaskMode,
   ROOT_LANE,
@@ -11,7 +11,7 @@ import {
 } from '../state/tasks'
 import { openTaskAtom } from '../state/view'
 import { activeDocAtom, snapshotAtom } from '../state/vaults'
-import { Row, RecurrenceRows, taskFieldInput } from './TaskDetail'
+import { Row, RecurrenceRows, TaskDescriptionEditor, taskFieldInput } from './TaskDetail'
 
 /** The folder a path sits in ('' for the vault root). */
 function folderOf(path: string): string {
@@ -67,6 +67,10 @@ export function CreateTaskDialog({
   const [status, setStatus] = useState<TaskStatus>('todo')
   const [draft, setDraft] = useState<Draft>({ tags: [] })
   const [busy, setBusy] = useState(false)
+  // The body rides a ref, not state: the editor is mount-once (its own CodeMirror
+  // doc is the source of truth), and re-rendering the dialog on every keystroke
+  // would be churn for a value only read at submit.
+  const bodyRef = useRef('')
 
   const folders = useMemo(
     () =>
@@ -118,6 +122,7 @@ export function CreateTaskDialog({
       if (draft.tags.length) extra.tags = draft.tags
       if (draft.reminder) extra.reminder = draft.reminder
       if (draft.recurrence) extra.recurrence = draft.recurrence
+      if (bodyRef.current.trim() !== '') extra.description = bodyRef.current
       if (Object.keys(extra).length > 0) await patch(path, extra)
     }
     // `full` drops you into the detail editor on the board (for the body); `quick`
@@ -268,6 +273,17 @@ export function CreateTaskDialog({
             </Row>
 
             <RecurrenceRows task={draftTask} save={draftSave} />
+
+            <div className="mt-1">
+              <span className="mb-1 block text-xs text-neutral-500">description</span>
+              <TaskDescriptionEditor
+                notePath=""
+                initial=""
+                onChange={(v) => {
+                  bodyRef.current = v
+                }}
+              />
+            </div>
           </div>
         )}
 

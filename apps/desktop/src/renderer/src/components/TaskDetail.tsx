@@ -231,7 +231,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
  * is last-write-wins with no version, so external edits are not streamed into an
  * open editor — switching tasks remounts with fresh text.
  */
-function TaskDescriptionEditor({
+export function TaskDescriptionEditor({
   notePath,
   initial,
   onChange,
