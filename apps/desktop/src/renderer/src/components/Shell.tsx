@@ -42,7 +42,7 @@ import {
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
-import { createTaskDialogOpenAtom } from '../state/tasks'
+import { createTaskDialogAtom } from '../state/tasks'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
@@ -58,7 +58,7 @@ export function Shell() {
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
-  const [createTaskOpen, setCreateTaskOpen] = useAtom(createTaskDialogOpenAtom)
+  const [createTaskMode, setCreateTaskMode] = useAtom(createTaskDialogAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
@@ -109,18 +109,18 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [setAgentOpen])
 
-  // ⌘T opens the create-task dialog — a task can be filed into any folder,
-  // including one that is not yet a lane (which board quick-add cannot reach).
+  // Create a task in any folder (including one that is not yet a lane, which board
+  // quick-add cannot reach). ⌘T captures quickly and stays put; ⌘⇧T captures and
+  // opens the detail editor to fill in the rest.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 't') {
-        e.preventDefault()
-        setCreateTaskOpen(true)
-      }
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 't') return
+      e.preventDefault()
+      setCreateTaskMode(e.shiftKey ? 'full' : 'quick')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [setCreateTaskOpen])
+  }, [setCreateTaskMode])
 
   const tab = activeTab(workspace)
   const pane = workspace.panes[workspace.active]!
@@ -268,7 +268,9 @@ export function Shell() {
         <AgentPanel />
 
         {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
-        {createTaskOpen && <CreateTaskDialog onClose={() => setCreateTaskOpen(false)} />}
+        {createTaskMode && (
+          <CreateTaskDialog mode={createTaskMode} onClose={() => setCreateTaskMode(null)} />
+        )}
       </div>
 
       {/* The reconcile banner sits above the footer, beside the sync state it

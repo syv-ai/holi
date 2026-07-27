@@ -42,10 +42,12 @@ export const todayAtom = atom<string>(
 /** The task open in the detail view, by path. */
 export const selectedTaskPathAtom = atom<string | null>(null)
 
-/** Whether the ⌘T create-task dialog is open. A single global flag: the dialog is
- * mounted once in the shell, the shortcut and the board's own entry points flip
- * this rather than each owning a copy. */
-export const createTaskDialogOpenAtom = atom(false)
+/** The create-task dialog's mode, or `null` when closed. `quick` (⌘T) captures a
+ * task and stays where you are; `full` (⌘⇧T) captures it and drops you into the
+ * detail editor to flesh it out. A single global atom: the dialog is mounted once
+ * in the shell, and each entry point sets the mode rather than owning a copy. */
+export type CreateTaskMode = 'quick' | 'full'
+export const createTaskDialogAtom = atom<CreateTaskMode | null>(null)
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.
