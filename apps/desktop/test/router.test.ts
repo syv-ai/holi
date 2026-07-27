@@ -542,6 +542,41 @@ describe('tasks.complete', () => {
   })
 })
 
+describe('tasks.move', () => {
+  it('moves the file to the target lane and rewrites inbound links, status unchanged', async () => {
+    const { caller, root } = await rig({
+      'projects/q2/task.fix-login.md': '---\ntitle: Fix login\nstatus: todo\n---\n',
+      'meetings/note.md': 'blocking [[projects/q2/task.fix-login.md]] until fixed',
+    })
+    const task = await caller.tasks.move({
+      remote: REMOTE,
+      path: 'projects/q2/task.fix-login.md',
+      folder: 'personal',
+    })
+
+    // The identity slug is preserved — the basename rides along, not a re-slug of title.
+    expect(task.path).toBe('personal/task.fix-login.md')
+    expect(task.status).toBe('todo')
+    await expect(
+      caller.notes.read({ remote: REMOTE, path: 'projects/q2/task.fix-login.md' }),
+    ).rejects.toThrow()
+    expect(await readFile(join(root, 'personal/task.fix-login.md'), 'utf8')).toContain('Fix login')
+    expect(await readFile(join(root, 'meetings/note.md'), 'utf8')).toBe(
+      'blocking [[personal/task.fix-login.md]] until fixed',
+    )
+  })
+
+  it('refuses to clobber a task already in the target lane', async () => {
+    const { caller } = await rig({
+      'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n',
+      'personal/task.foo.md': '---\ntitle: Other foo\nstatus: doing\n---\n',
+    })
+    await expect(
+      caller.tasks.move({ remote: REMOTE, path: 'task.foo.md', folder: 'personal' }),
+    ).rejects.toThrow(/already exists/)
+  })
+})
+
 describe('tasks.delete', () => {
   it('removes the file', async () => {
     const { caller, root } = await rig({ 'task.review.md': '---\ntitle: Review\n---\n' })

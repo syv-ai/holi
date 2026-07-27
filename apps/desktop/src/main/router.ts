@@ -641,6 +641,50 @@ export function createRouter(deps: RouterDeps) {
         return next
       }),
 
+    /**
+     * The horizontal drag axis: moving a card to another lane moves the
+     * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`
+     * — a task's path is its identity, so a lane change IS a rename, reusing the
+     * one link-rewriting pass notes already own (`renameNote`), never a second
+     * (D63).
+     *
+     * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
+     * it is written in place first, so the single `renameNote` carries the final
+     * content to the destination — one route call, one write burst, one autosave
+     * commit, and a card is never half-dropped (prd/tasks.md §Board UX). `done`
+     * routes through `rollForward`, never a bare `status: done`, so a recurring
+     * task advances instead of persisting done.
+     *
+     * The basename rides along unchanged (identity slug preserved, not re-slugged
+     * from `title`), and a destination that already exists is refused rather than
+     * silently suffixed — that would change an existing task's identity.
+     */
+    move: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', folder: 'string', status: 'string?' }))
+      .mutation(async ({ input }): Promise<Task> => {
+        const root = await rootFor(input.remote)
+        const from = safe(input.path)
+        const basename = from.slice(from.lastIndexOf('/') + 1)
+        const to = safe(input.folder ? `${input.folder}/${basename}` : basename)
+
+        if (to === from && input.status === undefined) return readTask(root, to)
+        if (to !== from && (await exists(root, to))) {
+          throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
+        }
+
+        if (input.status !== undefined) {
+          const task = await readTask(root, from)
+          const next =
+            input.status === 'done'
+              ? rollForward(task)
+              : { ...task, ...patchOrThrow({ status: input.status }) }
+          await writeAtomic(root, from, serializeTaskFile(next))
+        }
+
+        if (to !== from) await renameNote(root, from, to)
+        return readTask(root, to)
+      }),
+
     delete: vaultMutation
       .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }) => {
