@@ -57,6 +57,8 @@ declare global {
            *  Claude's TUI fills the pane from the first paint. */
           cols?: number
           rows?: number
+          /** Seed the interactive session's first turn (the reconcile flow). */
+          prompt?: string
         }): Promise<{ ok: boolean; message?: string }>
         kill(): Promise<{ ok: true }>
         write(data: string): void

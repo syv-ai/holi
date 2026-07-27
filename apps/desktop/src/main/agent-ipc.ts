@@ -18,7 +18,7 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
     'agent-pty:start',
     async (
       _e,
-      args: { vaultId: string; resume?: boolean; cols?: number; rows?: number },
+      args: { vaultId: string; resume?: boolean; cols?: number; rows?: number; prompt?: string },
     ): Promise<{ ok: boolean; message?: string }> => {
       try {
         return await agent.start(args)

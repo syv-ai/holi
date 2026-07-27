@@ -67,7 +67,7 @@ contextBridge.exposeInMainWorld('holi', {
     onStatus: onAgentStatus,
     attach: (): Promise<string> => ipcRenderer.invoke('agent:attach'),
     status: () => ipcRenderer.invoke('agent:status'),
-    start: (args: { vaultId: string; resume?: boolean; cols?: number; rows?: number }) =>
+    start: (args: { vaultId: string; resume?: boolean; cols?: number; rows?: number; prompt?: string }) =>
       ipcRenderer.invoke('agent-pty:start', args),
     kill: () => ipcRenderer.invoke('agent-pty:kill'),
     write: (data: string) => ipcRenderer.send('agent-pty:write', data),

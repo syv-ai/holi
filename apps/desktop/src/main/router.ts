@@ -857,6 +857,10 @@ export function createRouter(deps: RouterDeps) {
       activeOrThrow().resume()
       return { ok: true as const }
     }),
+
+    /** FR-18: re-materialise the conflict for the agent and return the conflicted
+     *  paths for its seed prompt. `{paths:[]}` when the merge now applies cleanly. */
+    reconcile: t.procedure.mutation(() => activeOrThrow().reconcile()),
   })
 
   const pdf = t.router({
