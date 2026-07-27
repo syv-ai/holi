@@ -50,6 +50,7 @@ describe('SEED_FILES', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
+      '.claude/skills/md-to-pdf/SKILL.md',
       '.holi/templates/plain/template.json',
       '.holi/templates/plain/template.typ',
       '.holi/vault.json',
@@ -57,6 +58,14 @@ describe('SEED_FILES', () => {
       'CLAUDE.md',
       'MEMORY.md',
     ])
+  })
+
+  it('seeds the md-to-pdf skill with the Typst render recipe', () => {
+    const skill = SEED_FILES['.claude/skills/md-to-pdf/SKILL.md']!
+    expect(skill).toContain('name: md-to-pdf')
+    expect(skill).toContain('$TYPST_BIN')
+    expect(skill).toContain('doc(') // the template contract
+    expect(skill).toContain('--root /') // the compile recipe
   })
 
   it('.holi/vault.json is the durable vault marker', () => {
