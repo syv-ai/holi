@@ -104,6 +104,25 @@ describe('buildAgentEnv', () => {
   it('forces NO_FLICKER on — the embedded xterm flickers under the full-redraw renderer', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
   })
+
+  it('injects the hook port and token when given', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin' }, { hookPort: 5000, hookToken: 'abc123' })
+    expect(env.HOLI_HOOK_PORT).toBe('5000')
+    expect(env.HOLI_HOOK_TOKEN).toBe('abc123')
+  })
+
+  it('omits the hook keys when absent or null', () => {
+    expect(buildAgentEnv({ PATH: '/usr/bin' }).HOLI_HOOK_PORT).toBeUndefined()
+    const env = buildAgentEnv({ PATH: '/usr/bin' }, { hookPort: null, hookToken: null })
+    expect(env.HOLI_HOOK_PORT).toBeUndefined()
+    expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
+  })
+
+  it('strips inherited hook keys so a vault cannot spoof them (reserved)', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin', HOLI_HOOK_PORT: '9', HOLI_HOOK_TOKEN: 'evil' })
+    expect(env.HOLI_HOOK_PORT).toBeUndefined()
+    expect(env.HOLI_HOOK_TOKEN).toBeUndefined()
+  })
 })
 
 describe('buildAgentArgs', () => {

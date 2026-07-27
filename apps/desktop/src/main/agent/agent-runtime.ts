@@ -52,7 +52,14 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
  * code.claude.com/docs/en/terminal-config). Set here rather than in the user's
  * `~/.claude/settings.json`, which the PRD says Holi never touches.
  */
-export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
+export interface AgentEnvOpts {
+  /** The local hook server's port (git coexistence). The seeded curl hooks read
+   *  it live from `$HOLI_HOOK_PORT`; null/omitted leaves the child hook-less. */
+  hookPort?: number | null
+  hookToken?: string | null
+}
+
+export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined) env[key] = value
@@ -61,6 +68,12 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   delete env.CLAUDE_CODE_ENTRYPOINT
   env.TERM = 'xterm-256color'
   env.CLAUDE_CODE_NO_FLICKER = '1'
+  // Reserved keys: strip any inherited value so a vault/user env can't spoof the
+  // hook target, then set our own only when a live server is running.
+  delete env.HOLI_HOOK_PORT
+  delete env.HOLI_HOOK_TOKEN
+  if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
+  if (opts.hookToken) env.HOLI_HOOK_TOKEN = opts.hookToken
   return env
 }
 
