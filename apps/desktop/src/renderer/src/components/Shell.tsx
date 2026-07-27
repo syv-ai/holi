@@ -15,12 +15,13 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { fileKind } from '@holi/shared'
+import { fileKind, isTaskFilePath } from '@holi/shared'
 import { OnboardingRitual } from './OnboardingRitual'
 import { AgentPanel } from './AgentPanel'
 import { BoardView } from './BoardView'
 import { CreateTaskDialog } from './CreateTaskDialog'
 import { EditorPane } from './EditorPane'
+import { TaskFileEditor } from './TaskFileEditor'
 import { FilePlaceholder } from './FilePlaceholder'
 import { FileTree } from './FileTree'
 import { fileIconFor } from './tree/file-icons'
@@ -256,6 +257,17 @@ export function Shell() {
             // Non-image, non-markdown files open a typed placeholder for now — a
             // real per-type viewer replaces it later (spec §Arbitrary files).
             <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'text' | 'pdf' | 'doc'} />
+          ) : tab?.kind === 'note' && isTaskFilePath(tab.path) ? (
+            // A task file renders as a task — a structured header over the body —
+            // instead of raw frontmatter (prd/tasks.md; the file is still the truth).
+            <TaskFileEditor
+              path={tab.path}
+              onOpenNote={open}
+              onEdit={() => setWorkspace((w) => pinActive(w))}
+              onConflict={(path) =>
+                setBanner(`${path} changed underneath your edit and could not be merged`)
+              }
+            />
           ) : (
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}

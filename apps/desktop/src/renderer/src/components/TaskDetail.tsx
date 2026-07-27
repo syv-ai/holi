@@ -58,65 +58,23 @@ export function Row({
 export const taskFieldInput =
   'min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs focus:border-neutral-700 focus:outline-none'
 
-export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
-  const patch = useSetAtom(patchTaskAtom)
-  const complete = useSetAtom(completeTaskAtom)
-  const del = useSetAtom(deleteTaskAtom)
-  const close = useSetAtom(selectedTaskPathAtom)
-
-  // `description` is the file's markdown body — a full note editor now (@ mentions,
-  // [[wiki-links]], live preview), held by CodeMirror rather than React state.
-  const [title, setTitle] = useState(task.title)
-  useEffect(() => setTitle(task.title), [task.path, task.title])
-
-  const save = (p: Record<string, unknown>) => void patch(task.path, p)
-
-  // Debounce the body: a keystroke-per-mutation would rewrite the task file — and,
-  // once autosave commits land, commit it — on every character.
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const onDescription = (v: string) => {
-    if (timer.current) clearTimeout(timer.current)
-    // Sent as '' rather than null: an empty body is the field's empty state, not
-    // an absent field, and `parseTaskPatch` refuses to "clear" what cannot be unset.
-    timer.current = setTimeout(() => void patch(task.path, { description: v }), 600)
-  }
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close(null)
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [close])
-
+/**
+ * The scalar task fields — status, due, priority, tags, reminder — as `Row`s.
+ * Shared by the board's detail sidebar and the in-pane task-file editor so both
+ * edit a task the same way; `RecurrenceRows` and the body editor sit alongside it
+ * at each call site.
+ */
+export function TaskScalarFields({
+  task,
+  save,
+  complete,
+}: {
+  task: Task
+  save: (p: Record<string, unknown>) => void
+  complete: (path: string) => void
+}): React.JSX.Element {
   return (
-    <aside
-      data-task-detail={task.path}
-      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-neutral-900 bg-neutral-950 p-3"
-    >
-      <div className="flex items-start gap-2">
-        <input
-          value={title}
-          data-detail-title
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-          className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium hover:border-neutral-800 focus:border-neutral-700 focus:outline-none"
-        />
-        <button
-          onClick={() => close(null)}
-          className="rounded px-1 text-neutral-500 hover:bg-neutral-900"
-          title="close"
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* The path, read-only. It is the task's identity and its lane, and it is not
-          editable here: moving the file has to rewrite every inbound wiki-link in the
-          same pass, which is the file tree's rename, not a text field. */}
-      <p className="truncate font-mono text-[10px] text-neutral-600" title={task.path}>
-        {laneLabel(laneOf(task))}
-      </p>
-
+    <>
       <Row label="status">
         <select
           value={task.status}
@@ -125,7 +83,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
             const next = e.target.value as TaskStatus
             // Completion goes through tasks.complete even from here — it is the single
             // roll-forward path, so a recurring task rolls instead of persisting `done`.
-            if (next === 'done') void complete(task.path)
+            if (next === 'done') complete(task.path)
             else save({ status: next })
           }}
           className={taskFieldInput}
@@ -197,6 +155,70 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           className={taskFieldInput}
         />
       </Row>
+    </>
+  )
+}
+
+export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
+  const patch = useSetAtom(patchTaskAtom)
+  const complete = useSetAtom(completeTaskAtom)
+  const del = useSetAtom(deleteTaskAtom)
+  const close = useSetAtom(selectedTaskPathAtom)
+
+  // `description` is the file's markdown body — a full note editor now (@ mentions,
+  // [[wiki-links]], live preview), held by CodeMirror rather than React state.
+  const [title, setTitle] = useState(task.title)
+  useEffect(() => setTitle(task.title), [task.path, task.title])
+
+  const save = (p: Record<string, unknown>) => void patch(task.path, p)
+
+  // Debounce the body: a keystroke-per-mutation would rewrite the task file — and,
+  // once autosave commits land, commit it — on every character.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const onDescription = (v: string) => {
+    if (timer.current) clearTimeout(timer.current)
+    // Sent as '' rather than null: an empty body is the field's empty state, not
+    // an absent field, and `parseTaskPatch` refuses to "clear" what cannot be unset.
+    timer.current = setTimeout(() => void patch(task.path, { description: v }), 600)
+  }
+  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && close(null)
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [close])
+
+  return (
+    <aside
+      data-task-detail={task.path}
+      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-neutral-900 bg-neutral-950 p-3"
+    >
+      <div className="flex items-start gap-2">
+        <input
+          value={title}
+          data-detail-title
+          onChange={(e) => setTitle(e.target.value)}
+          onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
+          className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium hover:border-neutral-800 focus:border-neutral-700 focus:outline-none"
+        />
+        <button
+          onClick={() => close(null)}
+          className="rounded px-1 text-neutral-500 hover:bg-neutral-900"
+          title="close"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* The path, read-only. It is the task's identity and its lane, and it is not
+          editable here: moving the file has to rewrite every inbound wiki-link in the
+          same pass, which is the file tree's rename, not a text field. */}
+      <p className="truncate font-mono text-[10px] text-neutral-600" title={task.path}>
+        {laneLabel(laneOf(task))}
+      </p>
+
+      <TaskScalarFields task={task} save={save} complete={complete} />
 
       <RecurrenceRows task={task} save={save} />
 
@@ -235,10 +257,14 @@ export function TaskDescriptionEditor({
   notePath,
   initial,
   onChange,
+  hostClassName,
 }: {
   notePath: string
   initial: string
   onChange: (v: string) => void
+  /** Override the editor host's classes — the in-pane task editor makes the body
+   *  fill the pane, where the sidebar's fixed min-height is right. */
+  hostClassName?: string
 }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const openNote = useSetAtom(openNoteTabAtom)
@@ -290,7 +316,10 @@ export function TaskDescriptionEditor({
     <div
       ref={hostRef}
       data-detail-description
-      className="mt-1 min-h-[10rem] overflow-hidden rounded border border-neutral-800 bg-neutral-900 text-xs focus-within:border-neutral-700"
+      className={
+        hostClassName ??
+        'mt-1 min-h-[10rem] overflow-hidden rounded border border-neutral-800 bg-neutral-900 text-xs focus-within:border-neutral-700'
+      }
     />
   )
 }
