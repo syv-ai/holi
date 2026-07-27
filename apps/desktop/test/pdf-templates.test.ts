@@ -91,4 +91,28 @@ describe('listTemplates', () => {
     await seed(root, 'a', { name: 'Alpha' })
     expect((await listTemplates(root)).map((t) => t.name)).toEqual(['Alpha', 'Zeta'])
   })
+
+  it('surfaces manifest warnings, still degrading the fields', async () => {
+    const root = await vault()
+    await seed(root, 'w', {
+      name: 'W',
+      fields: [
+        { key: 'x', type: 'select' },
+        { key: 'd', type: 'date', default: '2026-13-40' },
+      ],
+    })
+    const [t] = await listTemplates(root)
+    expect(t.warnings.length).toBe(2)
+    expect(t.warnings.some((w) => w.includes('select'))).toBe(true)
+    expect(t.warnings.some((w) => w.includes('"d"'))).toBe(true)
+    expect(t.fields[0]).toMatchObject({ key: 'x', type: 'text' })
+    expect(t.fields[1]!.default).toBeUndefined()
+  })
+
+  it('a clean manifest has no warnings', async () => {
+    const root = await vault()
+    await seed(root, 'p', { name: 'P', fields: [{ key: 'a', type: 'text' }] })
+    const [t] = await listTemplates(root)
+    expect(t.warnings).toEqual([])
+  })
 })

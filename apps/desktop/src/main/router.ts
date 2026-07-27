@@ -872,14 +872,15 @@ export function createRouter(deps: RouterDeps) {
         async ({
           input,
         }): Promise<
-          { name: string; slug: string; description: string; fields: TemplateField[] }[]
+          { name: string; slug: string; description: string; fields: TemplateField[]; warnings: string[] }[]
         > => {
           const root = await rootFor(input.remote)
-          return (await listTemplates(root)).map(({ name, slug, description, fields }) => ({
+          return (await listTemplates(root)).map(({ name, slug, description, fields, warnings }) => ({
             name,
             slug,
             description,
             fields,
+            warnings,
           }))
         },
       ),
