@@ -111,15 +111,35 @@ member. Budget: 5,000 characters; consolidate when it fills up.
 
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
 
+/**
+ * A turn-bracket hook: POST to Holi's local hook server so it learns turn
+ * start/end (git coexistence — pause sync while the agent works). Guarded by
+ * `[ -n "$HOLI_HOOK_PORT" ]` so it is a silent no-op for a bare `claude` opened
+ * in this vault outside Holi (no server, no port). The port + token are read
+ * live from the child env Holi injects, so this shared/committed command needs
+ * no per-session rewrite. NOT gated by `permissions.ask` — hook commands run
+ * directly, they are not the agent's Bash tool.
+ */
+const turnHook = (endpoint: 'start' | 'end') =>
+  `[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/${endpoint}?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1`
+
 const SETTINGS_JSON =
   JSON.stringify(
     {
       hooks: {
-        // The one surviving hook. PreToolUse/Stop existed to open and close the
-        // bridge's turn protocol; there is no turn to bracket now that the file
-        // IS the document (D60), and the editor reconciles a foreign write on
-        // its own.
-        UserPromptSubmit: [{ hooks: [{ type: 'command', command: hookCommand('user-prompt-submit') }] }],
+        // UserPromptSubmit injects the focused-note context AND signals turn
+        // start; Stop signals turn end. Together they bracket a turn for git
+        // coexistence (the hook-server signal, not PTY parsing). PreToolUse stays
+        // absent — the UserPromptSubmit→Stop bracket already spans all tool use.
+        UserPromptSubmit: [
+          {
+            hooks: [
+              { type: 'command', command: hookCommand('user-prompt-submit') },
+              { type: 'command', command: turnHook('start') },
+            ],
+          },
+        ],
+        Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
       },
       permissions: {
         // seeded egress gating (PRD §Security posture) — the user still

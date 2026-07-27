@@ -73,14 +73,26 @@ describe('SEED_FILES', () => {
     expect(agents).not.toContain('Do not run') // the pre-coexistence prohibition
   })
 
-  it('settings.json wires the one surviving hook and gates network egress', () => {
+  it('settings.json wires the focus + turn hooks and gates network egress', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
       '.claude/hooks/user-prompt-submit.mjs',
     )
-    // PreToolUse/Stop bracketed the bridge's turn protocol; there is no turn (D60)
-    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit'])
+    // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server signal)
+    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit', 'Stop'])
     expect(settings.permissions.ask).toEqual(['Bash(curl:*)', 'Bash(wget:*)'])
+  })
+
+  it('the turn hooks POST to the local hook server, guarded so they no-op outside Holi', () => {
+    const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
+    const startCmd = settings.hooks.UserPromptSubmit[0].hooks[1].command
+    const endCmd = settings.hooks.Stop[0].hooks[0].command
+    expect(startCmd).toContain('/turn/start')
+    expect(endCmd).toContain('/turn/end')
+    for (const cmd of [startCmd, endCmd]) {
+      expect(cmd).toContain('[ -n "$HOLI_HOOK_PORT" ]') // the no-op-outside-Holi guard
+      expect(cmd).toContain('$HOLI_HOOK_TOKEN')
+    }
   })
 
   it('every hook script has its shebang on line 1', () => {
