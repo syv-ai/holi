@@ -1207,6 +1207,7 @@ describe('pdf', () => {
           { key: 'date', label: 'Date', type: 'text', required: false },
           { key: 'recipient', label: 'Recipient', type: 'text', required: true },
         ],
+        warnings: [],
       },
     ])
   })
