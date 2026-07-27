@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ROOT_LANE,
   availableLabels,
+  dropIntent,
   laneLabel,
   laneOrder,
   matchesFilter,
@@ -95,5 +96,30 @@ describe('availableLabels', () => {
       task({ tags: ['ops'] }),
     ]
     expect(availableLabels(tasks, TODAY)).toEqual(['finance', 'ops', 'overdue', 'p1'])
+  })
+})
+
+describe('dropIntent', () => {
+  // A card at `work/task.foo.md` (lane 'work', status 'todo').
+  const card = task({ path: 'work/task.foo.md', status: 'todo' })
+
+  it('same lane, diff column → a vertical status change', () => {
+    expect(dropIntent(card, 'work', 'doing')).toEqual({ kind: 'status', status: 'doing' })
+  })
+
+  it('diff lane, same column → a pure horizontal move, no status', () => {
+    expect(dropIntent(card, 'personal', 'todo')).toEqual({ kind: 'move', folder: 'personal' })
+  })
+
+  it('diff lane, diff column → a diagonal move carrying the new status', () => {
+    expect(dropIntent(card, 'personal', 'done')).toEqual({
+      kind: 'move',
+      folder: 'personal',
+      status: 'done',
+    })
+  })
+
+  it('same lane, same column → nothing to do', () => {
+    expect(dropIntent(card, 'work', 'todo')).toEqual({ kind: 'noop' })
   })
 })

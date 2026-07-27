@@ -110,6 +110,30 @@ export function laneOf(task: Task): string {
   return taskArea(task)
 }
 
+/** What a drop onto `(targetLane, targetStatus)` means for `task` — the branch a
+ * card's drop takes, factored out of the board so it is pure and tested (a
+ * diagonal is the subtle one: lane AND column change, and both must land as one
+ * action).
+ *
+ * - same lane, same column → `noop` (a card dropped where it already sits)
+ * - same lane, new column → `status` (the vertical axis — a plain status change)
+ * - new lane → `move` (the horizontal axis — a file move + link rewrite), and if
+ *   the column also changed, the new `status` rides along so the diagonal is one
+ *   `tasks.move` call rather than a move then a separate status write. */
+export type DropIntent =
+  | { kind: 'noop' }
+  | { kind: 'status'; status: TaskStatus }
+  | { kind: 'move'; folder: string; status?: TaskStatus }
+
+export function dropIntent(task: Task, targetLane: string, targetStatus: TaskStatus): DropIntent {
+  const sameLane = laneOf(task) === targetLane
+  const sameStatus = task.status === targetStatus
+  if (sameLane) return sameStatus ? { kind: 'noop' } : { kind: 'status', status: targetStatus }
+  return sameStatus
+    ? { kind: 'move', folder: targetLane }
+    : { kind: 'move', folder: targetLane, status: targetStatus }
+}
+
 // ------------------------------------------------------------------- writes
 //
 // Every write re-reads the vault. There is no optimistic patching and no
