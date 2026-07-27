@@ -110,6 +110,15 @@ export interface ActiveVault {
   /** FR-8/FR-18: a reconcile stops both loops. */
   pause(reason: string): void
   resume(): void
+  /**
+   * FR-18 reconcile: re-run the merge so the conflict is back in the working
+   * tree (markers + MERGE_HEAD) for the agent to resolve, and return the
+   * currently-conflicted paths for the seed prompt. Returns `{paths:[]}` when the
+   * merge now applies cleanly (the conflict resolved itself) — the banner is then
+   * cleared. Holds nothing: the resulting `merging` state suspends the loops
+   * (`blockedReason`), and the agent's merge commit lets them resume on their own.
+   */
+  reconcile(): Promise<{ paths: string[] }>
   close(): Promise<void>
 }
 
@@ -601,6 +610,24 @@ export async function openActiveVault(args: {
         await maybeCommit()
         await maybePull()
       })()
+    },
+    async reconcile() {
+      if (closed) return { paths: [] }
+      const result = await args.repo.remerge()
+      if (result.kind === 'conflict') {
+        // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
+        // computeState reports `merging`-paused on its own — nothing else to hold.
+        conflictPaths = result.paths
+        await refreshState()
+        return { paths: result.paths }
+      }
+      // It merged clean (or was already up-to-date): clear the sticky banner and
+      // return to normal — a merge commit, if any, still needs pushing.
+      conflictPaths = null
+      await rescan()
+      schedulePush()
+      await refreshState()
+      return { paths: [] }
     },
     async close() {
       closed = true

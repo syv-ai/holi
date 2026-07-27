@@ -594,6 +594,41 @@ describe('ActiveVault — sync', () => {
     expect(active.syncState().kind).toBe('conflict')
   })
 
+  it('reconcile() re-materialises the conflict in the tree for the agent', async () => {
+    // FR-18 step 2: pull() aborted, so the tree is clean with a sticky banner.
+    // reconcile() re-runs the merge so the agent has markers to resolve.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+
+    const { paths } = await active.reconcile()
+    expect(paths).toEqual(['README.md'])
+    expect((await active.repo.status()).merging).toBe(true)
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toContain('<<<<<<<')
+  })
+
+  it('reconcile() clears the banner when the merge now applies cleanly', async () => {
+    // The conflict resolved itself before the user clicked (both sides ended up
+    // making the same edit). reconcile() must not strand a stale banner.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+
+    // Make our side match theirs, so the re-merge applies cleanly (identical
+    // changes merge without conflict). The tree is clean here (the conflict path
+    // committed "# Ours" before aborting); retry on the loop's index lock.
+    await writeFile(join(dir, 'README.md'), '# Theirs\n', 'utf8')
+    await userGit(dir, ['add', '-A'])
+    await userGit(dir, ['commit', '-m', 'match theirs'])
+
+    const { paths } = await active.reconcile()
+    expect(paths).toEqual([])
+    expect(active.syncState().kind).not.toBe('conflict')
+    expect((await active.repo.status()).merging).toBe(false)
+  })
+
   it('keeps committing while a conflict banner is up', async () => {
     // FR-17: the banner is non-blocking — ignore it and you keep working on an
     // unbroken vault. Only a reconcile (FR-8) pauses autosave.
