@@ -46,8 +46,6 @@ interface Rig {
   spawns: Array<{ file: string; args: string[]; opts: { cwd: string; env: Record<string, string> } }>
   host: { setActive(v: string | null): void }
   pty(): FakePty
-  paused: string[]
-  resumes(): number
 }
 
 const cleanups: Array<() => Promise<void>> = []
@@ -55,7 +53,7 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn()
 })
 
-async function rig(opts: { bin?: string | null; active?: string | null; idleMs?: number } = {}): Promise<Rig> {
+async function rig(opts: { bin?: string | null; active?: string | null } = {}): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
   const workRoot = join(dir, 'work')
   await mkdir(workRoot, { recursive: true })
@@ -65,21 +63,10 @@ async function rig(opts: { bin?: string | null; active?: string | null; idleMs?:
   const spawns: Rig['spawns'] = []
   const ptys: FakePty[] = []
 
-  const paused: string[] = []
-  let resumes = 0
   let activeRemote: string | null = opts.active === undefined ? VAULT : opts.active
   const host = {
     active: (): ActiveVault | null =>
-      activeRemote === null
-        ? null
-        : ({
-            remote: activeRemote,
-            root: workRoot,
-            pause: (reason: string) => paused.push(reason),
-            resume: () => {
-              resumes += 1
-            },
-          } as unknown as ActiveVault),
+      activeRemote === null ? null : ({ remote: activeRemote, root: workRoot } as unknown as ActiveVault),
     open: async () => {
       throw new Error('not used in these tests')
     },
@@ -99,7 +86,6 @@ async function rig(opts: { bin?: string | null; active?: string | null; idleMs?:
     },
     resolveBin: () => (opts.bin === undefined ? '/bin/fake-claude' : opts.bin),
     killGraceMs: 20,
-    idleMs: opts.idleMs,
     log: () => {},
   })
 
@@ -108,16 +94,7 @@ async function rig(opts: { bin?: string | null; active?: string | null; idleMs?:
     await rm(dir, { recursive: true, force: true })
   })
 
-  return {
-    manager,
-    workRoot,
-    sent,
-    spawns,
-    host,
-    pty: () => ptys.at(-1)!,
-    paused,
-    resumes: () => resumes,
-  }
+  return { manager, workRoot, sent, spawns, host, pty: () => ptys.at(-1)! }
 }
 
 describe('AgentManager', () => {
@@ -247,43 +224,5 @@ describe('AgentManager', () => {
     await expect(r.manager.start({ vaultId: 'someone/else' })).rejects.toThrow(/not active/)
     r.host.setActive(null)
     await expect(r.manager.start({ vaultId: VAULT })).rejects.toThrow(/not active/)
-  })
-
-  it('pauses the vault sync while the agent works, and resumes when the turn goes idle', async () => {
-    const r = await rig({ idleMs: 40 })
-    await r.manager.start({ vaultId: VAULT })
-
-    r.pty().emit('…thinking…')
-    expect(r.manager.status().working).toBe(true)
-    expect(r.paused.length).toBeGreaterThan(0)
-    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.working).toBe(true)
-
-    await new Promise((res) => setTimeout(res, 80)) // outlast the idle window
-    expect(r.manager.status().working).toBe(false)
-    expect(r.resumes()).toBeGreaterThan(0)
-  })
-
-  it('stays working across a burst — each chunk resets the idle window', async () => {
-    const r = await rig({ idleMs: 40 })
-    await r.manager.start({ vaultId: VAULT })
-
-    r.pty().emit('a')
-    await new Promise((res) => setTimeout(res, 25))
-    r.pty().emit('b') // resets the window before the 40ms elapses
-    await new Promise((res) => setTimeout(res, 25))
-    expect(r.manager.status().working).toBe(true) // 50ms elapsed, but never a 40ms gap
-  })
-
-  it('resumes the vault if the session dies mid-turn — never strand a paused vault', async () => {
-    const r = await rig({ idleMs: 10_000 }) // long window: it stays "working" until it exits
-    await r.manager.start({ vaultId: VAULT })
-    r.pty().emit('working…')
-    expect(r.manager.status().working).toBe(true)
-    const before = r.resumes()
-
-    r.pty().exit(0) // claude quits mid-turn
-    await new Promise((res) => setTimeout(res, 30))
-    expect(r.manager.status().working).toBe(false)
-    expect(r.resumes()).toBe(before + 1)
   })
 })
