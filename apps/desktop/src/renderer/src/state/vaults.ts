@@ -8,6 +8,7 @@ import { scaffoldNoteText } from '../lib/scaffold'
 import { trpc } from '../lib/trpc'
 import { agentPanelOpenAtom, agentSeedPromptAtom } from './agent'
 import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
+import { openTaskAtom } from './view'
 
 type JotaiStore = ReturnType<typeof createStore>
 
@@ -169,9 +170,20 @@ export const createVaultAtom = atom(
 export function subscribeToVault(store: JotaiStore): () => void {
   const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
   const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
+  // A clicked reminder opens its task. Cross-vault, the switch runs here — not in
+  // main — so `activeRemoteAtom` stays truthful; the task opens once the new
+  // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
+  const offReminder = window.holi.reminders.onOpen(({ remote, path }) => {
+    if (remote && remote !== store.get(activeRemoteAtom)) {
+      void store.set(openVaultAtom, remote).then(() => store.set(openTaskAtom, path))
+    } else {
+      store.set(openTaskAtom, path)
+    }
+  })
   return () => {
     offSnapshot()
     offSync()
+    offReminder()
   }
 }
 

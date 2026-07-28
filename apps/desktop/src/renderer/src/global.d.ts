@@ -30,6 +30,12 @@ declare global {
         onFlushRequest(cb: () => void): () => void
         flushDone(): void
       }
+      /** A fired reminder's notification was clicked. Fans to a vault switch
+       *  (if the task lives elsewhere) + `openTaskAtom`. Back as a local push
+       *  channel, not the old SSE surface. Returns its unsubscribe. */
+      reminders: {
+        onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */

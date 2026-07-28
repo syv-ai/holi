@@ -49,6 +49,11 @@ const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
 /** running / working / configStale / authenticated — the header dot + hints. */
 const onAgentStatus = pushChannel<unknown>('agent:status')
 
+/** A reminder fired and its notification was clicked — open this task, switching
+ * vaults first if it lives in another one. Carries `remote` so the renderer's
+ * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
+const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -57,6 +62,9 @@ contextBridge.exposeInMainWorld('holi', {
     onSyncState,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
+  },
+  reminders: {
+    onOpen: onReminderOpen,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
