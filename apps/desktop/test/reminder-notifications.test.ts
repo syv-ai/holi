@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { notificationsFor } from '../src/main/reminders/notifications'
 import type { RemindersEvent } from '../src/main/reminders/types'
 
-const fire = (n: number) => ({ taskId: `t${n}`, title: `task ${n}`, fireAt: '2026-07-16T09:00' })
+const fire = (n: number) => ({
+  remote: 'o/r',
+  path: `task.t${n}.md`,
+  title: `task ${n}`,
+  fireAt: '2026-07-16T09:00',
+})
 const event = (count: number, coalesced = false): RemindersEvent => ({
   fires: Array.from({ length: count }, (_, i) => fire(i + 1)),
   coalesced,
@@ -13,11 +18,15 @@ describe('notificationsFor', () => {
   it('raises one notification per fire, titled by the task', () => {
     const specs = notificationsFor(event(2))
     expect(specs).toHaveLength(2)
-    expect(specs[0]).toEqual({ title: 'task 1', body: 'Reminder · 2026-07-16 09:00', taskId: 't1' })
+    expect(specs[0]).toEqual({
+      title: 'task 1',
+      body: 'Reminder · 2026-07-16 09:00',
+      task: { remote: 'o/r', path: 'task.t1.md' },
+    })
   })
 
-  it('carries the taskId so a click can open the task', () => {
-    expect(notificationsFor(event(1))[0]!.taskId).toBe('t1')
+  it('carries the task path so a click can open the task', () => {
+    expect(notificationsFor(event(1))[0]!.task).toEqual({ remote: 'o/r', path: 'task.t1.md' })
   })
 
   // Six toasts is not six times the information — it's a wall you dismiss unread,
@@ -38,8 +47,8 @@ describe('notificationsFor', () => {
   })
 
   // A summary speaks for several tasks — there is no single one to open.
-  it('gives a summary no taskId', () => {
-    expect(notificationsFor(event(6, true))[0]!.taskId).toBeUndefined()
+  it('gives a summary no task', () => {
+    expect(notificationsFor(event(6, true))[0]!.task).toBeUndefined()
   })
 
   it('raises nothing for an empty batch', () => {

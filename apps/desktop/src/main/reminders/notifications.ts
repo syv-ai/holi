@@ -14,7 +14,7 @@ export interface NotificationSpec {
   title: string
   body: string
   /** Clicking opens this task. Absent on a summary — it speaks for several. */
-  taskId?: string
+  task?: { remote: string; path: string }
 }
 
 const when = (fireAt: string) => fireAt.replace('T', ' ')
@@ -39,6 +39,6 @@ export function notificationsFor(event: RemindersEvent): NotificationSpec[] {
   return event.fires.map((f) => ({
     title: f.title,
     body: `Reminder · ${when(f.fireAt)}`,
-    taskId: f.taskId,
+    task: { remote: f.remote, path: f.path },
   }))
 }
