@@ -37,6 +37,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const snapshotSubs = new Set<(s: VaultSnapshot) => void>()
   const syncSubs = new Set<(s: SyncState) => void>()
   const flushSubs = new Set<() => void>()
+  const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
   let onFlushed: (() => void) | null = null
 
   const subscribe = <T>(subs: Set<(v: T) => void>) => (cb: (v: T) => void) => {
@@ -58,6 +59,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       onSyncState: subscribe(syncSubs),
       onFlushRequest: subscribe(flushSubs),
       flushDone: () => onFlushed?.(),
+    },
+    reminders: {
+      onOpen: subscribe(reminderSubs),
     },
     openExternal: async () => {},
   }
