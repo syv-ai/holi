@@ -706,3 +706,24 @@ describe('runGit', () => {
     expect(err).toBeInstanceOf(GitError)
   }, 20_000)
 })
+
+describe('show', () => {
+  it("reads a file's content at a past commit", async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    await commitFile(dir, 'note.md', 'v1\n')
+    const [{ sha: v1 }] = await repo.log({ path: 'note.md', limit: 1 })
+    await commitFile(dir, 'note.md', 'v2\n')
+    const [{ sha: head }] = await repo.log({ path: 'note.md', limit: 1 })
+    expect(await repo.show(v1, 'note.md')).toBe('v1\n')
+    expect(await repo.show(head, 'note.md')).toBe('v2\n')
+  })
+
+  it('rejects for a path absent at that commit', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    await commitFile(dir, 'note.md', 'hi\n')
+    const [{ sha }] = await repo.log({ limit: 1 })
+    await expect(repo.show(sha, 'no-such-file.md')).rejects.toThrow()
+  })
+})

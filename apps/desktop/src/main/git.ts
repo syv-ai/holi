@@ -148,6 +148,11 @@ export interface GitRepo {
   /** The vault's history — which IS git history (`prd/vaults-sync.md` §History).
    * `path` follows a file through renames. */
   log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
+  /** A file's content at a past commit, for the history preview/restore
+   * (`prd/vaults-sync.md` §History). Rejects when `path` is absent at `sha` —
+   * e.g. a commit from before the file was renamed (`show` reads the given name,
+   * it does not `--follow`). */
+  show(sha: string, path: string): Promise<string>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
@@ -462,6 +467,24 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
+  /** A file's content at a commit — `git show <sha>:<path>`. The output is the
+   * raw blob, not porcelain, so capturing it whole does not break the "parse only
+   * plumbing" rule — and unlike `runGit`, this must **not** trim: restore writes
+   * the result back verbatim, and a stripped trailing newline is a real edit.
+   * Rejects (a `GitError`) when the path does not exist at that commit, which is
+   * the signal the caller wants. */
+  async function show(sha: string, path: string): Promise<string> {
+    const res = await tryGit(root, ['show', `${sha}:${path}`], opts)
+    if (!res.ok) {
+      throw new GitError(
+        `git show ${sha}:${path} failed (${res.code}): ${res.stderr.split('\n')[0] ?? ''}`,
+        res.code,
+        res.stderr,
+      )
+    }
+    return res.stdout
+  }
+
   /** FR-20. A no-op when no merge is in progress, so the control can be pressed
    * twice without turning into an error. */
   async function abortMerge(): Promise<void> {
@@ -629,7 +652,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, log, commitAll, pull, remerge, push, abortMerge }
+  return { root, status, log, show, commitAll, pull, remerge, push, abortMerge }
 }
 
 /**
