@@ -5,39 +5,42 @@
  * a third `viewAtom` entry (history is *about* the open note, not a peer surface to
  * notes/board) and deliberately not a modal — there is no modal/dialog primitive in this
  * codebase, and inventing one is a different slice.
+ *
+ * The timeline IS git history (`prd/vaults-sync.md` §History): each row is a commit that
+ * touched the file, keyed by sha; restore writes the old content back as a new commit.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import {
   historyOpenAtom,
   loadPreviewAtom,
-  loadSnapshotsAtom,
-  partitionSnapshots,
+  loadVersionsAtom,
+  partitionVersions,
   previewAtom,
   resetHistoryAtom,
-  restoreSnapshotAtom,
-  selectedSnapshotIdAtom,
+  restoreVersionAtom,
+  selectedShaAtom,
   showAllVersionsAtom,
-  snapshotLabel,
-  snapshotsAtom,
-  type Snapshot,
+  versionLabel,
+  versionsAtom,
+  type Version,
 } from '../state/history'
 import { activeDocAtom } from '../state/vaults'
 
-/** `takenAt` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
+/** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 export function HistoryPanel() {
   const open = useAtomValue(historyOpenAtom)
   const activeDoc = useAtomValue(activeDocAtom)
-  const snapshots = useAtomValue(snapshotsAtom)
+  const versions = useAtomValue(versionsAtom)
   const preview = useAtomValue(previewAtom)
-  const selectedId = useAtomValue(selectedSnapshotIdAtom)
+  const selectedSha = useAtomValue(selectedShaAtom)
   const [showAll, setShowAll] = useAtom(showAllVersionsAtom)
-  const loadSnapshots = useSetAtom(loadSnapshotsAtom)
+  const loadVersions = useSetAtom(loadVersionsAtom)
   const loadPreview = useSetAtom(loadPreviewAtom)
-  const restore = useSetAtom(restoreSnapshotAtom)
+  const restore = useSetAtom(restoreVersionAtom)
   const reset = useSetAtom(resetHistoryAtom)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,8 +48,8 @@ export function HistoryPanel() {
   // History is per-doc: opening another note must not leave the last one's versions up.
   useEffect(() => {
     reset()
-    if (open && activeDoc) void loadSnapshots()
-  }, [open, activeDoc, loadSnapshots, reset])
+    if (open && activeDoc) void loadVersions()
+  }, [open, activeDoc, loadVersions, reset])
 
   // The house busy/error wrapper (VaultSettings) — reused, not reinvented.
   const guard = (fn: () => Promise<unknown>) => async () => {
@@ -62,30 +65,34 @@ export function HistoryPanel() {
   }
 
   if (!open || !activeDoc) return null
-  const { milestones, automatic } = partitionSnapshots(snapshots)
+  const { landmarks, automatic } = partitionVersions(versions)
 
   const onRestore = guard(async () => {
-    if (!selectedId) return
+    if (!selectedSha) return
     // window.confirm is the codebase's only destructive-confirm precedent (MembersSection).
-    // Say what it does: it is a CRDT edit everyone sees, and it is itself undoable.
+    // Say what it does: it lands a new commit everyone in the vault will pull, and it is
+    // itself revertible from this same timeline — not a private, silent undo.
     const proceed = window.confirm(
       'Restore this version?\n\n' +
-        "It replaces the note's text for everyone in the vault — this is an edit, not a private undo. " +
-        'A "before restoring an older version" snapshot is taken first, so you can put it back.',
+        "It replaces the note's text with this older version as a new commit — everyone in " +
+        'the vault will pull it. Nothing is erased: the current version stays in the timeline, ' +
+        'so you can put it back.',
     )
-    if (proceed) await restore(selectedId)
+    if (proceed) await restore(selectedSha)
   })
 
-  const row = (s: Snapshot) => (
+  const row = (v: Version) => (
     <button
-      key={s.id}
-      onClick={() => void loadPreview(s.id)}
+      key={v.sha}
+      onClick={() => void loadPreview(v.sha)}
       className={`w-full rounded px-2 py-1 text-left text-xs ${
-        selectedId === s.id ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-900'
+        selectedSha === v.sha ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-900'
       }`}
     >
-      <span className="block truncate">{snapshotLabel(s)}</span>
-      <span className="block text-[10px] text-neutral-600">{when(s.takenAt)}</span>
+      <span className="block truncate">{versionLabel(v)}</span>
+      <span className="block text-[10px] text-neutral-600">
+        {when(v.date)} · {v.author}
+      </span>
     </button>
   )
 
@@ -98,22 +105,22 @@ export function HistoryPanel() {
 
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="max-h-56 shrink-0 overflow-y-auto border-b border-neutral-900 p-2">
-          {snapshots.length === 0 && (
+          {versions.length === 0 && (
             <p className="px-2 py-1 text-xs text-neutral-600">
-              No versions yet. One is taken automatically every few minutes while a note is being
-              edited, and before Claude edits it.
+              No versions yet — this file has no commits. Edits become commits automatically as
+              you work, and each one shows up here.
             </p>
           )}
-          {milestones.map(row)}
-          {/* D54 — display only. Nothing is deleted, and an automatic version restores
-            * like any other; it is just not what you came here looking for. */}
+          {landmarks.map(row)}
+          {/* Display only — the autosave run is folded so the landmarks stand out.
+            * Nothing is hidden from restore; these are just not what you came looking for. */}
           {automatic.length > 0 && (
             <>
               <button
                 onClick={() => setShowAll((v) => !v)}
                 className="mt-1 w-full px-2 py-1 text-left text-[10px] text-neutral-600 hover:text-neutral-400"
               >
-                {showAll ? '⌃' : '⌄'} {automatic.length} automatic version
+                {showAll ? '⌃' : '⌄'} {automatic.length} automatic save
                 {automatic.length === 1 ? '' : 's'}
               </button>
               {showAll && automatic.map(row)}
@@ -122,7 +129,7 @@ export function HistoryPanel() {
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          {selectedId === null ? (
+          {selectedSha === null ? (
             <p className="text-xs text-neutral-600">Pick a version to read it.</p>
           ) : preview === null ? (
             <p className="text-xs text-neutral-600">Loading…</p>
@@ -138,7 +145,7 @@ export function HistoryPanel() {
         {error && <p className="px-3 pb-1 text-xs text-red-400">{error}</p>}
         <div className="border-t border-neutral-900 p-2">
           <button
-            disabled={busy || selectedId === null}
+            disabled={busy || selectedSha === null}
             onClick={() => void onRestore()}
             className="w-full rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700 disabled:opacity-40"
           >
