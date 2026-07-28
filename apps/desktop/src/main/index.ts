@@ -15,9 +15,9 @@
  * the router because it shares the host, and before the window because its
  * `getWindow` closure reads `mainWindow` lazily.
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
@@ -25,6 +25,11 @@ import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
+import { scanVault } from './vault/vault-store'
+import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
+import { createNotifier } from './reminders/notify'
+import type { VaultTasks } from './reminders/sweep'
+import { createTray } from './tray'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { createHookServer } from './agent/hook-server'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
@@ -34,6 +39,10 @@ import { registerAgentIpc } from './agent-ipc'
 // a `let` referenced from inside it while still in its temporal dead zone would
 // throw during startup, which is the worst possible place for one.
 let mainWindow: BrowserWindow | null = null
+
+// Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
+// vanishes from the menu bar, so it must outlive the setup closure.
+let tray: Tray | null = null
 
 /**
  * A second launch must not happen at all.
@@ -175,17 +184,123 @@ async function main(): Promise<void> {
   })
   registerAgentIpc({ agent })
 
+  /**
+   * Reminders: a tray-resident evaluator sweeps every registered vault each
+   * minute (and once at launch — the launch run is the catch-up for fires missed
+   * while quit) and raises native notifications.
+   *
+   * `clonePaths` is refreshed at the head of every `corpus.all()`, before `sweep`
+   * reads or the runtime marks the watermark, so the sync `DeliveredLog` resolver
+   * always sees the same clones the sweep just scanned. A vault whose `scanVault`
+   * throws (a stale registry entry, a missing clone) is skipped, never a stall.
+   */
+  const clonePaths = new Map<string, string>()
+  const corpus = {
+    async all(): Promise<VaultTasks[]> {
+      const entries = await registry.list()
+      clonePaths.clear()
+      for (const e of entries) clonePaths.set(e.remote, e.path)
+      const scans = await Promise.all(
+        entries.map(async (e) => {
+          const snap = await scanVault(e.path).catch(() => null)
+          return snap ? { remote: e.remote, tasks: snap.tasks } : null
+        }),
+      )
+      return scans.filter((v): v is VaultTasks => v !== null)
+    },
+  }
+  const delivered = createDeliveredLog((remote) => clonePaths.get(remote) ?? null)
+  /**
+   * A clicked reminder brings the window forward and hands the task to the
+   * renderer, which owns the vault switch (so `activeRemoteAtom` stays truthful).
+   * The window may be gone entirely — closed on macOS, or tray-resident once
+   * keep-alive lands — so recreate it and deliver on `did-finish-load`, or the
+   * push arrives before any renderer can hear it.
+   */
+  const focusTask = (remote: string, path: string): void => {
+    const payload = { remote, path }
+    const win = mainWindow
+    if (win === null || win.isDestroyed()) {
+      const fresh = createWindow()
+      fresh.on('focus', () => host.active()?.onFocus())
+      fresh.webContents.once('did-finish-load', () =>
+        fresh.webContents.send('reminders:open', payload),
+      )
+      return
+    }
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+    win.webContents.send('reminders:open', payload)
+  }
+  const notifier = createNotifier((remote, path) => focusTask(remote, path))
+  const reminders = createReminderRuntime({ corpus, notifier, delivered })
+  reminders.start()
+
   const win = createWindow()
   // FR-9: pull on focus. The interval exists for the case where the window
   // never loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const next = createWindow()
-      next.on('focus', () => host.active()?.onFocus())
+  // Create-or-focus the one window — the dock/`activate` path and the tray's
+  // Open Holi both funnel through here, so keep-alive has a single way back in.
+  const openWindow = (): void => {
+    const existing = mainWindow
+    if (existing !== null && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore()
+      existing.show()
+      existing.focus()
+      return
     }
+    const fresh = createWindow()
+    fresh.on('focus', () => host.active()?.onFocus())
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) openWindow()
   })
+
+  // Tray-resident: the sweep keeps running with the window closed, and the tray
+  // is the way back in (Open Holi) and the way out (Quit — ⌘W no longer is one).
+  tray = createTray({ openWindow })
+
+  /**
+   * First-run only: ask once whether to launch Holi at login — reminders fire
+   * only while it is running. The answer is applied via `setLoginItemSettings`;
+   * the "asked" flag lives in userData (never a vault, never committed), so a
+   * later launch never re-asks, whatever the answer was. Fire-and-forget so the
+   * modal does not hold up the rest of startup. (A settings toggle to change the
+   * choice later is out of scope — a follow-up.)
+   */
+  const appSettingsFile = join(app.getPath('userData'), 'settings.json')
+  void (async () => {
+    let settings: Record<string, unknown> = {}
+    try {
+      const parsed = JSON.parse(await readFile(appSettingsFile, 'utf8'))
+      if (parsed && typeof parsed === 'object') settings = parsed as Record<string, unknown>
+    } catch {
+      settings = {}
+    }
+    if (settings['launchPrompted'] === true) return
+    const { response } = await dialog.showMessageBox({
+      type: 'question',
+      buttons: ['Enable', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+      message: 'Launch Holi at login?',
+      detail: 'Reminders only fire while Holi is running. Launch it automatically when you log in?',
+    })
+    app.setLoginItemSettings({ openAtLogin: response === 0 })
+    try {
+      await writeFile(
+        appSettingsFile,
+        JSON.stringify({ ...settings, launchPrompted: true }, null, 2) + '\n',
+        'utf8',
+      )
+    } catch (err) {
+      console.error('[login-prompt] failed to persist the asked flag:', err)
+    }
+  })()
 
   /**
    * Quit has to WAIT for the flush.
@@ -201,6 +316,9 @@ async function main(): Promise<void> {
     if (quitting) return
     event.preventDefault()
     quitting = true
+    reminders.close() // stop the sweep timer at once — no tick into a teardown
+    tray?.destroy() // let go of the menu-bar item as we leave
+    tray = null
     void (async () => {
       try {
         // Kill the agent's PTY (and its process group) before we flush and
@@ -261,6 +379,10 @@ function flushChannel(win: BrowserWindow | null): FlushChannel {
   }
 }
 
+// Keep-alive on every platform: closing the last window no longer quits, so the
+// reminder sweep keeps running tray-resident (macOS already behaved this way).
+// A real quit is the tray's Quit or ⌘Q → `before-quit`. The handler must stay
+// registered and empty — with none, Electron's default quits on Windows/Linux.
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // intentionally does not quit
 })
