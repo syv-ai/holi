@@ -33,7 +33,7 @@ import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { remoteUrl } from './git'
+import { remoteUrl, type Commit } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
@@ -907,6 +907,48 @@ export function createRouter(deps: RouterDeps) {
     reconcile: t.procedure.mutation(() => activeOrThrow().reconcile()),
   })
 
+  // The vault's history IS git history (`prd/vaults-sync.md` §History): no snapshot
+  // store, git's object store is the timeline. `--follow` (in `repo.log`) tracks a
+  // file through renames; `HISTORY_LIMIT` caps a long-lived file's timeline.
+  const HISTORY_LIMIT = 200
+  const history = t.router({
+    /** The open file's commits, newest-first, following renames. Empty for a
+     *  file with no commits yet (new/untracked). */
+    list: t.procedure
+      .input(fields({ path: 'string' }))
+      .query(
+        ({ input }): Promise<Commit[]> =>
+          activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
+      ),
+
+    /** The file's content at one commit, for the read-only preview. NOT_FOUND when
+     *  the path is absent at that commit (e.g. before a rename — `show` reads the
+     *  current name and does not `--follow`). */
+    preview: t.procedure
+      .input(fields({ path: 'string', sha: 'string' }))
+      .query(async ({ input }): Promise<{ text: string }> => {
+        const text = await activeOrThrow()
+          .repo.show(input.sha, safe(input.path))
+          .catch(() => null)
+        if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: 'version unavailable' })
+        return { text }
+      }),
+
+    /** Restore writes the old content as a **new commit** — never a rewrite of
+     *  history (`prd/vaults-sync.md` §History). Lands as an autosave `Update`
+     *  commit; a labelled landmark is a later refinement. */
+    restore: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', sha: 'string' }))
+      .mutation(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        const text = await activeOrThrow().repo.show(input.sha, rel)
+        await writeAtomic(root, rel, text)
+        await activeOrThrow().commitNow()
+        return { ok: true as const }
+      }),
+  })
+
   const pdf = t.router({
     // The vault's templates, for the Convert picker + its metadata inputs.
     // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
@@ -960,7 +1002,7 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ auth, github, vaults, notes, tasks, sync, pdf })
+  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf })
 }
 
 /**

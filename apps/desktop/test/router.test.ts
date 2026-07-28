@@ -1322,3 +1322,44 @@ describe('pdf', () => {
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 })
+
+describe('history', () => {
+  // rig() makes a plain dir; version history needs real git material, so init a
+  // repo and land two commits on note.md (v1 = "write", v2 = "Update") first.
+  async function withHistory() {
+    const rigged = await rig({ 'note.md': 'v1\n' })
+    const { root, caller } = rigged
+    await plainGit(root, ['init', '-b', 'main'])
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'write note.md'])
+    await writeFile(join(root, 'note.md'), 'v2\n', 'utf8')
+    await plainGit(root, ['add', '-A'])
+    await plainGit(root, ['commit', '-m', 'Update note.md'])
+    await caller.vaults.open({ remote: REMOTE })
+    return rigged
+  }
+
+  it("lists a file's commits newest-first", async () => {
+    const { caller } = await withHistory()
+    const versions = await caller.history.list({ path: 'note.md' })
+    expect(versions.length).toBeGreaterThanOrEqual(2)
+    expect(versions[0]!.subject).toBe('Update note.md')
+  })
+
+  it('previews the content at a past commit', async () => {
+    const { caller } = await withHistory()
+    const versions = await caller.history.list({ path: 'note.md' })
+    const oldest = versions[versions.length - 1]! // the 'write note.md' = v1
+    expect((await caller.history.preview({ path: 'note.md', sha: oldest.sha })).text).toBe('v1\n')
+  })
+
+  it('restores old content as a new commit', async () => {
+    const { caller, root } = await withHistory()
+    const before = await caller.history.list({ path: 'note.md' })
+    const v1 = before.find((c) => c.subject === 'write note.md')!
+    await caller.history.restore({ remote: REMOTE, path: 'note.md', sha: v1.sha })
+    expect(await readFile(join(root, 'note.md'), 'utf8')).toBe('v1\n')
+    const after = await caller.history.list({ path: 'note.md' })
+    expect(after.length).toBe(before.length + 1)
+  })
+})
