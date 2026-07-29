@@ -44,7 +44,7 @@ import {
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
-import { historyOpenAtom } from '../state/history'
+import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { createTaskDialogAtom, openTaskCountAtom } from '../state/tasks'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
@@ -62,6 +62,7 @@ export function Shell() {
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const historyTarget = useAtomValue(historyTargetPathAtom)
   const [createTaskMode, setCreateTaskMode] = useAtom(createTaskDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
@@ -250,13 +251,11 @@ export function Shell() {
                 </button>
               </span>
             ))}
-            {/* Version history for the open note — a header button toggling the
-                right-hand drawer. Only for a markdown note (the EditorPane case,
-                where `activeDocAtom` is set) — an image/pdf/task tab has no history
-                drawer, so it gets no button. Mirrors how the agent panel opens. */}
-            {tab?.kind === 'note' &&
-              fileKind(tab.path) === 'markdown' &&
-              !isTaskFilePath(tab.path) && (
+            {/* Version history for the focused note — a header button toggling the
+                right-hand drawer. `historyTargetPathAtom` is the one predicate the
+                drawer also uses (a markdown note, not a task/image/pdf), so button
+                and drawer never disagree. Mirrors how the agent panel opens. */}
+            {historyTarget !== null && (
               <button
                 className="ml-auto rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
                 title="version history"

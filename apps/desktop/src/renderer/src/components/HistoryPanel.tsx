@@ -13,6 +13,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import {
   historyOpenAtom,
+  historyTargetPathAtom,
   loadPreviewAtom,
   loadVersionsAtom,
   partitionVersions,
@@ -25,7 +26,7 @@ import {
   versionsAtom,
   type Version,
 } from '../state/history'
-import { activeDocAtom } from '../state/vaults'
+import { activeRemoteAtom } from '../state/vaults'
 
 /** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
@@ -33,7 +34,8 @@ const when = (iso: string) =>
 
 export function HistoryPanel() {
   const open = useAtomValue(historyOpenAtom)
-  const activeDoc = useAtomValue(activeDocAtom)
+  const targetPath = useAtomValue(historyTargetPathAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   const versions = useAtomValue(versionsAtom)
   const preview = useAtomValue(previewAtom)
   const selectedSha = useAtomValue(selectedShaAtom)
@@ -45,11 +47,12 @@ export function HistoryPanel() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // History is per-doc: opening another note must not leave the last one's versions up.
+  // History is per-file and follows focus: switching to another note must swap the
+  // timeline, not leave the last one's versions up.
   useEffect(() => {
     reset()
-    if (open && activeDoc) void loadVersions()
-  }, [open, activeDoc, loadVersions, reset])
+    if (open && targetPath) void loadVersions()
+  }, [open, targetPath, loadVersions, reset])
 
   // The house busy/error wrapper (VaultSettings) — reused, not reinvented.
   const guard = (fn: () => Promise<unknown>) => async () => {
@@ -64,8 +67,13 @@ export function HistoryPanel() {
     }
   }
 
-  if (!open || !activeDoc) return null
+  if (!open || targetPath === null) return null
   const { landmarks, automatic } = partitionVersions(versions)
+
+  // The commit on the remote — GitHub is the vault's host (D60). Opens in the browser.
+  const openCommit = (sha: string) => {
+    if (remote) void window.holi.openExternal(`https://github.com/${remote}/commit/${sha}`)
+  }
 
   const onRestore = guard(async () => {
     if (!selectedSha) return
@@ -81,26 +89,41 @@ export function HistoryPanel() {
     if (proceed) await restore(selectedSha)
   })
 
+  // A row is two controls, not a button inside a button (invalid HTML): the label
+  // selects the version to preview; the short sha opens that commit on the remote.
   const row = (v: Version) => (
-    <button
+    <div
       key={v.sha}
-      onClick={() => void loadPreview(v.sha)}
-      className={`w-full rounded px-2 py-1 text-left text-xs ${
-        selectedSha === v.sha ? 'bg-neutral-800 text-neutral-100' : 'text-neutral-400 hover:bg-neutral-900'
+      className={`flex items-center gap-1 rounded ${
+        selectedSha === v.sha ? 'bg-neutral-800' : 'hover:bg-neutral-900'
       }`}
     >
-      <span className="block truncate">{versionLabel(v)}</span>
-      <span className="block text-[10px] text-neutral-600">
-        {when(v.date)} · {v.author}
-      </span>
-    </button>
+      <button
+        onClick={() => void loadPreview(v.sha)}
+        className={`min-w-0 flex-1 px-2 py-1 text-left text-xs ${
+          selectedSha === v.sha ? 'text-neutral-100' : 'text-neutral-400'
+        }`}
+      >
+        <span className="block truncate">{versionLabel(v)}</span>
+        <span className="block text-[10px] text-neutral-600">
+          {when(v.date)} · {v.author}
+        </span>
+      </button>
+      <button
+        onClick={() => openCommit(v.sha)}
+        title={`open commit ${v.sha.slice(0, 7)} on GitHub`}
+        className="shrink-0 rounded px-1.5 py-1 font-mono text-[10px] text-neutral-600 hover:text-sky-400"
+      >
+        {v.sha.slice(0, 7)}
+      </button>
+    </div>
   )
 
   return (
     <aside className="flex w-80 min-w-0 flex-col border-l border-neutral-900">
       <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
         <span className="text-neutral-300">History</span>
-        <span className="min-w-0 flex-1 truncate text-neutral-600">{activeDoc.path}</span>
+        <span className="min-w-0 flex-1 truncate text-neutral-600">{targetPath}</span>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">

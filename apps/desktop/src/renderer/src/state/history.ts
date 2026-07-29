@@ -6,10 +6,12 @@
  * **path** — a `DocMeta` has no id under D60 — and opening a different note
  * clears the selection and the preview.
  */
+import { fileKind, isTaskFilePath } from '@holi/shared'
 import { atom } from 'jotai'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import { activeDocAtom, activeRemoteAtom } from './vaults'
+import { workspaceAtom } from './panes'
+import { activeRemoteAtom } from './vaults'
 
 /** One commit that touched the open file — the git `Commit` shape. */
 export interface Version {
@@ -20,6 +22,25 @@ export interface Version {
   date: string
   author: string
 }
+
+/**
+ * The path the history drawer targets: the **focused tab**, when it is a markdown
+ * note (not a task file, not an image/pdf). Null otherwise — which is also when
+ * the header History button hides.
+ *
+ * Keyed off the workspace's active tab, NOT `activeDocAtom`: that atom follows a
+ * note being *opened* (a tree click / wiki-link), not a tab being *focused*, and
+ * `EditorPane` never syncs it — so switching between open tabs would leave the
+ * drawer stale. One source of truth, shared by the button and the drawer.
+ */
+export const historyTargetPathAtom = atom<string | null>((get) => {
+  const w = get(workspaceAtom)
+  const pane = w.panes[w.active]
+  const tab = pane?.tabs[pane.active]
+  if (!tab || tab.kind !== 'note') return null
+  if (fileKind(tab.path) !== 'markdown' || isTaskFilePath(tab.path)) return null
+  return tab.path
+})
 
 export const historyOpenAtom = atom(false)
 export const versionsAtom = atom<Version[]>([])
@@ -59,19 +80,22 @@ export function versionLabel(v: Version): string {
 // ------------------------------------------------------------------- write atoms
 
 export const loadVersionsAtom = atom(null, async (get, set) => {
-  const doc = get(activeDocAtom)
-  if (!doc) return
-  set(versionsAtom, await trpc.history.list.query({ path: doc.path }))
+  const path = get(historyTargetPathAtom)
+  if (!path) return
+  const versions = await trpc.history.list.query({ path })
+  // Focus may have moved to another file while this was in flight — don't stamp
+  // one file's timeline over another's.
+  if (get(historyTargetPathAtom) === path) set(versionsAtom, versions)
 })
 
 export const loadPreviewAtom = atom(null, async (get, set, sha: string) => {
-  const doc = get(activeDocAtom)
-  if (!doc) return
+  const path = get(historyTargetPathAtom)
+  if (!path) return
   set(selectedShaAtom, sha)
   set(previewAtom, null)
-  const { text } = await trpc.history.preview.query({ path: doc.path, sha })
-  // The note may have closed, or another version been picked, while this was in flight.
-  if (get(selectedShaAtom) === sha) set(previewAtom, text)
+  const { text } = await trpc.history.preview.query({ path, sha })
+  // The file may have changed, or another version been picked, while this was in flight.
+  if (get(selectedShaAtom) === sha && get(historyTargetPathAtom) === path) set(previewAtom, text)
 })
 
 /**
@@ -82,11 +106,11 @@ export const loadPreviewAtom = atom(null, async (get, set, sha: string) => {
  * a timeline missing it is missing it at the one moment it matters.
  */
 export const restoreVersionAtom = atom(null, async (get, set, sha: string) => {
-  const doc = get(activeDocAtom)
+  const path = get(historyTargetPathAtom)
   const remote = get(activeRemoteAtom)
-  if (!doc || !remote) return
+  if (!path || !remote) return
   await flushAllBuffers()
-  await trpc.history.restore.mutate({ remote, path: doc.path, sha })
+  await trpc.history.restore.mutate({ remote, path, sha })
   await set(loadVersionsAtom)
 })
 
