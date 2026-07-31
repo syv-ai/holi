@@ -1,21 +1,21 @@
-import { cn } from '@/lib/cn'
+import * as React from "react"
 
-/**
- * The text-input primitive. Replaces the `taskFieldInput`/`control` string
- * constants that were re-derived across four files (and exported upward out of
- * TaskDetail, a feature — the inverted seam this un-inverts).
- */
-export function Input({ className, ...props }: React.ComponentProps<'input'>): React.JSX.Element {
+import { cn } from "@/lib/cn"
+
+function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   return (
     <input
+      type={type}
       data-slot="input"
       className={cn(
-        'w-full rounded-control border border-border bg-surface-raised px-2 py-1',
-        'text-sm text-foreground outline-none placeholder:text-muted-fg',
-        'focus:border-accent disabled:opacity-50',
-        className,
+        "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none selection:bg-primary selection:text-primary-foreground file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm dark:bg-input/30",
+        "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        "aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+        className
       )}
       {...props}
     />
   )
 }
+
+export { Input }

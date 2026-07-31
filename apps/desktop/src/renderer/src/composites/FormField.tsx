@@ -15,9 +15,9 @@ export function FormField({
 }): React.JSX.Element {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs text-muted-fg">{label}</span>
+      <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
       {children}
-      {error !== undefined && <span className="mt-1 block text-xs text-danger">{error}</span>}
+      {error !== undefined && <span className="mt-1 block text-xs text-destructive">{error}</span>}
     </label>
   )
 }

@@ -3,7 +3,16 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { FormField } from '@/composites/FormField'
 import { RecurrenceRows, TaskDescriptionEditor } from '@/components/TaskDetail'
-import { Button, Dialog, Input, Select } from '@/primitives'
+import {
+  Button,
+  Dialog,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/primitives'
 import {
   type CreateTaskMode,
   ROOT_LANE,
@@ -154,31 +163,33 @@ export function CreateTask({
 
         {mode === 'quick' ? (
           <FormField label="Status">
-            <Select
-              data-create-task-status
-              value={status}
-              onChange={(e) => setStatus(e.target.value as TaskStatus)}
-            >
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
+            <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
+              <SelectTrigger className="w-full" data-create-task-status>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {STATUSES.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
+              </SelectContent>
             </Select>
           </FormField>
         ) : (
           <div className="flex flex-col gap-3 border-t border-border pt-3">
             <FormField label="Status">
-              <Select
-                data-create-task-status
-                value={status}
-                onChange={(e) => setStatus(e.target.value as TaskStatus)}
-              >
-                {STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
+              <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
+                <SelectTrigger className="w-full" data-create-task-status>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUSES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
               </Select>
             </FormField>
 
@@ -192,17 +203,21 @@ export function CreateTask({
             </FormField>
 
             <FormField label="Priority">
+              {/* Radix Select forbids an empty-string value, so 'none' is the
+                  sentinel for "no priority" (mapped back to undefined on save). */}
               <Select
-                data-create-task-priority
-                value={draft.priority ?? ''}
-                onChange={(e) =>
-                  draftSave({ priority: e.target.value === '' ? null : (e.target.value as Priority) })
-                }
+                value={draft.priority ?? 'none'}
+                onValueChange={(v) => draftSave({ priority: v === 'none' ? null : (v as Priority) })}
               >
-                <option value="">—</option>
-                <option value="high">high</option>
-                <option value="medium">medium</option>
-                <option value="low">low</option>
+                <SelectTrigger className="w-full" data-create-task-priority>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">—</SelectItem>
+                  <SelectItem value="high">high</SelectItem>
+                  <SelectItem value="medium">medium</SelectItem>
+                  <SelectItem value="low">low</SelectItem>
+                </SelectContent>
               </Select>
             </FormField>
 
@@ -238,7 +253,7 @@ export function CreateTask({
             <RecurrenceRows task={draftTask} save={draftSave} />
 
             <div>
-              <span className="mb-1 block text-xs text-muted-fg">description</span>
+              <span className="mb-1 block text-xs text-muted-foreground">description</span>
               <TaskDescriptionEditor
                 notePath=""
                 initial=""
@@ -252,7 +267,7 @@ export function CreateTask({
       </Dialog.Body>
 
       <Dialog.Footer>
-        <span className="mr-auto truncate text-xs text-muted-fg" title={laneLabel(folder.trim())}>
+        <span className="mr-auto truncate text-xs text-muted-foreground" title={laneLabel(folder.trim())}>
           → {laneLabel(folder.trim())}
         </span>
         <Button variant="ghost" size="sm" onClick={onClose}>

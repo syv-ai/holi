@@ -10,8 +10,8 @@ test('renders and forwards native props', () => {
 })
 
 test('caller className overrides the default (tailwind-merge wins)', () => {
-  render(<Input aria-label="f" className="bg-surface" />)
+  render(<Input aria-label="f" className="bg-background" />)
   const el = screen.getByLabelText('f')
-  expect(el).toHaveClass('bg-surface')
-  expect(el).not.toHaveClass('bg-surface-raised')
+  expect(el).toHaveClass('bg-background')
+  expect(el).not.toHaveClass('bg-transparent')
 })

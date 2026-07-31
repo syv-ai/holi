@@ -37,7 +37,7 @@ const colourRules = [
   {
     selector: COLOUR_LITERAL,
     message:
-      'arbitrary colour literal (bg-[#…], text-[oklch(…)]) — use a semantic token (bg-surface, text-accent). Tokens or nothing.',
+      'arbitrary colour literal (bg-[#…], text-[oklch(…)]) — use a semantic token (bg-background, text-primary). Tokens or nothing.',
   },
   {
     selector: COLOUR_TEMPLATE,
@@ -62,8 +62,8 @@ const external = {
   rules: [
     {
       from: ['composites', 'features'],
-      disallow: ['@radix-ui/*'],
-      message: 'Radix is a primitive dependency — import it only inside primitives/.',
+      disallow: ['@radix-ui/*', 'radix-ui', 'radix-ui/*'],
+      message: 'Radix (radix-ui / @radix-ui/*) is a primitive dependency — import it only inside primitives/.',
     },
   ],
 }

@@ -3,14 +3,14 @@ import { expect, test } from 'vitest'
 import { Input } from '../../primitives/Input'
 import { FormField } from '../FormField'
 
-test('shows the label and the error, error carries the danger token', () => {
+test('shows the label and the error, error carries the destructive token', () => {
   render(
     <FormField label="Title" error="required">
       <Input aria-label="Title" defaultValue="" />
     </FormField>,
   )
   expect(screen.getByText('Title')).toBeInTheDocument()
-  expect(screen.getByText('required')).toHaveClass('text-danger')
+  expect(screen.getByText('required')).toHaveClass('text-destructive')
 })
 
 test('no error node when error is absent', () => {

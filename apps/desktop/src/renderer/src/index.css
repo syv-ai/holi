@@ -1,50 +1,90 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
 
-/* Tier 1 — dark-mode switch driven by the data-theme root stamp (not prefers-color-scheme). */
+/* Dark-mode switch driven by the data-theme root stamp (not prefers-color-scheme).
+   Kept instead of shadcn's default `.dark` — Holi stamps `data-theme` on the root. */
 @custom-variant dark (&:where([data-theme='dark'] *));
 
-/* Tier 2 — semantic tokens mapped onto the built-in neutral/sky palette.
-   Plain selectors (NOT @theme) so they re-cascade per theme scope. */
+/* shadcn's semantic token vocabulary, mapped onto Tailwind's built-in neutral/sky
+   palette. Plain selectors (NOT @theme) so the values re-cascade per theme scope.
+   Holi is dark-first: :root shares the dark values; [data-theme='light'] overrides.
+   Role note: `--primary` is the brand action colour (sky); `--accent` is shadcn's
+   SUBTLE hover surface (neutral) — do not confuse it with the old brand `accent`. */
 :root,
 [data-theme='dark'] {
-  --surface: var(--color-neutral-950);
-  --surface-raised: var(--color-neutral-800);
-  --border: var(--color-neutral-800);
-  --accent: var(--color-sky-700);
-  --accent-fg: var(--color-neutral-50);
+  --background: var(--color-neutral-950);
   --foreground: var(--color-neutral-100);
-  --muted-fg: var(--color-neutral-400);
-  --danger: var(--color-red-900);
-  --danger-fg: var(--color-red-200);
+  --card: var(--color-neutral-900);
+  --card-foreground: var(--color-neutral-100);
+  --popover: var(--color-neutral-900);
+  --popover-foreground: var(--color-neutral-100);
+  --primary: var(--color-sky-700);
+  --primary-foreground: var(--color-neutral-50);
+  --secondary: var(--color-neutral-800);
+  --secondary-foreground: var(--color-neutral-100);
+  --muted: var(--color-neutral-800);
+  --muted-foreground: var(--color-neutral-400);
+  --accent: var(--color-neutral-800);
+  --accent-foreground: var(--color-neutral-100);
+  --destructive: var(--color-red-900);
+  --destructive-foreground: var(--color-red-100);
+  --border: var(--color-neutral-800);
+  --input: var(--color-neutral-800);
+  --ring: var(--color-sky-700);
 }
 [data-theme='light'] {
-  --surface: var(--color-neutral-50);
-  --surface-raised: #ffffff;
-  --border: var(--color-neutral-200);
-  --accent: var(--color-sky-600);
-  --accent-fg: #ffffff;
+  --background: var(--color-neutral-50);
   --foreground: var(--color-neutral-900);
-  --muted-fg: var(--color-neutral-500);
-  --danger: var(--color-red-600);
-  --danger-fg: #ffffff;
+  --card: #ffffff;
+  --card-foreground: var(--color-neutral-900);
+  --popover: #ffffff;
+  --popover-foreground: var(--color-neutral-900);
+  --primary: var(--color-sky-600);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-neutral-100);
+  --secondary-foreground: var(--color-neutral-900);
+  --muted: var(--color-neutral-100);
+  --muted-foreground: var(--color-neutral-500);
+  --accent: var(--color-neutral-100);
+  --accent-foreground: var(--color-neutral-900);
+  --destructive: var(--color-red-600);
+  --destructive-foreground: #ffffff;
+  --border: var(--color-neutral-200);
+  --input: var(--color-neutral-200);
+  --ring: var(--color-sky-600);
 }
 
-/* Tier 3 — expose semantics as utilities. @theme inline so the generated utility
-   holds the pointer (var(--surface)), letting the tier-2 override re-cascade. */
+/* Expose the semantics as utilities. @theme inline so the generated utility holds
+   the pointer (var(--background)…), letting the per-theme override re-cascade. */
 @theme inline {
-  --color-surface: var(--surface);
-  --color-surface-raised: var(--surface-raised);
-  --color-border: var(--border);
-  --color-accent: var(--accent);
-  --color-accent-fg: var(--accent-fg);
+  --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-muted-fg: var(--muted-fg);
-  --color-danger: var(--danger);
-  --color-danger-fg: var(--danger-fg);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 @theme {
-  --radius-control: 0.5rem;
+  --radius: 0.5rem;
 }
 
 /**

@@ -7,16 +7,16 @@ test('renders a button with its label', () => {
   expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
 })
 
-test('danger variant carries the danger token class', () => {
-  render(<Button variant="danger">Delete</Button>)
-  expect(screen.getByRole('button')).toHaveClass('bg-danger')
+test('destructive variant carries the destructive token class', () => {
+  render(<Button variant="destructive">Delete</Button>)
+  expect(screen.getByRole('button')).toHaveClass('bg-destructive')
 })
 
 test('caller className overrides the default (tailwind-merge wins)', () => {
-  render(<Button className="bg-surface">x</Button>)
+  render(<Button className="bg-secondary">x</Button>)
   const el = screen.getByRole('button')
-  expect(el).toHaveClass('bg-surface')
-  expect(el).not.toHaveClass('bg-accent')
+  expect(el).toHaveClass('bg-secondary')
+  expect(el).not.toHaveClass('bg-primary')
 })
 
 test('disabled prop reaches the element', () => {
