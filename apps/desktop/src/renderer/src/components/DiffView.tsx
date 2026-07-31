@@ -31,6 +31,11 @@ const diffTheme = EditorView.theme(
       border: 'none',
     },
     '.cm-collapsedLines:hover': { color: '#aaa' },
+    // The package marks changed/deleted text with a 2px bottom gradient — it reads
+    // as an underline. Replace it with a full solid background: green for
+    // insertions, red for deletions, the way a diff normally shades text.
+    '.cm-changedText': { background: 'rgba(34,197,94,0.28)' },
+    '.cm-deletedChunk .cm-deletedText, .cm-deletedText': { background: 'rgba(239,68,68,0.30)' },
   },
   { dark: true },
 )
