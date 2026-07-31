@@ -2,14 +2,25 @@ import boundaries from 'eslint-plugin-boundaries'
 import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
-// GATE_LEVEL=error flips warns to errors (used once a path's migration is done).
-// Default is warn so the un-migrated tree does not fail the build mid-migration.
+// GATE_LEVEL=error flips the un-migrated tree's warns to errors (whole-tree ratchet).
+// Independently, the MIGRATED paths below are always error — the pattern is applied
+// there, so a regression must fail regardless of GATE_LEVEL.
 const LEVEL = process.env.GATE_LEVEL === 'error' ? 'error' : 'warn'
+
+// Paths where the hierarchy is already applied — enforced at error.
+const MIGRATED = [
+  'src/renderer/src/primitives/**',
+  'src/renderer/src/composites/**',
+  'src/renderer/src/features/**',
+  'src/renderer/src/components/DialogHost.tsx',
+  'src/renderer/src/state/dialogs.ts',
+]
+// The subset that may NOT use native elements (everything migrated except primitives).
+const MIGRATED_NO_NATIVE = MIGRATED.filter((p) => !p.includes('/primitives/'))
 
 // AST selectors — not regex over source, so a <button> in a comment or string
 // is never a false positive.
-const NATIVE =
-  'JSXOpeningElement[name.name=/^(button|input|select|textarea|dialog|form)$/]'
+const NATIVE = 'JSXOpeningElement[name.name=/^(button|input|select|textarea|dialog|form)$/]'
 // Arbitrary COLOUR literals only. `bg-[var(--token)]`, `w-[32px]`, `text-[13px]`
 // are fine — only `<colour-prefix>-[<#|rgb|hsl|oklch|oklab|color>…]` is banned.
 const COLOUR_BODY =
@@ -33,6 +44,29 @@ const colourRules = [
     message: 'arbitrary colour literal in a template string — use a semantic token. Tokens or nothing.',
   },
 ]
+
+// Extracted so the base (LEVEL) and migrated (error) blocks share one definition.
+const elementTypes = {
+  default: 'disallow',
+  rules: [
+    { from: ['primitives'], allow: [] },
+    { from: ['composites'], allow: ['primitives'] },
+    {
+      from: ['features'],
+      allow: ['primitives', 'composites', ['features', { feature: '${from.feature}' }]],
+    },
+  ],
+}
+const external = {
+  default: 'allow',
+  rules: [
+    {
+      from: ['composites', 'features'],
+      disallow: ['@radix-ui/*'],
+      message: 'Radix is a primitive dependency — import it only inside primitives/.',
+    },
+  ],
+}
 
 const LINTED = ['src/renderer/src/**/*.{ts,tsx}', 'test/fixtures/gate/**/*.{ts,tsx}']
 
@@ -62,43 +96,33 @@ export default [
       // so the existing eslint-disable directives stay meaningful and never fail.
       'react-hooks/rules-of-hooks': 'warn',
       'react-hooks/exhaustive-deps': 'warn',
-      // native elements + colour literals, everywhere in the linted tree.
+      // The hierarchy gate — LEVEL over the whole (still-migrating) tree.
       'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules],
-      // one-way layer imports.
-      'boundaries/element-types': [
-        LEVEL,
-        {
-          default: 'disallow',
-          rules: [
-            { from: ['primitives'], allow: [] },
-            { from: ['composites'], allow: ['primitives'] },
-            {
-              from: ['features'],
-              allow: ['primitives', 'composites', ['features', { feature: '${from.feature}' }]],
-            },
-          ],
-        },
-      ],
-      // Radix (and shadcn) may only be imported inside primitives/.
-      'boundaries/external': [
-        LEVEL,
-        {
-          default: 'allow',
-          rules: [
-            {
-              from: ['composites', 'features'],
-              disallow: ['@radix-ui/*'],
-              message: 'Radix is a primitive dependency — import it only inside primitives/.',
-            },
-          ],
-        },
-      ],
+      'boundaries/element-types': [LEVEL, elementTypes],
+      'boundaries/external': [LEVEL, external],
     },
   },
   // primitives/ is the ONE place native elements + Radix are allowed.
-  // The colour ban still applies here (tokens or nothing, everywhere).
+  // The colour ban still applies (tokens or nothing, everywhere).
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
     rules: { 'no-restricted-syntax': [LEVEL, ...colourRules] },
+  },
+
+  // ── Ratchet: migrated paths are enforced at error regardless of GATE_LEVEL. ──
+  {
+    files: MIGRATED,
+    rules: {
+      'boundaries/element-types': ['error', elementTypes],
+      'boundaries/external': ['error', external],
+    },
+  },
+  {
+    files: MIGRATED_NO_NATIVE,
+    rules: { 'no-restricted-syntax': ['error', nativeRule, ...colourRules] },
+  },
+  {
+    files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
+    rules: { 'no-restricted-syntax': ['error', ...colourRules] },
   },
 ]

@@ -12,6 +12,12 @@
     "lint:gate": "GATE_LEVEL=error pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
     "format": "prettier --write ."
   },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm exec lint-staged"
+  },
+  "lint-staged": {
+    "apps/desktop/src/renderer/src/**/*.{ts,tsx}": "pnpm --filter @holi/desktop exec eslint"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron",
@@ -21,7 +27,9 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "lint-staged": "^17.3.0",
     "prettier": "^3.9.5",
+    "simple-git-hooks": "^2.13.1",
     "typescript": "^7.0.2"
   }
 }
