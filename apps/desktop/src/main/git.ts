@@ -153,6 +153,9 @@ export interface GitRepo {
    * e.g. a commit from before the file was renamed (`show` reads the given name,
    * it does not `--follow`). */
   show(sha: string, path: string): Promise<string>
+  /** The paths a commit changed vs its (first) parent — the file list for a
+   * commit's diff view. `--root` so the initial commit lists its files. */
+  changedFiles(sha: string): Promise<string[]>
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
@@ -485,6 +488,21 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return res.stdout
   }
 
+  /** The paths a commit changed vs its first parent (`--root` so the initial
+   * commit lists its files). Plumbing (`diff-tree`), so the newline-separated
+   * output is a stable interface. */
+  async function changedFiles(sha: string): Promise<string[]> {
+    const out = await runGit(
+      root,
+      ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', sha],
+      opts,
+    )
+    return out
+      .split('\n')
+      .map((s) => s.trim())
+      .filter((s) => s !== '')
+  }
+
   /** FR-20. A no-op when no merge is in progress, so the control can be pressed
    * twice without turning into an error. */
   async function abortMerge(): Promise<void> {
@@ -652,7 +670,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, log, show, commitAll, pull, remerge, push, abortMerge }
+  return { root, status, log, show, changedFiles, commitAll, pull, remerge, push, abortMerge }
 }
 
 /**

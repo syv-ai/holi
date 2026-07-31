@@ -727,3 +727,24 @@ describe('show', () => {
     await expect(repo.show(sha, 'no-such-file.md')).rejects.toThrow()
   })
 })
+
+describe('changedFiles', () => {
+  it('lists every path a commit changed', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    await writeFile(join(dir, 'a.md'), 'A\n', 'utf8')
+    await writeFile(join(dir, 'b.md'), 'B\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'two files'])
+    const [{ sha }] = await repo.log({ limit: 1 })
+    expect((await repo.changedFiles(sha)).sort()).toEqual(['a.md', 'b.md'])
+  })
+
+  it('lists the files of the very first (root) commit', async () => {
+    const dir = await makeClone(await makeRemote())
+    const repo = openRepo(dir)
+    const commits = await repo.log({})
+    const root = commits[commits.length - 1]!
+    expect((await repo.changedFiles(root.sha)).length).toBeGreaterThan(0)
+  })
+})
