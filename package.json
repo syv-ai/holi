@@ -8,6 +8,8 @@
     "dev": "pnpm --filter @holi/desktop dev",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
+    "lint:gate": "GATE_LEVEL=error pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
     "format": "prettier --write ."
   },
   "pnpm": {
