@@ -26,7 +26,7 @@ const diffTheme = EditorView.theme(
   {
     '.cm-collapsedLines': {
       background: 'none',
-      backgroundColor: '#000',
+      backgroundColor: '#0a0a0a', // neutral-950, the app's standard background
       color: '#888',
       border: 'none',
     },
