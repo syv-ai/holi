@@ -120,17 +120,19 @@ The standing assumption that makes this safe is the one the whole product rests 
 
 ## History
 
-The vault's history **is git history**, and autosave commits are what give it resolution.
+The vault's history **is git history**, and autosave commits are what give it resolution. Two surfaces read the same `git log`, both presenting commits *as commits* — the audience is developers, so nothing is dressed up as an abstract "version":
 
-- A **version timeline** for the open file, from `git log --follow`, with preview and restore. Restore writes the old content as a new commit — never a rewrite of history.
+- **A per-file timeline** — a right-hand drawer, opened by a header button on a note. A **flat** `git log --follow` for the open file: every commit, newest-first, each showing its short sha, message and author. Selecting a commit shows, inline, the diff that commit made to *this* file (vs its parent) in a read-only [`@codemirror/merge`](https://github.com/codemirror/merge) view; the sha opens the commit on GitHub; **Restore** writes that version's content back as a new commit.
+- **A whole-vault commit browser** — a dialog opened from the footer sync state. Every commit in the vault (left) → the files it changed (middle) → that file's diff (right), the same merge view and sha-links. Where the drawer is file-first, this is commit-first.
+- **Restore writes the old content as a new commit — never a rewrite of history.** Same argument as the machine-local reminder watermark: history is append-only, so restoring is an ordinary edit that lands as `Update <path>`, and the version you left is still in the log.
 - **No custom snapshot store.** `yjs_snapshots`, `snapshots.take`, `pre-agent-write` labels, the reason taxonomy, and the retention question they raised are all deleted. Git's object store is the snapshot store, and it already handles retention.
-- **Milestones fall out for free.** The old timeline needed a display-level split between meaningful and automatic snapshots because interval snapshots buried the ones that mattered. The same problem exists here — a wall of autosave commits — and the same fix applies: fold consecutive autosave commits and surface the landmarks that are *not* autosaves — merges, reconciles, and any deliberately-authored commit (the agent's, the seed). A push leaves no commit of its own, so it is not a landmark here; the timeline is the log, and the log has no push in it.
+- **A flat log, not a curated one.** An earlier plan folded consecutive `Update …` autosave commits away and surfaced only the landmarks (merges, reconciles, deliberately-authored commits). That fold was **dropped**: these are real commits and the user is a developer, so the timeline is the straight `git log` — autosave messages shown as what they are. A push leaves no commit, so the log has no push in it; making the shared journal terser is *squashing* (Open questions), not a display filter.
 
 ---
 
 ## Edge cases & risks
 
-- **Autosave committing something half-written** — by design; the journal is autosaves and the landmarks are the merges, reconciles, and deliberate commits among them. If the log proves ugly, the answer is folding the autosave runs in the history view, not a coarser debounce that risks losing work.
+- **Autosave committing something half-written** — by design; the journal is the autosaves, shown in the timeline as the commits they are. If the flat log proves too noisy to read, the lever is squashing the autosave journal (Open questions), not a coarser debounce that risks losing work.
 - **A pull landing while the agent is mid-turn.** The agent's `Edit`/`Write` will fail their read-before-edit guard on a file that moved, which is the correct outcome. Consider pausing auto-pull during an agent turn; measure before deciding, because the pause has its own failure mode (a long turn blocking sync).
 - **The `.git` directory is reachable by the agent.** It has `Bash` and the clone is a repo, so `reset --hard` and `push --force` are expressible ([`agent.md`](agent.md) §Security). Bounded by native permission prompts and branch protection, not by trying to blocklist git.
 - **Two Holi instances on one clone** (the app opened twice) would race on commits. Take a lock on the clone.
