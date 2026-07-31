@@ -26,12 +26,11 @@ const diffTheme = EditorView.theme(
   {
     '.cm-collapsedLines': {
       background: 'none',
-      backgroundColor: 'rgba(255,255,255,0.035)',
-      color: 'rgba(255,255,255,0.4)',
-      borderTop: '1px solid rgba(255,255,255,0.07)',
-      borderBottom: '1px solid rgba(255,255,255,0.07)',
+      backgroundColor: '#000',
+      color: '#888',
+      border: 'none',
     },
-    '.cm-collapsedLines:hover': { backgroundColor: 'rgba(255,255,255,0.06)' },
+    '.cm-collapsedLines:hover': { color: '#aaa' },
   },
   { dark: true },
 )
