@@ -15,6 +15,27 @@ import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 import { editorTheme } from '../editor/theme'
 
+/**
+ * `{ dark: true }` marks the editor dark so `@codemirror/merge`'s own `&dark`
+ * rules apply — `editorTheme` is a `baseTheme` with no dark flag, so without this
+ * the merge view falls back to its LIGHT variants (a white "N unchanged lines"
+ * bar on our dark UI). The `.cm-collapsedLines` override then replaces that bar's
+ * hardcoded gradient with a flat, subtle strip that reads on any background.
+ */
+const diffTheme = EditorView.theme(
+  {
+    '.cm-collapsedLines': {
+      background: 'none',
+      backgroundColor: 'rgba(255,255,255,0.035)',
+      color: 'rgba(255,255,255,0.4)',
+      borderTop: '1px solid rgba(255,255,255,0.07)',
+      borderBottom: '1px solid rgba(255,255,255,0.07)',
+    },
+    '.cm-collapsedLines:hover': { backgroundColor: 'rgba(255,255,255,0.06)' },
+  },
+  { dark: true },
+)
+
 export function DiffView({ before, after }: { before: string; after: string }) {
   const host = useRef<HTMLDivElement>(null)
 
@@ -29,6 +50,7 @@ export function DiffView({ before, after }: { before: string; after: string }) {
           EditorView.editable.of(false),
           EditorView.lineWrapping,
           editorTheme,
+          diffTheme,
           unifiedMergeView({
             original: before,
             mergeControls: false,
