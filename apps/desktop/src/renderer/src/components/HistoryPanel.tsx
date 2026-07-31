@@ -1,32 +1,28 @@
 /**
- * Version history for the open note — the timeline, a read-only preview, and restore.
+ * Version history for the open note — a right-hand drawer beside the editor,
+ * mirroring AgentPanel's shape (not a `viewAtom` peer, not a modal).
  *
- * A right-hand drawer beside the editor, mirroring AgentPanel's shape. Deliberately not
- * a third `viewAtom` entry (history is *about* the open note, not a peer surface to
- * notes/board) and deliberately not a modal — there is no modal/dialog primitive in this
- * codebase, and inventing one is a different slice.
- *
- * The timeline IS git history (`prd/vaults-sync.md` §History): each row is a commit that
- * touched the file, keyed by sha; restore writes the old content back as a new commit.
+ * These are the file's actual git commits (`prd/vaults-sync.md` §History): a flat
+ * log, newest-first, each row its sha, message and author. Picking one shows the
+ * diff that commit made to *this* file (vs its parent) in a merge view; the sha
+ * links to the commit on the remote; Restore writes the old content as a new commit.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import {
+  diffAtom,
   historyOpenAtom,
   historyTargetPathAtom,
-  loadPreviewAtom,
+  loadDiffAtom,
   loadVersionsAtom,
-  partitionVersions,
-  previewAtom,
   resetHistoryAtom,
   restoreVersionAtom,
   selectedShaAtom,
-  showAllVersionsAtom,
-  versionLabel,
   versionsAtom,
   type Version,
 } from '../state/history'
 import { activeRemoteAtom } from '../state/vaults'
+import { DiffView } from './DiffView'
 
 /** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
@@ -37,18 +33,17 @@ export function HistoryPanel() {
   const targetPath = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const versions = useAtomValue(versionsAtom)
-  const preview = useAtomValue(previewAtom)
-  const selectedSha = useAtomValue(selectedShaAtom)
-  const [showAll, setShowAll] = useAtom(showAllVersionsAtom)
+  const diff = useAtomValue(diffAtom)
+  const [selectedSha] = useAtom(selectedShaAtom)
   const loadVersions = useSetAtom(loadVersionsAtom)
-  const loadPreview = useSetAtom(loadPreviewAtom)
+  const loadDiff = useSetAtom(loadDiffAtom)
   const restore = useSetAtom(restoreVersionAtom)
   const reset = useSetAtom(resetHistoryAtom)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // History is per-file and follows focus: switching to another note must swap the
-  // timeline, not leave the last one's versions up.
+  // log, not leave the last one's commits up.
   useEffect(() => {
     reset()
     if (open && targetPath) void loadVersions()
@@ -68,7 +63,6 @@ export function HistoryPanel() {
   }
 
   if (!open || targetPath === null) return null
-  const { landmarks, automatic } = partitionVersions(versions)
 
   // The commit on the remote — GitHub is the vault's host (D60). Opens in the browser.
   const openCommit = (sha: string) => {
@@ -78,19 +72,17 @@ export function HistoryPanel() {
   const onRestore = guard(async () => {
     if (!selectedSha) return
     // window.confirm is the codebase's only destructive-confirm precedent (MembersSection).
-    // Say what it does: it lands a new commit everyone in the vault will pull, and it is
-    // itself revertible from this same timeline — not a private, silent undo.
     const proceed = window.confirm(
       'Restore this version?\n\n' +
-        "It replaces the note's text with this older version as a new commit — everyone in " +
-        'the vault will pull it. Nothing is erased: the current version stays in the timeline, ' +
-        'so you can put it back.',
+        "It replaces the note's text with this commit's version as a new commit — everyone in " +
+        'the vault will pull it. Nothing is erased: the current version stays in the log, so you ' +
+        'can put it back.',
     )
     if (proceed) await restore(selectedSha)
   })
 
-  // A row is two controls, not a button inside a button (invalid HTML): the label
-  // selects the version to preview; the short sha opens that commit on the remote.
+  // A row is two controls, not a button inside a button (invalid HTML): the message
+  // selects the commit to diff; the short sha opens that commit on the remote.
   const row = (v: Version) => (
     <div
       key={v.sha}
@@ -99,12 +91,12 @@ export function HistoryPanel() {
       }`}
     >
       <button
-        onClick={() => void loadPreview(v.sha)}
+        onClick={() => void loadDiff(v.sha)}
         className={`min-w-0 flex-1 px-2 py-1 text-left text-xs ${
           selectedSha === v.sha ? 'text-neutral-100' : 'text-neutral-400'
         }`}
       >
-        <span className="block truncate">{versionLabel(v)}</span>
+        <span className="block truncate">{v.subject || '(no message)'}</span>
         <span className="block text-[10px] text-neutral-600">
           {when(v.date)} · {v.author}
         </span>
@@ -120,7 +112,7 @@ export function HistoryPanel() {
   )
 
   return (
-    <aside className="flex w-80 min-w-0 flex-col border-l border-neutral-900">
+    <aside className="flex w-96 min-w-0 flex-col border-l border-neutral-900">
       <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
         <span className="text-neutral-300">History</span>
         <span className="min-w-0 flex-1 truncate text-neutral-600">{targetPath}</span>
@@ -130,38 +122,21 @@ export function HistoryPanel() {
         <div className="max-h-56 shrink-0 overflow-y-auto border-b border-neutral-900 p-2">
           {versions.length === 0 && (
             <p className="px-2 py-1 text-xs text-neutral-600">
-              No versions yet — this file has no commits. Edits become commits automatically as
-              you work, and each one shows up here.
+              No commits yet — edits become commits automatically as you work, and each shows here.
             </p>
           )}
-          {landmarks.map(row)}
-          {/* Display only — the autosave run is folded so the landmarks stand out.
-            * Nothing is hidden from restore; these are just not what you came looking for. */}
-          {automatic.length > 0 && (
-            <>
-              <button
-                onClick={() => setShowAll((v) => !v)}
-                className="mt-1 w-full px-2 py-1 text-left text-[10px] text-neutral-600 hover:text-neutral-400"
-              >
-                {showAll ? '⌃' : '⌄'} {automatic.length} automatic save
-                {automatic.length === 1 ? '' : 's'}
-              </button>
-              {showAll && automatic.map(row)}
-            </>
-          )}
+          {versions.map(row)}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <div className="min-h-0 flex-1 overflow-hidden">
           {selectedSha === null ? (
-            <p className="text-xs text-neutral-600">Pick a version to read it.</p>
-          ) : preview === null ? (
-            <p className="text-xs text-neutral-600">Loading…</p>
-          ) : preview === '' ? (
-            <p className="text-xs text-neutral-600 italic">This version was empty.</p>
+            <p className="p-3 text-xs text-neutral-600">Pick a commit to see what it changed.</p>
+          ) : diff === null ? (
+            <p className="p-3 text-xs text-neutral-600">Loading…</p>
+          ) : diff.before === '' && diff.after === '' ? (
+            <p className="p-3 text-xs text-neutral-600 italic">This commit did not change this file.</p>
           ) : (
-            <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-neutral-300">
-              {preview}
-            </pre>
+            <DiffView before={diff.before} after={diff.after} />
           )}
         </div>
 

@@ -921,17 +921,25 @@ export function createRouter(deps: RouterDeps) {
           activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
       ),
 
-    /** The file's content at one commit, for the read-only preview. NOT_FOUND when
-     *  the path is absent at that commit (e.g. before a rename — `show` reads the
-     *  current name and does not `--follow`). */
-    preview: t.procedure
+    /** The whole vault's commit log, newest-first — the broad history dialog. */
+    log: t.procedure.query((): Promise<Commit[]> => activeOrThrow().repo.log({ limit: HISTORY_LIMIT })),
+
+    /** The paths one commit changed — the file list beside a commit's diff. */
+    changed: t.procedure
+      .input(fields({ sha: 'string' }))
+      .query(({ input }): Promise<string[]> => activeOrThrow().repo.changedFiles(input.sha)),
+
+    /** One file's before/after at a commit (vs its parent) — fed to the merge
+     *  view as a diff. Either side is `''` when the file was added or removed
+     *  (or the commit is the root): the diff then reads as a pure add/delete. */
+    fileDiff: t.procedure
       .input(fields({ path: 'string', sha: 'string' }))
-      .query(async ({ input }): Promise<{ text: string }> => {
-        const text = await activeOrThrow()
-          .repo.show(input.sha, safe(input.path))
-          .catch(() => null)
-        if (text === null) throw new TRPCError({ code: 'NOT_FOUND', message: 'version unavailable' })
-        return { text }
+      .query(async ({ input }): Promise<{ before: string; after: string }> => {
+        const repo = activeOrThrow().repo
+        const rel = safe(input.path)
+        const after = await repo.show(input.sha, rel).catch(() => '')
+        const before = await repo.show(`${input.sha}^`, rel).catch(() => '')
+        return { before, after }
       }),
 
     /** Restore writes the old content as a **new commit** — never a rewrite of

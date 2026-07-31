@@ -42,40 +42,18 @@ export const historyTargetPathAtom = atom<string | null>((get) => {
   return tab.path
 })
 
+/** A file's before/after at a commit — fed to the merge view as a diff. */
+export interface FileDiff {
+  before: string
+  after: string
+}
+
 export const historyOpenAtom = atom(false)
 export const versionsAtom = atom<Version[]>([])
 export const selectedShaAtom = atom<string | null>(null)
-export const previewAtom = atom<string | null>(null)
-/** Display-only fold of the autosave run; the landmarks always show. */
-export const showAllVersionsAtom = atom(false)
-
-// ------------------------------------------------------------------ reducers
-// Pure, exported, and tested directly — the atoms are just where they live.
-
-/**
- * Split the timeline into landmarks and the autosave run (`prd/vaults-sync.md`
- * §History, "milestones fall out for free").
- *
- * Autosave commits are `Update <path>` / `Update N files` (see `commitMessage` in
- * `active-vault`); everything else — merges, reconciles, and any deliberately-
- * authored commit (the agent's, the seed) — is a landmark worth surfacing above
- * the wall of autosaves. A push leaves no commit, so it is never in here.
- */
-export function partitionVersions(rows: Version[]): {
-  landmarks: Version[]
-  automatic: Version[]
-} {
-  const isAutosave = (v: Version) => /^Update /.test(v.subject)
-  return {
-    landmarks: rows.filter((v) => !isAutosave(v)),
-    automatic: rows.filter(isAutosave),
-  }
-}
-
-/** What to call a version — its commit subject, never empty. */
-export function versionLabel(v: Version): string {
-  return v.subject.trim() || 'version'
-}
+/** The selected commit's diff for the focused file, or null while none is picked
+ *  / still loading. */
+export const diffAtom = atom<FileDiff | null>(null)
 
 // ------------------------------------------------------------------- write atoms
 
@@ -88,14 +66,15 @@ export const loadVersionsAtom = atom(null, async (get, set) => {
   if (get(historyTargetPathAtom) === path) set(versionsAtom, versions)
 })
 
-export const loadPreviewAtom = atom(null, async (get, set, sha: string) => {
+/** Load the diff a commit made to the focused file (vs its parent). */
+export const loadDiffAtom = atom(null, async (get, set, sha: string) => {
   const path = get(historyTargetPathAtom)
   if (!path) return
   set(selectedShaAtom, sha)
-  set(previewAtom, null)
-  const { text } = await trpc.history.preview.query({ path, sha })
-  // The file may have changed, or another version been picked, while this was in flight.
-  if (get(selectedShaAtom) === sha && get(historyTargetPathAtom) === path) set(previewAtom, text)
+  set(diffAtom, null)
+  const diff = await trpc.history.fileDiff.query({ path, sha })
+  // The file or the selection may have changed while this was in flight.
+  if (get(selectedShaAtom) === sha && get(historyTargetPathAtom) === path) set(diffAtom, diff)
 })
 
 /**
@@ -118,6 +97,5 @@ export const restoreVersionAtom = atom(null, async (get, set, sha: string) => {
 export const resetHistoryAtom = atom(null, (_get, set) => {
   set(versionsAtom, [])
   set(selectedShaAtom, null)
-  set(previewAtom, null)
-  set(showAllVersionsAtom, false)
+  set(diffAtom, null)
 })

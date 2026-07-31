@@ -1346,11 +1346,27 @@ describe('history', () => {
     expect(versions[0]!.subject).toBe('Update note.md')
   })
 
-  it('previews the content at a past commit', async () => {
+  it('logs the whole vault, newest-first', async () => {
     const { caller } = await withHistory()
-    const versions = await caller.history.list({ path: 'note.md' })
-    const oldest = versions[versions.length - 1]! // the 'write note.md' = v1
-    expect((await caller.history.preview({ path: 'note.md', sha: oldest.sha })).text).toBe('v1\n')
+    const commits = await caller.history.log()
+    expect(commits.length).toBeGreaterThanOrEqual(2)
+    expect(commits[0]!.subject).toBe('Update note.md')
+  })
+
+  it('lists the files a commit changed', async () => {
+    const { caller } = await withHistory()
+    const top = (await caller.history.log())[0]! // 'Update note.md'
+    expect(await caller.history.changed({ sha: top.sha })).toEqual(['note.md'])
+  })
+
+  it('diffs one file at a commit — before/after vs its parent', async () => {
+    const { caller } = await withHistory()
+    const v2 = (await caller.history.list({ path: 'note.md' })).find(
+      (c) => c.subject === 'Update note.md',
+    )!
+    const { before, after } = await caller.history.fileDiff({ path: 'note.md', sha: v2.sha })
+    expect(before).toBe('v1\n')
+    expect(after).toBe('v2\n')
   })
 
   it('restores old content as a new commit', async () => {
