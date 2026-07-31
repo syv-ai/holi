@@ -44,7 +44,8 @@ import {
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
-import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
+import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
+import { VaultHistory } from './VaultHistory'
 import { createTaskDialogAtom, openTaskCountAtom } from '../state/tasks'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
@@ -63,6 +64,7 @@ export function Shell() {
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
+  const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const [createTaskMode, setCreateTaskMode] = useAtom(createTaskDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
@@ -304,6 +306,7 @@ export function Shell() {
         <HistoryPanel />
 
         {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
+        {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
         {createTaskMode && (
           <CreateTaskDialog mode={createTaskMode} onClose={() => setCreateTaskMode(null)} />
         )}
@@ -323,7 +326,15 @@ export function Shell() {
           footer only reports; sign out lives in settings. */}
       <footer className="flex items-center justify-between gap-3 border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">
         <div className="flex min-w-0 items-center gap-2">
-          <span className={`truncate ${TONE[label.tone]}`}>{label.text}</span>
+          {/* The sync state doubles as the entry to the whole-vault commit history
+              (comment: "clickable — up to date opens version control"). */}
+          <button
+            className={`truncate hover:underline ${TONE[label.tone]}`}
+            title="version history"
+            onClick={() => setVaultLogOpen(true)}
+          >
+            {label.text}
+          </button>
           {syncState.kind === 'conflict' && (
             <button
               className="shrink-0 rounded border border-amber-700/60 px-1.5 py-0.5 text-[11px] text-amber-300 hover:bg-amber-950/40"

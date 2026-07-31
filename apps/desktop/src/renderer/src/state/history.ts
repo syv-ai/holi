@@ -99,3 +99,50 @@ export const resetHistoryAtom = atom(null, (_get, set) => {
   set(selectedShaAtom, null)
   set(diffAtom, null)
 })
+
+// ------------------------------------------------ the whole-vault commit dialog
+// The broad history surface (opened from the footer sync state): every commit in
+// the vault, the files each touched, and a per-file diff — commit-first, where the
+// drawer above is file-first.
+
+export const vaultLogOpenAtom = atom(false)
+export const vaultCommitsAtom = atom<Version[]>([])
+export const selectedCommitShaAtom = atom<string | null>(null)
+export const commitFilesAtom = atom<string[]>([])
+export const selectedCommitFileAtom = atom<string | null>(null)
+export const commitDiffAtom = atom<FileDiff | null>(null)
+
+export const loadVaultLogAtom = atom(null, async (_get, set) => {
+  set(vaultCommitsAtom, await trpc.history.log.query())
+})
+
+/** Diff of one file within the selected commit (vs its parent). */
+export const selectCommitFileAtom = atom(null, async (get, set, path: string) => {
+  const sha = get(selectedCommitShaAtom)
+  if (!sha) return
+  set(selectedCommitFileAtom, path)
+  set(commitDiffAtom, null)
+  const diff = await trpc.history.fileDiff.query({ path, sha })
+  if (get(selectedCommitFileAtom) === path && get(selectedCommitShaAtom) === sha) {
+    set(commitDiffAtom, diff)
+  }
+})
+
+/** Pick a commit → list its files and open the first one's diff. */
+export const selectCommitAtom = atom(null, async (_get, set, sha: string) => {
+  set(selectedCommitShaAtom, sha)
+  set(commitFilesAtom, [])
+  set(selectedCommitFileAtom, null)
+  set(commitDiffAtom, null)
+  const files = await trpc.history.changed.query({ sha })
+  set(commitFilesAtom, files)
+  if (files[0] !== undefined) await set(selectCommitFileAtom, files[0])
+})
+
+export const resetVaultLogAtom = atom(null, (_get, set) => {
+  set(vaultCommitsAtom, [])
+  set(selectedCommitShaAtom, null)
+  set(commitFilesAtom, [])
+  set(selectedCommitFileAtom, null)
+  set(commitDiffAtom, null)
+})
