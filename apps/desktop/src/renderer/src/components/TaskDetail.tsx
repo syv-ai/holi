@@ -40,7 +40,10 @@ import {
 } from '../state/tasks'
 import { snapshotAtom } from '../state/vaults'
 
-export function Row({
+// Not exported: the shared field styling lives in the Input primitive / FormField
+// composite now. Row stays module-local to TaskDetail until TaskDetail itself
+// migrates to the primitives (a follow-on slice).
+function Row({
   label,
   children,
 }: {
@@ -55,7 +58,7 @@ export function Row({
   )
 }
 
-export const taskFieldInput =
+const taskFieldInput =
   'min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs focus:border-neutral-700 focus:outline-none'
 
 /**

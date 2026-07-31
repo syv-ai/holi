@@ -20,7 +20,7 @@ import { OnboardingRitual } from './OnboardingRitual'
 import { AgentPanel } from './AgentPanel'
 import { HistoryPanel } from './HistoryPanel'
 import { BoardView } from './BoardView'
-import { CreateTaskDialog } from './CreateTaskDialog'
+import { DialogHost } from './DialogHost'
 import { EditorPane } from './EditorPane'
 import { TaskFileEditor } from './TaskFileEditor'
 import { FilePlaceholder } from './FilePlaceholder'
@@ -46,7 +46,8 @@ import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from './VaultHistory'
-import { createTaskDialogAtom, openTaskCountAtom } from '../state/tasks'
+import { openTaskCountAtom } from '../state/tasks'
+import { openDialogAtom } from '../state/dialogs'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
@@ -65,7 +66,7 @@ export function Shell() {
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
-  const [createTaskMode, setCreateTaskMode] = useAtom(createTaskDialogAtom)
+  const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const [showSettings, setShowSettings] = useState(false)
@@ -124,11 +125,11 @@ export function Shell() {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 't') return
       e.preventDefault()
-      setCreateTaskMode(e.shiftKey ? 'full' : 'quick')
+      openDialog({ id: 'create-task', size: 'md', mode: e.shiftKey ? 'full' : 'quick' })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [setCreateTaskMode])
+  }, [openDialog])
 
   const tab = activeTab(workspace)
   const pane = workspace.panes[workspace.active]!
@@ -307,9 +308,7 @@ export function Shell() {
 
         {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
         {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
-        {createTaskMode && (
-          <CreateTaskDialog mode={createTaskMode} onClose={() => setCreateTaskMode(null)} />
-        )}
+        <DialogHost />
       </div>
 
       {/* The reconcile banner sits above the footer, beside the sync state it

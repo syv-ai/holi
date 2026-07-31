@@ -53,7 +53,6 @@ export const selectedTaskPathAtom = atom<string | null>(null)
  * detail editor to flesh it out. A single global atom: the dialog is mounted once
  * in the shell, and each entry point sets the mode rather than owning a copy. */
 export type CreateTaskMode = 'quick' | 'full'
-export const createTaskDialogAtom = atom<CreateTaskMode | null>(null)
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.
