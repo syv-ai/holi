@@ -1,5 +1,52 @@
 @import 'tailwindcss';
 
+/* Tier 1 — dark-mode switch driven by the data-theme root stamp (not prefers-color-scheme). */
+@custom-variant dark (&:where([data-theme='dark'] *));
+
+/* Tier 2 — semantic tokens mapped onto the built-in neutral/sky palette.
+   Plain selectors (NOT @theme) so they re-cascade per theme scope. */
+:root,
+[data-theme='dark'] {
+  --surface: var(--color-neutral-950);
+  --surface-raised: var(--color-neutral-800);
+  --border: var(--color-neutral-800);
+  --accent: var(--color-sky-700);
+  --accent-fg: var(--color-neutral-50);
+  --foreground: var(--color-neutral-100);
+  --muted-fg: var(--color-neutral-400);
+  --danger: var(--color-red-900);
+  --danger-fg: var(--color-red-200);
+}
+[data-theme='light'] {
+  --surface: var(--color-neutral-50);
+  --surface-raised: #ffffff;
+  --border: var(--color-neutral-200);
+  --accent: var(--color-sky-600);
+  --accent-fg: #ffffff;
+  --foreground: var(--color-neutral-900);
+  --muted-fg: var(--color-neutral-500);
+  --danger: var(--color-red-600);
+  --danger-fg: #ffffff;
+}
+
+/* Tier 3 — expose semantics as utilities. @theme inline so the generated utility
+   holds the pointer (var(--surface)), letting the tier-2 override re-cascade. */
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-foreground: var(--foreground);
+  --color-muted-fg: var(--muted-fg);
+  --color-danger: var(--danger);
+  --color-danger-fg: var(--danger-fg);
+}
+
+@theme {
+  --radius-control: 0.5rem;
+}
+
 /**
  * Scroll containers that don't announce themselves.
  *
