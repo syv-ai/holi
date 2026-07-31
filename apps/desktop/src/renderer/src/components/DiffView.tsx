@@ -1,57 +1,43 @@
 /**
- * A read-only side-by-side diff (before | after), rendered with `@codemirror/merge`'s
- * `MergeView` — the DiffEditor shape: two panes, deletions shaded red on the left,
- * insertions green on the right, unchanged runs collapsed.
+ * A read-only unified diff, rendered with `@codemirror/merge`'s `unifiedMergeView`
+ * in **inline + compact** mode:
+ *  - `allowInlineDiffs` — small in-line edits render inline (solid green/red) rather
+ *    than as the default gradient-underlined separate lines.
+ *  - `collapseUnchanged` — long unchanged runs fold away, so the change is the focus.
  *
- * Read-only: no `revertControls`, both sides non-editable — this is a view of
- * history, not a merge to resolve. The theme override drops the package default
- * `.cm-changedText` gradient (which reads as an underline) in favour of clean
- * line backgrounds.
+ * Read-only: `mergeControls: false` drops the accept/reject affordances (this is a
+ * view of history, not a merge to resolve) and the editor is non-editable. `original`
+ * is the before-content; the doc is the after.
  */
-import { MergeView } from '@codemirror/merge'
+import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
 import { editorTheme } from '../editor/theme'
-
-const diffTheme = EditorView.theme({
-  // Kill the default changed-text gradient — it renders as an underline.
-  '.cm-changedText': { background: 'none' },
-  '.cm-changedText, .cm-deletedText, .cm-insertedText': { textDecoration: 'none' },
-  // Whole-line backgrounds do the work: red on the before side, green on the after.
-  '&.cm-merge-a .cm-changedLine, &.cm-merge-a .cm-deletedLine': {
-    backgroundColor: 'rgba(220, 70, 70, 0.18)',
-  },
-  '&.cm-merge-b .cm-changedLine, &.cm-merge-b .cm-insertedLine': {
-    backgroundColor: 'rgba(70, 180, 90, 0.18)',
-  },
-  '.cm-deletedChunk': { backgroundColor: 'rgba(220, 70, 70, 0.10)' },
-})
-
-const side = (doc: string) => ({
-  doc,
-  extensions: [
-    EditorState.readOnly.of(true),
-    EditorView.editable.of(false),
-    EditorView.lineWrapping,
-    editorTheme,
-    diffTheme,
-  ],
-})
 
 export function DiffView({ before, after }: { before: string; after: string }) {
   const host = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (host.current === null) return
-    const view = new MergeView({
+    const view = new EditorView({
       parent: host.current,
-      orientation: 'a-b',
-      a: side(before),
-      b: side(after),
-      gutter: true,
-      highlightChanges: true,
-      collapseUnchanged: { margin: 2 },
+      state: EditorState.create({
+        doc: after,
+        extensions: [
+          EditorState.readOnly.of(true),
+          EditorView.editable.of(false),
+          EditorView.lineWrapping,
+          editorTheme,
+          unifiedMergeView({
+            original: before,
+            mergeControls: false,
+            allowInlineDiffs: true,
+            gutter: true,
+            collapseUnchanged: { margin: 2 },
+          }),
+        ],
+      }),
     })
     return () => view.destroy()
   }, [before, after])

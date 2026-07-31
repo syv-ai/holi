@@ -112,7 +112,7 @@ export function HistoryPanel() {
   )
 
   return (
-    <aside className="flex w-[34rem] min-w-0 flex-col border-l border-neutral-900">
+    <aside className="flex w-96 min-w-0 flex-col border-l border-neutral-900">
       <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
         <span className="text-neutral-300">History</span>
         <span className="min-w-0 flex-1 truncate text-neutral-600">{targetPath}</span>
