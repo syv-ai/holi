@@ -6,7 +6,7 @@ import { CreateTask } from '../CreateTask'
 
 // The task-domain widgets pull the whole CodeMirror editor chain at import time;
 // quick mode renders neither, and this unit test asserts only the footer contract.
-vi.mock('@/components/TaskDetail', () => ({
+vi.mock('@/features/tasks/TaskDetail', () => ({
   RecurrenceRows: () => null,
   TaskDescriptionEditor: () => null,
 }))

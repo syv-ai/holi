@@ -2,7 +2,7 @@ import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
 import { FormField } from '@/composites/FormField'
-import { RecurrenceRows, TaskDescriptionEditor } from '@/components/TaskDetail'
+import { RecurrenceRows, TaskDescriptionEditor } from '@/features/tasks/TaskDetail'
 import {
   Button,
   Dialog,

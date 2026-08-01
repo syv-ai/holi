@@ -23,12 +23,23 @@ import type {
 } from '@holi/shared'
 import { EditorState } from '@codemirror/state'
 import { EditorView, placeholder } from '@codemirror/view'
+import { X } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { baseEditorExtensions } from '../editor/extensions'
-import type { LinkNav } from '../editor/links'
-import type { MentionData } from '../editor/mentions'
-import { openNoteTabAtom } from '../state/panes'
+import {
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/primitives'
+import { cn } from '@/lib/cn'
+import { baseEditorExtensions } from '@/editor/extensions'
+import type { LinkNav } from '@/editor/links'
+import type { MentionData } from '@/editor/mentions'
+import { openNoteTabAtom } from '@/state/panes'
 import {
   completeTaskAtom,
   deleteTaskAtom,
@@ -37,12 +48,12 @@ import {
   patchTaskAtom,
   selectedTaskPathAtom,
   tasksAtom,
-} from '../state/tasks'
-import { snapshotAtom } from '../state/vaults'
+} from '@/state/tasks'
+import { snapshotAtom } from '@/state/vaults'
 
-// Not exported: the shared field styling lives in the Input primitive / FormField
-// composite now. Row stays module-local to TaskDetail until TaskDetail itself
-// migrates to the primitives (a follow-on slice).
+// A horizontal labelled field (label left, control right) — the compact shape the
+// narrow detail sidebar wants, distinct from the vertical FormField composite. It
+// is a plain <label>, so it stays module-local; only the control inside is a primitive.
 function Row({
   label,
   children,
@@ -52,14 +63,11 @@ function Row({
 }): React.JSX.Element {
   return (
     <label className="flex items-center gap-2 text-xs">
-      <span className="w-20 shrink-0 text-neutral-500">{label}</span>
+      <span className="w-20 shrink-0 text-muted-foreground">{label}</span>
       {children}
     </label>
   )
 }
-
-const taskFieldInput =
-  'min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs focus:border-neutral-700 focus:outline-none'
 
 /**
  * The scalar task fields — status, due, priority, tags, reminder — as `Row`s.
@@ -79,52 +87,57 @@ export function TaskScalarFields({
   return (
     <>
       <Row label="status">
-        <select
+        <Select
           value={task.status}
-          data-detail-status
-          onChange={(e) => {
-            const next = e.target.value as TaskStatus
+          onValueChange={(v) => {
+            const next = v as TaskStatus
             // Completion goes through tasks.complete even from here — it is the single
             // roll-forward path, so a recurring task rolls instead of persisting `done`.
             if (next === 'done') complete(task.path)
             else save({ status: next })
           }}
-          className={taskFieldInput}
         >
-          <option value="todo">todo</option>
-          <option value="doing">doing</option>
-          <option value="done">done</option>
-        </select>
+          <SelectTrigger className="w-full" size="sm" data-detail-status>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todo">todo</SelectItem>
+            <SelectItem value="doing">doing</SelectItem>
+            <SelectItem value="done">done</SelectItem>
+          </SelectContent>
+        </Select>
       </Row>
 
       <Row label="due">
-        <input
+        <Input
           type="date"
           value={task.due ?? ''}
           data-detail-due
           onChange={(e) => save({ due: e.target.value === '' ? null : e.target.value })}
-          className={taskFieldInput}
         />
       </Row>
 
       <Row label="priority">
-        <select
-          value={task.priority ?? ''}
-          data-detail-priority
-          onChange={(e) =>
-            save({ priority: e.target.value === '' ? null : (e.target.value as Priority) })
-          }
-          className={taskFieldInput}
+        {/* Radix Select forbids an empty-string value, so 'none' is the sentinel for
+            "no priority" (mapped back to null on save). */}
+        <Select
+          value={task.priority ?? 'none'}
+          onValueChange={(v) => save({ priority: v === 'none' ? null : (v as Priority) })}
         >
-          <option value="">—</option>
-          <option value="high">high</option>
-          <option value="medium">medium</option>
-          <option value="low">low</option>
-        </select>
+          <SelectTrigger className="w-full" size="sm" data-detail-priority>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none">—</SelectItem>
+            <SelectItem value="high">high</SelectItem>
+            <SelectItem value="medium">medium</SelectItem>
+            <SelectItem value="low">low</SelectItem>
+          </SelectContent>
+        </Select>
       </Row>
 
       <Row label="tags">
-        <input
+        <Input
           defaultValue={task.tags.join(', ')}
           key={`${task.path}:tags`}
           placeholder="comma, separated — Enter to save"
@@ -140,14 +153,13 @@ export function TaskScalarFields({
                 .filter(Boolean),
             })
           }
-          className={taskFieldInput}
         />
       </Row>
 
       {/* The grammar goes in verbatim — the shared parser rejects bad input and its error
           string doubles as the format doc. No rule-builder UI. */}
       <Row label="reminder">
-        <input
+        <Input
           defaultValue={task.reminder ?? ''}
           key={`${task.path}:reminder`}
           placeholder="1d | 2w | 2026-07-20T09:00"
@@ -155,7 +167,6 @@ export function TaskScalarFields({
           onBlur={(e) =>
             save({ reminder: e.target.value.trim() === '' ? null : e.target.value.trim() })
           }
-          className={taskFieldInput}
         />
       </Row>
     </>
@@ -195,29 +206,27 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
   return (
     <aside
       data-task-detail={task.path}
-      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-neutral-900 bg-neutral-950 p-3"
+      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border bg-background p-3"
     >
       <div className="flex items-start gap-2">
-        <input
+        {/* A borderless title that shows its edge only on hover/focus — kept via
+            overrides on the Input primitive (transparent border → input/ring on interaction). */}
+        <Input
           value={title}
           data-detail-title
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-          className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-sm font-medium hover:border-neutral-800 focus:border-neutral-700 focus:outline-none"
+          className="h-auto min-w-0 flex-1 border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
         />
-        <button
-          onClick={() => close(null)}
-          className="rounded px-1 text-neutral-500 hover:bg-neutral-900"
-          title="close"
-        >
-          ✕
-        </button>
+        <Button variant="ghost" size="icon-xs" onClick={() => close(null)} title="close" aria-label="close">
+          <X />
+        </Button>
       </div>
 
       {/* The path, read-only. It is the task's identity and its lane, and it is not
           editable here: moving the file has to rewrite every inbound wiki-link in the
           same pass, which is the file tree's rename, not a text field. */}
-      <p className="truncate font-mono text-[10px] text-neutral-600" title={task.path}>
+      <p className="truncate font-mono text-[10px] text-muted-foreground" title={task.path}>
         {laneLabel(laneOf(task))}
       </p>
 
@@ -232,12 +241,14 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
         onChange={onDescription}
       />
 
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => void del(task.path)}
-        className="mt-auto self-start rounded px-1 py-0.5 text-xs text-red-400 hover:bg-red-950/50"
+        className="mt-auto self-start text-destructive hover:bg-destructive/10 hover:text-destructive"
       >
         delete task
-      </button>
+      </Button>
     </aside>
   )
 }
@@ -321,7 +332,7 @@ export function TaskDescriptionEditor({
       data-detail-description
       className={
         hostClassName ??
-        'mt-1 min-h-[10rem] overflow-hidden rounded border border-neutral-800 bg-neutral-900 text-xs focus-within:border-neutral-700'
+        'mt-1 min-h-[10rem] overflow-hidden rounded-md border border-input bg-transparent text-xs focus-within:border-ring'
       }
     />
   )
@@ -360,36 +371,37 @@ export function RecurrenceRows({
   return (
     <>
       <Row label="repeats">
-        <select
-          value={rule?.frequency ?? ''}
-          data-detail-recurrence
-          onChange={(e) =>
-            e.target.value === ''
-              ? setRule(null)
-              : setRule({ frequency: e.target.value as RecurrenceFrequency })
+        {/* 'never' is the sentinel for "no recurrence" (Radix Select forbids ''). */}
+        <Select
+          value={rule?.frequency ?? 'never'}
+          onValueChange={(v) =>
+            v === 'never' ? setRule(null) : setRule({ frequency: v as RecurrenceFrequency })
           }
-          className={taskFieldInput}
         >
-          <option value="">never</option>
-          <option value="daily">daily</option>
-          <option value="weekly">weekly</option>
-          <option value="monthly">monthly</option>
-          <option value="yearly">yearly</option>
-        </select>
+          <SelectTrigger className="w-full" size="sm" data-detail-recurrence>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="never">never</SelectItem>
+            <SelectItem value="daily">daily</SelectItem>
+            <SelectItem value="weekly">weekly</SelectItem>
+            <SelectItem value="monthly">monthly</SelectItem>
+            <SelectItem value="yearly">yearly</SelectItem>
+          </SelectContent>
+        </Select>
       </Row>
 
       {rule && (
         <>
           <Row label="every">
-            <input
+            <Input
               type="number"
               min={1}
               value={rule.interval}
               data-detail-interval
               onChange={(e) => setRule({ interval: Math.max(1, Number(e.target.value) || 1) })}
-              className={taskFieldInput}
             />
-            <span className="shrink-0 text-neutral-500">
+            <span className="shrink-0 text-muted-foreground">
               {
                 { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[
                   rule.frequency
@@ -407,8 +419,10 @@ export function RecurrenceRows({
                 {WEEKDAYS.map((d) => {
                   const on = rule.weekdays?.includes(d) ?? false
                   return (
-                    <button
+                    <Button
                       key={d}
+                      size="xs"
+                      variant={on ? 'secondary' : 'ghost'}
                       data-detail-weekday={d}
                       onClick={() => {
                         const next = on
@@ -418,14 +432,10 @@ export function RecurrenceRows({
                           weekdays: next.length ? WEEKDAYS.filter((w) => next.includes(w)) : undefined,
                         })
                       }}
-                      className={`flex-1 rounded py-0.5 text-[10px] ${
-                        on
-                          ? 'bg-neutral-700 text-neutral-100'
-                          : 'bg-neutral-900 text-neutral-500 hover:bg-neutral-800'
-                      }`}
+                      className={cn('min-w-0 flex-1 px-0 text-[10px]', !on && 'text-muted-foreground')}
                     >
                       {d[0]}
-                    </button>
+                    </Button>
                   )
                 })}
               </span>
@@ -433,14 +443,13 @@ export function RecurrenceRows({
           )}
 
           <Row label="until">
-            <input
+            <Input
               type="date"
               value={rule.endDate ?? ''}
               data-detail-recurrence-end
               onChange={(e) =>
                 setRule({ endDate: e.target.value === '' ? undefined : e.target.value })
               }
-              className={taskFieldInput}
             />
           </Row>
 

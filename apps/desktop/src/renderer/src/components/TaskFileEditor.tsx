@@ -26,7 +26,7 @@ import {
   tasksAtom,
 } from '../state/tasks'
 import { EditorPane } from './EditorPane'
-import { RecurrenceRows, TaskDescriptionEditor, TaskScalarFields } from './TaskDetail'
+import { RecurrenceRows, TaskDescriptionEditor, TaskScalarFields } from '@/features/tasks/TaskDetail'
 
 export function TaskFileEditor({
   path,
