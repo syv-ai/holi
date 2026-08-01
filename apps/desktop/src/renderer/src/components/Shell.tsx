@@ -16,7 +16,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath } from '@holi/shared'
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
+import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
@@ -51,7 +51,10 @@ import { openDialogAtom } from '../state/dialogs'
 import { usePanelLayout } from '../state/preferences'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
-const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
+// quiet/busy map to semantic tokens; warn stays a named amber utility — there is
+// no warning token yet, and named palette utilities are gate-legal (only arbitrary
+// colour literals are banned).
+const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text-amber-400' } as const
 
 export function Shell() {
   const session = useAtomValue(sessionAtom)
@@ -154,7 +157,7 @@ export function Shell() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
+    <div className="flex h-screen flex-col bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
         <ResizablePanelGroup
           orientation="horizontal"
@@ -163,7 +166,7 @@ export function Shell() {
           onLayoutChanged={shellLayout.onLayoutChanged}
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
-            <aside className="relative flex h-full flex-col border-r border-neutral-900">
+            <aside className="relative flex h-full flex-col border-r border-border">
           <div className="flex h-11 items-center px-2">
             <VaultPicker
               vaults={vaults}
@@ -184,36 +187,42 @@ export function Shell() {
 
           <div className="flex items-center gap-2 p-2">
             <Tooltip content="today's daily note (⌘⇧D)">
-              <button
-                className="flex-1 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+              <Button
+                variant="secondary"
+                size="xs"
+                className="flex-1"
                 // FR-6: opens today's daily (personal vaults only; the atom no-ops
                 // otherwise). Also the empty-state recovery path — always here.
                 onClick={() => void openDaily()}
               >
                 today
-              </button>
+              </Button>
             </Tooltip>
             <Tooltip content={`task board — ${openTaskCount} open`}>
-              <button
-                className="flex flex-1 items-center justify-center gap-1.5 rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700"
+              <Button
+                variant="secondary"
+                size="xs"
+                className="flex-1 gap-1.5"
                 onClick={() => setWorkspace((w) => openBoard(w))}
               >
                 board
                 {openTaskCount > 0 && (
-                  <span className="rounded-full bg-neutral-700 px-1.5 text-[10px] leading-4 text-neutral-200">
+                  <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
                     {openTaskCount}
                   </span>
                 )}
-              </button>
+              </Button>
             </Tooltip>
             <Tooltip content="vault settings">
-              <button
-                className="shrink-0 rounded p-1 text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="shrink-0 text-muted-foreground"
                 aria-label="vault settings"
                 onClick={() => setShowSettings((v) => !v)}
               >
                 <Settings size={16} />
-              </button>
+              </Button>
             </Tooltip>
           </div>
             </aside>
@@ -231,15 +240,17 @@ export function Shell() {
                 key={t.kind === 'note' ? t.path : 'board'}
                 className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   i === pane.active
-                    ? 'bg-neutral-800 text-neutral-100'
-                    : 'text-neutral-500 hover:text-neutral-300'
+                    ? 'bg-secondary text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
                 <Tooltip content={t.kind === 'board' ? 'task board' : t.path}>
-                  <button
-                    // A preview tab reads italic (VS Code); double-clicking it
-                    // pins it, the same promotion editing performs.
-                    className={`flex items-center gap-1.5 ${
+                  <Button
+                    variant="ghost"
+                    // Bare clickable on the pill — neutralise the ghost bg/padding so
+                    // the pill owns the surface. A preview tab reads italic (VS Code);
+                    // double-clicking it pins it, the same promotion editing performs.
+                    className={`h-auto gap-1.5 p-0 hover:bg-transparent ${
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() =>
@@ -252,15 +263,16 @@ export function Shell() {
                   >
                     {t.kind === 'board' ? <SquareKanban size={14} /> : fileIconFor(t.path)}
                     <span>{t.kind === 'board' ? 'board' : t.path.split('/').at(-1)}</span>
-                  </button>
+                  </Button>
                 </Tooltip>
                 <Tooltip content="close tab">
-                  <button
-                    className="text-neutral-600 hover:text-neutral-300"
+                  <Button
+                    variant="ghost"
+                    className="h-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
                     onClick={() => setWorkspace((w) => closeTab(w, i))}
                   >
                     ✕
-                  </button>
+                  </Button>
                 </Tooltip>
               </span>
             ))}
@@ -270,12 +282,14 @@ export function Shell() {
                 and drawer never disagree. Mirrors how the agent panel opens. */}
             {historyTarget !== null && (
               <Tooltip content="version history">
-                <button
-                  className="ml-auto rounded p-1 text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="ml-auto text-muted-foreground"
                   onClick={() => setHistoryOpen((v) => !v)}
                 >
                   <History size={16} />
-                </button>
+                </Button>
               </Tooltip>
             )}
           </div>
@@ -357,26 +371,30 @@ export function Shell() {
       {/* Sync state lives bottom-left: "where am I and is it saved elsewhere" is
           one glance. There is no Push button — push is automatic (D61) — so the
           footer only reports; sign out lives in settings. */}
-      <footer className="flex items-center justify-between gap-3 border-t border-neutral-900 px-3 py-1 text-xs text-neutral-500">
+      <footer className="flex items-center justify-between gap-3 border-t border-border px-3 py-1 text-xs text-muted-foreground">
         <div className="flex min-w-0 items-center gap-2">
           {/* The sync state doubles as the entry to the whole-vault commit history
               (comment: "clickable — up to date opens version control"). */}
           <Tooltip content="version history">
-            <button
-              className={`truncate hover:underline ${TONE[label.tone]}`}
+            <Button
+              variant="link"
+              className={`h-auto p-0 truncate ${TONE[label.tone]}`}
               onClick={() => setVaultLogOpen(true)}
             >
               {label.text}
-            </button>
+            </Button>
           </Tooltip>
           {syncState.kind === 'conflict' && (
             <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
-              <button
-                className="shrink-0 rounded border border-amber-700/60 px-1.5 py-0.5 text-[11px] text-amber-300 hover:bg-amber-950/40"
+              <Button
+                variant="outline"
+                size="xs"
+                // amber = the warning role (no token yet); named utilities are gate-legal.
+                className="shrink-0 border-amber-700/60 text-[11px] text-amber-300 hover:bg-amber-950/40 hover:text-amber-300"
                 onClick={() => void reconcile()}
               >
                 Ask Claude to reconcile
-              </button>
+              </Button>
             </Tooltip>
           )}
         </div>

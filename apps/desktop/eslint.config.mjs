@@ -2,10 +2,11 @@ import boundaries from 'eslint-plugin-boundaries'
 import reactHooks from 'eslint-plugin-react-hooks'
 import tseslint from 'typescript-eslint'
 
-// GATE_LEVEL=error flips the un-migrated tree's warns to errors (whole-tree ratchet).
-// Independently, the MIGRATED paths below are always error — the pattern is applied
-// there, so a regression must fail regardless of GATE_LEVEL.
-const LEVEL = process.env.GATE_LEVEL === 'error' ? 'error' : 'warn'
+// The migration is complete — the whole renderer tree is on the hierarchy, so the
+// gate is ERROR everywhere (no more GATE_LEVEL ratchet). The MIGRATED blocks below
+// are now redundant with this but kept as explicit intent. The only exception is the
+// self-test fixtures, downgraded to warn at the end (they exist to violate).
+const LEVEL = 'error'
 
 // Paths where the hierarchy is already applied — enforced at error.
 const MIGRATED = [
@@ -133,5 +134,18 @@ export default [
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
     rules: { 'no-restricted-syntax': ['error', ...colourRules, titleRule] },
+  },
+
+  // Gate self-test fixtures deliberately CONTAIN every violation. Keep the rules
+  // active (so test/gate.test.ts still sees them reported — warnings carry a ruleId
+  // too) but at 'warn', so the now-error-by-default tree lint doesn't fail on files
+  // whose whole purpose is to violate.
+  {
+    files: ['test/fixtures/gate/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['warn', nativeRule, ...colourRules, titleRule],
+      'boundaries/element-types': ['warn', elementTypes],
+      'boundaries/external': ['warn', external],
+    },
   },
 ]
