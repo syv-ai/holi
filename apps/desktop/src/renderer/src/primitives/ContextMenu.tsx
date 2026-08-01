@@ -91,10 +91,10 @@ function ContextMenuSubContent({
   )
 }
 
-// The deliberate explorer context-menu look, generalized: a fixed-width (w-56),
-// rounded-lg, text-xs popover with a heavy shadow. Items are compact (px-2 py-1)
-// with their keyboard hint floated to the right via ContextMenuShortcut. Kept as
-// the house style for every context menu (Nicolai, 2026-08-01).
+// The house context-menu look: a fixed-width (w-56), rounded-lg, text-xs popover
+// with a heavy shadow; items compact (px-2 py-1) with their keyboard hint floated
+// right via ContextMenuShortcut. Every context menu is this primitive fed
+// different items — there is no per-surface menu component (Nicolai, 2026-08-01).
 function ContextMenuContent({
   className,
   ...props
