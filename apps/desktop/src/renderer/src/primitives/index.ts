@@ -1,4 +1,5 @@
 export { Button, buttonVariants } from './Button'
+export { Checkbox } from './Checkbox'
 export { Dialog, type DialogSize } from './Dialog'
 export { Input } from './Input'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'

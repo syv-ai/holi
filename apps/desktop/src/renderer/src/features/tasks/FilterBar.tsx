@@ -9,7 +9,9 @@
  * query. That is what computing the labels buys.
  */
 import { useAtom, useAtomValue } from 'jotai'
-import { availableLabels, filterAtom, tasksAtom, todayAtom } from '../state/tasks'
+import { Button, Checkbox, Input } from '@/primitives'
+import { cn } from '@/lib/cn'
+import { availableLabels, filterAtom, tasksAtom, todayAtom } from '@/state/tasks'
 
 export function FilterBar(): React.JSX.Element {
   const [filter, setFilter] = useAtom(filterAtom)
@@ -25,13 +27,13 @@ export function FilterBar(): React.JSX.Element {
     }))
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-neutral-900 px-3 py-1.5">
-      <input
+    <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
+      <Input
         value={filter.search}
         onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
         placeholder="search…"
         data-filter-search
-        className="w-40 rounded border border-neutral-800 bg-neutral-900 px-2 py-0.5 text-xs placeholder:text-neutral-600 focus:border-neutral-700 focus:outline-none"
+        className="h-8 w-40 text-xs"
       />
 
       {/* Virtual labels and real tags are one vocabulary — the picker cannot tell them
@@ -40,27 +42,27 @@ export function FilterBar(): React.JSX.Element {
         {labels.map((tag) => {
           const on = filter.tags.includes(tag)
           return (
-            <button
+            <Button
               key={tag}
+              variant="outline"
+              size="xs"
               onClick={() => toggleTag(tag)}
               data-filter-tag={tag}
-              className={`rounded border px-1.5 py-0.5 text-[10px] ${
-                on
-                  ? 'border-sky-700 bg-sky-950 text-sky-300'
-                  : 'border-neutral-800 bg-neutral-900 text-neutral-500 hover:text-neutral-300'
-              }`}
+              className={cn(
+                'text-[10px]',
+                on && 'border-primary bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary',
+              )}
             >
               {tag}
-            </button>
+            </Button>
           )
         })}
       </div>
 
-      <label className="ml-auto flex items-center gap-1 text-xs text-neutral-500">
-        <input
-          type="checkbox"
+      <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Checkbox
           checked={filter.hideDone}
-          onChange={(e) => setFilter((f) => ({ ...f, hideDone: e.target.checked }))}
+          onCheckedChange={(v) => setFilter((f) => ({ ...f, hideDone: v === true }))}
           data-filter-hidedone
         />
         hide done

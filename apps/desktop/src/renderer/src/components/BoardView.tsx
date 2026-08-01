@@ -16,7 +16,7 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useState } from 'react'
-import { FilterBar } from './FilterBar'
+import { FilterBar } from '@/features/tasks/FilterBar'
 import { TaskDetailPanel } from '@/features/tasks/TaskDetail'
 import {
   ROOT_LANE,
