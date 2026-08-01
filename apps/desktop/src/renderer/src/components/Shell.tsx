@@ -306,8 +306,7 @@ export function Shell() {
         <AgentPanel />
         <HistoryPanel />
 
-        <VaultSettings open={showSettings} onClose={() => setShowSettings(false)} />
-
+        {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
         {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
         <DialogHost />
       </div>
