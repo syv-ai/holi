@@ -1,15 +1,18 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { History, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { Button } from '@/primitives'
+import { cn } from '@/lib/cn'
 import {
   clampPanelWidth,
   DEFAULT_AGENT_PANEL_WIDTH,
   MIN_AGENT_PANEL_WIDTH,
-} from '../lib/agent-panel-geometry'
-import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '../state/agent'
-import { activeRemoteAtom } from '../state/vaults'
+} from '@/lib/agent-panel-geometry'
+import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -283,7 +286,7 @@ export function AgentPanel() {
     ? 'animate-pulse bg-amber-400'
     : status.running
       ? 'bg-green-500'
-      : 'bg-neutral-600'
+      : 'bg-muted-foreground'
   // Spell out what the dot means — green alone is ambiguous. Driven by the
   // hook-server turn signal now (reliable), so the word is back.
   const state = status.working ? 'working…' : status.running ? 'running' : 'idle'
@@ -295,50 +298,56 @@ export function AgentPanel() {
 
   return (
     <aside
-      className={`${open ? 'flex' : 'hidden'} relative min-w-0 flex-col border-l border-neutral-900`}
+      className={cn('relative min-w-0 flex-col border-l border-border', open ? 'flex' : 'hidden')}
       style={{ width, minWidth: MIN_AGENT_PANEL_WIDTH }}
     >
       <span
-        className="absolute inset-y-0 left-0 w-1 cursor-col-resize hover:bg-neutral-700"
+        className="absolute inset-y-0 left-0 w-1 cursor-col-resize hover:bg-accent"
         onMouseDown={onDragStart}
         title="drag to resize"
       />
-      <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} title={stateTitle} />
-        <span className="text-neutral-300">Claude</span>
-        <span className="text-neutral-500" title={stateTitle}>
+      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} title={stateTitle} />
+        <span className="text-foreground">Claude</span>
+        <span className="text-muted-foreground" title={stateTitle}>
           {state}
         </span>
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}
         {!status.authenticated && (
-          <span className="truncate text-neutral-500">not logged in (run /login below)</span>
+          <span className="truncate text-muted-foreground">not logged in (run /login below)</span>
         )}
         <span className="flex-1" />
-        <button
-          className="rounded px-1.5 py-0.5 text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+        <Button
+          variant="ghost"
+          size="icon-xs"
           title="history (resume a past session)"
+          aria-label="resume a past session"
           onClick={() => void history()}
         >
-          ⟲
-        </button>
-        <button
-          className="rounded px-1.5 py-0.5 text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+          <History />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           title="restart session"
+          aria-label="restart session"
           onClick={() => void restart()}
         >
-          ↻
-        </button>
-        <button
-          className="rounded px-1.5 py-0.5 text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+          <RotateCw />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           title="hide (⌘J) — the session keeps running"
+          aria-label="hide agent panel"
           onClick={() => setOpen(false)}
         >
-          ✕
-        </button>
+          <X />
+        </Button>
       </div>
-      <div ref={hostRef} className="min-h-0 flex-1 bg-neutral-950 px-2 py-1" />
+      <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
     </aside>
   )
 }
