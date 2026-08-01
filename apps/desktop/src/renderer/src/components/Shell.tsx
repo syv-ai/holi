@@ -16,6 +16,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath } from '@holi/shared'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitives'
 import { OnboardingRitual } from './OnboardingRitual'
 import { AgentPanel } from './AgentPanel'
 import { HistoryPanel } from './HistoryPanel'
@@ -48,6 +49,7 @@ import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../sta
 import { VaultHistory } from './VaultHistory'
 import { openTaskCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
+import { usePanelLayout } from '../state/preferences'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 const TONE = { quiet: 'text-neutral-500', busy: 'text-sky-400', warn: 'text-amber-400' } as const
@@ -64,11 +66,13 @@ export function Shell() {
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const historyOpen = useAtomValue(historyOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const shellLayout = usePanelLayout(activeRemote, 'shell')
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
@@ -162,7 +166,14 @@ export function Shell() {
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
       <div className="flex min-h-0 flex-1">
-        <aside className="relative flex w-64 flex-col border-r border-neutral-900">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="min-w-0 flex-1"
+          defaultLayout={shellLayout.defaultLayout}
+          onLayoutChanged={shellLayout.onLayoutChanged}
+        >
+          <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
+            <aside className="relative flex h-full flex-col border-r border-neutral-900">
           <div className="flex h-11 items-center px-2">
             <VaultPicker
               vaults={vaults}
@@ -212,9 +223,13 @@ export function Shell() {
               <Settings size={16} />
             </button>
           </div>
-        </aside>
+            </aside>
+          </ResizablePanel>
 
-        <main className="flex min-w-0 flex-1 flex-col">
+          <ResizableHandle />
+
+          <ResizablePanel id="editor" minSize={360}>
+            <main className="flex h-full min-w-0 flex-col">
           {/* One pane, one strip. The state is panes[] → tabs[] so a split is a
               second pane later rather than a rewrite. */}
           <div className="flex h-11 items-center gap-1 px-2">
@@ -301,12 +316,30 @@ export function Shell() {
               }
             />
           )}
-        </main>
+            </main>
+          </ResizablePanel>
+
+          {historyOpen && historyTarget !== null && (
+            <>
+              <ResizableHandle />
+              <ResizablePanel id="history" defaultSize={384} minSize={280}>
+                <HistoryPanel />
+              </ResizablePanel>
+            </>
+          )}
+
+          {showSettings && (
+            <>
+              <ResizableHandle />
+              <ResizablePanel id="settings" defaultSize={320} minSize={240}>
+                <VaultSettings onClose={() => setShowSettings(false)} />
+              </ResizablePanel>
+            </>
+          )}
+        </ResizablePanelGroup>
 
         <AgentPanel />
-        <HistoryPanel />
 
-        {showSettings && <VaultSettings onClose={() => setShowSettings(false)} />}
         {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
         <DialogHost />
       </div>

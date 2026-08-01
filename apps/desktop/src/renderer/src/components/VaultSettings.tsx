@@ -81,7 +81,7 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   }, [remote])
 
   return (
-    <div className="flex h-full w-80 flex-col gap-4 border-l border-neutral-900 p-4 text-sm">
+    <div className="flex h-full flex-col gap-4 p-4 text-sm">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold">Settings</h2>
         <button className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700" onClick={onClose}>

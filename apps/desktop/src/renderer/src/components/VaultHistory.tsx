@@ -21,7 +21,9 @@ import {
   selectedCommitShaAtom,
   vaultCommitsAtom,
 } from '../state/history'
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitives'
 import { activeRemoteAtom } from '../state/vaults'
+import { usePanelLayout } from '../state/preferences'
 import { DiffView } from './DiffView'
 
 const when = (iso: string) =>
@@ -38,6 +40,7 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
   const selectCommit = useSetAtom(selectCommitAtom)
   const selectFile = useSetAtom(selectCommitFileAtom)
   const reset = useSetAtom(resetVaultLogAtom)
+  const layout = usePanelLayout(remote, 'vault-history')
 
   useEffect(() => {
     void load()
@@ -75,9 +78,15 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        <div className="flex min-h-0 flex-1">
+        <ResizablePanelGroup
+          orientation="horizontal"
+          className="min-h-0 flex-1"
+          defaultLayout={layout.defaultLayout}
+          onLayoutChanged={layout.onLayoutChanged}
+        >
           {/* Commits */}
-          <div className="w-72 shrink-0 overflow-y-auto border-r border-neutral-900 p-2">
+          <ResizablePanel id="commits" defaultSize={288} minSize={180}>
+            <div className="h-full overflow-y-auto p-2">
             {commits.length === 0 && (
               <p className="px-2 py-1 text-xs text-neutral-600">No commits yet.</p>
             )}
@@ -108,10 +117,14 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
                 </button>
               </div>
             ))}
-          </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle />
 
           {/* Files in the selected commit */}
-          <div className="w-64 shrink-0 overflow-y-auto border-r border-neutral-900 p-2">
+          <ResizablePanel id="files" defaultSize={256} minSize={160}>
+            <div className="h-full overflow-y-auto p-2">
             {selectedSha === null ? (
               <p className="px-2 py-1 text-xs text-neutral-600">Pick a commit.</p>
             ) : files.length === 0 ? (
@@ -132,10 +145,14 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
                 </button>
               ))
             )}
-          </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle />
 
           {/* Diff of the selected file */}
-          <div className="min-w-0 flex-1 overflow-hidden">
+          <ResizablePanel id="diff" minSize={280}>
+            <div className="h-full overflow-hidden">
             {selectedFile === null ? (
               <p className="p-3 text-xs text-neutral-600">Pick a file to see its diff.</p>
             ) : diff === null ? (
@@ -143,8 +160,9 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
             ) : (
               <DiffView before={diff.before} after={diff.after} />
             )}
-          </div>
-        </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   )
