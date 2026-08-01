@@ -31,7 +31,6 @@ import {
   ContextMenuTrigger,
   Input,
 } from '@/primitives'
-import { ConvertToPdfDialog } from '@/components/ConvertToPdfDialog'
 import { DeleteConfirm } from './DeleteConfirm'
 import { ExplorerHeader } from './ExplorerHeader'
 import { ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
@@ -48,6 +47,7 @@ import {
   snapshotAtom,
   vaultsAtom,
 } from '@/state/vaults'
+import { openDialogAtom } from '@/state/dialogs'
 
 /** The inline editable row shown when creating a file or folder. */
 function PendingRow({
@@ -109,9 +109,8 @@ export function FileTree({
   }
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
+  const openDialog = useSetAtom(openDialogAtom)
 
-  // The vault-relative path of the note whose Convert-to-PDF dialog is open.
-  const [converting, setConverting] = useState<string | null>(null)
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
 
   // The tree projects notes AND non-markdown files (spec §Arbitrary files); the
@@ -333,7 +332,12 @@ export function FileTree({
             {fileKind(path) === 'markdown' && (
               <>
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => setConverting(path)}>
+                <ContextMenuItem
+                  onSelect={() =>
+                    activeRemote !== null &&
+                    openDialog({ id: 'convert-to-pdf', size: 'md', remote: activeRemote, path })
+                  }
+                >
                   Convert to PDF…
                 </ContextMenuItem>
               </>
@@ -474,13 +478,6 @@ export function FileTree({
           refs={actions.confirming.refs}
           onCancel={actions.cancelDelete}
           onConfirm={actions.confirmDelete}
-        />
-      )}
-      {converting !== null && activeRemote !== null && (
-        <ConvertToPdfDialog
-          remote={activeRemote}
-          path={converting}
-          onClose={() => setConverting(null)}
         />
       )}
     </div>

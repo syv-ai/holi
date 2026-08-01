@@ -50,4 +50,5 @@ export {
   SelectTrigger,
   SelectValue,
 } from './Select'
+export { Textarea } from './Textarea'
 export { Tooltip, TooltipProvider } from './Tooltip'

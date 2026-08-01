@@ -1,7 +1,18 @@
 import { type TemplateField, initialValue } from '@holi/shared'
 import { useEffect, useMemo, useState } from 'react'
-import { trpc } from '../lib/trpc'
-import { FieldWidget } from './pdf/FieldWidget'
+import { FormField } from '@/composites/FormField'
+import { FieldWidget } from '@/features/pdf/FieldWidget'
+import { trpc } from '@/lib/trpc'
+import { metaFromValues, missingRequired } from '@/lib/pdf-fields'
+import {
+  Button,
+  Dialog,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/primitives'
 
 interface TemplateOption {
   name: string
@@ -16,11 +27,13 @@ interface TemplateOption {
  * Convert-to-PDF: pick a template, fill its typed metadata fields (each rendered
  * as the widget its declared type maps to — a date picker prefilled to today, a
  * dropdown, a checkbox, …), choose a destination via the native save dialog,
- * Convert. The render writes to the chosen path and is revealed in Finder. The
- * house modal pattern (fixed overlay + stop-propagation card), driven by the
- * caller's useState.
+ * Convert. The render writes to the chosen path and is revealed in Finder.
+ *
+ * The pdf-domain content block: it knows nothing about overlays or sizing — it
+ * fills a Dialog's Header/Body/Footer slots and the registry summons it at
+ * `size: 'md'`. Footer owns its own busy state (the slot, not a shell prop).
  */
-export function ConvertToPdfDialog({
+export function ConvertToPdf({
   remote,
   path,
   onClose,
@@ -28,7 +41,7 @@ export function ConvertToPdfDialog({
   remote: string
   path: string
   onClose: () => void
-}) {
+}): React.JSX.Element {
   const [templates, setTemplates] = useState<TemplateOption[] | null>(null)
   const [slug, setSlug] = useState<string>('')
   const [values, setValues] = useState<Record<string, string>>({})
@@ -73,9 +86,7 @@ export function ConvertToPdfDialog({
 
   const convert = async () => {
     if (selected === null) return
-    const missing = selected.fields.filter(
-      (f) => f.required && f.type !== 'checkbox' && (values[f.key] ?? '').trim() === '',
-    )
+    const missing = missingRequired(selected.fields, values)
     if (missing.length > 0) {
       setError(
         `Fill required field${missing.length > 1 ? 's' : ''}: ${missing
@@ -93,8 +104,7 @@ export function ConvertToPdfDialog({
         setBusy(false)
         return // user cancelled the save dialog
       }
-      const meta: Record<string, string> = {}
-      for (const f of selected.fields) meta[f.key] = values[f.key] ?? ''
+      const meta = metaFromValues(selected.fields, values)
       const { pdfPath } = await trpc.pdf.render.mutate({ remote, path, template: slug, outPath, meta })
       await window.holi.openPath(pdfPath)
       onClose()
@@ -105,49 +115,43 @@ export function ConvertToPdfDialog({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
-    >
-      <div
-        data-convert-dialog={path}
-        className="w-96 rounded-lg border border-neutral-800 bg-neutral-950 p-4 text-sm text-neutral-200 shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="mb-3">
-          Convert <span className="font-mono text-neutral-100">{name}</span> to PDF
-        </p>
+    <>
+      <Dialog.Header>
+        Convert <span className="font-mono text-foreground">{name}</span> to PDF
+      </Dialog.Header>
 
+      <Dialog.Body>
         {templates === null && error === null && (
-          <p className="mb-3 text-xs text-neutral-500">Loading templates…</p>
+          <p className="text-xs text-muted-foreground">Loading templates…</p>
         )}
         {templates !== null && templates.length === 0 && (
-          <p className="mb-3 text-xs text-neutral-500">
+          <p className="text-xs text-muted-foreground">
             No templates in this vault. Expected a seeded <span className="font-mono">Plain</span>{' '}
             under <span className="font-mono">.holi/templates/</span>.
           </p>
         )}
         {templates !== null && templates.length > 0 && (
-          <label className="mb-3 block">
-            <span className="mb-1 block text-xs text-neutral-400">Template</span>
-            <select
-              data-convert-template
-              className="w-full rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-neutral-100"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value)}
-            >
-              {templates.map((t) => (
-                <option key={t.slug} value={t.slug}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormField label="Template">
+            <Select value={slug} onValueChange={setSlug}>
+              <SelectTrigger className="w-full" data-convert-template>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {templates.map((t) => (
+                  <SelectItem key={t.slug} value={t.slug}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </FormField>
         )}
 
         {selected !== null && selected.warnings.length > 0 && (
-          <div className="mb-3 rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-xs text-amber-100">
-            <p className="mb-1 font-medium">This template's manifest had issues (using safe defaults):</p>
+          <div className="rounded border border-amber-900/60 bg-amber-950/40 px-2.5 py-2 text-xs text-amber-100">
+            <p className="mb-1 font-medium">
+              This template's manifest had issues (using safe defaults):
+            </p>
             <ul className="list-disc space-y-0.5 pl-4">
               {selected.warnings.map((w) => (
                 <li key={w}>{w}</li>
@@ -158,38 +162,35 @@ export function ConvertToPdfDialog({
 
         {selected !== null &&
           selected.fields.map((f) => (
-            <label key={f.key} className="mb-3 flex flex-col gap-1">
-              <span className="text-xs text-neutral-400">
-                {f.label}
-                {f.required && f.type !== 'checkbox' && <span className="text-red-400"> *</span>}
-              </span>
+            <FormField
+              key={f.key}
+              label={f.label}
+              required={f.required && f.type !== 'checkbox'}
+            >
               <FieldWidget
                 field={f}
                 value={values[f.key] ?? ''}
                 onChange={(v) => setValues((prev) => ({ ...prev, [f.key]: v }))}
               />
-            </label>
+            </FormField>
           ))}
 
-        {error !== null && <p className="mb-3 text-xs text-red-400">{error}</p>}
+        {error !== null && <p className="text-xs text-destructive">{error}</p>}
+      </Dialog.Body>
 
-        <div className="flex justify-end gap-2">
-          <button
-            className="rounded px-2 py-1 text-xs text-neutral-400 hover:text-neutral-200"
-            onClick={onClose}
-          >
-            Cancel
-          </button>
-          <button
-            data-convert-confirm
-            disabled={busy || slug === ''}
-            className="rounded bg-neutral-100 px-2 py-1 text-xs text-neutral-900 hover:bg-white disabled:opacity-40"
-            onClick={() => void convert()}
-          >
-            {busy ? 'Converting…' : 'Convert'}
-          </button>
-        </div>
-      </div>
-    </div>
+      <Dialog.Footer>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          data-convert-confirm
+          disabled={busy || slug === ''}
+          onClick={() => void convert()}
+        >
+          {busy ? 'Converting…' : 'Convert'}
+        </Button>
+      </Dialog.Footer>
+    </>
   )
 }

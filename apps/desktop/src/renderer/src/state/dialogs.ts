@@ -7,7 +7,9 @@ import type { CreateTaskMode } from './tasks'
  * dispatch in DialogHost) and `size` is the guarded prop the shell reads. The
  * union grows one line per migrated dialog; that growth is the whole point.
  */
-export type ActiveDialog = { id: 'create-task'; size: 'md'; mode: CreateTaskMode }
+export type ActiveDialog =
+  | { id: 'create-task'; size: 'md'; mode: CreateTaskMode }
+  | { id: 'convert-to-pdf'; size: 'md'; remote: string; path: string }
 
 /** Null when nothing is open. Lives in the Jotai store, mounted once by the app
  *  shell — state passed through the store, not a global mutable singleton. */

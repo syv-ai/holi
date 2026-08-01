@@ -1,4 +1,14 @@
 import type { TemplateField } from '@holi/shared'
+import {
+  Checkbox,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Textarea,
+} from '@/primitives'
 
 export interface WidgetProps {
   field: TemplateField
@@ -6,78 +16,78 @@ export interface WidgetProps {
   onChange: (value: string) => void
 }
 
-const control =
-  'w-full rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-neutral-100'
+// Radix Select forbids an empty-string value, so a blank selection rides this
+// sentinel (mapped back to '' on change) — the '—' choice means "unset". Kept
+// distinctive so it can't collide with a real template option value.
+const NONE = '__none__'
 
 /**
- * The type → widget registry for the Convert dialog. Each control is string-valued
+ * The type → widget registry for the Convert block. Each control is string-valued
  * (a checkbox contributes "true"/"false"); the engine coerces to native Typst
  * values later. An unknown type can't occur (normalizeFields clamps to the six),
- * but the switch falls back to a text input for safety.
+ * but the switch falls back to a text input for safety. Every control is a
+ * primitive — no native form element survives here.
  */
 export function FieldWidget({ field, value, onChange }: WidgetProps) {
   switch (field.type) {
     case 'textarea':
       return (
-        <textarea
+        <Textarea
           data-convert-field={field.key}
           rows={4}
-          className={control}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
       )
     case 'date':
       return (
-        <input
+        <Input
           data-convert-field={field.key}
           type="date"
-          className={control}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
       )
     case 'number':
       return (
-        <input
+        <Input
           data-convert-field={field.key}
           type="number"
-          className={control}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />
       )
     case 'select':
       return (
-        <select
-          data-convert-field={field.key}
-          className={control}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
+        <Select
+          value={value === '' ? NONE : value}
+          onValueChange={(v) => onChange(v === NONE ? '' : v)}
         >
-          <option value="">—</option>
-          {(field.options ?? []).map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="w-full" data-convert-field={field.key}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NONE}>—</SelectItem>
+            {(field.options ?? []).map((o) => (
+              <SelectItem key={o} value={o}>
+                {o}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       )
     case 'checkbox':
       return (
-        <input
+        <Checkbox
           data-convert-field={field.key}
-          type="checkbox"
-          className="h-4 w-4 accent-neutral-100"
           checked={value === 'true'}
-          onChange={(e) => onChange(e.target.checked ? 'true' : 'false')}
+          onCheckedChange={(c) => onChange(c === true ? 'true' : 'false')}
         />
       )
     default:
       return (
-        <input
+        <Input
           data-convert-field={field.key}
-          className={control}
           value={value}
           onChange={(e) => onChange(e.target.value)}
         />

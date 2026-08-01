@@ -1,4 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
+import { ConvertToPdf } from '@/features/pdf/ConvertToPdf'
 import { CreateTask } from '@/features/tasks/CreateTask'
 import { Dialog } from '@/primitives'
 import { activeDialogAtom, closeDialogAtom } from '@/state/dialogs'
@@ -15,6 +16,9 @@ export function DialogHost(): React.JSX.Element | null {
   return (
     <Dialog open size={active.size} onClose={() => close()}>
       {active.id === 'create-task' && <CreateTask mode={active.mode} onClose={() => close()} />}
+      {active.id === 'convert-to-pdf' && (
+        <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
+      )}
     </Dialog>
   )
 }
