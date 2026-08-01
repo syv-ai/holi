@@ -1,5 +1,22 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
+export {
+  ContextMenu,
+  ContextMenuCheckboxItem,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuPortal,
+  ContextMenuRadioGroup,
+  ContextMenuRadioItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from './ContextMenu'
 export { Dialog, type DialogSize } from './Dialog'
 export {
   DropdownMenu,
