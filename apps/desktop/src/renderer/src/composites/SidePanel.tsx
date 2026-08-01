@@ -38,7 +38,11 @@ export function SidePanel({
 }): React.JSX.Element {
   return (
     <aside data-slot="side-panel" className={cn('flex h-full min-w-0 flex-col', className)}>
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs">
+      {/* Fixed height, not py-based: the height must not depend on whether a
+          close Button (taller than the text) is present, so Settings and History
+          match — and h-11 aligns the bar with the nav + editor top bars it shares
+          the Resizable row with. */}
+      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
         <span className="font-medium text-foreground">{title}</span>
         {subtitle === undefined ? (
           <span className="flex-1" />

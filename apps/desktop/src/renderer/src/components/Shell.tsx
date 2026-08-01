@@ -322,7 +322,7 @@ export function Shell() {
           {historyOpen && historyTarget !== null && (
             <>
               <ResizableHandle />
-              <ResizablePanel id="history" defaultSize={384} minSize={280}>
+              <ResizablePanel id="history" defaultSize={384} minSize={220}>
                 <HistoryPanel />
               </ResizablePanel>
             </>
