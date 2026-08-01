@@ -1,4 +1,4 @@
-import { vaultAssetUrl } from '../lib/vault-asset'
+import { vaultAssetUrl } from '@/lib/vault-asset'
 
 /**
  * Full-frame view for an image file opened from the tree. Fit-to-window
@@ -8,13 +8,13 @@ import { vaultAssetUrl } from '../lib/vault-asset'
 export function ImageViewer({ path }: { path: string }) {
   const name = path.split('/').at(-1) ?? path
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 bg-neutral-950 p-6">
+    <div className="flex h-full flex-col items-center justify-center gap-3 bg-background p-6">
       <img
         src={vaultAssetUrl(path)}
         alt={name}
         className="max-h-[calc(100%-2rem)] max-w-full object-contain"
       />
-      <span className="text-sm text-neutral-500">{name}</span>
+      <span className="text-sm text-muted-foreground">{name}</span>
     </div>
   )
 }

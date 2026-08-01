@@ -1,7 +1,7 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { OnboardingRitual } from './components/OnboardingRitual'
-import { SignIn } from './components/SignIn'
+import { SignIn } from './features/auth/SignIn'
 import { Shell } from './components/Shell'
 import { loadSessionAtom, sessionAtom } from './state/session'
 import { loadVaultsAtom, vaultsAtom, vaultsLoadedAtom } from './state/vaults'

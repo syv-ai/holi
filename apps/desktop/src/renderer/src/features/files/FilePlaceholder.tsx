@@ -34,11 +34,11 @@ export function FilePlaceholder({ path, kind }: { path: string; kind: OpenableKi
   const { label, Icon, note } = describe(path, kind)
   const name = path.slice(path.lastIndexOf('/') + 1)
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-neutral-500">
-      <div className="text-neutral-600">
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+      <div className="text-muted-foreground">
         <Icon size={40} strokeWidth={1.5} />
       </div>
-      <p className="mt-2 font-mono text-sm text-neutral-300">{name}</p>
+      <p className="mt-2 font-mono text-sm text-foreground">{name}</p>
       <p className="text-xs">
         {label} — {note} It lives in the vault and syncs.
       </p>

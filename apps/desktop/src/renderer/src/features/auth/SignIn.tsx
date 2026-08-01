@@ -14,8 +14,9 @@
  */
 import { useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { trpc } from '../lib/trpc'
-import { sessionAtom } from '../state/session'
+import { Button } from '@/primitives'
+import { trpc } from '@/lib/trpc'
+import { sessionAtom } from '@/state/session'
 
 type Phase =
   | { kind: 'idle' }
@@ -65,41 +66,44 @@ export function SignIn() {
   }
 
   return (
-    <div className="flex h-screen flex-col items-center justify-center gap-6 bg-neutral-950 text-neutral-100">
+    <div className="flex h-screen flex-col items-center justify-center gap-6 bg-background text-foreground">
       <h1 className="text-3xl font-semibold tracking-tight">Holi</h1>
 
       {phase.kind === 'waiting' ? (
         <div className="flex flex-col items-center gap-3">
-          <p className="text-sm text-neutral-400">Enter this code on GitHub</p>
-          <code className="rounded border border-neutral-700 bg-neutral-900 px-4 py-2 font-mono text-2xl tracking-[0.3em]">
+          <p className="text-sm text-muted-foreground">Enter this code on GitHub</p>
+          <code className="rounded border border-border bg-muted px-4 py-2 font-mono text-2xl tracking-[0.3em]">
             {phase.userCode}
           </code>
-          <button
-            className="text-xs text-neutral-500 underline hover:text-neutral-300"
+          <Button
+            variant="link"
+            className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
             onClick={() => void window.holi.openExternal(phase.verificationUri)}
           >
             {phase.verificationUri}
-          </button>
-          <p className="text-xs text-neutral-600">Waiting for you to approve…</p>
+          </Button>
+          <p className="text-xs text-muted-foreground">Waiting for you to approve…</p>
         </div>
       ) : (
-        <button
-          className="rounded bg-white px-4 py-2 text-sm font-medium text-neutral-900 hover:bg-neutral-200 disabled:opacity-50"
+        // The GitHub-style white CTA, kept deliberately (there is no inverse/white
+        // token; bg-white/neutral are named utilities, so the colour gate allows them).
+        <Button
+          className="bg-white text-neutral-900 hover:bg-neutral-200"
           disabled={phase.kind === 'starting'}
           onClick={() => void start()}
         >
           {phase.kind === 'starting' ? 'Opening GitHub…' : 'Sign in with GitHub'}
-        </button>
+        </Button>
       )}
 
       {phase.kind === 'denied' && (
-        <p className="text-xs text-neutral-400">Sign-in was cancelled on GitHub.</p>
+        <p className="text-xs text-muted-foreground">Sign-in was cancelled on GitHub.</p>
       )}
       {phase.kind === 'expired' && (
-        <p className="text-xs text-neutral-400">That code expired. Press the button for a new one.</p>
+        <p className="text-xs text-muted-foreground">That code expired. Press the button for a new one.</p>
       )}
       {phase.kind === 'failed' && (
-        <p className="max-w-md text-center text-xs text-red-400">{phase.message}</p>
+        <p className="max-w-md text-center text-xs text-destructive">{phase.message}</p>
       )}
     </div>
   )
