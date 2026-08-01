@@ -1,5 +1,4 @@
 @import 'tailwindcss';
-@import 'tw-animate-css';
 
 /* Dark-mode switch driven by the data-theme root stamp (not prefers-color-scheme).
    Kept instead of shadcn's default `.dark` — Holi stamps `data-theme` on the root. */
