@@ -15,6 +15,7 @@ import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
+import { Button, Drawer } from '@/primitives'
 import { collaboratorsErrorText, errorCodeOf } from '../lib/collaborators-error'
 import { trpc } from '../lib/trpc'
 import { sessionAtom, signOutAtom } from '../state/session'
@@ -48,7 +49,7 @@ function GitHubMark() {
   return <SiGithub size={13} color="currentColor" aria-hidden="true" />
 }
 
-export function VaultSettings({ onClose }: { onClose: () => void }) {
+export function VaultSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const remote = useAtomValue(activeRemoteAtom)
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
   const session = useAtomValue(sessionAtom)
@@ -81,14 +82,15 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   }, [remote])
 
   return (
-    <div className="flex h-full w-80 flex-col gap-4 border-l border-neutral-900 p-4 text-sm">
-      <div className="flex items-center justify-between">
-        <h2 className="text-base font-semibold">Settings</h2>
-        <button className="rounded bg-neutral-800 px-2 py-1 hover:bg-neutral-700" onClick={onClose}>
-          close
-        </button>
-      </div>
+    <Drawer open={open} onClose={onClose} className="w-80">
+      <Drawer.Header>
+        <Drawer.Title className="flex-1 text-base font-semibold">Settings</Drawer.Title>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          Close
+        </Button>
+      </Drawer.Header>
 
+      <Drawer.Body className="flex flex-col gap-4 p-4">
       <section className="space-y-1">
         <h3 className="font-medium">Vault</h3>
         {entry === undefined ? (
@@ -206,6 +208,7 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </section>
-    </div>
+      </Drawer.Body>
+    </Drawer>
   )
 }
