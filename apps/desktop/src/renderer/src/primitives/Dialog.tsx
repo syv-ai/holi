@@ -11,12 +11,17 @@ import { cn } from '@/lib/cn'
  * shadcn's compound API — the block + registry pattern is the grilled house shape;
  * the styling below is shadcn's (animations, close button, tokens).
  */
-export type DialogSize = 'sm' | 'md' | 'lg'
+export type DialogSize = 'sm' | 'md' | 'lg' | 'full'
 
+// Each size is self-contained: its width AND the layout that width implies.
+// sm/md/lg are content-height form dialogs that scroll as one column; `full` is
+// a fixed-height workspace modal (VaultHistory's 3-pane git browser) whose body
+// scrolls internally, so the modal itself must not become a scroll box.
 const panel: Record<DialogSize, string> = {
-  sm: 'max-w-sm',
-  md: 'max-w-md',
-  lg: 'max-w-2xl',
+  sm: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-sm',
+  md: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-md',
+  lg: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-2xl',
+  full: 'flex h-[85vh] flex-col overflow-hidden max-w-6xl',
 }
 
 type DialogProps = {
@@ -46,8 +51,8 @@ export function Dialog({ open, onClose, size = 'md', children }: DialogProps): R
           // We label via Dialog.Header (Radix Title); opt out of the description requirement.
           aria-describedby={undefined}
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 grid w-full -translate-x-1/2 -translate-y-1/2 gap-4',
-            'max-h-[85vh] overflow-y-auto rounded-lg border bg-background p-6',
+            'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
+            'rounded-lg border bg-background',
             'text-sm text-foreground shadow-lg outline-none duration-200',
             'data-[state=open]:animate-in data-[state=closed]:animate-out',
             'data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0',

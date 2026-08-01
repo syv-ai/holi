@@ -46,7 +46,7 @@ import {
 import { sessionAtom } from '../state/session'
 import { agentPanelOpenAtom } from '../state/agent'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
-import { VaultHistory } from './VaultHistory'
+import { VaultHistory } from '@/features/history/VaultHistory'
 import { openTaskCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import { usePanelLayout } from '../state/preferences'

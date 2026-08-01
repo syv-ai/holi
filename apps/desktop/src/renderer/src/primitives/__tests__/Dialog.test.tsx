@@ -41,6 +41,20 @@ test('size maps to the panel width class', () => {
   expect(screen.getByRole('dialog')).toHaveClass('max-w-2xl')
 })
 
+test('full size is a fixed-height workspace panel (wide, scrolls internally)', () => {
+  render(
+    <Dialog open size="full" onClose={() => {}}>
+      {body}
+    </Dialog>,
+  )
+  const panel = screen.getByRole('dialog')
+  expect(panel).toHaveClass('max-w-6xl')
+  // The panes scroll internally — the modal itself must not become a scroll box
+  // (that is the form-dialog behaviour, wrong for a fixed-height workspace).
+  expect(panel).toHaveClass('overflow-hidden')
+  expect(panel).not.toHaveClass('overflow-y-auto')
+})
+
 test('renders through a portal (into document.body, not the mount node)', () => {
   const { container } = render(
     <Dialog open onClose={() => {}}>
