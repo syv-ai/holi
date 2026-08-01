@@ -702,7 +702,8 @@ Named here so they are not forgotten and not pre-built (avoiding **Over-build**)
 - **`ConfirmDialog` composite** (declarative/stateless on `Dialog`) — DeleteConfirm + the 3 currently-unguarded destructive actions.
 - **`Menu` composite** (Radix dropdown) — VaultPicker · TreeContextMenu · TaskDetail dismiss (3).
 - **`Combobox` composite** — folder datalist · onboarding repo search (2).
-- **`IconButton`, `Select`, `Textarea` primitives** — many.
+- **`IconButton`, `Textarea` primitives** — many. (`Select` is done — genuine shadcn, commit `9a43855`.)
+- **Typography seam** (noted by Nicolai 2026-07-31) — the caption/label/title class dialects repeat hard (66×`text-xs`, 24×`text-sm`, 13×`font-medium` across 24 files). Do NOT pre-build a `Header`/`Prose`/`Title` suite (over-build; shadcn ships **`Label`**, not a Typography component). Instead: adopt shadcn `Label` and route `FormField` through it; add a house **`Text`** primitive (cva `title`/`body`/`caption`/…) whose variant set is **extracted from the bulk-migration role inventory, not guessed** (≥2 uses per role). `Dialog.Header` (title) and `FormField` (label) already house the two biggest roles.
 - **Bulk migration** of the remaining ~20 components into `features/`, each swapping native/raw-Tailwind for primitives; then flip the whole-tree gate to `error` and drop `GATE_LEVEL`.
 - **`OnboardingRitual`** `.obrit-*` CSS — decide: fold into tokens or keep as a standalone fullscreen surface.
 - **`panel/Panel.tsx`** dev harness — exempt from the gate (add to eslint `ignores`) or delete.
