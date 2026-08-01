@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { History, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, ResizablePanel, type PanelImperativeHandle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
@@ -255,14 +255,19 @@ export function AgentPanel() {
     })()
   }, [seedPrompt, terminalReady, startSession, setSeedPrompt])
 
-  // `open` is the source of truth; drive the panel to match. useLayoutEffect so the
-  // initial collapse lands before paint (the atom starts closed, but a collapsible
-  // panel mounts at its defaultSize) — no empty gap on first render.
-  useLayoutEffect(() => {
-    const p = panelRef.current
-    if (!p) return
-    if (open && p.isCollapsed()) p.expand()
-    else if (!open && !p.isCollapsed()) p.collapse()
+  // `open` is the source of truth; drive the panel to match. Deferred a frame:
+  // the panel's imperative API throws "Group not found" if touched during the
+  // mount commit (a child's effect runs before the parent Group has registered
+  // itself), so rAF puts every collapse/expand safely after the group is live.
+  // The panel mounts at its defaultSize, so the first frame collapses it closed.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const p = panelRef.current
+      if (!p) return
+      if (open && p.isCollapsed()) p.expand()
+      else if (!open && !p.isCollapsed()) p.collapse()
+    })
+    return () => cancelAnimationFrame(id)
   }, [open])
 
   // Reconcile a *drag past the collapse threshold* back into `open`, so ⌘J and the
