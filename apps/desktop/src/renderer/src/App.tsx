@@ -1,6 +1,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
-import { OnboardingRitual } from './components/OnboardingRitual'
+import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SignIn } from './features/auth/SignIn'
 import { Shell } from './components/Shell'
 import { loadSessionAtom, sessionAtom } from './state/session'

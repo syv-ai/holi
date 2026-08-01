@@ -104,6 +104,9 @@
   --animate-rise: rise var(--duration-enter) var(--ease-settle) both;
   /* Spring scale-in for a mark/badge that should feel like it wakes up. */
   --animate-pop: pop 800ms var(--ease-spring) both;
+  /* One-time attention pulse — a ring bloom on --primary — the first time a
+   * control becomes actionable (e.g. a submit that just went enabled). */
+  --animate-wake: wake 1.1s var(--ease-settle);
   /* Overlay-panel in/out (dialogs, popovers): fade + a slight zoom. */
   --animate-scale-in: scale-in var(--duration-base) var(--ease-settle) both;
   --animate-scale-out: scale-out var(--duration-base) var(--ease-settle) both;
@@ -133,6 +136,20 @@
   100% {
     opacity: 1;
     transform: scale(1);
+  }
+}
+@keyframes wake {
+  0% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45);
+  }
+  45% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 6px hsl(var(--primary) / 0.18);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px hsl(var(--primary) / 0);
   }
 }
 @keyframes scale-in {

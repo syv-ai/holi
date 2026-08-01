@@ -18,6 +18,26 @@
   --surface-2: 0 0% 15%;
   --destructive: 8 50% 58%;
 
+  /* Bridge to the app's semantic tokens (full-colour form) so the shared
+   * primitives — Button/Input/Select — render in the ritual's own palette
+   * instead of the app's sky/neutral. The ritual keeps its HSL-triplet tokens
+   * (its atmosphere CSS applies alpha via hsl(var(--x) / a)); these aliases
+   * just wrap them as the colours the primitives read. */
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--background));
+  --color-muted: hsl(var(--surface-2));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--surface-2));
+  --color-accent-foreground: hsl(var(--foreground));
+  --color-popover: hsl(var(--surface-1));
+  --color-popover-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--border));
+  --color-ring: hsl(var(--primary));
+  --color-destructive: hsl(var(--destructive));
+
   position: fixed;
   inset: 0;
   z-index: 50;
@@ -120,21 +140,7 @@
   box-shadow:
     0 1px 2px hsl(0 0% 0% / 0.04),
     0 1px 6px hsl(0 0% 0% / 0.04);
-  animation: obrit-mark-wake 800ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
-}
-@keyframes obrit-mark-wake {
-  0% {
-    opacity: 0;
-    transform: scale(0.6) rotate(-10deg);
-  }
-  70% {
-    opacity: 1;
-    transform: scale(1.06) rotate(2deg);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) rotate(0);
-  }
+  animation: pop 800ms var(--ease-spring) both;
 }
 
 .onboarding-ritual .obrit-head-right {
@@ -156,7 +162,7 @@
   border: 1px solid hsl(var(--border));
   background: transparent;
   transition:
-    background 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    background 280ms var(--ease-settle),
     border-color 280ms,
     transform 280ms,
     box-shadow 280ms;
@@ -177,7 +183,7 @@
   inset: -3px;
   border-radius: 50%;
   background: hsl(var(--primary) / 0.25);
-  animation: obrit-ink-halo 900ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: obrit-ink-halo 900ms var(--ease-settle) forwards;
   pointer-events: none;
 }
 @keyframes obrit-ink-halo {
@@ -199,25 +205,6 @@
   background: hsl(var(--border));
 }
 
-.onboarding-ritual .obrit-close {
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  color: hsl(var(--muted-foreground));
-  background: transparent;
-  border: 0;
-  cursor: pointer;
-  transition:
-    background 160ms,
-    color 160ms;
-}
-.onboarding-ritual .obrit-close:hover {
-  background: hsl(var(--surface-2));
-  color: hsl(var(--foreground));
-}
-
 /* ── Stage + act crossfade ───────────────────────────────────────── */
 .onboarding-ritual .obrit-stage {
   position: relative;
@@ -235,8 +222,8 @@
   opacity: 0;
   transform: translateY(14px);
   transition:
-    opacity 380ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 380ms var(--ease-settle),
+    transform 480ms var(--ease-settle);
   pointer-events: none;
 }
 .onboarding-ritual .obrit-act[data-state='active'] {
@@ -323,29 +310,19 @@
 
 /* Staggered rise on Act 1 entry */
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-eyebrow {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both;
+  animation: rise 700ms var(--ease-settle) 60ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-display {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 200ms both;
+  animation: rise 700ms var(--ease-settle) 200ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-lede {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 340ms both;
+  animation: rise 700ms var(--ease-settle) 340ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-cta-row {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 480ms both;
+  animation: rise 700ms var(--ease-settle) 480ms both;
 }
 .onboarding-ritual .obrit-greeting[data-state='active'] .obrit-keyhint {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 620ms both;
-}
-@keyframes obrit-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  animation: rise 700ms var(--ease-settle) 620ms both;
 }
 
 /* ── Act 2: Naming ───────────────────────────────────────────────── */
@@ -365,37 +342,12 @@
   gap: 18px;
 }
 
-.onboarding-ritual .obrit-vault-input {
-  display: block;
-  width: 100%;
-  font-family: 'Fraunces', serif;
-  font-weight: 480;
-  font-size: 80px;
-  line-height: 1.05;
-  letter-spacing: -0.028em;
-  font-variation-settings:
-    'opsz' 144,
-    'SOFT' 50;
-  color: hsl(var(--foreground));
-  background: transparent;
-  border: 0;
-  outline: none;
-  text-align: center;
-  padding: 4px 0 8px;
-  caret-color: hsl(var(--primary));
-  transition: color 240ms;
-}
-.onboarding-ritual .obrit-vault-input::placeholder {
-  color: hsl(var(--muted-foreground) / 0.4);
-  font-style: italic;
-}
-
 .onboarding-ritual .obrit-input-underline {
   height: 1px;
   width: 64px;
   background: hsl(var(--border));
   transition:
-    width 360ms cubic-bezier(0.22, 1, 0.36, 1),
+    width 360ms var(--ease-settle),
     background 240ms;
 }
 .onboarding-ritual .obrit-name-stage:focus-within .obrit-input-underline {
@@ -441,35 +393,6 @@
   align-items: center;
   gap: 8px;
 }
-.onboarding-ritual .obrit-field-input {
-  font-family: 'Newsreader', serif;
-  font-variation-settings: 'opsz' 22;
-  font-size: 19px;
-  line-height: 1.4;
-  color: hsl(var(--foreground));
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid hsl(var(--border));
-  padding: 8px 2px 9px;
-  width: 100%;
-  outline: none;
-  transition: border-bottom-color 240ms;
-}
-.onboarding-ritual .obrit-field-input::placeholder {
-  color: hsl(var(--muted-foreground) / 0.55);
-  font-style: italic;
-}
-.onboarding-ritual .obrit-field-input:focus {
-  border-bottom-color: hsl(var(--primary));
-}
-.onboarding-ritual .obrit-field-input.is-mono {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13.5px;
-}
-.onboarding-ritual .obrit-field-input:disabled {
-  color: hsl(var(--muted-foreground) / 0.5);
-  cursor: not-allowed;
-}
 .onboarding-ritual .obrit-field-caption {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
@@ -482,17 +405,17 @@
 }
 
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-eyebrow {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 60ms both;
+  animation: rise 700ms var(--ease-settle) 60ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-vault-input,
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-input-underline {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 180ms both;
+  animation: rise 700ms var(--ease-settle) 180ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-path-caption {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 300ms both;
+  animation: rise 700ms var(--ease-settle) 300ms both;
 }
 .onboarding-ritual .obrit-name[data-state='active'] .obrit-form {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 420ms both;
+  animation: rise 700ms var(--ease-settle) 420ms both;
 }
 
 /* ── Act 3: Threshold ────────────────────────────────────────────── */
@@ -665,7 +588,7 @@
   box-shadow:
     0 1px 0 hsl(var(--border)),
     inset 0 1px 0 hsl(var(--background));
-  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition: transform 160ms var(--ease-spring);
 }
 .onboarding-ritual .obrit-hotkey:hover .obrit-kbd {
   transform: translateY(-1px);
@@ -679,31 +602,31 @@
 
 /* Act 3 staggered reveals */
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-thresh-rule {
-  animation: obrit-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) 40ms both;
+  animation: rise 600ms var(--ease-settle) 40ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-eyebrow {
-  animation: obrit-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) 140ms both;
+  animation: rise 600ms var(--ease-settle) 140ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-display {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 240ms both;
+  animation: rise 700ms var(--ease-settle) 240ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-lede {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 360ms both;
+  animation: rise 700ms var(--ease-settle) 360ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-vault-preview {
-  animation: obrit-rise 800ms cubic-bezier(0.22, 1, 0.36, 1) 480ms both;
+  animation: rise 800ms var(--ease-settle) 480ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-cta-row {
-  animation: obrit-rise 700ms cubic-bezier(0.22, 1, 0.36, 1) 620ms both;
+  animation: rise 700ms var(--ease-settle) 620ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(1) {
-  animation: obrit-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) 780ms both;
+  animation: rise 600ms var(--ease-settle) 780ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(2) {
-  animation: obrit-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) 880ms both;
+  animation: rise 600ms var(--ease-settle) 880ms both;
 }
 .onboarding-ritual .obrit-threshold[data-state='active'] .obrit-hotkey:nth-child(3) {
-  animation: obrit-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) 980ms both;
+  animation: rise 600ms var(--ease-settle) 980ms both;
 }
 
 /* ── Footer + buttons ────────────────────────────────────────────── */
@@ -721,86 +644,6 @@
 }
 .onboarding-ritual .obrit-foot-side.is-right {
   justify-content: flex-end;
-}
-
-.onboarding-ritual .obrit-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 38px;
-  padding: 0 20px;
-  background: hsl(var(--primary));
-  color: hsl(var(--background));
-  border: 0;
-  border-radius: 999px;
-  font-family: 'Geist', sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.005em;
-  cursor: pointer;
-  box-shadow:
-    0 1px 2px hsl(0 0% 0% / 0.04),
-    0 1px 6px hsl(0 0% 0% / 0.04);
-  transition:
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 200ms,
-    background 200ms,
-    opacity 200ms;
-}
-.onboarding-ritual .obrit-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    0 2px 8px hsl(0 0% 0% / 0.06),
-    0 8px 28px hsl(0 0% 0% / 0.08);
-  background: hsl(152 32% 30%);
-}
-.onboarding-ritual .obrit-btn:active:not(:disabled) {
-  transform: translateY(0);
-}
-.onboarding-ritual .obrit-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.onboarding-ritual .obrit-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-.onboarding-ritual .obrit-btn.is-ghost {
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  box-shadow: none;
-}
-.onboarding-ritual .obrit-btn.is-ghost:hover:not(:disabled) {
-  background: hsl(var(--surface-2));
-  color: hsl(var(--foreground));
-  box-shadow: none;
-  transform: none;
-}
-
-/* One-time wake-up when continue first becomes enabled */
-.onboarding-ritual .obrit-btn.is-waking {
-  animation: obrit-btn-wake 1.1s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes obrit-btn-wake {
-  0% {
-    transform: scale(0.9);
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.04),
-      0 0 0 0 hsl(var(--primary) / 0.45);
-  }
-  45% {
-    transform: scale(1.06);
-    box-shadow:
-      0 2px 8px hsl(0 0% 0% / 0.06),
-      0 0 0 6px hsl(var(--primary) / 0.18);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.04),
-      0 0 0 16px hsl(var(--primary) / 0);
-  }
 }
 
 .onboarding-ritual .obrit-keyhint {
@@ -884,56 +727,6 @@
   background: linear-gradient(90deg, transparent, hsl(0 0% 91% / 0.08) 50%, transparent);
 }
 
-/* The continue / open-vault button is the loudest surface in the
- * ritual. Solid terracotta on near-black is exactly the "orange and
- * black" the dark mode wants to avoid — so we drop to a tonal pill
- * (terracotta tint over the surface with a matching hairline). The
- * primary character is preserved but it reads as warm intent, not
- * pottery glow. */
-.dark .onboarding-ritual .obrit-btn:not(.is-ghost) {
-  background: hsl(var(--primary) / 0.16);
-  color: hsl(var(--primary-hover, var(--primary)));
-  box-shadow:
-    0 1px 2px hsl(0 0% 0% / 0.3),
-    inset 0 0 0 1px hsl(var(--primary) / 0.32);
-}
-.dark .onboarding-ritual .obrit-btn:not(.is-ghost):hover:not(:disabled) {
-  background: hsl(var(--primary) / 0.26);
-  color: hsl(var(--primary-hover, var(--primary)));
-  box-shadow:
-    0 2px 10px hsl(0 0% 0% / 0.4),
-    inset 0 0 0 1px hsl(var(--primary) / 0.5);
-}
-
-/* The wake-up animation needs its own dark-mode keyframes since the
- * light-mode version bakes in the dark ink shadow values. */
-.dark .onboarding-ritual .obrit-btn.is-waking {
-  animation: obrit-btn-wake-dark 1.1s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes obrit-btn-wake-dark {
-  0% {
-    transform: scale(0.9);
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.3),
-      inset 0 0 0 1px hsl(var(--primary) / 0.32),
-      0 0 0 0 hsl(var(--primary) / 0.4);
-  }
-  45% {
-    transform: scale(1.06);
-    box-shadow:
-      0 2px 10px hsl(0 0% 0% / 0.4),
-      inset 0 0 0 1px hsl(var(--primary) / 0.55),
-      0 0 0 8px hsl(var(--primary) / 0.16);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow:
-      0 1px 2px hsl(0 0% 0% / 0.3),
-      inset 0 0 0 1px hsl(var(--primary) / 0.32),
-      0 0 0 18px hsl(var(--primary) / 0);
-  }
-}
-
 /* ── Join sub-view (overlays Act 2 with the repo picker) ─────────────
  * New in the Electron port — the old ritual had no join path. Styled to
  * sit inside the same act-2 stage, reusing the ritual's dark tokens. */
@@ -949,29 +742,6 @@
   flex-direction: column;
   gap: 1px;
 }
-.onboarding-ritual .obrit-join-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  text-align: left;
-  padding: 9px 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: hsl(var(--foreground));
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  cursor: pointer;
-  transition: background-color 140ms;
-}
-.onboarding-ritual .obrit-join-row:hover:not(:disabled) {
-  background: hsl(0 0% 100% / 0.05);
-}
-.onboarding-ritual .obrit-join-row:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
 .onboarding-ritual .obrit-join-remote {
   flex: 1 1 auto;
   min-width: 0;
@@ -985,40 +755,6 @@
   color: hsl(38 55% 60%);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-/* ── Threshold: the created repo's remote, click-to-copy ─────────────
- * Shown only once the vault genuinely exists (create resolved), so the
- * URL is live and clonable. Centered by the threshold's text-align. */
-.onboarding-ritual .obrit-repo-url {
-  display: inline-flex;
-  align-items: center;
-  gap: 16px;
-  margin-top: 24px;
-  padding: 10px 16px;
-  border: 1px solid hsl(var(--border));
-  border-radius: 9px;
-  background: hsl(0 0% 100% / 0.02);
-  cursor: pointer;
-  transition:
-    border-color 160ms,
-    background 160ms;
-}
-.onboarding-ritual .obrit-repo-url:hover {
-  border-color: hsl(var(--primary) / 0.5);
-  background: hsl(0 0% 100% / 0.04);
-}
-.onboarding-ritual .obrit-repo-url-text {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 13px;
-  color: hsl(var(--muted-foreground));
-}
-.onboarding-ritual .obrit-repo-url-copy {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 0.04em;
-  color: hsl(var(--primary));
-  white-space: nowrap;
 }
 
 /* Join picker: repo-list load failure, with a retry (a timeout must not

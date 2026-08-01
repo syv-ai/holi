@@ -1,24 +1,38 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import type { Repo } from '../../../main/github/api'
-import { Tooltip } from '@/primitives'
-import { trpc } from '../lib/trpc'
-import { sessionAtom } from '../state/session'
-import { addVaultAtom, createVaultAtom, loadVaultsAtom, vaultsAtom } from '../state/vaults'
+import type { Repo } from '../../../../main/github/api'
 import {
-  atFloor,
+  Button,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Tooltip,
+} from '@/primitives'
+import { trpc } from '@/lib/trpc'
+import { sessionAtom } from '@/state/session'
+import { addVaultAtom, createVaultAtom, loadVaultsAtom, vaultsAtom } from '@/state/vaults'
+import {
   canAdvance,
   initialState,
   reduce,
   slugify,
   startingAct,
   type Act,
-  type Mode
-} from '../state/onboarding-flow'
-import '../styles/onboarding-ritual.css'
+  type Mode,
+} from '@/state/onboarding-flow'
+import './onboarding-ritual.css'
 
 type DotState = 'pending' | 'active' | 'done'
 type ActState = 'idle' | 'active' | 'exiting'
+
+// The ceremony CTAs come in two weights: the solid pill (Button `ceremony`) and
+// a transparent ghost. The ghost reuses the stock `ghost` variant and layers on
+// the ceremony geometry — kept here as one shared string, not per-call-site.
+const CEREMONY_GHOST =
+  'h-[38px] gap-2 rounded-full px-5 text-[13px] font-medium tracking-[0.005em] text-muted-foreground hover:text-foreground'
 
 interface Props {
   /** `first-run` plays all three acts (greeting → naming → threshold);
@@ -37,7 +51,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   const loadVaults = useSetAtom(loadVaultsAtom)
 
   const [s, dispatch] = useReducer(reduce, undefined, () =>
-    initialState(mode, session?.login ?? '')
+    initialState(mode, session?.login ?? ''),
   )
 
   // Purely visual crossfade bookkeeping — which act is fading out. Kept local
@@ -78,9 +92,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
     void trpc.github.repos
       .query()
       .then(setRepos)
-      .catch((err: unknown) =>
-        setReposError(err instanceof Error ? err.message : String(err))
-      )
+      .catch((err: unknown) => setReposError(err instanceof Error ? err.message : String(err)))
   }, [])
 
   // Fetch the first time the join view opens, then keep it.
@@ -173,7 +185,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   const run = (fn: () => Promise<unknown>) => {
     dispatch({ type: 'submitStart' })
     return fn().catch((err: unknown) =>
-      dispatch({ type: 'failInPlace', error: err instanceof Error ? err.message : String(err) })
+      dispatch({ type: 'failInPlace', error: err instanceof Error ? err.message : String(err) }),
     )
   }
 
@@ -255,9 +267,15 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
             </div>
             {dismissible && (
               <Tooltip content="Dismiss (Esc)">
-                <button type="button" className="obrit-close" onClick={onDismiss} aria-label="Dismiss">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="size-7 rounded-full text-muted-foreground"
+                  onClick={onDismiss}
+                  aria-label="Dismiss"
+                >
                   ✕
-                </button>
+                </Button>
               </Tooltip>
             )}
           </div>
@@ -275,10 +293,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                   synced to a repo you control.
                 </p>
                 <div className="obrit-cta-row">
-                  <button type="button" className="obrit-btn" onClick={advance}>
+                  <Button variant="ceremony" onClick={advance}>
                     Begin
                     <span aria-hidden>→</span>
-                  </button>
+                  </Button>
                 </div>
                 <div className="obrit-keyhint">
                   <span>or press</span>
@@ -295,8 +313,9 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                 <>
                   <div className="obrit-name-stage">
                     <div className="obrit-eyebrow">NAME YOUR VAULT</div>
-                    <input
+                    <Input
                       ref={nameRef}
+                      variant="display"
                       className="obrit-vault-input"
                       value={s.name}
                       onChange={(e) => dispatch({ type: 'setName', name: e.target.value })}
@@ -316,30 +335,34 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                   <div className="obrit-form">
                     <div className="obrit-field">
                       <div className="obrit-field-label">OWNER</div>
-                      <select
-                        className="obrit-field-input"
+                      <Select
                         value={s.owner}
-                        onChange={(e) => dispatch({ type: 'setOwner', owner: e.target.value })}
+                        onValueChange={(owner) => dispatch({ type: 'setOwner', owner })}
                       >
-                        {ownerOptions.map((o) => (
-                          <option key={o} value={o}>
-                            {o}
-                          </option>
-                        ))}
-                      </select>
+                        <SelectTrigger variant="underline">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ownerOptions.map((o) => (
+                            <SelectItem key={o} value={o}>
+                              {o}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <div className="obrit-field-caption">
                         the account or org this private repo is created under.
                       </div>
                     </div>
                     <div className="obrit-cta-row">
-                      <button
-                        type="button"
-                        className="obrit-btn is-ghost"
+                      <Button
+                        variant="ghost"
+                        className={CEREMONY_GHOST}
                         onClick={() => dispatch({ type: 'toJoin' })}
                       >
                         <span aria-hidden>↳</span>
                         join one you've been added to
-                      </button>
+                      </Button>
                     </div>
                     {s.error && <div className="obrit-error">{s.error}</div>}
                   </div>
@@ -347,9 +370,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               ) : (
                 <div className="obrit-name-stage obrit-join">
                   <div className="obrit-eyebrow">JOIN A VAULT</div>
-                  <input
+                  <Input
                     autoFocus
-                    className="obrit-field-input is-mono"
+                    variant="underline"
+                    className="font-mono text-[13.5px]"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="search your repos…"
@@ -363,45 +387,45 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                     {reposError !== null && (
                       <div className="obrit-join-error">
                         <p className="obrit-field-caption is-warn">couldn't load your repos.</p>
-                        <button type="button" className="obrit-btn is-ghost" onClick={loadRepos}>
+                        <Button variant="ghost" className={CEREMONY_GHOST} onClick={loadRepos}>
                           retry
-                        </button>
+                        </Button>
                       </div>
                     )}
                     {repos !== null &&
                       matches.map((repo) => (
-                        <button
+                        <Button
                           key={repo.remote}
-                          type="button"
+                          variant="ghost"
                           disabled={s.submitting || !repo.canPush}
-                          className="obrit-join-row"
+                          className="h-auto w-full justify-start gap-2.5 rounded-md px-2.5 py-2 font-mono text-[13px] font-normal text-foreground"
                           onClick={() => run(() => addVault(repo.remote))}
-                          // Native title, deliberately: this trigger is `disabled`,
-                          // and Radix (our Tooltip) never fires on a disabled element,
-                          // so the custom tooltip would vanish exactly when it explains
-                          // the disabled state. The one place native title stays.
-                          // eslint-disable-next-line no-restricted-syntax
+                          // `title` here is a Button *prop* (component, not a native
+                          // element) so the gate's native-title ban doesn't apply — and
+                          // it's what we want: a disabled trigger, on which the Radix
+                          // Tooltip never fires, so the plain title explains the disabled
+                          // state the one place the custom tooltip can't.
                           title={repo.canPush ? '' : 'you cannot push to this repo'}
                         >
                           <span className="obrit-join-remote">{repo.remote}</span>
                           {repo.visibility !== 'private' && (
                             <span className="obrit-join-vis">{repo.visibility}</span>
                           )}
-                        </button>
+                        </Button>
                       ))}
                     {repos !== null && matches.length === 0 && (
                       <p className="obrit-field-caption">no repos match</p>
                     )}
                   </div>
                   <div className="obrit-cta-row">
-                    <button
-                      type="button"
-                      className="obrit-btn is-ghost"
+                    <Button
+                      variant="ghost"
+                      className={CEREMONY_GHOST}
                       onClick={() => dispatch({ type: 'toForm' })}
                     >
                       <span aria-hidden>←</span>
                       back
-                    </button>
+                    </Button>
                   </div>
                   {s.error && <div className="obrit-error">{s.error}</div>}
                 </div>
@@ -417,24 +441,26 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               <h1 className="obrit-display">
                 Welcome to <span className="obrit-vault-name">{slug || '…'}</span>.
               </h1>
-              <p className="obrit-lede">
-                Created under {s.owner} · your team can clone it now.
-              </p>
+              <p className="obrit-lede">Created under {s.owner} · your team can clone it now.</p>
 
               {createdRemote && (
                 <Tooltip content="copy the repo URL">
-                  <button type="button" className="obrit-repo-url" onClick={copyRemote}>
+                  <Button
+                    variant="ghost"
+                    className="mt-6 h-auto gap-4 rounded-[9px] border border-border px-4 py-2.5 font-normal hover:border-primary/50"
+                    onClick={copyRemote}
+                  >
                     <span className="obrit-repo-url-text">github.com/{createdRemote}</span>
                     <span className="obrit-repo-url-copy">{copied ? 'copied ✓' : '⧉ copy'}</span>
-                  </button>
+                  </Button>
                 </Tooltip>
               )}
 
               <div className="obrit-cta-row">
-                <button type="button" className="obrit-btn" onClick={() => void enter()}>
+                <Button variant="ceremony" onClick={() => void enter()}>
                   Open vault
                   <span aria-hidden>→</span>
-                </button>
+                </Button>
               </div>
 
               <div className="obrit-hotkeys">
@@ -460,10 +486,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
         <footer className="obrit-foot">
           <div className="obrit-foot-side">
             {s.view === 'form' && s.act !== 3 && (s.act > startingAct(mode) || dismissible) && (
-              <button type="button" className="obrit-btn is-ghost" onClick={back}>
+              <Button variant="ghost" className={CEREMONY_GHOST} onClick={back}>
                 <span aria-hidden>←</span>
                 {s.act > startingAct(mode) ? 'back' : 'dismiss'}
-              </button>
+              </Button>
             )}
           </div>
           <div className="obrit-foot-side is-right">
@@ -474,9 +500,9 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                     press <span className="obrit-kbd-inline">enter</span>
                   </span>
                 )}
-                <button
-                  type="button"
-                  className={`obrit-btn ${continueWaking ? 'is-waking' : ''}`}
+                <Button
+                  variant="ceremony"
+                  className={continueWaking ? 'animate-wake' : ''}
                   onClick={() => void submit()}
                   disabled={continueDisabled || s.submitting}
                 >
@@ -488,7 +514,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                       <span aria-hidden>→</span>
                     </>
                   )}
-                </button>
+                </Button>
               </>
             )}
           </div>
