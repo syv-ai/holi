@@ -13,7 +13,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { Button, Dialog, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { DiffView } from '@/composites'
+import { DiffView, PanelHeader } from '@/composites'
 import {
   commitDiffAtom,
   commitFilesAtom,
@@ -56,11 +56,12 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog open onClose={onClose} size="full">
-      {/* pr-10 keeps the remote clear of the primitive's absolute close button. */}
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2 pr-10 text-sm">
+      {/* The shared panel bar, sized for the modal: h-auto over the Dialog's own
+          padding, and pr-10 to clear the primitive's absolute close button. */}
+      <PanelHeader className="h-auto px-4 py-2 pr-10 text-sm">
         <Dialog.Header>History</Dialog.Header>
         <span className="min-w-0 flex-1 truncate text-muted-foreground">{remote ?? ''}</span>
-      </div>
+      </PanelHeader>
 
       <ResizablePanelGroup
         orientation="horizontal"

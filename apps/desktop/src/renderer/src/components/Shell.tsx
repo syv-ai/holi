@@ -44,7 +44,6 @@ import {
   workspaceAtom,
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
-import { agentPanelOpenAtom } from '../state/agent'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
 import { openTaskCountAtom } from '../state/tasks'
@@ -64,7 +63,6 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
-  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
@@ -110,17 +108,9 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [openDaily])
 
-  // ⌘J toggles the agent drawer (prd/agent.md §Runtime).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') {
-        e.preventDefault()
-        setAgentOpen((v) => !v)
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [setAgentOpen])
+  // ⌘J (toggle the agent drawer) now lives on the drawer's own PanelHeader close
+  // action — it owns its shortcut, and the panel stays mounted so it binds even
+  // while collapsed. See features/agent/AgentPanel.tsx.
 
   // Create a task in any folder (including one that is not yet a lane, which board
   // quick-add cannot reach). ⌘T captures quickly and stays put; ⌘⇧T captures and

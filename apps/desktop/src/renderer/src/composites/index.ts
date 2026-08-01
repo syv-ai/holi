@@ -1,4 +1,5 @@
 export { DiffView } from './DiffView'
 export { EditorPane } from './EditorPane'
 export { FormField } from './FormField'
+export { PanelHeader, type HeaderAction } from './PanelHeader'
 export { SidePanel } from './SidePanel'

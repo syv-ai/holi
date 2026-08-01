@@ -1,18 +1,18 @@
 import { X } from 'lucide-react'
-import { Button } from '@/primitives'
+import { PanelHeader, type HeaderAction } from './PanelHeader'
 import { cn } from '@/lib/cn'
 
 /**
- * The chrome every workspace side panel shares: a full-height column with a
- * compact header bar (title · optional subtitle · optional actions · optional
- * close) over a body slot. It owns the shell, not the content — padding and
- * scroll belong to whatever fills `children`, because the panels differ there
- * (Settings pads and scrolls as one column; History splits a log over a diff).
+ * The chrome every workspace side panel shares: a full-height column whose header
+ * bar is the shared `PanelHeader`, over a body slot. It owns the shell, not the
+ * content — padding and scroll belong to whatever fills `children`, because the
+ * panels differ there (Settings pads and scrolls as one column; History splits a
+ * log over a diff).
  *
- * Domain-agnostic, so it lives in composites/ and every feature panel routes
- * through it — that is what makes them read as siblings instead of three
- * hand-rolled headers drifting apart. ≥2 uses justify the seam: VaultSettings
- * (a `close`), HistoryPanel (a `subtitle`); AgentPanel adopts it via `actions`.
+ * A convenience over PanelHeader for the common panel shape: a string `title`, an
+ * optional `subtitle`, structured header `actions`, and a plain `onClose` that
+ * becomes the trailing close control. A panel that needs a richer header (the
+ * agent drawer's status line) composes PanelHeader directly instead.
  *
  * Width/resize is not this component's job — the Resizable group around it owns
  * that. A SidePanel only fills the panel it is given.
@@ -26,11 +26,10 @@ export function SidePanel({
   children,
 }: {
   title: string
-  /** A dim, truncating second line of context (History's target path). When
-   *  absent, a spacer takes its place so actions/close stay right-aligned. */
+  /** A dim, truncating second line of context (History's target path). */
   subtitle?: React.ReactNode
-  /** Right-aligned header controls, before the close (AgentPanel's restart/history). */
-  actions?: React.ReactNode
+  /** Right-aligned header controls, before the close (structured, not raw JSX). */
+  actions?: HeaderAction[]
   /** Renders a ghost close button when present; omit for panels toggled elsewhere. */
   onClose?: () => void
   className?: string
@@ -38,24 +37,15 @@ export function SidePanel({
 }): React.JSX.Element {
   return (
     <aside data-slot="side-panel" className={cn('flex h-full min-w-0 flex-col', className)}>
-      {/* Fixed height, not py-based: the height must not depend on whether a
-          close Button (taller than the text) is present, so Settings and History
-          match — and h-11 aligns the bar with the nav + editor top bars it shares
-          the Resizable row with. */}
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
+      <PanelHeader
+        actions={actions}
+        close={onClose ? { icon: <X />, label: 'Close panel', onSelect: onClose } : undefined}
+      >
         <span className="font-medium text-foreground">{title}</span>
-        {subtitle === undefined ? (
-          <span className="flex-1" />
-        ) : (
+        {subtitle !== undefined && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{subtitle}</span>
         )}
-        {actions}
-        {onClose && (
-          <Button variant="ghost" size="icon-xs" onClick={onClose} title="close" aria-label="close panel">
-            <X />
-          </Button>
-        )}
-      </header>
+      </PanelHeader>
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>
     </aside>
   )

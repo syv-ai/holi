@@ -42,11 +42,14 @@ test('no close control when onClose is absent', () => {
   expect(screen.queryByRole('button', { name: /close/i })).not.toBeInTheDocument()
 })
 
-test('renders header actions when provided', () => {
+test('renders structured header actions when provided', () => {
   render(
-    <SidePanel title="Claude" actions={<span data-testid="action">restart</span>}>
+    <SidePanel
+      title="Claude"
+      actions={[{ icon: <i>↻</i>, label: 'Restart', onSelect: () => {} }]}
+    >
       x
     </SidePanel>,
   )
-  expect(screen.getByTestId('action')).toHaveTextContent('restart')
+  expect(screen.getByRole('button', { name: 'Restart' })).toBeInTheDocument()
 })

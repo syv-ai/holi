@@ -4,7 +4,8 @@ import '@xterm/xterm/css/xterm.css'
 import { History, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Button, ResizablePanel, type PanelImperativeHandle } from '@/primitives'
+import { ResizablePanel, type PanelImperativeHandle } from '@/primitives'
+import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
 import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
@@ -328,9 +329,22 @@ export function AgentPanel() {
       <aside
         className={cn('flex h-full min-w-0 flex-col border-l border-border', !open && 'hidden')}
       >
-      {/* h-11 (not py-based) to match the SidePanel header height, so the agent
-          drawer's title bar lines up with the other panels + the editor/nav bars. */}
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
+      {/* The shared panel bar. The agent's leading region is richer than a title —
+          a status dot + state + config/auth notices — so it composes PanelHeader
+          directly rather than via SidePanel. ⌘J lives on the close action here
+          (bound while mounted), so it toggles the drawer from anywhere. */}
+      <PanelHeader
+        actions={[
+          { icon: <History />, label: 'Resume a past session', onSelect: () => void history() },
+          { icon: <RotateCw />, label: 'Restart session', onSelect: () => void restart() },
+        ]}
+        close={{
+          icon: <X />,
+          label: 'Hide agent panel',
+          hotkey: '⌘J',
+          onSelect: () => setOpen((o) => !o),
+        }}
+      >
         <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} title={stateTitle} />
         <span className="text-foreground">Claude</span>
         <span className="text-muted-foreground" title={stateTitle}>
@@ -342,35 +356,7 @@ export function AgentPanel() {
         {!status.authenticated && (
           <span className="truncate text-muted-foreground">not logged in (run /login below)</span>
         )}
-        <span className="flex-1" />
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          title="history (resume a past session)"
-          aria-label="resume a past session"
-          onClick={() => void history()}
-        >
-          <History />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          title="restart session"
-          aria-label="restart session"
-          onClick={() => void restart()}
-        >
-          <RotateCw />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          title="hide (⌘J) — the session keeps running"
-          aria-label="hide agent panel"
-          onClick={() => setOpen(false)}
-        >
-          <X />
-        </Button>
-      </div>
+      </PanelHeader>
       <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
       </aside>
     </ResizablePanel>
