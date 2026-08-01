@@ -328,7 +328,9 @@ export function AgentPanel() {
       <aside
         className={cn('flex h-full min-w-0 flex-col border-l border-border', !open && 'hidden')}
       >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
+      {/* h-11 (not py-based) to match the SidePanel header height, so the agent
+          drawer's title bar lines up with the other panels + the editor/nav bars. */}
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-xs">
         <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} title={stateTitle} />
         <span className="text-foreground">Claude</span>
         <span className="text-muted-foreground" title={stateTitle}>
