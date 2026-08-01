@@ -1,5 +1,5 @@
 /**
- * Version history for the open note — a right-hand drawer beside the editor,
+ * Version history for the open note — a right-hand side panel beside the editor,
  * mirroring AgentPanel's shape (not a `viewAtom` peer, not a modal).
  *
  * These are the file's actual git commits (`prd/vaults-sync.md` §History): a flat
@@ -9,6 +9,10 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
+import { SidePanel } from '@/composites'
+import { Button } from '@/primitives'
+import { cn } from '@/lib/cn'
+import { DiffView } from '@/components/DiffView'
 import {
   diffAtom,
   historyOpenAtom,
@@ -20,9 +24,8 @@ import {
   selectedShaAtom,
   versionsAtom,
   type Version,
-} from '../state/history'
-import { activeRemoteAtom } from '../state/vaults'
-import { DiffView } from './DiffView'
+} from '@/state/history'
+import { activeRemoteAtom } from '@/state/vaults'
 
 /** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
@@ -86,71 +89,70 @@ export function HistoryPanel() {
   const row = (v: Version) => (
     <div
       key={v.sha}
-      className={`flex items-center gap-1 rounded ${
-        selectedSha === v.sha ? 'bg-neutral-800' : 'hover:bg-neutral-900'
-      }`}
+      className={cn(
+        'flex items-center gap-1 rounded',
+        selectedSha === v.sha ? 'bg-accent' : 'hover:bg-accent/50',
+      )}
     >
-      <button
+      <Button
+        variant="ghost"
         onClick={() => void loadDiff(v.sha)}
-        className={`min-w-0 flex-1 px-2 py-1 text-left text-xs ${
-          selectedSha === v.sha ? 'text-neutral-100' : 'text-neutral-400'
-        }`}
+        className={cn(
+          'h-auto min-w-0 flex-1 flex-col items-start justify-start gap-0 px-2 py-1 text-left text-xs font-normal hover:bg-transparent',
+          selectedSha === v.sha ? 'text-foreground' : 'text-muted-foreground',
+        )}
       >
-        <span className="block truncate">{v.subject || '(no message)'}</span>
-        <span className="block text-[10px] text-neutral-600">
+        <span className="block w-full truncate">{v.subject || '(no message)'}</span>
+        <span className="block w-full truncate text-[10px] text-muted-foreground">
           {when(v.date)} · {v.author}
         </span>
-      </button>
-      <button
+      </Button>
+      <Button
+        variant="ghost"
         onClick={() => openCommit(v.sha)}
         title={`open commit ${v.sha.slice(0, 7)} on GitHub`}
-        className="shrink-0 rounded px-1.5 py-1 font-mono text-[10px] text-neutral-600 hover:text-sky-400"
+        className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
       >
         {v.sha.slice(0, 7)}
-      </button>
+      </Button>
     </div>
   )
 
   return (
-    <aside className="flex h-full min-w-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-neutral-900 px-3 py-1.5 text-xs">
-        <span className="text-neutral-300">History</span>
-        <span className="min-w-0 flex-1 truncate text-neutral-600">{targetPath}</span>
+    <SidePanel title="History" subtitle={targetPath}>
+      <div className="max-h-56 shrink-0 overflow-y-auto border-b border-border p-2">
+        {versions.length === 0 && (
+          <p className="px-2 py-1 text-xs text-muted-foreground">
+            No commits yet — edits become commits automatically as you work, and each shows here.
+          </p>
+        )}
+        {versions.map(row)}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="max-h-56 shrink-0 overflow-y-auto border-b border-neutral-900 p-2">
-          {versions.length === 0 && (
-            <p className="px-2 py-1 text-xs text-neutral-600">
-              No commits yet — edits become commits automatically as you work, and each shows here.
-            </p>
-          )}
-          {versions.map(row)}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {selectedSha === null ? (
-            <p className="p-3 text-xs text-neutral-600">Pick a commit to see what it changed.</p>
-          ) : diff === null ? (
-            <p className="p-3 text-xs text-neutral-600">Loading…</p>
-          ) : diff.before === '' && diff.after === '' ? (
-            <p className="p-3 text-xs text-neutral-600 italic">This commit did not change this file.</p>
-          ) : (
-            <DiffView before={diff.before} after={diff.after} />
-          )}
-        </div>
-
-        {error && <p className="px-3 pb-1 text-xs text-red-400">{error}</p>}
-        <div className="border-t border-neutral-900 p-2">
-          <button
-            disabled={busy || selectedSha === null}
-            onClick={() => void onRestore()}
-            className="w-full rounded bg-neutral-800 px-2 py-1 text-xs hover:bg-neutral-700 disabled:opacity-40"
-          >
-            Restore this version
-          </button>
-        </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {selectedSha === null ? (
+          <p className="p-3 text-xs text-muted-foreground">Pick a commit to see what it changed.</p>
+        ) : diff === null ? (
+          <p className="p-3 text-xs text-muted-foreground">Loading…</p>
+        ) : diff.before === '' && diff.after === '' ? (
+          <p className="p-3 text-xs text-muted-foreground italic">This commit did not change this file.</p>
+        ) : (
+          <DiffView before={diff.before} after={diff.after} />
+        )}
       </div>
-    </aside>
+
+      {error && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
+      <div className="border-t border-border p-2">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={busy || selectedSha === null}
+          onClick={() => void onRestore()}
+          className="w-full"
+        >
+          Restore this version
+        </Button>
+      </div>
+    </SidePanel>
   )
 }
