@@ -82,7 +82,9 @@ export function PanelHeader({
                 a.hotkey ? (
                   <span className="inline-flex items-center gap-1.5">
                     {a.label}
-                    <kbd className="rounded bg-background/20 px-1 font-sans">{a.hotkey}</kbd>
+                    <kbd className="rounded border bg-muted px-1 font-sans text-muted-foreground">
+                      {a.hotkey}
+                    </kbd>
                   </span>
                 ) : (
                   a.label
