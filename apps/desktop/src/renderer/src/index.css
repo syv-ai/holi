@@ -85,6 +85,91 @@
 
 @theme {
   --radius: 0.5rem;
+
+  /* ── Motion tier ─────────────────────────────────────────────────────
+   * The app's shared motion vocabulary. Every moving part draws from THESE —
+   * dialogs, panels, menus, the onboarding ritual — so timing and feel are one
+   * system, not per-surface guesses. Extracted from the ritual's inventory:
+   * `--ease-settle` is the signature ease-out (26 uses); `--ease-spring` the
+   * overshoot for pops. Durations are a three-step scale. Named animations are
+   * built from the tokens and surface as `animate-*` utilities. */
+  --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --duration-micro: 160ms;
+  --duration-base: 240ms;
+  --duration-enter: 700ms;
+
+  /* Entrance workhorse: fade + a short lift. Stagger children with delay-* . */
+  --animate-rise: rise var(--duration-enter) var(--ease-settle) both;
+  /* Spring scale-in for a mark/badge that should feel like it wakes up. */
+  --animate-pop: pop 800ms var(--ease-spring) both;
+  /* Overlay-panel in/out (dialogs, popovers): fade + a slight zoom. */
+  --animate-scale-in: scale-in var(--duration-base) var(--ease-settle) both;
+  --animate-scale-out: scale-out var(--duration-base) var(--ease-settle) both;
+  /* Bare fade for scrims/overlays. */
+  --animate-fade-in: fade-in var(--duration-base) var(--ease-settle) both;
+  --animate-fade-out: fade-out var(--duration-base) var(--ease-settle) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  70% {
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes scale-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 /**
