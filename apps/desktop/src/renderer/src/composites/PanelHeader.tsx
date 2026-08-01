@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Button } from '@/primitives'
+import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { matchHotkey } from '@/lib/hotkey'
 
@@ -76,16 +76,23 @@ export function PanelHeader({
       {controls.length > 0 && (
         <div className="ml-auto flex items-center gap-1">
           {controls.map((a, i) => (
-            <Button
+            <Tooltip
               key={i}
-              variant="ghost"
-              size="icon-xs"
-              onClick={a.onSelect}
-              title={a.hotkey ? `${a.label} (${a.hotkey})` : a.label}
-              aria-label={a.label}
+              content={
+                a.hotkey ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {a.label}
+                    <kbd className="rounded bg-background/20 px-1 font-sans">{a.hotkey}</kbd>
+                  </span>
+                ) : (
+                  a.label
+                )
+              }
             >
-              {a.icon}
-            </Button>
+              <Button variant="ghost" size="icon-xs" onClick={a.onSelect} aria-label={a.label}>
+                {a.icon}
+              </Button>
+            </Tooltip>
           ))}
         </div>
       )}

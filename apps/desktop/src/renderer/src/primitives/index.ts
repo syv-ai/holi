@@ -50,3 +50,4 @@ export {
   SelectTrigger,
   SelectValue,
 } from './Select'
+export { Tooltip, TooltipProvider } from './Tooltip'

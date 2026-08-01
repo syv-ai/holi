@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { PanelHeader } from '../PanelHeader'
@@ -36,8 +36,12 @@ test('a hotkey is shown in the tooltip and bound while mounted', async () => {
   render(
     <PanelHeader close={{ icon: <i>×</i>, label: 'Hide', hotkey: '⌘J', onSelect }}>x</PanelHeader>,
   )
-  // Shown.
-  expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('title', 'Hide (⌘J)')
+  // Shown — the custom Tooltip (never a native title), with the hotkey as a kbd.
+  expect(screen.getByRole('button', { name: 'Hide' })).not.toHaveAttribute('title')
+  await userEvent.tab()
+  const tip = await screen.findByRole('tooltip')
+  expect(tip).toHaveTextContent('Hide')
+  expect(tip).toHaveTextContent('⌘J')
   // Bound.
   fireEvent.keyDown(window, { key: 'j', metaKey: true })
   expect(onSelect).toHaveBeenCalledOnce()

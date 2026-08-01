@@ -2,6 +2,7 @@ import { Provider, createStore } from 'jotai'
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { TooltipProvider } from './primitives'
 import { flushAllBuffers } from './lib/buffer-registry'
 import { subscribeToVault } from './state/vaults'
 import './index.css'
@@ -31,7 +32,9 @@ window.holi.vault.onFlushRequest(() => {
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <Provider store={store}>
-      <App />
+      <TooltipProvider>
+        <App />
+      </TooltipProvider>
     </Provider>
   </React.StrictMode>,
 )
