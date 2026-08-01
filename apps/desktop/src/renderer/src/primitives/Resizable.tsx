@@ -47,3 +47,6 @@ function ResizableHandle({
 }
 
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup }
+// The imperative handle (collapse/expand/isCollapsed) — re-exported so features
+// drive a collapsible panel without importing react-resizable-panels directly.
+export type { PanelImperativeHandle } from 'react-resizable-panels'

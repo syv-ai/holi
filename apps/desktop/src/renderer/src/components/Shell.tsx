@@ -336,9 +336,14 @@ export function Shell() {
               </ResizablePanel>
             </>
           )}
-        </ResizablePanelGroup>
 
-        <AgentPanel />
+          {/* The agent drawer is now a first-class member of the row: always
+              mounted (its PTY + scrollback survive), collapsed to nothing when
+              closed, drag-resizable against the editor like every other panel.
+              ⌘J drives its collapse/expand from inside the component. */}
+          <ResizableHandle />
+          <AgentPanel />
+        </ResizablePanelGroup>
 
         {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
         <DialogHost />

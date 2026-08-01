@@ -3,14 +3,10 @@ import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { History, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react'
-import { Button } from '@/primitives'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Button, ResizablePanel, type PanelImperativeHandle } from '@/primitives'
 import { cn } from '@/lib/cn'
-import {
-  clampPanelWidth,
-  DEFAULT_AGENT_PANEL_WIDTH,
-  MIN_AGENT_PANEL_WIDTH,
-} from '@/lib/agent-panel-geometry'
+import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
 import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
 import { activeRemoteAtom } from '@/state/vaults'
 
@@ -39,7 +35,10 @@ export function AgentPanel() {
   // against `host.active().remote`.
   const activeRemote = useAtomValue(activeRemoteAtom)
   const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
-  const [width, setWidth] = useState(DEFAULT_AGENT_PANEL_WIDTH)
+  /** Imperative handle on the collapsible group panel — driven by `open` (below),
+   *  so ⌘J and the reconcile trigger expand/collapse the panel instead of a bespoke
+   *  width. The panel stays mounted while collapsed, so the PTY + scrollback live on. */
+  const panelRef = useRef<PanelImperativeHandle | null>(null)
   /** True once the xterm is built and painted, so the reconcile-seed effect knows
    *  it can (re)start a session. A ref is not reactive — this state is. */
   const [terminalReady, setTerminalReady] = useState(false)
@@ -256,18 +255,30 @@ export function AgentPanel() {
     })()
   }, [seedPrompt, terminalReady, startSession, setSeedPrompt])
 
-  const onDragStart = (e: MouseEvent) => {
-    e.preventDefault()
-    const move = (ev: globalThis.MouseEvent) => {
-      setWidth(clampPanelWidth(window.innerWidth - ev.clientX, window.innerWidth))
-    }
-    const up = () => {
-      window.removeEventListener('mousemove', move)
-      window.removeEventListener('mouseup', up)
-      syncSize()
-    }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
+  // `open` is the source of truth; drive the panel to match. useLayoutEffect so the
+  // initial collapse lands before paint (the atom starts closed, but a collapsible
+  // panel mounts at its defaultSize) — no empty gap on first render.
+  useLayoutEffect(() => {
+    const p = panelRef.current
+    if (!p) return
+    if (open && p.isCollapsed()) p.expand()
+    else if (!open && !p.isCollapsed()) p.collapse()
+  }, [open])
+
+  // Reconcile a *drag past the collapse threshold* back into `open`, so ⌘J and the
+  // drawer never disagree (the actual TUI refit is the host ResizeObserver's job).
+  // The mount call (prev === undefined) is skipped: the panel mounts at its
+  // defaultSize, but `open` (closed) is what drives the initial collapse below —
+  // acting on the mount size would spuriously open the drawer on every launch.
+  const onPanelResize = (
+    size: { inPixels: number },
+    _id: string | number | undefined,
+    prev: { inPixels: number } | undefined,
+  ) => {
+    if (prev === undefined) return
+    const collapsed = size.inPixels < MIN_FITTABLE_PX
+    if (collapsed && open) setOpen(false)
+    else if (!collapsed && !open) setOpen(true)
   }
 
   const restart = async () => {
@@ -297,15 +308,21 @@ export function AgentPanel() {
       : 'no session — opens when you show the drawer (⌘J)'
 
   return (
-    <aside
-      className={cn('relative min-w-0 flex-col border-l border-border', open ? 'flex' : 'hidden')}
-      style={{ width, minWidth: MIN_AGENT_PANEL_WIDTH }}
+    <ResizablePanel
+      id="agent"
+      collapsible
+      collapsedSize={0}
+      defaultSize={DEFAULT_AGENT_PANEL_WIDTH}
+      minSize={MIN_AGENT_PANEL_WIDTH}
+      panelRef={panelRef}
+      onResize={onPanelResize}
     >
-      <span
-        className="absolute inset-y-0 left-0 w-1 cursor-col-resize hover:bg-accent"
-        onMouseDown={onDragStart}
-        title="drag to resize"
-      />
+      {/* Kept `hidden` when closed so the terminal is never built against a
+          display:none host, and no stray content shows while the panel is a
+          0-width sliver. The panel stays mounted either way. */}
+      <aside
+        className={cn('flex h-full min-w-0 flex-col border-l border-border', !open && 'hidden')}
+      >
       <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs">
         <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} title={stateTitle} />
         <span className="text-foreground">Claude</span>
@@ -348,6 +365,7 @@ export function AgentPanel() {
         </Button>
       </div>
       <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
-    </aside>
+      </aside>
+    </ResizablePanel>
   )
 }
