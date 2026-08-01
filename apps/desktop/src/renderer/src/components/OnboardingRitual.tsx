@@ -380,6 +380,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                           // and Radix (our Tooltip) never fires on a disabled element,
                           // so the custom tooltip would vanish exactly when it explains
                           // the disabled state. The one place native title stays.
+                          // eslint-disable-next-line no-restricted-syntax
                           title={repo.canPush ? '' : 'you cannot push to this repo'}
                         >
                           <span className="obrit-join-remote">{repo.remote}</span>

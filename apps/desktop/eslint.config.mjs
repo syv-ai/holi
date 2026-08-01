@@ -44,6 +44,15 @@ const colourRules = [
     message: 'arbitrary colour literal in a template string — use a semantic token. Tokens or nothing.',
   },
 ]
+// Native `title=""` on a DOM element (lowercase tag) is a browser tooltip — banned
+// in favour of the Tooltip primitive. Component `title` PROPS (uppercase names, e.g.
+// <SidePanel title=…>) are not matched. A disabled trigger — where Radix never fires
+// — is the one exception; eslint-disable that line with a reason.
+const titleRule = {
+  selector: "JSXOpeningElement[name.name=/^[a-z]/] > JSXAttribute[name.name='title']",
+  message:
+    'native title="" tooltip — use the Tooltip primitive (<Tooltip content>…</Tooltip>) instead. A disabled trigger is the rare exception; eslint-disable this line with a reason.',
+}
 
 // Extracted so the base (LEVEL) and migrated (error) blocks share one definition.
 const elementTypes = {
@@ -97,7 +106,7 @@ export default [
       'react-hooks/rules-of-hooks': 'warn',
       'react-hooks/exhaustive-deps': 'warn',
       // The hierarchy gate — LEVEL over the whole (still-migrating) tree.
-      'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules],
+      'no-restricted-syntax': [LEVEL, nativeRule, ...colourRules, titleRule],
       'boundaries/element-types': [LEVEL, elementTypes],
       'boundaries/external': [LEVEL, external],
     },
@@ -106,7 +115,7 @@ export default [
   // The colour ban still applies (tokens or nothing, everywhere).
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': [LEVEL, ...colourRules] },
+    rules: { 'no-restricted-syntax': [LEVEL, ...colourRules, titleRule] },
   },
 
   // ── Ratchet: migrated paths are enforced at error regardless of GATE_LEVEL. ──
@@ -119,10 +128,10 @@ export default [
   },
   {
     files: MIGRATED_NO_NATIVE,
-    rules: { 'no-restricted-syntax': ['error', nativeRule, ...colourRules] },
+    rules: { 'no-restricted-syntax': ['error', nativeRule, ...colourRules, titleRule] },
   },
   {
     files: ['src/renderer/src/primitives/**/*.{ts,tsx}'],
-    rules: { 'no-restricted-syntax': ['error', ...colourRules] },
+    rules: { 'no-restricted-syntax': ['error', ...colourRules, titleRule] },
   },
 ]
