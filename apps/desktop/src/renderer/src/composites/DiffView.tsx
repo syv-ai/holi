@@ -13,7 +13,7 @@ import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
-import { editorTheme } from '../editor/theme'
+import { editorTheme } from '@/editor/theme'
 
 /**
  * `{ dark: true }` marks the editor dark so `@codemirror/merge`'s own `&dark`

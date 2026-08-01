@@ -9,10 +9,9 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { SidePanel } from '@/composites'
+import { DiffView, SidePanel } from '@/composites'
 import { Button } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { DiffView } from '@/components/DiffView'
 import {
   diffAtom,
   historyOpenAtom,

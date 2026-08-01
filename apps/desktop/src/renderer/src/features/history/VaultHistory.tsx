@@ -13,7 +13,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
 import { Button, Dialog, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { DiffView } from '@/components/DiffView'
+import { DiffView } from '@/composites'
 import {
   commitDiffAtom,
   commitFilesAtom,
