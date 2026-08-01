@@ -20,7 +20,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitiv
 import { OnboardingRitual } from './OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
-import { BoardView } from './BoardView'
+import { BoardView } from '@/features/tasks/BoardView'
 import { DialogHost } from './DialogHost'
 import { EditorPane } from './EditorPane'
 import { TaskFileEditor } from './TaskFileEditor'

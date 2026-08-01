@@ -16,8 +16,10 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useState } from 'react'
-import { FilterBar } from '@/features/tasks/FilterBar'
-import { TaskDetailPanel } from '@/features/tasks/TaskDetail'
+import { Checkbox, Input } from '@/primitives'
+import { cn } from '@/lib/cn'
+import { FilterBar } from './FilterBar'
+import { TaskDetailPanel } from './TaskDetail'
 import {
   ROOT_LANE,
   brokenTasksAtom,
@@ -34,7 +36,7 @@ import {
   setTaskStatusAtom,
   tasksAtom,
   todayAtom,
-} from '../state/tasks'
+} from '@/state/tasks'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'todo', label: 'Todo' },
@@ -43,7 +45,8 @@ const COLUMNS: { status: TaskStatus; label: string }[] = [
 ]
 
 /** Virtual labels get a colour; a task's own tags stay neutral. The chip is the same
- * shape either way — they read as one vocabulary. */
+ * shape either way — they read as one vocabulary. A deliberate colour-coded set with
+ * no semantic-token equivalents (named palette utilities, so the gate allows them). */
 const CHIP: Record<string, string> = {
   overdue: 'bg-red-950 text-red-300 border-red-900',
   p1: 'bg-orange-950 text-orange-300 border-orange-900',
@@ -69,36 +72,35 @@ function Card({ task }: { task: Task }): React.JSX.Element {
         e.dataTransfer.setData('text/plain', task.path)
       }}
       onClick={() => select(task.path)}
-      className="cursor-grab rounded-md border border-neutral-700 bg-neutral-800 p-2 text-xs text-neutral-100 shadow-sm hover:border-neutral-600 active:cursor-grabbing"
+      className="cursor-grab rounded-md border border-border bg-card p-2 text-xs text-card-foreground shadow-sm hover:border-ring active:cursor-grabbing"
     >
       <div className="flex items-start gap-2">
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
             recurring task ROLLS FORWARD rather than persisting `done`. */}
-        <input
-          type="checkbox"
+        <Checkbox
           checked={task.status === 'done'}
-          onChange={() => void complete(task.path)}
+          onCheckedChange={() => void complete(task.path)}
           onClick={(e) => e.stopPropagation()}
           className="mt-0.5 shrink-0"
           aria-label={`Complete ${task.title}`}
         />
-        <span className={task.status === 'done' ? 'text-neutral-500 line-through' : ''}>
+        <span className={task.status === 'done' ? 'text-muted-foreground line-through' : ''}>
           {task.title}
         </span>
       </div>
 
       {(labels.length > 0 || task.tags.length > 0 || task.due) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-6">
-          {task.due && <span className="text-[10px] text-neutral-500">due {task.due}</span>}
+          {task.due && <span className="text-[10px] text-muted-foreground">due {task.due}</span>}
           {labels.map((l) => (
-            <span key={l} className={`rounded border px-1 text-[10px] ${CHIP[l]}`}>
+            <span key={l} className={cn('rounded border px-1 text-[10px]', CHIP[l])}>
               {l}
             </span>
           ))}
           {task.tags.map((t) => (
             <span
               key={t}
-              className="rounded border border-neutral-600 bg-neutral-700 px-1 text-[10px] text-neutral-200"
+              className="rounded border border-border bg-secondary px-1 text-[10px] text-secondary-foreground"
             >
               {t}
             </span>
@@ -119,23 +121,28 @@ function QuickAdd({
   const create = useSetAtom(createTaskAtom)
   const [title, setTitle] = useState('')
 
+  // Enter submits — replaces the old <form onSubmit> (a native <form> is not a
+  // primitive; the keydown handler is the same behaviour without the element).
+  const submit = () => {
+    const t = title.trim()
+    if (!t) return
+    setTitle('')
+    void create({ title: t, status, folder })
+  }
+
   return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault()
-        const t = title.trim()
-        if (!t) return
-        setTitle('')
-        void create({ title: t, status, folder })
+    <Input
+      value={title}
+      onChange={(e) => setTitle(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          submit()
+        }
       }}
-    >
-      <input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="+ add"
-        className="w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-xs text-neutral-300 placeholder:text-neutral-600 hover:border-neutral-800 focus:border-neutral-700 focus:outline-none"
-      />
-    </form>
+      placeholder="+ add"
+      className="h-auto border-transparent bg-transparent px-1 py-0.5 text-xs shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+    />
   )
 }
 
@@ -153,12 +160,12 @@ function BrokenStrip(): React.JSX.Element | null {
   if (broken.length === 0) return null
 
   return (
-    <div className="mx-3 mt-3 rounded border border-red-900 bg-red-950/40 p-2 text-xs">
-      <p className="mb-1 font-medium text-red-300">
+    <div className="mx-3 mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs">
+      <p className="mb-1 font-medium text-destructive">
         {broken.length} task {broken.length === 1 ? 'file' : 'files'} could not be read
       </p>
       {broken.map((b) => (
-        <div key={b.path} data-broken-task={b.path} className="text-[11px] text-red-400/90">
+        <div key={b.path} data-broken-task={b.path} className="text-[11px] text-destructive/90">
           <span className="font-mono">{b.path}</span> — {b.error}
         </div>
       ))}
@@ -215,14 +222,14 @@ function Grid(): React.JSX.Element {
       <div className="grid gap-2" style={{ gridTemplateColumns }}>
         <div />
         {columns.map((c) => (
-          <div key={c.status} className="px-1 pb-1 text-xs font-semibold text-neutral-200">
+          <div key={c.status} className="px-1 pb-1 text-xs font-semibold text-foreground">
             {c.label}
           </div>
         ))}
 
         {lanes.map((lane) => (
           <div key={lane || ROOT_LANE} className="contents">
-            <div className="truncate pt-2 text-xs font-medium text-neutral-400" title={laneLabel(lane)}>
+            <div className="truncate pt-2 text-xs font-medium text-muted-foreground" title={laneLabel(lane)}>
               {laneLabel(lane)}
             </div>
             {columns.map((c) => (
@@ -232,7 +239,7 @@ function Grid(): React.JSX.Element {
                 data-cell={`${c.status}:${lane}`}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => drop(e, lane, c.status)}
-                className="min-h-16 space-y-1.5 rounded-md border border-neutral-800 bg-neutral-900/40 p-1.5"
+                className="min-h-16 space-y-1.5 rounded-md border border-border bg-muted/40 p-1.5"
               >
                 {cell(lane, c.status).map((t) => (
                   <Card key={t.path} task={t} />
@@ -248,7 +255,7 @@ function Grid(): React.JSX.Element {
         // The empty state distinguishes "no tasks yet" from "nothing matches your
         // filters" — there is no "N excluded" count anywhere, because nothing is hidden
         // into unselected buckets.
-        <p className="mt-6 text-center text-xs text-neutral-600">
+        <p className="mt-6 text-center text-xs text-muted-foreground">
           {everything.length === 0
             ? 'No tasks yet. Add one above — or ask Claude to.'
             : 'Nothing matches your filters.'}
