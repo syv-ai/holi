@@ -10,7 +10,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import { DiffView, SidePanel } from '@/composites'
-import { Button } from '@/primitives'
+import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
   diffAtom,
@@ -106,14 +106,15 @@ export function HistoryPanel() {
           {when(v.date)} · {v.author}
         </span>
       </Button>
-      <Button
-        variant="ghost"
-        onClick={() => openCommit(v.sha)}
-        title={`open commit ${v.sha.slice(0, 7)} on GitHub`}
-        className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
-      >
-        {v.sha.slice(0, 7)}
-      </Button>
+      <Tooltip content={`open commit ${v.sha.slice(0, 7)} on GitHub`}>
+        <Button
+          variant="ghost"
+          onClick={() => openCommit(v.sha)}
+          className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
+        >
+          {v.sha.slice(0, 7)}
+        </Button>
+      </Tooltip>
     </div>
   )
 

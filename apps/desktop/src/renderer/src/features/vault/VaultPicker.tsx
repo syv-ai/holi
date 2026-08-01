@@ -15,6 +15,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
+  Tooltip,
 } from '@/primitives'
 
 export function VaultPicker({
@@ -32,16 +33,17 @@ export function VaultPicker({
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        data-vault-picker
-        title="switch vault"
-        className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-sm font-bold text-foreground outline-none hover:text-muted-foreground"
-      >
-        <span className="truncate">
-          {active?.name ?? (vaults.length ? 'select vault' : 'no vaults')}
-        </span>
-        <ChevronDown size={18} strokeWidth={2.5} className="shrink-0" />
-      </DropdownMenuTrigger>
+      <Tooltip content="switch vault">
+        <DropdownMenuTrigger
+          data-vault-picker
+          className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-sm font-bold text-foreground outline-none hover:text-muted-foreground"
+        >
+          <span className="truncate">
+            {active?.name ?? (vaults.length ? 'select vault' : 'no vaults')}
+          </span>
+          <ChevronDown size={18} strokeWidth={2.5} className="shrink-0" />
+        </DropdownMenuTrigger>
+      </Tooltip>
 
       <DropdownMenuContent
         align="start"
@@ -62,9 +64,9 @@ export function VaultPicker({
             <span className="flex w-3 shrink-0 justify-center text-primary">
               {v.remote === activeRemote && <Check size={14} strokeWidth={3} />}
             </span>
-            <span className="truncate" title={v.remote}>
-              {v.name}
-            </span>
+            <Tooltip content={v.remote} side="right">
+              <span className="truncate">{v.name}</span>
+            </Tooltip>
           </DropdownMenuItem>
         ))}
         {/* Pinned to the bottom: adding a vault is part of the same menu, not a

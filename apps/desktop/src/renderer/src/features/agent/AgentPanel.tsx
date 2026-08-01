@@ -4,7 +4,7 @@ import '@xterm/xterm/css/xterm.css'
 import { History, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ResizablePanel, type PanelImperativeHandle } from '@/primitives'
+import { ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitives'
 import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
@@ -345,11 +345,13 @@ export function AgentPanel() {
           onSelect: () => setOpen((o) => !o),
         }}
       >
-        <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} title={stateTitle} />
+        <Tooltip content={stateTitle}>
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
+        </Tooltip>
         <span className="text-foreground">Claude</span>
-        <span className="text-muted-foreground" title={stateTitle}>
-          {state}
-        </span>
+        <Tooltip content={stateTitle}>
+          <span className="text-muted-foreground">{state}</span>
+        </Tooltip>
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}

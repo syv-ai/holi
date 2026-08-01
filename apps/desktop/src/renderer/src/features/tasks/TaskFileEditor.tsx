@@ -17,7 +17,7 @@
 import type { Task } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
-import { Button, Input } from '@/primitives'
+import { Button, Input, Tooltip } from '@/primitives'
 import {
   completeTaskAtom,
   deleteTaskAtom,
@@ -107,9 +107,11 @@ function TaskFileBody({ task, onEdit }: { task: Task; onEdit?: () => void }): Re
 
       {/* Path/lane, read-only — moving the file rewrites inbound links, which is the
           file tree's rename (or a board lane drag), not a text field here. */}
-      <p className="mb-3 px-1 font-mono text-[10px] text-muted-foreground" title={task.path}>
-        {laneLabel(laneOf(task))}
-      </p>
+      <Tooltip content={task.path}>
+        <p className="mb-3 px-1 font-mono text-[10px] text-muted-foreground">
+          {laneLabel(laneOf(task))}
+        </p>
+      </Tooltip>
 
       {/* The properties, constrained so they read as a header band, not a field that
           stretches the whole pane. */}

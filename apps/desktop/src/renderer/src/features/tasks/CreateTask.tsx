@@ -12,6 +12,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Tooltip,
 } from '@/primitives'
 import {
   type CreateTaskMode,
@@ -267,9 +268,11 @@ export function CreateTask({
       </Dialog.Body>
 
       <Dialog.Footer>
-        <span className="mr-auto truncate text-xs text-muted-foreground" title={laneLabel(folder.trim())}>
-          → {laneLabel(folder.trim())}
-        </span>
+        <Tooltip content={laneLabel(folder.trim())}>
+          <span className="mr-auto truncate text-xs text-muted-foreground">
+            → {laneLabel(folder.trim())}
+          </span>
+        </Tooltip>
         <Button variant="ghost" size="sm" onClick={onClose}>
           Cancel
         </Button>

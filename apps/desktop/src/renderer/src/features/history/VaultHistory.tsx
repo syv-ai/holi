@@ -11,7 +11,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect } from 'react'
-import { Button, Dialog, ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/primitives'
+import { Button, Dialog, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { DiffView, PanelHeader } from '@/composites'
 import {
@@ -96,14 +96,15 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
                     {when(c.date)} · {c.author}
                   </span>
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => openCommit(c.sha)}
-                  title={`open commit ${c.sha.slice(0, 7)} on GitHub`}
-                  className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
-                >
-                  {c.sha.slice(0, 7)}
-                </Button>
+                <Tooltip content={`open commit ${c.sha.slice(0, 7)} on GitHub`}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => openCommit(c.sha)}
+                    className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
+                  >
+                    {c.sha.slice(0, 7)}
+                  </Button>
+                </Tooltip>
               </div>
             ))}
           </div>
@@ -120,20 +121,20 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
               <p className="px-2 py-1 text-xs text-muted-foreground">No files changed.</p>
             ) : (
               files.map((f) => (
-                <Button
-                  key={f}
-                  variant="ghost"
-                  onClick={() => void selectFile(f)}
-                  title={f}
-                  className={cn(
-                    'block h-auto w-full justify-start truncate px-2 py-1 text-left text-xs font-normal',
-                    selectedFile === f
-                      ? 'bg-accent text-foreground'
-                      : 'text-muted-foreground hover:bg-accent/50',
-                  )}
-                >
-                  {f}
-                </Button>
+                <Tooltip key={f} content={f} side="right">
+                  <Button
+                    variant="ghost"
+                    onClick={() => void selectFile(f)}
+                    className={cn(
+                      'block h-auto w-full justify-start truncate px-2 py-1 text-left text-xs font-normal',
+                      selectedFile === f
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/50',
+                    )}
+                  >
+                    {f}
+                  </Button>
+                </Tooltip>
               ))
             )}
           </div>

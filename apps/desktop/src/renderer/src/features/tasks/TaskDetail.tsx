@@ -34,6 +34,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { baseEditorExtensions } from '@/editor/extensions'
@@ -218,17 +219,21 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
           onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
           className="h-auto min-w-0 flex-1 border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
         />
-        <Button variant="ghost" size="icon-xs" onClick={() => close(null)} title="close" aria-label="close">
-          <X />
-        </Button>
+        <Tooltip content="close">
+          <Button variant="ghost" size="icon-xs" onClick={() => close(null)} aria-label="close">
+            <X />
+          </Button>
+        </Tooltip>
       </div>
 
       {/* The path, read-only. It is the task's identity and its lane, and it is not
           editable here: moving the file has to rewrite every inbound wiki-link in the
           same pass, which is the file tree's rename, not a text field. */}
-      <p className="truncate font-mono text-[10px] text-muted-foreground" title={task.path}>
-        {laneLabel(laneOf(task))}
-      </p>
+      <Tooltip content={task.path}>
+        <p className="truncate font-mono text-[10px] text-muted-foreground">
+          {laneLabel(laneOf(task))}
+        </p>
+      </Tooltip>
 
       <TaskScalarFields task={task} save={save} complete={complete} />
 

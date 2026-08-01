@@ -16,7 +16,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
 import { SidePanel } from '@/composites'
-import { Button } from '@/primitives'
+import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
@@ -67,17 +67,18 @@ function ExternalLink({
   children: React.ReactNode
 }) {
   return (
-    <Button
-      variant="link"
-      onClick={onOpen}
-      title={url}
-      className={cn(
-        'h-auto max-w-full justify-start truncate p-0 font-normal text-muted-foreground hover:text-primary',
-        block && 'block',
-      )}
-    >
-      {children}
-    </Button>
+    <Tooltip content={url}>
+      <Button
+        variant="link"
+        onClick={onOpen}
+        className={cn(
+          'h-auto max-w-full justify-start truncate p-0 font-normal text-muted-foreground hover:text-primary',
+          block && 'block',
+        )}
+      >
+        {children}
+      </Button>
+    </Tooltip>
   )
 }
 
@@ -186,9 +187,9 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
               crash, and the old catch-all blamed sign-in for all four. The raw
               message stays in the tooltip. */}
           {error !== null && (
-            <p className="text-xs text-muted-foreground" title={error.raw}>
-              {error.text}
-            </p>
+            <Tooltip content={error.raw}>
+              <p className="text-xs text-muted-foreground">{error.text}</p>
+            </Tooltip>
           )}
           {members === null && error === null && (
             <p className="text-xs text-muted-foreground">loading…</p>

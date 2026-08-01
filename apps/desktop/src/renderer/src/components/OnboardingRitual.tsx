@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import type { Repo } from '../../../main/github/api'
+import { Tooltip } from '@/primitives'
 import { trpc } from '../lib/trpc'
 import { sessionAtom } from '../state/session'
 import { addVaultAtom, createVaultAtom, loadVaultsAtom, vaultsAtom } from '../state/vaults'
@@ -253,15 +254,11 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               <span className="obrit-dot" data-state={dotState(3)} />
             </div>
             {dismissible && (
-              <button
-                type="button"
-                className="obrit-close"
-                onClick={onDismiss}
-                aria-label="Dismiss"
-                title="Dismiss (Esc)"
-              >
-                ✕
-              </button>
+              <Tooltip content="Dismiss (Esc)">
+                <button type="button" className="obrit-close" onClick={onDismiss} aria-label="Dismiss">
+                  ✕
+                </button>
+              </Tooltip>
             )}
           </div>
         </header>
@@ -379,6 +376,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                           disabled={s.submitting || !repo.canPush}
                           className="obrit-join-row"
                           onClick={() => run(() => addVault(repo.remote))}
+                          // Native title, deliberately: this trigger is `disabled`,
+                          // and Radix (our Tooltip) never fires on a disabled element,
+                          // so the custom tooltip would vanish exactly when it explains
+                          // the disabled state. The one place native title stays.
                           title={repo.canPush ? '' : 'you cannot push to this repo'}
                         >
                           <span className="obrit-join-remote">{repo.remote}</span>
@@ -420,15 +421,12 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               </p>
 
               {createdRemote && (
-                <button
-                  type="button"
-                  className="obrit-repo-url"
-                  onClick={copyRemote}
-                  title="copy the repo URL"
-                >
-                  <span className="obrit-repo-url-text">github.com/{createdRemote}</span>
-                  <span className="obrit-repo-url-copy">{copied ? 'copied ✓' : '⧉ copy'}</span>
-                </button>
+                <Tooltip content="copy the repo URL">
+                  <button type="button" className="obrit-repo-url" onClick={copyRemote}>
+                    <span className="obrit-repo-url-text">github.com/{createdRemote}</span>
+                    <span className="obrit-repo-url-copy">{copied ? 'copied ✓' : '⧉ copy'}</span>
+                  </button>
+                </Tooltip>
               )}
 
               <div className="obrit-cta-row">

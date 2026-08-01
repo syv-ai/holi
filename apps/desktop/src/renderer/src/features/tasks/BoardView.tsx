@@ -16,7 +16,7 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useState } from 'react'
-import { Checkbox, Input } from '@/primitives'
+import { Checkbox, Input, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
@@ -229,9 +229,11 @@ function Grid(): React.JSX.Element {
 
         {lanes.map((lane) => (
           <div key={lane || ROOT_LANE} className="contents">
-            <div className="truncate pt-2 text-xs font-medium text-muted-foreground" title={laneLabel(lane)}>
-              {laneLabel(lane)}
-            </div>
+            <Tooltip content={laneLabel(lane)}>
+              <div className="truncate pt-2 text-xs font-medium text-muted-foreground">
+                {laneLabel(lane)}
+              </div>
+            </Tooltip>
             {columns.map((c) => (
               // Every cell is a drop target: both axes are real writes now.
               <div
