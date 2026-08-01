@@ -1,6 +1,23 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
 export { Dialog, type DialogSize } from './Dialog'
+export {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuPortal,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from './DropdownMenu'
 export { Input } from './Input'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'
