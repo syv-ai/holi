@@ -21,14 +21,14 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
-import { baseEditorExtensions, plainTextExtensions } from '../editor/extensions'
-import { bodyStart, frontmatterValid, setFrontmatterCommit } from '../editor/frontmatter'
-import type { LinkNav } from '../editor/links'
-import type { MentionData } from '../editor/mentions'
-import { registerBuffer } from '../lib/buffer-registry'
-import { decideReload } from '../lib/editor-reload'
-import { trpc } from '../lib/trpc'
-import { activeRemoteAtom, snapshotAtom } from '../state/vaults'
+import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
+import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
+import type { LinkNav } from '@/editor/links'
+import type { MentionData } from '@/editor/mentions'
+import { registerBuffer } from '@/lib/buffer-registry'
+import { decideReload } from '@/lib/editor-reload'
+import { trpc } from '@/lib/trpc'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
  *  purpose: the file has to be there before the commit timer decides to look. */
@@ -255,7 +255,7 @@ export function EditorPane({
 
   if (path === null) {
     return (
-      <div className="flex flex-1 items-center justify-center text-sm text-neutral-500">
+      <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
         select or create a note
       </div>
     )

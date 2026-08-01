@@ -26,9 +26,7 @@ import {
   patchTaskAtom,
   tasksAtom,
 } from '@/state/tasks'
-// EditorPane is not migrated yet — features→components is a permitted transitional
-// edge (it closes when EditorPane moves into features/).
-import { EditorPane } from '@/components/EditorPane'
+import { EditorPane } from '@/composites'
 import { RecurrenceRows, TaskDescriptionEditor, TaskScalarFields } from './TaskDetail'
 
 export function TaskFileEditor({
