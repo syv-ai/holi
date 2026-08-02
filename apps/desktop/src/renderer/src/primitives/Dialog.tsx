@@ -53,7 +53,7 @@ export function Dialog({ open, onClose, size = 'md', children }: DialogProps): R
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
             'rounded-lg border bg-background',
-            'text-sm text-foreground shadow-lg outline-none',
+            'text-sm text-foreground shadow-dialog outline-none',
             // Motion from the shared tier (index.css): fade + slight zoom on the token easing.
             'data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out',
             panel[size],

@@ -30,6 +30,23 @@
   --border: var(--color-neutral-800);
   --input: var(--color-neutral-800);
   --ring: var(--color-sky-700);
+
+  /* ── Chrome tokens (per-vault themeable) ─────────────────────────────
+   * Paint-only knobs a vault theme may override alongside the colours above.
+   * Every default here reproduces today's look, so nothing changes until a
+   * vault sets one. Defined via `:root` (the list's first arm always matches
+   * html), so the light block below only re-states what actually differs.
+   * `--radius` lives in the `@theme` block further down. */
+  --scrollbar-thumb: var(--color-neutral-700);
+  --scrollbar-thumb-hover: var(--color-neutral-600);
+  /* Selection follows the brand by default, so recolouring --primary alone
+     recolours the selection; a theme can still set --selection outright. */
+  --selection: color-mix(in srgb, var(--primary) 30%, transparent);
+  /* Elevation, copied verbatim from Tailwind's md/lg so `.shadow-popover` /
+     `.shadow-dialog` (below) match the utilities they replace. Themable because
+     they're consumed through var() — Tailwind bakes its own shadow-* in. */
+  --shadow-popover: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 }
 [data-theme='light'] {
   --background: var(--color-neutral-50);
@@ -51,6 +68,11 @@
   --border: var(--color-neutral-200);
   --input: var(--color-neutral-200);
   --ring: var(--color-sky-600);
+
+  /* Only the scrollbar needs a light-mode default; --selection (brand-derived)
+     and the shadows (black-alpha) read fine on a light surface. */
+  --scrollbar-thumb: var(--color-neutral-300);
+  --scrollbar-thumb-hover: var(--color-neutral-400);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -138,17 +160,21 @@
   }
 }
 @keyframes wake {
+  /* color-mix, not hsl(var(--primary) / a): --primary holds a full colour
+     (var(--color-sky-700)), so hsl() around it is invalid and the ring never
+     drew. color-mix applies alpha to any colour form — and keeps working when a
+     vault theme swaps --primary for an arbitrary colour. */
   0% {
     transform: scale(0.94);
-    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.45);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
   }
   45% {
     transform: scale(1.04);
-    box-shadow: 0 0 0 6px hsl(var(--primary) / 0.18);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
   }
   100% {
     transform: scale(1);
-    box-shadow: 0 0 0 16px hsl(var(--primary) / 0);
+    box-shadow: 0 0 0 16px transparent;
   }
 }
 @keyframes scale-in {
@@ -223,13 +249,32 @@
   transition: background-color 150ms ease;
 }
 .holi-scroll:hover::-webkit-scrollbar-thumb {
-  background: var(--color-neutral-700);
+  background: var(--scrollbar-thumb);
   background-clip: content-box;
 }
 .holi-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--color-neutral-600);
+  background: var(--scrollbar-thumb-hover);
   background-clip: content-box;
 }
 .holi-scroll::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/**
+ * Themeable elevation. Tailwind v4 bakes shadow geometry into `shadow-md/lg`
+ * at build time (only the shadow *colour* is a runtime var), so those utilities
+ * can't follow a per-vault token. These plain classes consume the token through
+ * var(), which is what makes elevation themeable; the overlay/dialog primitives
+ * use them in place of `shadow-*`. Unlayered (after `@import`) so they win over
+ * any residual utility for the same property. */
+.shadow-popover {
+  box-shadow: var(--shadow-popover);
+}
+.shadow-dialog {
+  box-shadow: var(--shadow-dialog);
+}
+
+/* App-wide selection tint (the onboarding ritual keeps its own, scoped). */
+::selection {
+  background: var(--selection);
 }

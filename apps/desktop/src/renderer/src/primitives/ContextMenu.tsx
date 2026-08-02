@@ -83,7 +83,7 @@ function ContextMenuSubContent({
     <ContextMenuPrimitive.SubContent
       data-slot="context-menu-sub-content"
       className={cn(
-        "z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-xl data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
+        "z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
         className
       )}
       {...props}
@@ -104,7 +104,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          "z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-xl data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
+          "z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
           className
         )}
         {...props}

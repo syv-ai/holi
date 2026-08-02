@@ -55,7 +55,7 @@ export function Tooltip({
             // Theme-consistent with the other overlays (ContextMenu/DropdownMenu):
             // the popover surface in both themes — NOT shadcn's inverted bg-foreground,
             // which reads light-on-dark in dark mode. Arrowless, like the menus.
-            "z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-scale-in rounded-md border bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-md data-[state=closed]:animate-scale-out",
+            "z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-scale-in rounded-md border bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:animate-scale-out",
             className,
           )}
         >
