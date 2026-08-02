@@ -42,6 +42,8 @@ import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
+import { readVaultTheme, resetVaultTheme } from './vault/theme'
+import type { ResolvedTheme } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 import { listTemplates } from './pdf/templates'
 import type { TemplateField } from '@holi/shared'
@@ -957,6 +959,26 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
+  // Per-vault theming: the resolved (merged + validated) colour/chrome tokens
+  // the renderer writes onto the document root. A read, not a write — the theme
+  // files are authored by the user or the agent with ordinary file tools, never
+  // through the router, which is why there is no `theme.write` here.
+  const theme = t.router({
+    read: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(({ input }): Promise<ResolvedTheme> => rootFor(input.remote).then(readVaultTheme)),
+
+    // Back to standard: delete both theme files. A write (deletion), so it lives
+    // as a mutation. The running app reverts on its own via the watcher — no
+    // channel needed.
+    reset: t.procedure
+      .input(fields({ remote: 'string' }))
+      .mutation(async ({ input }) => {
+        await resetVaultTheme(await rootFor(input.remote))
+        return { ok: true as const }
+      }),
+  })
+
   const pdf = t.router({
     // The vault's templates, for the Convert picker + its metadata inputs.
     // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
@@ -1010,7 +1032,7 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf })
+  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf, theme })
 }
 
 /**
