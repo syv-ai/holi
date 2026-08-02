@@ -16,7 +16,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
 import { SidePanel } from '@/composites'
-import { Button, Tooltip } from '@/primitives'
+import { Button, Dialog, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
@@ -94,6 +94,16 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   /** The sentence to show, plus the raw refusal for the tooltip — kept together
    *  so they can never describe two different failures. */
   const [error, setError] = useState<{ text: string; raw: string } | null>(null)
+  /** The reset-theme confirm, gated because deleting the committed theme file
+   *  removes the shared theme for collaborators too. */
+  const [confirmReset, setConfirmReset] = useState(false)
+
+  const resetTheme = () => {
+    if (remote === null) return
+    // The running app reverts itself: the file deletion fires the watcher, which
+    // re-reads the (now empty) theme and clears the applied tokens.
+    void trpc.theme.reset.mutate({ remote }).finally(() => setConfirmReset(false))
+  }
 
   useEffect(() => {
     if (remote === null) return
@@ -209,6 +219,28 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           </ul>
         </section>
 
+        {/* Appearance. Authoring the theme stays file-based (the agent or the user
+          * edits `.holi/theme.json`); the one thing that wants a button is the
+          * escape hatch back to standard, because "delete a token you can't see
+          * the name of" is not something a file makes easy. */}
+        <section className="space-y-2">
+          <h3 className="font-medium">Appearance</h3>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              This vault&rsquo;s colours &amp; chrome. Edit <span className="font-mono">.holi/theme.json</span>.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={remote === null}
+              className="shrink-0"
+              onClick={() => setConfirmReset(true)}
+            >
+              Reset theme
+            </Button>
+          </div>
+        </section>
+
         {/* Account actions live here, not in the footer: the footer reports state,
           * it does not act — and sign out is the one destructive control here. */}
         <section className="mt-auto space-y-2 border-t border-border pt-4">
@@ -237,6 +269,29 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           </div>
         </section>
       </div>
+
+      {confirmReset && (
+        <Dialog open onClose={() => setConfirmReset(false)} size="sm">
+          <div className="grid gap-4">
+            <Dialog.Header>Reset theme?</Dialog.Header>
+            <Dialog.Body>
+              <p className="text-xs text-muted-foreground">
+                Deletes <span className="font-mono">.holi/theme.json</span> and{' '}
+                <span className="font-mono">.holi/theme.local.json</span>, returning the vault to the
+                standard look. The shared theme is removed for collaborators on the next sync.
+              </p>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmReset(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={resetTheme}>
+                Reset theme
+              </Button>
+            </Dialog.Footer>
+          </div>
+        </Dialog>
+      )}
     </SidePanel>
   )
 }
