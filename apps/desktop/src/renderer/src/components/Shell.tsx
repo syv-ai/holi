@@ -49,6 +49,7 @@ import { VaultHistory } from '@/features/history/VaultHistory'
 import { openTaskCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import { usePanelLayout } from '../state/preferences'
+import { useVaultTheme } from '../state/theme'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
 
 // quiet/busy map to semantic tokens; warn stays a named amber utility — there is
@@ -74,6 +75,8 @@ export function Shell() {
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
+  // Paint the active vault's colour/chrome theme onto the document root.
+  useVaultTheme()
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
