@@ -27,6 +27,7 @@ import { LOCAL_ONLY_IGNORE_LINES, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
+import themeSkill from './skills/theme/SKILL.md?raw'
 import plainTemplateTyp from './templates/plain/template.typ?raw'
 
 /** The old bootstrap's shim: CLAUDE.md is the file the CLI reads; AGENTS.md is
@@ -192,6 +193,7 @@ export const SEED_FILES: Record<string, string> = {
   '.claude/settings.json': SETTINGS_JSON,
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
+  '.claude/skills/theme/SKILL.md': themeSkill,
 }
 
 export const GITIGNORE = '.gitignore'

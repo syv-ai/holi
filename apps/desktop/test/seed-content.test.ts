@@ -51,6 +51,7 @@ describe('SEED_FILES', () => {
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
       '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/theme/SKILL.md',
       '.holi/templates/plain/template.json',
       '.holi/templates/plain/template.typ',
       '.holi/vault.json',
@@ -66,6 +67,13 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('$TYPST_BIN')
     expect(skill).toContain('doc(') // the template contract
     expect(skill).toContain('--root /') // the compile recipe
+  })
+
+  it('seeds the theme skill documenting the colour/chrome vocabulary', () => {
+    const skill = SEED_FILES['.claude/skills/theme/SKILL.md']!
+    expect(skill).toContain('name: theme')
+    expect(skill).toContain('.holi/theme.json') // the file it authors
+    expect(skill).toContain('primary') // a token from the whitelist
   })
 
   it('.holi/vault.json is the durable vault marker', () => {
