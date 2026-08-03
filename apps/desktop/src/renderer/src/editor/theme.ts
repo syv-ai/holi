@@ -1,3 +1,5 @@
+import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
+import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 
 export const editorTheme = EditorView.baseTheme({
@@ -85,4 +87,57 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-completionDetail': { color: '#a3a3a3', fontStyle: 'normal', marginLeft: '0.6em' },
   '.cm-completionMatchedText': { color: '#7dd3fc', textDecoration: 'none' },
   '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText': { color: '#e0f2fe' },
+
+  // Validity status strip (plain/code editor). A bottom panel; strip CM's default
+  // panel chrome so it reads as part of the dark editor, not a boxed toolbar.
+  '.cm-panels, .cm-panels-bottom': { background: 'transparent', border: 'none' },
+  '.cm-validity': {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.4rem',
+    padding: '3px 12px',
+    borderTop: '1px solid #262626',
+    fontFamily: 'ui-monospace, SF Mono, monospace',
+    fontSize: '0.72rem',
+    // Neutral while valid — the app's "quiet until wrong" cue, same as the
+    // frontmatter chevron. `.cm-validity-invalid` reddens both dot and label.
+    color: '#737373',
+  },
+  '.cm-validity-dot': {
+    width: '7px',
+    height: '7px',
+    borderRadius: '9999px',
+    background: '#737373',
+  },
+  '.cm-validity-invalid': { color: '#f87171' },
+  '.cm-validity-invalid .cm-validity-dot': { background: '#f87171' },
 })
+
+/**
+ * Token colours for the plain/code editor (`plainTextExtensions`).
+ *
+ * The markdown editor never needed this — it paints itself with the live-preview
+ * decorations (`.cm-heading`, `.cm-strong`, …), not the highlight-tag pipeline —
+ * so a language's parse tree produced tags that nothing coloured. This is the
+ * missing `HighlightStyle`: it maps Lezer tags to the editor's existing dark
+ * palette (sky for keys, green for strings, amber for literals). Legacy
+ * StreamLanguage modes (toml/ini/shell) route through the same standard tags.
+ */
+const codeHighlightStyle = HighlightStyle.define([
+  { tag: [t.keyword, t.moduleKeyword, t.operatorKeyword], color: '#f0abfc' },
+  { tag: [t.propertyName, t.attributeName], color: '#7dd3fc' },
+  { tag: [t.string, t.special(t.string)], color: '#86efac' },
+  { tag: [t.number, t.bool, t.null, t.atom, t.literal], color: '#fbbf24' },
+  { tag: [t.typeName, t.className, t.tagName], color: '#93c5fd' },
+  { tag: [t.variableName, t.definition(t.variableName)], color: '#e5e5e5' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: '#7dd3fc' },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: '#737373', fontStyle: 'italic' },
+  { tag: [t.escape, t.special(t.brace)], color: '#fbbf24' },
+  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: '#a3a3a3' },
+  { tag: [t.meta, t.processingInstruction], color: '#a3a3a3' },
+  { tag: t.invalid, color: '#f87171' },
+])
+
+/** The highlight extension to add to the plain/code stack. */
+export const codeHighlighting = syntaxHighlighting(codeHighlightStyle)

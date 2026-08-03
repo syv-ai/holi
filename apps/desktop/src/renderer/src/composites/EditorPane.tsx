@@ -23,6 +23,7 @@ import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
+import { syntaxValid } from '@/editor/languages'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { registerBuffer } from '@/lib/buffer-registry'
@@ -109,10 +110,14 @@ export function EditorPane({
     const save = async (): Promise<boolean> => {
       const view = viewRef.current
       if (view === null || disposed) return false
-      // The frontmatter hold-off is markdown-only; a plain text file has no
-      // frontmatter and always saves.
-      if (!plain && !frontmatterValid(view.state)) return false
       const text = view.state.doc.toString()
+      // Hold the save while the buffer is syntactically broken, so a half-typed
+      // config is never the autosaved — or committed — state. Markdown gates on
+      // its frontmatter YAML (FR-16); a plain file gates on its own language
+      // (`syntaxValid`: JSON/YAML only, everything else always valid). Both let
+      // the unconditional `flush` through — a blur or quit still writes, because
+      // losing keystrokes is worse than a file with temporarily-invalid syntax.
+      if (plain ? !syntaxValid(path, text) : !frontmatterValid(view.state)) return false
       if (text !== baseRef.current) {
         baseRef.current = text
         await trpc.notes.write.mutate({ remote, path, text })
@@ -138,7 +143,7 @@ export function EditorPane({
           selection: EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
           extensions: [
             ...(plain
-              ? plainTextExtensions()
+              ? plainTextExtensions(path)
               : baseEditorExtensions({
                   docExists: (p) => docPaths.current.has(p),
                   taskInfo: () => ({ label: 'task', missing: true }),

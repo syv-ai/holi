@@ -301,10 +301,12 @@ export function Shell() {
             <BoardView />
           ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
             <ImageViewer path={tab.path} />
-          ) : tab?.kind === 'note' && fileKind(tab.path) !== 'markdown' ? (
-            // Non-image, non-markdown files open a typed placeholder for now — a
-            // real per-type viewer replaces it later (spec §Arbitrary files).
-            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'text' | 'pdf' | 'doc'} />
+          ) : tab?.kind === 'note' &&
+            (fileKind(tab.path) === 'pdf' || fileKind(tab.path) === 'doc') ? (
+            // Rich formats we can't yet render open a typed placeholder — a real
+            // per-type viewer replaces it later (spec §Arbitrary files). Text
+            // files (json/yaml/…) fall through to the plain editor below.
+            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
           ) : tab?.kind === 'note' && isTaskFilePath(tab.path) ? (
             // A task file renders as a task — a structured header over the body —
             // instead of raw frontmatter (prd/tasks.md; the file is still the truth).
@@ -319,6 +321,10 @@ export function Shell() {
           ) : (
             <EditorPane
               path={tab?.kind === 'note' ? tab.path : null}
+              // A non-markdown text file (.json/.yaml/.env/…) edits in the plain
+              // stack — no wiki-links, no frontmatter, syntax highlighting by
+              // extension. Markdown notes keep the full editor.
+              plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
               onOpenNote={open}
               onEdit={() => setWorkspace((w) => pinActive(w))}
               onConflict={(path) =>

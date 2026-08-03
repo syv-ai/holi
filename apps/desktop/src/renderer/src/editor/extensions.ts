@@ -9,10 +9,11 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
+import { languageForPath, validityStatus } from './languages'
 import { docExistsFacet, livePreview, notePathFacet, taskInfoFacet, type TaskChipInfo } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
-import { editorTheme } from './theme'
+import { codeHighlighting, editorTheme } from './theme'
 
 /** Live seams the editor pulls on demand (the docExistsFacet pattern — closures
  * over the renderer's atoms, read when the user triggers `@`, never baked in). */
@@ -97,9 +98,16 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
  * the notes editor, but NONE of the markdown-specific layers: no live-preview
  * decorations, no frontmatter widget, no wiki-link chips, no `@`/slash/table
  * completion, no ⌘B-style markdown formatting. It is just text.
+ *
+ * `languageForPath` adds syntax highlighting (and, for JSON, a validity linter)
+ * when the extension is a known config/shell format; otherwise it is empty and
+ * the file renders as undecorated text.
  */
-export function plainTextExtensions(): Extension[] {
+export function plainTextExtensions(path: string): Extension[] {
   return [
+    ...languageForPath(path),
+    validityStatus(path),
+    codeHighlighting,
     history(),
     drawSelection(),
     dropCursor(),
