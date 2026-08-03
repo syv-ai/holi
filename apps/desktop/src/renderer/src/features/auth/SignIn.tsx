@@ -13,8 +13,9 @@
  * nothing else; the credential stops in main and goes to the keychain.
  */
 import { useSetAtom } from 'jotai'
+import { Check, Copy } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { Button } from '@/primitives'
+import { Button, Tooltip } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
 
@@ -32,7 +33,11 @@ type Phase =
 export function SignIn() {
   const setSession = useSetAtom(sessionAtom)
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
+  const [copied, setCopied] = useState(false)
   const running = useRef(false)
+  /** Held so the "Copied" tick reverts even if the flow resolves first, and is
+   *  cleared on unmount rather than firing setState into a dead component. */
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // A flow left running holds a polling loop in main against a code nobody is
   // going to type. Cancelling is cheap; leaking one costs a request every few
@@ -40,9 +45,24 @@ export function SignIn() {
   useEffect(
     () => () => {
       if (running.current) void trpc.auth.cancelSignIn.mutate()
+      if (copiedTimer.current) clearTimeout(copiedTimer.current)
     },
     [],
   )
+
+  // The clipboard write can reject (no permission, headless) — that must never
+  // escape into the sign-in flow, so it stays local and silent; the code is on
+  // screen to type by hand regardless.
+  async function copyCode(code: string) {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      if (copiedTimer.current) clearTimeout(copiedTimer.current)
+      copiedTimer.current = setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // no-op: the visible code is the fallback
+    }
+  }
 
   async function start() {
     setPhase({ kind: 'starting' })
@@ -72,9 +92,21 @@ export function SignIn() {
       {phase.kind === 'waiting' ? (
         <div className="flex flex-col items-center gap-3">
           <p className="text-sm text-muted-foreground">Enter this code on GitHub</p>
-          <code className="rounded border border-border bg-muted px-4 py-2 font-mono text-2xl tracking-[0.3em]">
-            {phase.userCode}
-          </code>
+          <div className="flex items-center gap-2">
+            <code className="rounded border border-border bg-muted px-4 py-2 font-mono text-2xl tracking-[0.3em]">
+              {phase.userCode}
+            </code>
+            <Tooltip content={copied ? 'Copied' : 'Copy code'}>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Copy code"
+                onClick={() => void copyCode(phase.userCode)}
+              >
+                {copied ? <Check className="text-primary" /> : <Copy />}
+              </Button>
+            </Tooltip>
+          </div>
           <Button
             variant="link"
             className="h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
@@ -85,15 +117,35 @@ export function SignIn() {
           <p className="text-xs text-muted-foreground">Waiting for you to approve…</p>
         </div>
       ) : (
-        // The GitHub-style white CTA, kept deliberately (there is no inverse/white
-        // token; bg-white/neutral are named utilities, so the colour gate allows them).
-        <Button
-          className="bg-white text-neutral-900 hover:bg-neutral-200"
-          disabled={phase.kind === 'starting'}
-          onClick={() => void start()}
-        >
-          {phase.kind === 'starting' ? 'Opening GitHub…' : 'Sign in with GitHub'}
-        </Button>
+        <div className="flex flex-col items-center gap-3">
+          {/* The GitHub-style white CTA, kept deliberately (there is no inverse/white
+              token; bg-white/neutral are named utilities, so the colour gate allows them). */}
+          <Button
+            className="bg-white text-neutral-900 hover:bg-neutral-200"
+            disabled={phase.kind === 'starting'}
+            onClick={() => void start()}
+          >
+            {phase.kind === 'starting' ? 'Opening GitHub…' : 'Sign in with GitHub'}
+          </Button>
+          {/* Sign-in grants a broad `repo` token (auth-identity.md §176); a
+              fine-grained PAT scoped to selected repos is the tighter option, so
+              the screen says so. Informational only — there is no PAT-paste flow;
+              the device flow is the sole sign-in path. */}
+          <p className="max-w-xs text-center text-xs text-muted-foreground">
+            Holi requests broad repo access.{' '}
+            <Button
+              variant="link"
+              className="h-auto p-0 text-xs"
+              onClick={() =>
+                void window.holi.openExternal(
+                  'https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-fine-grained-personal-access-token',
+                )
+              }
+            >
+              Prefer a fine-grained token?
+            </Button>
+          </p>
+        </div>
       )}
 
       {phase.kind === 'denied' && (
