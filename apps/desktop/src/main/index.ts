@@ -125,6 +125,9 @@ async function main(): Promise<void> {
       void agent?.notifyVaultChanged()
     },
     onSyncState: (state) => send('vault:sync', state),
+    // The large-file gate's held-back set (empty clears the callout). Pushed
+    // every commit tick and once at open, so a vault switch resets it.
+    onHeldBack: (files) => send('vault:heldback', files),
   })
 
   // Serve `holi-vault://vault/<vaultRelPath>` from the active vault, read-only.

@@ -694,6 +694,7 @@ export function createVaultHost(args: {
   gitDeps?: GitDeps
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
+  onHeldBack?: (files: HeldBackFile[]) => void
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null
@@ -757,6 +758,7 @@ export function createVaultHost(args: {
           repo: openRepo(entry.path, args.gitDeps),
           onSnapshot: args.onSnapshot,
           onSyncState: args.onSyncState,
+          onHeldBack: args.onHeldBack,
           timings: args.timings,
         })
         return current

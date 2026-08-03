@@ -1102,6 +1102,27 @@ describe('VaultHost', () => {
     expect(seen).toContain('up-to-date')
   })
 
+  it('forwards the held-back set from the opened vault to onHeldBack', async () => {
+    const { registry, a } = await twoVaults()
+    await mkdir(join(a, '.holi'), { recursive: true })
+    await writeFile(join(a, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await writeFile(join(a, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await sleep(QUIESCE)
+
+    const held: HeldBackFile[][] = []
+    const h = createVaultHost({
+      registry,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onHeldBack: (f) => held.push(f),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    await h.open('syv-ai/a')
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+  })
+
   it('opens a vault and makes it active', async () => {
     const { registry } = await twoVaults()
     const { h } = host(registry)

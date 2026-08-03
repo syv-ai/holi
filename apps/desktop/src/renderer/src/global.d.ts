@@ -1,5 +1,6 @@
 import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../main/vault/active-vault'
+import type { HeldBackFile } from '../../main/vault/large-files'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
 import type { AgentStatus } from './state/agent'
 
@@ -19,6 +20,8 @@ declare global {
         /** Each returns its unsubscribe closure. */
         onSnapshot(cb: (snapshot: VaultSnapshot) => void): () => void
         onSyncState(cb: (state: SyncState) => void): () => void
+        /** The large-file gate's held-back set; empty clears the callout. */
+        onHeldBack(cb: (files: HeldBackFile[]) => void): () => void
         /**
          * Main is quitting and wants the buffer on disk before it commits.
          * Write every dirty buffer, then call `flushDone()`.

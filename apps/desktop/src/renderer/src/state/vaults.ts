@@ -2,6 +2,7 @@ import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import { GITKEEP, type DocMeta, type VaultEntry, type VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
+import type { HeldBackFile } from '../../../main/vault/large-files'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { scaffoldNoteText } from '../lib/scaffold'
@@ -66,6 +67,10 @@ export const activeDocAtom = atom<DocMeta | null>(null)
  * arrived, and `sync.state` is only the initial read before the first push.
  */
 export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
+
+/** Files the large-file gate held out of the last commit — the callout's source.
+ *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
+export const heldBackAtom = atom<HeldBackFile[]>([])
 
 export const loadVaultsAtom = atom(null, async (get, set) => {
   const vaults = await trpc.vaults.list.query()
@@ -170,6 +175,7 @@ export const createVaultAtom = atom(
 export function subscribeToVault(store: JotaiStore): () => void {
   const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
   const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
+  const offHeldBack = window.holi.vault.onHeldBack((files) => store.set(heldBackAtom, files))
   // A clicked reminder opens its task. Cross-vault, the switch runs here — not in
   // main — so `activeRemoteAtom` stays truthful; the task opens once the new
   // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
@@ -183,6 +189,7 @@ export function subscribeToVault(store: JotaiStore): () => void {
   return () => {
     offSnapshot()
     offSync()
+    offHeldBack()
     offReminder()
   }
 }

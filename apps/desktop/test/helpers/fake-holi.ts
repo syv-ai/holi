@@ -14,6 +14,7 @@
  */
 import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../src/main/vault/active-vault'
+import type { HeldBackFile } from '../../src/main/vault/large-files'
 import type { TrpcEnvelope, TrpcOpWire } from '../../src/renderer/src/lib/ipc-link'
 
 export interface FakeHoli {
@@ -21,6 +22,7 @@ export interface FakeHoli {
   calls: { path: string; input: unknown }[]
   pushSnapshot(snapshot: VaultSnapshot): void
   pushSyncState(state: SyncState): void
+  pushHeldBack(files: HeldBackFile[]): void
   /** Fire `onFlushRequest` and resolve once the renderer calls `flushDone()`. */
   requestFlush(): Promise<void>
   restore(): void
@@ -36,6 +38,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const calls: { path: string; input: unknown }[] = []
   const snapshotSubs = new Set<(s: VaultSnapshot) => void>()
   const syncSubs = new Set<(s: SyncState) => void>()
+  const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
   let onFlushed: (() => void) | null = null
@@ -57,6 +60,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     vault: {
       onSnapshot: subscribe(snapshotSubs),
       onSyncState: subscribe(syncSubs),
+      onHeldBack: subscribe(heldBackSubs),
       onFlushRequest: subscribe(flushSubs),
       flushDone: () => onFlushed?.(),
     },
@@ -79,6 +83,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     pushSyncState: (state) => {
       for (const cb of syncSubs) cb(state)
+    },
+    pushHeldBack: (files) => {
+      for (const cb of heldBackSubs) cb(files)
     },
     requestFlush: () =>
       new Promise<void>((resolve) => {

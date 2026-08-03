@@ -28,6 +28,10 @@ const onSnapshot = pushChannel<unknown>('vault:snapshot')
  * conflict, reconciling, or paused. Pushed on change only. */
 const onSyncState = pushChannel<unknown>('vault:sync')
 
+/** Files the large-file gate held out of the last commit (over the size cap).
+ * Pushed every commit tick; empty clears the callout. */
+const onHeldBack = pushChannel<unknown>('vault:heldback')
+
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
@@ -60,6 +64,7 @@ contextBridge.exposeInMainWorld('holi', {
   vault: {
     onSnapshot,
     onSyncState,
+    onHeldBack,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
   },
