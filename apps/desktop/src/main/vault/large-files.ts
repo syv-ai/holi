@@ -8,6 +8,9 @@
  * hook (below) is the same gate for the agent's own direct commits.
  */
 
+import { chmod, mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+
 /** The default cap when `.holi/settings.json` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
  *  datasets, exported binaries. (GitHub warns at 50 / blocks at 100 MB.) */
@@ -40,4 +43,40 @@ export function partitionBySize(
     }
   }
   return { commit, heldBack }
+}
+
+/**
+ * Install (or regenerate) the machine-local pre-commit hook that is the same
+ * gate for the agent's own commits (and any direct `git`). Holi's selective-add
+ * never stages an oversized file so never trips this; the agent commits in the
+ * same clone, so it does. Git hooks live in `.git/hooks/` and are not committed,
+ * so this is written per clone on open — the resolved limit is baked in, so a
+ * `.holi/settings.json` change re-installs with the new number.
+ *
+ * Bounded, not a prison: `git commit --no-verify` bypasses it, matching the
+ * agent-security stance (guard accidents, don't blocklist git). POSIX `sh`; the
+ * line-based read is a backstop (a filename with a newline is not handled), fine
+ * because Holi's own commit path uses NUL and this only catches direct-git slips.
+ */
+export async function installGitHook(root: string, threshold: number): Promise<void> {
+  const hooksDir = join(root, '.git', 'hooks')
+  await mkdir(hooksDir, { recursive: true })
+  const script = `#!/bin/sh
+# Holi large-file guard (auto-generated; set maxCommittedFileBytes in .holi/settings.json).
+limit=${threshold}
+offenders=$(git diff --cached --name-only --diff-filter=AM | while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  size=$(wc -c < "$f" | tr -d ' ')
+  [ "$size" -gt "$limit" ] && printf '  %s (%s bytes)\\n' "$f" "$size"
+done)
+if [ -n "$offenders" ]; then
+  echo "Holi: refusing to commit files over $limit bytes:" >&2
+  echo "$offenders" >&2
+  echo "Keep them local, set up Git LFS, or 'git commit --no-verify' to override." >&2
+  exit 1
+fi
+`
+  const hookPath = join(hooksDir, 'pre-commit')
+  await writeFile(hookPath, script, 'utf8')
+  await chmod(hookPath, 0o755)
 }

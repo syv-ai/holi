@@ -28,7 +28,7 @@ import { join } from 'node:path'
 import type { VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
-import { partitionBySize, type HeldBackFile } from './large-files'
+import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
@@ -172,6 +172,12 @@ export async function openActiveVault(args: {
   // change takes effect on the next open — same as the seeded pre-commit hook).
   const maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
   let heldBack: HeldBackFile[] = []
+  // The same gate for the agent's own commits: a machine-local pre-commit hook,
+  // regenerated each open so a threshold change takes effect. Best-effort — a
+  // failed install must not block opening the vault.
+  await installGitHook(root, maxCommittedFileBytes).catch((err) =>
+    console.error('[vault] pre-commit hook install failed:', err),
+  )
 
   let closed = false
   let cached: VaultSnapshot = await scanVault(root)
