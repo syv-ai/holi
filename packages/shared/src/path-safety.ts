@@ -78,3 +78,18 @@ export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
 export function isHiddenPath(path: string): boolean {
   return path.split('/').some((seg) => seg.startsWith('.'))
 }
+
+/**
+ * The marker file that keeps an otherwise-empty folder alive. Git tracks no empty
+ * directory, so creating a folder drops one of these; the scanner reads it only
+ * to know the directory exists (it is surfaced as a `dirs` entry, never as a file
+ * leaf). `.gitkeep` is the conventional name, and being dot-prefixed it is itself
+ * hidden — which is exactly why the tree shows the *folder* from `dirs`, not from
+ * this file (a folder kept alive by a hidden file would otherwise appear only
+ * under show-hidden). */
+export const GITKEEP = '.gitkeep'
+
+/** Whether a path is a folder keep-marker (its basename is `.gitkeep`). */
+export function isKeepFile(path: string): boolean {
+  return (path.split('/').at(-1) ?? path) === GITKEEP
+}

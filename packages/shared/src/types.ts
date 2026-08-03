@@ -130,6 +130,11 @@ export interface VaultSnapshot {
   broken: BrokenTask[]
   /** Non-markdown files, kept separate from notes so link-aware ops stay md-only. */
   files: FileMeta[]
+  /** Real directories on disk. The tree renders these directly, so a folder shows
+   *  even when its contents are all filtered out of the lists above (its only
+   *  files are tasks, or hidden) or it is empty but for a `.gitkeep`. Git tracks
+   *  no empty directory; the keep-file is what makes an empty one survive a clone. */
+  dirs: string[]
 }
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */

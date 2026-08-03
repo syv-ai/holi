@@ -40,6 +40,7 @@ import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import { joinPath, parentOf, renameBasenameRange, withMdExtension } from '@/lib/tree-paths'
 import {
   activeRemoteAtom,
+  createFolderAtom,
   createNoteAtom,
   renameNoteAtom,
   showHiddenByVaultAtom,
@@ -109,6 +110,7 @@ export function FileTree({
   }
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
+  const createFolder = useSetAtom(createFolderAtom)
   const openDialog = useSetAtom(openDialogAtom)
 
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
@@ -145,8 +147,13 @@ export function FileTree({
     const visible = showHidden
       ? docPaths
       : docPaths.filter((p) => !isHiddenPath(p) && !isLocalOnlyPath(p))
-    return buildTreeData(visible, actions.pendingFolders)
-  }, [docPaths, actions.pendingFolders, showHidden])
+    // Real on-disk folders shown in their own right, so a folder appears even when
+    // its whole content is filtered away above (only tasks, only hidden files) or
+    // it is empty but for a `.gitkeep`. Hidden dirs (`.holi/…`) stay gated by the
+    // same toggle. `pendingFolders` are the still-being-named client-only ones.
+    const dirs = showHidden ? snapshot.dirs : snapshot.dirs.filter((d) => !isHiddenPath(d))
+    return buildTreeData(visible, [...dirs, ...actions.pendingFolders])
+  }, [docPaths, snapshot.dirs, actions.pendingFolders, showHidden])
 
   // headless-tree captures config closures once; this ref keeps the loaders
   // reading the latest projection.
@@ -375,7 +382,9 @@ export function FileTree({
         onToggleTasks={toggleTasks}
       />
       <div
-        className="holi-scroll min-h-0 flex-1 overflow-y-auto py-1 text-sm"
+        // pt-10 reserves the band the hover toolbar (ExplorerHeader, absolute
+        // top-1) floats into, so it never covers the first row.
+        className="holi-scroll min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
         {...tree.getContainerProps()}
       >
         {pending && (
@@ -384,7 +393,11 @@ export function FileTree({
             onCancel={() => setPending(null)}
             onCommit={(name) => {
               if (pending.kind === 'folder') {
-                actions.addPendingFolder(joinPath(pending.parent, name))
+                const folder = joinPath(pending.parent, name)
+                // Show it at once (optimistic), and make it real on disk: a
+                // `.gitkeep` so the empty folder persists and returns in `dirs`.
+                actions.addPendingFolder(folder)
+                void createFolder(folder)
               } else {
                 // Open the created file once it lands — a non-md file is not in
                 // `docs`, so opening a tab explicitly is what surfaces it.

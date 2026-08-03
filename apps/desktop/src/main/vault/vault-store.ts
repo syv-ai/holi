@@ -18,6 +18,7 @@
  */
 import { readFile, stat } from 'node:fs/promises'
 import {
+  isKeepFile,
   isLocalOnlyPath,
   isTaskFilePath,
   parseTaskFile,
@@ -48,14 +49,35 @@ function isDaily(text: string): boolean {
 
 /** Everything the vault holds, read fresh off disk. */
 export async function scanVault(root: string): Promise<VaultSnapshot> {
-  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
+  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
 
   // Exclude only true non-content (dirs/tmp/junk). Local-only files (`*.local.*`)
   // DO reach the snapshot so the tree can show them under show-hidden; git keeps
   // them out of a commit, not this filter.
   const all = (await listFiles(root)).filter((rel) => !isNonContentPath(rel))
 
+  // Every ancestor directory of every file on disk. The tree shows a folder from
+  // this set even when its own contents are all filtered out downstream (a
+  // folder of only tasks, or only hidden files) or it is empty but for a
+  // `.gitkeep`. Derived from the raw walk, before the doc/task/file bucketing a
+  // filtered tree would otherwise hide the folder behind.
+  const dirs = new Set<string>()
+  for (const rel of all) {
+    const parts = rel.split('/')
+    parts.pop() // drop the filename; keep the directory chain
+    let acc = ''
+    for (const seg of parts) {
+      acc = acc ? `${acc}/${seg}` : seg
+      dirs.add(acc)
+    }
+  }
+  snapshot.dirs = [...dirs]
+
   for (const path of all) {
+    // A keep-marker exists only to hold its directory open (already captured in
+    // `dirs`); it is never content, so it joins no list and shows as no leaf.
+    if (isKeepFile(path)) continue
+
     const mtime = () =>
       stat(`${root}/${path}`)
         .then((s) => s.mtime.toISOString())

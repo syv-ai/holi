@@ -211,7 +211,7 @@ export async function openActiveVault(args: {
       // Finder is not hypothetical — and a throw here must not take the heal
       // loop down with it. An empty vault is the honest reading of an absent
       // one; the sync state is where the problem gets reported.
-      cached = await scanVault(root).catch(() => ({ docs: [], tasks: [], broken: [], files: [] }))
+      cached = await scanVault(root).catch(() => ({ docs: [], tasks: [], broken: [], files: [], dirs: [] }))
       if (!closed) args.onSnapshot(cached)
     } finally {
       scanning = false

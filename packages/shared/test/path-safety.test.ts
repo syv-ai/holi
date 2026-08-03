@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
   isHiddenPath,
+  isKeepFile,
   isLocalOnlyPath,
   vaultRelPath,
 } from '../src/path-safety'
@@ -28,6 +30,20 @@ describe('isHiddenPath (explorer show/hide)', () => {
     for (const p of ['AGENTS.md', 'CLAUDE.md', 'MEMORY.md']) {
       expect(isHiddenPath(p)).toBe(false)
     }
+  })
+})
+
+describe('isKeepFile (folder marker)', () => {
+  it('matches a .gitkeep by basename at any depth', () => {
+    expect(isKeepFile(GITKEEP)).toBe(true)
+    expect(isKeepFile('bolig/.gitkeep')).toBe(true)
+    expect(isKeepFile('a/b/c/.gitkeep')).toBe(true)
+  })
+
+  it('does not match ordinary files (including other dotfiles)', () => {
+    expect(isKeepFile('bolig/note.md')).toBe(false)
+    expect(isKeepFile('.gitignore')).toBe(false)
+    expect(isKeepFile('.gitkeep.md')).toBe(false)
   })
 })
 

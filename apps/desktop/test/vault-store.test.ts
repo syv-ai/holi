@@ -117,7 +117,35 @@ describe('scanVault', () => {
 
   it('is empty, not an error, on a vault with nothing in it', async () => {
     const root = await vault({})
-    await expect(scanVault(root)).resolves.toEqual({ docs: [], tasks: [], broken: [], files: [] })
+    await expect(scanVault(root)).resolves.toEqual({
+      docs: [],
+      tasks: [],
+      broken: [],
+      files: [],
+      dirs: [],
+    })
+  })
+
+  it('surfaces every ancestor directory of every file as a dir', async () => {
+    const root = await vault({
+      'roadmap.md': '# Roadmap\n',
+      'projects/q2/task.fix-login.md': '---\ntitle: Fix login\n---\n',
+    })
+    const snap = await scanVault(root)
+    // Both the leaf dir and its parent, so the tree can render the chain — even
+    // though `projects/q2` holds only a (hidden-by-default) task.
+    expect(snap.dirs.sort()).toEqual(['projects', 'projects/q2'])
+  })
+
+  it('keeps an empty folder alive by its .gitkeep, without showing the marker', async () => {
+    const root = await vault({ 'bolig/.gitkeep': '' })
+    const snap = await scanVault(root)
+    // The folder exists (in dirs) but the keep-file is never content: not a file,
+    // not a doc, not a task.
+    expect(snap.dirs).toEqual(['bolig'])
+    expect(snap.files).toEqual([])
+    expect(snap.docs).toEqual([])
+    expect(snap.tasks).toEqual([])
   })
 
   it('lists non-markdown files separately from notes, ignoring junk', async () => {

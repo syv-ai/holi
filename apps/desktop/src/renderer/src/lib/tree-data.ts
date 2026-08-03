@@ -3,9 +3,11 @@
  *
  * headless-tree consumes a `Record<id, {name,isFolder,children}>` addressed by a
  * synchronous data loader (getItem/getChildren). Ids are paths; folders exist iff
- * a doc is inside them (git tracks no empty directory — see the old lib/tree.ts),
- * with the sole exception of `pendingFolders`: transient, client-only folders that
- * the UI shows until the first note lands inside (spec §Empty folders).
+ * a doc is inside them, OR they are named in `folders` — the real on-disk
+ * directories (`snapshot.dirs`, kept alive by a `.gitkeep`) plus the transient,
+ * client-only ones still being named. That second list is what lets an empty
+ * folder, or one whose whole content is filtered away, still show (spec §Empty
+ * folders).
  */
 export const ROOT_ID = '__root__'
 
@@ -19,7 +21,7 @@ const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 
 export function buildTreeData(
   paths: string[],
-  pendingFolders: string[] = [],
+  folders: string[] = [],
 ): Record<string, TreeItemData> {
   const root: TreeItemData = { name: '', isFolder: true, children: [] }
   const data: Record<string, TreeItemData> = { [ROOT_ID]: root }
@@ -37,7 +39,7 @@ export function buildTreeData(
     return node
   }
 
-  for (const folder of pendingFolders) ensureFolder(folder)
+  for (const folder of folders) ensureFolder(folder)
 
   for (const path of paths) {
     const slash = path.lastIndexOf('/')

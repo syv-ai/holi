@@ -1,6 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { DocMeta, VaultEntry, VaultSnapshot } from '@holi/shared'
+import { GITKEEP, type DocMeta, type VaultEntry, type VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
@@ -36,7 +36,7 @@ export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('h
  * whether they also render as leaves in the file tree (with a task glyph). */
 export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
-const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
+const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
 
 /**
  * The whole vault, as last read off disk.
@@ -199,6 +199,17 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
   await trpc.notes.create.mutate({ remote, path, text })
   await set(loadSnapshotAtom)
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
+})
+
+/** Make a folder real on disk. Git tracks no empty directory, so we drop a
+ *  `.gitkeep` inside it — the scanner then surfaces the folder in `snapshot.dirs`
+ *  (the keep-file itself is never shown), and an empty folder survives a clone.
+ *  `notes.write` upserts, so re-creating an existing folder is a harmless no-op. */
+export const createFolderAtom = atom(null, async (get, set, path: string) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return
+  await trpc.notes.write.mutate({ remote, path: `${path}/${GITKEEP}`, text: '' })
+  await set(loadSnapshotAtom)
 })
 
 /** What links to `path` — the delete-preview fetch (FR-12). Empty, and no call,
