@@ -64,9 +64,27 @@ export const editorTheme = EditorView.baseTheme({
     padding: '0 4px',
     cursor: 'pointer',
   },
-  // A task chip is a different destination (the board, not a note), so it reads as a
-  // different thing — same shape, its own hue, and the board's own amber.
-  '.cm-wikilink-task': { background: 'rgba(251,191,36,0.12)', color: '#fbbf24' },
+  // A task chip reads as a task, not a note: same shape, the board's amber tint, and a
+  // status orb before the title. `inline-flex` so the orb and title share a baseline row.
+  '.cm-wikilink-task': {
+    background: 'rgba(251,191,36,0.12)',
+    color: '#fbbf24',
+    display: 'inline-flex',
+    alignItems: 'baseline',
+    gap: '4px',
+  },
+  '.cm-task-orb': {
+    display: 'inline-block',
+    width: '7px',
+    height: '7px',
+    borderRadius: '50%',
+    alignSelf: 'center',
+  },
+  '.cm-task-orb-todo': { background: '#6e7681' },
+  '.cm-task-orb-doing': { background: '#d29922' },
+  '.cm-task-orb-done': { background: '#3fb950' },
+  // A done task strikes its title, matching the board card.
+  '.cm-wikilink-done': { textDecoration: 'line-through', color: '#8b949e' },
   // Last: a missing target outranks the kind tint, for a note and a task alike.
   '.cm-wikilink-missing': { color: '#f0abfc', background: 'rgba(240,171,252,0.10)' },
 
