@@ -51,6 +51,21 @@ function GitHubMark() {
   return <SiGithub size={13} color="currentColor" aria-hidden="true" />
 }
 
+/** A collaborator's GitHub avatar. Falls back to a neutral initial circle when
+ *  `avatarUrl` is absent, so the row never shows a broken image (the URL is a
+ *  remote githubusercontent.com asset). Decorative — the login beside it names
+ *  the person — so `alt=""`. */
+function CollaboratorAvatar({ login, avatarUrl }: { login: string; avatarUrl?: string }) {
+  if (avatarUrl) {
+    return <img src={avatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
+  }
+  return (
+    <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-muted text-[9px] uppercase text-muted-foreground">
+      {login.charAt(0)}
+    </span>
+  )
+}
+
 /** An external link rendered as the `link` Button (an OS-browser jump via
  *  `openExternal`, not in-app navigation — so a button, not an `<a href>`).
  *  Muted until hover, left-aligned, truncating — the shape every profile/URL
@@ -206,7 +221,8 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
           )}
           <ul className="space-y-1">
             {members?.collaborators.map((c) => (
-              <li key={c.accountId}>
+              <li key={c.accountId} className="flex items-center gap-2">
+                <CollaboratorAvatar login={c.login} avatarUrl={c.avatarUrl} />
                 {/* Each collaborator links to their GitHub profile. */}
                 <ExternalLink
                   url={userUrl(c.login)}
@@ -214,6 +230,11 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
                 >
                   {c.login}
                 </ExternalLink>
+                {/* Push permission is the whole access model (FR-10/FR-13): the
+                    level itself, muted, right-aligned. */}
+                <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {c.permission}
+                </span>
               </li>
             ))}
           </ul>
