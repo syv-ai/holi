@@ -27,6 +27,7 @@ import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/fron
 import { syntaxValid } from '@/editor/languages'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
+import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload } from '@/lib/editor-reload'
 import { trpc } from '@/lib/trpc'
@@ -259,9 +260,7 @@ export function EditorPane({
       // advance `base` — the merged text is now what this editor last saw, even
       // though it is not yet what is on disk. The pending save writes it.
       baseRef.current = decision.text
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: decision.text },
-      })
+      applyReload(view, decision.text)
       if (decision.kind === 'merged') {
         void trpc.notes.write.mutate({ remote, path, text: decision.text })
       }
