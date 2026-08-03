@@ -65,6 +65,10 @@ or a named colour like `transparent`):
 | `ring` | focus rings |
 | `scrollbar-thumb` / `scrollbar-thumb-hover` | the scrollbar handle |
 | `selection` | highlighted (selected) text background |
+| `link` | wiki-link + markdown-link chips in the editor (the tint is derived from it) |
+| `link-missing` | a wiki-link chip whose target does not exist |
+| `task` | a task-link chip's accent (the “this is a task” hue) |
+| `task-todo` / `task-doing` / `task-done` | the status orb on a task-link chip |
 
 **Chrome:**
 

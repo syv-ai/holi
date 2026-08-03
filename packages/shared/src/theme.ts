@@ -71,6 +71,13 @@ export const THEME_COLOR_TOKENS = [
   'scrollbar-thumb',
   'scrollbar-thumb-hover',
   'selection',
+  // Editor wiki-link chips + task-status orbs (consumed by the CodeMirror theme).
+  'link',
+  'link-missing',
+  'task',
+  'task-todo',
+  'task-doing',
+  'task-done',
 ] as const
 
 /** Length-valued chrome tokens (corner rounding). */

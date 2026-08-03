@@ -47,7 +47,7 @@ export const editorTheme = EditorView.baseTheme({
   // therefore gated on the modifier actually being held, so it never advertises
   // a click that does nothing. Wiki-link chips below keep theirs: a plain click
   // on one does navigate.
-  '.cm-md-link': { color: '#7dd3fc', textDecoration: 'underline' },
+  '.cm-md-link': { color: 'var(--link)', textDecoration: 'underline' },
   '&.cm-mod-held .cm-md-link': { cursor: 'pointer' },
 
   // compact HR (FR-3b: thin rule, minimal margins — not a chunky block)
@@ -58,17 +58,17 @@ export const editorTheme = EditorView.baseTheme({
   },
 
   '.cm-wikilink': {
-    background: 'rgba(125,211,252,0.12)',
-    color: '#7dd3fc',
+    background: 'color-mix(in srgb, var(--link) 12%, transparent)',
+    color: 'var(--link)',
     borderRadius: '4px',
     padding: '0 4px',
     cursor: 'pointer',
   },
-  // A task chip reads as a task, not a note: same shape, the board's amber tint, and a
+  // A task chip reads as a task, not a note: same shape, its own accent tint, and a
   // status orb before the title. `inline-flex` so the orb and title share a baseline row.
   '.cm-wikilink-task': {
-    background: 'rgba(251,191,36,0.12)',
-    color: '#fbbf24',
+    background: 'color-mix(in srgb, var(--task) 12%, transparent)',
+    color: 'var(--task)',
     display: 'inline-flex',
     alignItems: 'baseline',
     gap: '4px',
@@ -80,13 +80,16 @@ export const editorTheme = EditorView.baseTheme({
     borderRadius: '50%',
     alignSelf: 'center',
   },
-  '.cm-task-orb-todo': { background: '#6e7681' },
-  '.cm-task-orb-doing': { background: '#d29922' },
-  '.cm-task-orb-done': { background: '#3fb950' },
-  // A done task strikes its title, matching the board card.
-  '.cm-wikilink-done': { textDecoration: 'line-through', color: '#8b949e' },
+  '.cm-task-orb-todo': { background: 'var(--task-todo)' },
+  '.cm-task-orb-doing': { background: 'var(--task-doing)' },
+  '.cm-task-orb-done': { background: 'var(--task-done)' },
+  // A done task strikes its title, matching the board card (muted-foreground).
+  '.cm-wikilink-done': { textDecoration: 'line-through', color: 'var(--muted-foreground)' },
   // Last: a missing target outranks the kind tint, for a note and a task alike.
-  '.cm-wikilink-missing': { color: '#f0abfc', background: 'rgba(240,171,252,0.10)' },
+  '.cm-wikilink-missing': {
+    color: 'var(--link-missing)',
+    background: 'color-mix(in srgb, var(--link-missing) 10%, transparent)',
+  },
 
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },

@@ -47,6 +47,21 @@
      they're consumed through var() — Tailwind bakes its own shadow-* in. */
   --shadow-popover: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+
+  /* ── Editor chip tokens (per-vault themeable) ────────────────────────
+   * Wiki-link chips and task-status orbs in the CodeMirror editor. Defined
+   * here (not in the light block) because the editor is a `baseTheme` — one
+   * mode-independent palette — so these stay constant, and the defaults
+   * reproduce today's look. A chip's low-alpha tint is derived from its colour
+   * with color-mix, so recolouring the token recolours the fill too. The
+   * done-strike reuses `--muted-foreground`; there is no `link` token for
+   * markdown links vs wiki-links because they read as one "link" colour. */
+  --link: #7dd3fc;
+  --link-missing: #f0abfc;
+  --task: #fbbf24;
+  --task-todo: #6e7681;
+  --task-doing: #d29922;
+  --task-done: #3fb950;
 }
 [data-theme='light'] {
   --background: var(--color-neutral-50);
