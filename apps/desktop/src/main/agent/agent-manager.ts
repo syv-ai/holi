@@ -13,7 +13,11 @@
  * NOTE: no runtime `electron` import (types only). The window arrives through
  * `getWindow()`, so this module loads under vitest.
  */
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
+import { AGENT_CONFIG_FILES } from '@holi/shared'
 import type { VaultHost } from '../vault/active-vault'
 import {
   AgentRuntime,
@@ -31,9 +35,11 @@ export interface AgentStatus {
   /** A turn is open — Claude is mid-turn. Driven by the hook server's turn
    *  bracket (UserPromptSubmit → true, Stop → false), NOT by parsing PTY output. */
   working: boolean
-  /** Synced agent config changed under a live session. Its D60 detection source
-   *  was deleted; a "restart to pick up config" nudge is a PRD open question, so
-   *  false for now. */
+  /** A synced agent-config file (`AGENT_CONFIG_FILES`) changed on disk since this
+   *  session launched, so the live agent is running against stale config until it
+   *  restarts. Detected by fingerprinting those files at spawn and re-checking on
+   *  each vault change; sticky until a restart, which is what actually re-reads
+   *  config. Drives the AgentPanel's "shared config changed; restart" nudge. */
   configStale: boolean
   authenticated: boolean
 }
@@ -78,15 +84,43 @@ export interface AgentManager {
   /** Turn bracket from the hook server: true on UserPromptSubmit, false on Stop.
    *  Drives the vault pause/resume and status().working. No-op with no session. */
   setTurnActive(active: boolean): void
+  /** The vault's files changed on disk (wired to the host's snapshot signal).
+   *  Re-fingerprints the agent-config files and flips `configStale` if a synced
+   *  one changed under the live session. No-op with no session, or once stale. */
+  notifyVaultChanged(): Promise<void>
   status(): AgentStatus
   dispose(): Promise<void>
 }
 
 interface Session {
   vaultId: string
+  /** The clone dir the session launched in — the root its config fingerprint is
+   *  read from. Held so a vault switch can't point the check at the wrong tree. */
+  root: string
   runtime: AgentRuntime
   mirror: TerminalMirror
   snapshot: ContextSnapshot
+}
+
+/**
+ * A content fingerprint of the launch-loaded agent-config files under `root`.
+ * Contents, not mtimes, so an identical rewrite (a no-op autosave, a sync that
+ * touches the file) does not read as a change; a missing file is its own state,
+ * so creating or deleting one shifts the hash too.
+ */
+async function fingerprintAgentConfig(root: string): Promise<string> {
+  const h = createHash('sha1')
+  for (const rel of AGENT_CONFIG_FILES) {
+    h.update(rel)
+    h.update('\0')
+    try {
+      h.update(await readFile(join(root, rel)))
+    } catch {
+      h.update('\0absent')
+    }
+    h.update('\0')
+  }
+  return h.digest('hex')
 }
 
 export function createAgentManager(deps: AgentManagerDeps): AgentManager {
@@ -101,6 +135,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
 
   const turnSafetyMs = deps.turnSafetyMs ?? 600_000
   let working = false
+  /** Set once a synced config file changes under the live session; sticky until
+   *  a restart clears it. `configBaseline` is the fingerprint captured at spawn. */
+  let configStale = false
+  let configBaseline: string | null = null
   let safetyTimer: ReturnType<typeof setTimeout> | null = null
   const clearSafety = () => {
     if (safetyTimer) {
@@ -116,7 +154,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   const status = (): AgentStatus => ({
     running: session !== null,
     working,
-    configStale: false,
+    configStale,
     authenticated: isClaudeAuthenticated(),
   })
 
@@ -151,6 +189,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     if (!current) return
     session = null // guard the double-stop: the PTY exit path tears down too
     attached = false
+    // The next session captures its own baseline; a dead session is never stale.
+    configStale = false
+    configBaseline = null
     clearSafety()
     if (working) {
       working = false
@@ -229,9 +270,31 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       throw err
     }
 
-    session = { vaultId, runtime, mirror: terminal, snapshot }
+    session = { vaultId, root: workRoot, runtime, mirror: terminal, snapshot }
+    // Baseline the config the child just loaded, so a later change reads as stale.
+    // `teardown` (run at the head of every start) already cleared the old flag.
+    configBaseline = await fingerprintAgentConfig(workRoot)
     pushStatus()
     return { ok: true }
+  }
+
+  /**
+   * A vault file changed on disk (wired to the host's snapshot signal). Re-check
+   * the config fingerprint; if a synced agent-config file moved since spawn, the
+   * live agent is stale until it restarts. Cheap and skipped once already stale
+   * (sticky) or with no session — a handful of small reads on a change that is
+   * already debounced upstream by the watcher.
+   */
+  async function notifyVaultChanged(): Promise<void> {
+    if (session === null || configStale || configBaseline === null) return
+    const current = await fingerprintAgentConfig(session.root)
+    // The session may have died during the await; only a still-live, still-fresh
+    // one flips.
+    if (session === null || configStale) return
+    if (current !== configBaseline) {
+      configStale = true
+      pushStatus()
+    }
   }
 
   /**
@@ -264,6 +327,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // writer targets the session's clone. Before a session starts this no-ops.
     setFocus: (focus) => session?.snapshot.setFocus(focus),
     setTurnActive,
+    notifyVaultChanged,
     status,
     dispose: async () => {
       await teardown()

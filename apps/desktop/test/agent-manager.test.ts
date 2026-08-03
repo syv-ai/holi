@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -328,5 +328,61 @@ describe('AgentManager', () => {
     await r.manager.start({ vaultId: VAULT })
     expect(r.spawns[0]!.opts.env.TYPST_BIN).toBe('/fake/typst')
     expect(r.warmed()).toBe(1)
+  })
+
+  it('flips configStale when a synced agent-config file changes under a live session', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    expect(r.manager.status().configStale).toBe(false)
+
+    // A collaborator's pull (or the agent itself) rewrites the shared memory the
+    // running session loaded at launch.
+    await writeFile(join(r.workRoot, 'CLAUDE.md'), '<rules>\nnew\n</rules>\n', 'utf8')
+    await r.manager.notifyVaultChanged()
+
+    expect(r.manager.status().configStale).toBe(true)
+    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.configStale).toBe(true)
+  })
+
+  it('leaves configStale false when an ordinary note changes', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    await mkdir(join(r.workRoot, 'notes'), { recursive: true })
+    await writeFile(join(r.workRoot, 'notes', 'plan.md'), '# plan\n', 'utf8')
+    await r.manager.notifyVaultChanged()
+    expect(r.manager.status().configStale).toBe(false)
+  })
+
+  it('restart clears configStale — the fresh session loaded the current config', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    await writeFile(join(r.workRoot, 'AGENTS.md'), 'changed\n', 'utf8')
+    await r.manager.notifyVaultChanged()
+    expect(r.manager.status().configStale).toBe(true)
+
+    await r.manager.start({ vaultId: VAULT }) // restart
+    expect(r.manager.status().configStale).toBe(false)
+  })
+
+  it('notifyVaultChanged is a no-op with no live session', async () => {
+    const r = await rig()
+    await r.manager.notifyVaultChanged()
+    expect(r.manager.status().configStale).toBe(false)
+  })
+
+  it('configStale is sticky — it stays set even if the config reverts, until a restart', async () => {
+    const r = await rig()
+    await writeFile(join(r.workRoot, 'CLAUDE.md'), 'original\n', 'utf8')
+    await r.manager.start({ vaultId: VAULT })
+
+    await writeFile(join(r.workRoot, 'CLAUDE.md'), 'changed\n', 'utf8')
+    await r.manager.notifyVaultChanged()
+    expect(r.manager.status().configStale).toBe(true)
+
+    // Reverting the content does not un-stale it — only relaunching the session,
+    // which is the thing that actually re-reads config, resets the nudge.
+    await writeFile(join(r.workRoot, 'CLAUDE.md'), 'original\n', 'utf8')
+    await r.manager.notifyVaultChanged()
+    expect(r.manager.status().configStale).toBe(true)
   })
 })

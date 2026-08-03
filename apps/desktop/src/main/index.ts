@@ -118,7 +118,12 @@ async function main(): Promise<void> {
     // A GETTER, not a string. Read lazily on every git operation, so a sign-out
     // takes effect on the next pull rather than the next restart.
     gitDeps: { token: () => session.token() },
-    onSnapshot: (snapshot) => send('vault:snapshot', snapshot),
+    onSnapshot: (snapshot) => {
+      send('vault:snapshot', snapshot)
+      // A vault change is where synced agent-config can go stale under a live
+      // session (`agent` is assigned below, long before any snapshot fires).
+      void agent?.notifyVaultChanged()
+    },
     onSyncState: (state) => send('vault:sync', state),
   })
 

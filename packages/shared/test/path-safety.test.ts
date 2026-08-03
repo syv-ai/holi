@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AGENT_CONFIG_FILES,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
@@ -75,6 +76,22 @@ describe('isVaultConfigPath (config-conflict prominence)', () => {
     ]) {
       expect(isVaultConfigPath(p)).toBe(false)
     }
+  })
+})
+
+describe('AGENT_CONFIG_FILES (restart-to-pick-up detection)', () => {
+  it('is the launch-loaded agent config: settings + memory, not Holi config or local overrides', () => {
+    expect(AGENT_CONFIG_FILES).toContain('.claude/settings.json')
+    expect(AGENT_CONFIG_FILES).toContain('CLAUDE.md')
+    expect(AGENT_CONFIG_FILES).toContain('AGENTS.md')
+    // Holi's own config never affects the agent; local overrides never sync.
+    expect(AGENT_CONFIG_FILES).not.toContain('.holi/settings.json')
+    expect(AGENT_CONFIG_FILES).not.toContain('.claude/settings.local.json')
+  })
+
+  it('shares .claude/settings.json with VAULT_CONFIG_FILES — both conflict-worthy and restart-worthy', () => {
+    expect(VAULT_CONFIG_FILES).toContain('.claude/settings.json')
+    expect(AGENT_CONFIG_FILES).toContain('.claude/settings.json')
   })
 })
 

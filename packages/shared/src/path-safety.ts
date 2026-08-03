@@ -87,6 +87,21 @@ export function isVaultConfigPath(path: string): boolean {
 }
 
 /**
+ * The synced files Claude Code loads **once at launch**, so a change to any of
+ * them under a live agent session is only picked up by restarting it — which is
+ * what the AgentPanel's "shared config changed; restart to pick it up" nudge is
+ * for (agent.md). Settings plus the always-loaded memory: `.claude/settings.json`
+ * (overlaps `VAULT_CONFIG_FILES` — it is both sync-conflict-worthy and
+ * restart-worthy), `CLAUDE.md`, and the `AGENTS.md` it shims to.
+ *
+ * Deliberately NOT here: `.holi/settings.json` (Holi's config, not the agent's),
+ * `*.local.*` overrides (never synced, so a collaborator's pull can't change
+ * them), and hooks/skills (external scripts re-read per invocation, not cached at
+ * launch — no restart needed).
+ */
+export const AGENT_CONFIG_FILES: readonly string[] = ['.claude/settings.json', 'CLAUDE.md', 'AGENTS.md']
+
+/**
  * Whether a vault-relative path is "hidden" in the explorer — true iff any
  * `/`-segment starts with a dot (`.gitignore`, `.holi/…`, `.claude/…`, a nested
  * `sub/.foo`). Display-only: the file tree's show/hide toggle keys off this, and
