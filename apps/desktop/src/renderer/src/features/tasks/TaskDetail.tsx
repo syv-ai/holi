@@ -292,12 +292,17 @@ export function TaskDescriptionEditor({
   // Read on demand so a snapshot arriving mid-edit does not rebuild the view.
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
+  const tasksByPath = useRef(new Map<string, Task>())
+  tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
-  mentionRef.current = { notes: snapshot.docs.map((d) => ({ path: d.path })), tasks: [] }
-  const navRef = useRef<LinkNav>({ openNote: () => {}, openTask: () => {}, openExternal: () => {} })
+  mentionRef.current = {
+    notes: snapshot.docs.map((d) => ({ path: d.path })),
+    tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
+  }
+  const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
-    openNote: (target) => docPaths.current.has(target) && openNote(target),
-    openTask: () => {},
+    openNote: (target) =>
+      (docPaths.current.has(target) || tasksByPath.current.has(target)) && openNote(target),
     openExternal: (url) => void window.holi.openExternal(url),
   }
   const onChangeRef = useRef(onChange)
@@ -311,7 +316,10 @@ export function TaskDescriptionEditor({
         extensions: [
           ...baseEditorExtensions({
             docExists: (p) => docPaths.current.has(p),
-            taskInfo: () => ({ label: 'task', missing: true }),
+            taskByPath: (p) => {
+              const t = tasksByPath.current.get(p)
+              return t ? { title: t.title, status: t.status } : null
+            },
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
             notePath,

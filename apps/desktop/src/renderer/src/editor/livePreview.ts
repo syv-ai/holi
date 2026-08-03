@@ -14,7 +14,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
-import { fileKind, parseWikiLinks, resolveImageRef } from '@holi/shared'
+import { fileKind, parseWikiLinks, resolveImageRef, type TaskStatus } from '@holi/shared'
 import { frontmatterRegion } from './frontmatter-region'
 import { ImageWidget } from './imageWidget'
 import { vaultAssetUrl } from '../lib/vault-asset'
@@ -32,23 +32,20 @@ export const notePathFacet = Facet.define<string, string>({
   combine: (values) => values[0] ?? '',
 })
 
-/** What a `[[task:<id>]]` chip should say, and whether its target is gone (D27's
- * tombstone). Resolved by the renderer against `tasksAtom` — the editor never joins. */
-export interface TaskChipInfo {
-  label: string
-  missing: boolean
+/** A task chip's rendered fields, resolved by path from the board's task store. */
+export interface TaskChip {
+  title: string
+  status: TaskStatus
 }
 
-/** Task id → title lookup for chips, the sibling of `docExistsFacet`.
- *
- * The unwired default shows the raw id and claims **nothing** about existence: a chip
- * that says "[deleted task]" because a facet was never provided would be a fresh lie of
- * exactly the kind this change exists to remove. */
-export const taskInfoFacet = Facet.define<(id: string) => TaskChipInfo, (id: string) => TaskChipInfo>(
-  {
-    combine: (values) => values[0] ?? ((id) => ({ label: id, missing: false })),
-  },
-)
+/** Path → task lookup for chips, the sibling of `docExistsFacet`. The unwired default
+ * says "no path is a task", so a bare editor renders every link as a note chip. */
+export const taskByPathFacet = Facet.define<
+  (path: string) => TaskChip | null,
+  (path: string) => TaskChip | null
+>({
+  combine: (values) => values[0] ?? (() => null),
+})
 
 const conceal = Decoration.replace({})
 const strong = Decoration.mark({ class: 'cm-strong' })
@@ -205,20 +202,13 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
-  const taskInfo = state.facet(taskInfoFacet)
+  const taskByPath = state.facet(taskByPathFacet)
   const visible = state.sliceDoc(from, to)
   for (const link of parseWikiLinks(visible)) {
     const start = from + link.start
     const end = from + link.end
     if (isActive(start)) continue
-    // Both kinds get a chip. Task links used to fall out here, which meant the app's own
-    // `@`-mention wrote `[[task:<id>]]` that its own editor rendered as raw text.
-    let chip: WikiLinkChip
-    if (link.kind === 'task') {
-      const info = taskInfo(link.target)
-      // An explicit `|Label` wins over the live title — the author asked for those words.
-      chip = new WikiLinkChip('task', link.target, link.label ?? info.label, !info.missing)
-    } else if (fileKind(link.target) === 'image') {
+    if (fileKind(link.target) === 'image') {
       // [[img.png]] embeds are vault-relative (used as-is); render inline.
       ranges.push({
         from: start,
@@ -228,9 +218,13 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
         }),
       })
       continue
-    } else {
-      chip = new WikiLinkChip('note', link.target, link.label ?? link.target, docExists(link.target))
     }
+    // A path that resolves to a task renders a task chip (orb + title); everything else
+    // is a note chip, existing or missing. An explicit `|Label` wins over the live title.
+    const task = taskByPath(link.target)
+    const chip = task
+      ? new WikiLinkChip(link.target, link.label ?? task.title, true, { status: task.status })
+      : new WikiLinkChip(link.target, link.label ?? link.target, docExists(link.target))
     ranges.push({ from: start, to: end, deco: Decoration.replace({ widget: chip }) })
   }
 

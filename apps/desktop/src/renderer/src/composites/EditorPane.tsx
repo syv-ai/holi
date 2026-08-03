@@ -19,6 +19,7 @@
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import type { Task } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
@@ -70,14 +71,19 @@ export function EditorPane({
   // mid-edit does not rebuild the EditorView and drop the caret.
   const docPaths = useRef(new Set<string>())
   docPaths.current = new Set(snapshot.docs.map((d) => d.path))
+  const tasksByPath = useRef(new Map<string, Task>())
+  tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
-  mentionRef.current = { notes: snapshot.docs.map((d) => ({ path: d.path })), tasks: [] }
-  const navRef = useRef<LinkNav>({ openNote: () => {}, openTask: () => {}, openExternal: () => {} })
+  mentionRef.current = {
+    notes: snapshot.docs.map((d) => ({ path: d.path })),
+    tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
+  }
+  const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
-    // A link can point at a note that does not exist yet; the chip already
-    // renders it as missing, so a click does nothing rather than inventing one.
-    openNote: (target) => docPaths.current.has(target) && onOpenNote(target),
-    openTask: () => {},
+    // A link can point at a note or task that does not exist yet; the chip renders
+    // missing and the click no-ops rather than inventing a file.
+    openNote: (target) =>
+      (docPaths.current.has(target) || tasksByPath.current.has(target)) && onOpenNote(target),
     openExternal: (url) => void window.holi.openExternal(url),
   }
 
@@ -146,7 +152,10 @@ export function EditorPane({
               ? plainTextExtensions(path)
               : baseEditorExtensions({
                   docExists: (p) => docPaths.current.has(p),
-                  taskInfo: () => ({ label: 'task', missing: true }),
+                  taskByPath: (p) => {
+                    const t = tasksByPath.current.get(p)
+                    return t ? { title: t.title, status: t.status } : null
+                  },
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
                   notePath: path,

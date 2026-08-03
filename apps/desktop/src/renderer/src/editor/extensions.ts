@@ -10,7 +10,7 @@ import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
 import { languageForPath, validityStatus } from './languages'
-import { docExistsFacet, livePreview, notePathFacet, taskInfoFacet, type TaskChipInfo } from './livePreview'
+import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskChip } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
 import { codeHighlighting, editorTheme } from './theme'
@@ -19,8 +19,8 @@ import { codeHighlighting, editorTheme } from './theme'
  * over the renderer's atoms, read when the user triggers `@`, never baked in). */
 export interface EditorDeps {
   docExists: (path: string) => boolean
-  /** Title + tombstone for a `[[task:<id>]]` chip (D27). */
-  taskInfo: (id: string) => TaskChipInfo
+  /** Title + status for a `[[path]]` chip whose path is a task, else null. */
+  taskByPath: (path: string) => TaskChip | null
   /** Notes + tasks for `@`-mention completion (FR-8). */
   mentionData: () => MentionData
   /** Where a clicked link goes (FR-6/FR-7). */
@@ -54,7 +54,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // grammar in the tree; plain markdown() defaults to CommonMark (no tables).
     markdown({ base: markdownLanguage }),
     docExistsFacet.of(deps.docExists),
-    taskInfoFacet.of(deps.taskInfo),
+    taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
     livePreview,
     // After livePreview: the block-replace owns the frontmatter region, and

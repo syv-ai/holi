@@ -1,46 +1,54 @@
 import { WidgetType } from '@codemirror/view'
+import type { TaskStatus } from '@holi/shared'
 
 /**
- * Inline chip for `[[path]]` / `[[path|Label]]` (notes-editor PRD FR-6) and for
- * `[[task:<id>]]` task refs (D27).
+ * Inline chip for a `[[path]]` / `[[path|Label]]` wiki-link (notes-editor PRD FR-6).
  *
- * One widget, two kinds. They differ only in what a click means and in where "does the
- * target exist?" is answered — a note chip carries a vault path and opens a note; a task
- * chip carries a stable id and opens the task. Everything else (the reveal-on-active-line
- * behaviour, the missing styling, `ignoreEvent`) is identical, so a second widget class
- * would fork all of it to express one difference.
- *
- * `label` arrives already resolved: the caller has folded in the `|Label` override and,
- * for a task, the id→title join. The widget renders what it is handed and does not look
- * anything up — which is what keeps `eq` an honest identity check, since two chips that
- * compare equal really do draw the same.
+ * Every chip routes by path — a task is a file like any other (D27/D60), so there is
+ * one grammar and one click target. A chip is a task chip when `task` is present: it
+ * carries the task's status, which draws a coloured orb and strikes the title when done,
+ * so it reads as a task rather than a note. `label` arrives already resolved (the caller
+ * folds in `|Label` and, for a task, the path→title join).
  */
 export class WikiLinkChip extends WidgetType {
   constructor(
-    readonly kind: 'note' | 'task',
     readonly target: string,
     readonly label: string,
     readonly exists: boolean,
+    readonly task?: { status: TaskStatus },
   ) {
     super()
   }
 
   override eq(other: WikiLinkChip): boolean {
     return (
-      other.kind === this.kind &&
       other.target === this.target &&
       other.label === this.label &&
-      other.exists === this.exists
+      other.exists === this.exists &&
+      other.task?.status === this.task?.status
     )
   }
 
   override toDOM(): HTMLElement {
     const el = document.createElement('span')
-    el.className = `cm-wikilink cm-wikilink-${this.kind}${this.exists ? '' : ' cm-wikilink-missing'}`
-    el.textContent = this.label
-    // The dataset key is what `resolveLinkClick` routes on — a task id must never be
-    // read as a vault path.
-    el.dataset[this.kind === 'task' ? 'taskTarget' : 'wikiTarget'] = this.target
+    const done = this.task?.status === 'done'
+    el.className = [
+      'cm-wikilink',
+      this.task ? 'cm-wikilink-task' : 'cm-wikilink-note',
+      // A missing tint applies to notes only — a task chip resolved from a real file.
+      !this.task && !this.exists ? 'cm-wikilink-missing' : '',
+      done ? 'cm-wikilink-done' : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+    // The dataset key `resolveLinkClick` routes on. Always a path now.
+    el.dataset['wikiTarget'] = this.target
+    if (this.task) {
+      const orb = document.createElement('span')
+      orb.className = `cm-task-orb cm-task-orb-${this.task.status}`
+      el.appendChild(orb)
+    }
+    el.appendChild(document.createTextNode(this.label))
     return el
   }
 
