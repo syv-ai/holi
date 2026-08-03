@@ -21,9 +21,12 @@ export const loadSessionAtom = atom(null, async (_get, set) => {
   set(sessionAtom, viewer)
 })
 
-export const signOutAtom = atom(null, async (_get, set) => {
-  // FR-15: this drops the keychain entry and leaves every clone where it is.
-  // Removing a vault is a separate, deliberate act.
+export const signOutAtom = atom(null, async (_get, set, opts?: { deleteClones?: boolean }) => {
+  // FR-15: sign-out drops the keychain entry and stops all sync. By default the
+  // clones stay on disk — removing a vault is a separate, deliberate act. The
+  // dialog can opt into deleting them too, which trashes them recoverably (so
+  // even the private vault can be restored) *before* the keychain goes.
+  if (opts?.deleteClones) await trpc.vaults.deleteClones.mutate()
   await trpc.auth.signOut.mutate()
   set(sessionAtom, null)
 })

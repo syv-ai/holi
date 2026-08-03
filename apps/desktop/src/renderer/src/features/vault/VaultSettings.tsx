@@ -16,10 +16,11 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
 import type { Collaborator } from '@holi/shared'
 import { SidePanel } from '@/composites'
-import { Button, Dialog, Tooltip } from '@/primitives'
+import { Button, Checkbox, Dialog, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
+import { unpushedWarning } from '@/lib/unpushed-warning'
 import { sessionAtom, signOutAtom } from '@/state/session'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
 
@@ -112,6 +113,22 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
   /** The reset-theme confirm, gated because deleting the committed theme file
    *  removes the shared theme for collaborators too. */
   const [confirmReset, setConfirmReset] = useState(false)
+  /** The sign-out confirm: whether it is open, whether to also delete the local
+   *  clones, and the unpushed-work warning fetched when it opens (`null` = none,
+   *  or not yet fetched). */
+  const [confirmSignOut, setConfirmSignOut] = useState(false)
+  const [alsoDeleteClones, setAlsoDeleteClones] = useState(false)
+  const [unpushedText, setUnpushedText] = useState<string | null>(null)
+
+  // Ask what deleting the clones would cost, but only when the dialog opens —
+  // this walks every clone's git status, so it is not worth doing on every
+  // render of the panel. Reset the choice each time it opens.
+  useEffect(() => {
+    if (!confirmSignOut) return
+    setAlsoDeleteClones(false)
+    setUnpushedText(null)
+    void trpc.vaults.unpushed.query().then((s) => setUnpushedText(unpushedWarning(s)))
+  }, [confirmSignOut])
 
   const resetTheme = () => {
     if (remote === null) return
@@ -281,15 +298,66 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
             <Button
               variant="secondary"
               size="sm"
-              // FR-15: this drops the keychain entry and leaves every clone where
-              // it is. Removing a vault is a separate, deliberate act.
-              onClick={() => void signOut()}
+              // FR-15: sign-out drops the keychain entry. Whether it also deletes
+              // the clones is the dialog's choice, warned by unpushed work.
+              onClick={() => setConfirmSignOut(true)}
             >
               Sign out
             </Button>
           </div>
         </section>
       </div>
+
+      {confirmSignOut && (
+        <Dialog open onClose={() => setConfirmSignOut(false)} size="sm">
+          <div className="grid gap-4">
+            <Dialog.Header>Sign out?</Dialog.Header>
+            <Dialog.Body>
+              <div className="grid gap-3 text-xs text-muted-foreground">
+                <p>
+                  Removes your GitHub credential and stops all sync. Your local clones stay on disk
+                  unless you choose to delete them below.
+                </p>
+                <label className="flex items-start gap-2">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={alsoDeleteClones}
+                    onCheckedChange={(v) => setAlsoDeleteClones(v === true)}
+                  />
+                  <span>
+                    Also delete local clones on this machine. They&rsquo;re moved to the Trash, so
+                    you can restore them.
+                  </span>
+                </label>
+                {/* FR-15: warn when a clone still holds commits that never reached
+                    the remote. Advisory — and the Trash makes it recoverable — so
+                    the copy cautions rather than blocks. */}
+                {unpushedText !== null && (
+                  <p className="text-destructive">
+                    {unpushedText}. Deleting the clones moves them to the Trash, where you can still
+                    recover that work.
+                  </p>
+                )}
+              </div>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmSignOut(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  setConfirmSignOut(false)
+                  void signOut({ deleteClones: alsoDeleteClones })
+                }}
+              >
+                Sign out
+              </Button>
+            </Dialog.Footer>
+          </div>
+        </Dialog>
+      )}
 
       {confirmReset && (
         <Dialog open onClose={() => setConfirmReset(false)} size="sm">
