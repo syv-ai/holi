@@ -192,7 +192,7 @@ describe('commitAll', () => {
       await writeFile(join(dir, name), `${name}\n`, 'utf8')
     }
 
-    const sha = await openRepo(dir).commitAll('Update 3 files')
+    const sha = await openRepo(dir).commitAll('Update 3 files', ['a.md', 'b.md', 'c.md'])
     expect(sha).toMatch(/^[0-9a-f]{40}$/)
     expect(Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))).toBe(Number(before) + 1)
   })
@@ -202,21 +202,30 @@ describe('commitAll', () => {
     const dir = await makeClone(await makeRemote())
     await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
     const repo = openRepo(dir)
-    await repo.commitAll('Update a.md')
+    await repo.commitAll('Update a.md', ['a.md'])
     expect((await repo.status()).dirty).toBe(false)
   })
 
-  it('returns null when there is nothing to commit', async () => {
-    // The idle timer fires on untouched vaults constantly. This is the normal
-    // path, not an error.
+  it('stages only the named paths, leaving the rest dirty (the large-file hold-back)', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
+    await writeFile(join(dir, 'b.md'), 'b\n', 'utf8')
+    const repo = openRepo(dir)
+    await repo.commitAll('Update a.md', ['a.md']) // b.md deliberately held back
+    expect((await repo.status()).dirtyPaths).toEqual(['b.md'])
+  })
+
+  it('returns null when the pathspec is empty', async () => {
+    // The idle timer fires on untouched vaults constantly, and an all-held-back
+    // tree has nothing to stage. This is the normal path, not an error.
     const repo = openRepo(await makeClone(await makeRemote()))
-    expect(await repo.commitAll('Update nothing')).toBeNull()
+    expect(await repo.commitAll('Update nothing', [])).toBeNull()
   })
 
   it('commits a deletion, not just a change', async () => {
     const dir = await makeClone(await makeRemote())
     await rm(join(dir, 'README.md'))
-    expect(await openRepo(dir).commitAll('Delete README.md')).not.toBeNull()
+    expect(await openRepo(dir).commitAll('Delete README.md', ['README.md'])).not.toBeNull()
     expect((await openRepo(dir).status()).dirty).toBe(false)
   })
 
@@ -234,7 +243,7 @@ describe('commitAll', () => {
       // An empty HOME hides any global config, so this is a real fresh machine.
       env: { HOME: base, USERPROFILE: base, GIT_CONFIG_GLOBAL: join(base, 'nonexistent') },
     })
-    expect(await repo.commitAll('Update a.md')).not.toBeNull()
+    expect(await repo.commitAll('Update a.md', ['a.md'])).not.toBeNull()
   })
 })
 
@@ -658,7 +667,7 @@ describe('runGit', () => {
     // Released while the retries are still going, the way a real one would be.
     setTimeout(() => void rm(lock).catch(() => {}), 120)
 
-    expect(await openRepo(repo).commitAll('Update note.md')).not.toBeNull()
+    expect(await openRepo(repo).commitAll('Update note.md', ['note.md'])).not.toBeNull()
   })
 
   it('gives up on a lock that is never released, rather than hanging', async () => {
@@ -669,7 +678,7 @@ describe('runGit', () => {
     await writeFile(join(repo, '.git', 'index.lock'), '', 'utf8')
 
     const err = await openRepo(repo)
-      .commitAll('Update note.md')
+      .commitAll('Update note.md', ['note.md'])
       .catch((e) => e)
     expect(err).toBeInstanceOf(GitError)
     expect(err.stderr).toMatch(/index\.lock/)

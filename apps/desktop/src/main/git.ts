@@ -173,7 +173,7 @@ export interface GitRepo {
   /** Stage everything and commit. Returns the new sha, or **null** when the tree
    * was already clean — "nothing to commit" is the normal outcome of an idle
    * timer on an untouched vault, not an error. */
-  commitAll(message: string): Promise<string | null>
+  commitAll(message: string, paths: string[]): Promise<string | null>
 }
 
 /**
@@ -340,13 +340,6 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
  */
 export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   const opts: RunOpts = { token: deps.token, gitPath: deps.gitPath, env: deps.env }
-
-  /** Anything at all to commit? Cheaper than a full `status()`, which also asks
-   * about the upstream and MERGE_HEAD — this runs on every idle tick. */
-  async function isDirty(): Promise<boolean> {
-    const raw = await runGit(root, ['status', '--porcelain=v2', '--untracked-files=all', '-z'], opts)
-    return raw.trim() !== ''
-  }
 
   /**
    * Identity flags for a commit — **only** when the machine has none.
@@ -555,11 +548,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     )
   }
 
-  async function commitAll(message: string): Promise<string | null> {
-    if (!(await isDirty())) return null
-    // `-A` so deletions and untracked files ride along: a deleted note is a
-    // change to publish, and a new one is the whole point.
-    await runGit(root, ['add', '-A'], opts)
+  async function commitAll(message: string, paths: string[]): Promise<string | null> {
+    // The caller decides what commits (the large-file gate holds oversized files
+    // out by simply not naming them); an empty pathspec is the idle/all-held-back
+    // path, nothing to do.
+    if (paths.length === 0) return null
+    // `-A -- <paths>` so deletions and untracked files among the named paths ride
+    // along — a deleted note is a change to publish, a new one is the point — but
+    // only those paths, never the whole tree.
+    await runGit(root, ['add', '-A', '--', ...paths], opts)
+    // Nothing actually got staged (e.g. the named paths were already clean): not
+    // an error, just the idle path — do not create an empty commit.
+    if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
     await runGit(root, [...(await identityArgs()), 'commit', '-m', message], opts)
     return runGit(root, ['rev-parse', 'HEAD'], opts)
   }

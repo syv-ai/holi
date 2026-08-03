@@ -300,7 +300,7 @@ export async function openActiveVault(args: {
         setState(computeState(status))
         return null
       }
-      const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths))
+      const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths), status.dirtyPaths)
       await refreshState()
       // A commit that landed is work the remote does not have yet. Arm the
       // coalescer rather than pushing now, so a burst of commits (a board drag,
