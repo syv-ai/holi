@@ -15,7 +15,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { fileKind, isTaskFilePath } from '@holi/shared'
+import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
@@ -161,6 +161,13 @@ export function Shell() {
     setBanner(null)
     setActiveRemote(remote)
   }
+
+  // A conflict in the shared config files can leave the vault misconfigured while
+  // it lasts, so it gets its own loud callout above the ordinary reconcile
+  // affordance (vaults-sync.md §Edge cases). Ordinary content conflicts keep the
+  // quiet footer button; only these get the banner.
+  const configConflicts =
+    syncState.kind === 'conflict' ? syncState.paths.filter(isVaultConfigPath) : []
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -388,6 +395,36 @@ export function Shell() {
         <DialogHost />
       </div>
 
+      {/* A config conflict outranks everything else in the footer region: it is
+          destructive-toned, names the offending file(s), and carries its own
+          reconcile action, so a misconfigured vault can't hide behind the quiet
+          footer button (vaults-sync.md §Edge cases / FR-18). */}
+      {configConflicts.length > 0 && (
+        <div className="flex items-center justify-between gap-3 border-t border-destructive bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <p className="min-w-0">
+            <span className="font-semibold">Configuration conflict.</span>{' '}
+            {configConflicts.map((p, i) => (
+              <span key={p}>
+                {i > 0 && (i === configConflicts.length - 1 ? ' and ' : ', ')}
+                <code className="rounded bg-destructive/15 px-1 font-mono">{p}</code>
+              </span>
+            ))}{' '}
+            {configConflicts.length === 1 ? 'is' : 'are'} unresolved — your vault may be
+            misconfigured until you reconcile.
+          </p>
+          <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
+            <Button
+              variant="destructive"
+              size="xs"
+              className="shrink-0"
+              onClick={() => void reconcile()}
+            >
+              Ask Claude to reconcile
+            </Button>
+          </Tooltip>
+        </div>
+      )}
+
       {/* The reconcile banner sits above the footer, beside the sync state it
           qualifies — an unmergeable external write to the open note raises it
           (EditorPane's onConflict), the one thing left that a user must answer. */}
@@ -413,7 +450,10 @@ export function Shell() {
               {label.text}
             </Button>
           </Tooltip>
-          {syncState.kind === 'conflict' && (
+          {/* The quiet footer affordance is for ordinary content conflicts; when a
+              config file is among them the loud banner above owns the action, so
+              this would be a redundant second reconcile button. */}
+          {syncState.kind === 'conflict' && configConflicts.length === 0 && (
             <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
               <Button
                 variant="outline"

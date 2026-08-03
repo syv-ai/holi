@@ -68,6 +68,25 @@ export function isLocalOnlyPath(path: string): boolean {
 export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
 
 /**
+ * The shared, committed config files whose contents configure the whole vault:
+ * `.holi/settings.json` (Holi) and `.claude/settings.json` (the agent). A merge
+ * conflict in either is a conflict in *config*, not content, and can leave the
+ * vault misconfigured while it lasts — so the sync UI surfaces it louder than an
+ * ordinary note conflict (vaults-sync.md §Edge cases). The machine-local
+ * `*.local.json` overrides are absent on purpose: they never sync, so they
+ * cannot conflict.
+ */
+export const VAULT_CONFIG_FILES: readonly string[] = ['.holi/settings.json', '.claude/settings.json']
+
+/** Whether a vault-relative path is one of the shared config files
+ * (`VAULT_CONFIG_FILES`) — an exact match, so a same-named file elsewhere in the
+ * tree (`notes/settings.json`) or a local override (`.holi/settings.local.json`)
+ * is not one. */
+export function isVaultConfigPath(path: string): boolean {
+  return VAULT_CONFIG_FILES.includes(path)
+}
+
+/**
  * Whether a vault-relative path is "hidden" in the explorer — true iff any
  * `/`-segment starts with a dot (`.gitignore`, `.holi/…`, `.claude/…`, a nested
  * `sub/.foo`). Display-only: the file tree's show/hide toggle keys off this, and

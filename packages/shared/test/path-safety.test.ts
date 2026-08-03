@@ -3,9 +3,11 @@ import {
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
+  VAULT_CONFIG_FILES,
   isHiddenPath,
   isKeepFile,
   isLocalOnlyPath,
+  isVaultConfigPath,
   vaultRelPath,
 } from '../src/path-safety'
 
@@ -44,6 +46,35 @@ describe('isKeepFile (folder marker)', () => {
     expect(isKeepFile('bolig/note.md')).toBe(false)
     expect(isKeepFile('.gitignore')).toBe(false)
     expect(isKeepFile('.gitkeep.md')).toBe(false)
+  })
+})
+
+describe('isVaultConfigPath (config-conflict prominence)', () => {
+  it('matches exactly the shared, committed config files', () => {
+    // A conflict in these can leave the vault misconfigured while it lasts —
+    // vaults-sync.md Edge cases singles them out as worth showing prominently.
+    for (const p of VAULT_CONFIG_FILES) {
+      expect(isVaultConfigPath(p)).toBe(true)
+    }
+    expect(isVaultConfigPath('.holi/settings.json')).toBe(true)
+    expect(isVaultConfigPath('.claude/settings.json')).toBe(true)
+  })
+
+  it('does not match machine-local overrides (they never sync, so never conflict)', () => {
+    expect(isVaultConfigPath('.holi/settings.local.json')).toBe(false)
+  })
+
+  it('does not match other files in the config dirs, or ordinary content', () => {
+    for (const p of [
+      '.holi/theme.json',
+      '.holi/vault.json',
+      '.claude/agents/foo.md',
+      'settings.json',
+      'notes/settings.json',
+      'projects/plan.md',
+    ]) {
+      expect(isVaultConfigPath(p)).toBe(false)
+    }
   })
 })
 
