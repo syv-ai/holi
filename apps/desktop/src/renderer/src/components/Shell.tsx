@@ -48,6 +48,7 @@ import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../sta
 import { VaultHistory } from '@/features/history/VaultHistory'
 import { openTaskCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
+import { agentPanelOpenAtom } from '@/state/agent'
 import { usePanelLayout } from '../state/preferences'
 import { useVaultTheme } from '../state/theme'
 import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
@@ -74,6 +75,7 @@ export function Shell() {
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
@@ -166,7 +168,17 @@ export function Shell() {
           orientation="horizontal"
           className="min-w-0 flex-1"
           defaultLayout={shellLayout.defaultLayout}
-          onLayoutChanged={shellLayout.onLayoutChanged}
+          onLayoutChanged={(layout, meta) => {
+            shellLayout.onLayoutChanged(layout, meta)
+            // Reconcile a genuine handle drag of the agent panel back into its
+            // `open` atom. Only `isUserInteraction` drags count: opening the
+            // settings or history panel inserts a sibling and makes the library
+            // recompute every size (isUserInteraction:false), which used to trip
+            // the agent panel's own onResize into flipping open. The panel-level
+            // callback can't tell a drag from a reflow; this one can.
+            if (!meta.isUserInteraction) return
+            setAgentOpen((layout.agent ?? 0) > 0)
+          }}
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
             <aside className="relative flex h-full flex-col border-r border-border">

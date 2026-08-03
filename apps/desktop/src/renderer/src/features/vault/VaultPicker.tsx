@@ -38,7 +38,7 @@ export function VaultPicker({
           data-vault-picker
           className="flex min-w-0 flex-1 items-center gap-1 px-2 py-1 text-sm font-bold text-foreground outline-none hover:text-muted-foreground"
         >
-          <span className="truncate">
+          <span className="min-w-0 flex-1 truncate text-left">
             {active?.name ?? (vaults.length ? 'select vault' : 'no vaults')}
           </span>
           <ChevronDown size={18} strokeWidth={2.5} className="shrink-0" />

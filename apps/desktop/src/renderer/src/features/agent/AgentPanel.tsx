@@ -271,21 +271,13 @@ export function AgentPanel() {
     return () => cancelAnimationFrame(id)
   }, [open])
 
-  // Reconcile a *drag past the collapse threshold* back into `open`, so ⌘J and the
-  // drawer never disagree (the actual TUI refit is the host ResizeObserver's job).
-  // The mount call (prev === undefined) is skipped: the panel mounts at its
-  // defaultSize, but `open` (closed) is what drives the initial collapse below —
-  // acting on the mount size would spuriously open the drawer on every launch.
-  const onPanelResize = (
-    size: { inPixels: number },
-    _id: string | number | undefined,
-    prev: { inPixels: number } | undefined,
-  ) => {
-    if (prev === undefined) return
-    const collapsed = size.inPixels < MIN_FITTABLE_PX
-    if (collapsed && open) setOpen(false)
-    else if (!collapsed && !open) setOpen(true)
-  }
+  // A user drag of the handle reconciles back into `open` at the GROUP level
+  // (Shell's onLayoutChanged), where the library reports `isUserInteraction`.
+  // The panel-level onResize fires for programmatic reflows too — inserting the
+  // settings/history panel recomputes every size — and can't tell them apart, so
+  // reconciling here spuriously opened the drawer whenever a sibling panel
+  // mounted. `open` stays the single source of truth; the effect above drives
+  // the panel to match it.
 
   const restart = async () => {
     await window.holi.agent.kill()
@@ -321,7 +313,6 @@ export function AgentPanel() {
       defaultSize={DEFAULT_AGENT_PANEL_WIDTH}
       minSize={MIN_AGENT_PANEL_WIDTH}
       panelRef={panelRef}
-      onResize={onPanelResize}
     >
       {/* Kept `hidden` when closed so the terminal is never built against a
           display:none host, and no stray content shows while the panel is a
