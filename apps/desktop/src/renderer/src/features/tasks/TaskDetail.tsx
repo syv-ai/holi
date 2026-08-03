@@ -313,7 +313,6 @@ export function TaskDescriptionEditor({
             docExists: (p) => docPaths.current.has(p),
             taskInfo: () => ({ label: 'task', missing: true }),
             mentionData: () => mentionRef.current,
-            onTaskMention: () => {},
             nav: () => navRef.current,
             notePath,
           }),

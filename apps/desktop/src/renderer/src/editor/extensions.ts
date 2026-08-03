@@ -23,8 +23,6 @@ export interface EditorDeps {
   taskInfo: (id: string) => TaskChipInfo
   /** Notes + tasks for `@`-mention completion (FR-8). */
   mentionData: () => MentionData
-  /** A picked task mention links the current note into the task's `related[]`. */
-  onTaskMention: (taskId: string) => void
   /** Where a clicked link goes (FR-6/FR-7). */
   nav: () => LinkNav
   /** The open note's vault path, for note-relative image resolution. */
@@ -68,7 +66,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     markdownTables(),
     autocompletion({
       override: [
-        mentionSource(deps.mentionData, deps.onTaskMention),
+        mentionSource(deps.mentionData),
         slashCommands,
         markdownTableAutocompleter(),
       ],
