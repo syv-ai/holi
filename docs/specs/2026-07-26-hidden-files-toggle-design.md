@@ -32,4 +32,6 @@ A per-vault toggle in the file-tree header that shows or hides **hidden entries*
 
 ## Non-goals
 
-A global (cross-vault) setting; hiding non-dot files by pattern; changing what the scanner excludes (`.git`, `node_modules`, `*.local.*`, `USER.md`, OS junk stay out of the tree entirely).
+A global (cross-vault) setting; hiding non-dot files by pattern; changing what the scanner excludes (`.git`, `node_modules`, OS junk stay out of the tree entirely).
+
+> **Superseded in part (D65, 2026-08-03):** this originally listed `*.local.*` / `USER.md` among "stay out of the tree entirely." They no longer do — local-only files (`*.local.*`, now incl. `USER.local.md`) **reach the snapshot and show under show-hidden**, gated by `isHiddenPath || isLocalOnlyPath`; only true non-content (`.git`, `node_modules`, tmp, junk) is excluded outright. They still never sync (`.gitignore`).

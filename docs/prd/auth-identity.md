@@ -65,7 +65,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 ### Identity & vaults
 6. **FR-6** After sign-in, fetch the viewer (`login`, `name`, `avatarUrl`) and cache it for offline display. Identity is the **GitHub account id**, not the login (logins are mutable).
 7. **FR-7** **Add vault** lists the user's repos (sorted by recent push, searchable) and clones the chosen one into the managed vault root.
-8. **FR-8** **New vault** creates a **private** repo, seeds it (a `.gitignore` covering `.holi/settings.local.json` and `USER.md`, a `.claude/` scaffold, an empty `AGENTS.md`/`MEMORY.md`, a daily-note folder), commits, pushes, and opens it.
+8. **FR-8** **New vault** creates a **private** repo, seeds it (a `.gitignore` covering `.holi/settings.local.json` and `USER.local.md`, a `.claude/` scaffold, an empty `AGENTS.md`/`MEMORY.md`, a daily-note folder), commits, pushes, and opens it.
 9. **FR-9** Vaults the user has added are remembered machine-locally, with their clone paths. This list is a *machine* fact, not an account fact — a second laptop starts empty and adds its own.
 
 ### Access
@@ -139,7 +139,7 @@ type Collaborator = {
 **Only Holi-managed clones.** Holi never adopts a checkout the user maintains themselves — autosave-commit inside a working tree where someone keeps WIP branches and staged changes is destructive, and a managed clone makes that impossible by construction.
 
 ### Creating a vault
-As FR-8: create a private repo, seed, commit, push, open. Seeding matters more than it looks — the `.gitignore` is what keeps `USER.md` and the machine-local settings out of a shared repo, and that is now a **file**, not a server boundary.
+As FR-8: create a private repo, seed, commit, push, open. Seeding matters more than it looks — the `.gitignore` is what keeps `USER.local.md` and the machine-local settings out of a shared repo, and that is now a **file**, not a server boundary.
 
 ### Losing access
 1. A teammate is removed from the repo on GitHub.
@@ -177,7 +177,7 @@ Key properties:
 - **Renderer compromise.** `contextIsolation: true`, no `nodeIntegration`; the token never crosses to the renderer. A fully compromised main process can read the keychain — out of scope to defend for v1, unchanged from before.
 - **A private repo made public** exposes vault contents. Holi should surface repo visibility in the members panel, because a vault silently becoming public is the highest-severity thing that can happen to it and nothing else in the product would show it.
 - **Login rename / account reuse** — keyed on `accountId`, so display updates and identity does not.
-- **`USER.md` or `.holi/settings.local.json` committed by accident** — the seed `.gitignore` prevents it, but an *adopted* repo (or one created before the seed changed) may lack the entries. Holi should check on vault open and offer to add them. This replaces a boundary the server used to enforce structurally, so it deserves an active check rather than a hope.
+- **`USER.local.md` or `.holi/settings.local.json` committed by accident** — the seed `.gitignore` prevents it, but an *adopted* repo (or one created before the seed changed) may lack the entries. Holi should check on vault open and offer to add them. This replaces a boundary the server used to enforce structurally, so it deserves an active check rather than a hope.
 - **Org SSO enforcement.** A GitHub org with SAML SSO requires the token to be authorized for the org; an unauthorized token fails with a specific error that must be surfaced as "authorize this token for your org", not as a generic auth failure.
 - **Rate limits.** Repo and collaborator lists are cheap but not free; cache them and refresh on demand rather than per render.
 - **Two machines, one vault, diverged** — normal git divergence, handled by the sync engine, not by identity.

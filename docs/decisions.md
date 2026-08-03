@@ -87,7 +87,47 @@ Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkC
 
 ---
 
-## Number allocation — **next free is D64**
+## D64 — A vault's theme is a whitelisted token map, not CSS.
+
+**Context.** The ask was per-vault customization of the app's look — "just colors and chrome, no change to layout" — authorable by the vault agent on the user's behalf. The old repo carried per-vault theme *CSS* guarded by a substring-blocklist validator, named in `architecture.md` §10 as the weak point. Two forks decided everything downstream: **what** the theme file is (constrained token map vs. raw scoped CSS + sanitizer) and **where** it lives (committed vault file vs. machine-local pref).
+
+**Decision.** Agreed with Nicolai 2026-08-02. **Landed** same day (`b160542`…`90efb2c`); design-of-record in [`specs/2026-08-02-per-vault-theming-design.md`](../specs/2026-08-02-per-vault-theming-design.md).
+
+1. **A whitelisted token map, not CSS.** `.holi/theme.json` carries `light`/`dark` blocks of whitelisted token → CSS *value*. "No layout change" is therefore **structural, not a promise**: the vocabulary has no token that can express spacing/size/position, and because values only ever become custom-property values consumed through `var()`, **no CSS is injected** — the §10 injection risk is gone by construction, not by a validator.
+2. **Colours + paint-only chrome only.** The 19 semantic colour tokens (+ `-foreground` pairs, `border`/`input`/`ring`), `scrollbar-thumb(-hover)`, `selection`; and `radius`, `shadow-popover`, `shadow-dialog`. Nothing else.
+3. **Committed base + personal override.** `.holi/theme.json` is committed (shared, agent-writable); `.holi/theme.local.json` (gitignored `*.local.*`) overrides **per key within each block**. Chosen over a localStorage pref, which the agent cannot write and which does not travel with the vault.
+4. **Applied on the document root.** Overriding the raw semantic tokens on `document.documentElement` re-cascades every `--color-*` utility (they are `var()` pointers via `@theme inline`) with zero component change — the onboarding-ritual mechanism generalised — and reaches Radix portals, which an inner wrapper would miss.
+5. **Agent authors it with native tools.** A seeded `.claude/skills/theme/SKILL.md` documents the schema + vocabulary; there is no `theme.write` route and no authoring UI (per "users are developers"). The one control is **Reset theme** in vault settings — the escape hatch back to standard, which a file makes awkward.
+6. **Two stores of the vocabulary, guarded.** The whitelist (TS) and the token defaults (CSS) must agree; a drift-guard test asserts every whitelisted token has a `--slug` definition, turning silent no-op drift into a red build.
+
+**Why.** "No layout change" is the load-bearing constraint, and a token map makes it unfalsifiable where a sanitizer only makes it likely; the same move deletes the injection surface the old validator was chasing. Committing the file (vs. a local pref) is what makes "the agent does it on the user's behalf" and "syncs to the team" both true, since the agent edits files and files sync.
+
+**Rejected.** *Raw scoped CSS + a sanitizer* — reintroduces the injection surface and downgrades "no layout" to best-effort. *Token map + a raw escape hatch* — two mental models for the same injection risk. *Titlebar/window-chrome as a knob* — the native macOS titlebar isn't CSS-reachable, so theming it needs a custom hidden titlebar, i.e. a layout change the constraint forbids; excluded until the constraint is relaxed. *A `theme:changed` push channel* — deferred; the renderer re-pulls on snapshot ticks (reapply is O(vault-activity)), which is correct and cheap for a local app.
+
+**Consolidates into** `architecture.md` §9 (the token tier now carries per-vault overrides) and §10 (the Theme-injection note, now resolved by construction). *Stays in the inbox until consolidated.*
+
+---
+
+## D65 — Local-ness is legible from the name; no gitignored file wears a synced-looking name.
+
+**Context.** `isLocalOnlyPath` special-cased `USER.md` as machine-local despite an ordinary, synced-looking name — hidden magic: a file that appears to be in git but silently isn't. Separately, *all* `*.local.*` files were excluded from the vault snapshot **entirely** (not merely hidden), so the show-hidden toggle could never reveal them — but a personal theme or config file is the user's *content*, not plumbing they should be unable to see. Surfaced while testing per-vault theming (`.holi/theme.local.json` was invisible even under show-hidden).
+
+**Decision.** Agreed with Nicolai 2026-08-03. **Landed** same day.
+
+1. **The `.local.` marker is the whole rule.** `isLocalOnlyPath` is now *only* the `.local.` basename test — the `USER.md` special case is deleted, and the personal user model is **`USER.local.md`**. `LOCAL_ONLY_IGNORE_LINES` is `['*.local.*']`. A file's git-vs-local status is now inspectable from its name, never a special case.
+2. **Local files are content the tree shows under show-hidden.** `scanVault` filters on a new **`isNonContentPath`** (dirs/tmp/junk only); local files reach the snapshot as `files` — **out of the note graph** (local markdown like `USER.local.md` never becomes a linkable note). The tree's hidden gate is `isHiddenPath(p) || isLocalOnlyPath(p)`, so a root-level `USER.local.md` is gated by the toggle too, not shown always.
+3. **The leak guarantee is unchanged, keyed only on `*.local.*`.** Commit is still `git add -A` gated by `.gitignore` — the snapshot is display-only. A bare `USER.md` now *travels* (ordinary content); a `.local.` file never commits. The leak test asserts both halves.
+4. **The watcher still ignores local writes** (`.holi/context.local.json` is rewritten every agent turn — watching it would storm the rescan loop), except `theme.local.json`'s live-reload carve-out; local files refresh in the tree on the 30s heal rather than instantly.
+
+**Why.** A reader must be able to tell whether a file is shared or private *from its name* — the same honesty every other `.local.` file already has; a normal name that is secretly ignored is exactly the trap that publishes a private file the day the ignore line drifts. And show-hidden should reveal a user's own local files, because they are content, not plumbing.
+
+**Rejected.** *Keep `USER.md` special-cased* — the magic this fixes. *Exclude local files from the tree entirely* — treats user config as plumbing; wrong for a theme or a personal model the user edits. *Make local markdown first-class notes* — pollutes the link graph (backrefs, `[[ ]]` autocomplete, rename) with config files.
+
+**Consolidates into** `architecture.md` §3 (the tree shows local files under show-hidden) and the config-layering/security prose, `glossary.md` + `prd/agent.md` + `prd/auth-identity.md` (`USER.local.md`), and the `path-safety` docstrings. **Supersedes** `specs/2026-07-26-hidden-files-toggle-design.md`'s "local files stay out of the tree entirely." *Stays in the inbox until consolidated.*
+
+---
+
+## Number allocation — **next free is D66**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 

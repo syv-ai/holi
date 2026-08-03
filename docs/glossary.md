@@ -77,15 +77,15 @@ The shared vault-assistant identity: **SOUL.md** / **IDENTITY.md** + shared **AG
 ### Config layering
 Claude Code's native layering, unmodified:
 1. **Shared** — the repo's `.claude/`, `AGENTS.md`, `MEMORY.md`. CC picks them up from the cwd; they travel because they are committed.
-2. **Personal** — the user's own `~/.claude` + `CLAUDE.local.md` + `USER.md`: machine-local, never touched by Holi.
+2. **Personal** — the user's own `~/.claude` + `CLAUDE.local.md` + `USER.local.md`: machine-local, never touched by Holi.
 3. **Holi app settings** — `.holi/settings.json` (committed, vault-wide) + `.holi/settings.local.json` (gitignored, machine-local) — the same shared/local convention CC itself uses.
 
 Chat history is machine-local, never committed.
 
-### USER.md / MEMORY.md / AGENTS.md
+### USER.local.md / MEMORY.md / AGENTS.md
 - **AGENTS.md** — the user-authored "System" instructions for the vault assistant. Committed.
 - **MEMORY.md** — the vault's shared scratchpad memory. Committed.
-- **USER.md** — the agent's model of an individual user. **Personal, machine-local** (never committed).
+- **USER.local.md** — the agent's model of an individual user. **Personal, machine-local** (never committed).
 
 ### Per-turn context
 The fresh context (active note, linked tasks, memory fill-state) injected into every agent turn via a **`UserPromptSubmit` hook**.

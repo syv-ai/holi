@@ -109,20 +109,20 @@ CC reads all of this from the cwd natively — **zero extra machinery**. A teamm
 **Personal (machine-local, untouched by Holi).**
 - The user's own **`~/.claude`** — global config, personal skills, plugins, auth.
 - **`CLAUDE.local.md`** in the clone — CC's native personal-per-project layer.
-- **`USER.md`** (the agent's model of *you*) — personal and machine-local, and therefore **gitignored** by the vault template. This is a real requirement now, not a property of the sync engine: nothing stops `git add -A` from committing it, so `.gitignore` is what enforces the privacy the old design got from a server boundary.
+- **`USER.local.md`** (the agent's model of *you*) — personal and machine-local, and therefore **gitignored** by the vault template. This is a real requirement now, not a property of the sync engine: nothing stops `git add -A` from committing it, so `.gitignore` is what enforces the privacy the old design got from a server boundary.
 
 **Holi app settings.**
 - **`.holi/settings.json`** — vault-wide app settings, committed.
 - **`.holi/settings.local.json`** — machine-local, gitignored (sync watermarks, reminder delivery state, UI prefs).
 
-Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.md` / a skill file *is* the edit path — no memory or skill ops.
+Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.local.md` / a skill file *is* the edit path — no memory or skill ops.
 
 ## Per-turn context & system prompt
 
 **Holi builds no prompt content.** This is the sharpest application of the standing principle, decided in the 2026-07-26 revision after the old repo over-engineered the agent on top of Claude Code. CC already reads `CLAUDE.md` (→ `@AGENTS.md`) from the cwd, already has native file/git/web tools, and already supports skills and `--resume`. So Holi builds none of it.
 
 **1. Base system prompt — none.** `--append-system-prompt` is **empty**; there is no `build_system_prompt` port. Everything the old prompt carried moves to a place CC already reads or the agent already discovers:
-- **Vault conventions** — the task-file convention (`task.<name>.md`, frontmatter keys, folder-is-the-lane, `done`-rolls-a-recurring-task), wiki-link rename, daily notes/recurrence, managed root files, the sync model, and **memory guidance** (USER.md/MEMORY.md, budgets, when-to-save) — live in **`AGENTS.md`** (read natively via the `CLAUDE.md` shim).
+- **Vault conventions** — the task-file convention (`task.<name>.md`, frontmatter keys, folder-is-the-lane, `done`-rolls-a-recurring-task), wiki-link rename, daily notes/recurrence, managed root files, the sync model, and **memory guidance** (USER.local.md/MEMORY.md, budgets, when-to-save) — live in **`AGENTS.md`** (read natively via the `CLAUDE.md` shim).
 - **Capabilities** are **`.claude/skills/`**, not prompt prose.
 - **The vault tree** is not injected; the agent `Glob`s it when it needs it.
 - **Persona** (the old IDENTITY/SOUL injection) is dropped for v1; if wanted later it goes in a CC-native file (`CLAUDE.md`/`CLAUDE.local.md`), not a Holi injection.
@@ -147,7 +147,7 @@ Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.md
 
 **The cost, stated plainly.** A skill-driven rename is not atomic and can miss a link. That is a real regression against a server op, and it is accepted because the alternative is keeping an MCP server, its lifecycle, and its per-run bearer token alive for one tool. If misses prove common, the answer is to move rename into the app (where the file tree already implements it) and expose it to the agent as a **slash command** the user runs, not to resurrect the op surface.
 
-**Everything else is native:** note read/write/append/backrefs → `Read/Write/Edit/Grep`; tasks → file ops; memory → edits on `USER.md`/`MEMORY.md`; skills → edits on skill files; asking the user → native `AskUserQuestion`; git → `Bash`; conversation recall → `claude --resume`.
+**Everything else is native:** note read/write/append/backrefs → `Read/Write/Edit/Grep`; tasks → file ops; memory → edits on `USER.local.md`/`MEMORY.md`; skills → edits on skill files; asking the user → native `AskUserQuestion`; git → `Bash`; conversation recall → `claude --resume`.
 
 **Phase 2** brings calendar and mail — external Google data, not vault files, and therefore the one category that will genuinely need an MCP server again. Reintroducing one *then*, for data that is not in the repo, is consistent with the rule; keeping one *now* would not be.
 
