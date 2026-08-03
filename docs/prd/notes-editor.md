@@ -220,9 +220,8 @@ A grep over the vault for `[[<path>` — no index, no `link_index` table, no mai
 ## Open questions
 1. **Do task files appear in the notes tree?** Shared with [`tasks.md`](tasks.md). They are markdown files, so by default they do.
 2. **Attributing a write.** Is the editor's own save distinguished by path+mtime bookkeeping, by pausing the watcher across the write, or by content comparison? The cheapest correct answer wins; content comparison is the only one that cannot race.
-3. **Undo across an external reload.** After a 3-way merge lands foreign text in the buffer, what does ⌘Z mean? Leaning: the merge is a single undoable transaction, so ⌘Z reverts to your text and re-flags the conflict.
 
-*Resolved:* task references in prose → ordinary path wiki-links (§Task links). Formatting hotkey set → standard B/I/E/K/strikethrough, toggle-aware.
+*Resolved:* task references in prose → ordinary path wiki-links (§Task links). Formatting hotkey set → standard B/I/E/K/strikethrough, toggle-aware. **Undo across an external reload** → a foreign reload is a *co-author's* edit, not your undo step: it is dispatched with `addToHistory:false` (⌘Z unwinds your keystrokes, not the foreign text) via a minimal prefix/suffix diff that preserves the caret — *not* the tentative "single undoable transaction" leaning, which contradicted §Undo. Design: [`../specs/2026-08-03-undo-external-reload-design.md`](../specs/2026-08-03-undo-external-reload-design.md).
 
 ---
 
