@@ -23,9 +23,13 @@
  *   - The snapshot push carries **no path**. Everything downstream re-derives
  *     from it, so an over-eager push is free and a missed one self-heals.
  */
+import { stat } from 'node:fs/promises'
+import { join } from 'node:path'
 import type { VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
+import { partitionBySize, type HeldBackFile } from './large-files'
+import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
 import { watchVault, type VaultWatcher } from './watcher'
@@ -119,6 +123,9 @@ export interface ActiveVault {
    * (`blockedReason`), and the agent's merge commit lets them resume on their own.
    */
   reconcile(): Promise<{ paths: string[] }>
+  /** Files the autosave held out of the last commit for being over the size cap
+   *  (the large-file gate). Derived each commit tick, never stored on disk. */
+  heldBack(): HeldBackFile[]
   close(): Promise<void>
 }
 
@@ -154,10 +161,17 @@ export async function openActiveVault(args: {
   repo: GitRepo
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
+  /** The large-file gate's held-back set, pushed every commit tick (including
+   *  empty, so a resolved file clears the surface). */
+  onHeldBack?: (files: HeldBackFile[]) => void
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
   const root = args.repo.root
+  // The size cap is a per-vault synced setting, read once at open (a config
+  // change takes effect on the next open — same as the seeded pre-commit hook).
+  const maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
+  let heldBack: HeldBackFile[] = []
 
   let closed = false
   let cached: VaultSnapshot = await scanVault(root)
@@ -294,13 +308,34 @@ export async function openActiveVault(args: {
     committing = true
     try {
       const status = await args.repo.status()
-      if (blockedReason(status) !== null || !status.dirty) {
-        // A clean tree is not an error and must not be logged as one: an idle
-        // timer on a vault nobody is touching finds one every time.
+      // The large-file gate: split the dirty paths by size and commit only the
+      // ones under the cap. Oversized files stay unstaged and unpushed — nothing
+      // large auto-publishes (fear (c)). Stat the working tree once; a path with
+      // no file (a deletion) has no size and always commits.
+      const sizes = new Map<string, number>()
+      await Promise.all(
+        status.dirtyPaths.map(async (p) => {
+          const size = await stat(join(root, p)).then((s) => s.size).catch(() => null)
+          if (size !== null) sizes.set(p, size)
+        }),
+      )
+      const partitioned = partitionBySize(
+        status.dirtyPaths,
+        (p) => sizes.get(p) ?? null,
+        maxCommittedFileBytes,
+      )
+      heldBack = partitioned.heldBack
+      // Push the surface every tick, even when empty, so a resolved file clears it.
+      args.onHeldBack?.(heldBack)
+
+      // An all-held-back tree is effectively clean: commit nothing, and let the
+      // sync state read up-to-date rather than perpetually dirty (the held-back
+      // files are untracked and would otherwise peg `status.dirty` forever).
+      if (blockedReason(status) !== null || partitioned.commit.length === 0) {
         setState(computeState(status))
         return null
       }
-      const sha = await args.repo.commitAll(commitMessage(status.dirtyPaths), status.dirtyPaths)
+      const sha = await args.repo.commitAll(commitMessage(partitioned.commit), partitioned.commit)
       await refreshState()
       // A commit that landed is work the remote does not have yet. Arm the
       // coalescer rather than pushing now, so a burst of commits (a board drag,
@@ -564,6 +599,7 @@ export async function openActiveVault(args: {
     repo: args.repo,
     snapshot: () => cached,
     syncState: () => state,
+    heldBack: () => heldBack,
     refresh: rescan,
     commitNow() {
       // ⌘S, a vault switch, and quit. Skips the timer entirely — FR-4 calls it

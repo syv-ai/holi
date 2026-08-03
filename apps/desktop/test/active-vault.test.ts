@@ -10,10 +10,11 @@
  * Timings are shrunk per test. `fileParallelism: false` is what keeps these
  * honest — read the comment in vitest.config.ts before touching a wait.
  */
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, afterEach, describe, expect, it } from 'vitest'
 import { GitError, openRepo } from '../src/main/git'
+import type { HeldBackFile } from '../src/main/vault/large-files'
 import {
   createVaultHost,
   openActiveVault,
@@ -248,6 +249,61 @@ describe('ActiveVault — commit', () => {
 
     expect(await count(dir)).toBe(before + 1)
     expect((await active.repo.status()).dirty).toBe(false)
+  })
+
+  it('holds an oversized file out of the commit, keeping the tree clean', async () => {
+    // Threshold 1 KB (via .holi/settings.json, read at open); a >1 KB file is
+    // held back while the ordinary note (and the settings file itself) commit.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await mkdir(join(dir, '.holi'), { recursive: true })
+    await writeFile(join(dir, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await writeFile(join(dir, 'note.md'), 'a thought\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await sleep(QUIESCE)
+
+    const held: HeldBackFile[][] = []
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onHeldBack: (f) => held.push(f),
+      // Loops off; if it commits, opening did. FR-7 aside, this pins the gate.
+      timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    // The note + settings landed; big.bin is held back, still on disk, and the
+    // tree reads clean/up-to-date rather than perpetually dirty.
+    expect((await active.repo.status()).dirtyPaths).toEqual(['big.bin'])
+    expect(active.syncState()).toEqual({ kind: 'up-to-date' })
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    expect(held.at(-1)).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
+  })
+
+  it('does not spin an empty commit when only held-back files remain', async () => {
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    await mkdir(join(dir, '.holi'), { recursive: true })
+    await writeFile(join(dir, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await sleep(QUIESCE)
+
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
+    })
+    open.push(active)
+    const after = await count(dir)
+
+    // A forced commit with nothing but the held-back file left makes no commit.
+    expect(await active.commitNow()).toBeNull()
+    expect(await count(dir)).toBe(after)
   })
 
   it('commits nothing, and complains about nothing, when the tree is clean', async () => {
