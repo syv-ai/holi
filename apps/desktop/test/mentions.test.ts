@@ -9,7 +9,7 @@ function ctx(doc: string, pos = doc.length, explicit = false) {
 
 const DATA = {
   notes: [{ path: 'notes/reading.md' }, { path: 'projects/plan.md' }],
-  tasks: [{ id: 't1', title: 'Ship it', status: 'todo' as const }],
+  tasks: [{ path: 'projects/task.ship-it.md', title: 'Ship it', status: 'todo' as const }],
 }
 
 describe('mentionCompletions (FR-8)', () => {
@@ -26,9 +26,9 @@ describe('mentionCompletions (FR-8)', () => {
     expect(opt?.apply).toBe('[[notes/reading.md]]')
   })
 
-  it('offers task completions that insert a [[task:id]] chip labelled by title', () => {
+  it('offers task completions that insert a path wiki-link labelled by title', () => {
     const result = mentionCompletions(ctx('ping @'), DATA)
-    const opt = result!.options.find((o) => o.apply === '[[task:t1]]')
+    const opt = result!.options.find((o) => o.apply === '[[projects/task.ship-it.md]]')
     expect(opt).toBeDefined()
     expect(opt!.label).toContain('Ship it')
   })

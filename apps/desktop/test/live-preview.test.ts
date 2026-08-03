@@ -4,7 +4,7 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { buildDecorations, taskInfoFacet } from '../src/renderer/src/editor/livePreview'
+import { buildDecorations, taskByPathFacet } from '../src/renderer/src/editor/livePreview'
 import type { WikiLinkChip } from '../src/renderer/src/editor/wikiLinkChips'
 
 function stateFor(doc: string, cursor = 0, extra: Extension[] = []) {
@@ -69,13 +69,15 @@ describe('buildDecorations (D22: plain decoration swap)', () => {
 })
 
 /**
- * Task chips (D27). The `@`-mention has always inserted `[[task:<id>]]`, and the editor
- * has always dropped it on the floor — the insert path and the render path disagreed, so
- * the app wrote text it would not render.
+ * Task chips. A task is a file, so a link to a task is an ordinary path wiki-link
+ * `[[…/task.foo.md]]` (D27/D60). The editor renders it as a task chip — carrying the
+ * task's status for the orb — when the path resolves to a task via the store, and as a
+ * plain note chip otherwise.
  */
-describe('buildDecorations — [[task:<id>]] chips', () => {
-  const known = taskInfoFacet.of((id) =>
-    id === 't1' ? { label: 'Ship the thing', missing: false } : { label: '[deleted task]', missing: true },
+describe('buildDecorations — task-path chips', () => {
+  const TASK = 'projects/task.ship.md'
+  const known = taskByPathFacet.of((path) =>
+    path === TASK ? { title: 'Ship the thing', status: 'todo' } : null,
   )
 
   const chipIn = (doc: string, extra: Extension[]): WikiLinkChip | undefined => {
@@ -84,56 +86,51 @@ describe('buildDecorations — [[task:<id>]] chips', () => {
     return found?.spec['widget'] as WikiLinkChip | undefined
   }
 
-  it('renders a task chip titled by the resolver, not by its id', () => {
-    const chip = chipIn('first\nsee [[task:t1]] ok', [known])
-    expect(chip).toMatchObject({ kind: 'task', target: 't1', label: 'Ship the thing', exists: true })
+  it('renders a task chip titled by the resolver, carrying its status', () => {
+    const chip = chipIn(`first\nsee [[${TASK}]] ok`, [known])
+    expect(chip).toMatchObject({
+      target: TASK,
+      label: 'Ship the thing',
+      exists: true,
+      task: { status: 'todo' },
+    })
   })
 
-  // The tombstone is D27's designed state, resolved by the same join the relations row
-  // uses — a chip and a relation must never disagree about whether a task is gone.
-  it('tombstones a task that is gone', () => {
-    const chip = chipIn('first\nsee [[task:ghost]] ok', [known])
-    expect(chip).toMatchObject({ label: '[deleted task]', exists: false })
+  // A path the store does not know is an ordinary note chip — never a task, never a lie.
+  it('renders a note chip for a non-task path', () => {
+    const chip = chipIn('first\nsee [[notes/plan.md]] ok', [known])
+    expect(chip).toMatchObject({ target: 'notes/plan.md', label: 'notes/plan.md' })
+    expect(chip?.task).toBeUndefined()
   })
 
   // An explicit label is the author's words; the live title must not overwrite them.
   it('prefers an explicit |Label over the live title', () => {
-    expect(chipIn('first\nsee [[task:t1|my words]] ok', [known])).toMatchObject({
+    expect(chipIn(`first\nsee [[${TASK}|my words]] ok`, [known])).toMatchObject({
       label: 'my words',
     })
   })
 
-  // The unwired default must not invent a tombstone: a chip claiming "[deleted task]"
-  // because a facet was missing would be a fresh lie of the kind this change removes.
-  it('falls back to the raw id without claiming the task is gone', () => {
-    expect(chipIn('first\nsee [[task:t1]] ok', [])).toMatchObject({ label: 't1', exists: true })
+  // The unwired default resolves nothing as a task, so a task path with no store is a
+  // plain note chip — no invented tombstone.
+  it('with no store, a task path is just a note chip', () => {
+    const chip = chipIn(`first\nsee [[${TASK}]] ok`, [])
+    expect(chip).toMatchObject({ target: TASK, label: TASK })
+    expect(chip?.task).toBeUndefined()
   })
 
-  it('reveals the raw [[task:…]] when the caret is inside it', () => {
+  it('reveals the raw [[…]] when the caret is inside it', () => {
     // The caret starts on the line ABOVE: live preview reveals the whole line it touches,
     // so a caret on the chip's own line would make this pass for the wrong reason.
-    const doc = 'first\nsee [[task:t1]] ok'
+    const doc = `first\nsee [[${TASK}]] ok`
     expect(chipIn(doc, [known])).toBeDefined()
-    const state = stateFor(doc, doc.indexOf('t1'), [known]) // caret inside the token
+    const state = stateFor(doc, doc.indexOf('ship'), [known]) // caret inside the token
     expect(specs(buildDecorations(state, 0, doc.length)).some((d) => d.spec['widget'])).toBe(false)
   })
 
-  // A note chip and a task chip route through different dataset keys, so a task id can
-  // never be handed to the note-opening path as if it were a vault path.
-  it('keeps note chips note-kind', () => {
-    expect(chipIn('first\nsee [[notes/plan.md]] ok', [known])).toMatchObject({
-      kind: 'note',
-      target: 'notes/plan.md',
-      label: 'notes/plan.md',
-    })
-  })
-
-  // The label fallback used to live inside the widget and moved to the call site when
-  // the widget grew a `kind`. Nothing covered it, so that move could have silently
-  // broken every `[[path|Label]]` in the vault — found by mutation, pinned here.
+  // The label fallback lives at the call site; nothing else covers it, so a broken move
+  // would silently break every `[[path|Label]]` in the vault.
   it('renders a note chip by its explicit |Label', () => {
     expect(chipIn('first\nsee [[notes/plan.md|The Plan]] ok', [known])).toMatchObject({
-      kind: 'note',
       target: 'notes/plan.md',
       label: 'The Plan',
     })
