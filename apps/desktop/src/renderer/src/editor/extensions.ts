@@ -13,6 +13,7 @@ import { languageForPath, validityStatus } from './languages'
 import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskChip } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
+import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { codeHighlighting, editorTheme } from './theme'
 
 /** Live seams the editor pulls on demand (the docExistsFacet pattern — closures
@@ -21,6 +22,8 @@ export interface EditorDeps {
   docExists: (path: string) => boolean
   /** Title + status for a `[[path]]` chip whose path is a task, else null. */
   taskByPath: (path: string) => TaskChip | null
+  /** Reads a note's text for the hover preview; null when the target is missing. */
+  readNote: ReadNote
   /** Notes + tasks for `@`-mention completion (FR-8). */
   mentionData: () => MentionData
   /** Where a clicked link goes (FR-6/FR-7). */
@@ -61,6 +64,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // livePreview is told to skip it (FR-2 hide / FR-16 reveal).
     frontmatterExtension,
     linkClickHandler(deps.nav),
+    wikiHoverPreview(deps.readNote),
     // Nested in-cell editors mutate the same doc — verify live that these
     // transactions compose with yCollab (FR-10 risk), no binding bypass.
     markdownTables(),

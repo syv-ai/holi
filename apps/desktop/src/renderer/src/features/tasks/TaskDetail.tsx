@@ -37,6 +37,7 @@ import {
   Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
+import { trpc } from '@/lib/trpc'
 import { baseEditorExtensions } from '@/editor/extensions'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
@@ -50,7 +51,7 @@ import {
   selectedTaskPathAtom,
   tasksAtom,
 } from '@/state/tasks'
-import { snapshotAtom } from '@/state/vaults'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 // A horizontal labelled field (label left, control right) — the compact shape the
 // narrow detail sidebar wants, distinct from the vertical FormField composite. It
@@ -286,6 +287,7 @@ export function TaskDescriptionEditor({
   hostClassName?: string
 }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const hostRef = useRef<HTMLDivElement>(null)
 
@@ -318,8 +320,15 @@ export function TaskDescriptionEditor({
             docExists: (p) => docPaths.current.has(p),
             taskByPath: (p) => {
               const t = tasksByPath.current.get(p)
-              return t ? { title: t.title, status: t.status } : null
+              return t ? { title: t.title, status: t.status, due: t.due } : null
             },
+            readNote: (p) =>
+              remote === null
+                ? Promise.resolve(null)
+                : trpc.notes.read.query({ remote, path: p }).then(
+                    (text) => text,
+                    () => null,
+                  ),
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
             notePath,

@@ -154,8 +154,13 @@ export function EditorPane({
                   docExists: (p) => docPaths.current.has(p),
                   taskByPath: (p) => {
                     const t = tasksByPath.current.get(p)
-                    return t ? { title: t.title, status: t.status } : null
+                    return t ? { title: t.title, status: t.status, due: t.due } : null
                   },
+                  readNote: (p) =>
+                    trpc.notes.read.query({ remote, path: p }).then(
+                      (text) => text,
+                      () => null,
+                    ),
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
                   notePath: path,

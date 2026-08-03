@@ -36,6 +36,8 @@ export const notePathFacet = Facet.define<string, string>({
 export interface TaskChip {
   title: string
   status: TaskStatus
+  /** YYYY-MM-DD; shown in the hover preview, not on the inline chip. */
+  due?: string
 }
 
 /** Path → task lookup for chips, the sibling of `docExistsFacet`. The unwired default
