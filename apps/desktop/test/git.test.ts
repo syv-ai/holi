@@ -247,6 +247,47 @@ describe('commitAll', () => {
   })
 })
 
+describe('commitFileNoVerify (large-file "commit anyway")', () => {
+  it('commits a single file, leaving other dirty files untouched', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'keep.bin'), 'x'.repeat(50), 'utf8')
+    await writeFile(join(dir, 'other.md'), 'other\n', 'utf8')
+    const repo = openRepo(dir)
+
+    expect(await repo.commitFileNoVerify('keep.bin')).toMatch(/^[0-9a-f]{40}$/)
+    expect((await repo.status()).dirtyPaths).toEqual(['other.md'])
+  })
+
+  it('bypasses a pre-commit hook (the one deliberate override)', async () => {
+    const dir = await makeClone(await makeRemote())
+    // A hook that refuses every commit — commitFileNoVerify must still land it.
+    const hook = join(dir, '.git', 'hooks', 'pre-commit')
+    await writeFile(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(50), 'utf8')
+
+    expect(await openRepo(dir).commitFileNoVerify('big.bin')).not.toBeNull()
+  })
+
+  it('returns null when the path is not dirty (nothing to stage)', async () => {
+    const repo = openRepo(await makeClone(await makeRemote()))
+    expect(await repo.commitFileNoVerify('README.md')).toBeNull()
+  })
+})
+
+describe('excludeLocally (large-file "keep local")', () => {
+  it('stops an untracked file showing as dirty, without committing it', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'video.mov'), 'x'.repeat(50), 'utf8')
+    const repo = openRepo(dir)
+    expect((await repo.status()).dirtyPaths).toEqual(['video.mov'])
+
+    await repo.excludeLocally('video.mov')
+    expect((await repo.status()).dirtyPaths).toEqual([])
+    // Local-only: .git/info/exclude, never the shared .gitignore.
+    expect(await readFile(join(dir, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+  })
+})
+
 describe('pull', () => {
   /** Us and a teammate, both cloned from the same remote. */
   async function pair() {

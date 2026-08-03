@@ -14,7 +14,7 @@
  * interface, and a locale or git-version change would silently alter it.
  */
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -174,6 +174,12 @@ export interface GitRepo {
    * was already clean — "nothing to commit" is the normal outcome of an idle
    * timer on an untouched vault, not an error. */
   commitAll(message: string, paths: string[]): Promise<string | null>
+  /** "Commit anyway" for a held-back file: stage this one path and commit it with
+   *  `--no-verify` (the deliberate large-file hook bypass). Null if not dirty. */
+  commitFileNoVerify(path: string): Promise<string | null>
+  /** "Keep local" for a held-back file: append it to `.git/info/exclude`, git's
+   *  machine-local ignore — the file stays on disk but stops being dirty/synced. */
+  excludeLocally(path: string): Promise<void>
 }
 
 /**
@@ -565,6 +571,31 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   /**
+   * "Commit anyway" for a held-back file: stage exactly this path and commit it
+   * with `--no-verify` — the one deliberate bypass of the large-file pre-commit
+   * hook, for a file the user has decided belongs in git. Returns null when the
+   * path is not dirty (nothing to stage), never an empty commit.
+   */
+  async function commitFileNoVerify(path: string): Promise<string | null> {
+    await runGit(root, ['add', '--', path], opts)
+    if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
+    await runGit(root, [...(await identityArgs()), 'commit', '--no-verify', '-m', `Add ${path}`], opts)
+    return runGit(root, ['rev-parse', 'HEAD'], opts)
+  }
+
+  /**
+   * "Keep local" for a held-back file: append it to `.git/info/exclude` — git's
+   * machine-local ignore, uncommitted, so it never touches the shared `.gitignore`
+   * (another clone decides for itself). An untracked file listed here stops
+   * showing as dirty, so it leaves the held-back set on its own.
+   */
+  async function excludeLocally(path: string): Promise<void> {
+    const excludeFile = join(root, '.git', 'info', 'exclude')
+    await mkdir(dirname(excludeFile), { recursive: true })
+    await appendFile(excludeFile, `${path}\n`, 'utf8')
+  }
+
+  /**
    * `git status --porcelain=v2 --branch -z`, and nothing else.
    *
    * Porcelain v2's `# branch.*` headers carry everything the vault indicator
@@ -670,7 +701,20 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out !== ''
   }
 
-  return { root, status, log, show, changedFiles, commitAll, pull, remerge, push, abortMerge }
+  return {
+    root,
+    status,
+    log,
+    show,
+    changedFiles,
+    commitAll,
+    commitFileNoVerify,
+    excludeLocally,
+    pull,
+    remerge,
+    push,
+    abortMerge,
+  }
 }
 
 /**

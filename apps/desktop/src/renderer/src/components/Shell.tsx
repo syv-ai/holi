@@ -51,12 +51,32 @@ import { openDialogAtom } from '../state/dialogs'
 import { agentPanelOpenAtom } from '@/state/agent'
 import { usePanelLayout } from '../state/preferences'
 import { useVaultTheme } from '../state/theme'
-import { activeRemoteAtom, openVaultAtom, reconcileAtom, syncStateAtom, vaultsAtom } from '../state/vaults'
+import {
+  activeRemoteAtom,
+  heldBackAtom,
+  openVaultAtom,
+  reconcileAtom,
+  syncStateAtom,
+  vaultsAtom,
+} from '../state/vaults'
 
 // quiet/busy map to semantic tokens; warn stays a named amber utility — there is
 // no warning token yet, and named palette utilities are gate-legal (only arbitrary
 // colour literals are banned).
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text-amber-400' } as const
+
+/** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB']
+  let value = bytes / 1024
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
+}
 
 export function Shell() {
   const session = useAtomValue(sessionAtom)
@@ -76,6 +96,7 @@ export function Shell() {
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const todayLinkCount = useAtomValue(todayLinkCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
+  const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
   // Paint the active vault's colour/chrome theme onto the document root.
@@ -168,6 +189,15 @@ export function Shell() {
   // quiet footer button; only these get the banner.
   const configConflicts =
     syncState.kind === 'conflict' ? syncState.paths.filter(isVaultConfigPath) : []
+
+  // Resolve a held-back file: commit it anyway, or keep it local. Drop it from
+  // the list optimistically — main re-pushes the accurate set on its next tick.
+  const resolveHeld = async (path: string, action: 'commit' | 'keep') => {
+    if (activeRemote === null) return
+    if (action === 'commit') await trpc.vaults.commitFile.mutate({ remote: activeRemote, path })
+    else await trpc.vaults.keepFileLocal.mutate({ remote: activeRemote, path })
+    setHeldBack((files) => files.filter((f) => f.path !== path))
+  }
 
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
@@ -422,6 +452,47 @@ export function Shell() {
               Ask Claude to reconcile
             </Button>
           </Tooltip>
+        </div>
+      )}
+
+      {/* The large-file gate (vaults-sync.md §Edge cases): files over the size
+          cap are held out of git so they can't bloat every clone permanently.
+          Amber, not destructive — nothing is wrong, there is just a decision to
+          make. Each file offers commit-anyway or keep-local. */}
+      {heldBack.length > 0 && (
+        <div className="border-t border-amber-700/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+          <p className="mb-1.5">
+            <span className="font-semibold">
+              {heldBack.length} file{heldBack.length === 1 ? '' : 's'} held back
+            </span>{' '}
+            — over the size limit, kept out of git so they don&rsquo;t bloat every clone.
+          </p>
+          <ul className="space-y-1">
+            {heldBack.map((f) => (
+              <li key={f.path} className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded bg-amber-900/30 px-1 font-mono">
+                  {f.path}
+                </code>
+                <span className="shrink-0 text-amber-300/70">{formatBytes(f.bytes)}</span>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="shrink-0"
+                  onClick={() => void resolveHeld(f.path, 'commit')}
+                >
+                  Commit anyway
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="shrink-0"
+                  onClick={() => void resolveHeld(f.path, 'keep')}
+                >
+                  Keep local
+                </Button>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

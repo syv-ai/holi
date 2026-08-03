@@ -600,6 +600,24 @@ export function createRouter(deps: RouterDeps) {
       }
       return { ok: true as const }
     }),
+
+    // "Commit anyway" for a file the large-file gate held back: the user has
+    // decided this big asset belongs in git. Bypasses the pre-commit hook.
+    commitFile: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }) => {
+        await openRepo(await rootFor(input.remote)).commitFileNoVerify(safe(input.path))
+        return { ok: true as const }
+      }),
+
+    // "Keep local" for a held-back file: git-ignore it machine-locally so it
+    // stays on disk but never commits or syncs (`.git/info/exclude`).
+    keepFileLocal: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .mutation(async ({ input }) => {
+        await openRepo(await rootFor(input.remote)).excludeLocally(safe(input.path))
+        return { ok: true as const }
+      }),
   })
 
   /** Does this file exist? The existence half of "create must not clobber". */

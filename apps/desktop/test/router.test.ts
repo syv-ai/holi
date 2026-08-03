@@ -1130,6 +1130,35 @@ describe('vaults.add', () => {
   })
 })
 
+describe('vaults large-file actions', () => {
+  /** Adopt a real clone and return its on-disk path. */
+  async function adopted() {
+    const { caller } = await rig()
+    await caller.vaults.add({ remote: 'syv-ai/notes', url: await makeRemote() })
+    const path = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')!.path
+    return { caller, path }
+  }
+
+  it('commitFile commits a held-back file, clearing it from the dirty tree', async () => {
+    const { caller, path } = await adopted()
+    await writeFile(join(path, 'big.bin'), 'x'.repeat(50), 'utf8')
+
+    await caller.vaults.commitFile({ remote: 'syv-ai/notes', path: 'big.bin' })
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'big.bin'])).toBe('')
+  })
+
+  it('keepFileLocal excludes a held-back file locally, keeping it on disk', async () => {
+    const { caller, path } = await adopted()
+    await writeFile(join(path, 'video.mov'), 'x'.repeat(50), 'utf8')
+
+    await caller.vaults.keepFileLocal({ remote: 'syv-ai/notes', path: 'video.mov' })
+    // No longer dirty (git-ignored locally) but still on disk.
+    expect(await plainGit(path, ['status', '--porcelain', '--', 'video.mov'])).toBe('')
+    await expect(readFile(join(path, 'video.mov'), 'utf8')).resolves.toHaveLength(50)
+    expect(await readFile(join(path, '.git', 'info', 'exclude'), 'utf8')).toContain('video.mov')
+  })
+})
+
 describe('vaults.create', () => {
   it('creates the repo, seeds it, commits and pushes', async () => {
     const { caller, session, base } = await rig({}, seeded())
