@@ -13,7 +13,7 @@
  * by these tests. Content comparison is the only one that cannot race.
  */
 import { describe, expect, it } from 'vitest'
-import { decideReload } from '../src/renderer/src/lib/editor-reload'
+import { decideReload, minimalChange } from '../src/renderer/src/lib/editor-reload'
 
 describe('decideReload', () => {
   it('does nothing when disk matches base, whoever did the writing', () => {
@@ -56,5 +56,46 @@ describe('decideReload', () => {
     expect(result.kind).toBe('conflict')
     if (result.kind !== 'conflict') throw new Error('expected a conflict')
     expect(result.regions.length).toBeGreaterThan(0)
+  })
+})
+
+describe('minimalChange', () => {
+  it('returns null when the texts are identical', () => {
+    expect(minimalChange('hello\n', 'hello\n')).toBeNull()
+  })
+
+  it('reports a pure insertion as an empty-range change', () => {
+    // Foreign edit prepended; nothing of `current` is removed.
+    expect(minimalChange('hello', 'TOP\nhello')).toEqual({ from: 0, to: 0, insert: 'TOP\n' })
+  })
+
+  it('reports a pure deletion as an empty insert', () => {
+    // "one\nt" is common on both sides, so the diff opens at 5, not 4: it deletes
+    // "wo\nt" (5..9), leaving "one\nt" + "hree".
+    expect(minimalChange('one\ntwo\nthree', 'one\nthree')).toEqual({
+      from: 5,
+      to: 9,
+      insert: '',
+    })
+  })
+
+  it('reports a middle replacement bounded by the common prefix and suffix', () => {
+    // "one\n" prefix, "\nthree" suffix, only "two" -> "TWO" between them.
+    expect(minimalChange('one\ntwo\nthree', 'one\nTWO\nthree')).toEqual({
+      from: 4,
+      to: 7,
+      insert: 'TWO',
+    })
+  })
+
+  it('clamps so the prefix and suffix cannot overlap when one text contains the other', () => {
+    // Common prefix "aa" (len 2) and common suffix "aa" (len 2) would sum past
+    // current.length (3); the suffix is clamped to a single deletion at the end.
+    expect(minimalChange('aaa', 'aa')).toEqual({ from: 2, to: 3, insert: '' })
+  })
+
+  it('handles the empty-string edges', () => {
+    expect(minimalChange('', 'new')).toEqual({ from: 0, to: 0, insert: 'new' })
+    expect(minimalChange('gone', '')).toEqual({ from: 0, to: 4, insert: '' })
   })
 })

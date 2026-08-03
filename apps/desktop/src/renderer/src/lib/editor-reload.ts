@@ -48,3 +48,38 @@ export function decideReload(base: string, buffer: string, disk: string): Reload
     ? { kind: 'merged', text: merged.text }
     : { kind: 'conflict', regions: merged.regions }
 }
+
+/**
+ * The single contiguous change that turns `current` into `target`: the span
+ * between their common prefix and common suffix. `null` when they are equal.
+ *
+ * A one-span diff is coarser than a multi-hunk one, but it is always correct —
+ * and for a `merged` reload the diff of the buffer against the merged text *is*
+ * the foreign edit, so the changed span never covers the caret, and CodeMirror's
+ * selection mapping preserves it for free. Framework-free on purpose: the return
+ * is a CodeMirror `ChangeSpec` shape, but this module holds no view dependency.
+ */
+export function minimalChange(
+  current: string,
+  target: string,
+): { from: number; to: number; insert: string } | null {
+  if (current === target) return null
+  const maxPrefix = Math.min(current.length, target.length)
+  let prefix = 0
+  while (prefix < maxPrefix && current[prefix] === target[prefix]) prefix++
+  // Cap the suffix so it cannot reach back past the prefix in either string —
+  // otherwise "aaa" -> "aa" would double-count the shared run.
+  const maxSuffix = Math.min(current.length - prefix, target.length - prefix)
+  let suffix = 0
+  while (
+    suffix < maxSuffix &&
+    current[current.length - 1 - suffix] === target[target.length - 1 - suffix]
+  ) {
+    suffix++
+  }
+  return {
+    from: prefix,
+    to: current.length - suffix,
+    insert: target.slice(prefix, target.length - suffix),
+  }
+}
