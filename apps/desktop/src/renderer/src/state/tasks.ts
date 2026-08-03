@@ -13,7 +13,7 @@
  * writing wiki-links in its body — backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { allLabels, taskArea } from '@holi/shared'
+import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
@@ -36,6 +36,24 @@ export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
  * "how much is on my plate" is one glance without opening the board. */
 export const openTaskCountAtom = atom(
   (get) => get(snapshotAtom).tasks.filter((t) => t.status !== 'done').length,
+)
+
+/** Open (not-done) tasks whose body links to `notePath` (daily-notes FR-6). A task
+ * links by writing a wiki-link in its description — backrefs are a grep, not an index.
+ * A task counts once no matter how many times it links. */
+export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): number {
+  let n = 0
+  for (const t of tasks) {
+    if (t.status === 'done') continue
+    if (parseWikiLinks(t.description).some((l) => l.target === notePath)) n += 1
+  }
+  return n
+}
+
+/** The badge on the sidebar "Today" entry: how many open tasks link to today's note
+ * (daily-notes §UX). Zero → the Shell renders no badge. */
+export const todayLinkCountAtom = atom((get) =>
+  countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
 )
 
 /** Today, as YYYY-MM-DD. Held in state so virtual labels stay pure and testable

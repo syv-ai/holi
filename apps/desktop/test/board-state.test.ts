@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ROOT_LANE,
   availableLabels,
+  countOpenTasksLinking,
   dropIntent,
   laneLabel,
   laneOrder,
@@ -19,6 +20,36 @@ const task = (over: Partial<Task> = {}): Task => ({
   tags: [],
   description: '',
   ...over,
+})
+
+describe('countOpenTasksLinking (daily-notes FR-6)', () => {
+  const DAILY = '14-07-2026.md'
+
+  it('counts open tasks whose body links to the note, labelled links included', () => {
+    const tasks = [
+      task({ path: 'a.md', description: 'see [[14-07-2026.md]]' }),
+      task({ path: 'b.md', description: 'ref [[14-07-2026.md|Today]] here' }),
+      task({ path: 'c.md', description: 'no link' }),
+    ]
+    expect(countOpenTasksLinking(tasks, DAILY)).toBe(2)
+  })
+
+  it('excludes done tasks even when they link', () => {
+    const tasks = [
+      task({ path: 'a.md', status: 'done', description: '[[14-07-2026.md]]' }),
+      task({ path: 'b.md', status: 'doing', description: '[[14-07-2026.md]]' }),
+    ]
+    expect(countOpenTasksLinking(tasks, DAILY)).toBe(1)
+  })
+
+  it('counts a task once however many times it links', () => {
+    const tasks = [task({ description: '[[14-07-2026.md]] and again [[14-07-2026.md]]' })]
+    expect(countOpenTasksLinking(tasks, DAILY)).toBe(1)
+  })
+
+  it('ignores links to other notes', () => {
+    expect(countOpenTasksLinking([task({ description: '[[other.md]]' })], DAILY)).toBe(0)
+  })
 })
 
 describe('lanes', () => {

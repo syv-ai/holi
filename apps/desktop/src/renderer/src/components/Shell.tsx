@@ -46,7 +46,7 @@ import {
 import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
-import { openTaskCountAtom } from '../state/tasks'
+import { openTaskCountAtom, todayLinkCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import { agentPanelOpenAtom } from '@/state/agent'
 import { usePanelLayout } from '../state/preferences'
@@ -74,6 +74,7 @@ export function Shell() {
   const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
+  const todayLinkCount = useAtomValue(todayLinkCountAtom)
   const reconcile = useSetAtom(reconcileAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
@@ -205,12 +206,19 @@ export function Shell() {
               <Button
                 variant="secondary"
                 size="xs"
-                className="flex-1"
+                className="flex-1 gap-1.5"
                 // FR-6: opens today's daily (personal vaults only; the atom no-ops
                 // otherwise). Also the empty-state recovery path — always here.
                 onClick={() => void openDaily()}
               >
                 today
+                {/* Open tasks linking to today's note (daily-notes §UX). Zero → no badge;
+                    in a shared vault nothing links to the daily path, so it stays hidden. */}
+                {todayLinkCount > 0 && (
+                  <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
+                    {todayLinkCount}
+                  </span>
+                )}
               </Button>
             </Tooltip>
             <Tooltip content={`task board — ${openTaskCount} open`}>
