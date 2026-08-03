@@ -26,7 +26,7 @@ export async function scanBackrefs(
     const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
     if (text === null) continue
     const count = parseWikiLinks(text).filter(
-      (link) => link.kind === 'note' && link.target === target,
+      (link) => link.target === target,
     ).length
     if (count > 0) out.push({ path, count })
   }
@@ -52,7 +52,7 @@ export async function scanBackrefsMany(
     const text = await readFile(`${root}/${path}`, 'utf8').catch(() => null)
     if (text === null) continue
     const count = parseWikiLinks(text).filter(
-      (link) => link.kind === 'note' && set.has(link.target),
+      (link) => set.has(link.target),
     ).length
     if (count > 0) out.push({ path, count })
   }

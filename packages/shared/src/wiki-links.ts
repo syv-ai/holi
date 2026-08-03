@@ -1,13 +1,13 @@
 /**
  * Canonical grammar for vault references in note markdown (ports the shape of
- * the old `vaultRefs.ts` — one parser, thin renderers, D12/D22/D27):
+ * the old `vaultRefs.ts` — one parser, thin renderers, D12/D22):
  *
  *  - `[[vault-relative/path.md]]` wiki-links, optionally `[[path|Label]]`
- *  - `[[task:<id>]]` task chips (stable-ID machine refs, D27)
  *
- * Framework-free by design: no React/CodeMirror imports. Consumed by the
- * editor renderer, the server's link_index + rename rewrite, and the agent's
- * link authoring.
+ * There is one grammar. A link to a task is a link to its file like any other —
+ * the `[[task:<id>]]` token is gone with task ids (D27/D60). Framework-free by
+ * design: no React/CodeMirror imports. Consumed by the editor renderer, the
+ * rename rewrite, and the agent's link authoring.
  */
 
 /**
@@ -25,16 +25,11 @@ export function wikiLinkRegex(): RegExp {
   return new RegExp(WIKI_LINK_BODY, 'g')
 }
 
-/** Prefix marking a task chip body: `[[task:<id>]]`. */
-export const TASK_REF_PREFIX = 'task:'
-
 /** A single wiki-link match within some text. */
 export interface WikiLinkMatch {
   /** The whole matched token, e.g. `[[notes/a.md|Label]]`. */
   raw: string
-  /** `note` for path links, `task` for `[[task:<id>]]` chips. */
-  kind: 'note' | 'task'
-  /** The vault-relative path (note) or the task id (task), trimmed. */
+  /** The vault-relative path, trimmed. */
   target: string
   /** Display label after `|`, trimmed; undefined when absent. */
   label: string | undefined
@@ -54,23 +49,10 @@ export function parseWikiLinks(text: string): WikiLinkMatch[] {
     const body = m[1]?.trim()
     if (!body) continue
     const pipe = body.indexOf('|')
-    let target = (pipe >= 0 ? body.slice(0, pipe) : body).trim()
+    const target = (pipe >= 0 ? body.slice(0, pipe) : body).trim()
     const label = pipe >= 0 ? body.slice(pipe + 1).trim() || undefined : undefined
     if (!target) continue
-    let kind: WikiLinkMatch['kind'] = 'note'
-    if (target.startsWith(TASK_REF_PREFIX)) {
-      kind = 'task'
-      target = target.slice(TASK_REF_PREFIX.length).trim()
-      if (!target) continue
-    }
-    out.push({
-      raw: m[0],
-      kind,
-      target,
-      label,
-      start: m.index,
-      end: m.index + m[0].length,
-    })
+    out.push({ raw: m[0], target, label, start: m.index, end: m.index + m[0].length })
   }
   return out
 }
@@ -81,10 +63,10 @@ export function formatWikiLink(target: string, label?: string): string {
 }
 
 /**
- * Rewrite every note link targeting `fromPath` to `toPath`, preserving labels
- * (the D12 rename primitive — the server applies this to each affected doc's
- * text). Task chips and other targets are untouched. Matching uses the same
- * trimming as the parser, and rewritten tokens come out normalized.
+ * Rewrite every link targeting `fromPath` to `toPath`, preserving labels
+ * (the D12 rename primitive — applied to each affected doc's text). Links to
+ * other targets are untouched. Matching uses the same trimming as the parser,
+ * and rewritten tokens come out normalized.
  */
 export function rewriteWikiLinks(
   text: string,
@@ -96,7 +78,7 @@ export function rewriteWikiLinks(
   let cursor = 0
   let count = 0
   for (const link of links) {
-    if (link.kind !== 'note' || link.target !== fromPath) continue
+    if (link.target !== fromPath) continue
     out += text.slice(cursor, link.start) + formatWikiLink(toPath, link.label)
     cursor = link.end
     count += 1
@@ -113,7 +95,7 @@ export function rewriteWikiLinks(
  * moves `b.md` must resolve to `map.get('a.md')` and stop there, even when that
  * value is itself a key (`a→b`, `b→c`): chaining it on to `c` is precisely the
  * double-rewrite that applying N single-target `rewriteWikiLinks` in sequence
- * produces. Labels are preserved; task chips and untargeted links are untouched.
+ * produces. Labels are preserved; untargeted links are untouched.
  */
 export function rewriteWikiLinksMulti(
   text: string,
@@ -124,7 +106,6 @@ export function rewriteWikiLinksMulti(
   let cursor = 0
   let count = 0
   for (const link of links) {
-    if (link.kind !== 'note') continue
     const to = moves.get(link.target)
     if (to === undefined) continue
     out += text.slice(cursor, link.start) + formatWikiLink(to, link.label)
