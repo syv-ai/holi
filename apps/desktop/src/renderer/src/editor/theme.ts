@@ -109,6 +109,35 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-completionMatchedText': { color: '#7dd3fc', textDecoration: 'none' },
   '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText': { color: '#e0f2fe' },
 
+  // Wiki-link hover preview (FR-6). The card owns its chrome, so strip the base
+  // tooltip wrapper. Colours are D64 tokens, so a vault theme recolours the card.
+  '.cm-tooltip.cm-tooltip-hover': { background: 'transparent', border: 'none' },
+  '.cm-wiki-preview': {
+    background: 'var(--popover)',
+    color: 'var(--popover-foreground)',
+    border: '1px solid var(--border)',
+    borderRadius: '6px',
+    padding: '8px 10px',
+    maxWidth: '320px',
+    fontSize: '12px',
+    lineHeight: '1.5',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+  },
+  '.cm-wiki-preview-title': {
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    marginBottom: '4px',
+  },
+  '.cm-wiki-preview-meta': { color: 'var(--muted-foreground)' },
+  '.cm-wiki-preview-line': {
+    color: 'var(--muted-foreground)',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+
   // Validity status strip (plain/code editor). A bottom panel; strip CM's default
   // panel chrome so it reads as part of the dark editor, not a boxed toolbar.
   '.cm-panels, .cm-panels-bottom': { background: 'transparent', border: 'none' },
