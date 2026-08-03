@@ -80,18 +80,20 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     timings: { pullIntervalMs: 3_600_000, healIntervalMs: 3_600_000, commitQuietMs: 3_600_000 },
   })
   hosts.push(host)
+  const trashItem = vi.fn(async () => {})
   const caller = createRouter({
     registry,
     session,
     host,
     vaultRoot: join(base, 'Holi'),
     openExternal: async () => {},
+    trashItem,
     downloadsDir: join(base, 'Downloads'),
     typstCacheDir: join(base, 'typst'),
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
-  return { caller, root, registry, host, session, base }
+  return { caller, root, registry, host, session, base, trashItem }
 }
 
 describe('vaults', () => {
@@ -127,6 +129,30 @@ describe('vaults', () => {
     expect(await caller.vaults.list()).toEqual([])
     // unpublished work must never be a casualty of forgetting a vault
     await expect(readFile(join(root, 'a.md'), 'utf8')).resolves.toBe('# A\n')
+  })
+
+  it('unpushed is advisory: a clone whose git status cannot be read is omitted, not fatal', async () => {
+    // The rig's clone is a plain dir, not a git repo, so `status()` throws. The
+    // summary must swallow that and report nothing rather than breaking sign-out.
+    const { caller } = await rig({ 'a.md': '# A\n' })
+    await expect(caller.vaults.unpushed()).resolves.toEqual([])
+  })
+
+  it('deleteClones trashes every clone (recoverable) and clears the registry', async () => {
+    const { caller, root, trashItem } = await rig({ 'a.md': '# A\n' })
+    await caller.vaults.deleteClones()
+    // Recoverable delete: the clone went to the OS trash, not an rm — so the
+    // private vault, or one deleted by mistake, can be restored and re-ingested.
+    expect(trashItem).toHaveBeenCalledWith(root)
+    expect(await caller.vaults.list()).toEqual([])
+  })
+
+  it('deleteClones keeps a clone registered if trashing it fails (never orphaned)', async () => {
+    const { caller, trashItem } = await rig({ 'a.md': '# A\n' })
+    trashItem.mockRejectedValueOnce(new Error('trash unavailable'))
+    await caller.vaults.deleteClones()
+    // Best-effort: a clone still on disk stays in the registry, not stranded.
+    expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
   })
 })
 
@@ -776,6 +802,7 @@ async function authRig(routes: Record<string, Scripted[]>, seed?: StoredAuth) {
     host,
     vaultRoot: join(base, 'Holi'),
     openExternal,
+    trashItem: async () => {},
     downloadsDir: join(base, 'Downloads'),
     typstCacheDir: join(base, 'typst'),
   }).createCaller({})

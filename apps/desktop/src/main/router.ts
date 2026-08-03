@@ -33,7 +33,7 @@ import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
-import { remoteUrl, type Commit } from './git'
+import { openRepo, remoteUrl, type Commit } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
@@ -94,6 +94,17 @@ export interface RouterDeps {
    * repo's collaborator settings, because Holi does not implement invitation.
    */
   openExternal: (url: string) => Promise<void>
+  /**
+   * Move a directory to the OS trash (Electron's `shell.trashItem`), injected
+   * for the same reason as `openExternal` — the router stays electron-free and
+   * testable under plain Node.
+   *
+   * Sign-out's "also delete local clones" (FR-15) uses this rather than a hard
+   * `rm`, on purpose: a clone removed by mistake — or the user's private vault —
+   * is recoverable from the trash and can be re-ingested. A destructive account
+   * action should be undoable.
+   */
+  trashItem: (path: string) => Promise<void>
   /** Absolute dir the Convert-to-PDF output is written to (the user's Downloads).
    *  Injected rather than read from electron here so the router stays
    *  typecheckable and testable under plain Node. */
@@ -547,6 +558,48 @@ export function createRouter(deps: RouterDeps) {
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
       // — which may hold unpublished commits — is never a side effect here.
       .mutation(({ input }) => deps.registry.remove(input.remote)),
+
+    // What "also delete local clones" would throw away (FR-15 / Open-Q3). One
+    // entry per registered clone with commits that never reached the remote, so
+    // the sign-out dialog can warn before deleting. Advisory and best-effort: a
+    // clone whose status can't be read (a local-fixture repo, a broken clone) is
+    // omitted rather than breaking the whole summary — `status().ahead` needs the
+    // upstream ref, which every real managed clone has.
+    unpushed: t.procedure.query(async (): Promise<{ remote: string; ahead: number }[]> => {
+      const out: { remote: string; ahead: number }[] = []
+      for (const e of await deps.registry.list()) {
+        try {
+          const { ahead } = await openRepo(e.path).status()
+          if (ahead > 0) out.push({ remote: e.remote, ahead })
+        } catch {
+          // best-effort: skip a clone we can't inspect
+        }
+      }
+      return out
+    }),
+
+    // Sign-out's optional "also delete local clones" (FR-15). **Recoverable on
+    // purpose:** each clone goes to the OS trash, not `rm -rf`, so a vault
+    // deleted by mistake — or a private one — can be restored and re-ingested.
+    //
+    // Close the active vault first: its watcher and autosave/push timers run on
+    // the clone dir, and trashing it out from under them would fire events into a
+    // moved tree. `close()` also flushes and pushes the active vault on the way
+    // out, so its work reaches the remote before the local copy goes. Per-clone
+    // best-effort: one that won't trash stays on disk AND in the registry, never
+    // orphaned.
+    deleteClones: t.procedure.mutation(async (): Promise<{ ok: true }> => {
+      await deps.host.close()
+      for (const e of await deps.registry.list()) {
+        try {
+          await deps.trashItem(e.path)
+          await deps.registry.remove(e.remote)
+        } catch (err) {
+          console.error(`[vaults] could not trash clone ${e.remote}:`, err)
+        }
+      }
+      return { ok: true as const }
+    }),
   })
 
   /** Does this file exist? The existence half of "create must not clobber". */

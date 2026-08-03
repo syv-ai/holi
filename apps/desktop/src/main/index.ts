@@ -151,6 +151,10 @@ async function main(): Promise<void> {
       const { shell } = await import('electron')
       await shell.openExternal(url)
     },
+    trashItem: async (path) => {
+      const { shell } = await import('electron')
+      await shell.trashItem(path)
+    },
     downloadsDir: app.getPath('downloads'),
     typstCacheDir,
   })
