@@ -19,7 +19,7 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, isHiddenPath } from '@holi/shared'
+import { fileKind, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -136,10 +136,15 @@ export function FileTree({
   // to the batch atoms. FileTree only reads its state and calls its methods.
   const actions = useExplorerActions(docPaths)
 
-  // Hidden (dot-prefixed) entries are filtered out unless the per-vault toggle is
-  // on. Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never hidden.
+  // Hidden entries are filtered out unless the per-vault toggle is on. "Hidden"
+  // means dot-prefixed (`.holi/…`) OR machine-local (`*.local.*`, e.g.
+  // `USER.local.md` at the root — not dot-prefixed, but the toggle should still
+  // gate it). Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never
+  // hidden.
   const data = useMemo(() => {
-    const visible = showHidden ? docPaths : docPaths.filter((p) => !isHiddenPath(p))
+    const visible = showHidden
+      ? docPaths
+      : docPaths.filter((p) => !isHiddenPath(p) && !isLocalOnlyPath(p))
     return buildTreeData(visible, actions.pendingFolders)
   }, [docPaths, actions.pendingFolders, showHidden])
 

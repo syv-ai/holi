@@ -6,6 +6,7 @@ import { vaultRelPath } from '@holi/shared'
 import {
   absPathFor,
   isIgnoredPath,
+  isNonContentPath,
   listFiles,
   moveDocFile,
   removeDocFile,
@@ -38,13 +39,26 @@ describe('vault-files', () => {
     expect(toVaultRel(root, '/etc/passwd')).toBeNull()
   })
 
-  it('isIgnoredPath: local-only, tmp markers, junk', () => {
-    expect(isIgnoredPath('USER.md')).toBe(true)
+  it('isIgnoredPath (what the watcher ignores): local-only, tmp markers, junk', () => {
+    expect(isIgnoredPath('USER.local.md')).toBe(true)
     expect(isIgnoredPath('.holi/settings.local.json')).toBe(true)
     expect(isIgnoredPath('notes/.holi-tmp-abc123')).toBe(true)
     expect(isIgnoredPath('.DS_Store')).toBe(true)
     expect(isIgnoredPath('notes/a.md')).toBe(false)
     expect(isIgnoredPath('.claude/settings.json')).toBe(false)
+    // A bare USER.md is ordinary content now — no special case.
+    expect(isIgnoredPath('USER.md')).toBe(false)
+  })
+
+  it('isNonContentPath (what the store excludes): junk/tmp/dirs, but NOT local-only', () => {
+    expect(isNonContentPath('notes/.holi-tmp-abc123')).toBe(true)
+    expect(isNonContentPath('.DS_Store')).toBe(true)
+    expect(isNonContentPath('node_modules/x/y.js')).toBe(true)
+    expect(isNonContentPath('.git/HEAD')).toBe(true)
+    // Local-only files ARE content the store surfaces (git keeps them uncommitted).
+    expect(isNonContentPath('.holi/theme.local.json')).toBe(false)
+    expect(isNonContentPath('USER.local.md')).toBe(false)
+    expect(isNonContentPath('notes/a.md')).toBe(false)
   })
 
   it('move + remove', async () => {

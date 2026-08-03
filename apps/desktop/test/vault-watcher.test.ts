@@ -174,13 +174,14 @@ describe('watchVault', () => {
   })
 
   it('does not fire for a machine-local file', async () => {
-    // USER.md is gitignored and never syncs; a change to it is not a vault
-    // change and must not produce a commit attempt.
+    // USER.local.md is gitignored and never syncs; a change to it is not a vault
+    // change and must not produce a commit attempt. (A bare USER.md, by contrast,
+    // is now ordinary content and WOULD fire — locality is only the .local. mark.)
     const root = await vault()
     const rec = recorder()
     await start(root, rec.onChange)
 
-    await writeFile(join(root, 'USER.md'), 'about me\n', 'utf8')
+    await writeFile(join(root, 'USER.local.md'), 'about me\n', 'utf8')
     await sleep(SETTLE)
 
     expect(rec.count).toBe(0)

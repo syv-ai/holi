@@ -43,11 +43,14 @@ export function vaultRelPath(raw: string): VaultRelPath {
 }
 
 /** Machine-local paths that sync/mirror/export layers must never treat as
- * vault content: `*.local.*` basenames (`.holi/settings.local.json`,
- * `CLAUDE.local.md`, `.holi/context.local.json`) and the personal root
- * `USER.md` (agent PRD §Config layering). */
+ * committed vault content — identified **solely** by the `.local.` marker in the
+ * basename (`.holi/settings.local.json`, `.holi/context.local.json`,
+ * `.holi/theme.local.json`, `CLAUDE.local.md`, `USER.local.md`).
+ *
+ * The marker is the whole rule on purpose: a file's git-vs-local status must be
+ * legible from its name, never a special-cased exception. (This is why the
+ * personal user model is `USER.local.md`, not a magically-ignored `USER.md`.) */
 export function isLocalOnlyPath(path: string): boolean {
-  if (path === 'USER.md') return true
   const base = path.split('/').at(-1) ?? path
   return /\.local\./.test(base)
 }
@@ -62,7 +65,7 @@ export function isLocalOnlyPath(path: string): boolean {
  * commit published to every collaborator. A line missing here is a private file
  * in someone else's clone.
  */
-export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['USER.md', '*.local.*']
+export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
 
 /**
  * Whether a vault-relative path is "hidden" in the explorer — true iff any

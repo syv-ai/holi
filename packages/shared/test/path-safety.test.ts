@@ -95,9 +95,10 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     // nothing about isLocalOnlyPath, so a line missing here publishes a
     // machine-local file to every collaborator.
     for (const path of [
-      'USER.md',
+      'USER.local.md',
       '.holi/settings.local.json',
       '.holi/context.local.json',
+      '.holi/theme.local.json',
       'CLAUDE.local.md',
     ]) {
       expect(isLocalOnlyPath(path)).toBe(true)
@@ -105,8 +106,10 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     }
   })
 
-  it('does not ignore ordinary vault content', () => {
-    for (const path of ['AGENTS.md', 'MEMORY.md', 'notes/user.md', 'projects/local-plans.md']) {
+  it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is only the .local. marker)', () => {
+    // USER.md is no longer special-cased: a synced-looking name IS synced. The
+    // personal model lives at USER.local.md, whose name declares its locality.
+    for (const path of ['AGENTS.md', 'MEMORY.md', 'USER.md', 'notes/user.md', 'projects/local-plans.md']) {
       expect(isLocalOnlyPath(path)).toBe(false)
       expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
     }

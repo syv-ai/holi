@@ -13,13 +13,13 @@
  * **`.gitignore` is the exception, and the reason this module matters.** An
  * adopted repo usually already has one, so create-if-missing would silently
  * never write ours — and the sync engine commits with `git add -A`, so the
- * first commit would carry `USER.md` to every collaborator. Its lines are
- * therefore appended individually, and they come from `LOCAL_ONLY_IGNORE_LINES`
- * rather than being copied here, so the ignore file and the vault store's
- * notion of "machine-local" cannot drift apart.
+ * first commit would carry a `*.local.*` file to every collaborator. Its lines
+ * are therefore appended individually, and they come from
+ * `LOCAL_ONLY_IGNORE_LINES` rather than being copied here, so the ignore file
+ * and the vault store's notion of "machine-local" cannot drift apart.
  *
- * `USER.md` is deliberately NOT seeded: it is machine-local, and the agent
- * creates it when it first learns something about the user.
+ * `USER.local.md` is deliberately NOT seeded: it is machine-local (its name says
+ * so), and the agent creates it when it first learns something about the user.
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -101,9 +101,9 @@ turn goes idle, so there is only ever one git actor and you never contend on
 
 - \`MEMORY.md\` — shared with everyone in the vault. Vault conventions,
   environment quirks, approaches that did not work.
-- \`USER.md\` — your model of one individual. **Machine-local and gitignored**;
-  it never reaches anyone else's clone. Keep personal detail here, not in
-  \`MEMORY.md\`.
+- \`USER.local.md\` — your model of one individual. **Machine-local and
+  gitignored** (the \`.local.\` in the name is what makes it so); it never
+  reaches anyone else's clone. Keep personal detail here, not in \`MEMORY.md\`.
 `
 
 const MEMORY_MD = `# Memory
@@ -182,11 +182,25 @@ const PLAIN_MANIFEST =
     2,
   ) + '\n'
 
+/**
+ * The vault's colour/chrome theme, seeded empty (D64). Both files ship in every
+ * vault so theming is discoverable — a member opens the vault, finds them under
+ * show-hidden, and knows where shared (`theme.json`, committed) vs personal
+ * (`theme.local.json`, gitignored) overrides go. Empty blocks = the standard
+ * look until edited; the token vocabulary lives in the seeded `theme` skill.
+ */
+const THEME_SKELETON = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} }, null, 2) + '\n'
+
 /** Written only when absent. Never updated, so a member's edit survives. */
 export const SEED_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
   '.holi/templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/templates/plain/template.typ': plainTemplateTyp,
+  '.holi/theme.json': THEME_SKELETON,
+  // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
+  // the personal-override slot exists by default. The `.gitignore` is written
+  // first in `ensureSeeded`, so this is ignored before it lands.
+  '.holi/theme.local.json': THEME_SKELETON,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,
@@ -204,7 +218,7 @@ export const GITIGNORE = '.gitignore'
  *
  * Line-wise rather than whole-file, because an adopted repo's existing ignores
  * are not ours to replace — and because appending to a file with no trailing
- * newline would otherwise produce `node_modulesUSER.md`, which ignores nothing
+ * newline would otherwise produce `node_modules*.local.*`, which ignores nothing
  * while looking like it ignores something.
  */
 export function gitignoreWithLocalOnly(existing: string | null): string | null {

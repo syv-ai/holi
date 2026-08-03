@@ -17,8 +17,14 @@
  *     model will occasionally write bad frontmatter.
  */
 import { readFile, stat } from 'node:fs/promises'
-import { isTaskFilePath, parseTaskFile, TaskFileError, type VaultSnapshot } from '@holi/shared'
-import { isIgnoredPath, listFiles } from './vault-files'
+import {
+  isLocalOnlyPath,
+  isTaskFilePath,
+  parseTaskFile,
+  TaskFileError,
+  type VaultSnapshot,
+} from '@holi/shared'
+import { isNonContentPath, listFiles } from './vault-files'
 
 // The shape is `@holi/shared`'s: the renderer reads it too, and a type that
 // crossed the IPC seam by being imported out of `main/` would make the seam a
@@ -44,7 +50,10 @@ function isDaily(text: string): boolean {
 export async function scanVault(root: string): Promise<VaultSnapshot> {
   const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [] }
 
-  const all = (await listFiles(root)).filter((rel) => !isIgnoredPath(rel))
+  // Exclude only true non-content (dirs/tmp/junk). Local-only files (`*.local.*`)
+  // DO reach the snapshot so the tree can show them under show-hidden; git keeps
+  // them out of a commit, not this filter.
+  const all = (await listFiles(root)).filter((rel) => !isNonContentPath(rel))
 
   for (const path of all) {
     const mtime = () =>
@@ -52,10 +61,12 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
         .then((s) => s.mtime.toISOString())
         .catch(() => new Date(0).toISOString())
 
-    // Non-markdown: a plain file entry. No read, no parse — it is not a note, so
-    // it stays out of `docs` and the link-aware ops (backrefs/rename) never see
-    // it (spec §Arbitrary files).
-    if (!path.endsWith('.md')) {
+    // Non-markdown OR local-only: a plain file entry. No read, no parse — it is
+    // not a note, so it stays out of `docs` and the link-aware ops
+    // (backrefs/rename/mentions) never see it. Local-only markdown (USER.local.md,
+    // CLAUDE.local.md) is content the tree shows but the note graph must not
+    // absorb — it is personal config, not a linkable note (spec §Arbitrary files).
+    if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
     }

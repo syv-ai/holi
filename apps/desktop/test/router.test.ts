@@ -1038,7 +1038,7 @@ describe('vaults.add', () => {
     expect(host.active()?.remote).toBe('syv-ai/notes')
     // Seeded on the way in, so the `.gitignore` is in place before the first
     // commit can carry a machine-local file.
-    expect(await readFile(join(entry!.path, '.gitignore'), 'utf8')).toContain('USER.md')
+    expect(await readFile(join(entry!.path, '.gitignore'), 'utf8')).toContain('*.local.*')
     expect(await readFile(join(entry!.path, 'AGENTS.md'), 'utf8')).toContain('# Agent rules')
   })
 

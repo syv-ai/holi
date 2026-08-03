@@ -33,12 +33,29 @@ export function toVaultRel(root: string, absPath: string): VaultRelPath | null {
   }
 }
 
-/** Paths the vault store must never treat as content. */
-export function isIgnoredPath(rel: string): boolean {
+/**
+ * Paths that are **never vault content at all** — directories we never walk
+ * (`.git`, `node_modules`), tmp write-files, and OS junk. This is distinct from
+ * *local-only* files (`*.local.*`): those ARE the user's content — the tree
+ * shows them (under show-hidden) and the agent reads them — they just never get
+ * committed (`.gitignore`). The vault store filters on THIS, so local files
+ * reach the snapshot; git is what keeps them out of a commit.
+ */
+export function isNonContentPath(rel: string): boolean {
   const segments = rel.split('/')
   const base = segments.at(-1)!
   if (segments.some((s) => IGNORED_DIRS.has(s))) return true
-  return isLocalOnlyPath(rel) || base.startsWith(TMP_MARKER) || JUNK.has(base)
+  return base.startsWith(TMP_MARKER) || JUNK.has(base)
+}
+
+/**
+ * Non-content **plus** local-only. This is what the *watcher* ignores: a change
+ * to `.holi/context.local.json` (rewritten every agent turn) must not storm the
+ * rescan loop. The snapshot uses `isNonContentPath` instead, so those files
+ * still appear in the tree — refreshed on the periodic heal rather than live.
+ */
+export function isIgnoredPath(rel: string): boolean {
+  return isNonContentPath(rel) || isLocalOnlyPath(rel)
 }
 
 export async function writeAtomic(root: string, rel: VaultRelPath, text: string): Promise<void> {

@@ -19,9 +19,10 @@ break the layout.
   committed). If it exists, its keys win over `theme.json` **per key**, so a
   one-line local file can recolour just `primary` and inherit the rest.
 
-Create either file if it's missing. Malformed JSON, unknown keys, and invalid
-values are ignored (the app falls back to defaults) — so a typo is safe, but check
-your work: a dropped key just won't take effect.
+Both files already exist in every vault, seeded empty (`{"dark":{},"light":{}}`)
+— edit them, no need to create. Malformed JSON, unknown keys, and invalid values
+are ignored (the app falls back to defaults) — so a typo is safe, but check your
+work: a dropped key just won't take effect.
 
 ## Shape
 

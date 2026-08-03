@@ -46,7 +46,7 @@ function runHook(name: string, opts: { env?: Record<string, string>; cwd?: strin
 }
 
 describe('SEED_FILES', () => {
-  it('covers exactly the spec\'s managed set (USER.md is machine-local, never seeded)', () => {
+  it('covers exactly the spec\'s managed set (USER.local.md is machine-local, never seeded)', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
@@ -54,11 +54,19 @@ describe('SEED_FILES', () => {
       '.claude/skills/theme/SKILL.md',
       '.holi/templates/plain/template.json',
       '.holi/templates/plain/template.typ',
+      '.holi/theme.json',
+      '.holi/theme.local.json',
       '.holi/vault.json',
       'AGENTS.md',
       'CLAUDE.md',
       'MEMORY.md',
     ])
+  })
+
+  it('seeds an empty, valid theme.json and a blank theme.local.json', () => {
+    for (const key of ['.holi/theme.json', '.holi/theme.local.json'] as const) {
+      expect(JSON.parse(SEED_FILES[key]!)).toMatchObject({ dark: {}, light: {} })
+    }
   })
 
   it('seeds the md-to-pdf skill with the Typst render recipe', () => {
@@ -145,10 +153,10 @@ describe('ensureSeeded', () => {
     expect(second).toEqual([]) // everything is on disk now
   })
 
-  it('does not seed USER.md — it is machine-local', async () => {
+  it('does not seed USER.local.md — it is machine-local', async () => {
     const root = await tempDir()
     await ensureSeeded(root)
-    await expect(readFile(join(root, 'USER.md'), 'utf8')).rejects.toThrow()
+    await expect(readFile(join(root, 'USER.local.md'), 'utf8')).rejects.toThrow()
   })
 })
 
@@ -165,8 +173,8 @@ describe('ensureSeeded — the .gitignore', () => {
   it('APPENDS to a .gitignore that already exists, keeping what was there', async () => {
     // Decision 10's hole, and the reason .gitignore is not create-if-missing
     // like the rest. An adopted repo usually already has one, so ours would
-    // never be written — and `commitAll` runs `git add -A`, which means USER.md
-    // reaches the shared history on the very first commit.
+    // never be written — and `commitAll` runs `git add -A`, which means a
+    // `*.local.*` file reaches the shared history on the very first commit.
     const root = await tempDir()
     await writeFile(join(root, '.gitignore'), 'node_modules\ndist\n')
 
@@ -196,7 +204,7 @@ describe('ensureSeeded — the .gitignore', () => {
   })
 
   it('does not join onto a file with no trailing newline', async () => {
-    // `USER.mdnode_modules` ignores nothing and looks like it ignores something.
+    // `node_modules*.local.*` ignores nothing and looks like it ignores something.
     const root = await tempDir()
     await writeFile(join(root, '.gitignore'), 'node_modules')
 
@@ -214,10 +222,14 @@ describe('ensureSeeded — the .gitignore', () => {
     await exec('git', ['-C', root, 'config', 'user.name', 'Holi Test'])
 
     await ensureSeeded(root)
-    await writeFile(join(root, 'USER.md'), 'private notes about the user\n')
+    await writeFile(join(root, 'USER.local.md'), 'private notes about the user\n')
     await mkdir(join(root, '.holi'), { recursive: true })
     await writeFile(join(root, '.holi/settings.local.json'), '{"machine":"local"}\n')
     await writeFile(join(root, 'shared.md'), 'this one should travel\n')
+    // A bare USER.md is ordinary content now — the name has no `.local.`, so it
+    // is NOT ignored and MUST travel. This is the honesty guarantee: locality is
+    // legible from the name, never a special case.
+    await writeFile(join(root, 'USER.md'), 'a synced-looking name is synced\n')
 
     await exec('git', ['-C', root, 'add', '-A'])
     await exec('git', ['-C', root, 'commit', '-m', 'first'])
@@ -226,8 +238,11 @@ describe('ensureSeeded — the .gitignore', () => {
 
     expect(committed).toContain('shared.md')
     expect(committed).toContain('AGENTS.md')
-    expect(committed).not.toContain('USER.md')
+    expect(committed).toContain('USER.md') // no longer special-cased — it travels
+    expect(committed).toContain('.holi/theme.json') // seeded + committed (shared theme)
+    expect(committed).not.toContain('USER.local.md')
     expect(committed).not.toContain('.holi/settings.local.json')
+    expect(committed).not.toContain('.holi/theme.local.json') // seeded but gitignored
   })
 })
 
