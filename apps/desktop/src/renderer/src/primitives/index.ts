@@ -36,6 +36,7 @@ export {
   DropdownMenuTrigger,
 } from './DropdownMenu'
 export { Input } from './Input'
+export { Popover, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'
 export {

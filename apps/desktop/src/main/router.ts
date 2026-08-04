@@ -50,9 +50,11 @@ import {
 import type { CalendarPrefsStore } from './google/calendar-prefs'
 import type { GoogleData } from './google/data'
 import {
+  fetchMailCounts,
   listThreads,
   readThread,
   type MailCategory,
+  type MailCounts,
   type MailPage,
   type MailThread,
 } from './google/gmail'
@@ -189,39 +191,45 @@ async function isVaultClone(root: string): Promise<boolean> {
 /** A tiny validator, so the router keeps its input contract without pulling in a
  * schema library for four shapes. Each one throws on anything it did not ask
  * for; tRPC turns that into a BAD_REQUEST. */
-type Parsed<T extends Record<string, 'string' | 'string?'>> = {
-  [K in keyof T as T[K] extends 'string?' ? never : K]: string
+type FieldKind = 'string' | 'string?' | 'boolean' | 'boolean?'
+
+/** What a spec entry produces once parsed. */
+type ValueOf<K extends FieldKind> = K extends 'boolean' | 'boolean?' ? boolean : string
+
+type Parsed<T extends Record<string, FieldKind>> = {
+  [K in keyof T as T[K] extends `${string}?` ? never : K]: ValueOf<T[K]>
 } & {
   // Genuinely optional, not "required and possibly undefined". tRPC infers a
   // procedure's input from this type, so the difference is whether a caller may
   // omit the key at all — and every optional field here is one a caller omits.
-  [K in keyof T as T[K] extends 'string?' ? K : never]?: string
+  [K in keyof T as T[K] extends `${string}?` ? K : never]?: ValueOf<T[K]>
 }
 
-function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
+/**
+ * Booleans are **checked, never coerced.**
+ *
+ * This validator was string-only for a reason worth keeping now that it is not:
+ * a coerced `"false"` reads as true, which is how a calendar silently switches
+ * back on. So a `boolean` field demands an actual boolean and throws on
+ * anything else, rather than accepting the string form and guessing.
+ */
+function fields<T extends Record<string, FieldKind>>(spec: T) {
   return (raw: unknown): Parsed<T> => {
     if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
     const input = raw as Record<string, unknown>
     const out: Record<string, unknown> = {}
     for (const [key, kind] of Object.entries(spec)) {
       const value = input[key]
+      const wanted = kind.startsWith('boolean') ? 'boolean' : 'string'
       if (value === undefined || value === null) {
-        if (kind === 'string?') continue
+        if (kind.endsWith('?')) continue
         throw new Error(`${key} is required`)
       }
-      if (typeof value !== 'string') throw new Error(`${key} must be a string`)
+      if (typeof value !== wanted) throw new Error(`${key} must be a ${wanted}`)
       out[key] = value
     }
     return out as never
   }
-}
-
-/** A required boolean. Separate from `fields`, which is deliberately
- *  string-only — a coerced `"false"` would read as true and silently switch a
- *  calendar back on. */
-function booleanOrThrow(value: unknown, key: string): boolean {
-  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`)
-  return value
 }
 
 const MAIL_CATEGORIES: readonly MailCategory[] = [
@@ -1284,10 +1292,7 @@ export function createRouter(deps: RouterDeps) {
      * carried on reading their day.
      */
     setCalendar: t.procedure
-      .input((raw: unknown) => ({
-        ...fields({ id: 'string' })(raw),
-        enabled: booleanOrThrow((raw as { enabled?: unknown }).enabled, 'enabled'),
-      }))
+      .input(fields({ id: 'string', enabled: 'boolean' }))
       .mutation(async ({ input }) => {
         if (deps.calendarPrefs === undefined) {
           throw new TRPCError({
@@ -1308,12 +1313,20 @@ export function createRouter(deps: RouterDeps) {
      * not two that can disagree.
      */
     threads: t.procedure
-      .input(fields({ query: 'string?', pageToken: 'string?', category: 'string?' }))
+      .input(
+        fields({
+          query: 'string?',
+          pageToken: 'string?',
+          category: 'string?',
+          unread: 'boolean?',
+        }),
+      )
       .query(({ input }): Promise<MailPage> => {
         const options = {
           query: input.query,
           pageToken: input.pageToken,
           category: asMailCategory(input.category),
+          unread: input.unread,
         }
         // Cached AND current: the delta brings the cached list up to date, so
         // this is fast without ever being stale.
@@ -1334,6 +1347,17 @@ export function createRouter(deps: RouterDeps) {
     thread: t.procedure
       .input(fields({ id: 'string' }))
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
+
+    /**
+     * How much mail there is, for the list footer.
+     *
+     * **Exact**, from Gmail's own per-label bookkeeping — not the
+     * `resultSizeEstimate` the category picker refuses to show, which is
+     * approximate and so would put a number people trust in front of them and
+     * be wrong. `null` when the request fails: the footer then says nothing
+     * rather than guessing.
+     */
+    mailCounts: t.procedure.query((): Promise<MailCounts | null> => fetchMailCounts(googleApi())),
   })
 
   /** No store configured means no explicit choices — every calendar follows the

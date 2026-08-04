@@ -130,13 +130,33 @@ function HtmlFrame({
     }
     document_.addEventListener('click', onClick)
 
-    // The frame has no intrinsic height, and its content's height is not known
-    // until it has been laid out — nor stable afterwards, since unblocked images
-    // arrive later and push everything down.
-    const measure = () => setHeight(document_.documentElement.scrollHeight)
+    /**
+     * The frame has no intrinsic height, so it is measured and set — and the
+     * measurement has to be right, because a frame shorter than its content
+     * does not merely clip: it becomes its own little scroll area inside the
+     * thread, which is the one thing a mail reader must never do.
+     *
+     * **Observe `body`, not `documentElement`.** The root element's box *is*
+     * the frame viewport — the height we just set — so a ResizeObserver on it
+     * watches our own output and never fires when the content grows. That is a
+     * feedback loop with no signal in it, and it is why a message could end up
+     * short and scrollable. `body`'s box follows the content.
+     *
+     * `scrollHeight` is taken from both, and the larger wins: margins on the
+     * body are outside its own scroll box but inside the root's, and mail is
+     * full of body margins.
+     */
+    const measure = () =>
+      setHeight(
+        Math.max(
+          document_.documentElement.scrollHeight,
+          document_.body.scrollHeight,
+          document_.body.offsetHeight,
+        ),
+      )
     measure()
     const observer = new ResizeObserver(measure)
-    observer.observe(document_.documentElement)
+    observer.observe(document_.body)
     // Capture: `load` on an <img> does not bubble.
     document_.addEventListener('load', measure, true)
 

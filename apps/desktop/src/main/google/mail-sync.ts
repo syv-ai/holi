@@ -108,7 +108,9 @@ export async function syncThreads(
   cache.writeThreads(key, threads)
   if (page.historyId !== undefined) cache.setHistoryId(key, page.historyId)
 
-  return { threads, nextPageToken: null }
+  // A delta IS a sync: these threads are current as of this moment, even
+  // though most of them were served from disk rather than refetched.
+  return { threads, nextPageToken: null, syncedAt: new Date().toISOString() }
 }
 
 /**

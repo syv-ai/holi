@@ -160,11 +160,18 @@ export function mailFrameDocument({ html, palette, allowRemoteContent }: MailFra
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
 html { color-scheme: ${palette.scheme}; }
+/* The frame is sized to this content by the app, so it must never scroll
+   vertically on its own — a message that scrolls inside the thread is a
+   scroll area within a scroll area, and the wheel stops meaning one thing.
+   Horizontal is left alone: a wide table has to go somewhere, and clipping
+   it would silently hide content rather than let the user reach it. */
+html { overflow-y: hidden; }
 body {
   margin: 0; padding: 12px;
   background: ${palette.background}; color: ${palette.foreground};
   font: 13px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow-wrap: break-word;
+  overflow-x: auto;
 }
 img { max-width: 100%; height: auto; }
 table { max-width: 100%; }

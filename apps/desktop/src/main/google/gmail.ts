@@ -29,11 +29,25 @@ const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
  *  internally — the two names are not interchangeable in the API. */
 export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
 
+/**
+ * A person on a message, as the header spelled them.
+ *
+ * Both halves are kept: `name` is what a list shows, `email` is what identifies
+ * them. See `parseAddress` for why keeping only the name was a mistake.
+ */
+export interface MailAddress {
+  /** The display name, falling back to the address when the header had none. */
+  name: string
+  /** The bare address, lowercased, or `''` when the header carried nothing that
+   *  looks like one. Empty means "do not offer a mailto:". */
+  email: string
+}
+
 export interface MailThreadSummary {
   id: string
   subject: string
-  /** The sender, preferring the display name over the raw address. */
-  from: string
+  /** The sender of the most recent message. */
+  from: MailAddress
   /** ISO, from the message's `Date` header. */
   date: string
   snippet: string
@@ -81,11 +95,11 @@ export interface MailAttachment {
 
 export interface MailMessage {
   id: string
-  from: string
-  to: string[]
+  from: MailAddress
+  to: MailAddress[]
   /** Who else saw this. A reply-all is a different act from a reply, and this
    *  header is the only thing that says which one is called for. */
-  cc: string[]
+  cc: MailAddress[]
   date: string
   /** Every part with a filename, however deep. **No extra request** — the
    *  thread is already fetched at `format=full`, so the parts are in hand. */
@@ -165,24 +179,42 @@ function headerOf(part: RawPart | undefined, name: string): string | null {
   return found?.value ?? null
 }
 
-/** `"Nicolai Thomsen" <nicolai@syv.ai>` → `Nicolai Thomsen`; a bare address is
- *  returned as-is. Display beats precision here — a list of addresses is much
- *  harder to scan than a list of names. */
-function displayName(address: string | null): string {
-  if (address === null) return ''
-  const match = /^\s*"?([^"<]*?)"?\s*<[^>]+>\s*$/.exec(address)
-  const name = match?.[1]?.trim()
-  return name !== undefined && name !== '' ? name : address.trim()
+/**
+ * `"Nicolai Thomsen" <nicolai@syv.ai>` → `{ name, email }`.
+ *
+ * **Both halves travel**, where this used to keep only the name. The name is
+ * still what a list shows — a column of addresses is far harder to scan than a
+ * column of names — but the address is the only thing that identifies a person,
+ * and dropping it in the parser meant nothing downstream could ever offer a
+ * `mailto:`, group two spellings of the same colleague, or say who a sender
+ * actually is. A renderer cannot recover what main threw away.
+ *
+ * `email` is lowercased because addresses are compared, not just shown, and the
+ * local part's case is not significant in any mail system anyone uses. `name`
+ * falls back to the address so a display always has something to print.
+ */
+function parseAddress(value: string | null): MailAddress {
+  if (value === null) return { name: '', email: '' }
+  const match = /^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/.exec(value)
+  if (match !== null) {
+    const email = match[2]!.trim().toLowerCase()
+    const name = match[1]!.trim()
+    return { name: name === '' ? email : name, email }
+  }
+  // A bare address, or a header this pattern does not fit. Treated as an
+  // address when it looks like one at all, so `mailto:` still works.
+  const bare = value.trim()
+  return { name: bare, email: bare.includes('@') ? bare.toLowerCase() : '' }
 }
 
-function addresses(value: string | null): string[] {
+function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
   // Split on commas that are not inside quotes — a display name may contain one
   // ("Thomsen, Nicolai" <…>), and splitting naively mangles it into two people.
   return value
     .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
-    .map((a) => displayName(a))
-    .filter((a) => a !== '')
+    .map((a) => parseAddress(a))
+    .filter((a) => a.name !== '')
 }
 
 /** Gmail encodes body data as base64**url**; plain base64 decoding corrupts any
@@ -329,12 +361,54 @@ export interface ListThreadsOptions {
    * can disagree.
    */
   category?: MailCategory
+  /**
+   * Only threads with something unread in them, as `is:unread`.
+   *
+   * Composed the same way `category` is, and for the same reason — but note the
+   * two behave differently at the UI, deliberately. A category is a *place*, so
+   * a search leaves it; unread is a *state*, so a search keeps it. That choice
+   * belongs to the caller; this just ANDs what it is given.
+   */
+  unread?: boolean
 }
 
 export interface MailPage {
   threads: MailThreadSummary[]
   /** `null` when there is nothing more to load. */
   nextPageToken: string | null
+  /** When these threads were actually obtained from Google, ISO. The footer
+   *  shows it, and a served-from-cache page carries the *cache's* time rather
+   *  than now — the whole point is to say how old what you are reading is. */
+  syncedAt: string
+}
+
+/**
+ * How much mail there is, from Gmail's own bookkeeping.
+ *
+ * **Exact, not an estimate.** `labels.get` returns counts Gmail maintains for
+ * the label; this is not `resultSizeEstimate`, which the category picker
+ * deliberately refuses to show because it is approximate and a wrong number is
+ * worse than no number. One request, and it answers for the whole mailbox
+ * rather than the page in hand.
+ */
+export interface MailCounts {
+  /** Threads in the inbox with something unread in them. */
+  unread: number
+  /** Threads in the inbox, read or not. */
+  total: number
+}
+
+const INBOX_URL = `${BASE}/labels/INBOX`
+
+/** A failure returns `null`, never throws: the count is a footer decoration,
+ *  and losing it must cost the number rather than the mail it sits under. */
+export async function fetchMailCounts(api: GoogleApi): Promise<MailCounts | null> {
+  try {
+    const label = await api.get<{ threadsTotal?: number; threadsUnread?: number }>(INBOX_URL)
+    return { unread: label.threadsUnread ?? 0, total: label.threadsTotal ?? 0 }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -365,6 +439,7 @@ export async function listThreads(
     // `undefined` means "no further page" on the wire; `null` says it on the
     // type, so a caller cannot mistake "not asked" for "nothing left".
     nextPageToken: page.nextPageToken ?? null,
+    syncedAt: new Date().toISOString(),
   }
 }
 
@@ -413,10 +488,14 @@ export async function fetchThreadSummaries(
     .filter((t): t is MailThreadSummary => t !== null)
 }
 
-/** The user's own query and the category tab, in Gmail's one grammar. */
+/** The user's own query, the category tab and the unread filter, in Gmail's one
+ *  grammar — so there is one way to narrow a list rather than several that can
+ *  disagree with each other. */
 function composeQuery(options: ListThreadsOptions): string {
-  const base = options.query !== undefined && options.query !== '' ? options.query : 'in:inbox'
-  return options.category === undefined ? base : `${base} ${categoryQuery(options.category)}`
+  const parts = [options.query !== undefined && options.query !== '' ? options.query : 'in:inbox']
+  if (options.category !== undefined) parts.push(categoryQuery(options.category))
+  if (options.unread === true) parts.push('is:unread')
+  return parts.join(' ')
 }
 
 /**
@@ -494,7 +573,7 @@ function summarize(thread: RawThread, labelNames: Map<string, string>): MailThre
     subject: headerOf(first.payload, 'Subject')?.trim() || '(no subject)',
     // The sender comes from the LAST: "who wrote most recently" is what a list
     // is scanned for.
-    from: displayName(headerOf(last.payload, 'From')),
+    from: parseAddress(headerOf(last.payload, 'From')),
     date: isoDate(last),
     snippet: last.snippet ?? '',
     // Unread if ANY message in the thread is — that is what Gmail's own bolding
@@ -544,9 +623,9 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
     webUrl: messageUrl(headerOf(first?.payload, 'Message-ID'), threadId),
     messages: messages.map((message) => ({
       id: message.id ?? '',
-      from: displayName(headerOf(message.payload, 'From')),
-      to: addresses(headerOf(message.payload, 'To')),
-      cc: addresses(headerOf(message.payload, 'Cc')),
+      from: parseAddress(headerOf(message.payload, 'From')),
+      to: parseAddresses(headerOf(message.payload, 'To')),
+      cc: parseAddresses(headerOf(message.payload, 'Cc')),
       date: isoDate(message),
       body: bodyTextOf(message.payload),
       html: bodyHtmlOf(message.payload),

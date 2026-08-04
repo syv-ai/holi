@@ -62,6 +62,17 @@ export interface GoogleCache {
   close(): void
 }
 
+/**
+ * The shape of the rows, not the shape of the tables.
+ *
+ * `threads` and `agenda` hold whole objects as JSON, so a change to
+ * `MailThreadSummary` or `CalendarEvent` is invisible to SQLite and invisible
+ * on read — the row parses fine and is simply wrong. **Bump this whenever a
+ * cached type changes.** `2` is where `from` became `{ name, email }` instead
+ * of a bare display name.
+ */
+const SHAPE_VERSION = '2'
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
@@ -128,14 +139,24 @@ export function openGoogleCache(path: string): GoogleCache {
 
   return {
     useAccount(sub) {
-      const row = database().prepare("SELECT value FROM meta WHERE key = 'account'").get() as
-        | { value?: string }
-        | undefined
-      if (row?.value === sub) return
+      const read = (key: string): string | undefined =>
+        (database().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+          | { value?: string }
+          | undefined)?.value
+
+      // Same account AND same row shape. The shape half is what stops a release
+      // that changes `MailThreadSummary` from serving yesterday's JSON into
+      // today's UI — rows are stored as whole objects, so a field that changed
+      // type arrives looking like the old one and breaks at the render, far
+      // from the change that caused it. Wiping is free: this is a cache.
+      if (read('account') === sub && read('shape') === SHAPE_VERSION) return
+
       // A different account — or the first one. Everything held belongs to
       // whoever was connected before, and none of it is theirs to see.
       database().exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
-      database().prepare("INSERT INTO meta (key, value) VALUES ('account', ?)").run(sub)
+      const write = database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)')
+      write.run('account', sub)
+      write.run('shape', SHAPE_VERSION)
     },
 
     readThreads(key) {

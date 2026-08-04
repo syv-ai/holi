@@ -357,11 +357,10 @@ export function AgendaView() {
     >
       <ResizablePanel id="agenda-list" defaultSize={480} minSize={320}>
         <div className="flex h-full min-h-0 flex-col">
-          <div className="flex h-11 shrink-0 items-center justify-between gap-2 px-4">
-            <h2 className="flex items-center gap-2 text-sm font-medium">
-              <CalendarDays size={15} />
-              Agenda
-            </h2>
+          {/* No "Agenda" heading — the tab already says so, and a title inside
+              a pane that is already labelled spends a row on a word nobody
+              reads twice. The controls keep the row. */}
+          <div className="flex h-11 shrink-0 items-center justify-end gap-2 px-4">
             <div className="flex items-center gap-1">
               <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
               <Tooltip content="refresh">

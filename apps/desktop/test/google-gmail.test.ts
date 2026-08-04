@@ -11,6 +11,7 @@ import { GoogleApi } from '../src/main/google/api'
 import {
   bodyHtmlOf,
   bodyTextOf,
+  fetchMailCounts,
   htmlToText,
   listThreads,
   messageUrl,
@@ -28,6 +29,13 @@ interface RawLabel {
   id: string
   name: string
   type: string
+}
+
+/** The `q` Gmail was actually asked, decoded. Reading the parameter rather than
+ *  the URL matters: a space is encoded as `+`, which `decodeURIComponent` leaves
+ *  alone, so a naive assertion passes or fails for the wrong reason. */
+function queryParam(url: string): string {
+  return new URL(url).searchParams.get('q') ?? ''
 }
 
 /** A fake Gmail that answers threads.list, threads.get and labels.list. */
@@ -237,7 +245,9 @@ describe('listThreads', () => {
 
     // "Re: Q2 budget" would make a renamed thread look like a different one.
     expect(summary!.subject).toBe('Q2 budget')
-    expect(summary!.from).toBe('someone@else.com')
+    // A bare address with no display name: the name falls back to it so a row
+    // always has something to print, and the address travels either way.
+    expect(summary!.from).toEqual({ name: 'someone@else.com', email: 'someone@else.com' })
     expect(summary!.date).toBe(new Date(1_000_000_060_000).toISOString())
     expect(summary!.messageCount).toBe(2)
   })
@@ -569,11 +579,16 @@ describe('readThread', () => {
 
     expect(thread.subject).toBe('Plan')
     expect(thread.messages[0]).toMatchObject({
-      from: 'Thomsen, Nicolai',
+      from: { name: 'Thomsen, Nicolai', email: 'nicolai@syv.ai' },
       body: 'here is the plan',
     })
     // A comma inside a quoted display name must not split one person into two.
-    expect(thread.messages[0]!.to).toEqual(['Doe, Jane', 'bob@y.com'])
+    // Both halves travel now: the name is what a list shows, the address is the
+    // only thing that identifies them — see `parseAddress`.
+    expect(thread.messages[0]!.to).toEqual([
+      { name: 'Doe, Jane', email: 'jane@x.com' },
+      { name: 'bob@y.com', email: 'bob@y.com' },
+    ])
   })
 
   /**
@@ -694,7 +709,10 @@ describe('readThread', () => {
 
     // Who else saw this is part of reading it — a reply-all is a different act
     // from a reply, and the header is the only thing that says which.
-    expect((await readThread(api, 't1')).messages[0]!.cc).toEqual(['Doe, Bob', 'sam@z.com'])
+    expect((await readThread(api, 't1')).messages[0]!.cc).toEqual([
+      { name: 'Doe, Bob', email: 'bob@y.com' },
+      { name: 'sam@z.com', email: 'sam@z.com' },
+    ])
   })
 
   it('shows an untitled thread rather than an empty heading', async () => {
@@ -785,5 +803,141 @@ describe('textOnly', () => {
     // Not merely falsy — the key must be absent, or it lands in the JSON the
     // agent reads and doubles the size of every `holi-google read`.
     expect('html' in projected.messages[0]!).toBe(false)
+  })
+})
+
+/**
+ * The unread filter, the counts, and how fresh a page is.
+ *
+ * All three exist for the list footer and its toggle. The counts are the one
+ * that needed care: the category picker deliberately refuses to show
+ * `resultSizeEstimate`, and this must not quietly reintroduce the same problem
+ * under a different name.
+ */
+describe('unread, counts and freshness', () => {
+  it('composes is:unread into the one query grammar', async () => {
+    const { api, seen } = gmail([], {})
+
+    await listThreads(api, { unread: true })
+
+    // Gmail's own grammar, ANDed like the category is — so there is one way to
+    // narrow a list rather than a query and a client-side filter that can
+    // disagree about what is on screen. Read as a parameter, not by decoding
+    // the URL: a space is `+` in a query string and survives decodeURIComponent.
+    expect(queryParam(seen[0]!)).toBe('in:inbox is:unread')
+  })
+
+  it('composes the category and unread together', async () => {
+    const { api, seen } = gmail([], {})
+
+    await listThreads(api, { query: 'from:jane', category: 'promotions', unread: true })
+
+    const asked = queryParam(seen[0]!)
+    expect(asked).toContain('from:jane')
+    expect(asked).toContain('category:promotions')
+    expect(asked).toContain('is:unread')
+  })
+
+  it('leaves the query alone when unread is off', async () => {
+    const { api, seen } = gmail([], {})
+
+    await listThreads(api, { unread: false })
+
+    expect(queryParam(seen[0]!)).not.toContain('is:unread')
+  })
+
+  it('stamps a page with when it was actually obtained', async () => {
+    const { api } = gmail([], {})
+    const before = Date.now()
+
+    const page = await listThreads(api)
+
+    // The footer says how old what you are reading is, so the time has to come
+    // from the fetch rather than from the render.
+    expect(Date.parse(page.syncedAt)).toBeGreaterThanOrEqual(before)
+  })
+
+  it('reads exact inbox counts from the label, not an estimate', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ threadsTotal: 431, threadsUnread: 7 }),
+      text: async () => '',
+    })) as unknown as typeof globalThis.fetch
+    const api = new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl })
+
+    // Gmail's own bookkeeping for the label. `resultSizeEstimate` is the thing
+    // the category picker refuses to show, because an approximate number
+    // presented as a count is one people trust and it is wrong.
+    expect(await fetchMailCounts(api)).toEqual({ unread: 7, total: 431 })
+  })
+
+  it('gives no number rather than a wrong one when the count fails', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async () => 'boom',
+    })) as unknown as typeof globalThis.fetch
+    const api = new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl })
+
+    // A footer decoration must never cost the mail it sits under, and "0
+    // unread" would be a claim rather than an absence.
+    expect(await fetchMailCounts(api)).toBeNull()
+  })
+})
+
+describe('addresses', () => {
+  it('keeps the address as well as the name, and lowercases it', async () => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            internalDate: '1000',
+            payload: {
+              mimeType: 'text/plain',
+              headers: [
+                header('Subject', 'Hi'),
+                header('From', '"Mette Nielsen" <Mette@SYV.ai>'),
+              ],
+              body: { data: b64('hi') },
+            },
+          },
+        ],
+      },
+    })
+
+    const { from } = (await readThread(api, 't1')).messages[0]!
+
+    // Addresses are compared, not only shown — two spellings of one colleague
+    // must group, and case is not significant in any mail system in use.
+    expect(from).toEqual({ name: 'Mette Nielsen', email: 'mette@syv.ai' })
+  })
+
+  it('offers no address when the header carries nothing that looks like one', async () => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            internalDate: '1000',
+            payload: {
+              mimeType: 'text/plain',
+              headers: [header('Subject', 'Hi'), header('From', 'Mail Delivery Subsystem')],
+              body: { data: b64('hi') },
+            },
+          },
+        ],
+      },
+    })
+
+    const { from } = (await readThread(api, 't1')).messages[0]!
+
+    // An empty `email` is the signal the UI reads as "show the name, offer no
+    // mailto:" — a link to nothing is worse than plain text.
+    expect(from).toEqual({ name: 'Mail Delivery Subsystem', email: '' })
   })
 })

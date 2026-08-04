@@ -8,6 +8,7 @@
  * lie.
  */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,7 +36,7 @@ function thread(id: string, overrides: Partial<MailThreadSummary> = {}): MailThr
   return {
     id,
     subject: `Subject ${id}`,
-    from: 'Jane',
+    from: { name: 'Jane', email: 'jane@example.com' },
     date: '2026-08-04T09:00:00.000Z',
     snippet: 'a snippet',
     unread: false,
@@ -213,5 +214,49 @@ describe('GoogleCache', () => {
     expect(reopened.readThreads('in:inbox|primary')).toBeNull()
     expect(() => reopened.writeThreads('in:inbox|primary', [thread('t1')])).not.toThrow()
     reopened.close()
+  })
+})
+
+/**
+ * The row shape, which SQLite cannot see.
+ *
+ * `threads` and `agenda` hold whole objects as JSON, so changing a cached type
+ * is invisible to the schema and invisible on read: the row parses fine and is
+ * simply the wrong shape. It then breaks at the render, far from the change
+ * that caused it — which is the failure this guard exists to prevent.
+ */
+describe('shape version', () => {
+  it('drops rows written by an older shape, for the same account', () => {
+    cache.useAccount('sub-1')
+    cache.writeThreads('inbox', [thread('t1')])
+    expect(cache.readThreads('inbox')).toHaveLength(1)
+    cache.close()
+
+    // Stand where a user upgrading the app stands: the same account, rows still
+    // on disk, and a shape stamp from the release before. Written directly
+    // because no public method can produce it — the old build simply wrote a
+    // different value here.
+    const raw = new DatabaseSync(path)
+    raw.prepare("UPDATE meta SET value = '1' WHERE key = 'shape'").run()
+    raw.close()
+
+    cache = openGoogleCache(path)
+    cache.useAccount('sub-1')
+
+    // Wiped, not served. The rows would have parsed perfectly and been the
+    // wrong shape — `from` as a bare string where the UI now reads `.name` —
+    // and the failure would have surfaced at the render.
+    expect(cache.readThreads('inbox')).toBeNull()
+  })
+
+  it('keeps the cache when the account and shape both match', () => {
+    cache.useAccount('sub-1')
+    cache.writeThreads('inbox', [thread('t1')])
+
+    cache.useAccount('sub-1')
+
+    // The guard must not wipe on every launch — that would turn the cache into
+    // an expensive way of doing nothing.
+    expect(cache.readThreads('inbox')).toHaveLength(1)
   })
 })

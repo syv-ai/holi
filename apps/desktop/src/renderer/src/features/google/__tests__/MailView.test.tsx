@@ -10,16 +10,18 @@
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { MailView } from '../MailView'
+import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
+const countsMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     google: {
       threads: { query: (input: unknown) => threadMock(input) },
       thread: { query: (input: { id: string }) => readMock(input) },
+      mailCounts: { query: () => countsMock() },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -41,7 +43,7 @@ function summary(overrides: Record<string, unknown> = {}) {
   return {
     id: 't1',
     subject: 'Q2 budget',
-    from: 'Jane',
+    from: { name: 'Jane', email: 'jane@example.com' },
     date: '2026-08-04T09:00:00.000Z',
     snippet: 'a snippet',
     unread: false,
@@ -60,7 +62,7 @@ function summary(overrides: Record<string, unknown> = {}) {
 
 /** Gmail answers a page at a time; `nextPageToken` is null at the end. */
 function page(threads: unknown[], nextPageToken: string | null = null) {
-  return { threads, nextPageToken }
+  return { threads, nextPageToken, syncedAt: new Date().toISOString() }
 }
 
 /** One thread in the list, one message in it — the list is not what is under
@@ -74,8 +76,8 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
     messages: [
       {
         id: 'm1',
-        from: 'Jane',
-        to: ['nicolai@syv.ai'],
+        from: { name: 'Jane', email: 'jane@example.com' },
+        to: [{ name: 'Nicolai', email: 'nicolai@syv.ai' }],
         cc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
@@ -109,6 +111,7 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 beforeEach(() => {
   threadMock.mockReset()
   readMock.mockReset()
+  countsMock.mockReset().mockResolvedValue({ unread: 3, total: 120 })
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -122,7 +125,7 @@ test('shows the subject, which is the whole point of a thread list', async () =>
   // Regression: every row read "(no subject)" from an empty sender, because the
   // metadata headers were requested as one comma-joined value that Gmail
   // matched nothing against and answered 200 to. See google-gmail.test.ts.
-  threadMock.mockResolvedValue(page([summary({ subject: 'Q2 budget', from: 'Jane Doe' })]))
+  threadMock.mockResolvedValue(page([summary({ subject: 'Q2 budget', from: { name: 'Jane Doe', email: 'jane@doe.test' } })]))
 
   render(<MailView />)
 
@@ -179,7 +182,9 @@ test('a search is not narrowed by the category, as in Gmail itself', async () =>
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
   await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
 
-  await user.type(screen.getByLabelText(/search mail/i), 'from:jane{Enter}')
+  // Search is an icon until asked for; opening it focuses the field.
+  await user.click(screen.getByRole('button', { name: /search mail/i }))
+  await user.type(await screen.findByRole('combobox', { name: /search mail/i }), 'from:jane{Enter}')
 
   // Gmail's own search escapes the tab you are standing in. Silently ANDing the
   // category onto an explicit query is how a search comes back empty for a
@@ -298,15 +303,20 @@ test('opens an attachment in Gmail rather than downloading it', async () => {
 })
 
 test('renders an HTML body as real markup, inside a frame of its own', async () => {
-  withMessage({ body: 'Hi Nicolai, the plan is attached', html: '<p>Hi <b>Nicolai</b>, the plan is attached</p>' })
+  // A word that appears ONLY in the body. The recipient's name would otherwise
+  // satisfy the second assertion by accident — the header renders it as a link.
+  withMessage({
+    body: 'the quarterly plan is attached',
+    html: '<p>the <b>quarterly</b> plan is attached</p>',
+  })
 
   const article = await openThread()
   const frame = await frameOf(article)
 
   // The point of the whole change: a designed message reads as designed mail.
-  expect(frame.querySelector('b')?.textContent).toBe('Nicolai')
+  expect(frame.querySelector('b')?.textContent).toBe('quarterly')
   // And it is emphatically NOT in the app's document.
-  expect(within(article).queryByText('Nicolai')).toBeNull()
+  expect(within(article).queryByText(/quarterly/)).toBeNull()
 })
 
 test('the frame is sandboxed without allow-scripts', async () => {
@@ -457,4 +467,236 @@ test('remembers its width per account, not per vault', async () => {
   // cannot key a write on a null remote).
   expect(keys).toContain('holi:panelLayouts:global')
   expect(keys).not.toContain('holi:panelLayouts')
+})
+
+/**
+ * The toolbar.
+ *
+ * One row, no heading. Search is an icon until it is wanted, because a
+ * permanently-open field in a panel this narrow spends a whole row on a control
+ * used occasionally — and the list is what the pane is for.
+ */
+
+test('search is an icon until it is asked for', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  expect(screen.queryByRole('combobox', { name: /search mail/i })).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: /search mail/i }))
+
+  const field = await screen.findByRole('combobox', { name: /search mail/i })
+  // Focused on unfold: the click that opened it is the same gesture as the
+  // intent to type, and a field that looks ready but is not is worse than none.
+  expect(field).toHaveFocus()
+})
+
+test('⌘F opens search when the pane has focus', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  // Focus something inside the pane — the binding is deliberately scoped to the
+  // pane rather than the document, so mail's ⌘F cannot fire from the editor.
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  expect(await screen.findByRole('combobox', { name: /search mail/i })).toBeInTheDocument()
+})
+
+test('the view carries no redundant "Mail" heading', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  // The tab already says Mail. A title inside a pane that is already labelled
+  // spends the narrowest dimension of the narrowest panel on a word nobody
+  // reads twice.
+  expect(screen.queryByRole('heading', { name: /^mail$/i })).toBeNull()
+})
+
+test('the unread toggle narrows the list, and survives a search', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await user.click(screen.getByRole('button', { name: /show unread only/i }))
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ unread: true }))
+
+  await user.click(screen.getByRole('button', { name: /search mail/i }))
+  await user.type(await screen.findByRole('combobox', { name: /search mail/i }), 'budget{Enter}')
+
+  // Unlike a category, unread is a STATE rather than a place — so a search
+  // keeps it, where a search deliberately escapes the category tab.
+  await waitFor(() => expect(queryOf(2)).toMatchObject({ query: 'budget', unread: true }))
+})
+
+test('the footer reports sync and Gmail’s own exact counts', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  countsMock.mockResolvedValue({ unread: 7, total: 431 })
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  // Exact, from labels.get — not the resultSizeEstimate the category picker
+  // refuses to show, which is approximate and so would be a number people
+  // trust and it would be wrong.
+  expect(await screen.findByText(/7 unread · 431 in inbox/)).toBeInTheDocument()
+  expect(screen.getByText(/synced/i)).toBeInTheDocument()
+})
+
+test('the footer counts only what is on screen when Gmail will not say', async () => {
+  threadMock.mockResolvedValue(page([summary(), summary({ id: 't2', subject: 'Q3 plan' })]))
+  countsMock.mockResolvedValue(null)
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q3 plan/ })
+
+  // "0 unread" would be a claim. A count of what is rendered cannot be wrong.
+  expect(await screen.findByText(/2 shown/)).toBeInTheDocument()
+})
+
+/**
+ * The reader.
+ *
+ * A thread is one scrolling column of messages, each at its full height. The
+ * history above the newest message is context you open when you want it.
+ */
+
+test('opens the newest message and collapses the history above it', async () => {
+  threadMock.mockResolvedValue(page([summary({ messageCount: 2 })]))
+  readMock.mockResolvedValue({
+    id: 't1',
+    subject: 'Q2 budget',
+    webUrl: 'https://mail.google.com/x',
+    messages: [
+      {
+        id: 'm1',
+        from: { name: 'Jane', email: 'jane@example.com' },
+        to: [],
+        cc: [],
+        date: '2026-08-03T09:00:00.000Z',
+        attachments: [],
+        body: 'the older question',
+        html: null,
+      },
+      {
+        id: 'm2',
+        from: { name: 'Mette', email: 'mette@syv.ai' },
+        to: [],
+        cc: [],
+        date: '2026-08-04T09:00:00.000Z',
+        attachments: [],
+        body: 'the newest answer',
+        html: null,
+      },
+    ],
+  })
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  // A ten-message thread that opens fully expanded buries the part that is new.
+  const older = await screen.findByRole('button', { name: /expand message from Jane/i })
+  expect(screen.getByRole('button', { name: /collapse message from Mette/i })).toBeInTheDocument()
+
+  await user.click(older)
+  expect(
+    await screen.findByRole('button', { name: /collapse message from Jane/i }),
+  ).toBeInTheDocument()
+})
+
+test('an address is a person you can act on, not just a name', async () => {
+  withMessage({ body: 'hello', html: null })
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await user.click(await screen.findByRole('button', { name: /about Jane/i }))
+
+  // The address is the whole reason main stopped throwing it away: a display
+  // name cannot be mailed, copied, or told apart from a namesake.
+  expect(await screen.findByText('jane@example.com')).toBeInTheDocument()
+
+  await user.click(screen.getByRole('button', { name: /^email$/i }))
+
+  // Composing is a mailto: handoff — the granted scope is read-only, so the
+  // OS's mail client sends and Holi does not pretend it can.
+  expect(openExternal).toHaveBeenCalledWith('mailto:jane@example.com')
+})
+
+/**
+ * "@" completion.
+ *
+ * The people come from the mail already in hand — there is no contacts scope
+ * (`GOOGLE_SCOPES` is gmail + calendar, both read-only), so an address book
+ * would mean a new Google API and a fresh consent screen. What the cache can
+ * see is everyone who has written to you, which is most of who anyone searches
+ * for. These are the pure parts, tested directly rather than through the field.
+ */
+
+test('an @ only opens the list while it is still one word', () => {
+  expect(mentionAt('from:@met')).toEqual({ start: 5, term: 'met' })
+  expect(mentionAt('@')).toEqual({ start: 0, term: '' })
+  // Whitespace ends it: `@` in prose is not a request for a person.
+  expect(mentionAt('@met budget')).toBeNull()
+  // And an address the user already accepted must not reopen the list on its
+  // own `@` — this is what made the popup flicker back after every completion.
+  expect(mentionAt('from:jane@syv.ai')).toBeNull()
+  expect(mentionAt('budget')).toBeNull()
+})
+
+test('accepting a person leaves a query the user could have typed', () => {
+  const query = 'from:@met'
+  expect(replaceMention(query, mentionAt(query)!, 'mette@syv.ai')).toBe('from:mette@syv.ai ')
+
+  // Gmail's own grammar either way — a bare `@mette` is not valid, so the
+  // prefix is supplied when the user has not already written one.
+  const bare = '@met'
+  expect(replaceMention(bare, mentionAt(bare)!, 'mette@syv.ai')).toBe('from:mette@syv.ai ')
+})
+
+test('people are ranked by how often you actually hear from them', () => {
+  const threads = [
+    { from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } },
+    { from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } },
+    { from: { name: 'Anders Skøt', email: 'anders@krifa.dk' } },
+    // No address to act on — a `From` the parser could not read. Never offered,
+    // because completing to an empty address produces a query matching nothing.
+    { from: { name: 'Mystery', email: '' } },
+  ]
+
+  const all = matchPeople(threads, '')
+  expect(all.map((p) => p.email)).toEqual(['mette@syv.ai', 'anders@krifa.dk'])
+  expect(all[0]!.count).toBe(2)
+
+  // Matched on either half: people search by the name they see in the list.
+  expect(matchPeople(threads, 'krifa').map((p) => p.name)).toEqual(['Anders Skøt'])
+  expect(matchPeople(threads, 'mette').map((p) => p.name)).toEqual(['Mette Nielsen'])
+})
+
+test('typing @ in the search box offers people from the mail on screen', async () => {
+  threadMock.mockResolvedValue(
+    page([summary({ from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } })]),
+  )
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+  await user.click(screen.getByRole('button', { name: /search mail/i }))
+  await user.type(await screen.findByRole('combobox', { name: /search mail/i }), '@met')
+
+  const option = await screen.findByRole('option', { name: /Mette Nielsen/ })
+  await user.click(option)
+
+  expect(await screen.findByRole('combobox', { name: /search mail/i })).toHaveValue(
+    'from:mette@syv.ai ',
+  )
 })
