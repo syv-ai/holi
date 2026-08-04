@@ -24,7 +24,14 @@ import {
   type CalendarEvent,
   type CalendarOverrides,
 } from './calendar'
-import type { ListThreadsOptions, MailPage } from './gmail'
+import {
+  archiveThread,
+  markThreadRead,
+  setThreadStarred,
+  trashThread,
+  type ListThreadsOptions,
+  type MailPage,
+} from './gmail'
 import { cacheKey, syncThreads } from './mail-sync'
 
 export interface GoogleData {
@@ -34,6 +41,14 @@ export interface GoogleData {
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Threads, served from the cache and brought up to date by a delta. */
   threads(options: ListThreadsOptions): Promise<MailPage>
+  /**
+   * The four writes (D68). Each calls Google **first** and touches the cache
+   * only once Google has agreed — see the note above `write`.
+   */
+  markRead(id: string): Promise<void>
+  setStarred(id: string, starred: boolean): Promise<void>
+  archive(id: string): Promise<void>
+  trash(id: string): Promise<void>
   /** The account this cache belongs to. Called on connect; a different `sub`
    *  wipes everything before anything can be read. */
   useAccount(sub: string): void
@@ -64,6 +79,41 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       return syncThreads(api(), cache, options)
     },
 
+    markRead(id) {
+      return write(
+        () => markThreadRead(api(), id),
+        () => cache.patchThread(id, { added: [], removed: ['UNREAD'] }),
+      )
+    },
+
+    setStarred(id, starred) {
+      return write(
+        () => setThreadStarred(api(), id, starred),
+        () =>
+          cache.patchThread(id, {
+            added: starred ? ['STARRED'] : [],
+            removed: starred ? [] : ['STARRED'],
+          }),
+      )
+    },
+
+    archive(id) {
+      // Dropped from every cached list, including a search that might still
+      // legitimately match it. That over-reach is deliberate and self-healing:
+      // the next `syncThreads` refetches, and this is a cache, not a mirror.
+      return write(
+        () => archiveThread(api(), id),
+        () => cache.dropThread(id),
+      )
+    },
+
+    trash(id) {
+      return write(
+        () => trashThread(api(), id),
+        () => cache.dropThread(id),
+      )
+    },
+
     useAccount(sub) {
       cache.useAccount(sub)
     },
@@ -72,6 +122,24 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       cache.destroy()
     },
   }
+}
+
+/**
+ * A write, and the ordering that keeps the cache honest.
+ *
+ * **Google first; the cache only once Google has agreed.** The reverse — patch
+ * optimistically, undo on failure — is tempting because it paints faster, and
+ * it is wrong here: a cache that records a write Google refused is the one
+ * divergence a delta sync can never repair. `history.list` reports what changed
+ * *at Gmail*, and for a refused request nothing did, so there is no event to
+ * correct it and the wrong value survives every refresh and every restart.
+ *
+ * Optimism belongs in the renderer, where a revert costs a re-render and
+ * nothing is persisted. It does not belong on disk.
+ */
+async function write(send: () => Promise<void>, record: () => void): Promise<void> {
+  await send()
+  record()
 }
 
 /**

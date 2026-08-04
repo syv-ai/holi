@@ -154,3 +154,117 @@ describe('createGoogleData', () => {
     expect(existsSync(path)).toBe(true)
   })
 })
+
+/**
+ * The writes (D68), and the ordering that keeps disk honest.
+ *
+ * **Google first, cache only on success.** Patching optimistically and then
+ * discovering the request failed leaves a lie on disk that survives a restart —
+ * and it is the one divergence a delta sync cannot repair, because from Gmail's
+ * side nothing ever changed and `history.list` has nothing to report.
+ */
+describe('mutations', () => {
+  /** A Gmail whose reads work and whose writes can be told to fail. */
+  function mutable({ writesFail = false } = {}) {
+    const posts: string[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const ok = (body: unknown) => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      })
+      if (init?.method === 'POST') {
+        posts.push(url)
+        if (writesFail) {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({}),
+            text: async () =>
+              JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+          }
+        }
+        return ok({})
+      }
+      const path_ = new URL(url).pathname
+      if (path_.endsWith('/labels')) return ok({ labels: [] })
+      if (path_.endsWith('/profile')) return ok({ historyId: '100' })
+      if (path_.endsWith('/threads')) return ok({ threads: [{ id: 't1' }] })
+      if (path_.includes('/threads/')) {
+        return ok({
+          id: 't1',
+          messages: [
+            {
+              id: 'm1',
+              internalDate: '1000000000000',
+              // Unread and unstarred, so every write below has somewhere to go.
+              labelIds: ['INBOX', 'UNREAD'],
+              payload: { headers: [{ name: 'Subject', value: 'Q2 budget' }] },
+            },
+          ],
+        })
+      }
+      return ok({})
+    }) as unknown as typeof globalThis.fetch
+
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.useAccount('sub-a')
+    return { data: subject, posts }
+  }
+
+  it('marks read at Google and clears the cached flag', async () => {
+    const { data: subject, posts } = mutable()
+    expect((await subject.threads({})).threads[0]!.unread).toBe(true)
+
+    await subject.markRead('t1')
+
+    expect(posts).toEqual([
+      'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify',
+    ])
+    expect(cache.readThreads('|')![0]!.unread).toBe(false)
+  })
+
+  it('leaves the cache untouched when Google refuses, and rethrows', async () => {
+    const { data: subject } = mutable({ writesFail: true })
+    await subject.threads({})
+
+    await expect(subject.markRead('t1')).rejects.toThrow()
+
+    // Still unread on disk. A cache that recorded a write Google refused is a
+    // divergence no later sync can find.
+    expect(cache.readThreads('|')![0]!.unread).toBe(true)
+  })
+
+  it('stars in both directions', async () => {
+    const { data: subject } = mutable()
+    await subject.threads({})
+
+    await subject.setStarred('t1', true)
+    expect(cache.readThreads('|')![0]!.starred).toBe(true)
+
+    await subject.setStarred('t1', false)
+    expect(cache.readThreads('|')![0]!.starred).toBe(false)
+  })
+
+  it('archive and trash remove the thread from the cached list', async () => {
+    const { data: subject } = mutable()
+    await subject.threads({})
+    expect(cache.readThreads('|')).toHaveLength(1)
+
+    await subject.archive('t1')
+    expect(cache.readThreads('|')).toHaveLength(0)
+  })
+
+  it('a refused archive leaves the thread in the list', async () => {
+    const { data: subject } = mutable({ writesFail: true })
+    await subject.threads({})
+
+    await expect(subject.archive('t1')).rejects.toThrow()
+
+    expect(cache.readThreads('|')).toHaveLength(1)
+  })
+})

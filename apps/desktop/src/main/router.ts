@@ -1360,6 +1360,52 @@ export function createRouter(deps: RouterDeps) {
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
 
     /**
+     * The four writes (D68) — the only procedures here that change anything at
+     * Google.
+     *
+     * Each goes through `googleData` rather than calling `gmail.ts` directly,
+     * because the cache has to move with the mailbox: a thread marked read at
+     * Google and still bold on disk is a list that disagrees with itself until
+     * the next full sync. `googleData` owns that ordering.
+     *
+     * **The agent reaches none of this.** `createGoogleOpsServer` is handed
+     * read functions and is not given `googleData` at all (D67), so the
+     * exclusion is structural rather than remembered — giving an LLM archive
+     * and trash over a real mailbox is a decision nobody has taken.
+     */
+    markRead: t.procedure
+      .input(fields({ id: 'string' }))
+      .mutation(async ({ input }) => {
+        await googleWrites().markRead(input.id)
+        return { ok: true as const }
+      }),
+
+    setStarred: t.procedure
+      // `fields()` checks booleans and never coerces. That matters here: a
+      // coerced "false" reads as true, which is how a star refuses to turn off.
+      .input(fields({ id: 'string', starred: 'boolean' }))
+      .mutation(async ({ input }) => {
+        await googleWrites().setStarred(input.id, input.starred)
+        return { ok: true as const }
+      }),
+
+    archive: t.procedure
+      .input(fields({ id: 'string' }))
+      .mutation(async ({ input }) => {
+        await googleWrites().archive(input.id)
+        return { ok: true as const }
+      }),
+
+    /** Trash, which Gmail keeps for 30 days. Not delete: permanent removal
+     *  needs `https://mail.google.com/`, which Holi does not request. */
+    trash: t.procedure
+      .input(fields({ id: 'string' }))
+      .mutation(async ({ input }) => {
+        await googleWrites().trash(input.id)
+        return { ok: true as const }
+      }),
+
+    /**
      * How much mail there is, for the list footer.
      *
      * **Exact**, from Gmail's own per-label bookkeeping — not the
@@ -1375,6 +1421,24 @@ export function createRouter(deps: RouterDeps) {
    *  default rule rather than the agenda coming back empty. */
   async function calendarOverrides(): Promise<CalendarOverrides> {
     return (await deps.calendarPrefs?.read()) ?? {}
+  }
+
+  /**
+   * The write surface, or a refusal.
+   *
+   * Reads degrade gracefully when `googleData` is absent — they go straight to
+   * Google, which is how the pillar shipped. A write cannot: without the cache
+   * there is nothing to keep in step, and succeeding at Google while the list on
+   * screen still says otherwise is worse than saying no.
+   */
+  function googleWrites(): GoogleData {
+    if (deps.googleData === undefined) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'the Google connector is not configured',
+      })
+    }
+    return deps.googleData
   }
 
   function googleSession(): GoogleSession {
