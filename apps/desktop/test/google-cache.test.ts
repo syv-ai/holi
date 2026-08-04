@@ -83,7 +83,7 @@ describe('GoogleCache', () => {
     // different answers, and only one of them means "go and ask Google".
     expect(cache.readThreads('in:inbox|primary')).toBeNull()
     expect(cache.readAgenda('2026-08-04|primary')).toBeNull()
-    expect(cache.historyId()).toBeNull()
+    expect(cache.historyId('in:inbox|primary')).toBeNull()
   })
 
   it('round-trips a thread list', () => {
@@ -118,7 +118,7 @@ describe('GoogleCache', () => {
     cache.useAccount('sub-a')
     cache.writeThreads('in:inbox|primary', [thread('secret', { subject: 'Client contract' })])
     cache.writeAgenda('2026-08-04|primary', [event('e1')])
-    cache.setHistoryId('9001')
+    cache.setHistoryId('in:inbox|primary', '9001')
 
     cache.useAccount('sub-b')
 
@@ -127,7 +127,7 @@ describe('GoogleCache', () => {
     // read can happen.
     expect(cache.readThreads('in:inbox|primary')).toBeNull()
     expect(cache.readAgenda('2026-08-04|primary')).toBeNull()
-    expect(cache.historyId()).toBeNull()
+    expect(cache.historyId('in:inbox|primary')).toBeNull()
   })
 
   it('keeps a reconnect of the SAME account', () => {
@@ -167,12 +167,12 @@ describe('GoogleCache', () => {
 
   it('remembers the Gmail history id across a close', () => {
     cache.useAccount('sub-a')
-    cache.setHistoryId('9001')
+    cache.setHistoryId('in:inbox|primary', '9001')
     cache.close()
 
     const reopened = openGoogleCache(path)
     reopened.useAccount('sub-a')
-    expect(reopened.historyId()).toBe('9001')
+    expect(reopened.historyId('in:inbox|primary')).toBe('9001')
     reopened.close()
   })
 

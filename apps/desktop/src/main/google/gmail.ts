@@ -360,7 +360,28 @@ export async function listThreads(
 
   const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
 
-  // ONCE per list, not once per thread — resolving a chip must not cost a
+  return {
+    threads: await fetchThreadSummaries(api, ids),
+    // `undefined` means "no further page" on the wire; `null` says it on the
+    // type, so a caller cannot mistake "not asked" for "nothing left".
+    nextPageToken: page.nextPageToken ?? null,
+  }
+}
+
+/**
+ * Summaries for a known set of thread ids, in the order given.
+ *
+ * The N+1 in one place: `listThreads` uses it for a whole page, and
+ * `mail-sync` uses it for the two threads a delta says actually changed. The
+ * label lookup is one request either way.
+ */
+export async function fetchThreadSummaries(
+  api: GoogleApi,
+  ids: string[],
+): Promise<MailThreadSummary[]> {
+  if (ids.length === 0) return []
+
+  // ONCE per call, not once per thread — resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
   const labelNames = fetchLabelNames(api)
 
@@ -387,14 +408,9 @@ export async function listThreads(
   )
 
   const names = await labelNames
-  return {
-    threads: threads
-      .map((thread) => summarize(thread, names))
-      .filter((t): t is MailThreadSummary => t !== null),
-    // `undefined` means "no further page" on the wire; `null` says it on the
-    // type, so a caller cannot mistake "not asked" for "nothing left".
-    nextPageToken: page.nextPageToken ?? null,
-  }
+  return threads
+    .map((thread) => summarize(thread, names))
+    .filter((t): t is MailThreadSummary => t !== null)
 }
 
 /** The user's own query and the category tab, in Gmail's one grammar. */

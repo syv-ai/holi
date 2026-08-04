@@ -46,9 +46,17 @@ export interface GoogleCache {
   writeThreads(key: string, threads: MailThreadSummary[]): void
   readAgenda(key: string): CalendarEvent[] | null
   writeAgenda(key: string, events: CalendarEvent[]): void
-  /** Gmail's `historyId`, the cursor incremental sync resumes from. */
-  historyId(): string | null
-  setHistoryId(id: string): void
+  /**
+   * Gmail's `historyId` for one cached list — the cursor its next delta
+   * resumes from.
+   *
+   * **Per list, not per mailbox**, even though Gmail's cursor is mailbox-wide.
+   * Each list was written at a different moment, and asking "what changed since
+   * 200?" against a list last written at 100 silently loses everything in
+   * between. The cursor belongs to the list it was taken for.
+   */
+  historyId(key: string): string | null
+  setHistoryId(key: string, id: string): void
   /** Delete the database file. Disconnect calls this. */
   destroy(): void
   close(): void
@@ -155,15 +163,15 @@ export function openGoogleCache(path: string): GoogleCache {
       markAnswered('agenda', key)
     },
 
-    historyId() {
-      const row = db.prepare("SELECT value FROM meta WHERE key = 'historyId'").get() as
+    historyId(key) {
+      const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(historyKey(key)) as
         | { value?: string }
         | undefined
       return row?.value ?? null
     },
 
-    setHistoryId(id) {
-      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('historyId', ?)").run(id)
+    setHistoryId(key, id) {
+      db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(historyKey(key), id)
     },
 
     destroy() {
@@ -200,6 +208,11 @@ function open(at: string): DatabaseSync {
     fresh.exec(SCHEMA)
     return fresh
   }
+}
+
+/** Namespaced so a list key can never collide with `account`. */
+function historyKey(key: string): string {
+  return `historyId:${key}`
 }
 
 function removeFiles(path: string): void {
