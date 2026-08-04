@@ -38,6 +38,7 @@ function googleApi(routes: Record<string, unknown | unknown[]>) {
 }
 
 const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
+const COLORS = 'https://www.googleapis.com/calendar/v3/colors'
 const eventsUrl = (id: string) =>
   `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(id)}/events`
 
@@ -324,6 +325,222 @@ describe('listAgenda', () => {
     })
 
     expect((await listAgenda(api, WINDOW))[0]!.title).toBe('(no title)')
+  })
+
+  /**
+   * Triage — the fields that separate "a thing I must answer" from "a thing
+   * that is merely on the calendar". Google sends all of them and the agenda
+   * used to throw every one away.
+   */
+
+  it('surfaces an invitation the user has not answered', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('ask', 'Design review', '2026-08-04T09:00:00Z', {
+            attendees: [
+              { self: true, responseStatus: 'needsAction', email: 'me@syv.ai' },
+              { responseStatus: 'accepted', email: 'jane@syv.ai' },
+            ],
+          }),
+        ],
+      },
+    })
+
+    // The single most valuable field here: an unanswered invitation is the one
+    // agenda row that is a task rather than a fact.
+    expect((await listAgenda(api, WINDOW))[0]!.myResponse).toBe('needsAction')
+  })
+
+  it('leaves myResponse null for an event with no attendees', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: { items: [timed('solo', 'Write plan', '2026-08-04T09:00:00Z')] },
+    })
+
+    // A solo block is not an unanswered invitation, and must not be badged as one.
+    const [event] = await listAgenda(api, WINDOW)
+    expect(event!.myResponse).toBeNull()
+    expect(event!.attendeeCount).toBe(0)
+  })
+
+  it('drops workingLocation events, which Google creates every day', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('office', 'Office', '2026-08-04T00:00:00Z', { eventType: 'workingLocation' }),
+          timed('real', 'Stand-up', '2026-08-04T09:00:00Z'),
+        ],
+      },
+    })
+
+    // Google writes one of these per working day. They are a setting, not an
+    // event, and they double the length of a week's agenda.
+    expect((await listAgenda(api, WINDOW)).map((e) => e.id)).toEqual(['real'])
+  })
+
+  it('marks out-of-office and focus-time so they do not read as meetings', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('ooo', 'Out of office', '2026-08-04T09:00:00Z', { eventType: 'outOfOffice' }),
+          timed('focus', 'Focus', '2026-08-04T10:00:00Z', { eventType: 'focusTime' }),
+          timed('meet', 'Sync', '2026-08-04T11:00:00Z'),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW)).map((e) => e.kind)).toEqual([
+      'outOfOffice',
+      'focusTime',
+      'default',
+    ])
+  })
+
+  it('marks a transparent event as not blocking time', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('free', 'FYI: release', '2026-08-04T09:00:00Z', { transparency: 'transparent' }),
+          timed('busy', 'Interview', '2026-08-04T10:00:00Z'),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW)).map((e) => e.busy)).toEqual([false, true])
+  })
+
+  it('prefers a conferenceData entry point over hangoutLink, so Zoom and Teams work', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('z', 'Client call', '2026-08-04T09:00:00Z', {
+            conferenceData: {
+              entryPoints: [
+                { entryPointType: 'phone', uri: 'tel:+4512345678' },
+                { entryPointType: 'video', uri: 'https://syv.zoom.us/j/123' },
+              ],
+            },
+          }),
+        ],
+      },
+    })
+
+    // `hangoutLink` is Meet-only; half of a consultancy's calls are not Meet.
+    // The video entry point is the one a "Join" button can use.
+    expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBe('https://syv.zoom.us/j/123')
+  })
+
+  it('falls back to hangoutLink when there is no conferenceData', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('m', 'Sync', '2026-08-04T09:00:00Z', { hangoutLink: 'https://meet.google.com/abc' }),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBe('https://meet.google.com/abc')
+  })
+
+  it('lets a per-event colour override the calendar colour', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: {
+        items: [{ id: 'primary', summary: 'Me', accessRole: 'owner', backgroundColor: '#039be5' }],
+      },
+      [COLORS]: { event: { '5': { background: '#fbd75b' } } },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('tinted', 'Deadline', '2026-08-04T09:00:00Z', { colorId: '5' }),
+          timed('plain', 'Sync', '2026-08-04T10:00:00Z'),
+        ],
+      },
+    })
+
+    // Colour-coding an individual event is how people mark the one that matters
+    // in a day of identical blue blocks; ignoring colorId erases that.
+    expect((await listAgenda(api, WINDOW)).map((e) => e.color)).toEqual(['#fbd75b', '#039be5'])
+  })
+
+  it('counts attendees and names the organizer', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('big', 'All hands', '2026-08-04T09:00:00Z', {
+            organizer: { displayName: 'Jane Doe', email: 'jane@syv.ai' },
+            attendees: [
+              { self: true, responseStatus: 'accepted', email: 'me@syv.ai' },
+              { responseStatus: 'accepted', email: 'jane@syv.ai' },
+              { responseStatus: 'needsAction', email: 'sam@syv.ai' },
+            ],
+          }),
+        ],
+      },
+    })
+
+    const [event] = await listAgenda(api, WINDOW)
+    expect(event!.attendeeCount).toBe(3)
+    expect(event!.organizer).toBe('Jane Doe')
+  })
+
+  it('does not count a meeting room as an attendee', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('room', 'Workshop', '2026-08-04T09:00:00Z', {
+            attendees: [
+              { self: true, responseStatus: 'accepted', email: 'me@syv.ai' },
+              { resource: true, email: 'room3@syv.ai', displayName: 'Meeting Room 3' },
+            ],
+          }),
+        ],
+      },
+    })
+
+    // "2 people" for a one-person meeting in a booked room is a lie the count
+    // tells constantly on a Workspace account.
+    expect((await listAgenda(api, WINDOW))[0]!.attendeeCount).toBe(1)
+  })
+
+  it('marks an instance of a recurring series', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('weekly', 'Stand-up', '2026-08-04T09:00:00Z', { recurringEventId: 'series-1' }),
+          timed('once', 'Interview', '2026-08-04T10:00:00Z'),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW)).map((e) => e.recurring)).toEqual([true, false])
+  })
+
+  it('carries the description through', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('d', 'Board call', '2026-08-04T09:00:00Z', {
+            description: 'Dial-in 555-0100, agenda in the deck',
+          }),
+        ],
+      },
+    })
+
+    // Where the dial-in and the agenda live. It is also what makes a task made
+    // from an event useful rather than a bare title.
+    expect((await listAgenda(api, WINDOW))[0]!.description).toBe(
+      'Dial-in 555-0100, agenda in the deck',
+    )
   })
 })
 

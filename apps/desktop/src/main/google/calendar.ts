@@ -7,8 +7,21 @@
  * rather than merely undone.
  */
 import type { GoogleApi } from './api'
+import { fetchEventColors } from './event-colors'
 
 const BASE = 'https://www.googleapis.com/calendar/v3'
+
+/** The user's own answer to an invitation. */
+export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+
+/**
+ * What kind of block this is.
+ *
+ * `workingLocation` is deliberately absent — Google writes one of those per
+ * working day and they are a setting rather than an event, so they are filtered
+ * out entirely rather than given a kind.
+ */
+export type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
 
 export interface CalendarEvent {
   id: string
@@ -45,6 +58,27 @@ export interface CalendarEvent {
   /** A video link, when the event has one. The single most-clicked thing on an
    *  agenda row, so it is lifted out rather than left buried in the payload. */
   meetLink?: string
+  /**
+   * The user's own RSVP, or `null` when they are not an attendee at all.
+   *
+   * The most valuable field on the row: `needsAction` is the one entry on an
+   * agenda that is a *task* rather than a fact.
+   */
+  myResponse: RsvpStatus | null
+  kind: EventKind
+  /** `false` when Google says `transparency: 'transparent'` — it is on the
+   *  calendar but does not claim the time. */
+  busy: boolean
+  /** Where the dial-in and the agenda live; also what makes a task made from an
+   *  event worth more than its title. */
+  description: string | null
+  /** People, not rooms — a booked room is an `attendee` to Google. */
+  attendeeCount: number
+  organizer: string | null
+  /** The conferenceData video entry point, falling back to `hangoutLink`.
+   *  Meet, Zoom or Teams — `hangoutLink` alone is Meet-only. */
+  conferenceUrl: string | null
+  recurring: boolean
 }
 
 interface RawEvent {
@@ -54,9 +88,29 @@ interface RawEvent {
   htmlLink?: string
   location?: string
   hangoutLink?: string
+  description?: string
+  /** `default` | `outOfOffice` | `focusTime` | `birthday` | `fromGmail` |
+   *  `workingLocation`. */
+  eventType?: string
+  /** `opaque` (blocks time, the default) | `transparent`. */
+  transparency?: string
+  /** An index into the palette `event-colors` fetches, not a colour. */
+  colorId?: string
+  /** Present on an instance of a recurring series; it is the series' id. */
+  recurringEventId?: string
+  organizer?: { displayName?: string; email?: string }
+  conferenceData?: { entryPoints?: { entryPointType?: string; uri?: string }[] }
   start?: { date?: string; dateTime?: string }
   end?: { date?: string; dateTime?: string }
-  attendees?: { self?: boolean; responseStatus?: string }[]
+  attendees?: {
+    self?: boolean
+    responseStatus?: string
+    email?: string
+    displayName?: string
+    /** A meeting room or piece of equipment. Google lists it as an attendee;
+     *  a human count must not. */
+    resource?: boolean
+  }[]
 }
 
 export interface CalendarListEntry {
@@ -174,25 +228,33 @@ export async function listAgenda(
   // from turning one agenda into twenty round-trips.
   const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
 
-  const perCalendar = await Promise.all(
-    calendars.map(async (calendar) => {
-      const raw = await api.getAll<RawEvent>(
-        `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`,
-        {
-          timeMin: window.timeMin,
-          timeMax: window.timeMax,
-          singleEvents: 'true',
-          orderBy: 'startTime',
-          maxResults: '250',
-        },
-        (page) => page.items ?? [],
-      )
-      return raw.filter(isWorthShowing).map((event) => toCalendarEvent(event, calendar))
-    }),
-  )
+  // The palette runs *concurrently with* the events rather than before them: it
+  // is one request, it cannot fail the agenda (it returns `{}` instead), and
+  // awaiting it first would add its latency to every load for a tint.
+  const [palette, perCalendar] = await Promise.all([
+    fetchEventColors(api),
+    Promise.all(
+      calendars.map(async (calendar) => {
+        const raw = await api.getAll<RawEvent>(
+          `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`,
+          {
+            timeMin: window.timeMin,
+            timeMax: window.timeMax,
+            singleEvents: 'true',
+            orderBy: 'startTime',
+            maxResults: '250',
+          },
+          (page) => page.items ?? [],
+        )
+        return { calendar, raw: raw.filter(isWorthShowing) }
+      }),
+    ),
+  ])
 
   // Merged across calendars, so per-calendar ordering is not enough.
-  return perCalendar.flat().sort(byStart)
+  return perCalendar
+    .flatMap(({ calendar, raw }) => raw.map((event) => toCalendarEvent(event, calendar, palette)))
+    .sort(byStart)
 }
 
 /** Cancelled instances of a recurring series still come back (that is how a
@@ -201,11 +263,49 @@ export async function listAgenda(
  *  agenda that answers "what am I doing today". */
 function isWorthShowing(event: RawEvent): boolean {
   if (event.status === 'cancelled') return false
+  // Google writes a `workingLocation` entry for every working day. It is a
+  // setting rendered as an event, and on a week's agenda it is half the rows.
+  if (event.eventType === 'workingLocation') return false
+  // Note the asymmetry with `needsAction`, which is deliberately kept: an
+  // unanswered invitation is precisely what the agenda now wants to surface.
   return event.attendees?.some((a) => a.self === true && a.responseStatus === 'declined') !== true
 }
 
-function toCalendarEvent(event: RawEvent, calendar: CalendarChoice): CalendarEvent {
+const RSVP_STATUSES: readonly RsvpStatus[] = ['needsAction', 'tentative', 'accepted', 'declined']
+const EVENT_KINDS: readonly EventKind[] = [
+  'default',
+  'outOfOffice',
+  'focusTime',
+  'birthday',
+  'fromGmail',
+]
+
+/** Google's own value, or the safe default — never a string the UI has to
+ *  switch on blindly. An unknown `eventType` reads as an ordinary event. */
+function asKind(eventType: string | undefined): EventKind {
+  return EVENT_KINDS.find((k) => k === eventType) ?? 'default'
+}
+
+function asRsvp(status: string | undefined): RsvpStatus | null {
+  return RSVP_STATUSES.find((s) => s === status) ?? null
+}
+
+/** The video link, whoever hosts it. `hangoutLink` is Meet-only, so it is the
+ *  fallback rather than the answer — a Zoom or Teams meeting has no hangoutLink
+ *  at all and used to lose its join link entirely. */
+function conferenceUrlOf(event: RawEvent): string | null {
+  const video = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')
+  return video?.uri ?? event.hangoutLink ?? null
+}
+
+function toCalendarEvent(
+  event: RawEvent,
+  calendar: CalendarChoice,
+  palette: Record<string, string>,
+): CalendarEvent {
   const allDay = event.start?.date !== undefined
+  const attendees = event.attendees ?? []
+  const organizer = event.organizer?.displayName ?? event.organizer?.email ?? null
   return {
     id: event.id ?? '',
     // An untitled event is a real thing Google returns; the calendar UI shows
@@ -219,8 +319,20 @@ function toCalendarEvent(event: RawEvent, calendar: CalendarChoice): CalendarEve
     calendarId: calendar.id,
     calendarName: calendar.name,
     mine: calendar.mine,
-    color: calendar.color,
+    // A per-event colour is how people mark the one thing that matters in a day
+    // of identical blocks; it wins over the calendar's own.
+    color: (event.colorId !== undefined ? palette[event.colorId] : undefined) ?? calendar.color,
     meetLink: event.hangoutLink,
+    myResponse: asRsvp(attendees.find((a) => a.self === true)?.responseStatus),
+    kind: asKind(event.eventType),
+    busy: event.transparency !== 'transparent',
+    description: event.description ?? null,
+    // Rooms and equipment are attendees to Google; "2 people" for a solo
+    // meeting in a booked room is a lie the count would tell constantly.
+    attendeeCount: attendees.filter((a) => a.resource !== true).length,
+    organizer,
+    conferenceUrl: conferenceUrlOf(event),
+    recurring: event.recurringEventId !== undefined,
   }
 }
 
