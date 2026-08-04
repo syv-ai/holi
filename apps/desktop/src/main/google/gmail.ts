@@ -24,6 +24,10 @@ import type { GoogleApi } from './api'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
+/** Gmail's own inbox tabs. `primary` is what Gmail calls `CATEGORY_PERSONAL`
+ *  internally — the two names are not interchangeable in the API. */
+export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
+
 export interface MailThreadSummary {
   id: string
   subject: string
@@ -45,6 +49,26 @@ export interface MailThreadSummary {
   messageCount: number
   /** The link written into a task or note (D67). */
   webUrl: string
+  starred: boolean
+  important: boolean
+  /**
+   * An unsent draft sits in this thread — you started replying and stopped.
+   *
+   * A third state, distinct from both `answered` and untouched, and the one
+   * most easily forgotten: nothing else in the list says it exists.
+   */
+  hasDraft: boolean
+  category: MailCategory | null
+  /**
+   * The labels the user filed this under. Ids at this layer; `listThreads`
+   * resolves them to names through `labels.ts` before the summary leaves main.
+   * Gmail's own system labels are excluded — INBOX and UNREAD are not filing.
+   */
+  labels: string[]
+  /** From the List-Unsubscribe header: a URL to **open**, never a request Holi
+   *  sends. The `mailto:` form is ignored — acting on it would mean composing
+   *  mail on the user's behalf, which the read-only scope forbids anyway. */
+  unsubscribeUrl: string | null
 }
 
 export interface MailMessage {
@@ -286,11 +310,79 @@ export async function listThreads(
       // Comma-joining these is not a shorthand — Gmail reads the whole string
       // as one header name, matches nothing, and returns 200 with no headers,
       // which renders every thread as "(no subject)" from an empty sender.
-      metadataHeaders: ['Subject', 'From', 'Date', 'Message-ID'],
+      // The recipient and unsubscribe headers are free — same request, same
+      // response size to any degree that matters.
+      metadataHeaders: [
+        'Subject',
+        'From',
+        'Date',
+        'Message-ID',
+        'To',
+        'Cc',
+        'Reply-To',
+        'List-Unsubscribe',
+      ],
     }),
   )
 
   return threads.map(summarize).filter((t): t is MailThreadSummary => t !== null)
+}
+
+/**
+ * Gmail's own labels, which are not the user's.
+ *
+ * Everything else on a message is something the user filed it under, and only
+ * those belong on a row as chips. `CATEGORY_*` is handled by prefix because the
+ * set has grown before.
+ */
+const SYSTEM_LABELS = new Set([
+  'INBOX',
+  'SENT',
+  'DRAFT',
+  'DRAFTS',
+  'SPAM',
+  'TRASH',
+  'UNREAD',
+  'STARRED',
+  'IMPORTANT',
+  'CHAT',
+  'SCHEDULED',
+])
+
+/** Gmail's label name for each tab. `CATEGORY_PERSONAL` is the Primary tab —
+ *  the one mapping that is silently wrong if it is guessed. */
+const CATEGORY_BY_LABEL: Record<string, MailCategory> = {
+  CATEGORY_PERSONAL: 'primary',
+  CATEGORY_SOCIAL: 'social',
+  CATEGORY_PROMOTIONS: 'promotions',
+  CATEGORY_UPDATES: 'updates',
+  CATEGORY_FORUMS: 'forums',
+}
+
+/** Gmail's query grammar uses the tab's short name, not its label id. */
+export function categoryQuery(category: MailCategory): string {
+  return `category:${category}`
+}
+
+function isSystemLabel(id: string): boolean {
+  return SYSTEM_LABELS.has(id) || id.startsWith('CATEGORY_')
+}
+
+/**
+ * The unsubscribe link a newsletter advertises, if it offers a web one.
+ *
+ * The header may hold both forms — `<mailto:…>, <https://…>` — and only the
+ * https one is something to hand the browser. A `mailto:` would mean composing
+ * mail on the user's behalf, which is not what the read-only scope granted and
+ * not what a one-click affordance should ever do silently.
+ */
+export function unsubscribeUrlOf(header: string | null): string | null {
+  if (header === null) return null
+  for (const match of header.matchAll(/<([^>]+)>/g)) {
+    const url = match[1]!.trim()
+    if (/^https?:\/\//i.test(url)) return url
+  }
+  return null
 }
 
 function summarize(thread: RawThread): MailThreadSummary | null {
@@ -298,6 +390,11 @@ function summarize(thread: RawThread): MailThreadSummary | null {
   const first = messages[0]
   const last = messages[messages.length - 1]
   if (thread.id === undefined || first === undefined || last === undefined) return null
+
+  // A label anywhere in the thread applies to the thread — the same rule Gmail's
+  // own list follows, and `unread` already followed.
+  const allLabels = messages.flatMap((m) => m.labelIds ?? [])
+  const category = last.labelIds?.map((id) => CATEGORY_BY_LABEL[id]).find((c) => c !== undefined)
 
   return {
     id: thread.id,
@@ -318,6 +415,14 @@ function summarize(thread: RawThread): MailThreadSummary | null {
     answered: last.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
     webUrl: messageUrl(headerOf(first.payload, 'Message-ID'), thread.id),
+    starred: allLabels.includes('STARRED'),
+    important: allLabels.includes('IMPORTANT'),
+    hasDraft: allLabels.includes('DRAFT'),
+    // From the LAST message: Gmail re-categorises a thread as it grows, and the
+    // tab it sits in now is the one the user would look in for it.
+    category: category ?? null,
+    labels: [...new Set(allLabels)].filter((id) => !isSystemLabel(id)),
+    unsubscribeUrl: unsubscribeUrlOf(headerOf(last.payload, 'List-Unsubscribe')),
   }
 }
 

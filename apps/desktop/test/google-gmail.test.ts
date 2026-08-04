@@ -284,6 +284,151 @@ describe('listThreads', () => {
     expect(new URL(get).searchParams.get('format')).toBe('metadata')
   })
 
+  /**
+   * The flags a mail list is actually scanned by.
+   *
+   * Gmail sends all of these on the same `metadata` request the list already
+   * makes — every one of them was being parsed away and thrown out.
+   */
+
+  it('marks a starred thread', async () => {
+    const starred = {
+      id: 't1',
+      messages: [
+        { id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } },
+        { id: 'm2', internalDate: '2000', labelIds: ['INBOX', 'STARRED'], payload: { headers: [] } },
+      ],
+    }
+    const { api } = gmail([{ id: 't1' }], { t1: starred })
+
+    // Starred on *any* message: that is what Gmail's own star on a thread row
+    // means, and the thread is the unit the user acts on.
+    expect((await listThreads(api))[0]!.starred).toBe(true)
+  })
+
+  it('marks an important thread', async () => {
+    const important = {
+      id: 't1',
+      messages: [
+        { id: 'm1', internalDate: '1000', labelIds: ['INBOX', 'IMPORTANT'], payload: { headers: [] } },
+      ],
+    }
+    const { api } = gmail([{ id: 't1' }], { t1: important })
+
+    expect((await listThreads(api))[0]!.important).toBe(true)
+  })
+
+  it('marks a thread holding an unsent draft', async () => {
+    const drafting = {
+      id: 't1',
+      messages: [
+        { id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } },
+        { id: 'm2', internalDate: '2000', labelIds: ['DRAFT'], payload: { headers: [] } },
+      ],
+    }
+    const { api } = gmail([{ id: 't1' }], { t1: drafting })
+
+    // "You started replying and stopped" is a third state, distinct from both
+    // `answered` and untouched — and the one most likely to be forgotten.
+    const [summary] = await listThreads(api)
+    expect(summary!.hasDraft).toBe(true)
+    expect(summary!.answered).toBe(false)
+  })
+
+  it('reads the category from Gmail’s own label', async () => {
+    for (const [label, category] of [
+      ['CATEGORY_PROMOTIONS', 'promotions'],
+      ['CATEGORY_SOCIAL', 'social'],
+      ['CATEGORY_UPDATES', 'updates'],
+      ['CATEGORY_FORUMS', 'forums'],
+      // The one that gets guessed wrong: Gmail calls the Primary tab
+      // "personal", and a `primary` lookup against the label name finds nothing.
+      ['CATEGORY_PERSONAL', 'primary'],
+    ] as const) {
+      const { api } = gmail([{ id: 't1' }], {
+        t1: {
+          id: 't1',
+          messages: [
+            { id: 'm1', internalDate: '1000', labelIds: ['INBOX', label], payload: { headers: [] } },
+          ],
+        },
+      })
+
+      expect((await listThreads(api))[0]!.category).toBe(category)
+    }
+  })
+
+  it('leaves category null when Gmail assigns none', async () => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [{ id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } }],
+      },
+    })
+
+    expect((await listThreads(api))[0]!.category).toBeNull()
+  })
+
+  it('excludes system labels from the label list', async () => {
+    const { api } = gmail([{ id: 't1' }], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            internalDate: '1000',
+            labelIds: ['INBOX', 'UNREAD', 'IMPORTANT', 'CATEGORY_UPDATES', 'Label_12'],
+            payload: { headers: [] },
+          },
+        ],
+      },
+    })
+
+    // INBOX and UNREAD are not things the user filed this under; rendering them
+    // as chips is noise on every single row.
+    expect((await listThreads(api))[0]!.labels).toEqual(['Label_12'])
+  })
+
+  it('extracts an unsubscribe URL from a List-Unsubscribe header', async () => {
+    const newsletter = (unsubscribe: string) => ({
+      id: 't1',
+      messages: [
+        {
+          id: 'm1',
+          internalDate: '1000',
+          labelIds: ['INBOX'],
+          payload: { headers: [header('List-Unsubscribe', unsubscribe)] },
+        },
+      ],
+    })
+
+    // Both forms are legal in one header; the https one is a link Holi can hand
+    // to the browser, and a mailto would mean composing on the user's behalf.
+    const both = gmail([{ id: 't1' }], {
+      t1: newsletter('<mailto:stop@list.test>, <https://list.test/unsub?u=9>'),
+    })
+    expect((await listThreads(both.api))[0]!.unsubscribeUrl).toBe('https://list.test/unsub?u=9')
+
+    const mailtoOnly = gmail([{ id: 't1' }], { t1: newsletter('<mailto:stop@list.test>') })
+    expect((await listThreads(mailtoOnly.api))[0]!.unsubscribeUrl).toBeNull()
+  })
+
+  it('asks for the recipient and unsubscribe headers in the same request', async () => {
+    // Free: the same `metadata` request the list already makes. Guarding it
+    // here because the array form is exactly what the `(no subject)` bug broke.
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api)
+
+    const asked = new URL(seen.find((u) => u.includes('/threads/t1'))!).searchParams.getAll(
+      'metadataHeaders',
+    )
+    expect(asked).toContain('To')
+    expect(asked).toContain('Cc')
+    expect(asked).toContain('Reply-To')
+    expect(asked).toContain('List-Unsubscribe')
+  })
+
   it('asks for each metadata header as its own query parameter', async () => {
     // The bug this pins: sent as ONE comma-joined value, Gmail reads it as a
     // single header *name*, matches nothing, and returns a message with no
@@ -299,6 +444,10 @@ describe('listThreads', () => {
       'From',
       'Date',
       'Message-ID',
+      'To',
+      'Cc',
+      'Reply-To',
+      'List-Unsubscribe',
     ])
   })
 })
