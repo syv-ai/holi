@@ -28,11 +28,29 @@ import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './
  * **PKCE** is what actually protects the grant. This is the same premise
  * `github/session.ts` documents for its own public client id.
  *
- * **Fill this in from the existing registration before a live connect works.**
- * Everything else — the flow, the store, the refresh — is complete and tested
- * without it; only the round-trip to Google is blocked.
+ * `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` in the environment
+ * override both, which is how you point a dev build at a different app without
+ * editing source.
  */
-export const GOOGLE_CLIENT_ID = ''
+export const GOOGLE_CLIENT_ID = '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
+
+/**
+ * The desktop `client_secret` Google issued alongside the id above.
+ *
+ * **Committed on purpose, and it is not a credential.** Google's own docs say
+ * the secret for an installed app "is obviously not treated as a secret" — it
+ * ships in every copy of the binary and anyone can read it out. Google requires
+ * it on the token exchange for a Desktop-type client, so it has to be here; the
+ * thing that actually stops a stolen authorization code being redeemed is
+ * **PKCE** (`pkce.ts`), which binds the exchange to a verifier that never
+ * leaves this process.
+ *
+ * The consequence to be clear-eyed about: this pair identifies *Holi*, not a
+ * user. It grants nothing on its own — every token still requires the user to
+ * complete consent in their own browser. Rotating it is a config change, not an
+ * incident.
+ */
+export const GOOGLE_CLIENT_SECRET = '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'
 
 /**
  * **Read-only, both services** (D67). Holi reads mail and calendar, links them
@@ -266,6 +284,6 @@ export class GoogleSession {
   }
 
   #clientSecret(): string | undefined {
-    return this.#deps.clientSecret ?? process.env.HOLI_GOOGLE_CLIENT_SECRET
+    return this.#deps.clientSecret ?? process.env.HOLI_GOOGLE_CLIENT_SECRET ?? GOOGLE_CLIENT_SECRET
   }
 }

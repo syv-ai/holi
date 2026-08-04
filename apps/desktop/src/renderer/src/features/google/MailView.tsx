@@ -6,22 +6,28 @@
  * reply box. Replying opens Gmail, because the scope Holi holds is read-only
  * and pretending otherwise would be a button that cannot work.
  *
- * **Bodies are sanitized HTML** (D67, revised). A message arrives with both a
- * `html` part and a plain-text one; HTML wins when it exists, because mail is
- * designed and a reader that flattens every newsletter to text is not a reader.
- * The HTML is attacker-controlled, so it goes through `sanitizeMailHtml` — and
- * that call is the *only* thing standing between a stranger's markup and this
- * document. `dangerouslySetInnerHTML` here is deliberate and must never be fed
- * anything that has not come back from the sanitizer.
+ * **Bodies are sanitized HTML in a sandboxed frame** (D67, revised). A message
+ * arrives with both an `html` part and a plain-text one; HTML wins when it
+ * exists, because mail is designed and a reader that flattens every newsletter
+ * to text is not a reader. Two independent defences, and neither is a
+ * substitute for the other: `sanitizeMailHtml` decides what markup survives,
+ * and `mailFrameDocument` puts the survivors in a document of their own, with
+ * their own far stricter CSP. Sanitized markup never lands in *this* document.
  *
  * Remote content is blocked until the user asks for it, per message, which is
  * what every mail client does and for the same reason: an image fetched from a
  * sender's server is a read receipt they did not ask permission for.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ExternalLink, ImageOff, Link2, Mail, RefreshCw, Reply, Search } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Button, Input, Tooltip } from '@/primitives'
+import {
+  mailFrameDocument,
+  openableLink,
+  useMailPalette,
+  type MailPalette,
+} from '../../lib/mail-frame'
 import { sanitizeMailHtml } from '../../lib/mail-html'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
@@ -272,13 +278,8 @@ function Note({ children }: { children: React.ReactNode }) {
   return <p className="p-6 text-center text-sm text-muted-foreground">{children}</p>
 }
 
-/** Schemes a mail link may open. Anything else — `file:`, and whatever a sender
- *  invents — is dropped rather than handed to the OS. DOMPurify has already
- *  refused `javascript:`; this is the second gate, at the point of action. */
-const OPENABLE = /^(https?|mailto):/i
-
 /**
- * One message's body: sanitized HTML when there is any, text otherwise.
+ * One message's body: a sandboxed frame when there is HTML, text otherwise.
  *
  * "Load images" is per message and lives here rather than on the thread, which
  * matches how the decision is actually made — a user trusts *this* newsletter,
@@ -289,6 +290,7 @@ const OPENABLE = /^(https?|mailto):/i
  */
 function MessageBody({ message }: { message: ThreadMessage }) {
   const [allowRemoteContent, setAllowRemoteContent] = useState(false)
+  const palette = useMailPalette()
   const sanitized = useMemo(
     () => (message.html === null ? null : sanitizeMailHtml(message.html, { allowRemoteContent })),
     [message.html, allowRemoteContent],
@@ -296,21 +298,6 @@ function MessageBody({ message }: { message: ThreadMessage }) {
 
   if (sanitized === null) {
     return <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
-  }
-
-  /**
-   * Links inside a message must not navigate anything — an in-place navigation
-   * would replace the app itself, and `target=_blank` would open a Chromium
-   * window with no address bar. Delegated from the container so it covers every
-   * anchor in markup we do not control.
-   */
-  const openLink = (event: React.MouseEvent<HTMLDivElement>) => {
-    const anchor = (event.target as HTMLElement).closest('a[href]')
-    if (anchor === null) return
-    // Prevent first, decide second: an untrusted scheme must still not navigate.
-    event.preventDefault()
-    const href = anchor.getAttribute('href') ?? ''
-    if (OPENABLE.test(href)) void window.holi.openExternal(href)
   }
 
   return (
@@ -326,13 +313,90 @@ function MessageBody({ message }: { message: ThreadMessage }) {
           </Button>
         </div>
       )}
-      {/* The one dangerouslySetInnerHTML in the app. `sanitized.html` is the
-          sanitizer's output and nothing else may be substituted here. */}
-      <div
-        className="mail-body text-sm"
-        onClick={openLink}
-        dangerouslySetInnerHTML={{ __html: sanitized.html }}
+      <MailFrame
+        html={sanitized.html}
+        palette={palette}
+        allowRemoteContent={allowRemoteContent}
+        label={`message from ${message.from}`}
       />
     </>
+  )
+}
+
+interface MailFrameProps {
+  /** Sanitizer output. Nothing else may be passed. */
+  html: string
+  palette: MailPalette
+  allowRemoteContent: boolean
+  label: string
+}
+
+/**
+ * The message's own page.
+ *
+ * Written into rather than handed a `srcdoc`, because the app needs the
+ * document anyway — to size the frame and to catch link clicks — and writing
+ * gives it on the same tick instead of after a load event. Everything reaching
+ * in here is the *app's* script touching an inert document; the frame carries
+ * no `allow-scripts`, so nothing in the message ever runs.
+ */
+function MailFrame({ html, palette, allowRemoteContent, label }: MailFrameProps) {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(0)
+
+  // Layout, not passive: the frame has no height until it is measured, so an
+  // ordinary effect would paint every message at zero height first and snap.
+  useLayoutEffect(() => {
+    const frame = ref.current
+    const document_ = frame?.contentDocument
+    if (document_ == null) return
+
+    document_.open()
+    document_.write(mailFrameDocument({ html, palette, allowRemoteContent }))
+    document_.close()
+
+    /**
+     * A link must not navigate anything — inside the frame it would replace the
+     * message with a live web page, which is the one place remote content was
+     * being kept out of. Delegated, so it covers every anchor in markup nobody
+     * here wrote.
+     */
+    const onClick = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest('a[href]')
+      if (anchor == null) return
+      // Prevent first, decide second: an untrusted scheme must still not navigate.
+      event.preventDefault()
+      const href = openableLink(anchor.getAttribute('href'))
+      if (href !== null) void window.holi.openExternal(href)
+    }
+    document_.addEventListener('click', onClick)
+
+    // The frame has no intrinsic height, and its content's height is not known
+    // until it has been laid out — nor stable afterwards, since unblocked images
+    // arrive later and push everything down.
+    const measure = () => setHeight(document_.documentElement.scrollHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(document_.documentElement)
+    // Capture: `load` on an <img> does not bubble.
+    document_.addEventListener('load', measure, true)
+
+    return () => {
+      document_.removeEventListener('click', onClick)
+      document_.removeEventListener('load', measure, true)
+      observer.disconnect()
+    }
+  }, [html, palette, allowRemoteContent])
+
+  return (
+    <iframe
+      ref={ref}
+      // `allow-same-origin` and nothing else. No `allow-scripts` — granting both
+      // is the footgun that lets framed content drop its own sandbox.
+      sandbox="allow-same-origin"
+      aria-label={label}
+      className="block w-full rounded-md border-0"
+      style={{ height }}
+    />
   )
 }

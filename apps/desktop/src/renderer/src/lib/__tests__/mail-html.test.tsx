@@ -94,8 +94,13 @@ describe('sanitizeMailHtml — embedding and exfiltration', () => {
   })
 })
 
-describe('sanitizeMailHtml — style containment', () => {
-  it('drops a <style> block so a message cannot restyle the app around it', () => {
+describe('sanitizeMailHtml — styling', () => {
+  it('drops a <style> block, frame or no frame', () => {
+    // The sandboxed frame WOULD contain a stylesheet safely, so this looks like
+    // a rule that outlived its reason. It did not: DOMPurify strips stylesheet
+    // contents as an mXSS mitigation, and forcing them back changes how it
+    // parses — measured, on the payload in the mXSS test above, which stops
+    // being neutralised. Nicer newsletters are not worth that.
     const { html } = sanitizeMailHtml('<style>body{display:none}</style><p>hi</p>')
 
     expect(html).not.toContain('display:none')
@@ -150,6 +155,17 @@ describe('sanitizeMailHtml — remote content', () => {
 
     expect(result.blockedRemoteCount).toBe(0)
     expect(parse(result.html).querySelector('img')?.getAttribute('src')).toBe(src)
+  })
+
+  it('leaves a stylesheet no route to fetch, since the whole block is gone', () => {
+    // `@import` and `url()` inside a <style> are remote fetches no attribute
+    // pass can see. Nothing scrubs them because nothing has to — and the
+    // frame's `default-src 'none'` is the backstop if that ever changes.
+    const result = sanitizeMailHtml(
+      '<style>@import "https://tracker.test/x.css";p{background:url(https://tracker.test/p.png)}</style>',
+    )
+
+    expect(result.html).not.toContain('tracker.test')
   })
 
   it('leaves a data: url in CSS alone, and does not count it', () => {

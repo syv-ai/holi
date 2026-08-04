@@ -23,11 +23,20 @@
  *    which is a read receipt fired from the user's IP the moment the message is
  *    opened. Remote loads are stripped by default and counted, so the UI can
  *    offer the same per-message "load images" every mail client offers.
- * 3. **Containment** — also ours. `<style>` is dropped entirely: a message's own
- *    stylesheet has no scope, so `body { display: none }` in a newsletter would
- *    restyle the app around it. Inline `style` attributes survive, which is how
- *    the overwhelming majority of mail is designed anyway (Gmail itself is
- *    hostile to `<style>` blocks, so senders do not rely on them).
+ * 3. **Containment** — mostly `mail-frame.ts`'s now: a message renders in its
+ *    own sandboxed document, so its selectors have nothing of the app to match.
+ *    What stays here is the `<form>` family and `<base>` — exfiltration and URL
+ *    retargeting, which no amount of framing makes acceptable.
+ *
+ * **`<style>` stays forbidden even though the frame would contain it**, and the
+ * reason is worth recording because it is not the obvious one. DOMPurify strips
+ * stylesheet *contents* by default as an mXSS mitigation, and forcing them back
+ * (`ADD_TAGS: ['style']`) measurably changes how it parses: on the classic
+ * `<svg><style><img src=x onerror=…>` payload it stops neutralising the `<img>`
+ * inside the style and lets it out into the document as a real element. That is
+ * a parser-level regression traded for nicer newsletters, so the trade is
+ * declined. Inline `style` attributes — how the large majority of mail is
+ * actually designed, since Gmail is itself hostile to `<style>` — are kept.
  *
  * `target` is stripped so a link cannot navigate anything itself — `MailView`
  * intercepts the click and hands the URL to `window.holi.openExternal`, which
@@ -52,10 +61,13 @@ export interface SanitizeMailOptions {
 /**
  * Removed outright rather than left to the default allow-list.
  *
- * `style` is containment (above). The form family is exfiltration: a message
- * that can render a password box and post it somewhere is a phishing page with
- * the user's own mail client as its chrome. `base` would silently retarget every
- * relative URL in the document, including ones outside the message.
+ * The form family is exfiltration: a message that can render a password box and
+ * post it somewhere is a phishing page wearing the user's own mail client as
+ * chrome. `base` would silently retarget every relative URL in the document.
+ * `link` and `meta` would let a message redeclare the frame's own CSP.
+ *
+ * `style` is listed to make the intent explicit; DOMPurify would drop its
+ * contents regardless (see the module note on why that default is left alone).
  */
 const FORBID_TAGS = [
   'style',

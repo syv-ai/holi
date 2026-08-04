@@ -294,68 +294,7 @@
   background: var(--selection);
 }
 
-/**
- * The surface a sanitized mail body renders on (features/google/MailView.tsx).
- *
- * **Deliberately not themed, and this is the one place that is right.** HTML
- * mail is authored against a white page — senders set text colours and leave
- * backgrounds alone — so rendering it on a dark vault theme produces dark text
- * on a dark surface, which is not "themed", it is unreadable. Apple Mail and
- * Outlook both put HTML mail on white for exactly this reason. It is foreign
- * content given its own page, not app chrome, so it does not follow D64's
- * per-vault tokens.
- *
- * The rules below are containment, not decoration: mail arrives with fixed
- * pixel widths and 900px tables, and without these a single newsletter blows
- * the reader pane out horizontally. `<style>` blocks are stripped by the
- * sanitizer, so the message cannot fight these back.
- */
-.mail-body {
-  background: #ffffff;
-  color: #1a1a1a;
-  border-radius: var(--radius-md);
-  padding: 0.75rem;
-  /* Wide mail scrolls inside its own box rather than widening the pane. */
-  overflow-x: auto;
-}
-.mail-body img {
-  max-width: 100%;
-  height: auto;
-}
-.mail-body table {
-  max-width: 100%;
-}
-.mail-body a {
-  color: #0b57d0;
-  text-decoration: underline;
-}
-/* The Tailwind preflight resets these to unstyled; mail assumes a browser's
-   defaults, so a newsletter's headings and lists need them back — scoped here
-   so nothing leaks into the app. */
-.mail-body h1,
-.mail-body h2,
-.mail-body h3 {
-  font-weight: 600;
-  margin: 0.5em 0;
-}
-.mail-body h1 {
-  font-size: 1.5em;
-}
-.mail-body h2 {
-  font-size: 1.25em;
-}
-.mail-body p {
-  margin: 0.5em 0;
-}
-.mail-body ul,
-.mail-body ol {
-  margin: 0.5em 0;
-  padding-left: 1.5em;
-  list-style: revert;
-}
-.mail-body blockquote {
-  margin: 0.5em 0;
-  padding-left: 0.75em;
-  border-left: 2px solid #d0d0d0;
-  color: #555555;
-}
+/* A mail message's own styling is NOT here. It renders in a sandboxed frame
+   with its own document, so its base stylesheet is built in
+   `lib/mail-frame.ts` and the app's cascade deliberately cannot reach it —
+   which is the whole point of the frame. */
