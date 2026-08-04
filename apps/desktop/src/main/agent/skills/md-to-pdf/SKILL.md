@@ -16,7 +16,17 @@ A template is a folder under `.holi/document-templates/<slug>/`:
 - `template.typ` — exports `doc(notePath, meta, assets)`.
 - `template.json` — a manifest declaring the fields the template accepts.
 
-List them with `ls .holi/document-templates/`. Every vault ships the `plain` template.
+List them with `ls .holi/document-templates/`. Every vault ships three:
+
+- `plain` — a clean, unbranded layout.
+- `proposal` — the branded syv.ai proposal (tilbud): Raleway, numbered sections, logo + date
+  header. Supports two markdown tokens, each on its own line:
+  - `@@SIG:syv.ai ApS|ACME A/S@@` — a signature block, one column per `|`-separated party.
+  - `@@FIG:agent-flow@@` / `@@FIG:custom-arkitektur@@` — an embedded syv architecture diagram.
+- `report` — a branded long-form report/whitepaper: cover page, table of contents, running header.
+  Fields: `title`, `subtitle`, `date`.
+
+(`_brand/` holds the shared fonts/logo/module the branded templates import — not a template itself.)
 
 Each `template.json` field has a `key`, `label`, `type`, and optional `required`,
 `default`, and `options`. The six field types and the Typst value each becomes:
