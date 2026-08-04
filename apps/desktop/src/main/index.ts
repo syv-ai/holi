@@ -26,7 +26,7 @@ import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { GoogleApi } from './google/api'
 import { listAgenda } from './google/calendar'
-import { listThreads, readThread } from './google/gmail'
+import { listThreads, readThread, textOnly } from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
@@ -202,7 +202,9 @@ async function main(): Promise<void> {
   const googleOps = createGoogleOpsServer({
     agenda: (window) => listAgenda(googleApiFor(), window),
     threads: (query) => listThreads(googleApiFor(), { query }),
-    thread: (id) => readThread(googleApiFor(), id),
+    // `textOnly` is the asymmetry, and it is deliberate: the UI renders
+    // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
+    thread: async (id) => textOnly(await readThread(googleApiFor(), id)),
   })
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))

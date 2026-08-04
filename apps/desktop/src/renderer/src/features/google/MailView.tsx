@@ -6,15 +6,23 @@
  * reply box. Replying opens Gmail, because the scope Holi holds is read-only
  * and pretending otherwise would be a button that cannot work.
  *
- * **Bodies are plain text.** `main/google/gmail.ts` extracts text rather than
- * sanitizing HTML, so everything here lands in a text node — the message body
- * is the most hostile input in the app, and this is the property that makes it
- * safe. Never render it with `dangerouslySetInnerHTML`.
+ * **Bodies are sanitized HTML** (D67, revised). A message arrives with both a
+ * `html` part and a plain-text one; HTML wins when it exists, because mail is
+ * designed and a reader that flattens every newsletter to text is not a reader.
+ * The HTML is attacker-controlled, so it goes through `sanitizeMailHtml` — and
+ * that call is the *only* thing standing between a stranger's markup and this
+ * document. `dangerouslySetInnerHTML` here is deliberate and must never be fed
+ * anything that has not come back from the sanitizer.
+ *
+ * Remote content is blocked until the user asks for it, per message, which is
+ * what every mail client does and for the same reason: an image fetched from a
+ * sender's server is a read receipt they did not ask permission for.
  */
-import { useCallback, useEffect, useState } from 'react'
-import { ExternalLink, Link2, Mail, RefreshCw, Reply, Search } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ExternalLink, ImageOff, Link2, Mail, RefreshCw, Reply, Search } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Button, Input, Tooltip } from '@/primitives'
+import { sanitizeMailHtml } from '../../lib/mail-html'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
@@ -35,7 +43,10 @@ interface ThreadMessage {
   from: string
   to: string[]
   date: string
+  /** Plain text — the fallback, and what a text-only message carries. */
   body: string
+  /** Raw, unsanitized HTML, or null. Only `MessageBody` may touch this. */
+  html: string | null
 }
 
 interface Thread {
@@ -246,8 +257,7 @@ export function MailView() {
                       to {message.to.join(', ')}
                     </p>
                   )}
-                  {/* Plain text in a text node — see the module note. Never HTML. */}
-                  <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
+                  <MessageBody message={message} />
                 </article>
               ))}
             </div>
@@ -260,4 +270,69 @@ export function MailView() {
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="p-6 text-center text-sm text-muted-foreground">{children}</p>
+}
+
+/** Schemes a mail link may open. Anything else — `file:`, and whatever a sender
+ *  invents — is dropped rather than handed to the OS. DOMPurify has already
+ *  refused `javascript:`; this is the second gate, at the point of action. */
+const OPENABLE = /^(https?|mailto):/i
+
+/**
+ * One message's body: sanitized HTML when there is any, text otherwise.
+ *
+ * "Load images" is per message and lives here rather than on the thread, which
+ * matches how the decision is actually made — a user trusts *this* newsletter,
+ * not everything the thread ever collected. Re-sanitizing from the original
+ * HTML on unblock (rather than stashing the stripped URLs and putting them
+ * back) keeps one code path: whatever renders has been through the sanitizer
+ * with the current setting, always.
+ */
+function MessageBody({ message }: { message: ThreadMessage }) {
+  const [allowRemoteContent, setAllowRemoteContent] = useState(false)
+  const sanitized = useMemo(
+    () => (message.html === null ? null : sanitizeMailHtml(message.html, { allowRemoteContent })),
+    [message.html, allowRemoteContent],
+  )
+
+  if (sanitized === null) {
+    return <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
+  }
+
+  /**
+   * Links inside a message must not navigate anything — an in-place navigation
+   * would replace the app itself, and `target=_blank` would open a Chromium
+   * window with no address bar. Delegated from the container so it covers every
+   * anchor in markup we do not control.
+   */
+  const openLink = (event: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (event.target as HTMLElement).closest('a[href]')
+    if (anchor === null) return
+    // Prevent first, decide second: an untrusted scheme must still not navigate.
+    event.preventDefault()
+    const href = anchor.getAttribute('href') ?? ''
+    if (OPENABLE.test(href)) void window.holi.openExternal(href)
+  }
+
+  return (
+    <>
+      {sanitized.blockedRemoteCount > 0 && (
+        <div className="mb-2 flex items-center gap-2 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
+          <ImageOff size={12} className="shrink-0" />
+          <span className="min-w-0 flex-1">
+            Images blocked — loading them tells the sender you opened this.
+          </span>
+          <Button variant="ghost" size="xs" onClick={() => setAllowRemoteContent(true)}>
+            Load images
+          </Button>
+        </div>
+      )}
+      {/* The one dangerouslySetInnerHTML in the app. `sanitized.html` is the
+          sanitizer's output and nothing else may be substituted here. */}
+      <div
+        className="mail-body text-sm"
+        onClick={openLink}
+        dangerouslySetInnerHTML={{ __html: sanitized.html }}
+      />
+    </>
+  )
 }

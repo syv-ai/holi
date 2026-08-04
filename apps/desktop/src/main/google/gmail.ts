@@ -4,15 +4,21 @@
  * **Read-only** (D67): the granted scope is `gmail.readonly`, so nothing here
  * can send, archive, or label. Composing is a `mailto:` handoff in the UI.
  *
- * **Mail is rendered as plain text, never as HTML — and that is a security
- * decision, not a styling one.** A message body is the most hostile input the
- * app handles: it is attacker-controlled by definition. Rendering it as HTML
- * would mean shipping a sanitizer and trusting it forever, and would silently
- * re-enable remote-content tracking pixels the moment anything loaded an image.
- * Extracting text instead removes the entire class by construction — the body
- * reaches the renderer as a string that is only ever placed in a text node.
- * The cost is honest: a heavily-designed newsletter reads plainly. Holi is not
- * an email client (PRD non-goal), and "open in Gmail" is one click away.
+ * **A message carries both representations, and each consumer gets the one it
+ * wants.** `body` is plain text — the sender's own `text/plain` part when there
+ * is one, converted from HTML when there is not. `html` is the raw HTML part,
+ * untouched, or `null`.
+ *
+ * - The **UI** reads `html`, and sanitizes it in the renderer
+ *   (`renderer/src/lib/mail-html.ts`, which also blocks remote content by
+ *   default). Mail is designed, and a reader that flattens every newsletter to
+ *   text is not a mail reader.
+ * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
+ *   a table layout, and markup would be tokens spent on nothing.
+ *
+ * Nothing here sanitizes, and that is deliberate: main hands over exactly what
+ * Google returned, so there is one sanitizer, in the one process with a DOM,
+ * rather than two half-measures that each assume the other did the work.
  */
 import type { GoogleApi } from './api'
 
@@ -37,8 +43,21 @@ export interface MailMessage {
   from: string
   to: string[]
   date: string
-  /** Plain text. See the module note: never HTML. */
+  /** Plain text, for the agent and as the UI's fallback. See the module note. */
   body: string
+  /** The raw HTML part, or `null`. **Unsanitized** — the renderer sanitizes it
+   *  before it becomes markup, and nothing else may render it. */
+  html: string | null
+}
+
+/** What the agent sees: the same thread with the markup removed. */
+export type AgentMailMessage = Omit<MailMessage, 'html'>
+
+export interface AgentMailThread {
+  id: string
+  subject: string
+  webUrl: string
+  messages: AgentMailMessage[]
 }
 
 export interface MailThread {
@@ -145,6 +164,24 @@ export function bodyTextOf(payload: RawPart | undefined): string {
 
   // A single-part message carries its body on the payload itself.
   return decodeBody(payload?.body?.data).trim()
+}
+
+/**
+ * The message's HTML, exactly as Google returned it, or `null`.
+ *
+ * Verbatim on purpose. Trimming or pre-stripping here would give the renderer's
+ * sanitizer a subtly different input from the one it is tested against, and
+ * would invite the belief that main already made this safe. It did not.
+ */
+export function bodyHtmlOf(payload: RawPart | undefined): string | null {
+  // `findPart` matches the payload itself, so a single-part HTML message needs
+  // no separate branch here.
+  const html = findPart(payload, 'text/html')
+  if (html === null) return null
+  const raw = decodeBody(html.body?.data)
+  // An empty part is "no HTML", not "empty HTML" — the UI branches on null, and
+  // a blank string would render a blank message instead of the text body.
+  return raw === '' ? null : raw
 }
 
 function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
@@ -280,7 +317,7 @@ function isoDate(message: RawMessage): string {
   return Number.isNaN(parsed) ? '' : new Date(parsed).toISOString()
 }
 
-/** One thread, with every message's text. */
+/** One thread, with every message in both representations (see the module note). */
 export async function readThread(api: GoogleApi, threadId: string): Promise<MailThread> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${threadId}`, { format: 'full' })
   const messages = thread.messages ?? []
@@ -296,6 +333,26 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       to: addresses(headerOf(message.payload, 'To')),
       date: isoDate(message),
       body: bodyTextOf(message.payload),
+      html: bodyHtmlOf(message.payload),
     })),
+  }
+}
+
+/**
+ * The thread as the agent should see it: text bodies, no markup.
+ *
+ * Applied at the ops server (`main/index.ts`) rather than left to the agent to
+ * ignore. Two reasons, and the second is the one that matters: an HTML body is
+ * many times the size of its text twin, so shipping it would spend the agent's
+ * context on table layout; and unsanitized markup should exist in exactly one
+ * place, which is the renderer that sanitizes it. Sending it down a second path
+ * means a second consumer that might one day render it.
+ */
+export function textOnly(thread: MailThread): AgentMailThread {
+  return {
+    id: thread.id,
+    subject: thread.subject,
+    webUrl: thread.webUrl,
+    messages: thread.messages.map(({ html: _html, ...message }) => message),
   }
 }

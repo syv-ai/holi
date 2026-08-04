@@ -2,6 +2,31 @@
 <html>
   <head>
     <meta charset="UTF-8" />
+    <!--
+      A deliberately narrow CSP — every directive here forbids something the app
+      never does, so it costs nothing and holds in dev and in a packaged build
+      alike.
+
+      What it is NOT: an XSS defence. `script-src` is absent on purpose, because
+      Vite's dev server injects an inline module preamble, so the only policy
+      that would work in dev is one carrying `'unsafe-inline'` — which stops
+      nothing and reads like protection. The app's real script defence is that
+      the one untrusted string it renders as markup (a mail body) goes through
+      DOMPurify first: renderer/src/lib/mail-html.ts.
+
+      What it IS: the second layer under that sanitizer. If a bypass ever landed
+      an <iframe>, <object> or <form> in a message, or a <base> that silently
+      retargeted every relative URL in the document, these are what keep it
+      inert. Holi renders no frames and submits no forms, so nothing legitimate
+      is constrained.
+
+      Remote images are deliberately NOT restricted here: blocking them is the
+      sanitizer's job, per message, so that "load images" can work at all.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="object-src 'none'; frame-src 'none'; child-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>Holi</title>
   </head>
   <body>

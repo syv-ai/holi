@@ -48,7 +48,10 @@ cancelled events removed:
 `unread`, `messageCount`, `webUrl`.
 
 `read` → `{ id, subject, webUrl, messages: [{ from, to, date, body }] }`. Bodies
-are **plain text** — HTML mail has been converted. Do not expect markup.
+are **plain text** — the sender's own text part where there is one, converted
+from HTML otherwise. Do not expect markup, and do not ask for it: Holi's own
+mail reader renders sanitized HTML, but this command strips it deliberately,
+because a table layout would cost you context and tell you nothing.
 
 ## Linking an email or event into the vault
 

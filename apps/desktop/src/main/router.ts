@@ -1208,9 +1208,15 @@ export function createRouter(deps: RouterDeps) {
         listThreads(googleApi(), { query: input.query }),
       ),
 
-    /** One thread, with every message as **plain text** — never HTML. The body
-     *  is attacker-controlled input, and `gmail.ts` explains why it is extracted
-     *  rather than sanitized. */
+    /**
+     * One thread. Each message carries `body` (plain text) and `html` (the raw
+     * HTML part, or null).
+     *
+     * **`html` is unsanitized and crosses IPC that way.** That is the design,
+     * not an oversight: the renderer sanitizes it with DOMPurify
+     * (`renderer/src/lib/mail-html.ts`) because that is the process with a DOM.
+     * Nothing may render it before that call. See `google/gmail.ts`.
+     */
     thread: t.procedure
       .input(fields({ id: 'string' }))
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
