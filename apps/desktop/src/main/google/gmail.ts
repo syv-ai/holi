@@ -657,6 +657,38 @@ export function textOnly(thread: MailThread): AgentMailThread {
 }
 
 /**
+ * System labels a cached summary can be re-derived from without refetching it,
+ * and the mapping that does it. **These two are one decision** — a label added
+ * to the set but not to `applyLabelDelta` is silently ignored, and the reverse
+ * makes a delta refetch when it did not need to.
+ *
+ * A *user* label is deliberately absent: the cache holds label NAMES, and
+ * `Label_12` cannot become one without a lookup — so that case refetches, which
+ * is both correct and rare.
+ *
+ * Two callers, and they arrive from opposite directions: `mail-sync` applying
+ * what `history.list` reports, and `cache` applying a write this app just made.
+ * Both are "a label moved; update the flags", and neither should own its own
+ * copy of the answer.
+ */
+export const PATCHABLE_LABELS = new Set(['UNREAD', 'STARRED', 'IMPORTANT', 'DRAFT'])
+
+export function applyLabelDelta(
+  thread: MailThreadSummary,
+  change: { added: ReadonlySet<string>; removed: ReadonlySet<string> },
+): MailThreadSummary {
+  const flag = (label: string, current: boolean) =>
+    change.added.has(label) ? true : change.removed.has(label) ? false : current
+  return {
+    ...thread,
+    unread: flag('UNREAD', thread.unread),
+    starred: flag('STARRED', thread.starred),
+    important: flag('IMPORTANT', thread.important),
+    hasDraft: flag('DRAFT', thread.hasDraft),
+  }
+}
+
+/**
  * The four writes (D68) — everything Holi can change about a thread.
  *
  * **This is the whole write surface, and it is meant to stay that way.** The

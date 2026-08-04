@@ -21,8 +21,10 @@
 import { GoogleApiError, type GoogleApi } from './api'
 import type { GoogleCache } from './cache'
 import {
+  applyLabelDelta,
   fetchThreadSummaries,
   listThreads,
+  PATCHABLE_LABELS,
   type ListThreadsOptions,
   type MailPage,
   type MailThreadSummary,
@@ -31,14 +33,14 @@ import {
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
 /**
- * System labels a cached summary can be repatched from without refetching it.
+ * Which labels a cached summary can be repatched from, rather than refetched.
  *
  * Read/unread is the most common delta there is, and paying a request for it
- * would spend the whole saving. A *user* label is deliberately absent: the
- * cache holds label NAMES, and `Label_12` cannot become one without a lookup —
- * so that case refetches, which is both correct and rare.
+ * would spend the whole saving. The set and the mapping that applies it live in
+ * `gmail.ts` beside `MailThreadSummary`, because the cache needs the same
+ * answer for a write this app just made — see `applyLabelDelta`.
  */
-const PATCHABLE = new Set(['UNREAD', 'STARRED', 'IMPORTANT', 'DRAFT'])
+const PATCHABLE = PATCHABLE_LABELS
 
 interface RawHistoryMessage {
   id?: string
@@ -227,16 +229,7 @@ function patch(
   thread: MailThreadSummary,
   change: { added: Set<string>; removed: Set<string> } | undefined,
 ): MailThreadSummary {
-  if (change === undefined) return thread
-  const flag = (label: string, current: boolean) =>
-    change.added.has(label) ? true : change.removed.has(label) ? false : current
-  return {
-    ...thread,
-    unread: flag('UNREAD', thread.unread),
-    starred: flag('STARRED', thread.starred),
-    important: flag('IMPORTANT', thread.important),
-    hasDraft: flag('DRAFT', thread.hasDraft),
-  }
+  return change === undefined ? thread : applyLabelDelta(thread, change)
 }
 
 /**

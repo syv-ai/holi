@@ -260,3 +260,92 @@ describe('shape version', () => {
     expect(cache.readThreads('inbox')).toHaveLength(1)
   })
 })
+
+/**
+ * One thread, changed everywhere it is cached.
+ *
+ * The key is `query|category` (`mail-sync.ts`), so a single thread lives in the
+ * inbox list, the unread-filtered list, and any search that matched it. **The
+ * bug these exist to forbid is patching only the list on screen** — clearing
+ * bold in the inbox while the unread filter still lists the thread is worse
+ * than not patching at all, because the two views now disagree and neither is
+ * obviously the wrong one.
+ *
+ * The `id` column has been written since this file was created and read by
+ * nothing. It is what makes reaching every list possible without enumerating
+ * keys or parsing JSON.
+ */
+describe('mutating one thread', () => {
+  /** The same thread in two lists, plus a bystander in each. */
+  function seedTwoLists() {
+    cache.useAccount('sub-1')
+    cache.writeThreads('|', [thread('t1', { unread: true }), thread('t2', { unread: true })])
+    cache.writeThreads('|unread', [thread('t1', { unread: true }), thread('t3', { unread: true })])
+  }
+
+  it('patches a flag in every list holding the thread, not just one', async () => {
+    seedTwoLists()
+
+    cache.patchThread('t1', { added: [], removed: ['UNREAD'] })
+
+    expect(cache.readThreads('|')!.find((t) => t.id === 't1')!.unread).toBe(false)
+    expect(cache.readThreads('|unread')!.find((t) => t.id === 't1')!.unread).toBe(false)
+  })
+
+  it('leaves every other thread alone', async () => {
+    seedTwoLists()
+
+    cache.patchThread('t1', { added: [], removed: ['UNREAD'] })
+
+    expect(cache.readThreads('|')!.find((t) => t.id === 't2')!.unread).toBe(true)
+    expect(cache.readThreads('|unread')!.find((t) => t.id === 't3')!.unread).toBe(true)
+  })
+
+  it('adds a flag as well as removing one', async () => {
+    seedTwoLists()
+
+    cache.patchThread('t1', { added: ['STARRED'], removed: [] })
+
+    expect(cache.readThreads('|')!.find((t) => t.id === 't1')!.starred).toBe(true)
+    // Untouched flags survive the round trip — the row is rewritten whole.
+    expect(cache.readThreads('|')!.find((t) => t.id === 't1')!.unread).toBe(true)
+  })
+
+  it('preserves list order — a patch is not a re-sort', async () => {
+    seedTwoLists()
+
+    cache.patchThread('t1', { added: [], removed: ['UNREAD'] })
+
+    expect(cache.readThreads('|')!.map((t) => t.id)).toEqual(['t1', 't2'])
+  })
+
+  it('drops a thread from every list — archive and trash remove it outright', async () => {
+    seedTwoLists()
+
+    cache.dropThread('t1')
+
+    expect(cache.readThreads('|')!.map((t) => t.id)).toEqual(['t2'])
+    expect(cache.readThreads('|unread')!.map((t) => t.id)).toEqual(['t3'])
+  })
+
+  it('is a no-op for an id nothing holds', async () => {
+    seedTwoLists()
+
+    cache.patchThread('nope', { added: [], removed: ['UNREAD'] })
+    cache.dropThread('nope')
+
+    expect(cache.readThreads('|')!.map((t) => t.id)).toEqual(['t1', 't2'])
+    expect(cache.readThreads('|unread')!.map((t) => t.id)).toEqual(['t1', 't3'])
+  })
+
+  it('survives a reopen — the patch is on disk, not in memory', async () => {
+    seedTwoLists()
+    cache.patchThread('t1', { added: [], removed: ['UNREAD'] })
+
+    cache.close()
+    cache = openGoogleCache(path)
+    cache.useAccount('sub-1')
+
+    expect(cache.readThreads('|')!.find((t) => t.id === 't1')!.unread).toBe(false)
+  })
+})

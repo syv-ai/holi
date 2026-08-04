@@ -24,7 +24,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { rmSync } from 'node:fs'
 import type { CalendarEvent } from './calendar'
-import type { MailThreadSummary } from './gmail'
+import { applyLabelDelta, type MailThreadSummary } from './gmail'
 
 /**
  * How many threads a single query keeps.
@@ -44,6 +44,23 @@ export interface GoogleCache {
   useAccount(sub: string): void
   readThreads(key: string): MailThreadSummary[] | null
   writeThreads(key: string, threads: MailThreadSummary[]): void
+  /**
+   * Apply a label change to one thread **in every list that holds it**.
+   *
+   * The key is `query|category`, so a thread is cached once per question it
+   * answered — the inbox, the unread filter, a search. Patching only the list on
+   * screen is the bug this signature forbids: bold clearing in the inbox while
+   * the unread filter still lists the thread leaves two views disagreeing, with
+   * neither obviously wrong.
+   *
+   * Optimism, not truth. `history.list` reports this app's own writes, so the
+   * next `syncThreads` reconciles every list regardless of what happened here.
+   */
+  patchThread(id: string, change: { added: string[]; removed: string[] }): void
+  /** Remove a thread from every cached list — what archive and trash do. Also
+   *  optimism: a search that still legitimately matches gets it back on the
+   *  next sync, because this is a cache and not a mirror. */
+  dropThread(id: string): void
   readAgenda(key: string): CalendarEvent[] | null
   writeAgenda(key: string, events: CalendarEvent[]): void
   /**
@@ -178,6 +195,31 @@ export function openGoogleCache(path: string): GoogleCache {
         insert.run(key, position, thread.id, JSON.stringify(thread))
       })
       markAnswered('threads', key)
+    },
+
+    patchThread(id, change) {
+      // The `id` column has been written since this table existed and read by
+      // nothing until now. It is what makes "every list holding this thread"
+      // a query rather than an enumeration of keys and a JSON parse per row.
+      const rows = database()
+        .prepare('SELECT key, position, json FROM threads WHERE id = ?')
+        .all(id) as { key: string; position: number; json: string }[]
+      if (rows.length === 0) return
+
+      const added = new Set(change.added)
+      const removed = new Set(change.removed)
+      const update = database().prepare('UPDATE threads SET json = ? WHERE key = ? AND position = ?')
+      for (const row of rows) {
+        const patched = applyLabelDelta(JSON.parse(row.json) as MailThreadSummary, { added, removed })
+        update.run(JSON.stringify(patched), row.key, row.position)
+      }
+    },
+
+    dropThread(id) {
+      // `position` is deliberately NOT renumbered. `readThreads` only orders by
+      // it, so a gap is invisible — and rewriting every later row is a second
+      // chance to corrupt an order that was already correct.
+      database().prepare('DELETE FROM threads WHERE id = ?').run(id)
     },
 
     readAgenda(key) {
