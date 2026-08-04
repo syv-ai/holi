@@ -2,10 +2,15 @@
  * The authenticated Google request — the one place a token meets a URL.
  *
  * Like `github/api.ts`, deliberately not a generated client: Holi makes a
- * handful of GET requests and the SDK that wrapped them would be larger than
- * they are. What this owns instead is the part a generic client would not do
- * for us — **classifying a refusal** so the caller can tell "reconnect Google"
- * apart from "you are rate limited" apart from "that scope was never granted".
+ * handful of reads and four writes, and the SDK that wrapped them would be
+ * larger than they are. What this owns instead is the part a generic client
+ * would not do for us — **classifying a refusal** so the caller can tell
+ * "reconnect Google" apart from "you are rate limited" apart from "that scope
+ * was never granted".
+ *
+ * `post` is the only verb that changes anything at Google (D68). Everything it
+ * can reach is bounded by `GOOGLE_SCOPES`, which buys thread state and no
+ * ability to delete a mailbox's contents outright.
  *
  * The token arrives as a **getter returning a promise**, never a string: it is
  * `GoogleSession.getAccessToken()`, which refreshes transparently and
@@ -91,6 +96,48 @@ export class GoogleApi {
 
     if (!res.ok) throw await classify(res)
     return (await res.json()) as T
+  }
+
+  /**
+   * A write. **The only verb here that changes anything at Google** (D68).
+   *
+   * No query-parameter path, deliberately: every Gmail write this app makes
+   * carries its arguments in the body, and a second `URLSearchParams` builder
+   * would be an unused branch of the one function that can do damage.
+   *
+   * Returns `null` when the response carries no JSON. That is not defensive
+   * padding — Gmail's write endpoints do not all answer with a body, and
+   * throwing on `res.json()` would report a *completed* archive as failed,
+   * which then reverts the UI to a state the mailbox no longer has.
+   */
+  async post<T>(url: string, body: unknown): Promise<T | null> {
+    let token: string
+    try {
+      token = await this.#deps.accessToken()
+    } catch (err) {
+      throw new GoogleApiError(
+        'reconnect',
+        401,
+        err instanceof Error ? err.message : 'not connected to Google',
+      )
+    }
+
+    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) throw await classify(res)
+    // A 403 here is most often `insufficientPermissions` — a grant older than
+    // GOOGLE_SCOPES — which `classify` maps to `scope` so the UI can offer the
+    // reconnect that actually fixes it. See `GoogleSession.missingScopes`.
+    return await res.json().catch(() => null)
   }
 
   /**
