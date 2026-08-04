@@ -133,6 +133,18 @@ export class GoogleSession {
   }
 
   /**
+   * Google's stable id for the connected account, or `null`.
+   *
+   * **Main only** — deliberately not on `GoogleAccount`, which is what the
+   * renderer is allowed to know. What needs it is the cache, which must be
+   * scoped to an account by something that does not change: an email address
+   * can be renamed, and `sub` is what the token store already keys on.
+   */
+  get accountSub(): string | null {
+    return this.#current()?.sub ?? null
+  }
+
+  /**
    * Starts the grant. Returns as soon as the browser is open, so the UI can
    * say "waiting for your browser" — but the returned `wait()` is **wrapped**:
    * on a grant, the tokens are persisted before the promise settles, so a

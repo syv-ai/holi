@@ -95,8 +95,21 @@ const SCHEMA = `
  * the schema statement is the probe.
  */
 export function openGoogleCache(path: string): GoogleCache {
-  const db = open(path)
+  let handle: DatabaseSync | null = open(path)
   let closed = false
+
+  /**
+   * The database, reopened if `destroy` took it away.
+   *
+   * Lazy rather than eager, so `destroy()` genuinely leaves nothing on disk —
+   * reopening on the spot would put the file straight back, and Disconnect
+   * promises an empty disk, not an empty table.
+   */
+  function database(): DatabaseSync {
+    if (closed) throw new Error('the Google cache is closed')
+    handle ??= open(path)
+    return handle
+  }
 
   /**
    * Has this question been answered before?
@@ -106,28 +119,28 @@ export function openGoogleCache(path: string): GoogleCache {
    * means go and ask Google.
    */
   function isAnswered(kind: string, key: string): boolean {
-    return db.prepare('SELECT 1 FROM answered WHERE kind = ? AND key = ?').get(kind, key) !== undefined
+    return database().prepare('SELECT 1 FROM answered WHERE kind = ? AND key = ?').get(kind, key) !== undefined
   }
 
   function markAnswered(kind: string, key: string): void {
-    db.prepare('INSERT OR REPLACE INTO answered (kind, key) VALUES (?, ?)').run(kind, key)
+    database().prepare('INSERT OR REPLACE INTO answered (kind, key) VALUES (?, ?)').run(kind, key)
   }
 
   return {
     useAccount(sub) {
-      const row = db.prepare("SELECT value FROM meta WHERE key = 'account'").get() as
+      const row = database().prepare("SELECT value FROM meta WHERE key = 'account'").get() as
         | { value?: string }
         | undefined
       if (row?.value === sub) return
       // A different account — or the first one. Everything held belongs to
       // whoever was connected before, and none of it is theirs to see.
-      db.exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
-      db.prepare("INSERT INTO meta (key, value) VALUES ('account', ?)").run(sub)
+      database().exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
+      database().prepare("INSERT INTO meta (key, value) VALUES ('account', ?)").run(sub)
     },
 
     readThreads(key) {
       if (!isAnswered('threads', key)) return null
-      const rows = db
+      const rows = database()
         .prepare('SELECT json FROM threads WHERE key = ? ORDER BY position')
         .all(key) as { json: string }[]
       return rows.map((row) => JSON.parse(row.json) as MailThreadSummary)
@@ -136,8 +149,8 @@ export function openGoogleCache(path: string): GoogleCache {
     writeThreads(key, threads) {
       // Replaced, never appended: a thread that has left the inbox must leave
       // the cache with it, or the list grows things the mailbox no longer has.
-      db.prepare('DELETE FROM threads WHERE key = ?').run(key)
-      const insert = db.prepare(
+      database().prepare('DELETE FROM threads WHERE key = ?').run(key)
+      const insert = database().prepare(
         'INSERT INTO threads (key, position, id, json) VALUES (?, ?, ?, ?)',
       )
       threads.slice(0, MAX_THREADS).forEach((thread, position) => {
@@ -148,15 +161,15 @@ export function openGoogleCache(path: string): GoogleCache {
 
     readAgenda(key) {
       if (!isAnswered('agenda', key)) return null
-      const rows = db
+      const rows = database()
         .prepare('SELECT json FROM agenda WHERE key = ? ORDER BY position')
         .all(key) as { json: string }[]
       return rows.map((row) => JSON.parse(row.json) as CalendarEvent)
     },
 
     writeAgenda(key, events) {
-      db.prepare('DELETE FROM agenda WHERE key = ?').run(key)
-      const insert = db.prepare('INSERT INTO agenda (key, position, json) VALUES (?, ?, ?)')
+      database().prepare('DELETE FROM agenda WHERE key = ?').run(key)
+      const insert = database().prepare('INSERT INTO agenda (key, position, json) VALUES (?, ?, ?)')
       events.forEach((event, position) => {
         insert.run(key, position, JSON.stringify(event))
       })
@@ -164,31 +177,32 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     historyId(key) {
-      const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(historyKey(key)) as
+      const row = database().prepare('SELECT value FROM meta WHERE key = ?').get(historyKey(key)) as
         | { value?: string }
         | undefined
       return row?.value ?? null
     },
 
     setHistoryId(key, id) {
-      db.prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(historyKey(key), id)
+      database().prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run(historyKey(key), id)
     },
 
     destroy() {
       // The FILE, not the rows. Emptying the tables would leave recoverable
-      // pages on a disk Disconnect said it had cleaned — and it is not reopened
-      // afterwards, because reopening would put the file straight back.
-      close()
+      // pages on a disk Disconnect said it had cleaned. Nothing is reopened
+      // here either — `database()` does that on the next use, so a disconnect
+      // followed by a reconnect works without leaving a file behind meanwhile.
+      handle?.close()
+      handle = null
       removeFiles(path)
     },
 
-    close,
-  }
-
-  function close(): void {
-    if (closed) return
-    closed = true
-    db.close()
+    close() {
+      if (closed) return
+      closed = true
+      handle?.close()
+      handle = null
+    },
   }
 }
 

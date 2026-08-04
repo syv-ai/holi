@@ -15,6 +15,7 @@ import { AgendaView } from '../AgendaView'
 import { activeRemoteAtom } from '../../../state/vaults'
 
 const agendaMock = vi.fn()
+const agendaCachedMock = vi.fn()
 const calendarsMock = vi.fn()
 const setCalendarMock = vi.fn()
 const createTaskMock = vi.fn()
@@ -23,12 +24,21 @@ vi.mock('../../../lib/trpc', () => ({
   trpc: {
     google: {
       agenda: { query: () => agendaMock() },
+      agendaCached: { query: () => agendaCachedMock() },
       calendars: { query: () => calendarsMock() },
       setCalendar: { mutate: (input: unknown) => setCalendarMock(input) },
     },
     tasks: { create: { mutate: (input: unknown) => createTaskMock(input) } },
   },
 }))
+
+/** A promise this test resolves by hand, so "before Google answers" is an
+ *  actual moment rather than a race. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
 
 const CALENDARS = [
   { id: 'primary', name: 'Nicolai', mine: true, color: '#039be5', enabled: true },
@@ -64,6 +74,7 @@ const openExternal = vi.fn()
 
 beforeEach(() => {
   agendaMock.mockReset().mockResolvedValue([])
+  agendaCachedMock.mockReset().mockResolvedValue(null)
   calendarsMock.mockReset().mockResolvedValue(CALENDARS)
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
   createTaskMock.mockReset().mockResolvedValue({ path: 'tasks/q2-review.md' })
@@ -222,6 +233,25 @@ test('puts the event description into the task it creates', async () => {
   // task worth opening — the dial-in lives there, not in the title.
   expect(description).toContain('https://calendar.google.com/x')
   expect(description).toContain('Dial-in 555-0100')
+})
+
+test('paints the cached agenda while Google is still answering', async () => {
+  agendaCachedMock.mockResolvedValue([event({ id: 'cached', title: 'Yesterday’s copy' })])
+  const live = deferred<unknown[]>()
+  agendaMock.mockReturnValue(live.promise)
+
+  render(<AgendaView />)
+
+  // The point of the cache: a day on screen immediately, instead of "Loading…"
+  // for as long as Google takes.
+  expect(await screen.findByText('Yesterday’s copy')).toBeInTheDocument()
+
+  live.resolve([event({ id: 'fresh', title: 'The real thing' })])
+
+  // And replaced the moment the live answer lands — the cache fills the gap, it
+  // does not stand in for the answer.
+  expect(await screen.findByText('The real thing')).toBeInTheDocument()
+  expect(screen.queryByText('Yesterday’s copy')).toBeNull()
 })
 
 test('says nothing about calendars when Google gives none', async () => {

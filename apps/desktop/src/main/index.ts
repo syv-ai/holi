@@ -23,6 +23,8 @@ import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createGoogleSession } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
+import { openGoogleCache } from './google/cache'
+import { createGoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { GoogleApi } from './google/api'
@@ -123,6 +125,33 @@ async function main(): Promise<void> {
   const calendarPrefs = createCalendarPrefs(
     join(app.getPath('userData'), 'google-calendars.json'),
   )
+  // Bound to the session's token *getter*, never a token: the getter refreshes
+  // and single-flights, so every call goes through the one authority.
+  const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
+
+  /**
+   * The UI's Google cache (D67, amended). In `userData` rather than in a vault:
+   * mail is **account** data, and a vault is a shared git repo — caching a
+   * client's inbox there would push it to teammates on the next sync.
+   */
+  const googleCache = openGoogleCache(join(app.getPath('userData'), 'google-cache.db'))
+  const googleData = createGoogleData({ api: googleApiFor, cache: googleCache })
+
+  /**
+   * Keep the cache scoped to whoever is actually connected.
+   *
+   * Hung off `onChange` rather than off the disconnect procedure, because
+   * `onChange` also fires for a **dead grant** — a revoked or expired
+   * connection is just as much "this mail is no longer yours to hold" as a
+   * button press, and wiring only the button would leave it behind.
+   */
+  const scopeGoogleCache = () => {
+    const sub = googleSession.accountSub
+    if (sub === null) googleData.forget()
+    else googleData.useAccount(sub)
+  }
+  scopeGoogleCache()
+  googleSession.onChange(scopeGoogleCache)
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) =>
@@ -170,6 +199,7 @@ async function main(): Promise<void> {
     session,
     googleSession,
     calendarPrefs,
+    googleData,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -202,10 +232,14 @@ async function main(): Promise<void> {
    * This is why the pillar ships no MCP server — the agent reaches external
    * data with `Bash` and a documented command, like everything else.
    */
-  // Bound to the session's token *getter*, never a token: the getter refreshes
-  // and single-flights, so the agent's calls go through the same one authority
-  // the UI does.
-  const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
+  /**
+   * The agent's door to Google — **and deliberately not `googleData`**.
+   *
+   * These are the raw fetchers, which take no cache and therefore cannot read
+   * one. The agent asks for current data (D67, "Do not cache"), so the
+   * exclusion is structural rather than a rule someone has to remember when
+   * editing this file later.
+   */
   const googleOps = createGoogleOpsServer({
     // Through the SAME overrides file the panel writes. A calendar the user
     // switched off is not fetched for the agent either — otherwise "turn Jane's

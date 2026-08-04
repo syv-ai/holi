@@ -188,6 +188,20 @@ describe('GoogleCache', () => {
     expect(existsSync(path)).toBe(false)
   })
 
+  it('is usable again after a destroy, holding none of what it held', () => {
+    cache.useAccount('sub-a')
+    cache.writeThreads('in:inbox|primary', [thread('t1')])
+
+    cache.destroy()
+
+    // Disconnect then reconnect is an ordinary thing to do inside one run of
+    // the app, and it must not need a restart to work.
+    cache.useAccount('sub-a')
+    expect(cache.readThreads('in:inbox|primary')).toBeNull()
+    cache.writeThreads('in:inbox|primary', [thread('t2')])
+    expect(cache.readThreads('in:inbox|primary')!.map((t) => t.id)).toEqual(['t2'])
+  })
+
   it('survives a corrupt database file rather than crashing', async () => {
     cache.close()
     await writeFile(path, 'this is not a database', 'utf8')

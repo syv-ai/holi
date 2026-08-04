@@ -48,6 +48,7 @@ import {
   type CalendarOverrides,
 } from './google/calendar'
 import type { CalendarPrefsStore } from './google/calendar-prefs'
+import type { GoogleData } from './google/data'
 import {
   listThreads,
   readThread,
@@ -103,6 +104,14 @@ export interface RouterDeps {
    * `google.setCalendar` refuses rather than pretending to remember.
    */
   calendarPrefs?: CalendarPrefsStore
+  /**
+   * The UI's cached Google data. Optional like the two above; absent means
+   * every read goes to Google, which is exactly how the pillar shipped.
+   *
+   * **The agent's ops server is deliberately not given this** — it asks for
+   * current data and must not be handed a stale answer (D67).
+   */
+  googleData?: GoogleData
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -1229,17 +1238,35 @@ export function createRouter(deps: RouterDeps) {
      * fact, and a main-side `new Date()` would silently disagree with it across
      * a timezone or a midnight boundary — the same rule daily notes follow.
      *
-     * Not cached here. `GoogleApi` fetches on demand (D67), and a stale agenda
-     * is worse than a slow one.
+     * **Always fetched, never served from the cache.** A stale agenda is worse
+     * than a slow one — `agendaCached` is the separate, explicit way to paint
+     * the last one while this is in flight.
      */
     agenda: t.procedure
       .input(fields({ timeMin: 'string', timeMax: 'string' }))
-      .query(async ({ input }): Promise<CalendarEvent[]> =>
-        listAgenda(
-          googleApi(),
+      .query(async ({ input }): Promise<CalendarEvent[]> => {
+        const window = { timeMin: input.timeMin, timeMax: input.timeMax }
+        const overrides = await calendarOverrides()
+        return deps.googleData === undefined
+          ? listAgenda(googleApi(), window, { overrides })
+          : deps.googleData.agenda(window, overrides)
+      }),
+
+    /**
+     * The last agenda for this exact window and calendar set, or `null`.
+     *
+     * **Never a request**, and never a substitute for `agenda`: the panel
+     * paints this immediately and replaces it the moment the live one lands.
+     * Two procedures rather than one stale-while-revalidate answer, because
+     * there is no push channel to tell the renderer the second one arrived.
+     */
+    agendaCached: t.procedure
+      .input(fields({ timeMin: 'string', timeMax: 'string' }))
+      .query(async ({ input }): Promise<CalendarEvent[] | null> =>
+        deps.googleData?.cachedAgenda(
           { timeMin: input.timeMin, timeMax: input.timeMax },
-          { overrides: await calendarOverrides() },
-        ),
+          await calendarOverrides(),
+        ) ?? null,
       ),
 
     /** Every calendar the account can draw from, with its colour and whether it
@@ -1282,13 +1309,18 @@ export function createRouter(deps: RouterDeps) {
      */
     threads: t.procedure
       .input(fields({ query: 'string?', pageToken: 'string?', category: 'string?' }))
-      .query(({ input }): Promise<MailPage> =>
-        listThreads(googleApi(), {
+      .query(({ input }): Promise<MailPage> => {
+        const options = {
           query: input.query,
           pageToken: input.pageToken,
           category: asMailCategory(input.category),
-        }),
-      ),
+        }
+        // Cached AND current: the delta brings the cached list up to date, so
+        // this is fast without ever being stale.
+        return deps.googleData === undefined
+          ? listThreads(googleApi(), options)
+          : deps.googleData.threads(options)
+      }),
 
     /**
      * One thread. Each message carries `body` (plain text) and `html` (the raw

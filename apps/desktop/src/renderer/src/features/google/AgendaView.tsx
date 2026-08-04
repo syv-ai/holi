@@ -158,9 +158,24 @@ export function AgendaView() {
   }, [])
 
   const load = useCallback(() => {
+    const window = agendaWindow()
     setState({ kind: 'loading' })
+
+    // Paint the last agenda for this exact day and calendar set, if there is
+    // one — then let the live fetch below replace it. Never a request, and
+    // never a substitute for the real answer: a stale agenda shown *instead of*
+    // a fresh one is worse than a slow one, so this only fills the gap.
+    void trpc.google.agendaCached
+      .query(window)
+      .then((events) => {
+        if (events !== null && events.length > 0) {
+          setState((current) => (current.kind === 'loading' ? { kind: 'ready', events } : current))
+        }
+      })
+      .catch(() => {})
+
     void trpc.google.agenda
-      .query(agendaWindow())
+      .query(window)
       .then((events) => setState({ kind: 'ready', events }))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Could not load your agenda.'
