@@ -1,9 +1,9 @@
-import { type TemplateField, initialValue } from '@holi/shared'
+import type { TemplateField } from '@holi/shared'
 import { useEffect, useMemo, useState } from 'react'
 import { FormField } from '@/composites/FormField'
 import { FieldWidget } from '@/features/pdf/FieldWidget'
 import { trpc } from '@/lib/trpc'
-import { metaFromValues, missingRequired } from '@/lib/pdf-fields'
+import { metaFromValues, missingRequired, parseFrontmatter, prefillValues } from '@/lib/pdf-fields'
 import {
   Button,
   Dialog,
@@ -45,6 +45,9 @@ export function ConvertToPdf({
   const [templates, setTemplates] = useState<TemplateOption[] | null>(null)
   const [slug, setSlug] = useState<string>('')
   const [values, setValues] = useState<Record<string, string>>({})
+  /** The note's YAML frontmatter, read once on open; pre-fills matching fields.
+   *  `{}` until read, and on any read/parse failure — Convert must never break. */
+  const [frontmatter, setFrontmatter] = useState<Record<string, unknown>>({})
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const name = path.split('/').at(-1) ?? path
@@ -71,18 +74,29 @@ export function ConvertToPdf({
     }
   }, [remote])
 
-  // Seed each field from its type/default whenever the chosen template changes,
-  // so a date field lands on today and one template's values never leak to another.
+  // Read the note once on open so its frontmatter can pre-fill matching fields.
+  useEffect(() => {
+    let live = true
+    void trpc.notes.read
+      .query({ remote, path })
+      .then((text) => live && setFrontmatter(parseFrontmatter(text)))
+      .catch(() => live && setFrontmatter({}))
+    return () => {
+      live = false
+    }
+  }, [remote, path])
+
+  // Seed each field whenever the chosen template (or the note's frontmatter)
+  // changes: the note's declared keys pre-fill their fields, everything else
+  // lands on its type default, and one template's values never leak to another.
   useEffect(() => {
     const tpl = templates?.find((t) => t.slug === slug) ?? null
     if (tpl === null) {
       setValues({})
       return
     }
-    const seed: Record<string, string> = {}
-    for (const f of tpl.fields) seed[f.key] = initialValue(f, today)
-    setValues(seed)
-  }, [slug, templates, today])
+    setValues(prefillValues(tpl.fields, frontmatter, today))
+  }, [slug, templates, today, frontmatter])
 
   const convert = async () => {
     if (selected === null) return
