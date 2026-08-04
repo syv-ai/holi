@@ -27,6 +27,16 @@ describe('listTemplates', () => {
     expect(await listTemplates(await vault())).toEqual([])
   })
 
+  it('skips underscore-prefixed dirs even with a valid manifest (_brand foundation)', async () => {
+    const root = await vault()
+    await seed(root, 'proposal', { name: 'Proposal', fields: [] })
+    // _brand carries a manifest-shaped file in no vault, but guard anyway so a
+    // future underscore folder can never surface in the picker.
+    await seed(root, '_brand', { name: 'Brand', fields: [] })
+    const names = (await listTemplates(root)).map((t) => t.slug)
+    expect(names).toEqual(['proposal'])
+  })
+
   it('reads a template dir + manifest into a Template', async () => {
     const root = await vault()
     await seed(root, 'plain', { name: 'Plain', description: 'Clean.', fields: [] })

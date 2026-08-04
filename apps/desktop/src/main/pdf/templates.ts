@@ -30,6 +30,10 @@ export async function listTemplates(vaultRoot: string): Promise<Template[]> {
   const templates: Template[] = []
   for (const e of entries) {
     if (!e.isDirectory()) continue
+    // Underscore-prefixed dirs are foundation, not templates (`_brand/` holds the
+    // shared brand module + fonts + logo). It carries no manifest today, but guard
+    // by name so it can never surface in the picker.
+    if (e.name.startsWith('_')) continue
     const dir = join(base, e.name)
     const raw = await readFile(join(dir, 'template.json'), 'utf8').catch(() => null)
     if (raw === null) continue
