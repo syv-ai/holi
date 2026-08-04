@@ -62,6 +62,34 @@ export function formatWikiLink(target: string, label?: string): string {
   return label ? `[[${target}|${label}]]` : `[[${target}]]`
 }
 
+/** The prose a wiki-link should read as where there is no chip and no link — a
+ *  rendered document (PDF export): the explicit label, else the target's file
+ *  name without a trailing `.md`. */
+export function wikiLinkDisplay(link: WikiLinkMatch): string {
+  if (link.label) return link.label
+  const base = link.target.split('/').at(-1) ?? link.target
+  return base.replace(/\.md$/i, '')
+}
+
+/**
+ * Replace every wiki-link with its display text (`wikiLinkDisplay`). For
+ * pipelines that render note markdown *outside* the editor — PDF export —
+ * where `[[a/b.md|X]]` must read as prose, not raw brackets. One grammar:
+ * reuses `parseWikiLinks`, so it can never drift from the chips or the rename
+ * rewrite. Returns the input unchanged when there are no links.
+ */
+export function wikiLinksToText(text: string): string {
+  const links = parseWikiLinks(text)
+  if (links.length === 0) return text
+  let out = ''
+  let cursor = 0
+  for (const link of links) {
+    out += text.slice(cursor, link.start) + wikiLinkDisplay(link)
+    cursor = link.end
+  }
+  return out + text.slice(cursor)
+}
+
 /**
  * Rewrite every link targeting `fromPath` to `toPath`, preserving labels
  * (the D12 rename primitive — applied to each affected doc's text). Links to

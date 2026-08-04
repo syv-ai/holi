@@ -160,7 +160,8 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     const notePath = join(root, 'tilbud.md')
     await writeFile(
       notePath,
-      '---\ntitle: T\n---\n\n# Tilbud til ACME\n\n## Baggrund\n\nEt **flow**:\n\n' +
+      '---\ntitle: T\n---\n\n# Tilbud til ACME\n\n## Baggrund\n\n' +
+        'Se [[projects/q2/plan.md]] og [[plan.md|planen]]. Et **flow**:\n\n' +
         '@@FIG:agent-flow@@\n\n## Pris\n\n| Ydelse | Pris |\n|---|---|\n| Udvikling | 100 |\n\n' +
         '@@SIG:syv.ai ApS|ACME A/S@@\n',
     )

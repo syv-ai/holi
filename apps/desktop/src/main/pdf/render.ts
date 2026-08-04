@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import type { TemplateField } from '@holi/shared'
+import { type TemplateField, wikiLinksToText } from '@holi/shared'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
@@ -53,10 +53,25 @@ export async function renderPdf({
 }: RenderInput): Promise<void> {
   const work = await mkdtemp(join(tmpdir(), 'holi-typst-'))
   try {
+    // Preprocess the note into the work dir: wiki-links → their display text, so
+    // `[[a/b.md|X]]` reads as prose rather than raw brackets in the PDF. The
+    // template (its `render-body`, or Plain's inline cmarker) reads THIS copy.
+    // cmarker already resolves note-relative images against its own package dir,
+    // not the note dir, so moving the note regresses nothing; if that is fixed
+    // later, the image base must be the ORIGINAL note dir (dirname(notePath)).
+    const noteForTypst = join(work, 'note.md')
+    await writeFile(noteForTypst, wikiLinksToText(await readFile(notePath, 'utf8')))
+
     const wrapperPath = join(work, 'wrapper.typ')
     await writeFile(
       wrapperPath,
-      composeWrapper({ templateDir, notePath, assetsDir: join(templateDir, 'assets'), fields, meta }),
+      composeWrapper({
+        templateDir,
+        notePath: noteForTypst,
+        assetsDir: join(templateDir, 'assets'),
+        fields,
+        meta,
+      }),
     )
     await exec(typstBin, ['compile', wrapperPath, outPath, '--root', '/', ...fontPathArgs(templateDir)])
   } catch (err) {

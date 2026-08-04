@@ -4,6 +4,9 @@ import {
   parseWikiLinks,
   rewriteWikiLinks,
   rewriteWikiLinksMulti,
+  type WikiLinkMatch,
+  wikiLinkDisplay,
+  wikiLinksToText,
 } from '../src/wiki-links'
 
 describe('parseWikiLinks', () => {
@@ -93,5 +96,53 @@ describe('rewriteWikiLinksMulti', () => {
       text: '[[keep.md]] and [[task:t1]]',
       count: 0,
     })
+  })
+})
+
+describe('wikiLinkDisplay', () => {
+  const link = (target: string, label?: string): WikiLinkMatch => ({
+    raw: '',
+    target,
+    label,
+    start: 0,
+    end: 0,
+  })
+
+  it('uses the explicit label when present', () => {
+    expect(wikiLinkDisplay(link('projects/q2/plan.md', 'The Plan'))).toBe('The Plan')
+  })
+
+  it('falls back to the target basename without .md', () => {
+    expect(wikiLinkDisplay(link('projects/q2/plan.md'))).toBe('plan')
+  })
+
+  it('keeps a non-.md target file name intact', () => {
+    expect(wikiLinkDisplay(link('assets/diagram.svg'))).toBe('diagram.svg')
+  })
+
+  it('handles a bare name with no path', () => {
+    expect(wikiLinkDisplay(link('Home'))).toBe('Home')
+  })
+})
+
+describe('wikiLinksToText', () => {
+  it('leaves text with no wiki-links unchanged', () => {
+    expect(wikiLinksToText('just prose, no links')).toBe('just prose, no links')
+  })
+
+  it('replaces an unlabeled link with the basename', () => {
+    expect(wikiLinksToText('See [[projects/q2/plan.md]] today.')).toBe('See plan today.')
+  })
+
+  it('replaces a labeled link with the label', () => {
+    expect(wikiLinksToText('See [[plan.md|The Plan]] today.')).toBe('See The Plan today.')
+  })
+
+  it('handles multiple, mixed labeled and unlabeled links', () => {
+    expect(wikiLinksToText('[[a/b.md]] then [[c.md|C]] and [[d.md]]')).toBe('b then C and d')
+  })
+
+  it('handles adjacent links', () => {
+    expect(wikiLinksToText('[[a.md]][[b.md|B]]')).toBe('aB')
   })
 })
