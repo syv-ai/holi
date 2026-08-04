@@ -16,6 +16,10 @@ import {
   listThreads,
   messageUrl,
   readThread,
+  markThreadRead,
+  setThreadStarred,
+  archiveThread,
+  trashThread,
   textOnly,
 } from '../src/main/google/gmail'
 
@@ -939,5 +943,88 @@ describe('addresses', () => {
     // An empty `email` is the signal the UI reads as "show the name, offer no
     // mailto:" — a link to nothing is worse than plain text.
     expect(from).toEqual({ name: 'Mail Delivery Subsystem', email: '' })
+  })
+})
+
+/**
+ * The four writes (D68).
+ *
+ * What these protect is **which request each one makes**, because every wrong
+ * answer here is silent. Trash in particular: adding a `TRASH` label through
+ * `modify` returns 200 and does not trash anything, so a test that only
+ * asserted "a POST happened" would pass against a feature that never worked.
+ */
+describe('thread mutations', () => {
+  /** A Gmail that records writes and answers each with an empty body. */
+  function writable() {
+    const posts: { url: string; body: unknown }[] = []
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      posts.push({ url, body: JSON.parse(String(init.body)) })
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+    return { posts, api }
+  }
+
+  const MODIFY = 'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify'
+
+  it('marks a thread read by removing UNREAD from it', async () => {
+    const { posts, api } = writable()
+
+    await markThreadRead(api, 't1')
+
+    expect(posts).toEqual([{ url: MODIFY, body: { removeLabelIds: ['UNREAD'] } }])
+  })
+
+  it('stars and unstars through the same endpoint, in opposite directions', async () => {
+    const { posts, api } = writable()
+
+    await setThreadStarred(api, 't1', true)
+    await setThreadStarred(api, 't1', false)
+
+    expect(posts[0]).toEqual({ url: MODIFY, body: { addLabelIds: ['STARRED'] } })
+    expect(posts[1]).toEqual({ url: MODIFY, body: { removeLabelIds: ['STARRED'] } })
+  })
+
+  it('archives by removing INBOX — the thread stays, it just leaves the inbox', async () => {
+    const { posts, api } = writable()
+
+    await archiveThread(api, 't1')
+
+    expect(posts).toEqual([{ url: MODIFY, body: { removeLabelIds: ['INBOX'] } }])
+  })
+
+  it('trashes through /trash, NOT by adding a TRASH label', async () => {
+    // The failure this exists for: `modify` with `addLabelIds: ['TRASH']`
+    // answers 200 and leaves the thread exactly where it was. There is no error
+    // to notice — only mail that comes back after a refresh.
+    const { posts, api } = writable()
+
+    await trashThread(api, 't1')
+
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/trash')
+    expect(JSON.stringify(posts[0]!.body)).not.toContain('TRASH')
+  })
+
+  it('lets a refusal through rather than reporting a write that did not happen', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 403,
+      text: async () => JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+      json: async () => ({}),
+    }))
+    const api = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+
+    // Swallowing this is what would let the cache record an archive Google
+    // refused — the one divergence a delta sync cannot detect, because from
+    // Gmail's side nothing ever changed.
+    await expect(archiveThread(api, 't1')).rejects.toThrow()
   })
 })

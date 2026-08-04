@@ -1,8 +1,11 @@
 /**
- * Gmail — search, read, and the stable link that goes into a note.
+ * Gmail — search, read, triage, and the stable link that goes into a note.
  *
- * **Read-only** (D67): the granted scope is `gmail.readonly`, so nothing here
- * can send, archive, or label. Composing is a `mailto:` handoff in the UI.
+ * **Read plus four writes** (D68, amending D67 §4): the granted scope is
+ * `gmail.modify`, and the writes live at the foot of this file — mark read,
+ * star, archive, trash. Composing is still a `mailto:` handoff, because no
+ * compose surface is built; the scope would allow one. Read the note above
+ * those functions before adding a fifth.
  *
  * **A message carries both representations, and each consumer gets the one it
  * wants.** `body` is plain text — the sender's own `text/plain` part when there
@@ -651,4 +654,65 @@ export function textOnly(thread: MailThread): AgentMailThread {
     webUrl: thread.webUrl,
     messages: thread.messages.map(({ html: _html, ...message }) => message),
   }
+}
+
+/**
+ * The four writes (D68) — everything Holi can change about a thread.
+ *
+ * **This is the whole write surface, and it is meant to stay that way.** The
+ * scope behind it (`gmail.modify`) permits more than these: it also permits
+ * `messages.send`, because no lesser scope grants `threads.modify` and archive
+ * cannot be bought without it. So "Holi cannot send" is true only for as long
+ * as this file has no function that sends — a code boundary, not a granted one.
+ * Adding one is a decision, not a refactor.
+ *
+ * None of these touch the cache. A function that both calls Google and mutates
+ * local state cannot be tested as either, and the ordering that keeps the two
+ * honest — Google first, cache only on success — belongs to `data.ts`, which
+ * owns the cache.
+ */
+
+/** Removing `UNREAD` clears it from every message, which is what Gmail itself
+ *  does when a thread is opened. `unread` is derived from any message carrying
+ *  the label (see `summarize`), so a partial removal would leave it set. */
+export async function markThreadRead(api: GoogleApi, id: string): Promise<void> {
+  await modifyThread(api, id, { remove: ['UNREAD'] })
+}
+
+export async function setThreadStarred(api: GoogleApi, id: string, starred: boolean): Promise<void> {
+  await modifyThread(api, id, starred ? { add: ['STARRED'] } : { remove: ['STARRED'] })
+}
+
+/** Archive is the *absence* of `INBOX`, not the presence of anything. The
+ *  thread is untouched otherwise — still searchable, still in All Mail. */
+export async function archiveThread(api: GoogleApi, id: string): Promise<void> {
+  await modifyThread(api, id, { remove: ['INBOX'] })
+}
+
+/**
+ * Trash — **its own endpoint, not a label change.**
+ *
+ * `modify` with `addLabelIds: ['TRASH']` is the intuitive version and it does
+ * not work: Gmail answers 200 and leaves the thread where it was. There is no
+ * error to notice, only mail that reappears on the next refresh.
+ *
+ * Recoverable by design. Permanent deletion needs `https://mail.google.com/`,
+ * which Holi does not request and will not.
+ */
+export async function trashThread(api: GoogleApi, id: string): Promise<void> {
+  await api.post(`${BASE}/threads/${encodeURIComponent(id)}/trash`, {})
+}
+
+/** The one shape every label write shares, so the URL and the body exist once.
+ *  Empty arrays are omitted rather than sent: Gmail accepts them, but a request
+ *  that says `removeLabelIds: []` reads like a bug in the log it appears in. */
+async function modifyThread(
+  api: GoogleApi,
+  id: string,
+  labels: { add?: string[]; remove?: string[] },
+): Promise<void> {
+  await api.post(`${BASE}/threads/${encodeURIComponent(id)}/modify`, {
+    ...(labels.add === undefined ? {} : { addLabelIds: labels.add }),
+    ...(labels.remove === undefined ? {} : { removeLabelIds: labels.remove }),
+  })
 }
