@@ -144,6 +144,20 @@ describe('resolveCalendars', () => {
     expect(calendars.find((c) => c.id === 'holidays')?.enabled).toBe(true)
   })
 
+  it('prefers the name the user gave a subscribed calendar', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: {
+        items: [
+          { id: 'jane', summary: 'Jane Doe', summaryOverride: 'Jane (design)', accessRole: 'reader' },
+        ],
+      },
+    })
+
+    // Google Calendar shows the override. Showing the owner's name for a
+    // calendar the user deliberately renamed is a small, constant papercut.
+    expect((await resolveCalendars(api, {}))[0]!.name).toBe('Jane (design)')
+  })
+
   it('respects a calendar you own but unticked in Google', async () => {
     const { api } = googleApi({
       [CAL_LIST]: {

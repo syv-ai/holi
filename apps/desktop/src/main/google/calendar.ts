@@ -116,6 +116,10 @@ interface RawEvent {
 export interface CalendarListEntry {
   id: string
   summary: string
+  /** The name *the user* gave this calendar. Google Calendar displays it in
+   *  place of `summary`, and people rename a colleague's calendar precisely so
+   *  it stops reading as that colleague's name. */
+  summaryOverride?: string
   primary?: boolean
   selected?: boolean
   deleted?: boolean
@@ -189,7 +193,7 @@ export async function resolveCalendars(
   const calendars = await listCalendars(api)
   return calendars.map((calendar) => ({
     id: calendar.id,
-    name: calendar.summary,
+    name: calendar.summaryOverride ?? calendar.summary,
     mine: isMine(calendar),
     color: calendar.backgroundColor ?? null,
     enabled: overrides[calendar.id] ?? isMine(calendar),
