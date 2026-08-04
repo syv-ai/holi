@@ -17,8 +17,15 @@ vi.mock('../../lib/trpc', () => ({
 }))
 
 function Probe() {
-  const [account] = useGoogleAccount()
-  return <span data-testid="account">{account === undefined ? 'unknown' : (account?.email ?? 'none')}</span>
+  const [account, , missingScopes] = useGoogleAccount()
+  return (
+    <>
+      <span data-testid="account">
+        {account === undefined ? 'unknown' : (account?.email ?? 'none')}
+      </span>
+      <span data-testid="missing">{missingScopes.length}</span>
+    </>
+  )
 }
 
 const renderProbe = (store = createStore()) => {
@@ -35,7 +42,7 @@ beforeEach(() => {
 })
 
 test('starts unknown, then reports the connected account', async () => {
-  statusMock.mockResolvedValue({ account: { email: 'nicolai@syv.ai' } })
+  statusMock.mockResolvedValue({ account: { email: 'nicolai@syv.ai' }, missingScopes: [] })
 
   const { getByTestId } = renderProbe()
 
@@ -46,7 +53,7 @@ test('starts unknown, then reports the connected account', async () => {
 })
 
 test('reports no account when nothing is connected', async () => {
-  statusMock.mockResolvedValue({ account: null })
+  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
 
   const { getByTestId } = renderProbe()
 
@@ -65,7 +72,7 @@ test('treats an unreachable connector as not connected, not as unknown forever',
 })
 
 test('asks once, however many components read it', async () => {
-  statusMock.mockResolvedValue({ account: null })
+  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
   const store = createStore()
 
   const { getByTestId } = renderProbe(store)
@@ -75,8 +82,33 @@ test('asks once, however many components read it', async () => {
   await waitFor(() => expect(statusMock).toHaveBeenCalledTimes(1))
 })
 
+test('carries the scopes a stored grant is missing — connected is not the same as sufficient', async () => {
+  // The state a widened GOOGLE_SCOPES produces: the grant still works, mail
+  // still lists, and only the new calls fail. Nothing else in the UI can tell
+  // that apart from a broken feature.
+  statusMock.mockResolvedValue({
+    account: { email: 'nicolai@syv.ai' },
+    missingScopes: ['https://www.googleapis.com/auth/gmail.modify'],
+  })
+
+  const { getByTestId } = renderProbe()
+
+  await waitFor(() => expect(getByTestId('missing').textContent).toBe('1'))
+  // Connected AND insufficient, at the same time.
+  expect(getByTestId('account').textContent).toBe('nicolai@syv.ai')
+})
+
+test('an unreachable connector reports no missing scopes rather than a stale list', async () => {
+  statusMock.mockRejectedValue(new Error('the Google connector is not configured'))
+
+  const { getByTestId } = renderProbe()
+
+  await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
+  expect(getByTestId('missing').textContent).toBe('0')
+})
+
 test('a write is visible to every reader — connecting lights the chips up', async () => {
-  statusMock.mockResolvedValue({ account: null })
+  statusMock.mockResolvedValue({ account: null, missingScopes: [] })
   const store = createStore()
 
   const { getByTestId } = renderProbe(store)

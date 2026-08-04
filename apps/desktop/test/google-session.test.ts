@@ -11,7 +11,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GoogleSession } from '../src/main/google/session'
+import { GOOGLE_SCOPES, GoogleSession } from '../src/main/google/session'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../src/main/google/token-store'
 import type { LoopbackServer } from '../src/main/google/loopback-flow'
 
@@ -95,6 +95,57 @@ describe('loading', () => {
       openBrowser: async () => {},
     })
     expect(session.account).toBeNull()
+  })
+})
+
+/**
+ * A grant older than the scopes the build now asks for.
+ *
+ * `scopes` has been written on every connect since the connector landed and,
+ * until this, read by nothing. That is the whole hazard: widening
+ * `GOOGLE_SCOPES` does not invalidate a stored grant, so the refresh token
+ * keeps minting tokens for the OLD scopes, every write 403s with `scope`, and
+ * the user has no route back but disconnecting by hand. Comparing the two is
+ * what turns that into a reconnect prompt.
+ */
+describe('missingScopes', () => {
+  /** The four the connector originally shipped with, before mail could write. */
+  const OLD_GRANT = [
+    'openid',
+    'email',
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/calendar.readonly',
+  ]
+
+  it('names every scope this build needs that the stored grant does not carry', async () => {
+    const session = await connected(auth({ scopes: OLD_GRANT }))
+
+    expect(session.missingScopes()).toEqual([
+      'https://www.googleapis.com/auth/gmail.modify',
+      'https://www.googleapis.com/auth/contacts.readonly',
+    ])
+  })
+
+  it('is empty when the grant covers everything the build asks for', async () => {
+    const session = await connected(auth({ scopes: [...GOOGLE_SCOPES] }))
+
+    expect(session.missingScopes()).toEqual([])
+  })
+
+  it('is empty with no account — "not connected" is a different state the UI already renders', async () => {
+    const session = await GoogleSession.load({
+      store,
+      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close: () => {} }),
+      openBrowser: async () => {},
+    })
+
+    expect(session.missingScopes()).toEqual([])
+  })
+
+  it('ignores extra scopes Google granted that this build never asked for', async () => {
+    const session = await connected(auth({ scopes: [...GOOGLE_SCOPES, 'https://example.test/extra'] }))
+
+    expect(session.missingScopes()).toEqual([])
   })
 })
 

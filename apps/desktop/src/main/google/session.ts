@@ -53,18 +53,36 @@ export const GOOGLE_CLIENT_ID = '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.a
 export const GOOGLE_CLIENT_SECRET = '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'
 
 /**
- * **Read-only, both services** (D67). Holi reads mail and calendar, links them
- * into notes, and composes via a `mailto:` deeplink — so it needs no
- * `gmail.send` and no calendar write scope, and cannot send mail or touch a
- * calendar even if something told it to.
+ * **Mail is read-write within a bounded set; calendar stays read-only** (D68,
+ * amending D67 §4).
+ *
+ * `gmail.modify` replaces `gmail.readonly` — it is a superset, so asking for
+ * both is redundant. It buys the four things a mailbox is actually triaged
+ * with: read state, star, archive and trash.
+ *
+ * **Two boundaries, and only one of them is Google's.**
+ *
+ * - *Permanent delete is impossible.* It needs `https://mail.google.com/`,
+ *   which is not requested and will not be. Trash is recoverable; that is what
+ *   makes it not-delete.
+ * - *Sending is merely unbuilt.* `gmail.modify` permits `messages.send`, and no
+ *   lesser scope grants `threads.modify` — so there is no way to buy archive
+ *   without also buying send. Nothing here stops a send; the absence of a
+ *   function that sends does. Do not write a comment claiming otherwise: this
+ *   is a code boundary wearing a scope boundary's clothes, and the agent's
+ *   `Bash(holi-google …)` gate (D67 §5) is now the only wall, not the second.
+ *
+ * `contacts.readonly` rode the same consent screen rather than costing a second
+ * one — it is what puts a real address book behind `@`-completion.
  *
  * `openid`/`email` are what make the `id_token` carry the `sub` we key on.
  */
 export const GOOGLE_SCOPES = [
   'openid',
   'email',
-  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/contacts.readonly',
 ]
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
@@ -130,6 +148,31 @@ export class GoogleSession {
   get account(): GoogleAccount | null {
     const auth = this.#current()
     return auth === null ? null : { email: auth.email }
+  }
+
+  /**
+   * Scopes this build needs that the stored grant does not carry.
+   *
+   * **Widening `GOOGLE_SCOPES` does not invalidate an existing grant**, and that
+   * is the trap this exists for. The refresh token keeps minting access tokens
+   * for whatever was consented to originally, so a build that asks for more
+   * gets a working connection whose every new call 403s with
+   * `insufficientPermissions` — a failure that looks like a bug in the feature
+   * rather than a missing consent, and that no amount of retrying fixes. The
+   * one cure is to send the user back through consent, which needs someone to
+   * notice first.
+   *
+   * `scopes` had been written on every connect since the connector landed and
+   * read by nothing until this.
+   *
+   * Empty with no account: "not connected" is a different state, and the UI
+   * already renders it.
+   */
+  missingScopes(): string[] {
+    const auth = this.#current()
+    if (auth === null) return []
+    const granted = new Set(auth.scopes)
+    return GOOGLE_SCOPES.filter((scope) => !granted.has(scope))
   }
 
   /**

@@ -33,7 +33,7 @@ const OUTCOME: Record<string, string> = {
 }
 
 export function GoogleConnection() {
-  const [account, setAccount] = useGoogleAccount()
+  const [account, setAccount, missingScopes, refreshGoogle] = useGoogleAccount()
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   /** Set while a connect is in flight, so unmounting cancels it rather than
    *  leaving a listener holding a port for the life of the app. */
@@ -53,8 +53,12 @@ export function GoogleConnection() {
       const result = await trpc.google.awaitConnect.mutate()
       if (result.kind === 'granted' && result.account !== null) {
         // Writing the shared atom is what makes the shell's chips appear, on
-        // the same tick this panel says "connected as".
+        // the same tick this panel says "connected as". `refreshGoogle` then
+        // re-reads what was actually granted rather than assuming consent was
+        // taken whole — a user can approve Gmail and decline contacts, which
+        // lands here as `granted` with scopes still missing.
         setAccount(result.account)
+        void refreshGoogle()
         setPhase({ kind: 'idle' })
       } else {
         setPhase({ kind: 'idle', error: OUTCOME[result.kind] || undefined })
@@ -72,11 +76,20 @@ export function GoogleConnection() {
   const disconnect = async () => {
     await trpc.google.disconnect.mutate().catch(() => undefined)
     setAccount(null)
+    void refreshGoogle()
     setPhase({ kind: 'idle' })
   }
 
   const connected = account != null
   const busy = phase.kind === 'connecting' || account === undefined
+  /**
+   * Connected, but on a grant older than the scopes this build needs.
+   *
+   * Worth its own affordance rather than an error on the feature that fails:
+   * the mailbox still lists, so the user's evidence says Google works, and
+   * "reconnect" is not a step anyone guesses from a triage button doing nothing.
+   */
+  const needsReconsent = connected && missingScopes.length > 0
 
   return (
     <section className="space-y-2">
@@ -91,7 +104,7 @@ export function GoogleConnection() {
             ) : phase.kind === 'connecting' ? (
               'Waiting for your browser…'
             ) : (
-              'Read your Gmail and Calendar. Applies to every vault.'
+              'Read and triage your Gmail, read your Calendar. Applies to every vault.'
             )}
           </p>
           {!connected && phase.kind === 'idle' && phase.error !== undefined && (
@@ -100,9 +113,16 @@ export function GoogleConnection() {
         </div>
 
         {connected ? (
-          <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void disconnect()}>
-            Disconnect
-          </Button>
+          <div className="flex shrink-0 items-center gap-2">
+            {needsReconsent && (
+              <Button size="sm" disabled={busy} onClick={() => void connect()}>
+                {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => void disconnect()}>
+              Disconnect
+            </Button>
+          </div>
         ) : (
           <Button
             variant="secondary"
@@ -115,11 +135,18 @@ export function GoogleConnection() {
           </Button>
         )}
       </div>
-      {connected && (
-        <p className="text-xs text-muted-foreground">
-          Read-only. Holi cannot send mail or change your calendar.
-        </p>
-      )}
+      {connected &&
+        (needsReconsent ? (
+          <p className="text-xs text-amber-400">
+            Holi needs new permissions. Mail still loads, but marking read, starring, archiving and
+            contacts will not work until you reconnect.
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Holi can read your mail and calendar, and mark read, star, archive or trash a thread. It
+            cannot delete mail permanently or change your calendar.
+          </p>
+        ))}
     </section>
   )
 }

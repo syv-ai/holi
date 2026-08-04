@@ -12,7 +12,7 @@
  * would flash the chips on every launch before hiding them again.
  */
 import { atom, useAtom } from 'jotai'
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import type { GoogleAccount } from '../../../main/google/session'
 import { trpc } from '../lib/trpc'
 
@@ -20,6 +20,16 @@ export type { GoogleAccount }
 
 /** `undefined` — not asked yet. `null` — asked, nothing connected. */
 export const googleAccountAtom = atom<GoogleAccount | null | undefined>(undefined)
+
+/**
+ * Scopes this build needs that the connected grant does not carry.
+ *
+ * **Connected and insufficient is a real state**, and it is the one a widened
+ * `GOOGLE_SCOPES` produces: the stored refresh token keeps working, mail keeps
+ * listing, and only the new calls fail. Nothing else in the UI can distinguish
+ * that from a bug, so it is held here rather than inferred from a failure.
+ */
+export const googleMissingScopesAtom = atom<string[]>([])
 
 /**
  * Read the account, asking main the first time anyone does.
@@ -30,17 +40,34 @@ export const googleAccountAtom = atom<GoogleAccount | null | undefined>(undefine
  */
 export function useGoogleAccount() {
   const [account, setAccount] = useAtom(googleAccountAtom)
+  const [missingScopes, setMissingScopes] = useAtom(googleMissingScopesAtom)
 
-  useEffect(() => {
-    if (account !== undefined) return
-    void trpc.google.status
-      .query()
-      .then((status) => setAccount(status.account))
+  /**
+   * Re-read both halves from main.
+   *
+   * Used after connect and disconnect rather than assuming what they produced:
+   * a reconnect that the user half-completes — approving Gmail and declining
+   * contacts — grants an account *and* leaves scopes missing, which is exactly
+   * the case a hand-set `[]` would paper over.
+   */
+  const refresh = useCallback(async () => {
+    try {
+      const status = await trpc.google.status.query()
+      setAccount(status.account)
+      setMissingScopes(status.missingScopes)
+    } catch {
       // The connector refuses outright when it is not configured. That is a
       // normal state and not one the user can act on, so it reads as "not
       // connected" — and settles, rather than re-querying on every render.
-      .catch(() => setAccount(null))
-  }, [account, setAccount])
+      setAccount(null)
+      setMissingScopes([])
+    }
+  }, [setAccount, setMissingScopes])
 
-  return [account, setAccount] as const
+  useEffect(() => {
+    if (account !== undefined) return
+    void refresh()
+  }, [account, refresh])
+
+  return [account, setAccount, missingScopes, refresh] as const
 }

@@ -1202,7 +1202,18 @@ export function createRouter(deps: RouterDeps) {
   let connectFlow: GoogleFlow | null = null
 
   const google = t.router({
-    status: t.procedure.query(() => ({ account: deps.googleSession?.account ?? null })),
+    /**
+     * Who is connected, and whether that grant is still wide enough.
+     *
+     * `missingScopes` is not diagnostics. Widening `GOOGLE_SCOPES` leaves an
+     * existing grant working *and* insufficient — mail still lists, every write
+     * 403s — so without this the only symptom is a feature that looks broken.
+     * It is what lets settings offer the one action that fixes it.
+     */
+    status: t.procedure.query(() => ({
+      account: deps.googleSession?.account ?? null,
+      missingScopes: deps.googleSession?.missingScopes() ?? [],
+    })),
 
     connect: t.procedure.mutation(async () => {
       // A second connect supersedes the first, rather than leaving an orphaned
