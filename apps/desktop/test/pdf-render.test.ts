@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { fontPathArgs, renderPdf } from '../src/main/pdf/render'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
@@ -131,6 +132,71 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
       meta: { count: '4', urgent: 'true', day: '2026-07-26' },
     })
 
+    const bytes = await readFile(outPath)
+    expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+})
+
+// The seeded source templates, copied into a temp vault so the relative
+// `../_brand` imports and the Raleway `--font-path` resolve exactly as in a real
+// vault. Proves the branded set compiles end-to-end through renderPdf.
+const SRC_TEMPLATES = fileURLToPath(new URL('../src/main/agent/templates', import.meta.url))
+
+describe('renderPdf — branded set (integration — needs typst on PATH)', () => {
+  async function vaultWithBrandedSet(): Promise<string> {
+    const root = await work()
+    const dt = join(root, '.holi/document-templates')
+    for (const slug of ['_brand', 'proposal', 'report']) {
+      await cp(join(SRC_TEMPLATES, slug), join(dt, slug), { recursive: true })
+    }
+    return root
+  }
+
+  it('renders the proposal (signature + diagram + table tokens) to %PDF', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await vaultWithBrandedSet()
+    const notePath = join(root, 'tilbud.md')
+    await writeFile(
+      notePath,
+      '---\ntitle: T\n---\n\n# Tilbud til ACME\n\n## Baggrund\n\nEt **flow**:\n\n' +
+        '@@FIG:agent-flow@@\n\n## Pris\n\n| Ydelse | Pris |\n|---|---|\n| Udvikling | 100 |\n\n' +
+        '@@SIG:syv.ai ApS|ACME A/S@@\n',
+    )
+    const outPath = join(root, 'tilbud.pdf')
+    await renderPdf({
+      typstBin: typst,
+      templateDir: join(root, '.holi/document-templates/proposal'),
+      notePath,
+      outPath,
+      fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
+      meta: { date: '2026-07-08' },
+    })
+    const bytes = await readFile(outPath)
+    expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
+  it('renders the report (cover + TOC + running header) to %PDF', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await vaultWithBrandedSet()
+    const notePath = join(root, 'rapport.md')
+    await writeFile(notePath, '---\nx: 1\n---\n\n# Rapport\n\n## Indledning\n\nBrødtekst.\n\n## Metode\n\nMere.\n')
+    const outPath = join(root, 'rapport.pdf')
+    await renderPdf({
+      typstBin: typst,
+      templateDir: join(root, '.holi/document-templates/report'),
+      notePath,
+      outPath,
+      fields: [
+        { key: 'title', label: 'Title', type: 'text', required: false },
+        { key: 'subtitle', label: 'Subtitle', type: 'text', required: false },
+        { key: 'date', label: 'Date', type: 'date', required: false },
+      ],
+      meta: { title: 'Rapport', subtitle: 'Et hvidbog', date: '2026-07-08' },
+    })
     const bytes = await readFile(outPath)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
