@@ -299,18 +299,47 @@ test('says nothing until an event is picked', async () => {
   expect(screen.getByText(/pick an event/i)).toBeInTheDocument()
 })
 
-test('shows the description a row has no room for', async () => {
-  agendaMock.mockResolvedValue([
-    event({ description: 'Dial-in 555-0100, and the deck is in the drive folder' }),
-  ])
+/** Open the one event and hand back its description's document. */
+async function descriptionFrame(): Promise<Document> {
   const user = userEvent.setup()
-
   render(<AgendaView />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
+  const frame = (await screen.findByLabelText(/description of Q2 review/i)) as HTMLIFrameElement
+  await waitFor(() => expect(frame.contentDocument?.body.firstChild).toBeTruthy())
+  return frame.contentDocument!
+}
 
-  // Plain prose stays plain text: it keeps its line breaks, which an iframe
-  // would collapse. `detailLine` never carried this at all.
-  expect(await screen.findByText(/Dial-in 555-0100/)).toBeInTheDocument()
+test('shows the description a row has no room for', async () => {
+  // Bare text with real newlines — what an event created through the API or
+  // imported from an .ics carries, rather than Google's own rich-text HTML.
+  agendaMock.mockResolvedValue([
+    event({ description: 'Dial-in 555-0100\nDeck is in the drive folder' }),
+  ])
+
+  const frame = await descriptionFrame()
+
+  // Down the same renderer as markup: one path, so there is one place the
+  // sandbox could be forgotten rather than two. `detailLine` never carried this
+  // at all — reading it used to mean creating a task first.
+  expect(frame.body.textContent).toContain('Dial-in 555-0100')
+  // Converted, not collapsed. Putting raw text into an HTML document would run
+  // the two lines together.
+  expect(frame.querySelectorAll('br')).toHaveLength(1)
+})
+
+test('a plain description keeps the characters that look like markup', async () => {
+  // `<b` with no closing `>` on purpose: an HTML parser reads that as an
+  // unterminated start tag and swallows everything after it, so this fails
+  // loudly if the escape is dropped. A bare `< 5000` would survive either way
+  // and prove nothing.
+  agendaMock.mockResolvedValue([event({ description: 'budget <b 5000 EUR & rising' })])
+
+  const frame = await descriptionFrame()
+
+  // Escaped on the way in, so a stray `<` stays visible text instead of opening
+  // a tag nobody wrote — and `&` is escaped first, or it would double-escape
+  // the entity the `<` produces.
+  expect(frame.body.textContent).toContain('budget <b 5000 EUR & rising')
 })
 
 test('renders an HTML description as markup, in a frame of its own', async () => {
@@ -363,7 +392,7 @@ test('lets go of an event that a refresh drops from the agenda', async () => {
 
   render(<AgendaView />)
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
-  await screen.findByText(/Dial-in 555-0100/)
+  await screen.findByLabelText(/description of Q2 review/i)
 
   // Declining an invitation, or switching its calendar off, takes the event off
   // the next response. Holding the object rather than looking it up would pin
@@ -372,7 +401,7 @@ test('lets go of an event that a refresh drops from the agenda', async () => {
   await user.click(screen.getByRole('button', { name: /refresh agenda/i }))
 
   expect(await screen.findByText(/pick an event/i)).toBeInTheDocument()
-  expect(screen.queryByText(/Dial-in 555-0100/)).toBeNull()
+  expect(screen.queryByLabelText(/description of Q2 review/i)).toBeNull()
 })
 
 test('remembers its width per account, not per vault', async () => {

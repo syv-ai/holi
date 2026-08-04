@@ -171,20 +171,32 @@ function eventKey(event: CalendarEvent): string {
 }
 
 /**
- * Does this description need rendering as markup?
+ * A description as markup, whichever shape it arrived in.
  *
- * Google Calendar descriptions are HTML — Meet and Zoom write whole dial-in
- * blocks of it, and Google's own UI renders them as markup — but a description
- * typed as plain prose is common too, and putting three lines of it through an
- * iframe would collapse its newlines.
+ * **Every description goes through the one renderer** ([[SandboxedHtml]]).
+ * A description is a stranger's content no matter how it is written, and a
+ * second rendering path is a second place for the sandbox to be forgotten —
+ * so the plain ones are converted *into* the renderer's input rather than
+ * given a renderer of their own.
  *
- * Both ways of being wrong are safe, which is why a cheap test is enough: prose
- * mistaken for markup loses its line breaks, and markup mistaken for prose shows
- * as visible tags. Neither renders anything; the untrusted path is the frame,
- * and the frame is what this chooses *into*.
+ * The conversion exists because the two are not interchangeable. Google
+ * Calendar's own editor stores rich text, so most descriptions are already
+ * HTML; an event created through the API or imported from an `.ics` carries
+ * bare text with real newlines, and an HTML document collapses those. Escaping
+ * first keeps a literal `<` visible instead of letting it open a tag that was
+ * never meant as one, and `&` must go first or it would double-escape the
+ * entities the other two produce.
+ *
+ * This is *not* sanitizing, and does not stand in for it: escaping decides what
+ * the text means, and the sanitizer downstream still decides what survives.
  */
-function looksLikeHtml(description: string): boolean {
-  return /<[a-z][^>]*>/i.test(description)
+function descriptionHtml(description: string): string {
+  if (/<[a-z][^>]*>/i.test(description)) return description
+  return description
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>')
 }
 
 /** The full date a detail pane has room for, where the row has only `timeLabel`. */
@@ -575,13 +587,15 @@ function EventDetail({
 
         {event.description !== null && event.description.trim() !== '' && (
           <div className="mt-4 border-t border-border/50 pt-3">
-            {looksLikeHtml(event.description) ? (
-              // Whoever sent the invitation wrote this markup, so it goes down
-              // the same sandboxed path a mail body does — see `SandboxedHtml`.
-              <SandboxedHtml html={event.description} label={`description of ${event.title}`} />
-            ) : (
-              <p className="whitespace-pre-wrap break-words text-sm">{event.description}</p>
-            )}
+            {/* Whoever sent the invitation wrote this, so it goes down the same
+                sandboxed path a mail body does — all of it, not just the part
+                that already looks like markup. `descriptionHtml` normalises
+                plain text into the renderer's input; it does not choose a
+                renderer, because there is only the one. */}
+            <SandboxedHtml
+              html={descriptionHtml(event.description)}
+              label={`description of ${event.title}`}
+            />
           </div>
         )}
       </div>
