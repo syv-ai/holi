@@ -113,13 +113,27 @@ required: false }, { key: "subtitle", type: "text", required: false }, { key: "d
    Typst defaults. This is the "Fonts (`--font-path`) are a later concern" note in `render.ts`
    coming due. `wrapper.ts`/`composeWrapper` are unchanged (logo already flows through `assets`).
 
-2. **Binary seeding.** `SEED_FILES` in `seed-content.ts` is `Record<string,string>` (text). The
-   text files — `_brand/brand.typ`, `_brand/figures.typ`, `proposal/template.{typ,json}`,
-   `report/template.{typ,json}` — join `SEED_FILES` via `?raw` imports (like `plainTemplateTyp`).
-   The **binaries** (4 TTFs + `logo.png`) need a new seed step: ship them as app resources and
-   copy each into `_brand/` on vault open **if absent** (never overwrite a member's edit, matching
-   the existing seed rule). `resolveTypstBin` is the precedent for shipping a binary resource; the
-   plan resolves the exact electron-vite/resources mechanism.
+2. **Binary seeding (mechanism pinned).** `SEED_FILES` in `seed-content.ts` is
+   `Record<string,string>` (text). The text files — `_brand/brand.typ`, `_brand/figures.typ`,
+   `proposal/template.{typ,json}`, `report/template.{typ,json}` — join `SEED_FILES` via `?raw`
+   imports (like `plainTemplateTyp`). The **binaries** (4 TTFs + `logo.png`) are shipped as
+   **base64 embedded in a committed generated TS module**, not as electron-builder resources.
+   Rationale: the typst binary is *downloaded* on first use (`ensureTypst`), not bundled, so there
+   is **no binary-resource bundling precedent** to follow; there is no electron-builder config; and
+   the node vitest project bypasses electron-vite, so Vite `?url`/asset-emission would be fragile
+   across dev/test/packaged. A base64 string module bundles into the main JS exactly like the
+   existing `?raw` text seeds, is trivially importable by the node test project, and works
+   identically in dev and any future packaged build with zero build config.
+   - Raw brand binaries are committed under `src/main/agent/templates/_brand/` (provenance /
+     regeneration source, ported from 1brain).
+   - A committed generator `scripts/gen-brand-assets.mjs` reads them and writes
+     `src/main/agent/templates/_brand/binary-assets.generated.ts`, exporting
+     `BRAND_BINARIES: Record<string, string>` (vault-relative path → base64).
+   - `seed-content.ts` gains a **binary seed step**: for each `BRAND_BINARIES` entry, write the
+     decoded bytes into the vault **if absent** (never overwrite a member's edit — same rule as the
+     text seeds). `writeAtomic` is generalized from `text: string` to `data: string | Uint8Array`
+     (dropping the explicit `'utf8'`; a string still defaults to utf8, so text callers are
+     unchanged) so both seed loops share one atomic writer.
 
 ### `listTemplates` (`main/pdf/templates.ts`)
 
