@@ -28,7 +28,14 @@ import { writeAtomic } from '../vault/vault-files'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
+import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
+import brandTyp from './templates/_brand/brand.typ?raw'
+import figuresTyp from './templates/_brand/figures.typ?raw'
 import plainTemplateTyp from './templates/plain/template.typ?raw'
+import proposalManifest from './templates/proposal/template.json?raw'
+import proposalTyp from './templates/proposal/template.typ?raw'
+import reportManifest from './templates/report/template.json?raw'
+import reportTyp from './templates/report/template.typ?raw'
 
 /** The old bootstrap's shim: CLAUDE.md is the file the CLI reads; AGENTS.md is
  * the file humans and other agents edit. One import keeps them in sync. */
@@ -196,6 +203,15 @@ export const SEED_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
+  // The branded set and its shared brand foundation (D66 rename, spec
+  // 2026-08-04). `_brand/` is skipped by the template picker (underscore prefix);
+  // its binary fonts + logo are seeded separately from BRAND_BINARIES below.
+  '.holi/document-templates/_brand/brand.typ': brandTyp,
+  '.holi/document-templates/_brand/figures.typ': figuresTyp,
+  '.holi/document-templates/proposal/template.json': proposalManifest,
+  '.holi/document-templates/proposal/template.typ': proposalTyp,
+  '.holi/document-templates/report/template.json': reportManifest,
+  '.holi/document-templates/report/template.typ': reportTyp,
   '.holi/theme.json': THEME_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
   // the personal-override slot exists by default. The `.gitignore` is written
@@ -254,6 +270,15 @@ export async function ensureSeeded(root: string): Promise<string[]> {
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     if (onDisk !== null) continue
     await writeAtomic(root, vaultRelPath(rel), content)
+    written.push(rel)
+  }
+
+  // Brand binaries (Raleway fonts + logo), base64 in a generated module. Same
+  // if-absent rule as the text seeds, via the bytes overload of writeAtomic.
+  for (const [rel, b64] of Object.entries(BRAND_BINARIES)) {
+    const onDisk = await readFile(join(root, rel)).catch(() => null)
+    if (onDisk !== null) continue
+    await writeAtomic(root, vaultRelPath(rel), Buffer.from(b64, 'base64'))
     written.push(rel)
   }
   return written

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
+import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
 import { GITIGNORE, ensureSeeded, SEED_FILES } from '../src/main/agent/seed-content'
 
 const exec = promisify(execFile)
@@ -52,14 +53,33 @@ describe('SEED_FILES', () => {
       '.claude/settings.json',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
+      '.holi/document-templates/_brand/brand.typ',
+      '.holi/document-templates/_brand/figures.typ',
       '.holi/document-templates/plain/template.json',
       '.holi/document-templates/plain/template.typ',
+      '.holi/document-templates/proposal/template.json',
+      '.holi/document-templates/proposal/template.typ',
+      '.holi/document-templates/report/template.json',
+      '.holi/document-templates/report/template.typ',
       '.holi/theme.json',
       '.holi/theme.local.json',
       '.holi/vault.json',
       'AGENTS.md',
       'CLAUDE.md',
       'MEMORY.md',
+    ])
+  })
+
+  it('carries only the brand text; the brand binaries seed from BRAND_BINARIES', () => {
+    // The 4 Raleway TTFs + logo are binary, base64 in the generated module, not
+    // strings in SEED_FILES. brand.typ imports Raleway by family name only.
+    expect(Object.keys(SEED_FILES).filter((k) => k.endsWith('.ttf') || k.endsWith('.png'))).toEqual([])
+    expect(Object.keys(BRAND_BINARIES).sort()).toEqual([
+      '.holi/document-templates/_brand/fonts/Raleway-bold.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-boldItalic.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-italic.ttf',
+      '.holi/document-templates/_brand/fonts/Raleway-regular.ttf',
+      '.holi/document-templates/_brand/logo.png',
     ])
   })
 
@@ -132,12 +152,39 @@ describe('ensureSeeded', () => {
     const root = await tempDir()
     const written = await ensureSeeded(root)
     // The .gitignore is written too, but it is not in SEED_FILES: it is the one
-    // managed file that is merged line-wise rather than created-if-missing.
-    expect(written.sort()).toEqual([GITIGNORE, ...Object.keys(SEED_FILES)].sort())
+    // managed file that is merged line-wise rather than created-if-missing. The
+    // brand binaries seed alongside the text files, from BRAND_BINARIES.
+    expect(written.sort()).toEqual(
+      [GITIGNORE, ...Object.keys(SEED_FILES), ...Object.keys(BRAND_BINARIES)].sort(),
+    )
     expect(await readFile(join(root, 'CLAUDE.md'), 'utf8')).toBe(SEED_FILES['CLAUDE.md'])
     expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
       SEED_FILES['.claude/hooks/user-prompt-submit.mjs'],
     )
+  })
+
+  it('seeds the brand foundation: brand.typ text and the Raleway/logo binaries verbatim', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+
+    // Text: brand.typ + the two branded templates land as their source.
+    const brand = await readFile(join(root, '.holi/document-templates/_brand/brand.typ'), 'utf8')
+    expect(brand).toContain('with-brand')
+    expect(brand).toContain('Raleway')
+    expect(await readFile(join(root, '.holi/document-templates/proposal/template.typ'), 'utf8')).toContain(
+      'render-body',
+    )
+
+    // Binaries: bytes match the decoded base64, and a font is a real TrueType file.
+    const font = await readFile(join(root, '.holi/document-templates/_brand/fonts/Raleway-regular.ttf'))
+    const expected = Buffer.from(
+      BRAND_BINARIES['.holi/document-templates/_brand/fonts/Raleway-regular.ttf']!,
+      'base64',
+    )
+    expect(font.equals(expected)).toBe(true)
+    expect(font.length).toBeGreaterThan(50_000) // a real font, not a stub
+    const logo = await readFile(join(root, '.holi/document-templates/_brand/logo.png'))
+    expect(logo.subarray(1, 4).toString('latin1')).toBe('PNG') // PNG magic
   })
 
   it('never overwrites an existing file, and is idempotent', async () => {
