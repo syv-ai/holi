@@ -191,7 +191,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 The agent can turn a note into a PDF with the **same Typst engine** the UI's "Convert to PDF" uses — one env var and one skill, no new machinery.
 
 - **`$TYPST_BIN`** — Holi resolves the typst binary at agent spawn (find-only: `TYPST_BIN` env → cached download → `PATH`; **non-blocking**, never downloads on the spawn path) and, when found, sets it in the agent's env. A fire-and-forget `ensureTypst` caches it for the next spawn if the machine has never rendered. If it is unset, the skill's fallback says to run one UI Convert (or retry) to install typst.
-- **The seeded `md-to-pdf` skill** (`.claude/skills/md-to-pdf/`) documents the template model (`.holi/templates/<slug>/`), the six-type field schema, the `doc(notePath, meta, assets)` contract, and the render recipe: compose a wrapper that imports the template's `doc` and calls it, then `"$TYPST_BIN" compile wrapper.typ <out>.pdf --root /`. The agent writes typed `meta` literals directly.
+- **The seeded `md-to-pdf` skill** (`.claude/skills/md-to-pdf/`) documents the template model (`.holi/document-templates/<slug>/`), the six-type field schema, the `doc(notePath, meta, assets)` contract, and the render recipe: compose a wrapper that imports the template's `doc` and calls it, then `"$TYPST_BIN" compile wrapper.typ <out>.pdf --root /`. The agent writes typed `meta` literals directly.
 - **PDFs are outputs, never committed** — the skill writes them to a non-tracked path and reports it.
 
 This lands as a late slice, once the agent is live. The typed-template mechanism it builds on already exists (see `../specs/2026-07-26-typed-template-fields-design.md`).

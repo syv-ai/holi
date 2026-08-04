@@ -127,7 +127,26 @@ Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkC
 
 ---
 
-## Number allocation — **next free is D66**
+## D66 — PDF export templates live under a name that says what they are for.
+
+**Context.** The vault's branded-document templates — the Typst folders behind Convert-to-PDF, each `template.json` + `template.typ` + `assets/` — sat under `.holi/templates/`. In a notes app "templates" invites the wrong question ("templates for *notes*?"): the name named the mechanism, not the purpose. Flagged before growing the seeded set past `plain` to letter/report/memo/proposal, so one folder renames instead of a set migrating.
+
+**Decision.** Agreed with Nicolai 2026-08-04. **Landed** same day.
+
+1. **The convention is `.holi/document-templates/<slug>/`.** The single source is `TEMPLATES_REL` in `main/pdf/templates.ts`; `seed-content.ts` seeds `plain` there, the `md-to-pdf` skill and the Convert-to-PDF empty-state copy point there.
+2. **Flat, not categorised.** PDF export is the only kind of template Holi has, so the top-level name carries the purpose rather than a generic `templates/pdf/` nesting — a category segment is added only if a second template kind ever appears (YAGNI).
+3. **Hard cutover, no back-compat alias.** The old path is not read as a fallback. Templates are seeded into vaults at runtime (there is no committed `.holi/templates/` in the repo), and pre-release there are no real vaults to migrate; a legacy alias would be a second name for one truth.
+4. **The internal seed-source dir stays `main/agent/templates/plain/`.** It is build content bundled via `?raw`, not the vault convention; renaming it would churn import paths for no reader benefit.
+
+**Why.** A folder name in `.holi/` is read by users authoring templates and by the agent; it should answer "for what?" on sight. `document-templates` says these produce documents; `templates` alone said nothing.
+
+**Rejected.** *`.holi/pdf-templates`* — ties the name to today's only output when the pillar's aim is branded *documents* (Typst source and other targets are on the PRD's horizon). *`.holi/export-templates`* — "export" is the app's word, not the user's mental model of a branded letter/report. *Keep `.holi/templates` + a back-compat read* — carries the ambiguous name forever and doubles the truth.
+
+**Consolidates into** `prd/agent.md` (already updated) and the `_phase2-typst-export.md` template-set work that follows. Dated `specs/2026-07-26-*` and `plans/*` keep the old path as historical record. *Stays in the inbox until consolidated.*
+
+---
+
+## Number allocation — **next free is D67**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 

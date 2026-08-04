@@ -53,15 +53,15 @@ describe('coerceMeta', () => {
 describe('composeWrapper', () => {
   it('imports the template and calls doc with the coerced meta', () => {
     const out = composeWrapper({
-      templateDir: '/v/.holi/templates/plain',
+      templateDir: '/v/.holi/document-templates/plain',
       notePath: '/v/notes/report.md',
-      assetsDir: '/v/.holi/templates/plain/assets',
+      assetsDir: '/v/.holi/document-templates/plain/assets',
       fields: [f({ key: 'to', type: 'text' })],
       meta: { to: 'ACME' },
     })
     expect(out).toBe(
-      '#import "/v/.holi/templates/plain/template.typ": doc\n' +
-        '#doc("/v/notes/report.md", meta: (to: "ACME"), assets: "/v/.holi/templates/plain/assets")\n',
+      '#import "/v/.holi/document-templates/plain/template.typ": doc\n' +
+        '#doc("/v/notes/report.md", meta: (to: "ACME"), assets: "/v/.holi/document-templates/plain/assets")\n',
     )
   })
 })

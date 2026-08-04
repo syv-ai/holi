@@ -11,7 +11,7 @@ const exec = promisify(execFile)
 export interface RenderInput {
   /** Absolute path to the typst binary (from resolveTypstBin/ensureTypst). */
   typstBin: string
-  /** Absolute `.holi/templates/<name>/`. */
+  /** Absolute `.holi/document-templates/<name>/`. */
   templateDir: string
   /** Absolute path to the note. */
   notePath: string

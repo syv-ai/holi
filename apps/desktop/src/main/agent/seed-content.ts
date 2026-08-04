@@ -166,7 +166,7 @@ const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
 /** The Plain template's manifest — a clean, unbranded layout with two optional
  * metadata fields (Date, Recipient) that the Convert dialog renders as inputs
  * and template.typ prints as a small header. Committed vault content under
- * `.holi/templates/plain/`. Built via `JSON.stringify` (like VAULT_MARKER) so
+ * `.holi/document-templates/plain/`. Built via `JSON.stringify` (like VAULT_MARKER) so
  * there is no `.json?raw` import dependency. */
 const PLAIN_MANIFEST =
   JSON.stringify(
@@ -194,8 +194,8 @@ const THEME_SKELETON = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, ligh
 /** Written only when absent. Never updated, so a member's edit survives. */
 export const SEED_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
-  '.holi/templates/plain/template.json': PLAIN_MANIFEST,
-  '.holi/templates/plain/template.typ': plainTemplateTyp,
+  '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
+  '.holi/document-templates/plain/template.typ': plainTemplateTyp,
   '.holi/theme.json': THEME_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
   // the personal-override slot exists by default. The `.gitignore` is written

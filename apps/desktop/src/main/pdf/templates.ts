@@ -10,16 +10,16 @@ export interface Template {
   /** What `parseFields` had to degrade in the manifest (empty = clean). Surfaced
    *  in the Convert dialog as authoring feedback. */
   warnings: string[]
-  /** Absolute `.holi/templates/<slug>/`. */
+  /** Absolute `.holi/document-templates/<slug>/`. */
   dir: string
   /** The directory name — the stable id passed to `pdf.render`. */
   slug: string
 }
 
-const TEMPLATES_REL = '.holi/templates'
+const TEMPLATES_REL = '.holi/document-templates'
 
 /**
- * The vault's templates: subdirectories of `.holi/templates/` with a readable,
+ * The vault's templates: subdirectories of `.holi/document-templates/` with a readable,
  * valid `template.json`. Missing dir → `[]`. A dir without a valid manifest is
  * skipped rather than throwing, so one bad template can't break Convert. Sorted
  * by display name.

@@ -23,7 +23,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     if (typst === null) return // no typst on this machine — skip, don't fail
 
     const root = await work()
-    const templateDir = join(root, '.holi/templates/plain')
+    const templateDir = join(root, '.holi/document-templates/plain')
     await mkdir(join(templateDir, 'assets'), { recursive: true })
     await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
 
@@ -46,7 +46,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     if (typst === null) return // no typst on this machine — skip, don't fail
 
     const root = await work()
-    const templateDir = join(root, '.holi/templates/plain')
+    const templateDir = join(root, '.holi/document-templates/plain')
     await mkdir(join(templateDir, 'assets'), { recursive: true })
     await writeFile(join(templateDir, 'template.typ'), plainTemplateTyp)
 
@@ -87,7 +87,7 @@ describe('renderPdf (integration — needs typst on PATH; first run fetches cmar
     if (typst === null) return
 
     const root = await work()
-    const templateDir = join(root, '.holi/templates/t')
+    const templateDir = join(root, '.holi/document-templates/t')
     await mkdir(templateDir, { recursive: true })
     await writeFile(
       join(templateDir, 'template.typ'),

@@ -1316,7 +1316,7 @@ describe('sync', () => {
 
 describe('pdf', () => {
   const TEMPLATE_FILES = {
-    '.holi/templates/plain/template.json': JSON.stringify({
+    '.holi/document-templates/plain/template.json': JSON.stringify({
       name: 'Plain',
       description: 'Clean.',
       fields: [
@@ -1324,7 +1324,7 @@ describe('pdf', () => {
         { key: 'recipient', label: 'Recipient', required: true },
       ],
     }),
-    '.holi/templates/plain/template.typ': '#let doc(p, meta: (:), assets: "") = []',
+    '.holi/document-templates/plain/template.typ': '#let doc(p, meta: (:), assets: "") = []',
   }
 
   it('templates returns each template with its declared fields', async () => {
@@ -1359,11 +1359,11 @@ describe('pdf', () => {
     const typst = await resolveTypstBin()
     if (typst === null) return // no typst — skip, don't fail
     const { caller, base } = await rig({
-      '.holi/templates/plain/template.json': JSON.stringify({
+      '.holi/document-templates/plain/template.json': JSON.stringify({
         name: 'Plain',
         fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
       }),
-      '.holi/templates/plain/template.typ': plainTemplateTyp,
+      '.holi/document-templates/plain/template.typ': plainTemplateTyp,
       'note.md': '---\ntitle: T\n---\n\n## Heading\n\nBody.\n',
     })
     const outPath = join(base, 'chosen.pdf')

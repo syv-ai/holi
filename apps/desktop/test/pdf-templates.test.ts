@@ -15,7 +15,7 @@ afterEach(async () => {
 })
 
 async function seed(root: string, slug: string, manifest: unknown): Promise<void> {
-  const dir = join(root, '.holi/templates', slug)
+  const dir = join(root, '.holi/document-templates', slug)
   await mkdir(dir, { recursive: true })
   const body = typeof manifest === 'string' ? manifest : JSON.stringify(manifest)
   await writeFile(join(dir, 'template.json'), body)
@@ -32,7 +32,7 @@ describe('listTemplates', () => {
     await seed(root, 'plain', { name: 'Plain', description: 'Clean.', fields: [] })
     const [t] = await listTemplates(root)
     expect(t).toMatchObject({ name: 'Plain', description: 'Clean.', fields: [], slug: 'plain' })
-    expect(t.dir).toBe(join(root, '.holi/templates/plain'))
+    expect(t.dir).toBe(join(root, '.holi/document-templates/plain'))
   })
 
   it('normalizes fields and defaults label/required', async () => {
@@ -79,7 +79,7 @@ describe('listTemplates', () => {
 
   it('skips a dir with no manifest and a dir with invalid JSON', async () => {
     const root = await vault()
-    await mkdir(join(root, '.holi/templates/nomanifest'), { recursive: true })
+    await mkdir(join(root, '.holi/document-templates/nomanifest'), { recursive: true })
     await seed(root, 'broken', '{ not json')
     await seed(root, 'plain', { name: 'Plain', fields: [] })
     expect((await listTemplates(root)).map((t) => t.slug)).toEqual(['plain'])

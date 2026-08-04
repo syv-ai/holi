@@ -127,7 +127,7 @@ export function ConvertToPdf({
         {templates !== null && templates.length === 0 && (
           <p className="text-xs text-muted-foreground">
             No templates in this vault. Expected a seeded <span className="font-mono">Plain</span>{' '}
-            under <span className="font-mono">.holi/templates/</span>.
+            under <span className="font-mono">.holi/document-templates/</span>.
           </p>
         )}
         {templates !== null && templates.length > 0 && (

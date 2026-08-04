@@ -51,7 +51,7 @@ function typstDatetime(raw: string): string {
 }
 
 export interface WrapperInput {
-  /** Absolute `.holi/templates/<name>/`. */
+  /** Absolute `.holi/document-templates/<name>/`. */
   templateDir: string
   /** Absolute path to the note being rendered. */
   notePath: string

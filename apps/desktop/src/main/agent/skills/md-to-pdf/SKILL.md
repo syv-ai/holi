@@ -11,12 +11,12 @@ run **Convert to PDF** once from a note's ⋯ menu (that installs it), then retr
 
 ## Templates
 
-A template is a folder under `.holi/templates/<slug>/`:
+A template is a folder under `.holi/document-templates/<slug>/`:
 
 - `template.typ` — exports `doc(notePath, meta, assets)`.
 - `template.json` — a manifest declaring the fields the template accepts.
 
-List them with `ls .holi/templates/`. Every vault ships the `plain` template.
+List them with `ls .holi/document-templates/`. Every vault ships the `plain` template.
 
 Each `template.json` field has a `key`, `label`, `type`, and optional `required`,
 `default`, and `options`. The six field types and the Typst value each becomes:
@@ -40,11 +40,11 @@ Omit an optional field to leave it unset — the template reads
    never committed). Use ABSOLUTE paths so `--root /` can read everything:
 
    ```typ
-   #import "/ABS/VAULT/.holi/templates/plain/template.typ": doc
+   #import "/ABS/VAULT/.holi/document-templates/plain/template.typ": doc
    #doc(
      "/ABS/VAULT/notes/the-note.md",
      meta: (recipient: "Acme Inc"),
-     assets: "/ABS/VAULT/.holi/templates/plain/assets",
+     assets: "/ABS/VAULT/.holi/document-templates/plain/assets",
    )
    ```
 
