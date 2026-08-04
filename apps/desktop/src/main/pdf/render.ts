@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +8,18 @@ import type { TemplateField } from '@holi/shared'
 import { composeWrapper } from './wrapper'
 
 const exec = promisify(execFile)
+
+/**
+ * `--font-path` args for a template, or `[]`. The branded templates (proposal,
+ * report) render with Raleway, which the seeded `_brand/fonts` sibling holds;
+ * `plain` ships none and a vault not yet re-seeded has no `_brand` at all, so
+ * this is guarded on existence — a missing dir would make typst error rather
+ * than fall back to its defaults.
+ */
+export function fontPathArgs(templateDir: string): string[] {
+  const fontsDir = join(templateDir, '..', '_brand', 'fonts')
+  return existsSync(fontsDir) ? ['--font-path', fontsDir] : []
+}
 
 export interface RenderInput {
   /** Absolute path to the typst binary (from resolveTypstBin/ensureTypst). */
@@ -27,8 +40,8 @@ export interface RenderInput {
  * `outPath`. `--root /` because the wrapper (temp dir), the template, and the
  * note live in three different trees and the wrapper references them all by
  * absolute path — no single narrower root spans them. Throws with typst's
- * stderr on a non-zero exit. Fonts (`--font-path`) are a later concern; Plain
- * ships none.
+ * stderr on a non-zero exit. `--font-path` is added (via `fontPathArgs`) when the
+ * template has a seeded `_brand/fonts` sibling — the branded templates' Raleway.
  */
 export async function renderPdf({
   typstBin,
@@ -45,7 +58,7 @@ export async function renderPdf({
       wrapperPath,
       composeWrapper({ templateDir, notePath, assetsDir: join(templateDir, 'assets'), fields, meta }),
     )
-    await exec(typstBin, ['compile', wrapperPath, outPath, '--root', '/'])
+    await exec(typstBin, ['compile', wrapperPath, outPath, '--root', '/', ...fontPathArgs(templateDir)])
   } catch (err) {
     const stderr = (err as { stderr?: string }).stderr ?? String(err)
     throw new Error(`typst compile failed: ${stderr}`)

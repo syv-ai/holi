@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { renderPdf } from '../src/main/pdf/render'
+import { fontPathArgs, renderPdf } from '../src/main/pdf/render'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
 // The ACTUAL seeded template — this test proves that exact file compiles.
 import plainTemplateTyp from '../src/main/agent/templates/plain/template.typ?raw'
@@ -15,6 +15,23 @@ async function work(): Promise<string> {
 }
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+})
+
+describe('fontPathArgs', () => {
+  it('adds --font-path when the sibling _brand/fonts exists', async () => {
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/proposal')
+    const fontsDir = join(root, '.holi/document-templates/_brand/fonts')
+    await mkdir(fontsDir, { recursive: true })
+    expect(fontPathArgs(templateDir)).toEqual(['--font-path', fontsDir])
+  })
+
+  it('is empty when there is no _brand/fonts sibling (Plain, un-re-seeded vaults)', async () => {
+    const root = await work()
+    const templateDir = join(root, '.holi/document-templates/plain')
+    await mkdir(templateDir, { recursive: true })
+    expect(fontPathArgs(templateDir)).toEqual([])
+  })
 })
 
 describe('renderPdf (integration — needs typst on PATH; first run fetches cmarker)', () => {
