@@ -24,12 +24,17 @@ Let employees sync their **@syv.ai Gmail and Google Calendar** into Holi — rea
 - Being a full email client. Holi reads + links + composes lightly (mailto/send), it doesn't replace Gmail.
 - Persisting mail/calendar as vault content (keep Google as source of truth; cache transiently, like the old "Holi never persists mail").
 
-## Open questions
-- **Desktop Google OAuth without a server.** A confidential client secret can't ship. Loopback + PKCE is the native-app pattern and works, but confirm Google's rules for the required scopes.
-- Scope minimization + Google verification/review for the added scopes.
-- Multi-account (personal + syv.ai)?
-- Push/watch (Gmail push notifications, Calendar watch) vs polling — polling is the likely answer with no server to receive a webhook.
-- How an email/event link is represented in a task file now that `related[]` is gone.
+## Open questions — resolved (D67, 2026-08-04)
+
+The five forks below are settled in [`../specs/2026-08-04-google-mail-calendar-design.md`](../specs/2026-08-04-google-mail-calendar-design.md) and [`../decisions.md`](../decisions.md) D67. Summaries:
+
+- **Desktop Google OAuth without a server** → **auth-code + PKCE, loopback `127.0.0.1` redirect**, in Electron main, a sibling of `device-flow.ts`. The existing **External** OAuth registration is reused; its `client_id`/desktop `client_secret` ship in the binary (non-confidential — PKCE is the protection).
+- **Scope minimization + verification** → **read-only both** (`gmail.readonly` + `calendar.readonly`), compose via `mailto:`/deeplink. Calendar (sensitive) ships first; Gmail (restricted, CASA) verifies in parallel while built in testing mode.
+- **Multi-account** → **single** connected account in v1; the token store is keyed by Google `sub` so more accounts is additive, not a rewrite.
+- **Push vs polling** → **on-demand** fetch + short in-memory cache in main; no background poll (push is impossible with no server). Rely on Google's own notifications.
+- **Link representation** → a **plain markdown link in the file body** (not frontmatter); the UI renders a chip via render-time URL detection. No `related[]` revival.
+
+Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP)** over a main-held loopback ops channel; main is the **sole token authority**; UI is **workspace tabs**; disconnect revokes at Google and is independent of GitHub. Build order: **Connector → Calendar → Gmail → Agent skill.**
 
 ## Dependencies
 [`auth-identity.md`](auth-identity.md) (a second OAuth provider alongside GitHub, keychain token storage), [`agent.md`](agent.md) (the returning MCP surface), [`tasks.md`](tasks.md) (linking an email/event to a task; create-from-event).

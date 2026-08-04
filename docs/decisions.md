@@ -146,7 +146,34 @@ Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkC
 
 ---
 
-## Number allocation — **next free is D67**
+## D67 — Google mail/calendar rides one main-held connector; the agent reaches it via a CLI, not MCP.
+
+**Context.** The largest deferred pillar: employees' @-account Gmail + Calendar, read and linked to tasks/notes, rebuilt natively on the Google APIs after Mailspring's death. Sign-in is GitHub (`auth-identity.md`), so there is no Google consent to ride on and no server to hold a refresh token — Google auth is a new per-user, per-machine desktop grant. The PRD stub (`prd/_phase2-google-mail-calendar.md`) left five load-bearing questions open: the desktop OAuth flow, whether MCP returns (against `agent.md`'s pure-CC stance), how a link is represented, polling-vs-push, and scope/verification/multi-account. Designed whole and top-down with Nicolai 2026-08-04.
+
+**Decision.** These stand together; full design in `specs/2026-08-04-google-mail-calendar-design.md`.
+
+1. **Auth-code + PKCE, loopback `127.0.0.1` redirect, in Electron main** — Google's sanctioned desktop grant, built as a *sibling* of `device-flow.ts` (injectable `fetch`/`now`/`sleep`/`openBrowser`/`listen`, pure testable state machine, discriminated-union result). *Not* a reuse of the GitHub device-code flow.
+2. **Main is the sole token authority.** Only main hits Google's token endpoint; `getAccessToken()` single-flights the refresh. This exists because refresh tokens *rotate on use* — two independent refreshers race and invalidate each other. A new `GoogleTokenStore`/`GoogleSession` sit beside the GitHub ones (same `safeStorage` envelope + invariants), keyed by Google `sub`.
+3. **External OAuth app, reuse the existing registration.** Ship `GOOGLE_CLIENT_ID` (+ the non-confidential desktop `client_secret`) in the binary — PKCE is the protection, same reasoning `session.ts` documents for the public client id. **Single** connected account in v1; store keyed by `sub` so multi-account is additive.
+4. **Read-only both** (`gmail.readonly` + `calendar.readonly`); compose is `mailto:`/deeplink, no `gmail.send`, no calendar-write. Calendar (sensitive scope) verifies lightly and ships first; Gmail (restricted, CASA) is the long pole — build in testing mode (≤100 test users), verify in parallel. This answers the scope/verification question.
+5. **The agent reaches Google via a `holi-google` CLI + skill, not MCP.** The CLI proxies to a **loopback ops channel** main exposes (`{port,secret}` in a machine-local file; tokens never leave main). `holi-agent-pure-claude-code` stays intact — the PRD's "MCP returns here" prediction is *declined*. Send-gating stays recoverable via `Bash(holi-google send:*)` permission rules.
+6. **A link is a plain markdown link in the file body** (not frontmatter, not a `[[wiki-link]]` — the target is an external URL, not a vault file). UI renders a chip via **render-time URL detection** (computed, not stored, like `overdue`/`pN` labels). Answers the tasks-PRD reserved question and keeps "no second representation."
+7. **On-demand freshness** — fetch on open/refresh/CLI, short in-memory cache in main, nothing persisted; rely on Google's own notifications. No background poll in v1 (push is impossible with no server anyway).
+8. **UI = workspace tabs** (agenda + mail, peers of `board`); "Connect Google" lives in **global/app settings** (account-scoped, not per-vault). Disconnect **revokes at Google + clears keychain**, independent of GitHub sign-out.
+
+**Build order:** Connector → Calendar → Gmail → Agent skill (verification asymmetry puts Calendar before Gmail).
+
+**Deferred:** `gmail.send`, calendar-event write, recurring-event "task lights up", background poll/in-app notifications, multi-account-at-once, disk cache/offline agenda, an MCP surface.
+
+**Why.** Every fork resolved toward the model already load-bearing elsewhere: one process owns the token (as main owns the GitHub token), the agent uses native tools over external data (as it uses `Bash`/`Glob` over files), and a link is prose in a file (as backrefs and task links already are). The one place the PRD anticipated *new* machinery — an MCP server — is where the pure-CC stance is strongest, so it's declined; the loopback CLI gives the agent reach without a server lifecycle.
+
+**Rejected.** *Google device flow* — not approved for the sensitive/restricted scopes; a verification dead end. *Each consumer refreshes its own token* — races on the rotating refresh token. *An MCP server* — reintroduces a server+handshake lifecycle against the held pure-CC stance; skill+CLI recovers send-gating via Bash rules. *A frontmatter link field* — the `related[]` ghost the tasks PRD killed. *Internal Workspace-only OAuth app* — erases verification but bakes "@syv.ai only" in, incompatible with reusing the existing External registration. *Persist mail to disk* — contradicts "Google is source of truth".
+
+**Consolidates into** `prd/_phase2-google-mail-calendar.md` (the five open questions become settled prose), and — when built — `prd/agent.md` (§Tool surface: the CLI surface for external data), `prd/tasks.md` (§Deferred: linking resolved to a body link), `prd/auth-identity.md` (the second, independent OAuth provider). *Stays in the inbox until consolidated.*
+
+---
+
+## Number allocation — **next free is D68**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
