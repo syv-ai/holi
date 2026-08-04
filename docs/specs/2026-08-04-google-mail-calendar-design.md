@@ -151,8 +151,32 @@ What renders is sanitized HTML, and the work splits into three jobs that are wor
 **On-demand, no background polling in v1.** No server → no Gmail Pub/Sub or Calendar `watch` webhook to receive, so push is out regardless.
 
 - Fetch on **panel-open**, **manual refresh**, and **CLI invoke**. Hold a short **in-memory** cache in main so toggling a tab doesn't refetch.
-- **Nothing persisted to disk** (PRD non-goal — Google stays source of truth). Offline shows "reconnect to load your agenda," which is the honest state for inherently-online data.
+- ~~**Nothing persisted to disk** (PRD non-goal — Google stays source of truth).~~ **Overturned 2026-08-04 — see "Bounded local cache" below.** Offline still shows "reconnect to load your agenda" rather than pretending a cached day is today's.
 - **Rely on Google's own apps** for proactive meeting/mail notifications — reinventing them is the "full email client" the PRD rules out. A light background poll on the existing reminder tray-tick (for "meeting in 10 min" inside Holi) is a clean **additive** slice *if* it earns its place.
+
+### Bounded local cache + Gmail incremental sync (added 2026-08-04)
+
+**Overturns "nothing persisted", on Nicolai's call.** A bounded last-N cache is not a mirror: it holds the last **500 threads per question asked**, in `userData/google-cache.db` on `node:sqlite`. Google still decides what is true; the cache decides only what is painted before Google answers.
+
+**Why it was worth reversing a stated non-goal:** a mail refresh was `threads.list` + one `threads.get` per thread — **26 requests for 25 threads**. `history.list` deltas on top of the cache collapse an unchanged refresh to **one**.
+
+| | Mail | Calendar |
+|---|---|---|
+| Cached | yes | yes |
+| Incremental | **yes** — `history.list` delta | **no**, deliberately |
+| What the UI does | `threads` is instant *and* current | `agendaCached` paints, `agenda` replaces |
+
+**Calendar is not an oversight.** `events.list`'s `syncToken` **cannot be combined with `timeMin`/`timeMax`** (Google's reference lists both among the parameters that cannot accompany `nextSyncToken`; an expired token returns 410). Incremental calendar sync would therefore mean mirroring every event at every date, per calendar, to serve a seven-day view. Refused.
+
+**Design points that must not be "fixed" later:**
+
+- **`node:sqlite`** — built into Node 24 / Electron 43. No native module, no `electron-rebuild`. This is what made a database affordable.
+- **Unencrypted, on purpose.** SQLCipher is a native module (the thing `node:sqlite` avoids) and hand-encrypting columns would foreclose FTS5 search. The protection is the OS account and disk encryption — the same protection the vault's own notes already rely on, sitting in the same place.
+- **In `userData`, never in a vault.** Mail is account data; a vault is a shared git repo, so caching an inbox there would push a client's mail to teammates on the next sync.
+- **`useAccount(sub)` before any read**, and **disconnect deletes the file** (plus `-wal`/`-shm`), not the rows. Both hang off `googleSession.onChange`, which also fires for a dead grant.
+- **The agent never reads it.** The ops server gets `listAgenda`/`listThreads`, which take no cache and so cannot consult one.
+- **The Gmail history cursor is stored per cached list, not per mailbox** — one shared cursor asks "what changed since 200?" against a list written at 100 and silently loses everything between.
+- A `history.list` **404 means resync**, not failure: Gmail keeps roughly a week.
 
 ## Agent surface (slice 4)
 
@@ -197,7 +221,7 @@ Still worth knowing what that confirmation does and does not cover — it was a 
 - **Recurring-event "task lights up for a series"** — underspecified; needs the agenda proven first.
 - **Background polling + in-app "meeting soon"/new-mail notifications** — Google's own apps cover this.
 - **Multiple accounts at once / personal alongside work** — store is keyed by `sub` so this is additive; the External app already permits any *single* Google account.
-- **Disk-persisted cache / offline agenda viewing** — contradicts the "don't persist mail" non-goal.
+- ~~**Disk-persisted cache / offline agenda viewing** — contradicts the "don't persist mail" non-goal.~~ **The cache was built 2026-08-04** (see Freshness); *offline viewing* is still deferred — the cache paints a launch, it does not claim to be today.
 - **An MCP surface** — declined in favour of skill+CLI; revisit only if the CLI's unstructured output proves painful.
 
 ## Open dependencies (not blockers to planning)
