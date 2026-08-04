@@ -21,6 +21,7 @@ import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electr
 import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
+import { createGoogleSession } from './google/electron'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
@@ -108,6 +109,9 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
+  // The Google connector (D67) — independent of the GitHub session on purpose:
+  // it is a data connector, not identity, and neither sign-out affects the other.
+  const googleSession = await createGoogleSession()
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) =>
@@ -153,6 +157,7 @@ async function main(): Promise<void> {
   const router = createRouter({
     registry,
     session,
+    googleSession,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {

@@ -13,7 +13,7 @@
  * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, Settings, SquareKanban } from 'lucide-react'
+import { CalendarDays, History, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
@@ -21,6 +21,8 @@ import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
+import { AgendaView } from '@/features/google/AgendaView'
+import { GoogleConnection } from '@/features/google/GoogleConnection'
 import { DialogHost } from './DialogHost'
 import { EditorPane } from '@/composites'
 import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
@@ -36,6 +38,7 @@ import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import {
   activeTab,
   closeTab,
+  openAgenda,
   openBoard,
   openPinned,
   openPreview,
@@ -64,6 +67,14 @@ import {
 // no warning token yet, and named palette utilities are gate-legal (only arbitrary
 // colour literals are banned).
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text-amber-400' } as const
+
+/** The singleton tabs' pill text and tooltip. Notes use their filename/path
+ *  instead, so they are absent here by design. */
+const TAB_NAME = { board: 'board', agenda: 'agenda' } as const
+const TAB_LABEL: Partial<Record<string, string>> = {
+  board: 'task board',
+  agenda: 'your Google agenda',
+}
 
 /** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
 function formatBytes(bytes: number): string {
@@ -273,6 +284,19 @@ export function Shell() {
                 )}
               </Button>
             </Tooltip>
+            {/* The agenda is account-wide, not vault content (D67) — it sits
+                with the other surfaces because that is where you look for a
+                view, and its own header says whose calendar it is. */}
+            <Tooltip content="your Google agenda">
+              <Button
+                variant="secondary"
+                size="xs"
+                className="flex-1 gap-1.5"
+                onClick={() => setWorkspace((w) => openAgenda(w))}
+              >
+                agenda
+              </Button>
+            </Tooltip>
             <Tooltip content="vault settings">
               <Button
                 variant="ghost"
@@ -297,14 +321,14 @@ export function Shell() {
           <div className="flex h-11 items-center gap-1 px-2">
             {pane.tabs.map((t, i) => (
               <span
-                key={t.kind === 'note' ? t.path : 'board'}
+                key={t.kind === 'note' ? t.path : t.kind}
                 className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   i === pane.active
                     ? 'bg-secondary text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Tooltip content={t.kind === 'board' ? 'task board' : t.path}>
+                <Tooltip content={TAB_LABEL[t.kind] ?? (t.kind === 'note' ? t.path : t.kind)}>
                   <Button
                     variant="ghost"
                     // Bare clickable on the pill — neutralise the ghost bg/padding so
@@ -321,8 +345,14 @@ export function Shell() {
                     }
                     onDoubleClick={() => setWorkspace((w) => pinTab(w, i))}
                   >
-                    {t.kind === 'board' ? <SquareKanban size={14} /> : fileIconFor(t.path)}
-                    <span>{t.kind === 'board' ? 'board' : t.path.split('/').at(-1)}</span>
+                    {t.kind === 'board' ? (
+                      <SquareKanban size={14} />
+                    ) : t.kind === 'agenda' ? (
+                      <CalendarDays size={14} />
+                    ) : (
+                      fileIconFor(t.path)
+                    )}
+                    <span>{t.kind === 'note' ? t.path.split('/').at(-1) : TAB_NAME[t.kind]}</span>
                   </Button>
                 </Tooltip>
                 <Tooltip content="close tab">
@@ -356,6 +386,8 @@ export function Shell() {
 
           {tab?.kind === 'board' ? (
             <BoardView />
+          ) : tab?.kind === 'agenda' ? (
+            <AgendaView />
           ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
             <ImageViewer path={tab.path} />
           ) : tab?.kind === 'note' &&
@@ -408,7 +440,10 @@ export function Shell() {
             <>
               <ResizableHandle />
               <ResizablePanel id="settings" defaultSize={320} minSize={240}>
-                <VaultSettings onClose={() => setShowSettings(false)} />
+                <VaultSettings
+                  onClose={() => setShowSettings(false)}
+                  connections={<GoogleConnection />}
+                />
               </ResizablePanel>
             </>
           )}

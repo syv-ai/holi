@@ -13,7 +13,7 @@
  */
 import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { Collaborator } from '@holi/shared'
 import { SidePanel } from '@/composites'
 import { Button, Checkbox, Dialog, Tooltip } from '@/primitives'
@@ -98,7 +98,15 @@ function ExternalLink({
   )
 }
 
-export function VaultSettings({ onClose }: { onClose: () => void }) {
+export function VaultSettings({
+  onClose,
+  connections,
+}: {
+  onClose: () => void
+  /** Account-wide connection panels, composed in by the shell. Optional so the
+   *  panel renders standalone in a test without them. */
+  connections?: ReactNode
+}) {
   const remote = useAtomValue(activeRemoteAtom)
   const entry = useAtomValue(vaultsAtom).find((v) => v.remote === remote)
   const session = useAtomValue(sessionAtom)
@@ -278,6 +286,13 @@ export function VaultSettings({ onClose }: { onClose: () => void }) {
             </Button>
           </div>
         </section>
+
+        {/* Account-wide connections (the Google connector, D67), passed in
+          * rather than imported: they are not part of *this vault's* settings,
+          * and a feature reaching into another feature is exactly what the
+          * boundaries gate exists to stop. Rendered above Account because a
+          * connection is not a destructive control. */}
+        {connections}
 
         {/* Account actions live here, not in the footer: the footer reports state,
           * it does not act — and sign out is the one destructive control here. */}

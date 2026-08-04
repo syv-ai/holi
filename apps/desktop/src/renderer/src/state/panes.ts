@@ -29,7 +29,16 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
  * false means pinned. The board tab has no flag — it is pinned by construction,
  * being unique.
  */
-export type Tab = { kind: 'note'; path: string; preview?: boolean } | { kind: 'board' }
+export type Tab =
+  | { kind: 'note'; path: string; preview?: boolean }
+  | { kind: 'board' }
+  /** The Google agenda (D67). A **singleton** like the board — there is only
+   *  ever one of it, and it is account-wide rather than vault-scoped. */
+  | { kind: 'agenda' }
+
+/** The non-note surfaces: unique, pinned by construction, and opened from a nav
+ *  button rather than from a file. */
+export type SingletonTab = Exclude<Tab, { kind: 'note' }>['kind']
 
 export interface Pane {
   tabs: Tab[]
@@ -73,19 +82,27 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
- * Open the board — always the leftmost tab (index 0).
+ * Open a singleton surface — always a leftmost tab.
  *
- * The board is the one non-note surface and there is only ever one of it, so it
- * gets a fixed home rather than landing wherever it was opened. If it is already
- * open, focus it in place (do not move it); otherwise insert it at the front and
- * the notes slide right.
+ * The non-note surfaces are unique, so each gets a fixed home rather than
+ * landing wherever it was opened. If it is already open, focus it **in place**
+ * (do not move it, or a second click would shuffle the strip under the user);
+ * otherwise insert it at the front and the notes slide right.
  */
-export function openBoard(workspace: Workspace): Workspace {
+export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspace {
   return updatePane(workspace, (pane) => {
-    const existing = pane.tabs.findIndex((t) => t.kind === 'board')
+    const existing = pane.tabs.findIndex((t) => t.kind === kind)
     if (existing !== -1) return { ...pane, active: existing }
-    return { tabs: [{ kind: 'board' }, ...pane.tabs], active: 0 }
+    return { tabs: [{ kind }, ...pane.tabs], active: 0 }
   })
+}
+
+export function openBoard(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'board')
+}
+
+export function openAgenda(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'agenda')
 }
 
 /**

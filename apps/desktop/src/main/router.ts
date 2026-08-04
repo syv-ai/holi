@@ -37,6 +37,16 @@ import { openRepo, remoteUrl, type Commit } from './git'
 import { GitHubApiError, type Repo } from './github/api'
 import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
+import type { LoopbackFlow as GoogleFlow } from './google/loopback-flow'
+import type { GoogleSession } from './google/session'
+import { GoogleApi } from './google/api'
+import { listAgenda, type CalendarEvent } from './google/calendar'
+import {
+  listThreads,
+  readThread,
+  type MailThread,
+  type MailThreadSummary,
+} from './google/gmail'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
@@ -70,6 +80,15 @@ export interface PublicViewer {
 export interface RouterDeps {
   registry: VaultRegistry
   session: GitHubSession
+  /**
+   * The Google connector (D67), when configured.
+   *
+   * Optional so every existing router test keeps constructing deps without it —
+   * and so the app still runs when the Google client id has not been filled in.
+   * The `google.*` procedures refuse with a clear precondition failure rather
+   * than pretending to be connected.
+   */
+  googleSession?: GoogleSession
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -657,7 +676,15 @@ export function createRouter(deps: RouterDeps) {
 
   const tasks = t.router({
     create: vaultMutation
-      .input(fields({ remote: 'string', folder: 'string?', title: 'string', status: 'string?' }))
+      .input(
+        fields({
+          remote: 'string',
+          folder: 'string?',
+          title: 'string',
+          status: 'string?',
+          description: 'string?',
+        }),
+      )
       .mutation(async ({ input }): Promise<{ path: string }> => {
         const root = await rootFor(input.remote)
         // The status rides through the same validator a field edit does, so the
@@ -671,7 +698,11 @@ export function createRouter(deps: RouterDeps) {
             title: input.title,
             status: patch.status ?? 'todo',
             tags: [],
-            description: '',
+            // Optional, and empty for every existing caller. The agenda's
+            // create-from-event uses it to seed the body with the event's
+            // markdown link — which under D67 *is* the whole representation of
+            // the link, so dropping it would defeat the feature silently.
+            description: input.description ?? '',
           }),
         )
         return { path: rel }
@@ -1103,7 +1134,111 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
-  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf, theme })
+  /**
+   * The Google connection (D67) — a **data connector**, not identity.
+   *
+   * Deliberately its own sub-router rather than a branch of `auth`: signing out
+   * of GitHub must not drop your mail/calendar connection, and disconnecting
+   * Google must not touch your vaults. Two independent grants, two surfaces.
+   *
+   * Same two-phase shape as `auth.signIn` and for the same reason — a tRPC
+   * procedure returns once, but the grant lands later, so `connect` stashes the
+   * flow and `awaitConnect` waits on it.
+   */
+  let connectFlow: GoogleFlow | null = null
+
+  const google = t.router({
+    status: t.procedure.query(() => ({ account: deps.googleSession?.account ?? null })),
+
+    connect: t.procedure.mutation(async () => {
+      // A second connect supersedes the first, rather than leaving an orphaned
+      // listener holding a port for the life of the app.
+      connectFlow?.cancel()
+      connectFlow = await googleSession().connect()
+      // The browser is opened by the session itself (the system browser, so the
+      // consent reuses the user's Google session). Hand the URL back anyway:
+      // some desktop environments swallow the launch, and "open it again" is
+      // the only recovery that does not mean restarting the flow.
+      return { authUrl: connectFlow.authUrl }
+    }),
+
+    awaitConnect: t.procedure.mutation(async () => {
+      if (connectFlow === null) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'no Google connect in progress' })
+      }
+      const result = await connectFlow.wait()
+      connectFlow = null
+      // The tokens stop here. The renderer gets an email address and nothing else.
+      return result.kind === 'granted'
+        ? { kind: 'granted' as const, account: googleSession().account }
+        : { kind: result.kind }
+    }),
+
+    cancelConnect: t.procedure.mutation(() => {
+      connectFlow?.cancel()
+      connectFlow = null
+      return { ok: true as const }
+    }),
+
+    disconnect: t.procedure.mutation(async () => {
+      await googleSession().disconnect()
+      return { ok: true as const }
+    }),
+
+    /**
+     * The agenda for a window the **caller** supplies.
+     *
+     * Main never computes "today": the machine's local date is the renderer's
+     * fact, and a main-side `new Date()` would silently disagree with it across
+     * a timezone or a midnight boundary — the same rule daily notes follow.
+     *
+     * Not cached here. `GoogleApi` fetches on demand (D67), and a stale agenda
+     * is worse than a slow one.
+     */
+    agenda: t.procedure
+      .input(fields({ timeMin: 'string', timeMax: 'string' }))
+      .query(({ input }): Promise<CalendarEvent[]> =>
+        listAgenda(googleApi(), { timeMin: input.timeMin, timeMax: input.timeMax }),
+      ),
+
+    /** Threads matching Gmail's own search grammar. Empty query = the inbox. */
+    threads: t.procedure
+      .input(fields({ query: 'string?' }))
+      .query(({ input }): Promise<MailThreadSummary[]> =>
+        listThreads(googleApi(), { query: input.query }),
+      ),
+
+    /** One thread, with every message as **plain text** — never HTML. The body
+     *  is attacker-controlled input, and `gmail.ts` explains why it is extracted
+     *  rather than sanitized. */
+    thread: t.procedure
+      .input(fields({ id: 'string' }))
+      .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
+  })
+
+  function googleSession(): GoogleSession {
+    if (deps.googleSession === undefined) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'the Google connector is not configured',
+      })
+    }
+    return deps.googleSession
+  }
+
+  /**
+   * A Google client bound to the session's token **getter**, never a token.
+   *
+   * Built per call rather than held: the object is nothing but a closure, and a
+   * cached one would outlive a disconnect. The getter is what refreshes and
+   * single-flights (D67 — main is the sole token authority).
+   */
+  function googleApi(): GoogleApi {
+    const session = googleSession()
+    return new GoogleApi({ accessToken: () => session.getAccessToken() })
+  }
+
+  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf, theme, google })
 }
 
 /**
