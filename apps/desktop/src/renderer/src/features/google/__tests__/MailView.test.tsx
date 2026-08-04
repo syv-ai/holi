@@ -18,12 +18,17 @@ const readMock = vi.fn()
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
     google: {
-      threads: { query: () => threadMock() },
+      threads: { query: (input: unknown) => threadMock(input) },
       thread: { query: (input: { id: string }) => readMock(input) },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
 }))
+
+/** What the list actually asked Gmail for, on the nth load. */
+function queryOf(call: number): Record<string, unknown> {
+  return threadMock.mock.calls[call]![0] as Record<string, unknown>
+}
 
 const openExternal = vi.fn()
 
@@ -60,13 +65,24 @@ function page(threads: unknown[], nextPageToken: string | null = null) {
 
 /** One thread in the list, one message in it — the list is not what is under
  *  test here, so every case opens the same row. */
-function withMessage(message: Message) {
+function withMessage(message: Message, extra: Record<string, unknown> = {}) {
   threadMock.mockResolvedValue(page([summary()]))
   readMock.mockResolvedValue({
     id: 't1',
     subject: 'Q2 budget',
     webUrl: 'https://mail.google.com/x',
-    messages: [{ id: 'm1', from: 'Jane', to: ['nicolai@syv.ai'], date: '2026-08-04T09:00:00.000Z', ...message }],
+    messages: [
+      {
+        id: 'm1',
+        from: 'Jane',
+        to: ['nicolai@syv.ai'],
+        cc: [],
+        date: '2026-08-04T09:00:00.000Z',
+        attachments: [],
+        ...message,
+        ...extra,
+      },
+    ],
   })
 }
 
@@ -130,6 +146,120 @@ test('leaves a thread awaiting the user unmarked', async () => {
   await screen.findByRole('button', { name: /Q2 budget/ })
 
   expect(screen.queryByLabelText('you replied')).toBeNull()
+})
+
+/**
+ * The list, past "a row per thread".
+ *
+ * An inbox that shows everything at once is the inbox Gmail's own tabs exist
+ * to fix, and a list that stops at 25 with no way forward is a list that hides
+ * the rest of the mail.
+ */
+
+test('defaults the inbox to Primary', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  // Composed into Gmail's own grammar in main — the renderer only names the tab.
+  expect(queryOf(0)).toMatchObject({ category: 'primary' })
+})
+
+test('lets the user look at Promotions', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
+})
+
+test('marks a starred thread', async () => {
+  threadMock.mockResolvedValue(page([summary({ starred: true })]))
+
+  render(<MailView />)
+
+  expect(await screen.findByLabelText('starred')).toBeInTheDocument()
+})
+
+test('marks a thread with an unsent draft', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasDraft: true })]))
+
+  render(<MailView />)
+
+  // The state nothing else in the list reveals: you started replying, stopped,
+  // and there is no other trace of it.
+  expect(await screen.findByLabelText('unsent draft')).toBeInTheDocument()
+})
+
+test('shows user labels as chips', async () => {
+  threadMock.mockResolvedValue(page([summary({ labels: ['Work/Clients', 'Receipts'] })]))
+
+  render(<MailView />)
+
+  expect(await screen.findByText('Work/Clients')).toBeInTheDocument()
+  expect(screen.getByText('Receipts')).toBeInTheDocument()
+})
+
+test('offers an unsubscribe link for a newsletter', async () => {
+  withMessage({ body: 'this month at syv.ai', html: null })
+  threadMock.mockResolvedValue(page([summary({ unsubscribeUrl: 'https://list.test/unsub?u=9' })]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await user.click(await screen.findByRole('button', { name: /unsubscribe/i }))
+
+  // Opened, never requested by Holi: an unsubscribe URL is a page to look at,
+  // and firing it silently is a request made on the user's behalf.
+  expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
+})
+
+test('loads the next page when asked', async () => {
+  threadMock
+    .mockResolvedValueOnce(page([summary({ id: 't1', subject: 'First page' })], 'page-2'))
+    .mockResolvedValueOnce(page([summary({ id: 't2', subject: 'Second page' })]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /load more/i }))
+
+  await waitFor(() => expect(screen.getByText('Second page')).toBeInTheDocument())
+  expect(queryOf(1)).toMatchObject({ pageToken: 'page-2' })
+  // Appended, not replaced — "load more" that loses the page above it is a
+  // pagination control pretending to be one.
+  expect(screen.getByText('First page')).toBeInTheDocument()
+  // And there is nothing left to ask for.
+  expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
+})
+
+test('lists attachments on an open message', async () => {
+  withMessage(
+    { body: 'see attached', html: null },
+    { attachments: [{ filename: 'q2-deck.pdf', mimeType: 'application/pdf', size: 482_113 }] },
+  )
+
+  const article = await openThread()
+
+  expect(within(article).getByText('q2-deck.pdf')).toBeInTheDocument()
+})
+
+test('opens an attachment in Gmail rather than downloading it', async () => {
+  withMessage(
+    { body: 'see attached', html: null },
+    { attachments: [{ filename: 'q2-deck.pdf', mimeType: 'application/pdf', size: 482_113 }] },
+  )
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  await user.click(within(article).getByRole('button', { name: /q2-deck\.pdf/i }))
+
+  // The scope is read-only and v1 does not download: the honest affordance is
+  // the thread in Gmail, where the attachment actually is.
+  expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
 
 test('renders an HTML body as real markup, inside a frame of its own', async () => {

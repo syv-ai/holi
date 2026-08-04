@@ -19,9 +19,30 @@
  * sender's server is a read receipt they did not ask permission for.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ExternalLink, ImageOff, Link2, Mail, RefreshCw, Reply, Search } from 'lucide-react'
+import {
+  ExternalLink,
+  FileText,
+  ImageOff,
+  Link2,
+  Mail,
+  MailMinus,
+  Paperclip,
+  PenLine,
+  RefreshCw,
+  Reply,
+  Search,
+  Star,
+} from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Button, Input, Tooltip } from '@/primitives'
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  Input,
+  Tooltip,
+} from '@/primitives'
 import {
   mailFrameDocument,
   openableLink,
@@ -32,6 +53,19 @@ import { sanitizeMailHtml } from '../../lib/mail-html'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
+
+/** Mirrors `main/google/gmail.ts`. */
+type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
+
+/** The tabs, in Gmail's own order. Primary first because it is the default and
+ *  the only one most inboxes are read in. */
+const CATEGORIES: { value: MailCategory; label: string }[] = [
+  { value: 'primary', label: 'Primary' },
+  { value: 'social', label: 'Social' },
+  { value: 'promotions', label: 'Promotions' },
+  { value: 'updates', label: 'Updates' },
+  { value: 'forums', label: 'Forums' },
+]
 
 interface ThreadSummary {
   id: string
@@ -44,17 +78,33 @@ interface ThreadSummary {
   answered: boolean
   messageCount: number
   webUrl: string
+  starred: boolean
+  important: boolean
+  /** An unsent draft sits in this thread. */
+  hasDraft: boolean
+  category: MailCategory | null
+  /** User label names, already resolved in main. */
+  labels: string[]
+  unsubscribeUrl: string | null
+}
+
+interface Attachment {
+  filename: string
+  mimeType: string
+  size: number
 }
 
 interface ThreadMessage {
   id: string
   from: string
   to: string[]
+  cc: string[]
   date: string
   /** Plain text — the fallback, and what a text-only message carries. */
   body: string
   /** Raw, unsanitized HTML, or null. Only `MessageBody` may touch this. */
   html: string | null
+  attachments: Attachment[]
 }
 
 interface Thread {
@@ -66,7 +116,12 @@ interface Thread {
 
 type ListState =
   | { kind: 'loading' }
-  | { kind: 'ready'; threads: ThreadSummary[] }
+  | {
+      kind: 'ready'
+      threads: ThreadSummary[]
+      /** null when Gmail says there is nothing further. */
+      nextPageToken: string | null
+    }
   | { kind: 'disconnected' }
   | { kind: 'error'; message: string }
 
@@ -90,26 +145,75 @@ export function MailView() {
   const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
+  const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
+  /**
+   * Which Gmail tab the list is showing. **Primary by default**, which is the
+   * whole reason Gmail's tabs exist: an inbox that mixes newsletters and
+   * receipts into the same list is the one people stop reading.
+   */
+  const [category, setCategory] = useState<MailCategory>('primary')
+  const [loadingMore, setLoadingMore] = useState(false)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
 
   const load = useCallback(() => {
     setList({ kind: 'loading' })
     void trpc.google.threads
-      .query({ query: submitted })
-      .then((page) => setList({ kind: 'ready', threads: page.threads }))
+      .query({ query: submitted, category })
+      .then((page) =>
+        setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken }),
+      )
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
         setList(NOT_CONNECTED.test(message) ? { kind: 'disconnected' } : { kind: 'error', message })
       })
-  }, [submitted])
+  }, [submitted, category])
 
   useEffect(load, [load])
 
-  const openThread = (id: string) => {
-    setOpenId(id)
+  /**
+   * The next page, **appended**.
+   *
+   * A button rather than an infinite scroller: Gmail is rate limited, and an
+   * unbounded scroll over a rate-limited API is a bad pair — one flick of a
+   * trackpad would spend a minute's quota.
+   */
+  const loadMore = (pageToken: string) => {
+    setLoadingMore(true)
+    void trpc.google.threads
+      .query({ query: submitted, category, pageToken })
+      .then((page) => {
+        setList((previous) =>
+          previous.kind === 'ready'
+            ? {
+                kind: 'ready',
+                threads: [...previous.threads, ...page.threads],
+                nextPageToken: page.nextPageToken,
+              }
+            : previous,
+        )
+      })
+      // A failed "load more" leaves what is already on screen alone: the list is
+      // still true, it is merely shorter than it could be.
+      .finally(() => setLoadingMore(false))
+  }
+
+  /**
+   * Open a thread.
+   *
+   * The row's **summary** is kept alongside the fetched thread: the flags that
+   * matter while reading — the unsubscribe link above all — come from the list
+   * response, and refetching them per open would be a request for data already
+   * in hand.
+   */
+  const openThread = (thread: ThreadSummary) => {
+    setOpenId(thread.id)
+    setOpenSummary(thread)
     setOpen(null)
-    void trpc.google.thread.query({ id }).then(setOpen).catch(() => setOpenId(null))
+    void trpc.google.thread
+      .query({ id: thread.id })
+      .then(setOpen)
+      .catch(() => setOpenId(null))
   }
 
   /**
@@ -139,8 +243,9 @@ export function MailView() {
             <Mail size={15} />
             Mail
           </h2>
+          <CategoryPicker category={category} onChange={setCategory} />
           <Tooltip content="refresh">
-            <Button variant="ghost" size="icon-xs" className="ml-auto" aria-label="refresh mail" onClick={load}>
+            <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={load}>
               <RefreshCw size={14} />
             </Button>
           </Tooltip>
@@ -174,7 +279,7 @@ export function MailView() {
               <Button
                 key={thread.id}
                 variant="ghost"
-                onClick={() => openThread(thread.id)}
+                onClick={() => openThread(thread)}
                 className={`block h-auto w-full rounded-none border-b border-border/50 px-3 py-2 text-left ${
                   openId === thread.id ? 'bg-secondary' : ''
                 }`}
@@ -202,6 +307,15 @@ export function MailView() {
                   {/* "You replied and are waiting on them" — see `answered` in
                       main/google/gmail.ts for why it is the LAST message that
                       decides, not whether a reply exists anywhere. */}
+                  {thread.starred && (
+                    <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
+                  )}
+                  {/* "You started replying and stopped" — a third state,
+                      distinct from both answered and untouched, and the only
+                      trace of it anywhere in the list. */}
+                  {thread.hasDraft && (
+                    <PenLine size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
+                  )}
                   {thread.answered && (
                     <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
                   )}
@@ -217,8 +331,35 @@ export function MailView() {
                 <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
                   {thread.snippet}
                 </span>
+                {thread.labels.length > 0 && (
+                  <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
+                    {thread.labels.map((label) => (
+                      <span
+                        key={label}
+                        className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                  </span>
+                )}
               </Button>
             ))}
+          {list.kind === 'ready' && list.nextPageToken !== null && (
+            <div className="p-2">
+              {/* A button, not an infinite scroller: one flick of a trackpad
+                  against a rate-limited API spends a minute's quota. */}
+              <Button
+                variant="secondary"
+                size="xs"
+                className="w-full"
+                disabled={loadingMore}
+                onClick={() => loadMore(list.nextPageToken!)}
+              >
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -244,6 +385,23 @@ export function MailView() {
                   Task
                 </Button>
               </Tooltip>
+              {/* Advertised by the sender in List-Unsubscribe. Opened, never
+                  requested: firing it silently would be a request made on the
+                  user's behalf, to a URL a stranger chose. */}
+              {openSummary?.unsubscribeUrl != null && (
+                <Tooltip content="open this sender’s unsubscribe page">
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="shrink-0 gap-1"
+                    aria-label="unsubscribe from this sender"
+                    onClick={() => void window.holi.openExternal(openSummary.unsubscribeUrl!)}
+                  >
+                    <MailMinus size={13} />
+                    Unsubscribe
+                  </Button>
+                </Tooltip>
+              )}
               {/* Reply is a handoff, not a compose box: the granted scope is
                   read-only, so Holi cannot send and does not pretend to. */}
               <Tooltip content="reply in Gmail">
@@ -278,9 +436,11 @@ export function MailView() {
                   {message.to.length > 0 && (
                     <p className="mb-2 truncate text-[11px] text-muted-foreground">
                       to {message.to.join(', ')}
+                      {message.cc.length > 0 && ` · cc ${message.cc.join(', ')}`}
                     </p>
                   )}
                   <MessageBody message={message} />
+                  <Attachments attachments={message.attachments} webUrl={open.webUrl} />
                 </article>
               ))}
             </div>
@@ -293,6 +453,90 @@ export function MailView() {
 
 function Note({ children }: { children: React.ReactNode }) {
   return <p className="p-6 text-center text-sm text-muted-foreground">{children}</p>
+}
+
+/**
+ * Which Gmail tab the list is showing.
+ *
+ * Deliberately **no per-category counts**, which the design mock had: each
+ * would cost a request, and Gmail's `resultSizeEstimate` is an estimate. A
+ * count that is wrong is worse than no count — it is a number people trust.
+ */
+function CategoryPicker({
+  category,
+  onChange,
+}: {
+  category: MailCategory
+  onChange: (category: MailCategory) => void
+}) {
+  const current = CATEGORIES.find((c) => c.value === category)
+  return (
+    <DropdownMenu>
+      <Tooltip content="which of Gmail’s tabs to show">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="xs" className="ml-auto" aria-label="choose a category">
+            {current?.label ?? 'Primary'}
+          </Button>
+        </DropdownMenuTrigger>
+      </Tooltip>
+      <DropdownMenuContent align="end">
+        {CATEGORIES.map((option) => (
+          <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)}>
+            {option.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * What came with a message.
+ *
+ * Every one **opens the thread in Gmail** rather than downloading. The granted
+ * scope is read-only and v1 does not fetch attachment bytes at all, so the
+ * honest affordance is the place the file actually is — a download button that
+ * cannot download would be the worst of the options.
+ */
+function Attachments({ attachments, webUrl }: { attachments: Attachment[]; webUrl: string }) {
+  if (attachments.length === 0) return null
+  return (
+    <ul className="mt-2 flex flex-wrap gap-1">
+      {attachments.map((attachment) => (
+        <li key={attachment.filename}>
+          <Tooltip content="open in Gmail — Holi does not download attachments">
+            <Button
+              variant="secondary"
+              size="xs"
+              className="gap-1"
+              onClick={() => void window.holi.openExternal(webUrl)}
+            >
+              {attachment.mimeType.startsWith('image/') ? (
+                <Paperclip size={12} />
+              ) : (
+                <FileText size={12} />
+              )}
+              <span className="max-w-48 truncate">{attachment.filename}</span>
+              <span className="text-muted-foreground">{fileSize(attachment.size)}</span>
+            </Button>
+          </Tooltip>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Bytes as a person reads them. One decimal below 10 units, none above —
+ *  "1.4 MB" is useful, "1.42 MB" is noise on a chip. */
+function fileSize(bytes: number): string {
+  const units = ['B', 'KB', 'MB', 'GB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024
+    unit++
+  }
+  return `${value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
 /**
