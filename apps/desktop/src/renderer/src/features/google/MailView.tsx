@@ -97,7 +97,7 @@ export function MailView() {
     setList({ kind: 'loading' })
     void trpc.google.threads
       .query({ query: submitted })
-      .then((threads) => setList({ kind: 'ready', threads }))
+      .then((page) => setList({ kind: 'ready', threads: page.threads }))
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
         setList(NOT_CONNECTED.test(message) ? { kind: 'disconnected' } : { kind: 'error', message })

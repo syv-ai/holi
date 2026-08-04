@@ -283,6 +283,23 @@ export interface ListThreadsOptions {
    *  Empty means the inbox. */
   query?: string
   limit?: number
+  /** From a previous page's `nextPageToken`. */
+  pageToken?: string
+  /**
+   * Composed into the Gmail query as `category:<name>`.
+   *
+   * A **query**, not a client-side filter: Gmail's grammar already has
+   * `category:primary`, the search box passes that grammar through verbatim,
+   * and composing the two keeps one way to narrow a list instead of two that
+   * can disagree.
+   */
+  category?: MailCategory
+}
+
+export interface MailPage {
+  threads: MailThreadSummary[]
+  /** `null` when there is nothing more to load. */
+  nextPageToken: string | null
 }
 
 /**
@@ -296,11 +313,15 @@ export interface ListThreadsOptions {
 export async function listThreads(
   api: GoogleApi,
   options: ListThreadsOptions = {},
-): Promise<MailThreadSummary[]> {
-  const page = await api.get<{ threads?: { id?: string }[] }>(`${BASE}/threads`, {
-    q: options.query !== undefined && options.query !== '' ? options.query : 'in:inbox',
-    maxResults: String(options.limit ?? 25),
-  })
+): Promise<MailPage> {
+  const page = await api.get<{ threads?: { id?: string }[]; nextPageToken?: string }>(
+    `${BASE}/threads`,
+    {
+      q: composeQuery(options),
+      maxResults: String(options.limit ?? 25),
+      pageToken: options.pageToken,
+    },
+  )
 
   const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
 
@@ -331,9 +352,20 @@ export async function listThreads(
   )
 
   const names = await labelNames
-  return threads
-    .map((thread) => summarize(thread, names))
-    .filter((t): t is MailThreadSummary => t !== null)
+  return {
+    threads: threads
+      .map((thread) => summarize(thread, names))
+      .filter((t): t is MailThreadSummary => t !== null),
+    // `undefined` means "no further page" on the wire; `null` says it on the
+    // type, so a caller cannot mistake "not asked" for "nothing left".
+    nextPageToken: page.nextPageToken ?? null,
+  }
+}
+
+/** The user's own query and the category tab, in Gmail's one grammar. */
+function composeQuery(options: ListThreadsOptions): string {
+  const base = options.query !== undefined && options.query !== '' ? options.query : 'in:inbox'
+  return options.category === undefined ? base : `${base} ${categoryQuery(options.category)}`
 }
 
 /**

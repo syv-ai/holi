@@ -213,7 +213,10 @@ async function main(): Promise<void> {
     // reading it, which is the opposite of what switching it off means.
     agenda: async (window) =>
       listAgenda(googleApiFor(), window, { overrides: await calendarPrefs.read() }),
-    threads: (query) => listThreads(googleApiFor(), { query }),
+    // The agent gets the list itself, not the page envelope: it asks a question
+    // once and reads the answer, and `nextPageToken` is a UI affordance with
+    // nothing to click on the other side of a shell command.
+    threads: async (query) => (await listThreads(googleApiFor(), { query })).threads,
     // `textOnly` is the asymmetry, and it is deliberate: the UI renders
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
     thread: async (id) => textOnly(await readThread(googleApiFor(), id)),

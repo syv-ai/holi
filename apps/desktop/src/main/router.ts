@@ -51,8 +51,9 @@ import type { CalendarPrefsStore } from './google/calendar-prefs'
 import {
   listThreads,
   readThread,
+  type MailCategory,
+  type MailPage,
   type MailThread,
-  type MailThreadSummary,
 } from './google/gmail'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
@@ -212,6 +213,21 @@ function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
 function booleanOrThrow(value: unknown, key: string): boolean {
   if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`)
   return value
+}
+
+const MAIL_CATEGORIES: readonly MailCategory[] = [
+  'primary',
+  'social',
+  'promotions',
+  'updates',
+  'forums',
+]
+
+/** A category arrives as a string (`fields` is string-only) and is narrowed
+ *  here. An unknown value means "no category", not an error: the worst it can
+ *  do is compose a query Gmail answers nothing to. */
+function asMailCategory(value: string | undefined): MailCategory | undefined {
+  return MAIL_CATEGORIES.find((c) => c === value)
 }
 
 /** Batch inputs the string-only `fields` helper cannot express. Each throws on a
@@ -1256,11 +1272,22 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const }
       }),
 
-    /** Threads matching Gmail's own search grammar. Empty query = the inbox. */
+    /**
+     * Threads matching Gmail's own search grammar. Empty query = the inbox.
+     *
+     * A **page**, not a list: Gmail returns 25 at a time and the list foot has
+     * a "load more" that passes the token back. `category` composes into the
+     * same query grammar rather than filtering here — one way to narrow a list,
+     * not two that can disagree.
+     */
     threads: t.procedure
-      .input(fields({ query: 'string?' }))
-      .query(({ input }): Promise<MailThreadSummary[]> =>
-        listThreads(googleApi(), { query: input.query }),
+      .input(fields({ query: 'string?', pageToken: 'string?', category: 'string?' }))
+      .query(({ input }): Promise<MailPage> =>
+        listThreads(googleApi(), {
+          query: input.query,
+          pageToken: input.pageToken,
+          category: asMailCategory(input.category),
+        }),
       ),
 
     /**

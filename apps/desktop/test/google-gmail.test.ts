@@ -31,7 +31,12 @@ interface RawLabel {
 }
 
 /** A fake Gmail that answers threads.list, threads.get and labels.list. */
-function gmail(list: { id: string }[], threads: Record<string, unknown>, labels: RawLabel[] = []) {
+function gmail(
+  list: { id: string }[],
+  threads: Record<string, unknown>,
+  labels: RawLabel[] = [],
+  nextPageToken?: string,
+) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
@@ -39,7 +44,7 @@ function gmail(list: { id: string }[], threads: Record<string, unknown>, labels:
     const body = path.endsWith('/labels')
       ? { labels }
       : path.endsWith('/threads')
-        ? { threads: list }
+        ? { threads: list, nextPageToken }
         : threads[path.split('/').pop()!] ?? {}
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
@@ -228,7 +233,7 @@ describe('listThreads', () => {
   it('takes the subject from the first message and the sender from the last', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: thread })
 
-    const [summary] = await listThreads(api)
+    const [summary] = (await listThreads(api)).threads
 
     // "Re: Q2 budget" would make a renamed thread look like a different one.
     expect(summary!.subject).toBe('Q2 budget')
@@ -239,7 +244,7 @@ describe('listThreads', () => {
 
   it('marks a thread unread when any message in it is', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: thread })
-    expect((await listThreads(api))[0]!.unread).toBe(true)
+    expect((await listThreads(api)).threads[0]!.unread).toBe(true)
   })
 
   /**
@@ -258,7 +263,7 @@ describe('listThreads', () => {
     }
     const { api } = gmail([{ id: 't1' }], { t1: answered })
 
-    expect((await listThreads(api))[0]!.answered).toBe(true)
+    expect((await listThreads(api)).threads[0]!.answered).toBe(true)
   })
 
   it('is not answered when they wrote back after the user’s reply', async () => {
@@ -273,12 +278,12 @@ describe('listThreads', () => {
 
     // The user replied, and then someone answered — it needs them again, so the
     // marker has to come back off.
-    expect((await listThreads(api))[0]!.answered).toBe(false)
+    expect((await listThreads(api)).threads[0]!.answered).toBe(false)
   })
 
   it('builds the permalink from the first message’s Message-ID', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: thread })
-    expect(decodeURIComponent((await listThreads(api))[0]!.webUrl)).toContain(
+    expect(decodeURIComponent((await listThreads(api)).threads[0]!.webUrl)).toContain(
       'rfc822msgid:first@syv.ai',
     )
   })
@@ -311,7 +316,7 @@ describe('listThreads', () => {
 
     // Starred on *any* message: that is what Gmail's own star on a thread row
     // means, and the thread is the unit the user acts on.
-    expect((await listThreads(api))[0]!.starred).toBe(true)
+    expect((await listThreads(api)).threads[0]!.starred).toBe(true)
   })
 
   it('marks an important thread', async () => {
@@ -323,7 +328,7 @@ describe('listThreads', () => {
     }
     const { api } = gmail([{ id: 't1' }], { t1: important })
 
-    expect((await listThreads(api))[0]!.important).toBe(true)
+    expect((await listThreads(api)).threads[0]!.important).toBe(true)
   })
 
   it('marks a thread holding an unsent draft', async () => {
@@ -338,7 +343,7 @@ describe('listThreads', () => {
 
     // "You started replying and stopped" is a third state, distinct from both
     // `answered` and untouched — and the one most likely to be forgotten.
-    const [summary] = await listThreads(api)
+    const [summary] = (await listThreads(api)).threads
     expect(summary!.hasDraft).toBe(true)
     expect(summary!.answered).toBe(false)
   })
@@ -362,7 +367,7 @@ describe('listThreads', () => {
         },
       })
 
-      expect((await listThreads(api))[0]!.category).toBe(category)
+      expect((await listThreads(api)).threads[0]!.category).toBe(category)
     }
   })
 
@@ -374,7 +379,7 @@ describe('listThreads', () => {
       },
     })
 
-    expect((await listThreads(api))[0]!.category).toBeNull()
+    expect((await listThreads(api)).threads[0]!.category).toBeNull()
   })
 
   const filed = {
@@ -395,20 +400,20 @@ describe('listThreads', () => {
 
     // INBOX and UNREAD are not things the user filed this under; rendering them
     // as chips is noise on every single row.
-    expect((await listThreads(api))[0]!.labels).toEqual(['Work/Clients'])
+    expect((await listThreads(api)).threads[0]!.labels).toEqual(['Work/Clients'])
   })
 
   it('names the labels a thread is filed under, rather than showing their ids', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: filed }, USER_LABELS)
 
     // `Label_12` is not a thing to show anyone.
-    expect((await listThreads(api))[0]!.labels).toEqual(['Work/Clients'])
+    expect((await listThreads(api)).threads[0]!.labels).toEqual(['Work/Clients'])
   })
 
   it('drops a label it cannot name rather than showing the raw id', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: filed }, [])
 
-    expect((await listThreads(api))[0]!.labels).toEqual([])
+    expect((await listThreads(api)).threads[0]!.labels).toEqual([])
   })
 
   it('asks Gmail for the label names once, not once per thread', async () => {
@@ -443,10 +448,10 @@ describe('listThreads', () => {
     const both = gmail([{ id: 't1' }], {
       t1: newsletter('<mailto:stop@list.test>, <https://list.test/unsub?u=9>'),
     })
-    expect((await listThreads(both.api))[0]!.unsubscribeUrl).toBe('https://list.test/unsub?u=9')
+    expect((await listThreads(both.api)).threads[0]!.unsubscribeUrl).toBe('https://list.test/unsub?u=9')
 
     const mailtoOnly = gmail([{ id: 't1' }], { t1: newsletter('<mailto:stop@list.test>') })
-    expect((await listThreads(mailtoOnly.api))[0]!.unsubscribeUrl).toBeNull()
+    expect((await listThreads(mailtoOnly.api)).threads[0]!.unsubscribeUrl).toBeNull()
   })
 
   it('asks for the recipient and unsubscribe headers in the same request', async () => {
@@ -463,6 +468,54 @@ describe('listThreads', () => {
     expect(asked).toContain('Cc')
     expect(asked).toContain('Reply-To')
     expect(asked).toContain('List-Unsubscribe')
+  })
+
+  /**
+   * The category filter is a **query**, not a client-side filter.
+   *
+   * Gmail's search grammar already has `category:primary`, the search box
+   * passes that grammar through verbatim, and composing the two keeps one code
+   * path instead of two ways to narrow a list that then disagree.
+   */
+
+  it('composes the category into Gmail’s own query grammar', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { category: 'primary' })
+
+    expect(new URL(seen[0]!).searchParams.get('q')).toContain('category:primary')
+  })
+
+  it('keeps the user’s query when a category is also set', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { query: 'from:jane', category: 'promotions' })
+
+    // Searching inside Promotions has to work; dropping either half makes the
+    // search box lie about what it is searching.
+    const q = new URL(seen[0]!).searchParams.get('q')!
+    expect(q).toContain('from:jane')
+    expect(q).toContain('category:promotions')
+  })
+
+  it('returns the page token so the list can load more', async () => {
+    const { api } = gmail([{ id: 't1' }], { t1: thread }, [], 'page-2')
+
+    expect((await listThreads(api)).nextPageToken).toBe('page-2')
+  })
+
+  it('reports null when there is no further page', async () => {
+    const { api } = gmail([{ id: 't1' }], { t1: thread })
+
+    expect((await listThreads(api)).nextPageToken).toBeNull()
+  })
+
+  it('passes the page token back to Gmail', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { pageToken: 'page-2' })
+
+    expect(new URL(seen[0]!).searchParams.get('pageToken')).toBe('page-2')
   })
 
   it('asks for each metadata header as its own query parameter', async () => {

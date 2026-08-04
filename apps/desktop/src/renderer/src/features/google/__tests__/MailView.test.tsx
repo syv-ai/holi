@@ -43,14 +43,25 @@ function summary(overrides: Record<string, unknown> = {}) {
     answered: false,
     messageCount: 1,
     webUrl: 'https://mail.google.com/x',
+    starred: false,
+    important: false,
+    hasDraft: false,
+    category: null,
+    labels: [],
+    unsubscribeUrl: null,
     ...overrides,
   }
+}
+
+/** Gmail answers a page at a time; `nextPageToken` is null at the end. */
+function page(threads: unknown[], nextPageToken: string | null = null) {
+  return { threads, nextPageToken }
 }
 
 /** One thread in the list, one message in it — the list is not what is under
  *  test here, so every case opens the same row. */
 function withMessage(message: Message) {
-  threadMock.mockResolvedValue([summary()])
+  threadMock.mockResolvedValue(page([summary()]))
   readMock.mockResolvedValue({
     id: 't1',
     subject: 'Q2 budget',
@@ -95,7 +106,7 @@ test('shows the subject, which is the whole point of a thread list', async () =>
   // Regression: every row read "(no subject)" from an empty sender, because the
   // metadata headers were requested as one comma-joined value that Gmail
   // matched nothing against and answered 200 to. See google-gmail.test.ts.
-  threadMock.mockResolvedValue([summary({ subject: 'Q2 budget', from: 'Jane Doe' })])
+  threadMock.mockResolvedValue(page([summary({ subject: 'Q2 budget', from: 'Jane Doe' })]))
 
   render(<MailView />)
 
@@ -105,7 +116,7 @@ test('shows the subject, which is the whole point of a thread list', async () =>
 })
 
 test('marks a thread the user has replied to', async () => {
-  threadMock.mockResolvedValue([summary({ answered: true })])
+  threadMock.mockResolvedValue(page([summary({ answered: true })]))
 
   render(<MailView />)
 
@@ -113,7 +124,7 @@ test('marks a thread the user has replied to', async () => {
 })
 
 test('leaves a thread awaiting the user unmarked', async () => {
-  threadMock.mockResolvedValue([summary({ answered: false })])
+  threadMock.mockResolvedValue(page([summary({ answered: false })]))
 
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
