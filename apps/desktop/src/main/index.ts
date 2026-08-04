@@ -22,6 +22,7 @@ import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createGoogleSession } from './google/electron'
+import { createCalendarPrefs } from './google/calendar-prefs'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { GoogleApi } from './google/api'
@@ -117,6 +118,11 @@ async function main(): Promise<void> {
   // The Google connector (D67) — independent of the GitHub session on purpose:
   // it is a data connector, not identity, and neither sign-out affects the other.
   const googleSession = await createGoogleSession()
+  // One file, two readers: the agenda panel (via the router) and the agent (via
+  // the ops server below). Plain JSON — it holds calendar ids, not a credential.
+  const calendarPrefs = createCalendarPrefs(
+    join(app.getPath('userData'), 'google-calendars.json'),
+  )
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) =>
@@ -163,6 +169,7 @@ async function main(): Promise<void> {
     registry,
     session,
     googleSession,
+    calendarPrefs,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {
@@ -200,7 +207,12 @@ async function main(): Promise<void> {
   // the UI does.
   const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
   const googleOps = createGoogleOpsServer({
-    agenda: (window) => listAgenda(googleApiFor(), window),
+    // Through the SAME overrides file the panel writes. A calendar the user
+    // switched off is not fetched for the agent either — otherwise "turn Jane's
+    // calendar off" would hide her day from the panel while the agent kept
+    // reading it, which is the opposite of what switching it off means.
+    agenda: async (window) =>
+      listAgenda(googleApiFor(), window, { overrides: await calendarPrefs.read() }),
     threads: (query) => listThreads(googleApiFor(), { query }),
     // `textOnly` is the asymmetry, and it is deliberate: the UI renders
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.

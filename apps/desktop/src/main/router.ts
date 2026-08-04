@@ -40,7 +40,14 @@ import type { GitHubSession } from './github/session'
 import type { LoopbackFlow as GoogleFlow } from './google/loopback-flow'
 import type { GoogleSession } from './google/session'
 import { GoogleApi } from './google/api'
-import { listAgenda, type CalendarEvent } from './google/calendar'
+import {
+  listAgenda,
+  resolveCalendars,
+  type CalendarChoice,
+  type CalendarEvent,
+  type CalendarOverrides,
+} from './google/calendar'
+import type { CalendarPrefsStore } from './google/calendar-prefs'
 import {
   listThreads,
   readThread,
@@ -89,6 +96,12 @@ export interface RouterDeps {
    * than pretending to be connected.
    */
   googleSession?: GoogleSession
+  /**
+   * Which calendars the user has switched on. Optional for the same reason as
+   * `googleSession`; absent means every calendar follows the default rule, and
+   * `google.setCalendar` refuses rather than pretending to remember.
+   */
+  calendarPrefs?: CalendarPrefsStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -191,6 +204,14 @@ function fields<T extends Record<string, 'string' | 'string?'>>(spec: T) {
     }
     return out as never
   }
+}
+
+/** A required boolean. Separate from `fields`, which is deliberately
+ *  string-only — a coerced `"false"` would read as true and silently switch a
+ *  calendar back on. */
+function booleanOrThrow(value: unknown, key: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${key} must be a boolean`)
+  return value
 }
 
 /** Batch inputs the string-only `fields` helper cannot express. Each throws on a
@@ -1197,9 +1218,43 @@ export function createRouter(deps: RouterDeps) {
      */
     agenda: t.procedure
       .input(fields({ timeMin: 'string', timeMax: 'string' }))
-      .query(({ input }): Promise<CalendarEvent[]> =>
-        listAgenda(googleApi(), { timeMin: input.timeMin, timeMax: input.timeMax }),
+      .query(async ({ input }): Promise<CalendarEvent[]> =>
+        listAgenda(
+          googleApi(),
+          { timeMin: input.timeMin, timeMax: input.timeMax },
+          { overrides: await calendarOverrides() },
+        ),
       ),
+
+    /** Every calendar the account can draw from, with its colour and whether it
+     *  is switched on — what the agenda's calendar picker renders. */
+    calendars: t.procedure.query(
+      async (): Promise<CalendarChoice[]> => resolveCalendars(googleApi(), await calendarOverrides()),
+    ),
+
+    /**
+     * Switch one calendar on or off.
+     *
+     * Persisted in main rather than held in the renderer, because the **agent**
+     * resolves its agenda through the same file — otherwise turning a
+     * colleague's calendar off would hide it from the panel while the agent
+     * carried on reading their day.
+     */
+    setCalendar: t.procedure
+      .input((raw: unknown) => ({
+        ...fields({ id: 'string' })(raw),
+        enabled: booleanOrThrow((raw as { enabled?: unknown }).enabled, 'enabled'),
+      }))
+      .mutation(async ({ input }) => {
+        if (deps.calendarPrefs === undefined) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: 'the Google connector is not configured',
+          })
+        }
+        await deps.calendarPrefs.set(input.id, input.enabled)
+        return { ok: true as const }
+      }),
 
     /** Threads matching Gmail's own search grammar. Empty query = the inbox. */
     threads: t.procedure
@@ -1221,6 +1276,12 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ id: 'string' }))
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
   })
+
+  /** No store configured means no explicit choices — every calendar follows the
+   *  default rule rather than the agenda coming back empty. */
+  async function calendarOverrides(): Promise<CalendarOverrides> {
+    return (await deps.calendarPrefs?.read()) ?? {}
+  }
 
   function googleSession(): GoogleSession {
     if (deps.googleSession === undefined) {

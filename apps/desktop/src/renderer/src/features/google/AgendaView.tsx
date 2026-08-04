@@ -13,7 +13,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { CalendarDays, ExternalLink, RefreshCw, Video } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { Button, Tooltip } from '@/primitives'
+import {
+  Button,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Tooltip,
+} from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
@@ -28,7 +37,19 @@ interface CalendarEvent {
   htmlLink: string
   calendarId: string
   calendarName: string
+  /** From a calendar the user owns, rather than one they watch. */
+  mine: boolean
+  /** Google's own hex colour for the source calendar, or null. */
+  color: string | null
   meetLink?: string
+}
+
+interface CalendarChoice {
+  id: string
+  name: string
+  mine: boolean
+  color: string | null
+  enabled: boolean
 }
 
 type State =
@@ -81,9 +102,17 @@ function timeLabel(event: CalendarEvent): string {
 
 export function AgendaView() {
   const [state, setState] = useState<State>({ kind: 'loading' })
+  const [calendars, setCalendars] = useState<CalendarChoice[]>([])
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const [creating, setCreating] = useState<string | null>(null)
+
+  const loadCalendars = useCallback(() => {
+    // Failure here is not worth a surface of its own: the agenda's own error
+    // state already covers "Google is unreachable", and a picker that silently
+    // stays empty is better than two error messages about the same outage.
+    void trpc.google.calendars.query().then(setCalendars).catch(() => setCalendars([]))
+  }, [])
 
   const load = useCallback(() => {
     setState({ kind: 'loading' })
@@ -103,6 +132,26 @@ export function AgendaView() {
   }, [])
 
   useEffect(load, [load])
+  useEffect(loadCalendars, [loadCalendars])
+
+  /**
+   * Switch a calendar on or off.
+   *
+   * Optimistic in the list, then a reload of the agenda — the toggle is a
+   * statement about which calendars exist for the user at all, so the events
+   * have to follow it immediately or the checkbox appears not to have worked.
+   * It is persisted in main, which is also where the agent reads it.
+   */
+  const toggleCalendar = (calendar: CalendarChoice, enabled: boolean) => {
+    setCalendars((previous) =>
+      previous.map((c) => (c.id === calendar.id ? { ...c, enabled } : c)),
+    )
+    void trpc.google.setCalendar
+      .mutate({ id: calendar.id, enabled })
+      .then(load)
+      // Put the checkbox back rather than leaving it lying about what main holds.
+      .catch(() => loadCalendars())
+  }
 
   /**
    * Make a task out of an event.
@@ -163,11 +212,14 @@ export function AgendaView() {
           <CalendarDays size={15} />
           Agenda
         </h2>
-        <Tooltip content="refresh">
-          <Button variant="ghost" size="icon-xs" aria-label="refresh agenda" onClick={load}>
-            <RefreshCw size={14} />
-          </Button>
-        </Tooltip>
+        <div className="flex items-center gap-1">
+          <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
+          <Tooltip content="refresh">
+            <Button variant="ghost" size="icon-xs" aria-label="refresh agenda" onClick={load}>
+              <RefreshCw size={14} />
+            </Button>
+          </Tooltip>
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
@@ -185,11 +237,17 @@ export function AgendaView() {
                     key={`${event.calendarId}:${event.id}`}
                     className="group flex items-baseline gap-3 rounded px-2 py-1.5 hover:bg-secondary/60"
                   >
+                    <Swatch color={event.color} />
                     <span className="w-28 shrink-0 font-mono text-xs text-muted-foreground">
                       {timeLabel(event)}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{event.title}</span>
+                      {/* Someone else's event is dimmed rather than hidden: it
+                          is on the agenda because it was asked for, but it is
+                          not something the user is doing. */}
+                      <span className={`block truncate text-sm ${event.mine ? '' : 'text-muted-foreground'}`}>
+                        {event.title}
+                      </span>
                       {(event.location !== undefined || event.calendarName !== '') && (
                         <span className="block truncate text-xs text-muted-foreground">
                           {[event.calendarName, event.location].filter(Boolean).join(' · ')}
@@ -239,6 +297,86 @@ export function AgendaView() {
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Which calendars this agenda draws from.
+ *
+ * Yours are listed first and separately from the ones you are subscribed to,
+ * because that is the distinction the list exists to make: a Workspace account
+ * accumulates colleagues, rooms and birthday calendars, and flattening all of
+ * them into one agenda is what made "what am I doing today" unanswerable.
+ *
+ * The swatch is Google's own colour for the calendar, so a row here and a row
+ * in Google Calendar are recognisably the same thing.
+ */
+function CalendarPicker({
+  calendars,
+  onToggle,
+}: {
+  calendars: CalendarChoice[]
+  onToggle: (calendar: CalendarChoice, enabled: boolean) => void
+}) {
+  if (calendars.length === 0) return null
+
+  const mine = calendars.filter((c) => c.mine)
+  const others = calendars.filter((c) => !c.mine)
+  const off = calendars.filter((c) => !c.enabled).length
+
+  const item = (calendar: CalendarChoice) => (
+    <DropdownMenuCheckboxItem
+      key={calendar.id}
+      checked={calendar.enabled}
+      // Radix closes on select by default; ticking three colleagues one at a
+      // time through three menu openings is the wrong interaction for this.
+      onSelect={(event) => event.preventDefault()}
+      onCheckedChange={(checked) => onToggle(calendar, checked)}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <Swatch color={calendar.color} />
+        <span className="truncate">{calendar.name}</span>
+      </span>
+    </DropdownMenuCheckboxItem>
+  )
+
+  return (
+    <DropdownMenu>
+      <Tooltip content="which calendars this agenda shows">
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="xs" className="gap-1" aria-label="choose calendars">
+            calendars
+            {off > 0 && <span className="text-muted-foreground">({calendars.length - off})</span>}
+          </Button>
+        </DropdownMenuTrigger>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="max-w-72">
+        <DropdownMenuLabel>Your calendars</DropdownMenuLabel>
+        {mine.map(item)}
+        {others.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            {/* Named for what they are. "Subscribed" is the word Google uses,
+                and it is why these are off until asked for. */}
+            <DropdownMenuLabel>Subscribed</DropdownMenuLabel>
+            {others.map(item)}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** A calendar's colour. An inline style because the value is Google's, not a
+ *  token — the arbitrary-colour ban is about hard-coded literals in class
+ *  names, and there is no token that could stand for "Jane's calendar". */
+function Swatch({ color }: { color: string | null }) {
+  return (
+    <span
+      aria-hidden
+      className={`size-2.5 shrink-0 rounded-[2px] ${color === null ? 'bg-muted-foreground' : ''}`}
+      style={color === null ? undefined : { background: color }}
+    />
   )
 }
 

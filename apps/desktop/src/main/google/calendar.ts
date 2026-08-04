@@ -32,6 +32,16 @@ export interface CalendarEvent {
   /** Which calendar it came from; an agenda merges several. */
   calendarId: string
   calendarName: string
+  /**
+   * From a calendar the user owns, rather than one they are subscribed to.
+   *
+   * On the row this is the difference between "I am in this meeting" and "Jane
+   * is busy then" — and it is the same distinction the agent needs, which is
+   * why it travels on the event rather than being recomputed per surface.
+   */
+  mine: boolean
+  /** Google's own hex colour for the source calendar, or `null`. */
+  color: string | null
   /** A video link, when the event has one. The single most-clicked thing on an
    *  agenda row, so it is lifted out rather than left buried in the payload. */
   meetLink?: string
@@ -55,7 +65,28 @@ export interface CalendarListEntry {
   primary?: boolean
   selected?: boolean
   deleted?: boolean
+  /** `owner` | `writer` | `reader` | `freeBusyReader`. What separates a calendar
+   *  that is *yours* from one you merely watch. */
+  accessRole?: string
+  /** Google's own hex colour for the calendar, e.g. `#039be5`. */
+  backgroundColor?: string
 }
+
+/** A calendar as the picker shows it, and as the agenda decides by. */
+export interface CalendarChoice {
+  id: string
+  name: string
+  /** Yours, rather than one you are subscribed to. Drives both the default and
+   *  the attribution on every event it produces. */
+  mine: boolean
+  /** Google's hex colour, or `null` when the entry carries none. */
+  color: string | null
+  enabled: boolean
+}
+
+/** Per-calendar on/off, as the user has explicitly set it. Absent = the default
+ *  rule applies. See `resolveCalendars`. */
+export type CalendarOverrides = Record<string, boolean>
 
 /**
  * The calendars an agenda should draw from.
@@ -75,6 +106,47 @@ export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]
   return items.filter((c) => c.deleted !== true && c.selected !== false)
 }
 
+/** Yours to answer for, rather than a colleague's you happen to watch. Google
+ *  gives write access to shared team calendars too, but `owner` is the line
+ *  that matches "my day" — a calendar you can edit is not necessarily one whose
+ *  events are yours. */
+function isMine(calendar: CalendarListEntry): boolean {
+  return calendar.primary === true || calendar.accessRole === 'owner'
+}
+
+/**
+ * Every calendar the user could draw from, each with whether it is on.
+ *
+ * **The default is "calendars you own, and nothing else."** A Workspace account
+ * accumulates subscriptions — colleagues whose calendars you compare against,
+ * meeting rooms, birthdays — and Google's own `selected` flag says they are
+ * visible *in Google Calendar*, where they sit in their own columns. Flattened
+ * into one agenda they stop being comparable and start being noise, so Holi
+ * starts from your own and lets you switch a colleague on deliberately.
+ *
+ * Overrides are stored **per calendar rather than as "the enabled set"**, which
+ * is what makes a calendar created next month follow the rule instead of
+ * arriving silently switched off because it was not in a list written today.
+ */
+export async function resolveCalendars(
+  api: GoogleApi,
+  overrides: CalendarOverrides,
+): Promise<CalendarChoice[]> {
+  const calendars = await listCalendars(api)
+  return calendars.map((calendar) => ({
+    id: calendar.id,
+    name: calendar.summary,
+    mine: isMine(calendar),
+    color: calendar.backgroundColor ?? null,
+    enabled: overrides[calendar.id] ?? isMine(calendar),
+  }))
+}
+
+/** The ids an agenda should actually fetch. */
+export function enabledCalendarIds(calendars: CalendarChoice[]): string[] {
+  return calendars.filter((c) => c.enabled).map((c) => c.id)
+}
+
 export interface AgendaWindow {
   /** ISO instants. The caller owns "today" — main never computes it, because
    *  the machine's local date is the renderer's fact (the daily-notes rule). */
@@ -92,8 +164,15 @@ export interface AgendaWindow {
  * the series began. With it, Google expands the rule into the instances that
  * actually fall in the window, which is the only thing an agenda can render.
  */
-export async function listAgenda(api: GoogleApi, window: AgendaWindow): Promise<CalendarEvent[]> {
-  const calendars = await listCalendars(api)
+export async function listAgenda(
+  api: GoogleApi,
+  window: AgendaWindow,
+  options: { overrides?: CalendarOverrides } = {},
+): Promise<CalendarEvent[]> {
+  // Filtered BEFORE fetching, not after: a calendar that is off costs no
+  // request, which is what keeps a Workspace account's twenty subscriptions
+  // from turning one agenda into twenty round-trips.
+  const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
 
   const perCalendar = await Promise.all(
     calendars.map(async (calendar) => {
@@ -125,7 +204,7 @@ function isWorthShowing(event: RawEvent): boolean {
   return event.attendees?.some((a) => a.self === true && a.responseStatus === 'declined') !== true
 }
 
-function toCalendarEvent(event: RawEvent, calendar: CalendarListEntry): CalendarEvent {
+function toCalendarEvent(event: RawEvent, calendar: CalendarChoice): CalendarEvent {
   const allDay = event.start?.date !== undefined
   return {
     id: event.id ?? '',
@@ -138,7 +217,9 @@ function toCalendarEvent(event: RawEvent, calendar: CalendarListEntry): Calendar
     location: event.location,
     htmlLink: event.htmlLink ?? '',
     calendarId: calendar.id,
-    calendarName: calendar.summary,
+    calendarName: calendar.name,
+    mine: calendar.mine,
+    color: calendar.color,
     meetLink: event.hangoutLink,
   }
 }

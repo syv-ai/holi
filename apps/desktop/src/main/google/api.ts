@@ -46,6 +46,9 @@ export interface GoogleApiDeps {
 /** A hung request must not stall a panel with no error and nothing to cancel. */
 const REQUEST_TIMEOUT_MS = 20_000
 
+/** Query parameters. An **array value means a repeated key** — see `get`. */
+export type GoogleParams = Record<string, string | string[] | undefined>
+
 export class GoogleApi {
   #deps: GoogleApiDeps
 
@@ -53,9 +56,19 @@ export class GoogleApi {
     this.#deps = deps
   }
 
-  async get<T>(url: string, params: Record<string, string | undefined> = {}): Promise<T> {
+  async get<T>(url: string, params: GoogleParams = {}): Promise<T> {
     const query = new URLSearchParams()
-    for (const [k, v] of Object.entries(params)) if (v !== undefined) query.set(k, v)
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined) continue
+      // An array becomes REPEATED keys, not a joined value. Google's list-valued
+      // parameters (`metadataHeaders`, …) are repeated-key parameters, and the
+      // comma form is not a shorthand for them — it reads as one long value that
+      // matches nothing, and the request still returns 200 with the field
+      // silently missing. That is what made every mail thread show "(no
+      // subject)": the headers were never requested in a form Gmail understood.
+      if (Array.isArray(v)) for (const item of v) query.append(k, item)
+      else query.set(k, v)
+    }
     const full = query.size > 0 ? `${url}?${query.toString()}` : url
 
     let token: string
@@ -90,7 +103,7 @@ export class GoogleApi {
    */
   async getAll<T>(
     url: string,
-    params: Record<string, string | undefined>,
+    params: GoogleParams,
     items: (page: { items?: T[]; nextPageToken?: string }) => T[],
     cap = 10,
   ): Promise<T[]> {

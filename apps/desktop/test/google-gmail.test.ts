@@ -234,6 +234,40 @@ describe('listThreads', () => {
     expect((await listThreads(api))[0]!.unread).toBe(true)
   })
 
+  /**
+   * "Answered" means **the ball is in their court**: the last message in the
+   * thread is one the user sent. Deliberately not "there is a sent message
+   * somewhere in here" — in a long back-and-forth that is true forever and
+   * therefore says nothing about what is still outstanding.
+   */
+  it('marks a thread answered when the last message is one the user sent', async () => {
+    const answered = {
+      id: 't1',
+      messages: [
+        { id: 'm1', internalDate: '1000', labelIds: ['INBOX'], payload: { headers: [] } },
+        { id: 'm2', internalDate: '2000', labelIds: ['SENT'], payload: { headers: [] } },
+      ],
+    }
+    const { api } = gmail([{ id: 't1' }], { t1: answered })
+
+    expect((await listThreads(api))[0]!.answered).toBe(true)
+  })
+
+  it('is not answered when they wrote back after the user’s reply', async () => {
+    const theirTurn = {
+      id: 't1',
+      messages: [
+        { id: 'm1', internalDate: '1000', labelIds: ['SENT'], payload: { headers: [] } },
+        { id: 'm2', internalDate: '2000', labelIds: ['INBOX'], payload: { headers: [] } },
+      ],
+    }
+    const { api } = gmail([{ id: 't1' }], { t1: theirTurn })
+
+    // The user replied, and then someone answered — it needs them again, so the
+    // marker has to come back off.
+    expect((await listThreads(api))[0]!.answered).toBe(false)
+  })
+
   it('builds the permalink from the first message’s Message-ID', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: thread })
     expect(decodeURIComponent((await listThreads(api))[0]!.webUrl)).toContain(
@@ -248,6 +282,24 @@ describe('listThreads', () => {
 
     const get = seen.find((u) => u.includes('/threads/t1'))!
     expect(new URL(get).searchParams.get('format')).toBe('metadata')
+  })
+
+  it('asks for each metadata header as its own query parameter', async () => {
+    // The bug this pins: sent as ONE comma-joined value, Gmail reads it as a
+    // single header *name*, matches nothing, and returns a message with no
+    // headers at all — so every thread in the list renders as "(no subject)"
+    // from an empty sender. It fails silently, with a 200.
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api)
+
+    const get = new URL(seen.find((u) => u.includes('/threads/t1'))!)
+    expect(get.searchParams.getAll('metadataHeaders')).toEqual([
+      'Subject',
+      'From',
+      'Date',
+      'Message-ID',
+    ])
   })
 })
 

@@ -32,21 +32,25 @@ interface Message {
   html: string | null
 }
 
+function summary(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 't1',
+    subject: 'Q2 budget',
+    from: 'Jane',
+    date: '2026-08-04T09:00:00.000Z',
+    snippet: 'a snippet',
+    unread: false,
+    answered: false,
+    messageCount: 1,
+    webUrl: 'https://mail.google.com/x',
+    ...overrides,
+  }
+}
+
 /** One thread in the list, one message in it — the list is not what is under
  *  test here, so every case opens the same row. */
 function withMessage(message: Message) {
-  threadMock.mockResolvedValue([
-    {
-      id: 't1',
-      subject: 'Q2 budget',
-      from: 'Jane',
-      date: '2026-08-04T09:00:00.000Z',
-      snippet: 'a snippet',
-      unread: false,
-      messageCount: 1,
-      webUrl: 'https://mail.google.com/x',
-    },
-  ])
+  threadMock.mockResolvedValue([summary()])
   readMock.mockResolvedValue({
     id: 't1',
     subject: 'Q2 budget',
@@ -85,6 +89,36 @@ beforeEach(() => {
 afterEach(() => {
   // @ts-expect-error — as above.
   delete window.holi
+})
+
+test('shows the subject, which is the whole point of a thread list', async () => {
+  // Regression: every row read "(no subject)" from an empty sender, because the
+  // metadata headers were requested as one comma-joined value that Gmail
+  // matched nothing against and answered 200 to. See google-gmail.test.ts.
+  threadMock.mockResolvedValue([summary({ subject: 'Q2 budget', from: 'Jane Doe' })])
+
+  render(<MailView />)
+
+  const row = await screen.findByRole('button', { name: /Q2 budget/ })
+  expect(within(row).getByText('Q2 budget')).toBeInTheDocument()
+  expect(within(row).getByText(/Jane Doe/)).toBeInTheDocument()
+})
+
+test('marks a thread the user has replied to', async () => {
+  threadMock.mockResolvedValue([summary({ answered: true })])
+
+  render(<MailView />)
+
+  expect(await screen.findByLabelText('you replied')).toBeInTheDocument()
+})
+
+test('leaves a thread awaiting the user unmarked', async () => {
+  threadMock.mockResolvedValue([summary({ answered: false })])
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  expect(screen.queryByLabelText('you replied')).toBeNull()
 })
 
 test('renders an HTML body as real markup, inside a frame of its own', async () => {

@@ -41,11 +41,28 @@ cancelled events removed:
 ```json
 [{ "id": "...", "title": "Q2 review", "start": "2026-08-04T09:00:00Z",
    "end": "...", "allDay": false, "location": "...", "calendarName": "Me",
+   "mine": true, "color": "#039be5",
    "htmlLink": "https://calendar.google.com/...", "meetLink": "https://meet.google.com/..." }]
 ```
 
+**`mine` is the field to read before you say anything about "your" schedule.**
+The user subscribes to other people's calendars — colleagues, meeting rooms,
+birthdays. An event with `"mine": false` is **not something the user is doing**;
+it is someone else's time, on the agenda so it can be compared against. Say
+whose (`calendarName`) rather than folding it into their day. Answering "you
+have four meetings tomorrow" when three of them are Jane's is the failure this
+field exists to prevent.
+
+You only ever see calendars the user has **switched on** in Holi. Most
+subscribed calendars are off by default, so the absence of someone's events is
+a deliberate choice and not something to work around — there is no flag to see
+more, and asking Google another way is not available to you.
+
 `search` → one entry per thread: `id`, `subject`, `from`, `date`, `snippet`,
-`unread`, `messageCount`, `webUrl`.
+`unread`, `answered`, `messageCount`, `webUrl`. **`answered`** means the last
+message in the thread is one the user sent — they have replied and are waiting
+on the other side. A thread with `"unread": true` or `"answered": false` is one
+that may still need them; use those rather than guessing from dates.
 
 `read` → `{ id, subject, webUrl, messages: [{ from, to, date, body }] }`. Bodies
 are **plain text** — the sender's own text part where there is one, converted

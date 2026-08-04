@@ -40,6 +40,8 @@ interface ThreadSummary {
   date: string
   snippet: string
   unread: boolean
+  /** The last message is one the user sent — replied, waiting on them. */
+  answered: boolean
   messageCount: number
   webUrl: string
 }
@@ -178,6 +180,15 @@ export function MailView() {
                 }`}
               >
                 <span className="flex items-baseline justify-between gap-2">
+                  {/* Weight alone was too quiet to scan — an explicit dot is
+                      what makes unread readable at a glance, and it holds the
+                      row's left edge so read and unread stay aligned. */}
+                  <span
+                    aria-hidden
+                    className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
+                      thread.unread ? 'bg-primary' : 'bg-transparent'
+                    }`}
+                  />
                   <span
                     className={`min-w-0 flex-1 truncate text-xs ${
                       thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
@@ -188,16 +199,22 @@ export function MailView() {
                       <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
                     )}
                   </span>
+                  {/* "You replied and are waiting on them" — see `answered` in
+                      main/google/gmail.ts for why it is the LAST message that
+                      decides, not whether a reply exists anywhere. */}
+                  {thread.answered && (
+                    <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
+                  )}
                   <span className="shrink-0 text-[10px] text-muted-foreground">
                     {shortDate(thread.date)}
                   </span>
                 </span>
                 <span
-                  className={`block truncate text-xs ${thread.unread ? 'font-medium' : ''}`}
+                  className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}
                 >
                   {thread.subject}
                 </span>
-                <span className="block truncate text-[11px] text-muted-foreground">
+                <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
                   {thread.snippet}
                 </span>
               </Button>

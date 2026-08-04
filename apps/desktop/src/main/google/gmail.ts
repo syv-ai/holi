@@ -33,6 +33,15 @@ export interface MailThreadSummary {
   date: string
   snippet: string
   unread: boolean
+  /**
+   * The last message in the thread is one the user sent — so they have replied
+   * and are waiting on the other side.
+   *
+   * Deliberately not "a sent message exists somewhere in this thread": in a long
+   * back-and-forth that is true forever, which makes it useless for the question
+   * a mail list is actually scanned for ("what still needs me?").
+   */
+  answered: boolean
   messageCount: number
   /** The link written into a task or note (D67). */
   webUrl: string
@@ -273,10 +282,11 @@ export async function listThreads(
   const threads = await mapPooled(ids, 5, (id) =>
     api.get<RawThread>(`${BASE}/threads/${id}`, {
       format: 'metadata',
-      // Repeated query keys are how Gmail takes a list; `GoogleApi.get` builds
-      // one param per key, so the headers are requested as a single joined
-      // value — Gmail accepts the comma form.
-      metadataHeaders: 'Subject,From,Date,Message-ID',
+      // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
+      // Comma-joining these is not a shorthand — Gmail reads the whole string
+      // as one header name, matches nothing, and returns 200 with no headers,
+      // which renders every thread as "(no subject)" from an empty sender.
+      metadataHeaders: ['Subject', 'From', 'Date', 'Message-ID'],
     }),
   )
 
@@ -302,6 +312,10 @@ function summarize(thread: RawThread): MailThreadSummary | null {
     // Unread if ANY message in the thread is — that is what Gmail's own bolding
     // means, and the thread is the unit the user acts on.
     unread: messages.some((m) => m.labelIds?.includes('UNREAD') === true),
+    // `SENT` is Gmail's own label for "this account sent this", so it needs no
+    // comparison against the connected address — which would be wrong anyway
+    // for aliases and send-as addresses.
+    answered: last.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
     webUrl: messageUrl(headerOf(first.payload, 'Message-ID'), thread.id),
   }
