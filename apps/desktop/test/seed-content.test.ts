@@ -51,6 +51,7 @@ describe('SEED_FILES', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
+      '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.holi/document-templates/_brand/brand.typ',
@@ -101,6 +102,18 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('$TYPST_BIN')
     expect(skill).toContain('doc(') // the template contract
     expect(skill).toContain('--root /') // the compile recipe
+  })
+
+  it('seeds the gmail-calendar skill with the command and the linking rule (D67)', () => {
+    const skill = SEED_FILES['.claude/skills/gmail-calendar/SKILL.md']!
+    expect(skill).toContain('name: gmail-calendar')
+    expect(skill).toContain('$HOLI_GOOGLE_BIN')
+    // The two things the agent gets wrong without being told: that a link is a
+    // body markdown link (not frontmatter, not a wiki-link), and that a Gmail
+    // URL must not be hand-assembled.
+    expect(skill).toContain('markdown link')
+    expect(skill).toContain('rfc822msgid')
+    expect(skill).toContain('read-only')
   })
 
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {

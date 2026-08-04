@@ -13,7 +13,7 @@
  * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { CalendarDays, History, Settings, SquareKanban } from 'lucide-react'
+import { CalendarDays, History, Mail, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
@@ -22,6 +22,7 @@ import { AgentPanel } from '@/features/agent/AgentPanel'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
+import { MailView } from '@/features/google/MailView'
 import { GoogleConnection } from '@/features/google/GoogleConnection'
 import { DialogHost } from './DialogHost'
 import { EditorPane } from '@/composites'
@@ -40,6 +41,7 @@ import {
   closeTab,
   openAgenda,
   openBoard,
+  openMail,
   openPinned,
   openPreview,
   pinActive,
@@ -70,10 +72,11 @@ const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path
  *  instead, so they are absent here by design. */
-const TAB_NAME = { board: 'board', agenda: 'agenda' } as const
+const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail' } as const
 const TAB_LABEL: Partial<Record<string, string>> = {
   board: 'task board',
   agenda: 'your Google agenda',
+  mail: 'your Gmail',
 }
 
 /** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
@@ -284,9 +287,9 @@ export function Shell() {
                 )}
               </Button>
             </Tooltip>
-            {/* The agenda is account-wide, not vault content (D67) — it sits
-                with the other surfaces because that is where you look for a
-                view, and its own header says whose calendar it is. */}
+            {/* Agenda and mail are account-wide, not vault content (D67) — they
+                sit with the other surfaces because that is where you look for a
+                view, and each header says whose account it is. */}
             <Tooltip content="your Google agenda">
               <Button
                 variant="secondary"
@@ -295,6 +298,16 @@ export function Shell() {
                 onClick={() => setWorkspace((w) => openAgenda(w))}
               >
                 agenda
+              </Button>
+            </Tooltip>
+            <Tooltip content="your Gmail">
+              <Button
+                variant="secondary"
+                size="xs"
+                className="flex-1 gap-1.5"
+                onClick={() => setWorkspace((w) => openMail(w))}
+              >
+                mail
               </Button>
             </Tooltip>
             <Tooltip content="vault settings">
@@ -349,6 +362,8 @@ export function Shell() {
                       <SquareKanban size={14} />
                     ) : t.kind === 'agenda' ? (
                       <CalendarDays size={14} />
+                    ) : t.kind === 'mail' ? (
+                      <Mail size={14} />
                     ) : (
                       fileIconFor(t.path)
                     )}
@@ -388,6 +403,8 @@ export function Shell() {
             <BoardView />
           ) : tab?.kind === 'agenda' ? (
             <AgendaView />
+          ) : tab?.kind === 'mail' ? (
+            <MailView />
           ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
             <ImageViewer path={tab.path} />
           ) : tab?.kind === 'note' &&

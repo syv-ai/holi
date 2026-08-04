@@ -116,7 +116,7 @@ The shell (`Shell.tsx`) has two idioms: **workspace tabs** (`board` opens as a t
 - **Mail tab:** thread list (INBOX + Gmail search-query box) → thread reader (from/to/subject/sanitized body; attachments as "open in Gmail" links, no download in v1) → **"link to task/note"** (inserts the body markdown link) and **"reply"** = `mailto:`/Gmail-compose deeplink.
 - **Account-scoped, not vault-scoped.** Mail/calendar are *your Google data* regardless of which vault is open (unlike notes/tasks/board, which are vault content). Rendering them in the vault shell is fine (the agent drawer is also per-user), **but "Connect Google" / "Disconnect" belong in global/app settings or the user menu — not per-vault `VaultSettings`.** (If no global-settings surface exists yet, establishing a minimal one is part of the connector slice.)
 
-**Gotcha — HTML mail:** Gmail bodies are HTML and must be **sanitized** before render (strip scripts, neutralize remote-content tracking pixels, sandbox). This is real work in the Gmail slice, not an afterthought.
+**HTML mail — resolved during the build: extract text, do not sanitize HTML.** The original plan was to sanitize and render. Building it changed the answer: a message body is the most hostile input the app handles (attacker-controlled by definition), and sanitizing means shipping a sanitizer and trusting it forever, plus re-enabling remote-content tracking pixels the moment anything loads an image. Instead `main/google/gmail.ts` walks the MIME tree, prefers `text/plain`, and converts `text/html` to text — so the body reaches the renderer as a string that only ever lands in a text node. **The class is removed by construction rather than defended against**, and no new dependency is added. The honest cost: a heavily-designed newsletter reads plainly, and "open in Gmail" is one click away. Holi is not an email client (PRD non-goal).
 
 ## Freshness
 
@@ -132,8 +132,9 @@ The shell (`Shell.tsx`) has two idioms: **workspace tabs** (`board` opens as a t
 
 This keeps `holi-agent-pure-claude-code` **fully intact** — the phase-2 "MCP returns" prediction is *declined* in favour of the pure-CC idiom. The principle's reasoning ("vault state is files, discover it natively") never argued against a tool surface for *external* data; skill+CLI honours both the letter and the spirit better than an MCP server would, at the cost of unstructured (text) output the agent parses from the skill's documented format.
 
-- **Permission granularity is recovered via Bash rules:** the seeded `.claude/settings.json` can auto-allow `Bash(holi-google agenda:*)` / `Bash(holi-google mail read:*)` while gating any future `Bash(holi-google send:*)` behind approval. So "send" stays a distinct, gated capability when it lands — without a per-tool MCP surface.
-- The CLI binary must be resolvable by the agent (on `PATH` or an absolute path the skill documents); resolution mirrors how `$TYPST_BIN` is provided to the agent at spawn (`prd/agent.md` §Rendering PDFs).
+- **Permission granularity is recovered via Bash rules:** the seeded `.claude/settings.json` can auto-allow the read subcommands while gating any future `send` behind approval. So "send" stays a distinct, gated capability when it lands — without a per-tool MCP surface. (Moot in v1: the scopes are read-only, so there is no write subcommand to gate. Revisit when send lands.)
+- **As built:** the CLI is a **generated `/bin/sh` script** written to `userData/bin/holi-google` on launch, not a shipped binary — no packaging entry, readable on the machine it runs on, and it re-reads the port/token each invocation so it survives restarts that move the port. Its absolute path reaches the agent as **`$HOLI_GOOGLE_BIN`**, mirroring `$TYPST_BIN` (`prd/agent.md` §Rendering PDFs); the channel reaches it as `$HOLI_GOOGLE_PORT`/`$HOLI_GOOGLE_TOKEN`. All three are **stripped from the inherited env** before being set, so a vault's own env cannot redirect the agent at another mailbox. The script uses `curl -G --data-urlencode` rather than hand-rolled percent-encoding — a mangled search query fails silently by searching for something else.
+- **The ops channel is modelled on `agent/hook-server.ts`** (ephemeral port, per-instance token, `127.0.0.1` only) rather than being a second bespoke transport.
 
 ## Disconnect
 
@@ -144,10 +145,17 @@ This keeps `holi-agent-pure-claude-code` **fully intact** — the phase-2 "MCP r
 
 Each slice gets its own plan; this is the spine and the per-slice exit contract.
 
-1. **Connector** — loopback+PKCE flow (sibling of `device-flow.ts`), `GoogleTokenStore`, `GoogleSession` with single-flight `getAccessToken()`, the loopback ops channel + machine-local `{port,secret}` file, "Connect/Disconnect Google" in global settings. **Exit:** connect as an @-account and make one raw authenticated Google API call end-to-end (a unit-tested flow + a live-check of the browser round-trip).
+1. **Connector** — loopback+PKCE flow (sibling of `device-flow.ts`), `GoogleTokenStore`, `GoogleSession` with single-flight `getAccessToken()`, "Connect/Disconnect Google" in settings. **Exit:** connect as an @-account and make one raw authenticated Google API call end-to-end (a unit-tested flow + a live-check of the browser round-trip). *The **ops channel moved to slice 4**, where its only consumer is built — a localhost server with no caller is machinery bought before it is needed.*
 2. **Calendar read** — main-side calendar ops (list calendars, list events/agenda) exposed over tRPC + loopback; the **agenda workspace tab**; **create-task-from-event**. First because its scope verifies lightly. **Exit:** agenda renders live; a task is created from an event with the event link in its body.
 3. **Gmail read** — main-side gmail ops (list/search threads, read thread) with HTML **sanitization**; the **mail workspace tab**; **link-into-body** + `mailto`/deeplink compose. Restricted-scope verification submitted during slices 1–2. **Exit:** search + read a thread; link it into a task/note as a body link that renders a chip.
-4. **Agent skill** — the `holi-google` CLI over the loopback channel + the seeded `gmail-calendar` skill + the Bash permission defaults. **Exit:** the agent answers "what's on my calendar today?" and "find the thread about X" via the CLI.
+4. **Agent skill** — the loopback ops channel, the generated `holi-google` command over it, and the seeded `gmail-calendar` skill. **Exit:** the agent answers "what's on my calendar today?" and "find the thread about X" via the CLI.
+
+## Build status (2026-08-04)
+
+All four slices are **implemented and green** (typecheck clean; node 855, dom 70, shared 219; boundaries gate clean). What is *not* verified, and cannot be from here:
+
+- **The live OAuth round-trip.** `GOOGLE_CLIENT_ID` in `main/google/session.ts` is an **empty placeholder** — supply the value from the existing registration (or `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` in the env) and confirm the client is Desktop-type or carries the `http://127.0.0.1` redirect. Until then Connect cannot complete, by construction.
+- **Everything downstream of a real token** — agenda, mail, and the agent's CLI answer against fakes in the suite, never against Google.
 
 ## Deferred (fast-follow slices, explicitly out of v1)
 

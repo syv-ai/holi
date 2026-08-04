@@ -129,6 +129,37 @@ describe('buildAgentEnv', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin' }).TYPST_BIN).toBeUndefined()
     expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: null }).TYPST_BIN).toBeUndefined()
   })
+
+  it('passes the Google ops channel and the holi-google path (D67)', () => {
+    const env = buildAgentEnv(
+      { PATH: '/usr/bin' },
+      { googlePort: 6001, googleToken: 'tok', googleBin: '/data/bin/holi-google' },
+    )
+    expect(env.HOLI_GOOGLE_PORT).toBe('6001')
+    expect(env.HOLI_GOOGLE_TOKEN).toBe('tok')
+    expect(env.HOLI_GOOGLE_BIN).toBe('/data/bin/holi-google')
+  })
+
+  it('omits the Google keys when the channel is not running', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin' }, { googlePort: null, googleToken: null })
+    expect(env.HOLI_GOOGLE_PORT).toBeUndefined()
+    expect(env.HOLI_GOOGLE_TOKEN).toBeUndefined()
+    expect(env.HOLI_GOOGLE_BIN).toBeUndefined()
+  })
+
+  it('strips inherited Google keys so a vault cannot point the agent elsewhere', () => {
+    // The agent asks this channel for the user's mail; letting a committed
+    // `.env` redirect it would be a vault stealing another vault's inbox.
+    const env = buildAgentEnv({
+      PATH: '/usr/bin',
+      HOLI_GOOGLE_PORT: '9',
+      HOLI_GOOGLE_TOKEN: 'evil',
+      HOLI_GOOGLE_BIN: '/tmp/evil',
+    })
+    expect(env.HOLI_GOOGLE_PORT).toBeUndefined()
+    expect(env.HOLI_GOOGLE_TOKEN).toBeUndefined()
+    expect(env.HOLI_GOOGLE_BIN).toBeUndefined()
+  })
 })
 
 describe('buildAgentArgs', () => {

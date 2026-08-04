@@ -63,6 +63,12 @@ export interface AgentManagerDeps {
   /** Fire-and-forget: cache typst for next time if the machine has never
    *  rendered. Never awaited — the download must not block the spawn path. */
   warmTypst?: () => void
+  /** The live Google ops-channel port/token and the generated `holi-google`
+   *  path (D67). Read per-spawn like the hook server, since the channel
+   *  outlives any one session. The child gets a door, never a token. */
+  googlePort?: () => number | null
+  googleToken?: () => string | null
+  googleBin?: () => string | null
   log?: (msg: string) => void
 }
 
@@ -260,6 +266,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           hookPort: deps.hookPort?.() ?? null,
           hookToken: deps.hookToken?.() ?? null,
           typstBin,
+          googlePort: deps.googlePort?.() ?? null,
+          googleToken: deps.googleToken?.() ?? null,
+          googleBin: deps.googleBin?.() ?? null,
         }),
         cols,
         rows,

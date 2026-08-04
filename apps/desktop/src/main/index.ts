@@ -22,6 +22,11 @@ import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createGoogleSession } from './google/electron'
+import { createGoogleOpsServer } from './google/ops-server'
+import { installGoogleCli } from './google/cli'
+import { GoogleApi } from './google/api'
+import { listAgenda } from './google/calendar'
+import { listThreads, readThread } from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
@@ -182,6 +187,26 @@ async function main(): Promise<void> {
   // Claude Code hooks and drives the manager's pause/resume. The forward ref is
   // safe — its callbacks fire only at runtime, long after `agent` is assigned.
   let agent: AgentManager
+  /**
+   * The agent's door to Google (D67): a loopback server that serves calendar
+   * and mail RESULTS, with main making the API calls using the token only it
+   * holds. Plus the generated `holi-google` command the seeded skill invokes.
+   *
+   * This is why the pillar ships no MCP server — the agent reaches external
+   * data with `Bash` and a documented command, like everything else.
+   */
+  // Bound to the session's token *getter*, never a token: the getter refreshes
+  // and single-flights, so the agent's calls go through the same one authority
+  // the UI does.
+  const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
+  const googleOps = createGoogleOpsServer({
+    agenda: (window) => listAgenda(googleApiFor(), window),
+    threads: (query) => listThreads(googleApiFor(), { query }),
+    thread: (id) => readThread(googleApiFor(), id),
+  })
+  await googleOps.start()
+  const googleCliPath = await installGoogleCli(app.getPath('userData'))
+
   const hookServer = createHookServer({
     onTurnStart: () => agent.setTurnActive(true),
     onTurnEnd: () => agent.setTurnActive(false),
@@ -198,6 +223,9 @@ async function main(): Promise<void> {
     warmTypst: () => {
       void ensureTypst({ cacheDir: typstCacheDir })
     },
+    googlePort: () => googleOps.port(),
+    googleToken: () => googleOps.token(),
+    googleBin: () => googleCliPath,
   })
   registerAgentIpc({ agent })
 

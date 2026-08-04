@@ -1053,6 +1053,7 @@ describe('vaults.add', () => {
     // the way in rather than at some later activation. The seeded skills are
     // markdown under .claude/, so — like every managed .md — they scan as notes.
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
+      '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       'AGENTS.md',

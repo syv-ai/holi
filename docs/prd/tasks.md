@@ -217,5 +217,5 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 
 - **Time-grouped secondary board view** ("Today / This week / Later") — post-v1, as an *option*, not a mode to configure.
 - **Assignees**, and with them per-person reminders on shared tasks.
-- **Email/Calendar linking** — arrives with the phase-2 Gmail/Calendar work; as wiki-links or a frontmatter field, decided then rather than reserved now.
+- **Email/Calendar linking** — **decided and landed** (D67, 2026-08-04): **an ordinary markdown link in the task body**, e.g. `[Q2 review](https://calendar.google.com/…)`. Not a frontmatter field (that is the `related[]` this design deleted on purpose) and not a `[[wiki-link]]` (those resolve to vault files; these targets are URLs, and a wiki-link would render as a permanent tombstone). Backrefs stay a grep for the URL, and the board renders a chip by **detecting the link at render time** — computed, never stored, exactly like `overdue`/`pN`. `tasks.create` gained an optional `description` so create-from-event can seed the body with the link.
 - **Inline note-checkbox ↔ task sync** — rejected for v1.

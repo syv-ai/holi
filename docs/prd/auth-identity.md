@@ -36,7 +36,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 - **Authorization checks in the client.** They would be advisory at best and misleading at worst.
 - **Invite flows.** Adding a collaborator is a GitHub action; Holi deep-links to it.
 - **Per-document ACLs within a vault** — the access unit is the repo.
-- **Google Workspace SSO** — removed. Returns only if the phase-2 Gmail/Calendar work needs Google OAuth, and that grant is about *data access*, not sign-in.
+- **Google Workspace SSO** — removed, and it stayed removed. The phase-2 Gmail/Calendar work (D67) did add a **Google OAuth grant**, but it is about *data access*, not sign-in: see §A second provider below. Identity is still GitHub, alone.
 - **SCIM / directory provisioning, admin console, audit-log UI.**
 
 ---
@@ -149,6 +149,25 @@ As FR-8: create a private repo, seed, commit, push, open. Seeding matters more t
 **This is the honest description of the access model** and it should be stated in the product, not just here: **removing someone stops future sync; it does not reach back and remove what they already have.** That was true of any git-backed system, and it was true of the old design too the moment a clone existed.
 
 ---
+
+## A second provider: Google, for data (D67)
+
+Holi holds **two independent OAuth grants**, and the distinction between them is the point:
+
+| | GitHub | Google |
+|---|---|---|
+| What it is | **Identity + access** — who you are, and what you may push | **A data connector** — read your Gmail and Calendar |
+| Grant | Device flow | **Authorization code + PKCE, loopback `127.0.0.1`** redirect |
+| Scopes | `repo`, `read:user`, `read:org` | `gmail.readonly`, `calendar.readonly` — **read-only** |
+| Without it | Holi cannot open a vault | Holi works completely; mail/calendar surfaces say "not connected" |
+
+**They never touch.** Signing out of GitHub leaves the Google connection alone, and disconnecting Google touches no vaults, no clones, and no GitHub session. Coupling them would mean losing a mail connector because a git token was revoked — surprising, and wrong in both directions.
+
+**Why a different grant shape.** The device flow is right for GitHub and unavailable here: Google does not approve its limited-input device flow for the Gmail/Calendar scopes. Loopback + PKCE is Google's sanctioned desktop pattern — the system browser, a one-shot listener on an ephemeral `127.0.0.1` port, and a code bound to a secret this process invented. As with GitHub, **no confidential secret ships**: a desktop client's id (and the `client_secret` Google issues with it) are not secrets, and PKCE is what actually protects the grant.
+
+**Token custody is stricter than GitHub's, deliberately.** Google returns a short-lived access token plus a refresh token that **rotates on use**, so two independent refreshers can invalidate each other. Therefore **Electron main is the sole token authority**: it is the only process that calls Google's token endpoint, it single-flights the refresh, and every other consumer — including the agent, which runs in its own process — asks *main* for results rather than holding a token. Tokens live in the OS keychain via `safeStorage`, in their own entry, keyed by the Google account's stable `sub` (never the email — a Workspace address can be renamed and reassigned, the same reasoning that keys GitHub on `accountId`).
+
+**Disconnect revokes.** It calls Google's `/revoke` and then clears the keychain entry; deleting only the local copy would leave a live grant on the user's account with nothing in Holi to show for it. A failed revoke still clears locally — the user asked to disconnect.
 
 ## Access model
 

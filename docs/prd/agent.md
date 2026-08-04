@@ -149,7 +149,15 @@ Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.lo
 
 **Everything else is native:** note read/write/append/backrefs → `Read/Write/Edit/Grep`; tasks → file ops; memory → edits on `USER.local.md`/`MEMORY.md`; skills → edits on skill files; asking the user → native `AskUserQuestion`; git → `Bash`; conversation recall → `claude --resume`.
 
-**Phase 2** brings calendar and mail — external Google data, not vault files, and therefore the one category that will genuinely need an MCP server again. Reintroducing one *then*, for data that is not in the repo, is consistent with the rule; keeping one *now* would not be.
+**Phase 2 brought calendar and mail — and did *not* need an MCP server after all.** This document long predicted that external Google data would be the one category to justify reintroducing one. Building it (D67) showed the prediction was wrong, and the reason is worth keeping: what the agent actually needs is *a documented command that returns JSON*, and `Bash` already runs commands. An MCP server would have added a process lifecycle and a handshake to deliver something a shell script delivers.
+
+So the tool surface is still **zero ops**, and it now holds for external data too:
+
+- **`$HOLI_GOOGLE_BIN`** — an absolute path to `holi-google`, a generated `/bin/sh` script (same shape as `$TYPST_BIN`). `holi-google agenda` / `search <query>` / `read <threadId>` print JSON.
+- It talks to a **loopback ops server in main** (`main/google/ops-server.ts`), modelled on this PRD's own hook server: ephemeral port, per-instance token, `127.0.0.1` only, reaching the child as `$HOLI_GOOGLE_PORT`/`$HOLI_GOOGLE_TOKEN`. All three keys are stripped from the inherited env before being set, so a vault's own env cannot redirect the agent at someone else's mailbox.
+- **Main makes the Google calls and holds the tokens.** The agent receives results, never a credential — main is the sole token authority, so there is one refresher and a disconnect takes effect everywhere at once.
+- Capability is documented as a **seeded skill** (`.claude/skills/gmail-calendar/`), which is where capability has lived since this PRD was written.
+- **Read-only**: the granted scopes are `gmail.readonly` + `calendar.readonly`, so the agent cannot send mail or change a calendar — not by policy, but because no such scope exists to use.
 
 ## Permissions & security posture
 
@@ -252,4 +260,4 @@ Each slice gets its own plan.
 - **Self-improvement / curator loop.** Not in v1: designed around headless background forks, unproven value, and in a shared vault one person's background agent auto-editing **shared** skills/memory is a real hazard. If revived: scope auto-edits to the **personal** layer only; shared-layer changes become **proposals requiring approval**.
 - **Vault apps** — post-v1, design in [`vault-apps.md`](vault-apps.md).
 - **Agent theme proposals** — deferred.
-- **Calendar + mail** — phase 2, and the one place a Holi MCP server is expected to return, because that data is not in the repo.
+- **Calendar + mail** — **landed** (D67, 2026-08-04) as a skill + `holi-google` command over a loopback ops channel. The long-standing expectation that it would bring back an MCP server did not survive the build; see §Tool surface.

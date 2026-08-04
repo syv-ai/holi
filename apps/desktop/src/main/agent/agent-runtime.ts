@@ -60,6 +60,14 @@ export interface AgentEnvOpts {
   /** The resolved typst binary (find-only). Set as `$TYPST_BIN` so the seeded
    *  md-to-pdf skill can render with the same engine the UI's Convert uses. */
   typstBin?: string | null
+  /** The Google ops channel (D67): where `holi-google` sends its requests, and
+   *  the per-instance token that proves it is us. The agent never receives a
+   *  Google token — main holds those and makes the calls itself. */
+  googlePort?: number | null
+  googleToken?: string | null
+  /** Absolute path to the generated `holi-google` command, as `$HOLI_GOOGLE_BIN`
+   *  — the same shape as `$TYPST_BIN`, and what the seeded skill invokes. */
+  googleBin?: string | null
 }
 
 export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
@@ -75,9 +83,15 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   // hook target, then set our own only when a live server is running.
   delete env.HOLI_HOOK_PORT
   delete env.HOLI_HOOK_TOKEN
+  delete env.HOLI_GOOGLE_PORT
+  delete env.HOLI_GOOGLE_TOKEN
+  delete env.HOLI_GOOGLE_BIN
   if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
   if (opts.hookToken) env.HOLI_HOOK_TOKEN = opts.hookToken
   if (opts.typstBin) env.TYPST_BIN = opts.typstBin
+  if (opts.googlePort != null) env.HOLI_GOOGLE_PORT = String(opts.googlePort)
+  if (opts.googleToken) env.HOLI_GOOGLE_TOKEN = opts.googleToken
+  if (opts.googleBin) env.HOLI_GOOGLE_BIN = opts.googleBin
   return env
 }
 

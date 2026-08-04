@@ -32,9 +32,10 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
   | { kind: 'board' }
-  /** The Google agenda (D67). A **singleton** like the board — there is only
-   *  ever one of it, and it is account-wide rather than vault-scoped. */
+  /** The Google agenda and mail (D67). **Singletons** like the board — there is
+   *  only ever one of each, and both are account-wide rather than vault-scoped. */
   | { kind: 'agenda' }
+  | { kind: 'mail' }
 
 /** The non-note surfaces: unique, pinned by construction, and opened from a nav
  *  button rather than from a file. */
@@ -103,6 +104,10 @@ export function openBoard(workspace: Workspace): Workspace {
 
 export function openAgenda(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'agenda')
+}
+
+export function openMail(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'mail')
 }
 
 /**

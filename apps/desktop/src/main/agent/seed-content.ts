@@ -28,6 +28,7 @@ import { writeAtomic } from '../vault/vault-files'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
+import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -236,6 +237,7 @@ export const SEED_FILES: Record<string, string> = {
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
+  '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
 }
 
 export const GITIGNORE = '.gitignore'

@@ -26,7 +26,7 @@ import {
   patchTaskAtom,
   tasksAtom,
 } from '@/state/tasks'
-import { EditorPane } from '@/composites'
+import { EditorPane, GoogleLinkChips } from '@/composites'
 import { RecurrenceRows, TaskDescriptionEditor, TaskScalarFields } from './TaskDetail'
 
 export function TaskFileEditor({
@@ -112,6 +112,13 @@ function TaskFileBody({ task, onEdit }: { task: Task; onEdit?: () => void }): Re
           {laneLabel(laneOf(task))}
         </p>
       </Tooltip>
+
+      {/* Linked mail/calendar (D67) — **detected in the body, never stored.**
+          The link itself is ordinary markdown in the description below; this row
+          is a rendering of it, exactly as `overdue`/`pN` are renderings of `due`
+          and `priority`. Deleting the link in the body removes the chip; nothing
+          writes back. */}
+      <GoogleLinkChips body={task.description} />
 
       {/* The properties, constrained so they read as a header band, not a field that
           stretches the whole pane. */}

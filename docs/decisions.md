@@ -169,7 +169,17 @@ Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkC
 
 **Rejected.** *Google device flow* — not approved for the sensitive/restricted scopes; a verification dead end. *Each consumer refreshes its own token* — races on the rotating refresh token. *An MCP server* — reintroduces a server+handshake lifecycle against the held pure-CC stance; skill+CLI recovers send-gating via Bash rules. *A frontmatter link field* — the `related[]` ghost the tasks PRD killed. *Internal Workspace-only OAuth app* — erases verification but bakes "@syv.ai only" in, incompatible with reusing the existing External registration. *Persist mail to disk* — contradicts "Google is source of truth".
 
-**Consolidates into** `prd/_phase2-google-mail-calendar.md` (the five open questions become settled prose), and — when built — `prd/agent.md` (§Tool surface: the CLI surface for external data), `prd/tasks.md` (§Deferred: linking resolved to a body link), `prd/auth-identity.md` (the second, independent OAuth provider). *Stays in the inbox until consolidated.*
+**Built 2026-08-04 — all four slices.** `main/google/{pkce,loopback-flow,loopback-server,token-store,session,api,calendar,gmail,ops-server,cli,electron}.ts`, a `google` sub-router, agenda + mail workspace tabs, and the seeded `gmail-calendar` skill. Three decisions were *sharpened by building them*, and each is recorded in the spec:
+
+1. **Mail is extracted as plain text, never sanitized HTML.** The design said "sanitize"; the build says text. A message body is attacker-controlled by definition, and sanitizing means shipping a sanitizer and trusting it forever — plus re-enabling tracking pixels on the first image load. Extracting text removes the class *by construction* (the body only ever lands in a text node) and adds no dependency. Cost: designed newsletters read plainly.
+2. **The ops channel moved from slice 1 to slice 4**, where its only consumer lives — a localhost server with no caller is machinery bought early. It is modelled on `agent/hook-server.ts` (ephemeral port, per-instance token, loopback only) rather than being a second bespoke transport.
+3. **`holi-google` is a generated `/bin/sh` script**, not a shipped binary: no packaging entry, readable on the machine it runs on, and it re-reads `$HOLI_GOOGLE_PORT`/`$HOLI_GOOGLE_TOKEN` per invocation. Its path reaches the agent as `$HOLI_GOOGLE_BIN`, mirroring `$TYPST_BIN`; all three keys are stripped from the inherited env first, so a vault cannot redirect the agent at another mailbox.
+
+Also landed: `tasks.create` gained an optional `description`, because create-from-event writes the link into the task **body** and silently dropping it would have defeated the representation D67 chose.
+
+**Not verified, and not verifiable here:** `GOOGLE_CLIENT_ID` is an empty placeholder pending the value from the existing registration, so the live OAuth round-trip — and everything downstream of a real token — has never run against Google. The suites exercise fakes.
+
+**Consolidates into** `prd/_phase2-google-mail-calendar.md` (the five open questions became settled prose — done), and `prd/agent.md` (§Tool surface: the CLI surface for external data, and that the "MCP returns here" prediction was **declined**), `prd/tasks.md` (§Deferred: linking resolved to a body link), `prd/auth-identity.md` (the second, independent OAuth provider). *Stays in the inbox until consolidated into those three PRDs.*
 
 ---
 

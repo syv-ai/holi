@@ -1,5 +1,11 @@
 # Plan — Google connector (slice 1 of the mail/calendar pillar)
 
+> **Status: done (2026-08-04), and all four slices followed the same day.** The
+> spec's §Build status is the current record. Two things below were changed by
+> building them: mail is rendered as **extracted plain text, not sanitized HTML**,
+> and `holi-google` is a **generated shell script** rather than a shipped binary.
+> The gotcha list survived intact and each item earned its test.
+
 **Design:** `docs/specs/2026-08-04-google-mail-calendar-design.md` · **ADR:** D67 · **Date:** 2026-08-04
 
 The tracer bullet everything else needs: obtain a Google grant on the desktop with no server, hold it in the keychain, and refresh it from exactly one place. Ends with "connected as X" in the UI and a live authenticated Google API call.
