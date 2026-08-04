@@ -1,0 +1,7 @@
+{
+  "name": "Proposal",
+  "description": "Branded syv.ai proposal (tilbud): numbered sections, logo + date header, signature and diagram tokens.",
+  "fields": [
+    { "key": "date", "label": "Date", "type": "date", "required": false }
+  ]
+}
