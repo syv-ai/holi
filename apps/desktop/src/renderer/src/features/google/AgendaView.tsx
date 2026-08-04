@@ -27,6 +27,10 @@ import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
 
+/** Mirrors `main/google/calendar.ts`. */
+type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
+type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
+
 interface CalendarEvent {
   id: string
   title: string
@@ -41,7 +45,25 @@ interface CalendarEvent {
   mine: boolean
   /** Google's own hex colour for the source calendar, or null. */
   color: string | null
-  meetLink?: string
+  /** The user's own RSVP; null when they are not an attendee. */
+  myResponse: RsvpStatus | null
+  kind: EventKind
+  /** False for a `transparent` event — on the calendar, but not taking time. */
+  busy: boolean
+  description: string | null
+  attendeeCount: number
+  organizer: string | null
+  /** Meet, Zoom or Teams. */
+  conferenceUrl: string | null
+  recurring: boolean
+}
+
+/** What a non-meeting block is, in the two words a row has space for. `default`
+ *  gets nothing: an ordinary meeting is the baseline and labelling it is noise. */
+const KIND_LABELS: Partial<Record<EventKind, string>> = {
+  outOfOffice: 'out of office',
+  focusTime: 'focus time',
+  birthday: 'birthday',
 }
 
 interface CalendarChoice {
@@ -91,6 +113,27 @@ function dayLabel(key: string): string {
   if (days === 0) return 'Today'
   if (days === 1) return 'Tomorrow'
   return date.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })
+}
+
+/**
+ * The second line of a row: what this block is, whose it is, and how big.
+ *
+ * Ordered by how often it settles a question at a glance — an out-of-office
+ * that reads like a meeting is how someone gets double-booked on leave, and
+ * "12 people" is the difference between a meeting you can skip and one you
+ * cannot. The organizer is named only for someone else's calendar, where
+ * "who called this" is not already obvious.
+ */
+function detailLine(event: CalendarEvent): string {
+  return [
+    KIND_LABELS[event.kind],
+    event.calendarName || undefined,
+    event.location,
+    event.attendeeCount > 1 ? `${event.attendeeCount} people` : undefined,
+    event.organizer !== null && !event.mine ? event.organizer : undefined,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function timeLabel(event: CalendarEvent): string {
@@ -168,7 +211,12 @@ export function AgendaView() {
         remote,
         title: event.title,
         folder: '',
-        description: `[${event.title}](${event.htmlLink})\n`,
+        // The link first, then whatever the invitation actually said — a task
+        // made from a board call is worth opening because the dial-in and the
+        // agenda came with it, not because it repeats the title.
+        description:
+          `[${event.title}](${event.htmlLink})\n` +
+          (event.description === null ? '' : `\n${event.description}\n`),
       })
       openNote(path)
     } finally {
@@ -235,7 +283,10 @@ export function AgendaView() {
                 {events.map((event) => (
                   <li
                     key={`${event.calendarId}:${event.id}`}
-                    className="group flex items-baseline gap-3 rounded px-2 py-1.5 hover:bg-secondary/60"
+                    // An event that does not block time is on the calendar
+                    // without claiming any: an FYI, a webinar someone forwarded.
+                    // Dimming says "this is not why your day is full".
+                    className={`group flex items-baseline gap-3 rounded px-2 py-1.5 hover:bg-secondary/60 ${event.busy ? '' : 'opacity-60'}`}
                   >
                     <Swatch color={event.color} />
                     <span className="w-28 shrink-0 font-mono text-xs text-muted-foreground">
@@ -248,23 +299,40 @@ export function AgendaView() {
                       <span className={`block truncate text-sm ${event.mine ? '' : 'text-muted-foreground'}`}>
                         {event.title}
                       </span>
-                      {(event.location !== undefined || event.calendarName !== '') && (
+                      {detailLine(event) !== '' && (
                         <span className="block truncate text-xs text-muted-foreground">
-                          {[event.calendarName, event.location].filter(Boolean).join(' · ')}
+                          {detailLine(event)}
                         </span>
                       )}
                     </span>
 
+                    {/* An unanswered invitation is the one row on an agenda that
+                        is a task rather than a fact, so it stays visible instead
+                        of hiding until hover with the other actions. */}
+                    {event.myResponse === 'needsAction' && (
+                      <Tooltip content="answer this invitation in Google Calendar">
+                        <Button
+                          variant="secondary"
+                          size="xs"
+                          className="shrink-0"
+                          aria-label={`answer ${event.title} in Google Calendar`}
+                          onClick={() => void window.holi.openExternal(event.htmlLink)}
+                        >
+                          RSVP
+                        </Button>
+                      </Tooltip>
+                    )}
+
                     {/* Actions stay hidden until hover: an agenda is read most of
                         the time, and three buttons per row is a wall. */}
                     <span className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-                      {event.meetLink !== undefined && (
+                      {event.conferenceUrl !== null && (
                         <Tooltip content="join the meeting">
                           <Button
                             variant="ghost"
                             size="icon-xs"
                             aria-label={`join ${event.title}`}
-                            onClick={() => void window.holi.openExternal(event.meetLink!)}
+                            onClick={() => void window.holi.openExternal(event.conferenceUrl!)}
                           >
                             <Video size={14} />
                           </Button>
