@@ -1,0 +1,161 @@
+/**
+ * Third-party HTML, rendered in a page of its own.
+ *
+ * Google hands Holi markup that a stranger wrote, in two places: a mail message
+ * body, and a **calendar event description** — an invitation's description is
+ * whoever-invited-you's HTML, dial-in blocks and all, and Google Calendar's own
+ * UI renders it as markup. So both go down one path rather than two, and the
+ * reasoning lives here once: [[mail-html]] decides what markup survives,
+ * [[mail-frame]] decides what document it survives *in*, and neither is a
+ * substitute for the other. Sanitized markup never lands in the app's document.
+ *
+ * Remote content is blocked until asked for, per block of HTML — the same
+ * decision every mail client makes, for the same reason: an image fetched from
+ * a sender's server is a read receipt nobody agreed to. A calendar invitation
+ * is no different; a tracking pixel in a meeting description is still a pixel.
+ *
+ * The `mail-` module names predate the calendar using them. They are not
+ * mail-specific and are deliberately not renamed — the sanitizer and the frame
+ * document carry their own test suites under those names, and churning them
+ * would move the security-relevant code without changing it.
+ */
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { ImageOff } from 'lucide-react'
+import { Button } from '@/primitives'
+import {
+  mailFrameDocument,
+  openableLink,
+  useMailPalette,
+  type MailPalette,
+} from '../../lib/mail-frame'
+import { sanitizeMailHtml } from '../../lib/mail-html'
+
+interface SandboxedHtmlProps {
+  /** Raw and untrusted. Sanitizing happens **here** — a caller must not pre-sanitize
+   *  and must not pass anything it has already put through the sanitizer twice. */
+  html: string
+  /** Names the frame for a screen reader, e.g. `message from Jane`. */
+  label: string
+}
+
+/**
+ * One block of untrusted HTML: a sandboxed frame, with images held back.
+ *
+ * Re-sanitizing from the *original* HTML when the user unblocks (rather than
+ * stashing the stripped URLs and putting them back) keeps one code path —
+ * whatever renders has been through the sanitizer under the current setting,
+ * always.
+ */
+export function SandboxedHtml({ html, label }: SandboxedHtmlProps): React.JSX.Element {
+  const [allowRemoteContent, setAllowRemoteContent] = useState(false)
+  const palette = useMailPalette()
+  const sanitized = useMemo(
+    () => sanitizeMailHtml(html, { allowRemoteContent }),
+    [html, allowRemoteContent],
+  )
+
+  return (
+    <>
+      {sanitized.blockedRemoteCount > 0 && (
+        <div className="mb-2 flex items-center gap-2 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
+          <ImageOff size={12} className="shrink-0" />
+          <span className="min-w-0 flex-1">
+            Images blocked — loading them tells the sender you opened this.
+          </span>
+          <Button variant="ghost" size="xs" onClick={() => setAllowRemoteContent(true)}>
+            Load images
+          </Button>
+        </div>
+      )}
+      <HtmlFrame
+        html={sanitized.html}
+        palette={palette}
+        allowRemoteContent={allowRemoteContent}
+        label={label}
+      />
+    </>
+  )
+}
+
+interface HtmlFrameProps {
+  /** Sanitizer output. Nothing else may be passed. */
+  html: string
+  palette: MailPalette
+  allowRemoteContent: boolean
+  label: string
+}
+
+/**
+ * The content's own page.
+ *
+ * Written into rather than handed a `srcdoc`, because the app needs the
+ * document anyway — to size the frame and to catch link clicks — and writing
+ * gives it on the same tick instead of after a load event. Everything reaching
+ * in here is the *app's* script touching an inert document; the frame carries
+ * no `allow-scripts`, so nothing inside it ever runs.
+ */
+function HtmlFrame({
+  html,
+  palette,
+  allowRemoteContent,
+  label,
+}: HtmlFrameProps): React.JSX.Element {
+  const ref = useRef<HTMLIFrameElement>(null)
+  const [height, setHeight] = useState(0)
+
+  // Layout, not passive: the frame has no height until it is measured, so an
+  // ordinary effect would paint every block at zero height first and snap.
+  useLayoutEffect(() => {
+    const frame = ref.current
+    const document_ = frame?.contentDocument
+    if (document_ == null) return
+
+    document_.open()
+    document_.write(mailFrameDocument({ html, palette, allowRemoteContent }))
+    document_.close()
+
+    /**
+     * A link must not navigate anything — inside the frame it would replace the
+     * content with a live web page, which is the one place remote content was
+     * being kept out of. Delegated, so it covers every anchor in markup nobody
+     * here wrote.
+     */
+    const onClick = (event: MouseEvent) => {
+      const anchor = (event.target as Element | null)?.closest('a[href]')
+      if (anchor == null) return
+      // Prevent first, decide second: an untrusted scheme must still not navigate.
+      event.preventDefault()
+      const href = openableLink(anchor.getAttribute('href'))
+      if (href !== null) void window.holi.openExternal(href)
+    }
+    document_.addEventListener('click', onClick)
+
+    // The frame has no intrinsic height, and its content's height is not known
+    // until it has been laid out — nor stable afterwards, since unblocked images
+    // arrive later and push everything down.
+    const measure = () => setHeight(document_.documentElement.scrollHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(document_.documentElement)
+    // Capture: `load` on an <img> does not bubble.
+    document_.addEventListener('load', measure, true)
+
+    return () => {
+      document_.removeEventListener('click', onClick)
+      document_.removeEventListener('load', measure, true)
+      observer.disconnect()
+    }
+  }, [html, palette, allowRemoteContent])
+
+  return (
+    <iframe
+      ref={ref}
+      // `allow-same-origin` and nothing else. No `allow-scripts` — granting both
+      // is the footgun that lets framed content drop its own sandbox.
+      sandbox="allow-same-origin"
+      aria-label={label}
+      className="block w-full rounded-md border-0"
+      style={{ height }}
+    />
+  )
+}

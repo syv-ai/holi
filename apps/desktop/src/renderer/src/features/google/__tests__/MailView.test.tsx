@@ -421,3 +421,40 @@ test('refuses to open a link scheme it does not trust, and still does not naviga
   expect(openExternal).not.toHaveBeenCalled()
   expect(notCancelled).toBe(false)
 })
+
+/**
+ * The split.
+ *
+ * The width itself is not assertable — `react-resizable-panels` sizes from
+ * measured geometry and jsdom measures none. What these check is the wiring
+ * either side of the measurement: that there is a handle to drag at all
+ * (the list was a fixed `w-80` before), and that a width already saved reaches
+ * the panel rather than being read from a per-vault store mail never writes to.
+ */
+test('the list and the reader are separated by a draggable handle', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  expect(screen.getByRole('separator')).toBeInTheDocument()
+})
+
+test('remembers its width per account, not per vault', async () => {
+  const reads = vi.spyOn(Storage.prototype, 'getItem')
+  threadMock.mockResolvedValue(page([summary()]))
+
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  const keys = reads.mock.calls.map(([key]) => key)
+  reads.mockRestore()
+
+  // Mail shows one Google account whichever vault is open, and opens with no
+  // vault at all — so the split is filed under the account. The per-vault store
+  // would remember a different width per vault for identical content, and would
+  // decline to save anything at all until a vault exists (`usePanelLayout`
+  // cannot key a write on a null remote).
+  expect(keys).toContain('holi:panelLayouts:global')
+  expect(keys).not.toContain('holi:panelLayouts')
+})

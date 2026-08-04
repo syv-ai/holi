@@ -9,20 +9,14 @@
  * **Bodies are sanitized HTML in a sandboxed frame** (D67, revised). A message
  * arrives with both an `html` part and a plain-text one; HTML wins when it
  * exists, because mail is designed and a reader that flattens every newsletter
- * to text is not a reader. Two independent defences, and neither is a
- * substitute for the other: `sanitizeMailHtml` decides what markup survives,
- * and `mailFrameDocument` puts the survivors in a document of their own, with
- * their own far stricter CSP. Sanitized markup never lands in *this* document.
- *
- * Remote content is blocked until the user asks for it, per message, which is
- * what every mail client does and for the same reason: an image fetched from a
- * sender's server is a read receipt they did not ask permission for.
+ * to text is not a reader. The two defences that make that safe, and the
+ * blocking of remote content, live in [[SandboxedHtml]] — shared with the
+ * agenda, whose event descriptions are third-party HTML by the same logic.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   ExternalLink,
   FileText,
-  ImageOff,
   Link2,
   Mail,
   MailMinus,
@@ -41,18 +35,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Input,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
   Tooltip,
 } from '@/primitives'
-import {
-  mailFrameDocument,
-  openableLink,
-  useMailPalette,
-  type MailPalette,
-} from '../../lib/mail-frame'
-import { sanitizeMailHtml } from '../../lib/mail-html'
+import { SandboxedHtml } from './SandboxedHtml'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
+import { useGlobalPanelLayout } from '../../state/preferences'
 
 /** Mirrors `main/google/gmail.ts`. */
 type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
@@ -160,6 +152,9 @@ export function MailView() {
   const [loadingMore, setLoadingMore] = useState(false)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
+  /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
+   *  opens with no vault at all. See `useGlobalPanelLayout`. */
+  const layout = useGlobalPanelLayout('mail')
 
   /**
    * The category actually sent.
@@ -249,231 +244,264 @@ export function MailView() {
   }
 
   return (
-    <div className="flex h-full min-h-0">
-      {/* The list */}
-      <div className="flex min-h-0 w-80 shrink-0 flex-col border-r border-border">
-        <div className="flex h-11 shrink-0 items-center gap-1 px-2">
-          <h2 className="flex items-center gap-2 px-1 text-sm font-medium">
-            <Mail size={15} />
-            Mail
-          </h2>
-          {/* Gone during a search, as Gmail's own tabs are: a picker reading
+    <ResizablePanelGroup
+      orientation="horizontal"
+      className="h-full min-h-0"
+      defaultLayout={layout.defaultLayout}
+      onLayoutChanged={layout.onLayoutChanged}
+    >
+      {/* The list. Was a fixed `w-80`, which is the wrong constant for both ends
+          of the range this view is actually used at — a long subject truncates
+          to uselessness on a wide window, and on a narrow one the list crowds
+          out the message it exists to open. */}
+      <ResizablePanel id="mail-list" defaultSize={320} minSize={220} maxSize={640}>
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex h-11 shrink-0 items-center gap-1 px-2">
+            <h2 className="flex items-center gap-2 px-1 text-sm font-medium">
+              <Mail size={15} />
+              Mail
+            </h2>
+            {/* Gone during a search, as Gmail's own tabs are: a picker reading
               "Promotions" over unfiltered results claims a filter that is not
               applied. Clearing the search brings it back. */}
-          {submitted === '' && <CategoryPicker category={category} onChange={setCategory} />}
-          <Tooltip content="refresh">
-            <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={load}>
-              <RefreshCw size={14} />
-            </Button>
-          </Tooltip>
-        </div>
+            {submitted === '' && <CategoryPicker category={category} onChange={setCategory} />}
+            <Tooltip content="refresh">
+              <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={load}>
+                <RefreshCw size={14} />
+              </Button>
+            </Tooltip>
+          </div>
 
-        {/* Enter submits. No <form> — the gate keeps native elements inside
+          {/* Enter submits. No <form> — the gate keeps native elements inside
             primitives/, and a search box needs nothing a form would add. */}
-        <div className="flex shrink-0 items-center gap-1 px-2 pb-2">
-          <Search size={14} className="shrink-0 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setSubmitted(query)
-            }}
-            placeholder="Search mail — Gmail syntax"
-            className="h-7 text-xs"
-            aria-label="search mail"
-          />
-        </div>
+          <div className="flex shrink-0 items-center gap-1 px-2 pb-2">
+            <Search size={14} className="shrink-0 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') setSubmitted(query)
+              }}
+              placeholder="Search mail — Gmail syntax"
+              className="h-7 text-xs"
+              aria-label="search mail"
+            />
+          </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {list.kind === 'loading' && <Note>Loading…</Note>}
-          {list.kind === 'disconnected' && (
-            <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
-          )}
-          {list.kind === 'error' && <Note>{list.message}</Note>}
-          {/* Naming the tab matters: an empty tab and an empty mailbox look
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {list.kind === 'loading' && <Note>Loading…</Note>}
+            {list.kind === 'disconnected' && (
+              <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
+            )}
+            {list.kind === 'error' && <Note>{list.message}</Note>}
+            {/* Naming the tab matters: an empty tab and an empty mailbox look
               identical otherwise, which is exactly how defaulting to Primary
               read as "my mail is gone" on an inbox that has no tabs. */}
-          {list.kind === 'ready' && list.threads.length === 0 && (
-            <Note>
-              {filter === undefined
-                ? 'No threads.'
-                : `Nothing in ${CATEGORIES.find((c) => c.value === filter)?.label ?? filter}. Gmail’s tabs only apply if your inbox uses them.`}
-            </Note>
-          )}
-          {list.kind === 'ready' &&
-            list.threads.map((thread) => (
-              <Button
-                key={thread.id}
-                variant="ghost"
-                onClick={() => openThread(thread)}
-                className={`block h-auto w-full rounded-none border-b border-border/50 px-3 py-2 text-left ${
-                  openId === thread.id ? 'bg-secondary' : ''
-                }`}
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  {/* Weight alone was too quiet to scan — an explicit dot is
+            {list.kind === 'ready' && list.threads.length === 0 && (
+              <Note>
+                {filter === undefined
+                  ? 'No threads.'
+                  : `Nothing in ${CATEGORIES.find((c) => c.value === filter)?.label ?? filter}. Gmail’s tabs only apply if your inbox uses them.`}
+              </Note>
+            )}
+            {list.kind === 'ready' &&
+              list.threads.map((thread) => (
+                <Button
+                  key={thread.id}
+                  variant="ghost"
+                  onClick={() => openThread(thread)}
+                  className={`block h-auto w-full rounded-none border-b border-border/50 px-3 py-2 text-left ${
+                    openId === thread.id ? 'bg-secondary' : ''
+                  }`}
+                >
+                  <span className="flex items-baseline justify-between gap-2">
+                    {/* Weight alone was too quiet to scan — an explicit dot is
                       what makes unread readable at a glance, and it holds the
                       row's left edge so read and unread stay aligned. */}
-                  <span
-                    aria-hidden
-                    className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
-                      thread.unread ? 'bg-primary' : 'bg-transparent'
-                    }`}
-                  />
-                  <span
-                    className={`min-w-0 flex-1 truncate text-xs ${
-                      thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-                    }`}
-                  >
-                    {thread.from}
-                    {thread.messageCount > 1 && (
-                      <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
-                    )}
-                  </span>
-                  {/* "You replied and are waiting on them" — see `answered` in
+                    <span
+                      aria-hidden
+                      className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
+                        thread.unread ? 'bg-primary' : 'bg-transparent'
+                      }`}
+                    />
+                    <span
+                      className={`min-w-0 flex-1 truncate text-xs ${
+                        thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {thread.from}
+                      {thread.messageCount > 1 && (
+                        <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
+                      )}
+                    </span>
+                    {/* "You replied and are waiting on them" — see `answered` in
                       main/google/gmail.ts for why it is the LAST message that
                       decides, not whether a reply exists anywhere. */}
-                  {thread.starred && (
-                    <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
-                  )}
-                  {/* "You started replying and stopped" — a third state,
+                    {thread.starred && (
+                      <Star
+                        size={11}
+                        className="shrink-0 self-center text-muted-foreground"
+                        aria-label="starred"
+                      />
+                    )}
+                    {/* "You started replying and stopped" — a third state,
                       distinct from both answered and untouched, and the only
                       trace of it anywhere in the list. */}
-                  {thread.hasDraft && (
-                    <PenLine size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
-                  )}
-                  {thread.answered && (
-                    <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
-                  )}
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {shortDate(thread.date)}
+                    {thread.hasDraft && (
+                      <PenLine
+                        size={11}
+                        className="shrink-0 self-center text-muted-foreground"
+                        aria-label="unsent draft"
+                      />
+                    )}
+                    {thread.answered && (
+                      <Reply
+                        size={11}
+                        className="shrink-0 self-center text-muted-foreground"
+                        aria-label="you replied"
+                      />
+                    )}
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {shortDate(thread.date)}
+                    </span>
                   </span>
-                </span>
-                <span
-                  className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}
-                >
-                  {thread.subject}
-                </span>
-                <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
-                  {thread.snippet}
-                </span>
-                {thread.labels.length > 0 && (
-                  <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
-                    {thread.labels.map((label) => (
-                      <span
-                        key={label}
-                        className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
-                      >
-                        {label}
-                      </span>
-                    ))}
+                  <span
+                    className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}
+                  >
+                    {thread.subject}
                   </span>
-                )}
-              </Button>
-            ))}
-          {list.kind === 'ready' && list.nextPageToken !== null && (
-            <div className="p-2">
-              {/* A button, not an infinite scroller: one flick of a trackpad
+                  <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
+                    {thread.snippet}
+                  </span>
+                  {thread.labels.length > 0 && (
+                    <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
+                      {thread.labels.map((label) => (
+                        <span
+                          key={label}
+                          className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </span>
+                  )}
+                </Button>
+              ))}
+            {list.kind === 'ready' && list.nextPageToken !== null && (
+              <div className="p-2">
+                {/* A button, not an infinite scroller: one flick of a trackpad
                   against a rate-limited API spends a minute's quota. */}
-              <Button
-                variant="secondary"
-                size="xs"
-                className="w-full"
-                disabled={loadingMore}
-                onClick={() => loadMore(list.nextPageToken!)}
-              >
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* The reader */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {openId === null ? (
-          <Note>Pick a thread to read it.</Note>
-        ) : open === null ? (
-          <Note>Loading…</Note>
-        ) : (
-          <>
-            <div className="flex h-11 shrink-0 items-center gap-2 px-4">
-              <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{open.subject}</h3>
-              <Tooltip content="make a task linking this thread">
                 <Button
                   variant="secondary"
                   size="xs"
-                  className="shrink-0 gap-1"
-                  disabled={remote === null}
-                  onClick={() => void linkToTask(open)}
+                  className="w-full"
+                  disabled={loadingMore}
+                  onClick={() => loadMore(list.nextPageToken!)}
                 >
-                  <Link2 size={13} />
-                  Task
+                  {loadingMore ? 'Loading…' : 'Load more'}
                 </Button>
-              </Tooltip>
-              {/* Advertised by the sender in List-Unsubscribe. Opened, never
-                  requested: firing it silently would be a request made on the
-                  user's behalf, to a URL a stranger chose. */}
-              {openSummary?.unsubscribeUrl != null && (
-                <Tooltip content="open this sender’s unsubscribe page">
+              </div>
+            )}
+          </div>
+        </div>
+      </ResizablePanel>
+
+      {/* The divider IS the handle — the list's old `border-r` came off with the
+          fixed width, so there is one line here rather than two. */}
+      <ResizableHandle />
+
+      {/* The reader */}
+      <ResizablePanel id="mail-reader" minSize={280}>
+        <div className="flex h-full min-h-0 min-w-0 flex-col">
+          {openId === null ? (
+            <Note>Pick a thread to read it.</Note>
+          ) : open === null ? (
+            <Note>Loading…</Note>
+          ) : (
+            <>
+              <div className="flex h-11 shrink-0 items-center gap-2 px-4">
+                <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{open.subject}</h3>
+                <Tooltip content="make a task linking this thread">
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     size="xs"
                     className="shrink-0 gap-1"
-                    aria-label="unsubscribe from this sender"
-                    onClick={() => void window.holi.openExternal(openSummary.unsubscribeUrl!)}
+                    disabled={remote === null}
+                    onClick={() => void linkToTask(open)}
                   >
-                    <MailMinus size={13} />
-                    Unsubscribe
+                    <Link2 size={13} />
+                    Task
                   </Button>
                 </Tooltip>
-              )}
-              {/* Reply is a handoff, not a compose box: the granted scope is
+                {/* Advertised by the sender in List-Unsubscribe. Opened, never
+                  requested: firing it silently would be a request made on the
+                  user's behalf, to a URL a stranger chose. */}
+                {openSummary?.unsubscribeUrl != null && (
+                  <Tooltip content="open this sender’s unsubscribe page">
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      className="shrink-0 gap-1"
+                      aria-label="unsubscribe from this sender"
+                      onClick={() => void window.holi.openExternal(openSummary.unsubscribeUrl!)}
+                    >
+                      <MailMinus size={13} />
+                      Unsubscribe
+                    </Button>
+                  </Tooltip>
+                )}
+                {/* Reply is a handoff, not a compose box: the granted scope is
                   read-only, so Holi cannot send and does not pretend to. */}
-              <Tooltip content="reply in Gmail">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="reply in Gmail"
-                  onClick={() => void window.holi.openExternal(open.webUrl)}
-                >
-                  <Reply size={14} />
-                </Button>
-              </Tooltip>
-              <Tooltip content="open in Gmail">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="open in Gmail"
-                  onClick={() => void window.holi.openExternal(open.webUrl)}
-                >
-                  <ExternalLink size={14} />
-                </Button>
-              </Tooltip>
-            </div>
+                <Tooltip content="reply in Gmail">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="reply in Gmail"
+                    onClick={() => void window.holi.openExternal(open.webUrl)}
+                  >
+                    <Reply size={14} />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="open in Gmail">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="open in Gmail"
+                    onClick={() => void window.holi.openExternal(open.webUrl)}
+                  >
+                    <ExternalLink size={14} />
+                  </Button>
+                </Tooltip>
+              </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
-              {open.messages.map((message) => (
-                <article key={message.id} className="border-b border-border/50 py-3 last:border-0">
-                  <header className="mb-1 flex items-baseline justify-between gap-2 text-xs">
-                    <span className="min-w-0 truncate font-medium">{message.from}</span>
-                    <span className="shrink-0 text-muted-foreground">{shortDate(message.date)}</span>
-                  </header>
-                  {message.to.length > 0 && (
-                    <p className="mb-2 truncate text-[11px] text-muted-foreground">
-                      to {message.to.join(', ')}
-                      {message.cc.length > 0 && ` · cc ${message.cc.join(', ')}`}
-                    </p>
-                  )}
-                  <MessageBody message={message} />
-                  <Attachments attachments={message.attachments} webUrl={open.webUrl} />
-                </article>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
+                {open.messages.map((message) => (
+                  <article
+                    key={message.id}
+                    className="border-b border-border/50 py-3 last:border-0"
+                  >
+                    <header className="mb-1 flex items-baseline justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate font-medium">{message.from}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {shortDate(message.date)}
+                      </span>
+                    </header>
+                    {message.to.length > 0 && (
+                      <p className="mb-2 truncate text-[11px] text-muted-foreground">
+                        to {message.to.join(', ')}
+                        {message.cc.length > 0 && ` · cc ${message.cc.join(', ')}`}
+                      </p>
+                    )}
+                    <MessageBody message={message} />
+                    <Attachments attachments={message.attachments} webUrl={open.webUrl} />
+                  </article>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
   )
 }
 
@@ -568,122 +596,14 @@ function fileSize(bytes: number): string {
 /**
  * One message's body: a sandboxed frame when there is HTML, text otherwise.
  *
- * "Load images" is per message and lives here rather than on the thread, which
- * matches how the decision is actually made — a user trusts *this* newsletter,
- * not everything the thread ever collected. Re-sanitizing from the original
- * HTML on unblock (rather than stashing the stripped URLs and putting them
- * back) keeps one code path: whatever renders has been through the sanitizer
- * with the current setting, always.
+ * "Load images" is per message rather than per thread, which matches how the
+ * decision is actually made — a user trusts *this* newsletter, not everything
+ * the thread ever collected. `SandboxedHtml` holds that, and the frame, because
+ * a calendar event description is the same problem with a different sender.
  */
 function MessageBody({ message }: { message: ThreadMessage }) {
-  const [allowRemoteContent, setAllowRemoteContent] = useState(false)
-  const palette = useMailPalette()
-  const sanitized = useMemo(
-    () => (message.html === null ? null : sanitizeMailHtml(message.html, { allowRemoteContent })),
-    [message.html, allowRemoteContent],
-  )
-
-  if (sanitized === null) {
+  if (message.html === null) {
     return <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
   }
-
-  return (
-    <>
-      {sanitized.blockedRemoteCount > 0 && (
-        <div className="mb-2 flex items-center gap-2 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
-          <ImageOff size={12} className="shrink-0" />
-          <span className="min-w-0 flex-1">
-            Images blocked — loading them tells the sender you opened this.
-          </span>
-          <Button variant="ghost" size="xs" onClick={() => setAllowRemoteContent(true)}>
-            Load images
-          </Button>
-        </div>
-      )}
-      <MailFrame
-        html={sanitized.html}
-        palette={palette}
-        allowRemoteContent={allowRemoteContent}
-        label={`message from ${message.from}`}
-      />
-    </>
-  )
-}
-
-interface MailFrameProps {
-  /** Sanitizer output. Nothing else may be passed. */
-  html: string
-  palette: MailPalette
-  allowRemoteContent: boolean
-  label: string
-}
-
-/**
- * The message's own page.
- *
- * Written into rather than handed a `srcdoc`, because the app needs the
- * document anyway — to size the frame and to catch link clicks — and writing
- * gives it on the same tick instead of after a load event. Everything reaching
- * in here is the *app's* script touching an inert document; the frame carries
- * no `allow-scripts`, so nothing in the message ever runs.
- */
-function MailFrame({ html, palette, allowRemoteContent, label }: MailFrameProps) {
-  const ref = useRef<HTMLIFrameElement>(null)
-  const [height, setHeight] = useState(0)
-
-  // Layout, not passive: the frame has no height until it is measured, so an
-  // ordinary effect would paint every message at zero height first and snap.
-  useLayoutEffect(() => {
-    const frame = ref.current
-    const document_ = frame?.contentDocument
-    if (document_ == null) return
-
-    document_.open()
-    document_.write(mailFrameDocument({ html, palette, allowRemoteContent }))
-    document_.close()
-
-    /**
-     * A link must not navigate anything — inside the frame it would replace the
-     * message with a live web page, which is the one place remote content was
-     * being kept out of. Delegated, so it covers every anchor in markup nobody
-     * here wrote.
-     */
-    const onClick = (event: MouseEvent) => {
-      const anchor = (event.target as Element | null)?.closest('a[href]')
-      if (anchor == null) return
-      // Prevent first, decide second: an untrusted scheme must still not navigate.
-      event.preventDefault()
-      const href = openableLink(anchor.getAttribute('href'))
-      if (href !== null) void window.holi.openExternal(href)
-    }
-    document_.addEventListener('click', onClick)
-
-    // The frame has no intrinsic height, and its content's height is not known
-    // until it has been laid out — nor stable afterwards, since unblocked images
-    // arrive later and push everything down.
-    const measure = () => setHeight(document_.documentElement.scrollHeight)
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(document_.documentElement)
-    // Capture: `load` on an <img> does not bubble.
-    document_.addEventListener('load', measure, true)
-
-    return () => {
-      document_.removeEventListener('click', onClick)
-      document_.removeEventListener('load', measure, true)
-      observer.disconnect()
-    }
-  }, [html, palette, allowRemoteContent])
-
-  return (
-    <iframe
-      ref={ref}
-      // `allow-same-origin` and nothing else. No `allow-scripts` — granting both
-      // is the footgun that lets framed content drop its own sandbox.
-      sandbox="allow-same-origin"
-      aria-label={label}
-      className="block w-full rounded-md border-0"
-      style={{ height }}
-    />
-  )
+  return <SandboxedHtml html={message.html} label={`message from ${message.from}`} />
 }
