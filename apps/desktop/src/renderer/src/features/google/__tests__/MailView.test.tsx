@@ -156,14 +156,49 @@ test('leaves a thread awaiting the user unmarked', async () => {
  * the rest of the mail.
  */
 
-test('defaults the inbox to Primary', async () => {
+test('shows the whole inbox by default, not one of Gmail’s tabs', async () => {
   threadMock.mockResolvedValue(page([summary()]))
 
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  // Composed into Gmail's own grammar in main — the renderer only names the tab.
-  expect(queryOf(0)).toMatchObject({ category: 'primary' })
+  // Regression, reported from real use as "Email view says No threads".
+  // `category:primary` only matches anything if the account USES Gmail's tabs,
+  // and any non-Default inbox layout switches them off. Defaulting to a filter
+  // that can silently empty the inbox is the wrong default: the tabs are
+  // offered, not assumed.
+  expect(queryOf(0).category).toBeUndefined()
+})
+
+test('a search is not narrowed by the category, as in Gmail itself', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
+
+  await user.type(screen.getByLabelText(/search mail/i), 'from:jane{Enter}')
+
+  // Gmail's own search escapes the tab you are standing in. Silently ANDing the
+  // category onto an explicit query is how a search comes back empty for a
+  // reason the user cannot see.
+  await waitFor(() => expect(queryOf(2)).toMatchObject({ query: 'from:jane' }))
+  expect(queryOf(2).category).toBeUndefined()
+})
+
+test('says which tab is empty, rather than implying the inbox is', async () => {
+  threadMock.mockResolvedValue(page([]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+
+  // An empty tab and an empty mailbox look identical otherwise — which is
+  // exactly how the Primary default read as "the mail is gone".
+  expect(await screen.findByText(/nothing in promotions/i)).toBeInTheDocument()
 })
 
 test('lets the user look at Promotions', async () => {

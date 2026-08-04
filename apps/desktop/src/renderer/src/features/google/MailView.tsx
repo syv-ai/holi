@@ -57,9 +57,17 @@ import { openNoteTabAtom } from '../../state/panes'
 /** Mirrors `main/google/gmail.ts`. */
 type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
 
-/** The tabs, in Gmail's own order. Primary first because it is the default and
- *  the only one most inboxes are read in. */
-const CATEGORIES: { value: MailCategory; label: string }[] = [
+/**
+ * Gmail's tabs, plus the default: no tab at all.
+ *
+ * **`null` is first and is the default, deliberately.** `category:primary`
+ * matches nothing unless the account actually *uses* inbox categories, and any
+ * non-Default inbox layout — Priority Inbox, Multiple Inboxes, Important-first
+ * — switches them off. Defaulting to Primary emptied a real inbox
+ * ("Email view says No threads"). The tabs are offered; they are not assumed.
+ */
+const CATEGORIES: { value: MailCategory | null; label: string }[] = [
+  { value: null, label: 'All mail' },
   { value: 'primary', label: 'Primary' },
   { value: 'social', label: 'Social' },
   { value: 'promotions', label: 'Promotions' },
@@ -146,20 +154,26 @@ export function MailView() {
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  /**
-   * Which Gmail tab the list is showing. **Primary by default**, which is the
-   * whole reason Gmail's tabs exist: an inbox that mixes newsletters and
-   * receipts into the same list is the one people stop reading.
-   */
-  const [category, setCategory] = useState<MailCategory>('primary')
+  /** Which Gmail tab the list is showing; `null` is the whole inbox, and the
+   *  default — see `CATEGORIES`. */
+  const [category, setCategory] = useState<MailCategory | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
 
+  /**
+   * The category actually sent.
+   *
+   * **A search escapes the tab**, exactly as Gmail's own search does. ANDing
+   * the category onto an explicit query silently narrows it, and a search that
+   * comes back empty for a reason the user cannot see is worse than no tabs.
+   */
+  const filter = submitted === '' ? (category ?? undefined) : undefined
+
   const load = useCallback(() => {
     setList({ kind: 'loading' })
     void trpc.google.threads
-      .query({ query: submitted, category })
+      .query({ query: submitted, category: filter })
       .then((page) =>
         setList({ kind: 'ready', threads: page.threads, nextPageToken: page.nextPageToken }),
       )
@@ -167,7 +181,7 @@ export function MailView() {
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
         setList(NOT_CONNECTED.test(message) ? { kind: 'disconnected' } : { kind: 'error', message })
       })
-  }, [submitted, category])
+  }, [submitted, filter])
 
   useEffect(load, [load])
 
@@ -181,7 +195,7 @@ export function MailView() {
   const loadMore = (pageToken: string) => {
     setLoadingMore(true)
     void trpc.google.threads
-      .query({ query: submitted, category, pageToken })
+      .query({ query: submitted, category: filter, pageToken })
       .then((page) => {
         setList((previous) =>
           previous.kind === 'ready'
@@ -243,7 +257,10 @@ export function MailView() {
             <Mail size={15} />
             Mail
           </h2>
-          <CategoryPicker category={category} onChange={setCategory} />
+          {/* Gone during a search, as Gmail's own tabs are: a picker reading
+              "Promotions" over unfiltered results claims a filter that is not
+              applied. Clearing the search brings it back. */}
+          {submitted === '' && <CategoryPicker category={category} onChange={setCategory} />}
           <Tooltip content="refresh">
             <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={load}>
               <RefreshCw size={14} />
@@ -273,7 +290,16 @@ export function MailView() {
             <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
           )}
           {list.kind === 'error' && <Note>{list.message}</Note>}
-          {list.kind === 'ready' && list.threads.length === 0 && <Note>No threads.</Note>}
+          {/* Naming the tab matters: an empty tab and an empty mailbox look
+              identical otherwise, which is exactly how defaulting to Primary
+              read as "my mail is gone" on an inbox that has no tabs. */}
+          {list.kind === 'ready' && list.threads.length === 0 && (
+            <Note>
+              {filter === undefined
+                ? 'No threads.'
+                : `Nothing in ${CATEGORIES.find((c) => c.value === filter)?.label ?? filter}. Gmail’s tabs only apply if your inbox uses them.`}
+            </Note>
+          )}
           {list.kind === 'ready' &&
             list.threads.map((thread) => (
               <Button
@@ -466,22 +492,22 @@ function CategoryPicker({
   category,
   onChange,
 }: {
-  category: MailCategory
-  onChange: (category: MailCategory) => void
+  category: MailCategory | null
+  onChange: (category: MailCategory | null) => void
 }) {
   const current = CATEGORIES.find((c) => c.value === category)
   return (
     <DropdownMenu>
-      <Tooltip content="which of Gmail’s tabs to show">
+      <Tooltip content="Gmail’s tabs — only useful if your inbox uses them">
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="xs" className="ml-auto" aria-label="choose a category">
-            {current?.label ?? 'Primary'}
+            {current?.label ?? 'All mail'}
           </Button>
         </DropdownMenuTrigger>
       </Tooltip>
       <DropdownMenuContent align="end">
         {CATEGORIES.map((option) => (
-          <DropdownMenuItem key={option.value} onSelect={() => onChange(option.value)}>
+          <DropdownMenuItem key={option.value ?? 'all'} onSelect={() => onChange(option.value)}>
             {option.label}
           </DropdownMenuItem>
         ))}
