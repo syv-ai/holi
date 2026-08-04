@@ -576,6 +576,127 @@ describe('readThread', () => {
     expect(thread.messages[0]!.to).toEqual(['Doe, Jane', 'bob@y.com'])
   })
 
+  /**
+   * Attachments — free, because `readThread` already asks for `format=full`,
+   * so the parts are in the response either way.
+   */
+
+  it('lists a message’s attachments', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            internalDate: '1000',
+            payload: {
+              headers: [header('Subject', 'The deck')],
+              mimeType: 'multipart/mixed',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64('see attached') } },
+                {
+                  mimeType: 'application/pdf',
+                  filename: 'q2-deck.pdf',
+                  body: { size: 482_113, attachmentId: 'att-1' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    })
+
+    const [message] = (await readThread(api, 't1')).messages
+
+    expect(message!.attachments).toEqual([
+      { filename: 'q2-deck.pdf', mimeType: 'application/pdf', size: 482_113 },
+    ])
+  })
+
+  it('does not mistake the body for an attachment', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [],
+              mimeType: 'multipart/alternative',
+              parts: [
+                { mimeType: 'text/plain', body: { data: b64('the message') } },
+                { mimeType: 'text/html', body: { data: b64('<p>the message</p>') } },
+              ],
+            },
+          },
+        ],
+      },
+    })
+
+    // The mirror of `bodyTextOf`'s attachment test: a part with no filename is
+    // the message, however file-like its mime type looks.
+    expect((await readThread(api, 't1')).messages[0]!.attachments).toEqual([])
+  })
+
+  it('finds an attachment nested in a multipart tree', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [],
+              mimeType: 'multipart/mixed',
+              parts: [
+                {
+                  mimeType: 'multipart/related',
+                  parts: [
+                    { mimeType: 'text/html', body: { data: b64('<p>hi</p>') } },
+                    {
+                      mimeType: 'image/png',
+                      filename: 'signature.png',
+                      body: { size: 4_096, attachmentId: 'att-2' },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    })
+
+    expect((await readThread(api, 't1')).messages[0]!.attachments).toEqual([
+      { filename: 'signature.png', mimeType: 'image/png', size: 4_096 },
+    ])
+  })
+
+  it('reads Cc alongside To', async () => {
+    const { api } = gmail([], {
+      t1: {
+        id: 't1',
+        messages: [
+          {
+            id: 'm1',
+            payload: {
+              headers: [
+                header('To', 'jane@x.com'),
+                header('Cc', '"Doe, Bob" <bob@y.com>, sam@z.com'),
+              ],
+              mimeType: 'text/plain',
+              body: { data: b64('hi') },
+            },
+          },
+        ],
+      },
+    })
+
+    // Who else saw this is part of reading it — a reply-all is a different act
+    // from a reply, and the header is the only thing that says which.
+    expect((await readThread(api, 't1')).messages[0]!.cc).toEqual(['Doe, Bob', 'sam@z.com'])
+  })
+
   it('shows an untitled thread rather than an empty heading', async () => {
     const { api } = gmail([], { t1: { id: 't1', messages: [{ id: 'm1', payload: { headers: [] } }] } })
 

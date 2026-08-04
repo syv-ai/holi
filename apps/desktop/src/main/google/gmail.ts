@@ -72,11 +72,24 @@ export interface MailThreadSummary {
   unsubscribeUrl: string | null
 }
 
+export interface MailAttachment {
+  filename: string
+  mimeType: string
+  /** Bytes, from the part's `body.size`. */
+  size: number
+}
+
 export interface MailMessage {
   id: string
   from: string
   to: string[]
+  /** Who else saw this. A reply-all is a different act from a reply, and this
+   *  header is the only thing that says which one is called for. */
+  cc: string[]
   date: string
+  /** Every part with a filename, however deep. **No extra request** — the
+   *  thread is already fetched at `format=full`, so the parts are in hand. */
+  attachments: MailAttachment[]
   /** Plain text, for the agent and as the UI's fallback. See the module note. */
   body: string
   /** The raw HTML part, or `null`. **Unsanitized** — the renderer sanitizes it
@@ -216,6 +229,28 @@ export function bodyHtmlOf(payload: RawPart | undefined): string | null {
   // An empty part is "no HTML", not "empty HTML" — the UI branches on null, and
   // a blank string would render a blank message instead of the text body.
   return raw === '' ? null : raw
+}
+
+/**
+ * Every attachment in a message, however deep in the MIME tree.
+ *
+ * **A filename is what makes a part a file.** That is the same rule `findPart`
+ * uses in reverse to refuse an attachment as the body — one definition, read
+ * from both ends, rather than two that can drift apart.
+ */
+export function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
+  if (part === undefined) return []
+  const here: MailAttachment[] =
+    part.filename !== undefined && part.filename !== ''
+      ? [
+          {
+            filename: part.filename,
+            mimeType: part.mimeType ?? 'application/octet-stream',
+            size: part.body?.size ?? 0,
+          },
+        ]
+      : []
+  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentsOf(child))]
 }
 
 function findPart(part: RawPart | undefined, mimeType: string): RawPart | null {
@@ -495,9 +530,11 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       id: message.id ?? '',
       from: displayName(headerOf(message.payload, 'From')),
       to: addresses(headerOf(message.payload, 'To')),
+      cc: addresses(headerOf(message.payload, 'Cc')),
       date: isoDate(message),
       body: bodyTextOf(message.payload),
       html: bodyHtmlOf(message.payload),
+      attachments: attachmentsOf(message.payload),
     })),
   }
 }
