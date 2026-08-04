@@ -225,6 +225,10 @@ test('puts the event description into the task it creates', async () => {
   const user = userEvent.setup()
 
   render(<AgendaView />)
+  // Making a task now lives in the detail pane rather than on the row — it
+  // means "I have decided about this one event", which is when the pane is
+  // already open. The row keeps only RSVP and Join.
+  await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   await user.click(await screen.findByRole('button', { name: /^task$/i }))
 
   await waitFor(() => expect(createTaskMock).toHaveBeenCalled())
@@ -263,4 +267,126 @@ test('says nothing about calendars when Google gives none', async () => {
   // The agenda's own error surface covers the outage; a second broken control
   // saying the same thing is noise.
   expect(screen.queryByRole('button', { name: /choose calendars/i })).toBeNull()
+})
+
+/**
+ * The detail pane.
+ *
+ * What a row cannot hold, and what the agenda previously made you create a task
+ * to read. The description is the reason the pane exists, so most of these are
+ * about how a description reaches the screen — including the case where it is
+ * markup written by whoever sent the invitation.
+ */
+
+test('the list and the detail pane are separated by a draggable handle', async () => {
+  agendaMock.mockResolvedValue([event()])
+
+  render(<AgendaView />)
+  await screen.findByText('Q2 review')
+
+  expect(screen.getByRole('separator')).toBeInTheDocument()
+})
+
+test('says nothing until an event is picked', async () => {
+  agendaMock.mockResolvedValue([event()])
+
+  render(<AgendaView />)
+  await screen.findByText('Q2 review')
+
+  // An agenda is read far more often than it is interrogated; opening onto a
+  // pane full of the first event's details would be answering a question
+  // nobody asked.
+  expect(screen.getByText(/pick an event/i)).toBeInTheDocument()
+})
+
+test('shows the description a row has no room for', async () => {
+  agendaMock.mockResolvedValue([
+    event({ description: 'Dial-in 555-0100, and the deck is in the drive folder' }),
+  ])
+  const user = userEvent.setup()
+
+  render(<AgendaView />)
+  await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
+
+  // Plain prose stays plain text: it keeps its line breaks, which an iframe
+  // would collapse. `detailLine` never carried this at all.
+  expect(await screen.findByText(/Dial-in 555-0100/)).toBeInTheDocument()
+})
+
+test('renders an HTML description as markup, in a frame of its own', async () => {
+  // What Meet and Zoom actually write into an invitation. It is a stranger's
+  // markup, so it takes the same sandboxed path a mail body does rather than
+  // being trusted for being "from Google".
+  agendaMock.mockResolvedValue([
+    event({ description: '<p>Join here: <a href="https://meet.example/x">link</a></p>' }),
+  ])
+  const user = userEvent.setup()
+
+  render(<AgendaView />)
+  await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
+
+  const frame = (await screen.findByLabelText(/description of Q2 review/i)) as HTMLIFrameElement
+  await waitFor(() => expect(frame.contentDocument?.body.firstChild).toBeTruthy())
+
+  // Real markup, and *inside* the frame — the anchor exists as an element in a
+  // document of its own, not as text in the app's document.
+  const anchor = frame.contentDocument!.querySelector('a')
+  expect(anchor?.getAttribute('href')).toBe('https://meet.example/x')
+  expect(screen.queryByText(/<a href/)).toBeNull()
+})
+
+test('names the things the row had to drop to fit', async () => {
+  agendaMock.mockResolvedValue([
+    event({
+      location: 'Room 3, second floor',
+      organizer: 'Mette',
+      attendeeCount: 12,
+      recurring: true,
+    }),
+  ])
+  const user = userEvent.setup()
+
+  render(<AgendaView />)
+  await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
+
+  expect(await screen.findByText('Room 3, second floor')).toBeInTheDocument()
+  expect(screen.getByText('Mette')).toBeInTheDocument()
+  expect(screen.getByText('12 people')).toBeInTheDocument()
+  // On a row, repeating is invisible and not blocking time is only a dimming —
+  // which says something is different without saying what.
+  expect(screen.getByText('repeats')).toBeInTheDocument()
+})
+
+test('lets go of an event that a refresh drops from the agenda', async () => {
+  agendaMock.mockResolvedValue([event({ description: 'Dial-in 555-0100' })])
+  const user = userEvent.setup()
+
+  render(<AgendaView />)
+  await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
+  await screen.findByText(/Dial-in 555-0100/)
+
+  // Declining an invitation, or switching its calendar off, takes the event off
+  // the next response. Holding the object rather than looking it up would pin
+  // the pane to an event that is no longer on the agenda.
+  agendaMock.mockResolvedValue([])
+  await user.click(screen.getByRole('button', { name: /refresh agenda/i }))
+
+  expect(await screen.findByText(/pick an event/i)).toBeInTheDocument()
+  expect(screen.queryByText(/Dial-in 555-0100/)).toBeNull()
+})
+
+test('remembers its width per account, not per vault', async () => {
+  agendaMock.mockResolvedValue([event()])
+  const reads = vi.spyOn(Storage.prototype, 'getItem')
+
+  render(<AgendaView />)
+  await screen.findByText('Q2 review')
+
+  const keys = reads.mock.calls.map(([key]) => key)
+  reads.mockRestore()
+
+  // The agenda is account-wide (D67): the same calendar whichever vault is
+  // open, and open with no vault at all.
+  expect(keys).toContain('holi:panelLayouts:global')
+  expect(keys).not.toContain('holi:panelLayouts')
 })
