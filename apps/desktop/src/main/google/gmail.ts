@@ -21,6 +21,7 @@
  * rather than two half-measures that each assume the other did the work.
  */
 import type { GoogleApi } from './api'
+import { fetchLabelNames } from './labels'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -303,6 +304,10 @@ export async function listThreads(
 
   const ids = (page.threads ?? []).map((t) => t.id).filter((id): id is string => id !== undefined)
 
+  // ONCE per list, not once per thread — resolving a chip must not cost a
+  // request. It runs concurrently with the threads for the same reason.
+  const labelNames = fetchLabelNames(api)
+
   const threads = await mapPooled(ids, 5, (id) =>
     api.get<RawThread>(`${BASE}/threads/${id}`, {
       format: 'metadata',
@@ -325,7 +330,10 @@ export async function listThreads(
     }),
   )
 
-  return threads.map(summarize).filter((t): t is MailThreadSummary => t !== null)
+  const names = await labelNames
+  return threads
+    .map((thread) => summarize(thread, names))
+    .filter((t): t is MailThreadSummary => t !== null)
 }
 
 /**
@@ -385,7 +393,7 @@ export function unsubscribeUrlOf(header: string | null): string | null {
   return null
 }
 
-function summarize(thread: RawThread): MailThreadSummary | null {
+function summarize(thread: RawThread, labelNames: Map<string, string>): MailThreadSummary | null {
   const messages = thread.messages ?? []
   const first = messages[0]
   const last = messages[messages.length - 1]
@@ -421,7 +429,12 @@ function summarize(thread: RawThread): MailThreadSummary | null {
     // From the LAST message: Gmail re-categorises a thread as it grows, and the
     // tab it sits in now is the one the user would look in for it.
     category: category ?? null,
-    labels: [...new Set(allLabels)].filter((id) => !isSystemLabel(id)),
+    // An id with no name is dropped, not shown: `Label_12` on a row is worse
+    // than no chip at all, and it is what a failed lookup would render.
+    labels: [...new Set(allLabels)]
+      .filter((id) => !isSystemLabel(id))
+      .map((id) => labelNames.get(id))
+      .filter((name): name is string => name !== undefined),
     unsubscribeUrl: unsubscribeUrlOf(headerOf(last.payload, 'List-Unsubscribe')),
   }
 }

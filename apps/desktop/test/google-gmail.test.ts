@@ -24,15 +24,23 @@ function header(name: string, value: string) {
   return { name, value }
 }
 
-/** A fake Gmail that answers threads.list and threads.get. */
-function gmail(list: { id: string }[], threads: Record<string, unknown>) {
+interface RawLabel {
+  id: string
+  name: string
+  type: string
+}
+
+/** A fake Gmail that answers threads.list, threads.get and labels.list. */
+function gmail(list: { id: string }[], threads: Record<string, unknown>, labels: RawLabel[] = []) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
     const path = new URL(url).pathname
-    const body = path.endsWith('/threads')
-      ? { threads: list }
-      : threads[path.split('/').pop()!] ?? {}
+    const body = path.endsWith('/labels')
+      ? { labels }
+      : path.endsWith('/threads')
+        ? { threads: list }
+        : threads[path.split('/').pop()!] ?? {}
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
 
@@ -369,24 +377,52 @@ describe('listThreads', () => {
     expect((await listThreads(api))[0]!.category).toBeNull()
   })
 
-  it('excludes system labels from the label list', async () => {
-    const { api } = gmail([{ id: 't1' }], {
-      t1: {
-        id: 't1',
-        messages: [
-          {
-            id: 'm1',
-            internalDate: '1000',
-            labelIds: ['INBOX', 'UNREAD', 'IMPORTANT', 'CATEGORY_UPDATES', 'Label_12'],
-            payload: { headers: [] },
-          },
-        ],
+  const filed = {
+    id: 't1',
+    messages: [
+      {
+        id: 'm1',
+        internalDate: '1000',
+        labelIds: ['INBOX', 'UNREAD', 'IMPORTANT', 'CATEGORY_UPDATES', 'Label_12'],
+        payload: { headers: [] },
       },
-    })
+    ],
+  }
+  const USER_LABELS = [{ id: 'Label_12', name: 'Work/Clients', type: 'user' }]
+
+  it('excludes system labels from the label list', async () => {
+    const { api } = gmail([{ id: 't1' }], { t1: filed }, USER_LABELS)
 
     // INBOX and UNREAD are not things the user filed this under; rendering them
     // as chips is noise on every single row.
-    expect((await listThreads(api))[0]!.labels).toEqual(['Label_12'])
+    expect((await listThreads(api))[0]!.labels).toEqual(['Work/Clients'])
+  })
+
+  it('names the labels a thread is filed under, rather than showing their ids', async () => {
+    const { api } = gmail([{ id: 't1' }], { t1: filed }, USER_LABELS)
+
+    // `Label_12` is not a thing to show anyone.
+    expect((await listThreads(api))[0]!.labels).toEqual(['Work/Clients'])
+  })
+
+  it('drops a label it cannot name rather than showing the raw id', async () => {
+    const { api } = gmail([{ id: 't1' }], { t1: filed }, [])
+
+    expect((await listThreads(api))[0]!.labels).toEqual([])
+  })
+
+  it('asks Gmail for the label names once, not once per thread', async () => {
+    // The N+1 this whole area keeps inviting: a per-thread lookup would be 25
+    // extra requests to render 25 chips.
+    const { api, seen } = gmail(
+      [{ id: 't1' }, { id: 't2' }, { id: 't3' }],
+      { t1: filed, t2: filed, t3: filed },
+      USER_LABELS,
+    )
+
+    await listThreads(api)
+
+    expect(seen.filter((u) => new URL(u).pathname.endsWith('/labels'))).toHaveLength(1)
   })
 
   it('extracts an unsubscribe URL from a List-Unsubscribe header', async () => {
