@@ -55,6 +55,8 @@ describe('SEED_FILES', () => {
       '.claude/skills/theme/SKILL.md',
       '.holi/document-templates/_brand/brand.typ',
       '.holi/document-templates/_brand/figures.typ',
+      '.holi/document-templates/contract/template.json',
+      '.holi/document-templates/contract/template.typ',
       '.holi/document-templates/letter/template.json',
       '.holi/document-templates/letter/template.typ',
       '.holi/document-templates/memo/template.json',

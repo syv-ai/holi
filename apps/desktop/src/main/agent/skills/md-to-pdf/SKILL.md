@@ -29,6 +29,8 @@ List them with `ls .holi/document-templates/`. Every vault ships three:
   `recipient`, `date`, `closing`, `sender`.
 - `memo` — a branded internal memo: a To/From/Date/Re header, no letterhead. Fields: `to`, `from`,
   `re`, `date`.
+- `contract` — a branded contract (kontrakt): like `proposal`, plus automatic indentation of
+  numbered clause paragraphs (`5.1 …`, `7.2.1 …`) and `@@SIG:a|b@@` signature blocks. Field: `date`.
 
 (`_brand/` holds the shared fonts/logo/module the branded templates import — not a template itself.)
 

@@ -31,6 +31,8 @@ import themeSkill from './skills/theme/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
+import contractManifest from './templates/contract/template.json?raw'
+import contractTyp from './templates/contract/template.typ?raw'
 import letterManifest from './templates/letter/template.json?raw'
 import letterTyp from './templates/letter/template.typ?raw'
 import memoManifest from './templates/memo/template.json?raw'
@@ -220,6 +222,8 @@ export const SEED_FILES: Record<string, string> = {
   '.holi/document-templates/letter/template.typ': letterTyp,
   '.holi/document-templates/memo/template.json': memoManifest,
   '.holi/document-templates/memo/template.typ': memoTyp,
+  '.holi/document-templates/contract/template.json': contractManifest,
+  '.holi/document-templates/contract/template.typ': contractTyp,
   '.holi/theme.json': THEME_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
   // the personal-override slot exists by default. The `.gitignore` is written

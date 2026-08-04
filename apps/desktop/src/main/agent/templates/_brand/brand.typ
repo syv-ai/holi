@@ -109,17 +109,45 @@
   s
 }
 
+// Indent numbered contract clauses. A paragraph opening with a clause number
+// ("5.1 …", "7.2.1 …") becomes a blockquote — which `with-brand` renders as a
+// plain left indent — and a list that follows the clause indents with it. Ported
+// from 1brain's `render.py indryk_klausuler`; opt-in (contracts only) via the
+// `clauses` flag on `render-body`, so a proposal's stray "5.1" is untouched.
+#let indent-clauses(src) = {
+  let clause = regex("^\d{1,2}(\.\d{1,2}){1,2}\s")
+  let item = regex("^\s*([-*+]|\d{1,2}\.)\s")
+  let in-clause = false
+  let out = ()
+  for line in src.split("\n") {
+    if line.trim() == "" {
+      out.push(line)
+    } else if line.match(clause) != none {
+      in-clause = true
+      out.push("> " + line)
+    } else if in-clause and line.match(item) != none {
+      out.push("> " + line)
+    } else {
+      in-clause = false
+      out.push(line)
+    }
+  }
+  out.join("\n")
+}
+
 // Read the note and render it. Order matters:
 //   1. strip frontmatter FIRST — its `---` delimiters would be eaten by the
 //      horizontal-rule strip below and leak the YAML as body text;
 //   2. strip `---` horizontal rules (visual separators in markdown);
 //   3. strip manual heading numbers ("## 1. Foo" -> "## Foo") so the level-2
 //      show-rule's own numbering does not double up;
-//   4. split on @@FIG:name@@ / @@SIG:a|b@@ and insert native Typst blocks.
-#let render-body(md-file, figures: (:)) = {
+//   4. (contracts only) indent numbered clause paragraphs;
+//   5. split on @@FIG:name@@ / @@SIG:a|b@@ and insert native Typst blocks.
+#let render-body(md-file, figures: (:), clauses: false) = {
   let src = strip-frontmatter(read(md-file))
   src = src.replace(regex("(?m)^[-*_]{3,}[ \t]*$"), "")
   src = src.replace(regex("(?m)^(#{2,3}) \d+(\.\d+)*\.? "), m => m.captures.at(0) + " ")
+  if clauses { src = indent-clauses(src) }
   let prev = 0
   for m in src.matches(regex("@@(FIG|SIG):([^@]+)@@")) {
     cmarker.render(src.slice(prev, m.start), smart-punctuation: true)

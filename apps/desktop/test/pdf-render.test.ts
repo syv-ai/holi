@@ -146,7 +146,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
   async function vaultWithBrandedSet(): Promise<string> {
     const root = await work()
     const dt = join(root, '.holi/document-templates')
-    for (const slug of ['_brand', 'proposal', 'report', 'letter', 'memo']) {
+    for (const slug of ['_brand', 'proposal', 'report', 'letter', 'memo', 'contract']) {
       await cp(join(SRC_TEMPLATES, slug), join(dt, slug), { recursive: true })
     }
     return root
@@ -219,6 +219,29 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
       meta: { to: 'Teamet', from: 'Nicolai', re: 'Deadline', date: '2026-07-08' },
     })
     expect((await readFile(memoOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
+  it('renders the contract (numbered clause indentation + signatures) to %PDF', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await vaultWithBrandedSet()
+    const notePath = join(root, 'aftale.md')
+    await writeFile(
+      notePath,
+      '# Samarbejdsaftale\n\n## Ydelser\n\n5.1 Leverandøren udfører:\n\n- Udvikling\n- Drift\n\n' +
+        '5.2 Kunden stiller data til rådighed.\n\n@@SIG:syv.ai ApS|ACME A/S@@\n',
+    )
+    const outPath = join(root, 'aftale.pdf')
+    await renderPdf({
+      typstBin: typst,
+      templateDir: join(root, '.holi/document-templates/contract'),
+      notePath,
+      outPath,
+      fields: [{ key: 'date', label: 'Date', type: 'date', required: false }],
+      meta: { date: '2026-07-08' },
+    })
+    expect((await readFile(outPath)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
   it('renders the report (cover + TOC + running header) to %PDF', async () => {
