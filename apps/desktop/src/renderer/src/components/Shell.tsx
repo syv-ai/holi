@@ -51,6 +51,7 @@ import {
 import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
+import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, todayLinkCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import { agentPanelOpenAtom } from '@/state/agent'
@@ -109,6 +110,9 @@ export function Shell() {
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   const todayLinkCount = useAtomValue(todayLinkCountAtom)
+  // Also the one place that asks main whether Google is connected at all — the
+  // settings panel shares this atom rather than holding its own answer.
+  const [googleAccount] = useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
@@ -252,75 +256,89 @@ export function Shell() {
             onOpenPinned={openPin}
           />
 
-          <div className="flex items-center gap-2 p-2">
-            <Tooltip content="today's daily note (⌘⇧D)">
-              <Button
-                variant="secondary"
-                size="xs"
-                className="flex-1 gap-1.5"
-                // FR-6: opens today's daily (personal vaults only; the atom no-ops
-                // otherwise). Also the empty-state recovery path — always here.
-                onClick={() => void openDaily()}
-              >
-                today
-                {/* Open tasks linking to today's note (daily-notes §UX). Zero → no badge;
-                    in a shared vault nothing links to the daily path, so it stays hidden. */}
-                {todayLinkCount > 0 && (
-                  <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
-                    {todayLinkCount}
-                  </span>
-                )}
-              </Button>
-            </Tooltip>
-            <Tooltip content={`task board — ${openTaskCount} open`}>
-              <Button
-                variant="secondary"
-                size="xs"
-                className="flex-1 gap-1.5"
-                onClick={() => setWorkspace((w) => openBoard(w))}
-              >
-                board
-                {openTaskCount > 0 && (
-                  <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
-                    {openTaskCount}
-                  </span>
-                )}
-              </Button>
-            </Tooltip>
-            {/* Agenda and mail are account-wide, not vault content (D67) — they
-                sit with the other surfaces because that is where you look for a
-                view, and each header says whose account it is. */}
-            <Tooltip content="your Google agenda">
-              <Button
-                variant="secondary"
-                size="xs"
-                className="flex-1 gap-1.5"
-                onClick={() => setWorkspace((w) => openAgenda(w))}
-              >
-                agenda
-              </Button>
-            </Tooltip>
-            <Tooltip content="your Gmail">
-              <Button
-                variant="secondary"
-                size="xs"
-                className="flex-1 gap-1.5"
-                onClick={() => setWorkspace((w) => openMail(w))}
-              >
-                mail
-              </Button>
-            </Tooltip>
-            <Tooltip content="vault settings">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="shrink-0 text-muted-foreground"
-                aria-label="vault settings"
-                onClick={() => setShowSettings((v) => !v)}
-              >
-                <Settings size={16} />
-              </Button>
-            </Tooltip>
+          {/* Two rows, not one. Five chips across a sidebar this narrow made it
+              scroll horizontally — and `flex-1` alone could not fix that, since
+              a flex item's default `min-width: auto` refuses to shrink below its
+              text. `min-w-0` on each chip is what actually forbids the overflow;
+              the split is what keeps them legible rather than truncated. */}
+          <div className="flex flex-col gap-1.5 p-2">
+            <div className="flex items-center gap-2">
+              <Tooltip content="today's daily note (⌘⇧D)">
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  className="min-w-0 flex-1 gap-1.5"
+                  // FR-6: opens today's daily (personal vaults only; the atom no-ops
+                  // otherwise). Also the empty-state recovery path — always here.
+                  onClick={() => void openDaily()}
+                >
+                  today
+                  {/* Open tasks linking to today's note (daily-notes §UX). Zero → no badge;
+                      in a shared vault nothing links to the daily path, so it stays hidden. */}
+                  {todayLinkCount > 0 && (
+                    <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
+                      {todayLinkCount}
+                    </span>
+                  )}
+                </Button>
+              </Tooltip>
+              <Tooltip content={`task board — ${openTaskCount} open`}>
+                <Button
+                  variant="secondary"
+                  size="xs"
+                  className="min-w-0 flex-1 gap-1.5"
+                  onClick={() => setWorkspace((w) => openBoard(w))}
+                >
+                  board
+                  {openTaskCount > 0 && (
+                    <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
+                      {openTaskCount}
+                    </span>
+                  )}
+                </Button>
+              </Tooltip>
+              <Tooltip content="vault settings">
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  className="shrink-0 text-muted-foreground"
+                  aria-label="vault settings"
+                  onClick={() => setShowSettings((v) => !v)}
+                >
+                  <Settings size={16} />
+                </Button>
+              </Tooltip>
+            </div>
+
+            {/* Agenda and mail are account-wide, not vault content (D67), and
+                they appear only once Google is connected — a chip whose only
+                destination is "connect Google in settings" is a dead end
+                wearing the clothes of a feature. `undefined` (not asked yet)
+                hides them too, so a disconnected app never flashes them. */}
+            {googleAccount != null && (
+              <div className="flex items-center gap-2">
+                <Tooltip content={`${googleAccount.email} — agenda`}>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    className="min-w-0 flex-1 gap-1.5"
+                    onClick={() => setWorkspace((w) => openAgenda(w))}
+                  >
+                    agenda
+                  </Button>
+                </Tooltip>
+                <Tooltip content={`${googleAccount.email} — mail`}>
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    className="min-w-0 flex-1 gap-1.5"
+                    onClick={() => setWorkspace((w) => openMail(w))}
+                  >
+                    mail
+                  </Button>
+                </Tooltip>
+              </div>
+            )}
           </div>
             </aside>
           </ResizablePanel>

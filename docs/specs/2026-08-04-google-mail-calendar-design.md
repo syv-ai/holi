@@ -111,7 +111,9 @@ A Gmail/Calendar item is an **external URL, not a vault file**, so it cannot be 
 
 The shell (`Shell.tsx`) has two idioms: **workspace tabs** (`board` opens as a tab from a nav button; notes are `note` tabs) and **right-hand resizable drawers** (agent ⌘J, history, settings). Decision: **Agenda + Mail are workspace tabs**, peers of the board.
 
-- Extend the tab union `note | board` → **`note | board | agenda | mail`** (`state/panes.ts`), add **"calendar"** and **"mail"** nav buttons in the left aside beside "today"/"board", and branch the main render in `Shell.tsx` on the new kinds.
+- Extend the tab union `note | board` → **`note | board | agenda | mail`** (`state/panes.ts`), add **"agenda"** and **"mail"** nav buttons in the left aside beside "today"/"board", and branch the main render in `Shell.tsx` on the new kinds.
+  - **As built (corrected after use):** they sit on a **second row**, not inline with "today"/"board". Five chips across the sidebar made it scroll horizontally — and `flex-1` alone does not fix that, because a flex item's default `min-width: auto` refuses to shrink below its own text. `min-w-0` on every chip is what forbids the overflow; the second row is what keeps them legible instead of truncated.
+  - **They are hidden until Google is connected.** A chip whose only destination is "connect Google in vault settings" is a dead end wearing the clothes of a feature. Connectedness lives in `state/google.ts` — three states, because `undefined` ("not asked yet") must be distinguishable from `null` ("nothing connected") or the chips flash on every launch before hiding. `GoogleConnection` writes that atom rather than holding its own copy, so connecting lights the chips up on the same tick the panel says "connected as".
 - **Agenda tab:** today/this-week list of events across the user's calendars, each with a **"create task"** action (writes `task.<slug>.md` with the event's markdown link + title in the body) and an "open in Google Calendar" link.
 - **Mail tab:** thread list (INBOX + Gmail search-query box) → thread reader (from/to/subject/sanitized body; attachments as "open in Gmail" links, no download in v1) → **"link to task/note"** (inserts the body markdown link) and **"reply"** = `mailto:`/Gmail-compose deeplink.
 - **Account-scoped, not vault-scoped.** Mail/calendar are *your Google data* regardless of which vault is open (unlike notes/tasks/board, which are vault content). Rendering them in the vault shell is fine (the agent drawer is also per-user), **but "Connect Google" / "Disconnect" belong in global/app settings or the user menu — not per-vault `VaultSettings`.** (If no global-settings surface exists yet, establishing a minimal one is part of the connector slice.)
@@ -175,9 +177,13 @@ Each slice gets its own plan; this is the spine and the per-slice exit contract.
 
 All four slices are **implemented and green** (typecheck clean; node 869, dom 98, shared 229; boundaries gate clean). What is *not* verified, and cannot be from here:
 
-- **The live OAuth round-trip.** `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are now **filled in** (`main/google/session.ts`, supplied by Nicolai 2026-08-04) — both committed on purpose, because a desktop client's pair is not a credential: it ships in every binary, PKCE is what protects the grant, and no token exists without the user completing consent in their own browser. `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` still override. **Nothing has run against Google even so** — confirm the client is Desktop-type or carries the `http://127.0.0.1` redirect, or Connect fails at the redirect.
-- **Everything downstream of a real token** — agenda, mail, and the agent's CLI answer against fakes in the suite, never against Google.
-- **The mail frame in a real browser engine.** Its behaviour is pinned in jsdom, which is not Chromium: the frame's `write`/measure/intercept path and its CSP are asserted, but no packaged build has rendered a real message. First live check should be a designed newsletter, watching for a blocked-image banner, a sane frame height, and a link opening in the OS browser rather than in the frame.
+**Live as of 2026-08-04 — Nicolai confirmed "the integration works"** after supplying the credentials, which is the first time any of this has touched Google. `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` are embedded in `main/google/session.ts`, both committed on purpose: a desktop client's pair is not a credential — it ships in every binary, PKCE is what protects the grant, and no token exists without the user completing consent in their own browser. `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` still override.
+
+Still worth knowing what that confirmation does and does not cover — it was a user's report of the feature working, not an enumerated check:
+
+- **Not independently verified from here**, and not verifiable: no suite in this repo talks to Google, by design.
+- **The mail frame under real mail.** Its behaviour is pinned in jsdom, which is not Chromium. Worth a deliberate look at a heavily-designed newsletter: blocked-image banner, frame height, and a link opening in the OS browser rather than inside the frame.
+- **The agent's CLI path** (`holi-google agenda|search|read`) — exercised only against fakes.
 
 ## Deferred (fast-follow slices, explicitly out of v1)
 

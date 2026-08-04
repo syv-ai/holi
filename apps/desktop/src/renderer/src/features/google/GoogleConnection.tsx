@@ -8,16 +8,21 @@
  * The two-phase shape mirrors `SignIn`: `connect` returns as soon as the
  * browser is open, `awaitConnect` resolves when the grant lands. Nothing here
  * ever sees a token — the renderer is handed an email address and nothing else.
+ *
+ * **Whether an account is connected lives in `state/google.ts`, not here.** The
+ * shell shows or hides the agenda and mail chips on the same answer, so a local
+ * `useState` meant connecting left the chips missing until a reload. What stays
+ * local is only the transient part of the flow — in flight, and what went
+ * wrong — which nothing outside this panel has any use for.
  */
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
+import { useGoogleAccount } from '../../state/google'
 import { trpc } from '../../lib/trpc'
 
-type State =
-  | { kind: 'loading' }
-  | { kind: 'disconnected'; error?: string }
-  | { kind: 'connecting' }
-  | { kind: 'connected'; email: string }
+/** The flow's transient state. "Connected" is deliberately absent — that is the
+ *  shared atom's to know. */
+type Phase = { kind: 'idle'; error?: string } | { kind: 'connecting' }
 
 /** What a non-granted outcome should say. Each is a normal thing that happens,
  *  so none of them are phrased as errors. */
@@ -28,40 +33,35 @@ const OUTCOME: Record<string, string> = {
 }
 
 export function GoogleConnection() {
-  const [state, setState] = useState<State>({ kind: 'loading' })
+  const [account, setAccount] = useGoogleAccount()
+  const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   /** Set while a connect is in flight, so unmounting cancels it rather than
    *  leaving a listener holding a port for the life of the app. */
   const connecting = useRef(false)
 
   useEffect(() => {
-    void trpc.google.status
-      .query()
-      .then(({ account }) =>
-        setState(account === null ? { kind: 'disconnected' } : { kind: 'connected', email: account.email }),
-      )
-      // The connector is unconfigured (no client id yet) — not an error state
-      // the user can act on, so it reads as simply not connected.
-      .catch(() => setState({ kind: 'disconnected' }))
-
     return () => {
       if (connecting.current) void trpc.google.cancelConnect.mutate()
     }
   }, [])
 
   const connect = async () => {
-    setState({ kind: 'connecting' })
+    setPhase({ kind: 'connecting' })
     connecting.current = true
     try {
       await trpc.google.connect.mutate()
       const result = await trpc.google.awaitConnect.mutate()
       if (result.kind === 'granted' && result.account !== null) {
-        setState({ kind: 'connected', email: result.account.email })
+        // Writing the shared atom is what makes the shell's chips appear, on
+        // the same tick this panel says "connected as".
+        setAccount(result.account)
+        setPhase({ kind: 'idle' })
       } else {
-        setState({ kind: 'disconnected', error: OUTCOME[result.kind] || undefined })
+        setPhase({ kind: 'idle', error: OUTCOME[result.kind] || undefined })
       }
     } catch (err) {
-      setState({
-        kind: 'disconnected',
+      setPhase({
+        kind: 'idle',
         error: err instanceof Error ? err.message : 'Could not connect to Google.',
       })
     } finally {
@@ -71,8 +71,12 @@ export function GoogleConnection() {
 
   const disconnect = async () => {
     await trpc.google.disconnect.mutate().catch(() => undefined)
-    setState({ kind: 'disconnected' })
+    setAccount(null)
+    setPhase({ kind: 'idle' })
   }
+
+  const connected = account != null
+  const busy = phase.kind === 'connecting' || account === undefined
 
   return (
     <section className="space-y-2">
@@ -80,22 +84,22 @@ export function GoogleConnection() {
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-xs text-muted-foreground">
-            {state.kind === 'connected' ? (
+            {connected ? (
               <>
-                Connected as <span className="text-foreground">{state.email}</span>
+                Connected as <span className="text-foreground">{account.email}</span>
               </>
-            ) : state.kind === 'connecting' ? (
+            ) : phase.kind === 'connecting' ? (
               'Waiting for your browser…'
             ) : (
               'Read your Gmail and Calendar. Applies to every vault.'
             )}
           </p>
-          {state.kind === 'disconnected' && state.error !== undefined && (
-            <p className="mt-0.5 truncate text-xs text-amber-400">{state.error}</p>
+          {!connected && phase.kind === 'idle' && phase.error !== undefined && (
+            <p className="mt-0.5 truncate text-xs text-amber-400">{phase.error}</p>
           )}
         </div>
 
-        {state.kind === 'connected' ? (
+        {connected ? (
           <Button variant="secondary" size="sm" className="shrink-0" onClick={() => void disconnect()}>
             Disconnect
           </Button>
@@ -104,14 +108,14 @@ export function GoogleConnection() {
             variant="secondary"
             size="sm"
             className="shrink-0"
-            disabled={state.kind === 'connecting' || state.kind === 'loading'}
+            disabled={busy}
             onClick={() => void connect()}
           >
-            {state.kind === 'connecting' ? 'Connecting…' : 'Connect'}
+            {phase.kind === 'connecting' ? 'Connecting…' : 'Connect'}
           </Button>
         )}
       </div>
-      {state.kind === 'connected' && (
+      {connected && (
         <p className="text-xs text-muted-foreground">
           Read-only. Holi cannot send mail or change your calendar.
         </p>
