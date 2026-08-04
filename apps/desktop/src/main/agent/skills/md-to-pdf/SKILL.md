@@ -25,6 +25,10 @@ List them with `ls .holi/document-templates/`. Every vault ships three:
   - `@@FIG:agent-flow@@` / `@@FIG:custom-arkitektur@@` — an embedded syv architecture diagram.
 - `report` — a branded long-form report/whitepaper: cover page, table of contents, running header.
   Fields: `title`, `subtitle`, `date`.
+- `letter` — a branded letter: letterhead, recipient block, closing + signature. Fields:
+  `recipient`, `date`, `closing`, `sender`.
+- `memo` — a branded internal memo: a To/From/Date/Re header, no letterhead. Fields: `to`, `from`,
+  `re`, `date`.
 
 (`_brand/` holds the shared fonts/logo/module the branded templates import — not a template itself.)
 

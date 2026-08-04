@@ -31,6 +31,10 @@ import themeSkill from './skills/theme/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
+import letterManifest from './templates/letter/template.json?raw'
+import letterTyp from './templates/letter/template.typ?raw'
+import memoManifest from './templates/memo/template.json?raw'
+import memoTyp from './templates/memo/template.typ?raw'
 import plainTemplateTyp from './templates/plain/template.typ?raw'
 import proposalManifest from './templates/proposal/template.json?raw'
 import proposalTyp from './templates/proposal/template.typ?raw'
@@ -212,6 +216,10 @@ export const SEED_FILES: Record<string, string> = {
   '.holi/document-templates/proposal/template.typ': proposalTyp,
   '.holi/document-templates/report/template.json': reportManifest,
   '.holi/document-templates/report/template.typ': reportTyp,
+  '.holi/document-templates/letter/template.json': letterManifest,
+  '.holi/document-templates/letter/template.typ': letterTyp,
+  '.holi/document-templates/memo/template.json': memoManifest,
+  '.holi/document-templates/memo/template.typ': memoTyp,
   '.holi/theme.json': THEME_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
   // the personal-override slot exists by default. The `.gitignore` is written

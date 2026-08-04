@@ -1,0 +1,10 @@
+{
+  "name": "Letter",
+  "description": "Branded syv.ai letter: letterhead, recipient, closing and signature.",
+  "fields": [
+    { "key": "recipient", "label": "Recipient", "type": "text", "required": false },
+    { "key": "date", "label": "Date", "type": "date", "required": false },
+    { "key": "closing", "label": "Closing", "type": "text", "required": false, "default": "Med venlig hilsen" },
+    { "key": "sender", "label": "Sender", "type": "text", "required": false }
+  ]
+}

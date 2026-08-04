@@ -146,7 +146,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
   async function vaultWithBrandedSet(): Promise<string> {
     const root = await work()
     const dt = join(root, '.holi/document-templates')
-    for (const slug of ['_brand', 'proposal', 'report']) {
+    for (const slug of ['_brand', 'proposal', 'report', 'letter', 'memo']) {
       await cp(join(SRC_TEMPLATES, slug), join(dt, slug), { recursive: true })
     }
     return root
@@ -176,6 +176,49 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
     })
     const bytes = await readFile(outPath)
     expect(bytes.subarray(0, 5).toString('latin1')).toBe('%PDF-')
+  }, 30_000)
+
+  it('renders the letter (letterhead + closing) and memo (To/From header) to %PDF', async () => {
+    const typst = await resolveTypstBin()
+    if (typst === null) return
+
+    const root = await vaultWithBrandedSet()
+
+    const letterNote = join(root, 'brev.md')
+    await writeFile(letterNote, '# Vedr. samarbejde\n\nKære ACME,\n\nTak for mødet.\n')
+    const letterOut = join(root, 'brev.pdf')
+    await renderPdf({
+      typstBin: typst,
+      templateDir: join(root, '.holi/document-templates/letter'),
+      notePath: letterNote,
+      outPath: letterOut,
+      fields: [
+        { key: 'recipient', label: 'Recipient', type: 'text', required: false },
+        { key: 'date', label: 'Date', type: 'date', required: false },
+        { key: 'closing', label: 'Closing', type: 'text', required: false },
+        { key: 'sender', label: 'Sender', type: 'text', required: false },
+      ],
+      meta: { recipient: 'ACME A/S', date: '2026-07-08', closing: 'Med venlig hilsen', sender: 'Nicolai' },
+    })
+    expect((await readFile(letterOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
+
+    const memoNote = join(root, 'memo.md')
+    await writeFile(memoNote, '# n\n\nHusk deadline på fredag.\n')
+    const memoOut = join(root, 'memo.pdf')
+    await renderPdf({
+      typstBin: typst,
+      templateDir: join(root, '.holi/document-templates/memo'),
+      notePath: memoNote,
+      outPath: memoOut,
+      fields: [
+        { key: 'to', label: 'To', type: 'text', required: false },
+        { key: 'from', label: 'From', type: 'text', required: false },
+        { key: 're', label: 'Re', type: 'text', required: false },
+        { key: 'date', label: 'Date', type: 'date', required: false },
+      ],
+      meta: { to: 'Teamet', from: 'Nicolai', re: 'Deadline', date: '2026-07-08' },
+    })
+    expect((await readFile(memoOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)
 
   it('renders the report (cover + TOC + running header) to %PDF', async () => {
