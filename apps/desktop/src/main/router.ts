@@ -1387,7 +1387,7 @@ export function createRouter(deps: RouterDeps) {
     markRead: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().markRead(input.id).catch(rethrowGoogle)
+        await googleWrites().setRead(input.id, true).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 

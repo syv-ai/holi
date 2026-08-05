@@ -16,7 +16,7 @@ import {
   listThreads,
   messageUrl,
   readThread,
-  markThreadRead,
+  setThreadRead,
   setThreadStarred,
   archiveThread,
   trashThread,
@@ -1068,9 +1068,19 @@ describe('thread mutations', () => {
   it('marks a thread read by removing UNREAD from it', async () => {
     const { posts, api } = writable()
 
-    await markThreadRead(api, 't1')
+    await setThreadRead(api, 't1', true)
 
     expect(posts).toEqual([{ url: MODIFY, body: { removeLabelIds: ['UNREAD'] } }])
+  })
+
+  it('marks a thread unread by adding UNREAD back', async () => {
+    // The other direction, which the agent needs for "leave this one for me"
+    // (D70). Read is a two-way label, exactly like starred.
+    const { posts, api } = writable()
+
+    await setThreadRead(api, 't1', false)
+
+    expect(posts).toEqual([{ url: MODIFY, body: { addLabelIds: ['UNREAD'] } }])
   })
 
   it('stars and unstars through the same endpoint, in opposite directions', async () => {

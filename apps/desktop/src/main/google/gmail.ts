@@ -775,11 +775,19 @@ export function applyLabelDelta(
  * owns the cache.
  */
 
-/** Removing `UNREAD` clears it from every message, which is what Gmail itself
- *  does when a thread is opened. `unread` is derived from any message carrying
- *  the label (see `summarize`), so a partial removal would leave it set. */
-export async function markThreadRead(api: GoogleApi, id: string): Promise<void> {
-  await modifyThread(api, id, { remove: ['UNREAD'] })
+/**
+ * Read is a **two-way** label, exactly like starred (D70).
+ *
+ * Removing `UNREAD` clears it from every message, which is what Gmail itself
+ * does when a thread is opened. `unread` is derived from any message carrying
+ * the label (see `summarize`), so a partial removal would leave it set.
+ *
+ * The other direction exists for the agent: "leave this one for me" is a real
+ * triage move, and having only one direction here would have made the ops
+ * server carry a special case that no other label needs.
+ */
+export async function setThreadRead(api: GoogleApi, id: string, read: boolean): Promise<void> {
+  await modifyThread(api, id, read ? { remove: ['UNREAD'] } : { add: ['UNREAD'] })
 }
 
 export async function setThreadStarred(api: GoogleApi, id: string, starred: boolean): Promise<void> {

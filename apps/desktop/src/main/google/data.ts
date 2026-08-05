@@ -26,7 +26,7 @@ import {
 } from './calendar'
 import {
   archiveThread,
-  markThreadRead,
+  setThreadRead,
   setThreadStarred,
   trashThread,
   type ListThreadsOptions,
@@ -58,7 +58,7 @@ export interface GoogleData {
    * The four writes (D68). Each calls Google **first** and touches the cache
    * only once Google has agreed — see the note above `write`.
    */
-  markRead(id: string): Promise<void>
+  setRead(id: string, read: boolean): Promise<void>
   setStarred(id: string, starred: boolean): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
@@ -102,10 +102,14 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       return (addressBook ??= listContacts(api()))
     },
 
-    markRead(id) {
+    setRead(id, read) {
       return write(
-        () => markThreadRead(api(), id),
-        () => cache.patchThread(id, { added: [], removed: ['UNREAD'] }),
+        () => setThreadRead(api(), id, read),
+        () =>
+          cache.patchThread(id, {
+            added: read ? [] : ['UNREAD'],
+            removed: read ? ['UNREAD'] : [],
+          }),
       )
     },
 

@@ -298,7 +298,7 @@ describe('mutations', () => {
     const { data: subject, posts } = mutable()
     expect((await subject.threads({})).threads[0]!.unread).toBe(true)
 
-    await subject.markRead('t1')
+    await subject.setRead('t1', true)
 
     expect(posts).toEqual([
       'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify',
@@ -306,11 +306,22 @@ describe('mutations', () => {
     expect(cache.readThreads(INBOX_KEY)![0]!.unread).toBe(false)
   })
 
+  it('marks unread again, and the cached flag comes back', async () => {
+    const { data: subject, posts } = mutable()
+    await subject.threads({})
+    await subject.setRead('t1', true)
+
+    await subject.setRead('t1', false)
+
+    expect(posts).toHaveLength(2)
+    expect(cache.readThreads(INBOX_KEY)![0]!.unread).toBe(true)
+  })
+
   it('leaves the cache untouched when Google refuses, and rethrows', async () => {
     const { data: subject } = mutable({ writesFail: true })
     await subject.threads({})
 
-    await expect(subject.markRead('t1')).rejects.toThrow()
+    await expect(subject.setRead('t1', true)).rejects.toThrow()
 
     // Still unread on disk. A cache that recorded a write Google refused is a
     // divergence no later sync can find.
