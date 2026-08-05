@@ -30,9 +30,11 @@ import {
   setThreadStarred,
   trashThread,
   type ListThreadsOptions,
+  type MailAddress,
   type MailPage,
 } from './gmail'
 import { cacheKey, syncThreads } from './mail-sync'
+import { listContacts } from './people'
 
 export interface GoogleData {
   /** The agenda, fetched and then cached for the next launch's first paint. */
@@ -41,6 +43,17 @@ export interface GoogleData {
   cachedAgenda(window: AgendaWindow, overrides: CalendarOverrides): CalendarEvent[] | null
   /** Threads, served from the cache and brought up to date by a delta. */
   threads(options: ListThreadsOptions): Promise<MailPage>
+  /**
+   * The address book, fetched **once per connected account**.
+   *
+   * In memory rather than on disk, and single-flighted like the token refresh:
+   * the renderer asks on every `MailView` mount, and without this each mount
+   * cost up to four People requests against a rate-limited API to populate a
+   * dropdown. An address book is also the least time-sensitive thing this
+   * connector holds — a contact added today is not why completion missed
+   * someone. Cleared when the account changes.
+   */
+  contacts(): Promise<MailAddress[]>
   /**
    * The four writes (D68). Each calls Google **first** and touches the cache
    * only once Google has agreed — see the note above `write`.
@@ -64,6 +77,12 @@ export interface GoogleDataDeps {
 }
 
 export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
+  /** The in-flight or settled address book. A promise rather than a value, so
+   *  two mounts racing produce one request instead of two. `listContacts` never
+   *  rejects, so this can never latch a failure permanently — a refusal caches
+   *  `[]` until the account changes, which is the same answer it would give. */
+  let addressBook: Promise<MailAddress[]> | null = null
+
   return {
     async agenda(window, overrides) {
       const events = await listAgenda(api(), window, { overrides })
@@ -77,6 +96,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
 
     threads(options) {
       return syncThreads(api(), cache, options)
+    },
+
+    contacts() {
+      return (addressBook ??= listContacts(api()))
     },
 
     markRead(id) {
@@ -115,10 +138,17 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     },
 
     useAccount(sub) {
+      // The address book belongs to whoever was connected, exactly as the
+      // cached mail does — and unlike the mail it is not keyed by account, so
+      // dropping it here is what stops one account completing to another's
+      // contacts. `cache.useAccount` no-ops on an unchanged account; this does
+      // not, and the cost of being wrong that way is one extra request.
+      addressBook = null
       cache.useAccount(sub)
     },
 
     forget() {
+      addressBook = null
       cache.destroy()
     },
   }
