@@ -124,7 +124,37 @@ describe('missingScopes', () => {
       'https://www.googleapis.com/auth/gmail.modify',
       'https://www.googleapis.com/auth/contacts.readonly',
       'https://www.googleapis.com/auth/contacts.other.readonly',
+      'https://www.googleapis.com/auth/calendar.events',
     ])
+  })
+
+  /**
+   * The D70 grant widening, on its own.
+   *
+   * Widening `GOOGLE_SCOPES` does not invalidate an existing grant: the refresh
+   * token keeps minting tokens for the old scopes, so mail and the agenda go on
+   * working and only the calendar *writes* 403. That reads as a broken feature
+   * rather than a missing consent, and no amount of retrying fixes it — this is
+   * the one thing that makes it visible.
+   */
+  it('names calendar.events on a grant that predates the calendar writes', async () => {
+    const beforeD70 = GOOGLE_SCOPES.filter(
+      (scope) => scope !== 'https://www.googleapis.com/auth/calendar.events',
+    )
+    const session = await connected(auth({ scopes: beforeD70 }))
+
+    expect(session.missingScopes()).toEqual([
+      'https://www.googleapis.com/auth/calendar.events',
+    ])
+  })
+
+  it('does not alias calendar.events — it comes back exactly as it was asked for', async () => {
+    // SCOPE_ALIASES covers only the short forms (`email`, `profile`). A full
+    // .../auth/… URL is returned verbatim, so if this ever needed an alias the
+    // symptom would be settings demanding a reconnect that never clears.
+    const session = await connected(auth({ scopes: [...GOOGLE_SCOPES] }))
+
+    expect(session.missingScopes()).toEqual([])
   })
 
   it('is empty when the grant covers everything the build asks for', async () => {
@@ -154,6 +184,7 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/calendar.readonly',
           'https://www.googleapis.com/auth/contacts.readonly',
           'https://www.googleapis.com/auth/contacts.other.readonly',
+          'https://www.googleapis.com/auth/calendar.events',
         ],
       }),
     )
@@ -172,6 +203,7 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/calendar.readonly',
           'https://www.googleapis.com/auth/contacts.readonly',
+          'https://www.googleapis.com/auth/calendar.events',
         ],
       }),
     )

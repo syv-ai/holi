@@ -90,6 +90,15 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
+  // Calendar WRITE (D70) — time-blocking: the agent turns tasks into blocks on
+  // the user's own calendar. Deliberately narrower than it looks: Holi refuses
+  // any event carrying attendees, so this scope never sends an invitation or a
+  // cancellation. `calendar.readonly` stays alongside it because reading the
+  // full calendar list is not implied by the events scope.
+  //
+  // *Sensitive*, the same tier as `calendar.readonly` — so this costs a
+  // consent-screen edit and one re-consent, and no new verification.
+  'https://www.googleapis.com/auth/calendar.events',
 ]
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
