@@ -39,7 +39,7 @@ const NOW = 1_000_000
 function auth(overrides: Partial<StoredGoogleAuth> = {}): StoredGoogleAuth {
   return {
     sub: 'sub-1',
-    email: 'nicolai@syv.ai',
+    email: 'ada@syv.ai',
     refreshToken: 'rt-1',
     accessToken: 'at-1',
     expiresAt: NOW + 3_600_000,
@@ -82,7 +82,7 @@ describe('loading', () => {
   it('reads the keychain and reports the account without exposing tokens', async () => {
     const session = await connected(auth())
 
-    expect(session.account).toEqual({ email: 'nicolai@syv.ai' })
+    expect(session.account).toEqual({ email: 'ada@syv.ai' })
     // The renderer-facing projection carries no token, by construction.
     expect(JSON.stringify(session.account)).not.toContain('rt-1')
     expect(JSON.stringify(session.account)).not.toContain('at-1')
@@ -123,6 +123,7 @@ describe('missingScopes', () => {
     expect(session.missingScopes()).toEqual([
       'https://www.googleapis.com/auth/gmail.modify',
       'https://www.googleapis.com/auth/contacts.readonly',
+      'https://www.googleapis.com/auth/contacts.other.readonly',
     ])
   })
 
@@ -152,6 +153,7 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/calendar.readonly',
           'https://www.googleapis.com/auth/contacts.readonly',
+          'https://www.googleapis.com/auth/contacts.other.readonly',
         ],
       }),
     )
@@ -169,11 +171,17 @@ describe('missingScopes', () => {
           'https://www.googleapis.com/auth/userinfo.email',
           'https://www.googleapis.com/auth/gmail.modify',
           'https://www.googleapis.com/auth/calendar.readonly',
+          'https://www.googleapis.com/auth/contacts.readonly',
         ],
       }),
     )
 
-    expect(session.missingScopes()).toEqual(['https://www.googleapis.com/auth/contacts.readonly'])
+    // The auto-collected contacts need their OWN scope — `contacts.readonly`
+    // covers saved contacts and nothing else. A grant carrying only the first
+    // reads as complete until `otherContacts` quietly answers 403.
+    expect(session.missingScopes()).toEqual([
+      'https://www.googleapis.com/auth/contacts.other.readonly',
+    ])
   })
 
   it('is empty with no account — "not connected" is a different state the UI already renders', async () => {
@@ -281,7 +289,7 @@ describe('a dead grant', () => {
 
     await expect(session.getAccessToken()).rejects.toThrow()
     // A flaky network must never cost the user their connection.
-    expect(session.account).toEqual({ email: 'nicolai@syv.ai' })
+    expect(session.account).toEqual({ email: 'ada@syv.ai' })
     expect(await store.read()).not.toEqual({})
   })
 })

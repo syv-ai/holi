@@ -21,7 +21,20 @@ interface RawPerson {
   emailAddresses?: { value?: string }[]
 }
 
-/** A People API answering both collections, recording what it was asked. */
+/**
+ * A People API that **checks what it was asked**, not only which URL was hit.
+ *
+ * This is the difference between a fake and a recording, and it is the reason
+ * `otherContacts` shipped returning nothing at all. The two collections do not
+ * take the same parameter — `connections.list` wants `personFields` and
+ * `otherContacts.list` wants `readMask` — and a fake that answers on the URL
+ * alone happily returns contacts for a request Google would have rejected with
+ * a 400. The suite was green and the address book was empty.
+ *
+ * So this one refuses the way Google does. It cannot prove the scope half of
+ * the same bug (`contacts.other.readonly`) — nothing here talks to Google, and
+ * no fake can — but it can stop the parameter half coming back.
+ */
 function people(
   connections: RawPerson[],
   otherContacts: RawPerson[] = [],
@@ -30,17 +43,22 @@ function people(
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
-    if (fail) {
-      return {
-        ok: false,
-        status: 403,
-        json: async () => ({}),
-        text: async () => JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
-      }
-    }
-    const body = url.includes('otherContacts')
-      ? { otherContacts }
-      : { connections }
+    const refuse = (status: number, reason: string) => ({
+      ok: false,
+      status,
+      json: async () => ({}),
+      text: async () => JSON.stringify({ error: { errors: [{ reason }] } }),
+    })
+    if (fail) return refuse(403, 'insufficientPermissions')
+
+    const params = new URL(url).searchParams
+    const other = url.includes('otherContacts')
+    // Required, and named differently on each collection. Google answers 400
+    // when the required one is missing; it does not quietly ignore it.
+    if (other && params.get('readMask') === null) return refuse(400, 'badRequest')
+    if (!other && params.get('personFields') === null) return refuse(400, 'badRequest')
+
+    const body = other ? { otherContacts } : { connections }
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   })
   const api = new GoogleApi({
@@ -80,6 +98,33 @@ describe('listContacts', () => {
     // Requesting every field would page far more data for a dropdown that shows
     // two strings.
     expect(new URL(connections).searchParams.get('personFields')).toBe('names,emailAddresses')
+  })
+
+  it('asks otherContacts with readMask, which is what that collection takes', async () => {
+    // The parameter names differ between the two collections, and sending
+    // `personFields` to `otherContacts` is a 400 — swallowed by the `[]`
+    // policy, so the only symptom is an address book missing everyone the user
+    // has actually corresponded with.
+    const { api, seen } = people([], [person('Lars', 'lars@syv.ai')])
+
+    const contacts = await listContacts(api)
+
+    const other = new URL(seen.find((u) => u.includes('/otherContacts'))!)
+    expect(other.searchParams.get('readMask')).toBe('names,emailAddresses')
+    expect(other.searchParams.get('personFields')).toBeNull()
+    // And the consequence, stated as the outcome rather than the parameter:
+    // the collection that matters actually answers.
+    expect(contacts).toEqual([{ name: 'Lars', email: 'lars@syv.ai' }])
+  })
+
+  it('pages a bounded number of times — a dropdown is not a sync', async () => {
+    // `getAll`'s default cap is ten, which would be twenty requests across the
+    // two collections every time the address book is built.
+    const { api, seen } = people([person('Jane', 'jane@syv.ai')])
+
+    await listContacts(api)
+
+    expect(seen).toHaveLength(2)
   })
 
   it('drops a contact with no address — there is nothing to complete to', async () => {

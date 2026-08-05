@@ -8,6 +8,18 @@
  * An address book built from `connections` alone works perfectly and is empty
  * for the person it was built for.
  *
+ * **The two collections are not the same API wearing two URLs**, and assuming
+ * they were is how `otherContacts` shipped returning nothing at all:
+ *
+ * - `connections.list` takes `personFields`; `otherContacts.list` takes
+ *   **`readMask`**, and rejects the request outright without it.
+ * - `connections.list` is covered by `contacts.readonly`; `otherContacts.list`
+ *   needs its own **`contacts.other.readonly`** (see `GOOGLE_SCOPES`).
+ *
+ * Both failures are 4xx, both are swallowed by the `[]` policy below, and the
+ * result was an address book that looked like it worked. A test whose fake
+ * answered on URL alone could not have caught either — see `google-people`.
+ *
  * **Never throws.** A refusal, a cold API, a timeout — all answer `[]`, because
  * completion has a second source (senders across loaded threads, in `MailView`)
  * and degrading to it is correct. A dropdown that breaks because a contacts
@@ -26,14 +38,16 @@ const BASE = 'https://people.googleapis.com/v1'
 const FIELDS = 'names,emailAddresses'
 
 /**
- * How many contacts to page.
+ * How many contacts to page, and how many pages.
  *
- * Google's maximum page size differs between the two collections (1000 for
- * connections, 1000 for otherContacts), and `getAll`'s own cap bounds the loop.
- * This is a completion source, not a sync: the first few pages are the people
- * anyone actually types.
+ * 1000 is the maximum both collections accept. **Two pages, not ten:** this is
+ * a completion corpus, not a sync, and `getAll`'s default cap of ten would let
+ * one dropdown cost twenty requests against a rate-limited API. Two pages per
+ * collection is 2000 people each — past the point where the list stops being
+ * the reason completion misses someone.
  */
 const PAGE_SIZE = '1000'
+const PAGE_CAP = 2
 
 interface RawPerson {
   names?: { displayName?: string }[]
@@ -41,11 +55,13 @@ interface RawPerson {
 }
 
 export async function listContacts(api: GoogleApi): Promise<MailAddress[]> {
-  // Settled, not `all`: one collection failing must not cost the other. In
-  // practice `otherContacts` is the newer surface and the likelier to refuse.
+  // `Promise.all` is safe here only because `page` resolves to `[]` rather than
+  // rejecting — one collection failing genuinely does not cost the other. The
+  // containment is in `page`, not in this call; do not move it.
   const [connections, others] = await Promise.all([
-    page(api, `${BASE}/people/me/connections`, 'connections'),
-    page(api, `${BASE}/otherContacts`, 'otherContacts'),
+    page(api, `${BASE}/people/me/connections`, 'connections', 'personFields'),
+    // `readMask`, NOT `personFields` — see the module note.
+    page(api, `${BASE}/otherContacts`, 'otherContacts', 'readMask'),
   ])
 
   const byEmail = new Map<string, MailAddress>()
@@ -64,13 +80,25 @@ export async function listContacts(api: GoogleApi): Promise<MailAddress[]> {
   return [...byEmail.values()]
 }
 
-/** One collection, paged, or `[]` if Google will not answer for it. */
-async function page(api: GoogleApi, url: string, key: string): Promise<RawPerson[]> {
+/**
+ * One collection, paged, or `[]` if Google will not answer for it.
+ *
+ * `fieldsParam` is the whole reason this takes an argument for something that
+ * looks like a constant: the two collections spell the same idea differently,
+ * and sending the wrong one is a 400 that this function then hides.
+ */
+async function page(
+  api: GoogleApi,
+  url: string,
+  key: string,
+  fieldsParam: 'personFields' | 'readMask',
+): Promise<RawPerson[]> {
   try {
     return await api.getAll<RawPerson>(
       url,
-      { personFields: FIELDS, pageSize: PAGE_SIZE },
+      { [fieldsParam]: FIELDS, pageSize: PAGE_SIZE },
       (raw) => (raw as unknown as Record<string, RawPerson[] | undefined>)[key] ?? [],
+      PAGE_CAP,
     )
   } catch {
     return []

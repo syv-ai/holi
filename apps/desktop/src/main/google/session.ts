@@ -72,8 +72,14 @@ export const GOOGLE_CLIENT_SECRET = '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'
  *   is a code boundary wearing a scope boundary's clothes, and the agent's
  *   `Bash(holi-google …)` gate (D67 §5) is now the only wall, not the second.
  *
- * `contacts.readonly` rode the same consent screen rather than costing a second
- * one — it is what puts a real address book behind `@`-completion.
+ * **Contacts is two scopes, not one**, and that is not a belt-and-braces
+ * duplicate. `contacts.readonly` covers `people/me/connections` — the contacts
+ * someone explicitly saved. The auto-collected ones, which is what an address
+ * book is actually made of, live at `otherContacts` and are covered only by
+ * `contacts.other.readonly`. Asking for the first alone yields an address book
+ * that answers every request successfully and is empty for most Workspace
+ * accounts; the 403 is swallowed by `people.ts`'s `[]` policy, so nothing says
+ * so. See the module note there.
  *
  * `openid`/`email` are what make the `id_token` carry the `sub` we key on.
  */
@@ -83,6 +89,7 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
+  'https://www.googleapis.com/auth/contacts.other.readonly',
 ]
 
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
