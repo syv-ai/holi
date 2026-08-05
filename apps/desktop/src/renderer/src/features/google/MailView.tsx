@@ -157,6 +157,16 @@ interface MailCounts {
   total: number
 }
 
+/** Mirrors `CategoryCount` in `main/google/gmail.ts`. `more` means the answer
+ *  ran past one page, so it renders as `500+` rather than as a number that
+ *  quietly means "at least". */
+interface CategoryCount {
+  count: number
+  more: boolean
+}
+
+type CategoryCounts = Partial<Record<MailCategory, CategoryCount | null>>
+
 type ListState =
   | { kind: 'loading' }
   | {
@@ -203,6 +213,16 @@ export function MailView() {
   const [category, setCategory] = useState<MailCategory | null>(null)
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
+  /** Unread per Gmail tab. `null` until the picker is first opened — five
+   *  requests is not a price to pay for a dropdown nobody has touched. */
+  const [categoryCounts, setCategoryCounts] = useState<CategoryCounts | null>(null)
+  /**
+   * Bumped by everything that replaces the list.
+   *
+   * An optimistic write captures the list it is undoing; this is how it knows,
+   * on failure, whether that undo is still valid. See `write`.
+   */
+  const listGeneration = useRef(0)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
@@ -220,6 +240,7 @@ export function MailView() {
 
   const load = useCallback(() => {
     setList({ kind: 'loading' })
+    listGeneration.current++
     void trpc.google.threads
       .query({ query: submitted, category: filter, unread: unreadOnly || undefined })
       .then((page) =>
@@ -250,6 +271,23 @@ export function MailView() {
   useEffect(loadCounts, [loadCounts])
 
   /**
+   * Unread per tab, **on demand**.
+   *
+   * Five requests, so they are not spent until the picker is actually opened —
+   * and once opened, they refresh with everything else. A count that is exact
+   * but two minutes old is still exact about the moment it names; a count that
+   * cost five requests on every mount is not worth what it says.
+   */
+  const loadCategoryCounts = useCallback(() => {
+    void trpc.google.categoryCounts
+      .query()
+      .then(setCategoryCounts)
+      // The tabs still work with no numbers on them. Losing the counts must not
+      // cost the picker.
+      .catch(() => setCategoryCounts(null))
+  }, [])
+
+  /**
    * The address book, once per mount.
    *
    * A failure is silent and leaves `contacts` empty, which is not a degraded
@@ -277,6 +315,7 @@ export function MailView() {
     void trpc.google.threads
       .query({ query: submitted, category: filter, unread: unreadOnly || undefined, pageToken })
       .then((page) => {
+        listGeneration.current++
         setList((previous) =>
           previous.kind === 'ready'
             ? {
@@ -332,6 +371,7 @@ export function MailView() {
   const write = async (mutate: () => Promise<unknown>, next: (threads: ThreadSummary[]) => ThreadSummary[]) => {
     if (list.kind !== 'ready') return
     const snapshot = list.threads
+    const at = ++listGeneration.current
     setWriteError(null)
     setList((previous) =>
       previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
@@ -339,7 +379,28 @@ export function MailView() {
     try {
       await mutate()
     } catch (err: unknown) {
-      setList((previous) => (previous.kind === 'ready' ? { ...previous, threads: snapshot } : previous))
+      /**
+       * The snapshot is only a valid undo while nothing else has touched the
+       * list.
+       *
+       * Restoring it unconditionally was wrong in two reachable ways, and both
+       * show up in ordinary triage: marking one thread read while the previous
+       * one is still in flight, and clicking refresh straight after an archive.
+       * In each case the snapshot is a list that has since moved on, and
+       * writing it back discards the other change wholesale — a star that
+       * vanishes from a thread Google has starred, or a fresh page replaced by
+       * a stale one.
+       *
+       * When it has moved, the honest recovery is to re-read rather than to
+       * invent an undo: `load()` asks what is actually true.
+       */
+      if (listGeneration.current === at) {
+        setList((previous) =>
+          previous.kind === 'ready' ? { ...previous, threads: snapshot } : previous,
+        )
+      } else {
+        load()
+      }
       // **A silent revert is the bug, not the recovery.** Undoing the paint
       // leaves the row exactly as it was before the click, which is
       // indistinguishable from the click never registering — and that is how a
@@ -453,9 +514,15 @@ export function MailView() {
             unreadOnly={unreadOnly}
             onUnreadChange={setUnreadOnly}
             unreadCount={counts?.unread ?? null}
+            inboxUnread={counts?.unread ?? null}
+            categoryCounts={categoryCounts}
+            onCategoryMenuOpen={loadCategoryCounts}
             onRefresh={() => {
               load()
               loadCounts()
+              // Only if they are on screen already — refresh must not be the
+              // thing that first spends five requests on a dropdown.
+              if (categoryCounts !== null) loadCategoryCounts()
             }}
           />
 
@@ -663,6 +730,21 @@ export function MailView() {
   )
 }
 
+const NEEDS_SCOPE = 'Holi needs new Google permissions for this. Reconnect Google in settings.'
+const NOT_CONNECTED_MESSAGE = 'Google isn’t connected. Connect it in vault settings.'
+const RATE_LIMITED = 'Google is rate limiting. Try again in a moment.'
+
+/**
+ * tRPC's verdict, as `ipcLink` rebuilt it.
+ *
+ * `main/trpc-call.ts` puts main's code on the envelope and `ipc-link.ts` lands
+ * it on `err.data.code`, which is where tRPC's own callers already look.
+ */
+function codeOf(err: unknown): string | null {
+  const data = (err as { data?: { code?: unknown } } | null)?.data
+  return typeof data?.code === 'string' ? data.code : null
+}
+
 /**
  * Why a triage action did not stick, in terms the user can act on.
  *
@@ -670,14 +752,30 @@ export function MailView() {
  * one with a fix the user can perform — and because its natural symptom is
  * silence: mail loads, so the connection looks healthy, and only the writes
  * fail. "Reconnect Google in settings" is the whole message worth sending.
+ *
+ * **The code first, the prose second.** The router maps `GoogleApiError.code`
+ * onto a tRPC code precisely so this does not have to read Google's sentences
+ * (`rethrowGoogle`); matching on the message alone made the wording in
+ * `google/api.ts` load-bearing UI behaviour with no test between the two. The
+ * regexes stay as the fallback, because an error can still arrive from
+ * somewhere that never had a code — and because "the code was lost" should
+ * degrade to the old answer rather than to "that didn't stick".
  */
 function explainWriteFailure(err: unknown): string {
-  const message = err instanceof Error ? err.message : ''
-  if (/permission|scope|insufficient/i.test(message)) {
-    return 'Holi needs new Google permissions for this. Reconnect Google in settings.'
+  switch (codeOf(err)) {
+    case 'FORBIDDEN':
+      return NEEDS_SCOPE
+    case 'UNAUTHORIZED':
+    case 'PRECONDITION_FAILED':
+      return NOT_CONNECTED_MESSAGE
+    case 'TOO_MANY_REQUESTS':
+      return RATE_LIMITED
   }
-  if (NOT_CONNECTED.test(message)) return 'Google isn’t connected. Connect it in vault settings.'
-  if (/rate limit/i.test(message)) return 'Google is rate limiting. Try again in a moment.'
+
+  const message = err instanceof Error ? err.message : ''
+  if (/permission|scope|insufficient/i.test(message)) return NEEDS_SCOPE
+  if (NOT_CONNECTED.test(message)) return NOT_CONNECTED_MESSAGE
+  if (/rate limit/i.test(message)) return RATE_LIMITED
   return message === '' ? 'That didn’t stick. Try again.' : message
 }
 
@@ -715,6 +813,9 @@ function MailToolbar({
   unreadOnly,
   onUnreadChange,
   unreadCount,
+  inboxUnread,
+  categoryCounts,
+  onCategoryMenuOpen,
   onRefresh,
 }: {
   query: string
@@ -730,6 +831,9 @@ function MailToolbar({
   unreadOnly: boolean
   onUnreadChange: (unread: boolean) => void
   unreadCount: number | null
+  inboxUnread: number | null
+  categoryCounts: CategoryCounts | null
+  onCategoryMenuOpen: () => void
   onRefresh: () => void
 }): React.JSX.Element {
   if (searchOpen) {
@@ -785,7 +889,15 @@ function MailToolbar({
       {/* Gone during a search, as Gmail's own tabs are: a picker reading
           "Promotions" over unfiltered results claims a filter that is not
           applied. Clearing the search brings it back. */}
-      {!searching && <CategoryPicker category={category} onChange={onCategoryChange} />}
+      {!searching && (
+        <CategoryPicker
+          category={category}
+          onChange={onCategoryChange}
+          counts={categoryCounts}
+          inboxUnread={inboxUnread}
+          onOpen={onCategoryMenuOpen}
+        />
+      )}
 
       <Tooltip content="refresh">
         <Button
@@ -1137,22 +1249,42 @@ function ThreadRow({
 }
 
 /**
- * Which Gmail tab the list is showing.
+ * Which Gmail tab the list is showing, and how much unread sits in each.
  *
- * Deliberately **no per-category counts**, which the design mock had: each
- * would cost a request, and Gmail's `resultSizeEstimate` is an estimate. A
- * count that is wrong is worse than no count — it is a number people trust.
+ * **The counts are counted, not estimated**, which is the condition on which
+ * they exist at all: this used to show none, because the obvious source is
+ * `resultSizeEstimate` and an estimate presented as a count is a number people
+ * trust and it is wrong. `fetchCategoryUnread` lists the tab's unread thread
+ * ids in the inbox and counts them — exact, correctly scoped, and honest past
+ * one page (`500+`). Read the note there for why `labels.get`, which is one
+ * request instead of five, is nevertheless the wrong source.
+ *
+ * They are also **not fetched until this is opened**. Five requests for a
+ * dropdown nobody touched is exactly the kind of cost the mail cache exists to
+ * avoid paying.
+ *
+ * Unread rather than total, because that is what a tab badge means: "is there
+ * anything in here for me" is the question, and "how much promotional mail do
+ * I own" is not.
  */
 function CategoryPicker({
   category,
   onChange,
+  counts,
+  inboxUnread,
+  onOpen,
 }: {
   category: MailCategory | null
   onChange: (category: MailCategory | null) => void
+  counts: CategoryCounts | null
+  /** The whole inbox's unread, which is what "All mail" means here. Already in
+   *  hand from `mailCounts`, so it costs nothing. */
+  inboxUnread: number | null
+  onOpen: () => void
 }) {
   const current = CATEGORIES.find((c) => c.value === category)
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => open && onOpen()}>
       <Tooltip content="Gmail’s tabs — only useful if your inbox uses them">
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="xs" className="ml-auto" aria-label="choose a category">
@@ -1163,12 +1295,34 @@ function CategoryPicker({
       <DropdownMenuContent align="end">
         {CATEGORIES.map((option) => (
           <DropdownMenuItem key={option.value ?? 'all'} onSelect={() => onChange(option.value)}>
-            {option.label}
+            <span className="flex w-full items-baseline justify-between gap-4">
+              <span>{option.label}</span>
+              {/* Nothing at all rather than a zero while the counts are in
+                  flight, or when one tab's request failed: an absent number
+                  says "not known", and `0` would say "nothing here". */}
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {unreadLabel(option.value, counts, inboxUnread)}
+              </span>
+            </span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
     </DropdownMenu>
   )
+}
+
+/** The number beside one tab, or `''` when there is nothing truthful to put
+ *  there. `0` is rendered — "nothing unread" is a real answer, and a blank
+ *  would read as "still loading". */
+function unreadLabel(
+  value: MailCategory | null,
+  counts: CategoryCounts | null,
+  inboxUnread: number | null,
+): string {
+  if (value === null) return inboxUnread === null ? '' : String(inboxUnread)
+  const count = counts?.[value]
+  if (count === undefined || count === null) return ''
+  return count.more ? `${count.count}+` : String(count.count)
 }
 
 /**
@@ -1361,5 +1515,13 @@ function MessageBody({ message }: { message: ThreadMessage }) {
   if (message.html === null) {
     return <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
   }
-  return <SandboxedHtml html={message.html} label={`message from ${message.from.name}`} />
+  return (
+    <SandboxedHtml
+      html={message.html}
+      label={`message from ${message.from.name}`}
+      // The message id is what makes "load images" survive the reader closing;
+      // the sender is what makes "always from this sender" possible at all.
+      identity={{ key: message.id, sender: message.from.email }}
+    />
+  )
 }

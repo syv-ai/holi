@@ -20,6 +20,8 @@ import {
   setThreadStarred,
   archiveThread,
   trashThread,
+  fetchCategoryUnread,
+  fetchCategoryCounts,
   textOnly,
 } from '../src/main/google/gmail'
 
@@ -214,7 +216,7 @@ describe('listThreads', () => {
         payload: {
           headers: [
             header('Subject', 'Q2 budget'),
-            header('From', '"Nicolai Thomsen" <nicolai@syv.ai>'),
+            header('From', '"Ada Holm" <ada@syv.ai>'),
             header('Message-ID', '<first@syv.ai>'),
           ],
         },
@@ -567,7 +569,7 @@ describe('readThread', () => {
             payload: {
               headers: [
                 header('Subject', 'Plan'),
-                header('From', '"Thomsen, Nicolai" <nicolai@syv.ai>'),
+                header('From', '"Holm, Ada" <ada@syv.ai>'),
                 header('To', '"Doe, Jane" <jane@x.com>, bob@y.com'),
                 header('Message-ID', '<plan@syv.ai>'),
               ],
@@ -583,7 +585,7 @@ describe('readThread', () => {
 
     expect(thread.subject).toBe('Plan')
     expect(thread.messages[0]).toMatchObject({
-      from: { name: 'Thomsen, Nicolai', email: 'nicolai@syv.ai' },
+      from: { name: 'Holm, Ada', email: 'ada@syv.ai' },
       body: 'here is the plan',
     })
     // A comma inside a quoted display name must not split one person into two.
@@ -789,7 +791,7 @@ describe('textOnly', () => {
         {
           id: 'm1',
           from: 'Jane',
-          to: ['nicolai@syv.ai'],
+          to: ['ada@syv.ai'],
           date: '2026-08-04T09:00:00.000Z',
           body: 'the plain one',
           html: '<p>the html one</p>',
@@ -800,7 +802,7 @@ describe('textOnly', () => {
     expect(projected.messages[0]).toEqual({
       id: 'm1',
       from: 'Jane',
-      to: ['nicolai@syv.ai'],
+      to: ['ada@syv.ai'],
       date: '2026-08-04T09:00:00.000Z',
       body: 'the plain one',
     })
@@ -943,6 +945,95 @@ describe('addresses', () => {
     // An empty `email` is the signal the UI reads as "show the name, offer no
     // mailto:" — a link to nothing is worse than plain text.
     expect(from).toEqual({ name: 'Mail Delivery Subsystem', email: '' })
+  })
+})
+
+/**
+ * The number beside a Gmail tab.
+ *
+ * The picker showed none for a long time, and the reason was sound: the obvious
+ * source is `resultSizeEstimate`, and an estimate presented as a count is a
+ * number people trust and it is wrong. What these pin is the source that made
+ * counts possible without breaking that rule — and, in particular, that it is
+ * scoped to the **inbox**, because the other exact source (`labels.get` on
+ * `CATEGORY_PROMOTIONS`) counts the whole mailbox including archived mail.
+ */
+describe('category counts', () => {
+  function counting(body: unknown) {
+    const seen: string[] = []
+    const fetchImpl = vi.fn(async (url: string) => {
+      seen.push(url)
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+    return { api, seen }
+  }
+
+  it('counts the ids Gmail returns rather than trusting an estimate', async () => {
+    const { api } = counting({
+      threads: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+      // Present and deliberately wrong: if this is ever read, the count stops
+      // being exact and the picker goes back to lying.
+      resultSizeEstimate: 41,
+    })
+
+    expect(await fetchCategoryUnread(api, 'promotions')).toEqual({ count: 3, more: false })
+  })
+
+  it('asks for unread threads in the INBOX, not for the whole category', async () => {
+    const { api, seen } = counting({ threads: [] })
+
+    await fetchCategoryUnread(api, 'promotions')
+
+    // Every term matters. Without `in:inbox` this counts archived promotional
+    // mail, which is a number about the mailbox rather than about the tab.
+    const q = new URL(seen[0]!).searchParams.get('q')
+    expect(q).toContain('in:inbox')
+    expect(q).toContain('category:promotions')
+    expect(q).toContain('is:unread')
+  })
+
+  it('says `more` when the answer ran past a page', async () => {
+    // 500 is Gmail's maximum. Reporting it as a flat "500" would be a number
+    // that quietly means "at least 500".
+    const { api } = counting({ threads: [{ id: 'a' }], nextPageToken: 'p2' })
+
+    expect(await fetchCategoryUnread(api, 'updates')).toEqual({ count: 1, more: true })
+  })
+
+  it('answers null for one tab rather than failing the picker', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => '{}',
+    }))
+    const api = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+
+    expect(await fetchCategoryUnread(api, 'social')).toBeNull()
+  })
+
+  it('covers every tab the picker offers', async () => {
+    const { api, seen } = counting({ threads: [{ id: 'a' }] })
+
+    const counts = await fetchCategoryCounts(api)
+
+    // A tab with no entry renders no number at all, so a category missing here
+    // is a silently blank row rather than an error.
+    expect(Object.keys(counts).sort()).toEqual([
+      'forums',
+      'primary',
+      'promotions',
+      'social',
+      'updates',
+    ])
+    expect(seen).toHaveLength(5)
   })
 })
 

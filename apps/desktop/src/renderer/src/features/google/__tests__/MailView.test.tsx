@@ -7,10 +7,11 @@
  * it, that a blocked message offers the unblock and that the unblock works, and
  * that a link in a message opens externally instead of navigating the app.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { cleanup, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
+import { resetMailImagesForTests } from '../../../state/mail-images'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -20,6 +21,10 @@ const markReadMock = vi.fn()
 const setStarredMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
+const categoryCountsMock = vi.fn()
+const imageSendersMock = vi.fn()
+const allowImagesFromMock = vi.fn()
+const forgetImageSendersMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -32,6 +37,10 @@ vi.mock('../../../lib/trpc', () => ({
       setStarred: { mutate: (input: unknown) => setStarredMock(input) },
       archive: { mutate: (input: { id: string }) => archiveMock(input) },
       trash: { mutate: (input: { id: string }) => trashMock(input) },
+      categoryCounts: { query: () => categoryCountsMock() },
+      imageSenders: { query: () => imageSendersMock() },
+      allowImagesFrom: { mutate: (input: unknown) => allowImagesFromMock(input) },
+      forgetImageSenders: { mutate: () => forgetImageSendersMock() },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -87,7 +96,7 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
       {
         id: 'm1',
         from: { name: 'Jane', email: 'jane@example.com' },
-        to: [{ name: 'Nicolai', email: 'nicolai@syv.ai' }],
+        to: [{ name: 'Ada', email: 'ada@syv.ai' }],
         cc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
@@ -134,7 +143,7 @@ beforeEach(() => {
       {
         id: 'm1',
         from: { name: 'Jane', email: 'jane@example.com' },
-        to: [{ name: 'Nicolai', email: 'nicolai@syv.ai' }],
+        to: [{ name: 'Ada', email: 'ada@syv.ai' }],
         cc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
@@ -149,6 +158,14 @@ beforeEach(() => {
   setStarredMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
+  categoryCountsMock.mockReset().mockResolvedValue({})
+  imageSendersMock.mockReset().mockResolvedValue([])
+  allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
+  forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
+  // The remote-content choice now outlives a component, which is the whole
+  // point of it — so it has to be put back between tests or one test's
+  // "Load images" silently satisfies the next test's assertion.
+  resetMailImagesForTests()
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -909,6 +926,236 @@ test('a rate limit is not reported as a permissions problem', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   archiveMock.mockRejectedValue(new Error('Google is rate limiting this request'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+
+  expect(await screen.findByText(/rate limiting/)).toBeInTheDocument()
+  expect(screen.queryByText(/Reconnect Google/)).toBeNull()
+})
+
+/**
+ * The remote-content choice, and how long each version of it lasts.
+ *
+ * Reported from real use: "Load images" worked and then did not — closing the
+ * thread and reopening it put the banner straight back. The choice lived in the
+ * component, and the reader unmounts every time a thread is closed.
+ *
+ * Two answers are offered because they are two different promises: *this
+ * message* has no reason to outlive the session, and *this sender* would be
+ * worthless if it did not.
+ */
+
+/** Reopen the same thread from scratch, as closing the reader and coming back
+ *  does — a fresh mount, so nothing component-local survives. */
+async function reopenThread(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+  cleanup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  return await screen.findByRole('article')
+}
+
+test('an unblocked message stays unblocked when the reader is closed and reopened', async () => {
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  await user.click(within(article).getByRole('button', { name: /^load images$/i }))
+  await waitFor(() =>
+    expect(within(article).queryByRole('button', { name: /^load images$/i })).toBeNull(),
+  )
+
+  const reopened = await reopenThread(user)
+
+  // The whole bug: this used to be back, and the images with it.
+  expect(within(reopened).queryByRole('button', { name: /^load images$/i })).toBeNull()
+  expect((await frameOf(reopened)).querySelector('img')?.getAttribute('src')).toBe(
+    'https://cdn.test/logo.png',
+  )
+})
+
+test('“load images” is that message only, not every message from the sender', async () => {
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  await user.click(within(article).getByRole('button', { name: /^load images$/i }))
+
+  // Nothing was stored. The one-off must not quietly become standing consent.
+  await waitFor(() => expect(allowImagesFromMock).not.toHaveBeenCalled())
+})
+
+test('“always from this sender” is remembered in main, keyed on the address', async () => {
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  await user.click(within(article).getByRole('button', { name: /always from this sender/i }))
+
+  await waitFor(() => expect(allowImagesFromMock).toHaveBeenCalledWith({ sender: 'jane@example.com' }))
+  // And it takes effect now, not on the next launch.
+  expect(within(article).queryByRole('button', { name: /^load images$/i })).toBeNull()
+})
+
+test('a sender already allowed never shows the banner at all', async () => {
+  imageSendersMock.mockResolvedValue(['jane@example.com'])
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+
+  const article = await openThread()
+
+  await waitFor(async () =>
+    expect((await frameOf(article)).querySelector('img')?.getAttribute('src')).toBe(
+      'https://cdn.test/logo.png',
+    ),
+  )
+  expect(within(article).queryByRole('button', { name: /^load images$/i })).toBeNull()
+})
+
+test('offers nothing to remember when the sender could not be parsed', async () => {
+  // `parseAddress` answers `email: ''` for a `From` it cannot read. Storing that
+  // would allow images for every such message at once.
+  withMessage(
+    { body: 'hello', html: '<img src="https://cdn.test/logo.png">' },
+    { from: { name: 'Mail Delivery Subsystem', email: '' } },
+  )
+
+  const article = await openThread()
+
+  expect(within(article).getByRole('button', { name: /^load images$/i })).toBeInTheDocument()
+  expect(within(article).queryByRole('button', { name: /always from this sender/i })).toBeNull()
+})
+
+/**
+ * The canvas a message renders on.
+ *
+ * Reported from real use: rich mail and headings came out black on the dark
+ * theme's background. Mail declares its ink and inherits its paper — see
+ * `canvasFor` — so a message that brings any design of its own gets white.
+ */
+test('a designed message renders on paper, not on the dark theme', async () => {
+  withMessage({ body: 'hello', html: '<p style="color:#333333">the quarterly plan</p>' })
+
+  const article = await openThread()
+  const frame = await frameOf(article)
+
+  const style = frame.querySelector('style')?.textContent ?? ''
+  expect(style).toContain('background: #ffffff')
+  expect(style).toContain('color-scheme: light')
+})
+
+test('prose that brought no design keeps the app’s own theme', async () => {
+  withMessage({ body: 'hello', html: '<p>just a sentence</p>' })
+
+  const article = await openThread()
+  const frame = await frameOf(article)
+
+  // Continuity where it is safe: a plain message should not be a white card in
+  // a dark app for no reason.
+  expect(frame.querySelector('style')?.textContent).not.toContain('color-scheme: light')
+})
+
+/**
+ * Unread per Gmail tab.
+ *
+ * The picker showed no counts because the obvious source is an estimate. These
+ * are counted, and paid for only when the menu is opened.
+ */
+test('the category picker spends nothing until it is opened', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  expect(categoryCountsMock).not.toHaveBeenCalled()
+
+  await user.click(screen.getByRole('button', { name: 'choose a category' }))
+
+  await waitFor(() => expect(categoryCountsMock).toHaveBeenCalledTimes(1))
+})
+
+test('shows the unread count beside each tab, and 500+ past a page', async () => {
+  categoryCountsMock.mockResolvedValue({
+    primary: { count: 4, more: false },
+    promotions: { count: 500, more: true },
+    social: null,
+  })
+  countsMock.mockResolvedValue({ unread: 12, total: 340 })
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await user.click(screen.getByRole('button', { name: 'choose a category' }))
+
+  const menu = await screen.findByRole('menu')
+  expect(within(menu).getByRole('menuitem', { name: /Primary/ })).toHaveTextContent('4')
+  // Honest past the page rather than a flat 500, which would quietly mean
+  // "at least 500".
+  expect(within(menu).getByRole('menuitem', { name: /Promotions/ })).toHaveTextContent('500+')
+  // "All mail" is the whole inbox's unread, already in hand from mailCounts.
+  expect(within(menu).getByRole('menuitem', { name: /All mail/ })).toHaveTextContent('12')
+  // A tab whose own request failed shows nothing — an absent number says "not
+  // known", where 0 would say "nothing here".
+  expect(within(menu).getByRole('menuitem', { name: /Social/ })).not.toHaveTextContent(/\d/)
+})
+
+/**
+ * The optimistic undo, when the list has moved on under it.
+ *
+ * `write` captures the list it is undoing. Restoring that snapshot after
+ * something else has replaced the list discards the other change wholesale — so
+ * the recovery is to re-read rather than to invent an undo.
+ */
+test('a failed write does not roll back a refresh that landed while it was in flight', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ unread: true })]))
+  // Never settles until we say so, so "in flight" is a real moment.
+  let refuse!: (err: Error) => void
+  markReadMock.mockReturnValue(new Promise((_resolve, reject) => (refuse = reject)))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await waitFor(() => expect(markReadMock).toHaveBeenCalled())
+
+  // A refresh lands with different mail entirely.
+  threadMock.mockResolvedValue(page([{ ...summary(), id: 't9', subject: 'Newer thing' }]))
+  await user.click(screen.getByRole('button', { name: 'refresh mail' }))
+  await screen.findByRole('button', { name: /Newer thing/ })
+
+  refuse(new Error('this Google permission was not granted'))
+
+  // The stale snapshot must not come back. It used to, taking the refreshed
+  // page with it.
+  expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
+  await waitFor(() => expect(screen.getByRole('button', { name: /Newer thing/ })).toBeInTheDocument())
+})
+
+test('reads the refusal from the code, not from Google’s prose', async () => {
+  // The router maps `GoogleApiError.code` onto a tRPC code so this does not
+  // have to match on sentences. A message that says nothing useful still has
+  // to produce the right advice.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  archiveMock.mockRejectedValue(
+    Object.assign(new Error('Internal server error'), { data: { code: 'FORBIDDEN' } }),
+  )
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+
+  expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
+})
+
+test('a rate-limit code is not reported as a permissions problem either', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  archiveMock.mockRejectedValue(
+    Object.assign(new Error('Internal server error'), { data: { code: 'TOO_MANY_REQUESTS' } }),
+  )
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
