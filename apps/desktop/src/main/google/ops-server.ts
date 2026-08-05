@@ -115,6 +115,16 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   if (oversize) throw new TooLarge('that request body is too large')
   const text = Buffer.concat(chunks).toString('utf8')
   if (text.trim() === '') return {}
+
+  // Form-encoded is what the generated `holi-google` sends, and that is not an
+  // accident: `curl --data-urlencode "body@-"` reads the message from stdin and
+  // encodes it, so a mail body containing quotes, `$`, or a newline needs no
+  // escaping in POSIX `sh` at all. Assembling JSON by hand in a shell script is
+  // the same class of bug as hand-rolling percent-encoding, which is why the
+  // read subcommands already use `-G --data-urlencode`.
+  const contentType = req.headers['content-type'] ?? ''
+  if (contentType.includes('application/x-www-form-urlencoded')) return fromForm(text)
+
   let parsed: unknown
   try {
     parsed = JSON.parse(text)
@@ -125,6 +135,31 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
     throw new BadRequest('the request body must be a JSON object')
   }
   return parsed as Record<string, unknown>
+}
+
+/**
+ * A form body, given the shape the JSON routes already expect.
+ *
+ * Two rules, both chosen so a caller never has to say which it meant: a key
+ * that appears more than once is an **array** (`to=a&to=b`), and the exact
+ * strings `true`/`false` are **booleans**. Without the second one, `read=false`
+ * would arrive as the string `"false"` — which is truthy, so "mark it unread"
+ * would mark it read and answer 200.
+ */
+function fromForm(text: string): Record<string, unknown> {
+  const params = new URLSearchParams(text)
+  const out: Record<string, unknown> = {}
+  for (const key of new Set(params.keys())) {
+    const values = params.getAll(key)
+    out[key] = values.length > 1 ? values : coerce(values[0]!)
+  }
+  return out
+}
+
+function coerce(value: string): string | boolean {
+  if (value === 'true') return true
+  if (value === 'false') return false
+  return value
 }
 
 export interface GoogleOpsServer {
@@ -211,17 +246,23 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
       if (typeof value !== 'string' || value === '') throw new BadRequest('this operation needs an id')
       return value
     }
+    /** One recipient or several. A form body cannot tell them apart — `to=a`
+     *  is a scalar and `to=a&to=b` is an array — so both are accepted rather
+     *  than making the caller know which shape it produced. */
+    const addresses = (value: unknown): string[] => {
+      if (typeof value === 'string') return value === '' ? [] : [value]
+      if (Array.isArray(value)) return value.map(String).filter((v) => v !== '')
+      return []
+    }
+
     const mail = () => {
-      const { to, subject, body: text, cc } = body
-      if (!Array.isArray(to) || to.length === 0) throw new BadRequest('to is required')
+      const { subject, body: text } = body
+      const to = addresses(body.to)
+      if (to.length === 0) throw new BadRequest('to is required')
       if (typeof subject !== 'string') throw new BadRequest('subject is required')
       if (typeof text !== 'string') throw new BadRequest('body is required')
-      return {
-        to: to.map(String),
-        subject,
-        body: text,
-        ...(Array.isArray(cc) ? { cc: cc.map(String) } : {}),
-      }
+      const cc = addresses(body.cc)
+      return { to, subject, body: text, ...(cc.length > 0 ? { cc } : {}) }
     }
 
     switch (url.pathname) {
