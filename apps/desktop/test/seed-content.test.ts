@@ -49,6 +49,7 @@ function runHook(name: string, opts: { env?: Record<string, string>; cwd?: strin
 describe('SEED_FILES', () => {
   it('covers exactly the spec\'s managed set (USER.local.md is machine-local, never seeded)', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
+      '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/settings.json',
       '.claude/skills/gmail-calendar/SKILL.md',
@@ -148,9 +149,45 @@ describe('SEED_FILES', () => {
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
       '.claude/hooks/user-prompt-submit.mjs',
     )
-    // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server signal)
-    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit', 'Stop'])
-    expect(settings.permissions.ask).toEqual(['Bash(curl:*)', 'Bash(wget:*)'])
+    // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server
+    // signal); PreToolUse is the send gate (D70) and is unrelated to the bracket.
+    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'PreToolUse'])
+    expect(settings.permissions.ask).toEqual([
+      'Bash(curl:*)',
+      'Bash(wget:*)',
+      'Bash(holi-google archive:*)',
+      'Bash(holi-google trash:*)',
+      'Bash(holi-google unschedule:*)',
+      'Bash(holi-google send:*)',
+      'Bash(holi-google reply:*)',
+    ])
+  })
+
+  /**
+   * The gate is the only thing between the agent and a sent email, so its
+   * wiring is pinned rather than assumed.
+   *
+   * `matcher: 'Bash'` with **no `if` condition** is deliberate. An `if` keyed on
+   * one spelling of the command would miss the other two the agent can produce,
+   * and a gate that misses fails OPEN while still reading like protection —
+   * which is exactly what D67 §5's `Bash(holi-google send:*)` rule did.
+   */
+  it('wires the send gate to every Bash call, deciding in the hook rather than in a matcher', () => {
+    const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
+    const gate = settings.hooks.PreToolUse[0]
+
+    expect(gate.matcher).toBe('Bash')
+    expect(gate.hooks[0].command).toContain('.claude/hooks/google-send-gate.mjs')
+    expect(gate.hooks[0].if).toBeUndefined()
+  })
+
+  it('the send gate returns ask rather than deny, so the user still decides', () => {
+    // `deny` would take the choice away; `ask` overrides permissions.allow and
+    // a prior "don't ask again", which is the property the wall needs.
+    const gate = SEED_FILES['.claude/hooks/google-send-gate.mjs']!
+
+    expect(gate).toContain("'ask'")
+    expect(gate).not.toMatch(/permissionDecision:\s*'deny'/)
   })
 
   it('the turn hooks POST to the local hook server, guarded so they no-op outside Holi', () => {

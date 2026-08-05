@@ -26,6 +26,7 @@ import { join } from 'node:path'
 import { LOCAL_ONLY_IGNORE_LINES, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
+import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -147,8 +148,10 @@ const SETTINGS_JSON =
       hooks: {
         // UserPromptSubmit injects the focused-note context AND signals turn
         // start; Stop signals turn end. Together they bracket a turn for git
-        // coexistence (the hook-server signal, not PTY parsing). PreToolUse stays
-        // absent — the UserPromptSubmit→Stop bracket already spans all tool use.
+        // coexistence (the hook-server signal, not PTY parsing). PreToolUse was
+        // deliberately absent for that purpose — the UserPromptSubmit→Stop
+        // bracket already spans all tool use — and arrived later for an
+        // unrelated one: gating send (D70), below.
         UserPromptSubmit: [
           {
             hooks: [
@@ -158,11 +161,35 @@ const SETTINGS_JSON =
           },
         ],
         Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
+        // The send gate (D70). It matches Bash broadly and decides for itself,
+        // rather than relying on an `if` condition: the agent can spell the
+        // command three ways, and a condition that misses one fails OPEN while
+        // still reading like protection. The hook defers on everything it does
+        // not recognise, so the cost of matching broadly is one child process
+        // per Bash call.
+        PreToolUse: [
+          { matcher: 'Bash', hooks: [{ type: 'command', command: hookCommand('google-send-gate') }] },
+        ],
       },
       permissions: {
         // seeded egress gating (PRD §Security posture) — the user still
         // approves each one, they just don't slip through unasked
-        ask: ['Bash(curl:*)', 'Bash(wget:*)'],
+        //
+        // The holi-google entries are the *undoable* tier (D70) and are NOT the
+        // wall: a user can allow-always their way past any of them, which is
+        // fine, because each has a one-click undo in Gmail or Google Calendar.
+        // The wall for send/reply is the PreToolUse hook above, which overrides
+        // both this list and a prior "don't ask again". The send/reply entries
+        // here are belt-and-braces for a vault whose hook file was removed.
+        ask: [
+          'Bash(curl:*)',
+          'Bash(wget:*)',
+          'Bash(holi-google archive:*)',
+          'Bash(holi-google trash:*)',
+          'Bash(holi-google unschedule:*)',
+          'Bash(holi-google send:*)',
+          'Bash(holi-google reply:*)',
+        ],
       },
     },
     null,
@@ -235,6 +262,7 @@ export const SEED_FILES: Record<string, string> = {
   'MEMORY.md': MEMORY_MD,
   '.claude/settings.json': SETTINGS_JSON,
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
+  '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
