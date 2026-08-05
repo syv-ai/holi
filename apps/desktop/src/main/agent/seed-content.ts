@@ -291,6 +291,70 @@ export function gitignoreWithLocalOnly(existing: string | null): string | null {
   return `${base}\n# Machine-local — never committed. Managed by Holi.\n${missing.join('\n')}\n`
 }
 
+export const SETTINGS = '.claude/settings.json'
+
+/**
+ * The `.claude/settings.json` this vault should have, or **null** if it already
+ * carries everything Holi requires (or cannot be parsed).
+ *
+ * **Merged rather than skipped, and that distinction is a security property.**
+ * The seed loop is write-if-absent, and every vault opened before D70 already
+ * has a `settings.json` — so the send gate would have arrived as a *file* and
+ * never been wired: the hook script present, nothing invoking it, and `send`
+ * reaching a real mailbox with no confirmation at all. Exactly D68's stale-grant
+ * shape, where a capability widened in code while the stored artifact still
+ * reflected the old one.
+ *
+ * Key-wise, the way `.gitignore` is line-wise, and for the same reason: an
+ * adopted vault's own hooks and permission rules are not ours to replace. Holi
+ * adds what it needs and touches nothing else.
+ *
+ * A malformed file returns `null` — it is the user's, and unparseable JSON is
+ * not something to "fix" by overwriting. The cost is an ungated vault, which is
+ * why `ensureSeeded`'s caller can see that nothing was written.
+ */
+export function settingsWithRequired(existing: string | null): string | null {
+  if (existing === null || existing.trim() === '') return SETTINGS_JSON
+
+  let settings: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(existing)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+    settings = parsed as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const required = JSON.parse(SETTINGS_JSON) as {
+    hooks: { PreToolUse: unknown[] }
+    permissions: { ask: string[] }
+  }
+  let changed = false
+
+  // The gate. Matched by the script it runs rather than by deep-equality, so a
+  // user who reordered or annotated the entry does not get a duplicate.
+  const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>
+  const preToolUse = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
+  const hasGate = JSON.stringify(preToolUse).includes('google-send-gate')
+  if (!hasGate) {
+    hooks.PreToolUse = [...preToolUse, ...required.hooks.PreToolUse]
+    settings.hooks = hooks
+    changed = true
+  }
+
+  // The permission rules, added to whatever the user already asks about.
+  const permissions = (settings.permissions ?? {}) as Record<string, unknown>
+  const ask = Array.isArray(permissions.ask) ? (permissions.ask as string[]) : []
+  const missing = required.permissions.ask.filter((rule) => !ask.includes(rule))
+  if (missing.length > 0) {
+    permissions.ask = [...ask, ...missing]
+    settings.permissions = permissions
+    changed = true
+  }
+
+  return changed ? JSON.stringify(settings, null, 2) + '\n' : null
+}
+
 /**
  * Write whatever managed file is missing. Returns the paths actually written.
  * Idempotent, and safe to run on every vault activation.
@@ -309,10 +373,21 @@ export async function ensureSeeded(root: string): Promise<string[]> {
   }
 
   for (const [rel, content] of Object.entries(SEED_FILES)) {
+    // `settings.json` is the one managed file that is MERGED rather than
+    // skipped when present — see `settingsWithRequired`. Skipping it is how the
+    // send gate would ship as an inert file in every existing vault.
+    if (rel === SETTINGS) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     if (onDisk !== null) continue
     await writeAtomic(root, vaultRelPath(rel), content)
     written.push(rel)
+  }
+
+  const settingsOnDisk = await readFile(join(root, SETTINGS), 'utf8').catch(() => null)
+  const settingsNext = settingsWithRequired(settingsOnDisk)
+  if (settingsNext !== null) {
+    await writeAtomic(root, vaultRelPath(SETTINGS), settingsNext)
+    written.push(SETTINGS)
   }
 
   // Brand binaries (Raleway fonts + logo), base64 in a generated module. Same

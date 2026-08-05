@@ -589,7 +589,22 @@ export function createRouter(deps: RouterDeps) {
         // Opening is what starts the watcher and the sync loop — the snapshot
         // is a by-product, and comes from the vault that is now live rather
         // than from a second read that could already disagree with it.
-        await rootFor(input.remote)
+        const root = await rootFor(input.remote)
+        /**
+         * Seed on **open**, not only on clone (D70).
+         *
+         * `ensureSeeded` has always said it is "safe to run on every vault
+         * activation", and was wired only to `addVault` — so a vault created
+         * before a managed file existed never received it. That is not a
+         * cosmetic gap: it is how the send gate would have been absent from
+         * every established vault, with `send` reaching a real mailbox and
+         * nothing asking first.
+         *
+         * Before `host.open`, for `addVault`'s reason — the seed lands before
+         * the vault goes live, so nothing can be committed ahead of the
+         * `.gitignore`.
+         */
+        await ensureSeeded(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()

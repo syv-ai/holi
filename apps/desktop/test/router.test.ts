@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import { parseTaskFile } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
+import { ensureSeeded } from '../src/main/agent/seed-content'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
@@ -62,6 +63,11 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
       await writeFile(join(root, rel), text, 'utf8')
     })
   }
+  // A real vault carries its managed files — they are written at creation and,
+  // since D70, repaired on every open. Building the rig without them made every
+  // snapshot assertion here describe a vault that cannot exist.
+  await mkdir(root, { recursive: true })
+  await ensureSeeded(root)
   const registry = new VaultRegistry(join(base, 'vaults.json'))
   await registry.add({
     remote: REMOTE,
@@ -105,7 +111,9 @@ describe('vaults', () => {
   it('open returns the vault contents and stamps lastOpenedAt', async () => {
     const { caller, registry } = await rig({ 'a.md': '# A\n' })
     const snap = await caller.vaults.open({ remote: REMOTE })
-    expect(snap.docs.map((d) => d.path)).toEqual(['a.md'])
+    // A real vault also carries its seeded managed files, so this asserts the
+    // note is there rather than that nothing else is.
+    expect(snap.docs.map((d) => d.path)).toContain('a.md')
     expect((await registry.list())[0]!.lastOpenedAt).toBe('2026-07-21T12:00:00Z')
   })
 
@@ -115,6 +123,45 @@ describe('vaults', () => {
     await expect(caller.notes.read({ remote: 'nope/nope', path: 'a.md' })).rejects.toThrow(
       /no such vault/,
     )
+  })
+
+  /**
+   * The seed has to run on **open**, not only on clone (D70).
+   *
+   * `ensureSeeded` says in its own doc that it is "safe to run on every vault
+   * activation" — and was wired only to `addVault`, so a vault created before a
+   * new managed file existed never received it. That is how the D70 send gate
+   * would have been absent from every established vault: the hook file unwritten,
+   * `PreToolUse` unwired, and `send` reaching a real mailbox with no confirmation.
+   */
+  it('open seeds managed files that did not exist when the vault was created', async () => {
+    const { caller, root } = await rig({ 'a.md': '# A\n' })
+    const gate = join(root, '.claude/hooks/google-send-gate.mjs')
+    await rm(gate, { force: true })
+
+    await caller.vaults.open({ remote: REMOTE })
+
+    expect(await readFile(gate, 'utf8').catch(() => null)).not.toBeNull()
+  })
+
+  it('open wires the send gate into a settings.json that predates it', async () => {
+    const { caller, root } = await rig({ 'a.md': '# A\n' })
+    const settings = join(root, '.claude/settings.json')
+    // Exactly what a vault seeded before D70 looks like.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'x' }] }] },
+        permissions: { ask: ['Bash(curl:*)'] },
+      }),
+      'utf8',
+    )
+
+    await caller.vaults.open({ remote: REMOTE })
+
+    const after = JSON.parse(await readFile(settings, 'utf8'))
+    expect(JSON.stringify(after.hooks.PreToolUse)).toContain('google-send-gate')
+    expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
   })
 
   it('open makes the vault active, so the loop is running behind the snapshot', async () => {
@@ -188,7 +235,8 @@ describe('notes', () => {
     await caller.vaults.open({ remote: REMOTE })
     await caller.notes.create({ remote: REMOTE, path: 'fresh.md', text: '# Fresh\n' })
     const snap = await caller.vaults.snapshot({ remote: REMOTE })
-    expect(snap.docs.map((d) => d.path).sort()).toEqual(['a.md', 'fresh.md'])
+    // Containment, not equality: a real vault also carries its seeded files.
+    expect(snap.docs.map((d) => d.path)).toEqual(expect.arrayContaining(['a.md', 'fresh.md']))
   })
 
   it('makes a deleted note gone from the very next snapshot read', async () => {
@@ -196,7 +244,9 @@ describe('notes', () => {
     await caller.vaults.open({ remote: REMOTE })
     await caller.notes.delete({ remote: REMOTE, path: 'b.md' })
     const snap = await caller.vaults.snapshot({ remote: REMOTE })
-    expect(snap.docs.map((d) => d.path)).toEqual(['a.md'])
+    const paths = snap.docs.map((d) => d.path)
+    expect(paths).toContain('a.md')
+    expect(paths).not.toContain('b.md')
   })
 
   it('refuses to create over an existing note', async () => {
@@ -1330,7 +1380,10 @@ describe('pdf', () => {
 
   it('templates returns each template with its declared fields', async () => {
     const { caller } = await rig(TEMPLATE_FILES)
-    expect(await caller.pdf.templates({ remote: REMOTE })).toEqual([
+    // The vault also carries the seeded templates; this is about the one the
+    // fixture declares.
+    expect(await caller.pdf.templates({ remote: REMOTE })).toEqual(
+      expect.arrayContaining([
       {
         name: 'Plain',
         slug: 'plain',
@@ -1341,7 +1394,8 @@ describe('pdf', () => {
         ],
         warnings: [],
       },
-    ])
+    ]),
+    )
   })
 
   it('render rejects a meta value that is not a string', async () => {

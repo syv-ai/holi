@@ -7,7 +7,9 @@ import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
-import { GITIGNORE, ensureSeeded, SEED_FILES } from '../src/main/agent/seed-content'
+import { GITIGNORE, ensureSeeded, SEED_FILES,
+  settingsWithRequired,
+} from '../src/main/agent/seed-content'
 
 const exec = promisify(execFile)
 
@@ -397,5 +399,107 @@ describe('hook scripts', () => {
     const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
     expect(run.code).toBe(0)
     expect(run.stdout).toBe('')
+  })
+})
+
+/**
+ * `.claude/settings.json` is **merged, not skipped** — the gate depends on it.
+ *
+ * The seed loop is write-if-absent, and every established vault already has a
+ * `settings.json`. So the D70 `PreToolUse` gate would have been written as a
+ * *file* and never wired: the hook script present, nothing invoking it, and
+ * `send` reaching a real mailbox with no confirmation at all. That is the same
+ * shape as D68's stale grant — a capability widened in code while the stored
+ * artifact still reflects the old one.
+ *
+ * `.gitignore` already had this problem and already solved it line-wise. This is
+ * the same contract, key-wise: add what Holi requires, keep everything the user
+ * put there, and return `null` when there is nothing to do.
+ */
+describe('settingsWithRequired', () => {
+  const parse = (s: string | null) => JSON.parse(s!) as Record<string, any>
+
+  it('adds the gate to a settings.json that predates it', () => {
+    const before = JSON.stringify({
+      hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'x' }] }] },
+      permissions: { ask: ['Bash(curl:*)'] },
+    })
+
+    const after = parse(settingsWithRequired(before))
+
+    expect(after.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
+    expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+  })
+
+  it('keeps the user’s own hooks and permissions', () => {
+    const before = JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'mine' }] }],
+        PostToolUse: [{ matcher: 'Write', hooks: [{ type: 'command', command: 'format' }] }],
+      },
+      permissions: { ask: ['Bash(rm:*)'], allow: ['Bash(ls:*)'], deny: ['Bash(sudo:*)'] },
+      model: 'opus',
+    })
+
+    const after = parse(settingsWithRequired(before))
+
+    // Untouched
+    expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
+    expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
+    expect(after.permissions.allow).toEqual(['Bash(ls:*)'])
+    expect(after.permissions.deny).toEqual(['Bash(sudo:*)'])
+    expect(after.model).toBe('opus')
+    // Added, not replaced
+    expect(after.permissions.ask).toContain('Bash(rm:*)')
+    expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+  })
+
+  it('is null when the gate is already wired — no pointless rewrite', () => {
+    expect(settingsWithRequired(SEED_FILES['.claude/settings.json']!)).toBeNull()
+  })
+
+  it('writes the full seed when there is no settings.json at all', () => {
+    expect(settingsWithRequired(null)).toBe(SEED_FILES['.claude/settings.json'])
+  })
+
+  it('does not add a second copy of a gate the user already has', () => {
+    const once = settingsWithRequired(JSON.stringify({ hooks: {}, permissions: {} }))
+    const twice = settingsWithRequired(once)
+
+    expect(twice).toBeNull()
+    expect(parse(once).hooks.PreToolUse).toHaveLength(1)
+  })
+
+  // Their file, and unparseable JSON is not something to "fix" by overwriting.
+  // The cost is an ungated vault, which the caller reports rather than hides.
+  it('leaves a malformed settings.json alone rather than destroying it', () => {
+    expect(settingsWithRequired('{ not json')).toBeNull()
+  })
+})
+
+describe('ensureSeeded — settings.json', () => {
+  it('wires the gate into an existing settings.json on an established vault', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'holi-seed-settings-'))
+    await mkdir(join(root, '.claude'), { recursive: true })
+    // Exactly what a vault seeded before D70 looks like.
+    await writeFile(
+      join(root, '.claude/settings.json'),
+      JSON.stringify({
+        hooks: { UserPromptSubmit: [{ hooks: [{ type: 'command', command: 'x' }] }] },
+        permissions: { ask: ['Bash(curl:*)', 'Bash(wget:*)'] },
+      }),
+      'utf8',
+    )
+
+    const written = await ensureSeeded(root)
+
+    const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
+    expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
+    expect(written).toContain('.claude/settings.json')
+    // And the hook it invokes actually landed, or the wiring points at nothing.
+    expect(await readFile(join(root, '.claude/hooks/google-send-gate.mjs'), 'utf8')).toBe(
+      SEED_FILES['.claude/hooks/google-send-gate.mjs'],
+    )
+    await rm(root, { recursive: true, force: true })
   })
 })
