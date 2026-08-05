@@ -1379,10 +1379,13 @@ export function createRouter(deps: RouterDeps) {
      * Google and still bold on disk is a list that disagrees with itself until
      * the next full sync. `googleData` owns that ordering.
      *
-     * **The agent reaches none of this.** `createGoogleOpsServer` is handed
-     * read functions and is not given `googleData` at all (D67), so the
-     * exclusion is structural rather than remembered — giving an LLM archive
-     * and trash over a real mailbox is a decision nobody has taken.
+     * **The agent reaches these same four methods** (D70) — the decision D68 §6
+     * left untaken has been taken. `createGoogleOpsServer` is handed the
+     * methods, never `googleData` itself, so it still cannot read a cached
+     * anything; and it calls the identical function this procedure calls, which
+     * is what keeps the UI's list and the agent's view of the mailbox from
+     * disagreeing. What the agent does *not* get here is any route to `send`
+     * without the hook that always asks.
      */
     markRead: t.procedure
       .input(fields({ id: 'string' }))

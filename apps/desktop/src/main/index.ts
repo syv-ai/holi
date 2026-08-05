@@ -29,8 +29,15 @@ import { createGoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { GoogleApi } from './google/api'
-import { listAgenda } from './google/calendar'
-import { listThreads, readThread, textOnly } from './google/gmail'
+import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
+import {
+  createDraft,
+  listThreads,
+  readThread,
+  replyToThread,
+  sendMessage,
+  textOnly,
+} from './google/gmail'
 import { registerIpc } from './ipc'
 import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
@@ -244,12 +251,25 @@ async function main(): Promise<void> {
    * data with `Bash` and a documented command, like everything else.
    */
   /**
-   * The agent's door to Google — **and deliberately not `googleData`**.
+   * The agent's door to Google — **still not `googleData`, only more functions**
+   * (D70).
    *
-   * These are the raw fetchers, which take no cache and therefore cannot read
-   * one. The agent asks for current data (D67, "Do not cache"), so the
+   * The reads are the raw fetchers, which take no cache and therefore cannot
+   * read one. The agent asks for current data (D67, "Do not cache"), so that
    * exclusion is structural rather than a rule someone has to remember when
    * editing this file later.
+   *
+   * The **label writes go through `googleData`'s bound methods** — the same
+   * functions the router calls. That is the opposite direction to the reads and
+   * it is deliberate: a write the agent makes must land in the cache the UI
+   * paints from, or Holi's own list keeps showing a thread the agent archived
+   * until the next delta sync. Passing the four methods rather than the object
+   * keeps D68 §6's structural exclusion intact — this server still cannot read
+   * a cached anything.
+   *
+   * `send`/`draft`/`reply` and the calendar writes are raw functions, because
+   * they have no cache entry to patch: a new message reaches the list through
+   * the next `history.list` delta, and the agenda always refetches.
    */
   const googleOps = createGoogleOpsServer({
     // Through the SAME overrides file the panel writes. A calendar the user
@@ -265,6 +285,21 @@ async function main(): Promise<void> {
     // `textOnly` is the asymmetry, and it is deliberate: the UI renders
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
     thread: async (id) => textOnly(await readThread(googleApiFor(), id)),
+
+    // Label writes — through `googleData`, so the UI's cached list learns about
+    // them at the same moment Gmail does.
+    setRead: (id, read) => googleData.setRead(id, read),
+    star: (id, on) => googleData.setStarred(id, on),
+    archive: (id) => googleData.archive(id),
+    trash: (id) => googleData.trash(id),
+
+    // New messages and events — nothing cached to patch.
+    draft: ({ threadId, ...mail }) => createDraft(googleApiFor(), mail, threadId),
+    send: (mail) => sendMessage(googleApiFor(), mail),
+    reply: (threadId, body) => replyToThread(googleApiFor(), threadId, body),
+    schedule: (event) => createEvent(googleApiFor(), event),
+    reschedule: (id, patch) => updateEvent(googleApiFor(), id, patch),
+    unschedule: (id) => deleteEvent(googleApiFor(), id),
   })
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))

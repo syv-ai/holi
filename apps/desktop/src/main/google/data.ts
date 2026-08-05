@@ -1,11 +1,21 @@
 /**
  * The **UI's** Google data — the one place caching is decided.
  *
- * The agent does not come through here, and that is the point. `holi-google`
- * asks for current data and must never be handed a stale answer (D67, "Do not
- * cache"), so the ops server in `main/index.ts` is wired straight to
- * `listAgenda` / `listThreads` — functions that take no cache and therefore
- * cannot read one. The exclusion is structural rather than remembered.
+ * **The agent does not come through here to read, and does to write** (D70).
+ * The two halves point in opposite directions on purpose.
+ *
+ * It must never be handed a stale *answer* (D67, "Do not cache"), so the ops
+ * server in `main/index.ts` is wired straight to `listAgenda` / `listThreads` —
+ * functions that take no cache and therefore cannot read one.
+ *
+ * Its *writes* go through the four methods below, because a thread the agent
+ * archived has to leave the list the UI is painting from at the same moment it
+ * leaves Gmail. A write that skipped this would leave Holi showing a thread
+ * that is no longer in the inbox until the next delta sync noticed.
+ *
+ * `main/index.ts` passes those four methods, never this object — so the
+ * structural exclusion D68 §6 built survives: the ops server still has no way
+ * to read a cached anything.
  *
  * The two surfaces are cached differently because the APIs differ:
  *

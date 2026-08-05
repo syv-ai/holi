@@ -21,6 +21,16 @@ async function serve(ops: Partial<GoogleOps> = {}) {
     agenda: vi.fn(async () => [{ id: 'e1', title: 'Q2 review' }]),
     threads: vi.fn(async () => [{ id: 't1', subject: 'Budget' }]),
     thread: vi.fn(async () => ({ id: 't1', messages: [] })),
+    setRead: vi.fn(async () => {}),
+    star: vi.fn(async () => {}),
+    archive: vi.fn(async () => {}),
+    trash: vi.fn(async () => {}),
+    draft: vi.fn(async () => ({ id: 'd-1' })),
+    send: vi.fn(async () => ({ id: 'm-1' })),
+    reply: vi.fn(async () => ({ id: 'm-2' })),
+    schedule: vi.fn(async () => ({ id: 'ev-1' })),
+    reschedule: vi.fn(async () => {}),
+    unschedule: vi.fn(async () => {}),
     ...ops,
   })
   await server.start()
@@ -122,5 +132,170 @@ describe('it serves results, never credentials', () => {
     // no Google credential exists on this side of the wall at all.
     for (const body of bodies) expect(body).not.toContain(server.token())
     for (const body of bodies) expect(body).not.toMatch(/access_token|refresh_token|Bearer/)
+  })
+})
+
+/**
+ * The write half (D70).
+ *
+ * The agent's writes arrive as POST with a JSON body, because a mail body does
+ * not belong in a query string. Everything here is either "the argument
+ * survived the trip" or a refusal that has to be distinguishable from the
+ * others: the agent reads these status codes and has to be able to tell a
+ * malformed request of its own from Google being unreachable.
+ */
+describe('writes', () => {
+  async function post(url: string, body: unknown, init: RequestInit = {}) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      ...init,
+    })
+  }
+
+  it('marks read and unread through the same route', async () => {
+    const setRead = vi.fn(async () => {})
+    const { url } = await serve({ setRead })
+
+    await post(url('/mark-read'), { id: 't1', read: true })
+    await post(url('/mark-read'), { id: 't1', read: false })
+
+    expect(setRead.mock.calls).toEqual([
+      ['t1', true],
+      ['t1', false],
+    ])
+  })
+
+  it('stars in both directions', async () => {
+    const star = vi.fn(async () => {})
+    const { url } = await serve({ star })
+
+    await post(url('/star'), { id: 't1', on: false })
+
+    expect(star).toHaveBeenCalledWith('t1', false)
+  })
+
+  it('archives and trashes by id', async () => {
+    const archive = vi.fn(async () => {})
+    const trash = vi.fn(async () => {})
+    const { url } = await serve({ archive, trash })
+
+    await post(url('/archive'), { id: 't1' })
+    await post(url('/trash'), { id: 't2' })
+
+    expect(archive).toHaveBeenCalledWith('t1')
+    expect(trash).toHaveBeenCalledWith('t2')
+  })
+
+  it('carries a multi-line body through to send, intact', async () => {
+    const send = vi.fn(async () => ({ id: 'm-1' }))
+    const { url } = await serve({ send })
+    const body = 'Hej Ada,\n\nSe venligst vedhæftet — "Q2".\n\nMvh'
+
+    const res = await post(url('/send'), {
+      to: ['ada@syv.ai'],
+      subject: 'Møde på tirsdag',
+      body,
+    })
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ to: ['ada@syv.ai'], subject: 'Møde på tirsdag', body }),
+    )
+    expect(await res.json()).toEqual({ id: 'm-1' })
+  })
+
+  it('replies by thread id', async () => {
+    const reply = vi.fn(async () => ({ id: 'm-2' }))
+    const { url } = await serve({ reply })
+
+    await post(url('/reply'), { threadId: 't1', body: 'Yes.' })
+
+    expect(reply).toHaveBeenCalledWith('t1', 'Yes.')
+  })
+
+  it('drafts, passing the thread through when there is one', async () => {
+    const draft = vi.fn(async () => ({ id: 'd-1' }))
+    const { url } = await serve({ draft })
+
+    await post(url('/draft'), { to: ['ada@syv.ai'], subject: 'x', body: 'y', threadId: 't1' })
+
+    expect(draft).toHaveBeenCalledWith(expect.objectContaining({ threadId: 't1' }))
+  })
+
+  it('schedules, reschedules and unschedules', async () => {
+    const schedule = vi.fn(async () => ({ id: 'ev-1' }))
+    const reschedule = vi.fn(async () => {})
+    const unschedule = vi.fn(async () => {})
+    const { url } = await serve({ schedule, reschedule, unschedule })
+
+    await post(url('/schedule'), {
+      title: 'Deep work',
+      start: '2026-08-06T09:00:00Z',
+      end: '2026-08-06T11:00:00Z',
+    })
+    await post(url('/reschedule'), { id: 'ev-1', start: '2026-08-06T10:00:00Z' })
+    await post(url('/unschedule'), { id: 'ev-1' })
+
+    expect(schedule).toHaveBeenCalledWith(expect.objectContaining({ title: 'Deep work' }))
+    expect(reschedule).toHaveBeenCalledWith('ev-1', expect.objectContaining({ start: '2026-08-06T10:00:00Z' }))
+    expect(unschedule).toHaveBeenCalledWith('ev-1')
+  })
+
+  it('refuses an untokened POST without parsing its body', async () => {
+    // The order matters: parsing first would mean an unauthenticated caller
+    // could hand this process arbitrary JSON to chew on.
+    const send = vi.fn(async () => ({ id: 'm-1' }))
+    const { base } = await serve({ send })
+
+    const res = await post(`${base}/send`, { to: ['ada@syv.ai'] })
+
+    expect(res.status).toBe(403)
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('answers 400 for a malformed body — not the 502 that means Google failed', async () => {
+    // The agent reads these apart: 400 is "fix your request", 502 is "Google
+    // is unreachable, try later". Collapsing them makes it retry the wrong one.
+    const { url } = await serve()
+
+    const res = await fetch(url('/send'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{ this is not json',
+    })
+
+    expect(res.status).toBe(400)
+  })
+
+  it('refuses an oversized body rather than accumulating it', async () => {
+    const { url } = await serve()
+
+    const res = await fetch(url('/send'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ body: 'x'.repeat(2 * 1024 * 1024) }),
+    })
+
+    expect(res.status).toBe(413)
+  })
+
+  it('404s an unknown POST path, exactly as it does for GET', async () => {
+    const { url } = await serve()
+
+    expect((await post(url('/delete-everything'), {})).status).toBe(404)
+  })
+
+  it('reports a refusal from Google as 502, with the reason the agent should read', async () => {
+    const { url } = await serve({
+      unschedule: vi.fn(async () => {
+        throw new Error('"Q2 review" has attendees, so changing it would email them.')
+      }),
+    })
+
+    const res = await post(url('/unschedule'), { id: 'ev-2' })
+
+    expect(res.status).toBe(502)
+    expect((await res.json()).error).toMatch(/attendees/)
   })
 })
