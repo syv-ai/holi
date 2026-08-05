@@ -1,10 +1,26 @@
 /**
- * Mail — search, read, and link a thread into the vault.
+ * Mail — search, read, triage, and link a thread into the vault.
  *
- * A list on the left, the open thread on the right. Deliberately **not** an
- * email client (PRD non-goal): there is no archive, no label, no delete, and no
- * reply box. Replying opens Gmail, because the scope Holi holds is read-only
- * and pretending otherwise would be a button that cannot work.
+ * A list on the left, the open thread on the right. **Triage, not a mail
+ * client** (D68, amending the PRD non-goal): opening marks read, and a thread
+ * can be starred, archived or trashed. There is still no label editing and no
+ * reply box.
+ *
+ * The two absences are not the same kind of absence, and the difference is
+ * worth keeping straight:
+ *
+ * - **Permanent delete cannot happen.** It needs `https://mail.google.com/`,
+ *   which Holi does not request. Trash is Gmail's trash — recoverable for 30
+ *   days — which is why the button says trash and not delete.
+ * - **Replying opens Gmail because no compose surface is built**, *not* because
+ *   the scope forbids it. `gmail.modify` permits sending. Do not restore the
+ *   old comment here claiming otherwise; it would read as a reason not to build
+ *   one, and the reason is simply that nobody has.
+ *
+ * **Writes are optimistic here and nowhere below.** The list paints the change
+ * immediately and restores the previous list if Google refuses, because a
+ * revert costs a re-render and nothing is persisted. `main/google/data.ts`
+ * takes the opposite order deliberately — see the note on `write` there.
  *
  * **Bodies are sanitized HTML in a sandboxed frame** (D67, revised). A message
  * arrives with both an `html` part and a plain-text one; HTML wins when it
@@ -19,6 +35,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -32,6 +49,7 @@ import {
   Reply,
   Search,
   Star,
+  Trash2,
   X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -270,6 +288,65 @@ export function MailView() {
       .query({ id: thread.id })
       .then(setOpen)
       .catch(() => setOpenId(null))
+    // Only when there is something to change. A request per open, for a thread
+    // already read, against a rate-limited API, would spend exactly what the
+    // `history.list` delta was built to save.
+    if (thread.unread) void markRead(thread.id)
+  }
+
+  /**
+   * A write, painted immediately and undone if Google refuses.
+   *
+   * **Optimism belongs here and nowhere below.** A revert costs a re-render and
+   * nothing is persisted, so the list can afford to be wrong for 200ms. `main`
+   * cannot: it touches the cache only once Google has agreed, because a cached
+   * write Google refused is the one divergence a delta sync can never find —
+   * `history.list` reports what changed *at Gmail*, and for a refused request
+   * nothing did.
+   *
+   * The whole previous list is the undo, rather than an inverse per operation:
+   * restoring a removed row means putting it back at its index, and "unarchive"
+   * is not a thing this app can express.
+   */
+  const write = async (mutate: () => Promise<unknown>, next: (threads: ThreadSummary[]) => ThreadSummary[]) => {
+    if (list.kind !== 'ready') return
+    const snapshot = list.threads
+    setList((previous) =>
+      previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
+    )
+    try {
+      await mutate()
+    } catch {
+      setList((previous) => (previous.kind === 'ready' ? { ...previous, threads: snapshot } : previous))
+    }
+  }
+
+  const markRead = (id: string) =>
+    write(
+      () => trpc.google.markRead.mutate({ id }),
+      (threads) => threads.map((t) => (t.id === id ? { ...t, unread: false } : t)),
+    )
+
+  const setStarred = (id: string, starred: boolean) =>
+    write(
+      () => trpc.google.setStarred.mutate({ id, starred }),
+      (threads) => threads.map((t) => (t.id === id ? { ...t, starred } : t)),
+    )
+
+  /**
+   * Archive and trash, which both take the thread out of the list.
+   *
+   * The reader closes with it. Leaving it open is how `openSummary` goes on
+   * rendering a thread the list no longer holds — a pane describing mail that,
+   * as far as every other surface is concerned, is gone.
+   */
+  const removeThread = (id: string, mutate: () => Promise<unknown>) => {
+    if (openId === id) {
+      setOpen(null)
+      setOpenId(null)
+      setOpenSummary(null)
+    }
+    return write(mutate, (threads) => threads.filter((t) => t.id !== id))
   }
 
   /**
@@ -291,6 +368,18 @@ export function MailView() {
   }
 
   const threads = list.kind === 'ready' ? list.threads : []
+
+  /**
+   * The open thread's row, as the list has it *now*.
+   *
+   * `openSummary` is the row as it was when the thread was opened, which was
+   * enough while nothing could change it. Starring changes it, so reading the
+   * flag from that snapshot would leave the button showing the state it had
+   * before the click. The list is where flags move; `openSummary` remains the
+   * fallback for a thread the current list does not contain — after a search,
+   * or after this thread was archived out of it.
+   */
+  const openRow = threads.find((thread) => thread.id === openId) ?? openSummary
 
   /**
    * ⌘F, scoped to this pane.
@@ -418,22 +507,69 @@ export function MailView() {
                 {/* Advertised by the sender in List-Unsubscribe. Opened, never
                     requested: firing it silently would be a request made on the
                     user's behalf, to a URL a stranger chose. */}
-                {openSummary?.unsubscribeUrl != null && (
+                {openRow?.unsubscribeUrl != null && (
                   <Tooltip content="open this sender’s unsubscribe page">
                     <Button
                       variant="ghost"
                       size="xs"
                       className="shrink-0 gap-1"
                       aria-label="unsubscribe from this sender"
-                      onClick={() => void window.holi.openExternal(openSummary.unsubscribeUrl!)}
+                      onClick={() => void window.holi.openExternal(openRow.unsubscribeUrl!)}
                     >
                       <MailMinus size={13} />
                       Unsubscribe
                     </Button>
                   </Tooltip>
                 )}
-                {/* Reply is a handoff, not a compose box: the granted scope is
-                    read-only, so Holi cannot send and does not pretend to. */}
+                {/* Triage (D68). Star is a toggle that says which way it goes;
+                    archive and trash both take the thread out of the list. */}
+                <Tooltip content={openRow?.starred === true ? 'unstar' : 'star'}>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={
+                      openRow?.starred === true ? 'unstar this thread' : 'star this thread'
+                    }
+                    onClick={() => void setStarred(open.id, openRow?.starred !== true)}
+                  >
+                    <Star
+                      size={14}
+                      // Filled means starred — the outline alone reads as a
+                      // button rather than a state.
+                      className={openRow?.starred === true ? 'fill-current' : undefined}
+                    />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="archive — removes it from the inbox, keeps it in All Mail">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="archive this thread"
+                    onClick={() =>
+                      void removeThread(open.id, () => trpc.google.archive.mutate({ id: open.id }))
+                    }
+                  >
+                    <Archive size={14} />
+                  </Button>
+                </Tooltip>
+                {/* Trash, which Gmail keeps for 30 days. Deliberately not
+                    called Delete: Holi cannot delete mail permanently, and a
+                    button that says so would be promising something it has no
+                    scope to do. */}
+                <Tooltip content="move to trash — recoverable for 30 days">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="move this thread to trash"
+                    onClick={() =>
+                      void removeThread(open.id, () => trpc.google.trash.mutate({ id: open.id }))
+                    }
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </Tooltip>
+                {/* Reply is a handoff, not a compose box — because no compose
+                    surface is built, not because the scope forbids it. */}
                 <Tooltip content="reply in Gmail">
                   <Button
                     variant="ghost"

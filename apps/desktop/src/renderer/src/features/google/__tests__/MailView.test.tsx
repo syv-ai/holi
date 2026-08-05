@@ -15,6 +15,10 @@ import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
 const threadMock = vi.fn()
 const readMock = vi.fn()
 const countsMock = vi.fn()
+const markReadMock = vi.fn()
+const setStarredMock = vi.fn()
+const archiveMock = vi.fn()
+const trashMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -22,6 +26,10 @@ vi.mock('../../../lib/trpc', () => ({
       threads: { query: (input: unknown) => threadMock(input) },
       thread: { query: (input: { id: string }) => readMock(input) },
       mailCounts: { query: () => countsMock() },
+      markRead: { mutate: (input: { id: string }) => markReadMock(input) },
+      setStarred: { mutate: (input: unknown) => setStarredMock(input) },
+      archive: { mutate: (input: { id: string }) => archiveMock(input) },
+      trash: { mutate: (input: { id: string }) => trashMock(input) },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -110,8 +118,34 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 
 beforeEach(() => {
   threadMock.mockReset()
-  readMock.mockReset()
+  // A default, because the real `trpc.google.thread.query` ALWAYS returns a
+  // promise. A bare `mockReset()` returned `undefined`, and every test that
+  // opened a row without stubbing this threw "Cannot read properties of
+  // undefined (reading 'then')" — which vitest reports as an unhandled error
+  // beside a passing suite rather than as a failure. The double has to keep the
+  // shape of the thing it stands in for.
+  readMock.mockReset().mockResolvedValue({
+    id: 't1',
+    subject: 'Q2 budget',
+    webUrl: 'https://mail.google.com/x',
+    messages: [
+      {
+        id: 'm1',
+        from: { name: 'Jane', email: 'jane@example.com' },
+        to: [{ name: 'Nicolai', email: 'nicolai@syv.ai' }],
+        cc: [],
+        date: '2026-08-04T09:00:00.000Z',
+        attachments: [],
+        body: 'a body',
+        html: null,
+      },
+    ],
+  })
   countsMock.mockReset().mockResolvedValue({ unread: 3, total: 120 })
+  markReadMock.mockReset().mockResolvedValue({ ok: true })
+  setStarredMock.mockReset().mockResolvedValue({ ok: true })
+  archiveMock.mockReset().mockResolvedValue({ ok: true })
+  trashMock.mockReset().mockResolvedValue({ ok: true })
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -699,4 +733,125 @@ test('typing @ in the search box offers people from the mail on screen', async (
   expect(await screen.findByRole('combobox', { name: /search mail/i })).toHaveValue(
     'from:mette@syv.ai ',
   )
+})
+
+/**
+ * Triage (D68) — the first stateful things Holi does to a mailbox.
+ *
+ * What matters here is the *wiring*, which is the half jsdom can prove: that
+ * opening spends a request only when there is something to change, that the row
+ * moves without a refetch, and that a refusal puts the row back. Whether the
+ * buttons land where a person expects them is layout, and this file cannot see
+ * layout at all.
+ */
+
+/** The row's name span carries the unread weight — see `ThreadRow`. */
+function rowIsUnread(row: HTMLElement): boolean {
+  return row.querySelector('.font-semibold') !== null
+}
+
+test('opening an unread thread marks it read, once, and the row stops being bold', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ unread: true })]))
+  render(<MailView />)
+
+  const row = await screen.findByRole('button', { name: /Q2 budget/ })
+  expect(rowIsUnread(row)).toBe(true)
+
+  await user.click(row)
+
+  await waitFor(() => expect(markReadMock).toHaveBeenCalledWith({ id: 't1' }))
+  expect(markReadMock).toHaveBeenCalledTimes(1)
+  // Locally, with no second `threads.query`. A refetch would spend the whole
+  // saving `history.list` exists for.
+  await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(false))
+  expect(threadMock).toHaveBeenCalledTimes(1)
+})
+
+test('opening an already-read thread spends no request at all', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ unread: false })]))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  // A request per open, for a thread already read, against a rate-limited API.
+  expect(markReadMock).not.toHaveBeenCalled()
+})
+
+test('a refused mark-read puts the row back to unread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ unread: true })]))
+  markReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  await waitFor(() => expect(markReadMock).toHaveBeenCalled())
+  // The optimistic clear is undone: the mailbox still says unread, so the list
+  // must too. This is the exact state a grant older than GOOGLE_SCOPES produces.
+  await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(true))
+})
+
+test('stars and unstars the open thread', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ starred: false })]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'star this thread' }))
+
+  await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', starred: true }))
+  // The button becomes its own inverse, so the state is legible without a legend.
+  const unstar = await screen.findByRole('button', { name: 'unstar this thread' })
+  await user.click(unstar)
+  await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', starred: false }))
+})
+
+test('archiving removes the row and closes the reader', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary(), { ...summary(), id: 't2', subject: 'Other' }]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+
+  await waitFor(() => expect(archiveMock).toHaveBeenCalledWith({ id: 't1' }))
+  // Both halves. Leaving the reader open on a thread that has left the list is
+  // how `openSummary` keeps rendering something the mailbox no longer holds.
+  await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
+  expect(screen.queryByRole('article')).toBeNull()
+  expect(screen.getByRole('button', { name: /Other/ })).toBeInTheDocument()
+})
+
+test('trashing removes the row and closes the reader', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'move this thread to trash' }))
+
+  await waitFor(() => expect(trashMock).toHaveBeenCalledWith({ id: 't1' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
+})
+
+test('a refused archive puts the thread back in the list', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  archiveMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+
+  await waitFor(() => expect(archiveMock).toHaveBeenCalled())
+  // Still there. An optimistic removal that is never undone loses mail from the
+  // list until a full refresh, and the user has no reason to suspect one.
+  await waitFor(() => expect(screen.getByRole('button', { name: /Q2 budget/ })).toBeInTheDocument())
 })
