@@ -886,3 +886,35 @@ test('a refused archive puts the thread back in the list', async () => {
   // list until a full refresh, and the user has no reason to suspect one.
   await waitFor(() => expect(screen.getByRole('button', { name: /Q2 budget/ })).toBeInTheDocument())
 })
+
+test('a refused write says why, instead of silently snapping back', async () => {
+  // The failure mode this exists for, from real use: a grant without
+  // gmail.modify loads mail perfectly and refuses every write. The revert put
+  // the row back exactly as it was, which is indistinguishable from the click
+  // never registering — so the symptom was "nothing happens" and the fix
+  // (reconnect) was unguessable.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ unread: true })]))
+  markReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
+})
+
+test('a rate limit is not reported as a permissions problem', async () => {
+  // Sending someone to re-consent for a transient throttle is the wrong-fix
+  // problem `classify` exists to avoid in main; it must survive the trip here.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  archiveMock.mockRejectedValue(new Error('Google is rate limiting this request'))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'archive this thread' }))
+
+  expect(await screen.findByText(/rate limiting/)).toBeInTheDocument()
+  expect(screen.queryByText(/Reconnect Google/)).toBeNull()
+})

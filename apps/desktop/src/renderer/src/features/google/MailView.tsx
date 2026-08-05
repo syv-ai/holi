@@ -193,6 +193,8 @@ export function MailView() {
   /** The address book, fetched once. A corpus to filter locally, not a search
    *  endpoint — completing from it must not cost a request per keystroke. */
   const [contacts, setContacts] = useState<MailAddress[]>([])
+  /** Why the last triage action did not stick. Cleared on the next attempt. */
+  const [writeError, setWriteError] = useState<string | null>(null)
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
@@ -330,13 +332,20 @@ export function MailView() {
   const write = async (mutate: () => Promise<unknown>, next: (threads: ThreadSummary[]) => ThreadSummary[]) => {
     if (list.kind !== 'ready') return
     const snapshot = list.threads
+    setWriteError(null)
     setList((previous) =>
       previous.kind === 'ready' ? { ...previous, threads: next(previous.threads) } : previous,
     )
     try {
       await mutate()
-    } catch {
+    } catch (err: unknown) {
       setList((previous) => (previous.kind === 'ready' ? { ...previous, threads: snapshot } : previous))
+      // **A silent revert is the bug, not the recovery.** Undoing the paint
+      // leaves the row exactly as it was before the click, which is
+      // indistinguishable from the click never registering — and that is how a
+      // grant missing `gmail.modify` presented in real use: mail loading fine,
+      // triage doing nothing, no reason given anywhere.
+      setWriteError(explainWriteFailure(err))
     }
   }
 
@@ -449,6 +458,23 @@ export function MailView() {
               loadCounts()
             }}
           />
+
+          {/* Above the list rather than beside the button that failed: archive
+              and trash close the reader, so a message anchored there would
+              vanish with the pane that raised it. */}
+          {writeError !== null && (
+            <div className="flex shrink-0 items-start gap-2 border-b border-border bg-secondary px-3 py-1.5 text-[11px] text-amber-400">
+              <span className="min-w-0 flex-1">{writeError}</span>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="dismiss"
+                onClick={() => setWriteError(null)}
+              >
+                <X size={12} />
+              </Button>
+            </div>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {list.kind === 'loading' && <Note>Loading…</Note>}
@@ -635,6 +661,24 @@ export function MailView() {
       </ResizablePanel>
     </ResizablePanelGroup>
   )
+}
+
+/**
+ * Why a triage action did not stick, in terms the user can act on.
+ *
+ * The scope case is singled out because it is both the likeliest and the only
+ * one with a fix the user can perform — and because its natural symptom is
+ * silence: mail loads, so the connection looks healthy, and only the writes
+ * fail. "Reconnect Google in settings" is the whole message worth sending.
+ */
+function explainWriteFailure(err: unknown): string {
+  const message = err instanceof Error ? err.message : ''
+  if (/permission|scope|insufficient/i.test(message)) {
+    return 'Holi needs new Google permissions for this. Reconnect Google in settings.'
+  }
+  if (NOT_CONNECTED.test(message)) return 'Google isn’t connected. Connect it in vault settings.'
+  if (/rate limit/i.test(message)) return 'Google is rate limiting. Try again in a moment.'
+  return message === '' ? 'That didn’t stick. Try again.' : message
 }
 
 /** Why the list is empty, in the terms the user set it to be. */
