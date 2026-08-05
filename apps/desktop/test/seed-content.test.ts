@@ -113,7 +113,13 @@ describe('SEED_FILES', () => {
     // URL must not be hand-assembled.
     expect(skill).toContain('markdown link')
     expect(skill).toContain('rfc822msgid')
-    expect(skill).toContain('read-only')
+    // The agent's boundary, stated as what is true rather than what used to be.
+    // This asserted 'read-only' until D68: the scope is `gmail.modify` now, so
+    // telling the agent its connection is read-only would be a false invariant
+    // in a prompt it reasons from. What actually stops it is that `holi-google`
+    // has no write subcommand.
+    expect(skill).toContain('no subcommand that writes')
+    expect(skill).not.toContain('scopes are read-only')
   })
 
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {

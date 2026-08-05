@@ -6,9 +6,12 @@ description: Read the user's Google Calendar and Gmail — their agenda, and mai
 # Gmail & Calendar
 
 The user's Google account is connected to Holi. You can **read** their calendar
-and mail through one command; you cannot send mail or change their calendar
-(the granted scopes are read-only, so those are not merely discouraged — they
-are impossible).
+and mail through one command. You cannot send mail, change their calendar, or
+alter a thread: `holi-google` has no subcommand that writes, so these are not
+merely discouraged — there is nothing to call.
+
+(Holi's own UI can mark read, star, archive and trash a thread. That surface is
+deliberately not exposed to you. Do not attempt to reach it another way.)
 
 ## The command
 
@@ -112,9 +115,9 @@ due: 2026-08-04
 
 ## Rules
 
-- **Read-only.** If asked to send mail, reply, or create/move an event, say
-  plainly that Holi's Google connection is read-only, and offer the alternative:
-  you can draft the text, and the user sends it from Gmail.
+- **You have no write commands.** If asked to send mail, reply, or create/move
+  an event, say plainly that you cannot do it from here, and offer the
+  alternative: you can draft the text, and the user sends it from Gmail.
 - **Do not cache.** Ask the command again rather than reusing an old answer;
   the user's calendar changes while you work.
 - **Do not copy mail bodies into the vault** unless the user asks. Link instead
