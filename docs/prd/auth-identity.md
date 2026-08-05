@@ -156,9 +156,9 @@ Holi holds **two independent OAuth grants**, and the distinction between them is
 
 | | GitHub | Google |
 |---|---|---|
-| What it is | **Identity + access** — who you are, and what you may push | **A data connector** — read your Gmail and Calendar |
+| What it is | **Identity + access** — who you are, and what you may push | **A data connector** — read and act on your Gmail and Calendar |
 | Grant | Device flow | **Authorization code + PKCE, loopback `127.0.0.1`** redirect |
-| Scopes | `repo`, `read:user`, `read:org` | `gmail.readonly`, `calendar.readonly` — **read-only** |
+| Scopes | `repo`, `read:user`, `read:org` | `gmail.modify`, `calendar.readonly`, `calendar.events`, `contacts.readonly`, `contacts.other.readonly` — **read-write, bounded** |
 | Without it | Holi cannot open a vault | Holi works completely; mail/calendar surfaces say "not connected" |
 
 **They never touch.** Signing out of GitHub leaves the Google connection alone, and disconnecting Google touches no vaults, no clones, and no GitHub session. Coupling them would mean losing a mail connector because a git token was revoked — surprising, and wrong in both directions.
@@ -168,6 +168,8 @@ Holi holds **two independent OAuth grants**, and the distinction between them is
 **Token custody is stricter than GitHub's, deliberately.** Google returns a short-lived access token plus a refresh token that **rotates on use**, so two independent refreshers can invalidate each other. Therefore **Electron main is the sole token authority**: it is the only process that calls Google's token endpoint, it single-flights the refresh, and every other consumer — including the agent, which runs in its own process — asks *main* for results rather than holding a token. Tokens live in the OS keychain via `safeStorage`, in their own entry, keyed by the Google account's stable `sub` (never the email — a Workspace address can be renamed and reassigned, the same reasoning that keys GitHub on `accountId`).
 
 **Disconnect revokes.** It calls Google's `/revoke` and then clears the keychain entry; deleting only the local copy would leave a live grant on the user's account with nothing in Holi to show for it. A failed revoke still clears locally — the user asked to disconnect.
+
+**Widening the scopes does not invalidate the grant, and that is a trap worth naming once.** The refresh token goes on minting access tokens for whatever was consented to *originally*, so a build that asks for more gets a working connection in which only the new calls 403 — which reads as a broken feature rather than a missing consent, and no amount of retrying fixes it. The cure needs someone to notice first, so the stored grant's scopes are recorded on connect and compared against the build's (`GoogleSession.missingScopes()`), and vault settings offers **Reconnect** when they differ. This has now bitten twice — mail widening to `gmail.modify`, then contacts and calendar writes — and the general shape, *a capability widened in code while the stored credential still reflects the old one*, will recur with every future scope change. A related detail that cost a debugging session: **Google does not echo the scope strings you sent** (`email` comes back as `.../auth/userinfo.email`), so the comparison must be done in Google's own vocabulary or it reports a perfectly good grant as incomplete.
 
 ## Access model
 
@@ -179,7 +181,7 @@ Holi holds **two independent OAuth grants**, and the distinction between them is
 | **Editing a vault** | local filesystem | None. Every local edit succeeds. |
 | **Publishing** | GitHub, on `git push` | GitHub's repo permissions. A rejected push is the enforcement. |
 | **Pulling** | GitHub, on `git fetch` | GitHub's repo permissions. |
-| **The agent** | local | Whatever the user can do. It runs as them, on their files, with their credential. |
+| **The agent** | local | Whatever the user can do. It runs as them, on their files, with their credential. **One exception**: sending mail reaches someone outside this boundary entirely, so it is gated by a hook that asks every time — see [`agent.md`](agent.md) §Permissions. |
 
 Key properties:
 
