@@ -27,6 +27,12 @@
  * The frame is written with `document.write` rather than `srcdoc` because the
  * app needs a handle on the document anyway (height, links), and writing gives
  * that on the same tick instead of after a load event.
+ *
+ * **Two canvases, not one.** The frame originally always took the app's theme,
+ * which is right for prose and wrong for mail: real mail declares its ink and
+ * inherits its paper, so a dark theme rendered a great deal of it black on
+ * black. `bringsOwnDesign` decides which of the two a block gets, and `PAPER`
+ * is the other one.
  */
 import { useEffect, useState } from 'react'
 
@@ -53,15 +59,72 @@ const TOKENS: Record<Exclude<keyof MailPalette, 'scheme'>, string> = {
   link: '--primary',
 }
 
-/** Used when a token reads empty — which happens in tests (no stylesheet) and
- *  would otherwise emit `background:;` and leave the frame transparent. */
-const FALLBACK: MailPalette = {
+/**
+ * The canvas mail was designed for: white paper, dark ink.
+ *
+ * **Not a fallback — a deliberate second mode.** Mail is written for a white
+ * background and says so only partially: a newsletter sets `color: #333` on its
+ * text and leaves the background to the client, because for thirty years the
+ * client's background has been white. Render that on a dark surface and the
+ * message is dark-on-dark — and the images go with it, because a logo is
+ * usually dark ink on transparency and simply disappears.
+ *
+ * So a message that brings any design of its own gets paper, and only a message
+ * that brings none inherits the app's theme. See `bringsOwnDesign`.
+ *
+ * It doubles as the value used when a token reads empty — which happens in
+ * tests, where there is no stylesheet, and would otherwise emit `background:;`
+ * and leave the frame transparent.
+ */
+const PAPER: MailPalette = {
   background: '#ffffff',
   foreground: '#1a1a1a',
   muted: '#666666',
   border: '#d4d4d4',
   link: '#0b57d0',
   scheme: 'light',
+}
+
+const FALLBACK = PAPER
+
+/**
+ * Does this message bring its own design, or is it prose in an HTML wrapper?
+ *
+ * **Conservative on purpose: any signal at all means paper.** The failure this
+ * guards is asymmetric. Giving paper to a message that did not need it costs a
+ * white block in a dark app — visible, ordinary, exactly what every other mail
+ * client does. Giving the theme to a message that *did* need paper costs black
+ * text on a black background, which is unreadable and reads as a broken app.
+ *
+ * Four signals, and the last one is not about text at all: a message with
+ * images is a designed message even if every colour it uses is the default,
+ * because those images were drawn to sit on white.
+ *
+ * Read from the **raw** HTML rather than the sanitized output, so the answer
+ * cannot change when the user loads images — a message must not change colour
+ * as a side effect of unblocking a picture. That means it also sees inside
+ * `<style>` blocks the sanitizer strips, which errs towards paper. Correct
+ * direction.
+ */
+export function bringsOwnDesign(html: string): boolean {
+  return (
+    // Any CSS property whose name contains `color` or `background` —
+    // `color`, `background-color`, `background-image`, `border-color`. Written
+    // as a family rather than a list because the list is the thing that goes
+    // stale: `background-color:` was missed by a pattern that only allowed
+    // `background:` and `color:`, and a table cell with a background is the
+    // most ordinary designed-mail construct there is.
+    /(?:^|[\s;"'{])[a-z-]*(?:color|background)[a-z-]*\s*:/i.test(html) ||
+    /<font\b/i.test(html) ||
+    /\sbgcolor\s*=/i.test(html) ||
+    /<img\b/i.test(html)
+  )
+}
+
+/** The canvas one block of HTML renders on: its own if it brought one, the
+ *  app's theme if it did not. */
+export function canvasFor(html: string, themed: MailPalette): MailPalette {
+  return bringsOwnDesign(html) ? PAPER : themed
 }
 
 /**
