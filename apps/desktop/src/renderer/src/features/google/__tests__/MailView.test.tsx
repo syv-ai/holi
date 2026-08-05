@@ -1165,3 +1165,44 @@ test('a rate-limit code is not reported as a permissions problem either', async 
   expect(await screen.findByText(/rate limiting/)).toBeInTheDocument()
   expect(screen.queryByText(/Reconnect Google/)).toBeNull()
 })
+
+test('unblocking builds a NEW frame, because a document cannot shed a CSP', async () => {
+  // Reported from real use: "if I allow images, it doesn't load until I move
+  // away and back to the email."
+  //
+  // A `<meta>` CSP joins the document's list of policies and every request must
+  // satisfy all of them; `document.open()` does not clear the ones already
+  // applied. So rewriting the document with a wider `img-src` leaves the
+  // original `img-src data:` in force and the images stay blocked — the markup
+  // is right and the browser refuses anyway. Leaving the message destroyed the
+  // iframe, which is the only way a policy goes away.
+  //
+  // jsdom does not enforce CSP, so this cannot assert that an image loaded. It
+  // asserts the property the fix rests on: the element is replaced, not reused.
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  const before = article.querySelector('iframe')
+  await frameOf(article)
+
+  await user.click(within(article).getByRole('button', { name: /^load images$/i }))
+
+  await waitFor(() => expect(article.querySelector('iframe')).not.toBe(before))
+  expect((await frameOf(article)).querySelector('img')?.getAttribute('src')).toBe(
+    'https://cdn.test/logo.png',
+  )
+})
+
+test('does not churn the frame when nothing about the policy changed', async () => {
+  // The key is the flag, not a fresh value per render — keying on something
+  // unstable would rebuild the document on every render, losing scroll position
+  // and re-running the measure for nothing.
+  withMessage({ body: 'hello', html: '<p>just a sentence</p>' })
+
+  const article = await openThread()
+  const first = article.querySelector('iframe')
+  await frameOf(article)
+
+  expect(article.querySelector('iframe')).toBe(first)
+})

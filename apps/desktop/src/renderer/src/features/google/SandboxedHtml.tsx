@@ -222,6 +222,27 @@ function HtmlFrame({
   return (
     <iframe
       ref={ref}
+      /**
+       * **A fresh element when the policy widens, or the images never load.**
+       *
+       * A CSP delivered by `<meta>` joins the document's list of policies, and
+       * a request has to satisfy *every* policy in it. `document.open()` does
+       * not clear the ones already applied — so rewriting the document with a
+       * wider `img-src` adds a permissive policy underneath the restrictive one
+       * that is still there, and `img-src data:` goes on refusing every remote
+       * image. Rewriting is enough for the markup and not enough for the browser.
+       *
+       * The symptom was exact: "Load images" restored the `src`, the banner
+       * went away, and nothing appeared until you left the message and came
+       * back — because that destroyed the iframe and built a new document,
+       * which is the only way a document sheds a policy. Keying on the flag
+       * does deliberately what navigating away did by accident.
+       *
+       * The key is on the frame and not on `HtmlFrame`, so the measured height
+       * survives the swap and the message does not collapse to nothing and
+       * spring back while the new document is written.
+       */
+      key={allowRemoteContent ? 'remote-allowed' : 'remote-blocked'}
       // `allow-same-origin` and nothing else. No `allow-scripts` — granting both
       // is the footgun that lets framed content drop its own sandbox.
       sandbox="allow-same-origin"
