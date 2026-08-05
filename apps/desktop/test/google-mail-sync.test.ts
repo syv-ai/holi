@@ -293,6 +293,207 @@ describe('syncThreads', () => {
     expect(new URL(asked).searchParams.get('startHistoryId')).toBe('100')
   })
 
+  /**
+   * Archive, trash and spam — **the threads that leave without being deleted.**
+   *
+   * The bug these exist for: `messagesDeleted` is the only thing that used to
+   * take a thread out of a cached list, and archiving is not a deletion. So
+   * history reported `labelsRemoved: ['INBOX']`, that was not a patchable label,
+   * the thread was refetched — `threads.get` still answers, it is in All Mail —
+   * and `merge` found it absent from the cached list and added it back as new
+   * mail, at the TOP, because the sort is by date.
+   *
+   * Worse, it stuck: the merged list was written back and the cursor advanced,
+   * so no later delta ever mentioned it again. Archiving a thread in Holi made
+   * it jump to the top of the inbox on the next refresh and stay there.
+   */
+  describe('a thread that leaves the inbox', () => {
+    /** Archived at Gmail: the INBOX label removed, the thread otherwise intact. */
+    function archivedInHistory(id: string) {
+      return {
+        historyId: '6001',
+        history: [
+          { labelsRemoved: [{ message: { id: `${id}-m1`, threadId: id }, labelIds: ['INBOX'] }] },
+        ],
+      }
+    }
+
+    async function cachedInbox() {
+      const first = gmail({
+        list: [{ id: 't1' }, { id: 't2' }],
+        threads: { t1: rawThread('t1', 'One'), t2: rawThread('t2', 'Two') },
+      })
+      await syncThreads(first.api, cache, {})
+    }
+
+    it('does not come back as new mail', async () => {
+      await cachedInbox()
+      // What `data.archive` does to the cache once Google has agreed.
+      cache.dropThread('t2')
+
+      const second = gmail({
+        history: archivedInHistory('t2'),
+        // Still answers — an archived thread is in All Mail, which is exactly
+        // why refetching it and trusting the result was wrong.
+        threads: { t2: rawThread('t2', 'Two', []) },
+      })
+      const page = await syncThreads(second.api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+    })
+
+    it('stays gone across later syncs', async () => {
+      await cachedInbox()
+      cache.dropThread('t2')
+      await syncThreads(
+        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } }).api,
+        cache,
+        {},
+      )
+
+      // Nothing happens at all after that. The resurrection used to be written
+      // back to the cache, so this is where it became permanent.
+      const page = await syncThreads(gmail({ history: { historyId: '6002' } }).api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+    })
+
+    it('leaves when Gmail is the one that archived it', async () => {
+      // Not our write: archived in the Gmail web UI, so the cache still holds
+      // it. The row has to go, and this is the half that would have been broken
+      // in the opposite direction if `left` were only about our own writes.
+      await cachedInbox()
+
+      const page = await syncThreads(
+        gmail({ history: archivedInHistory('t2'), threads: { t2: rawThread('t2', 'Two', []) } }).api,
+        cache,
+        {},
+      )
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+    })
+
+    it('spends no request refetching a thread it is about to drop', async () => {
+      await cachedInbox()
+
+      const second = gmail({
+        history: archivedInHistory('t2'),
+        threads: { t2: rawThread('t2', 'Two', []) },
+      })
+      await syncThreads(second.api, cache, {})
+
+      expect(threadGets(second.seen)).toHaveLength(0)
+    })
+
+    it('treats trash the same way, though nothing was deleted', async () => {
+      await cachedInbox()
+
+      const second = gmail({
+        history: {
+          historyId: '6003',
+          history: [
+            { labelsAdded: [{ message: { id: 't2-m1', threadId: 't2' }, labelIds: ['TRASH'] }] },
+          ],
+        },
+        threads: { t2: rawThread('t2', 'Two', ['TRASH']) },
+      })
+      const page = await syncThreads(second.api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+    })
+
+    it('comes back when it is put back', async () => {
+      // The reverse must work or un-archiving would be invisible until a full
+      // resync. Both events in one window, in order: the last one wins.
+      await cachedInbox()
+      cache.dropThread('t2')
+
+      const second = gmail({
+        history: {
+          historyId: '6004',
+          history: [
+            { labelsRemoved: [{ message: { id: 't2-m1', threadId: 't2' }, labelIds: ['INBOX'] }] },
+            { labelsAdded: [{ message: { id: 't2-m1', threadId: 't2' }, labelIds: ['INBOX'] }] },
+          ],
+        },
+        threads: { t2: rawThread('t2', 'Two') },
+      })
+      const page = await syncThreads(second.api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toContain('t2')
+    })
+
+    it('keeps it in a SEARCH, which may still legitimately match', async () => {
+      // An explicit query is not the inbox, so "left the inbox" says nothing
+      // about whether the thread still answers `from:jane`. Here it is a
+      // refetch, exactly as it was before departures existed.
+      const first = gmail({
+        list: [{ id: 't2' }],
+        threads: { t2: rawThread('t2', 'Two') },
+      })
+      await syncThreads(first.api, cache, { query: 'from:jane' })
+
+      const second = gmail({
+        history: archivedInHistory('t2'),
+        threads: { t2: rawThread('t2', 'Two (archived)', []) },
+      })
+      const page = await syncThreads(second.api, cache, { query: 'from:jane' })
+
+      expect(page.threads.map((t) => t.subject)).toEqual(['Two (archived)'])
+    })
+  })
+
+  /**
+   * The unread filter is a different question, so it needs a different key.
+   *
+   * `cacheKey` was `query|category` while `ListThreadsOptions.unread` also
+   * narrows the list (`composeQuery` ANDs `is:unread` on). The two lists
+   * therefore shared one cache entry, and the consequence was not staleness but
+   * a wrong answer in both directions.
+   */
+  describe('the unread filter', () => {
+    it('is not served the whole inbox from the unfiltered cache', async () => {
+      const first = gmail({
+        list: [{ id: 't1' }, { id: 't2' }],
+        threads: {
+          t1: rawThread('t1', 'Read one'),
+          t2: rawThread('t2', 'Unread one', ['INBOX', 'UNREAD']),
+        },
+      })
+      await syncThreads(first.api, cache, {})
+
+      const second = gmail({
+        list: [{ id: 't2' }],
+        threads: { t2: rawThread('t2', 'Unread one', ['INBOX', 'UNREAD']) },
+      })
+      const page = await syncThreads(second.api, cache, { unread: true })
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t2'])
+    })
+
+    it('does not overwrite the inbox with its own narrower answer', async () => {
+      // The other direction, and the more damaging one: a cold unread-only
+      // fetch used to be written under the inbox's key, so the unfiltered list
+      // then showed only unread threads until something forced a resync.
+      const unreadOnly = gmail({
+        list: [{ id: 't2' }],
+        threads: { t2: rawThread('t2', 'Unread one', ['INBOX', 'UNREAD']) },
+      })
+      await syncThreads(unreadOnly.api, cache, { unread: true })
+
+      const everything = gmail({
+        list: [{ id: 't1' }, { id: 't2' }],
+        threads: {
+          t1: rawThread('t1', 'Read one'),
+          t2: rawThread('t2', 'Unread one', ['INBOX', 'UNREAD']),
+        },
+      })
+      const page = await syncThreads(everything.api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1', 't2'])
+    })
+  })
+
   it('goes straight to Gmail for a later page, never to the cache', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } })
     await syncThreads(first.api, cache, {})

@@ -42,6 +42,20 @@ const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
  */
 const PATCHABLE = PATCHABLE_LABELS
 
+/**
+ * Labels whose movement means a thread **left the inbox** rather than merely
+ * changed inside it.
+ *
+ * This is the distinction `messagesDeleted` does not cover and that nothing
+ * covered before: archive is `INBOX` removed, trash and spam are a label added,
+ * and none of the three is a deletion. Without it a refetched summary comes
+ * back through `merge`'s "new mail" branch and the thread reappears at the top
+ * of the list it was just archived out of — permanently, because the cursor
+ * advances past the event that would have explained it.
+ */
+const LEFT_WHEN_REMOVED = 'INBOX'
+const LEFT_WHEN_ADDED = new Set(['TRASH', 'SPAM'])
+
 interface RawHistoryMessage {
   id?: string
   threadId?: string
@@ -100,13 +114,27 @@ export async function syncThreads(
     throw error
   }
 
-  const { changed, deleted, patches } = readHistory(page.history ?? [])
+  const { changed, deleted, left, patches } = readHistory(page.history ?? [])
 
-  // Only the threads that actually moved. This is the win: two changed threads
-  // cost two requests, not twenty-five.
-  const refetched = await fetchThreadSummaries(api, [...changed])
+  /**
+   * "Left the inbox" only means "left this list" for a list that IS the inbox.
+   *
+   * A search (`from:jane`) may still legitimately match an archived thread, so
+   * there the same event becomes a **refetch** instead — which is what it was
+   * before departures existed, and it keeps the row while bringing it up to
+   * date. The category and unread lists are inbox-scoped, so they get the
+   * removal; only an explicit query opts out.
+   */
+  const inbox = scopedToInbox(options)
+  const gone = inbox ? new Set([...deleted, ...left]) : deleted
+  if (!inbox) for (const id of left) changed.add(id)
 
-  const threads = merge(cached, refetched, deleted, patches)
+  // Only the threads that actually moved, and never one we already know has
+  // gone — refetching a thread in order to drop it is a request spent on
+  // nothing. This is the win: two changed threads cost two requests, not 25.
+  const refetched = await fetchThreadSummaries(api, [...changed].filter((id) => !gone.has(id)))
+
+  const threads = merge(cached, refetched, gone, patches)
   cache.writeThreads(key, threads)
   if (page.historyId !== undefined) cache.setHistoryId(key, page.historyId)
 
@@ -150,20 +178,34 @@ async function currentHistoryId(api: GoogleApi): Promise<string | null> {
 interface Changes {
   /** Threads to refetch. */
   changed: Set<string>
+  /** Permanently gone from the mailbox. */
   deleted: Set<string>
+  /**
+   * Still in the mailbox, but no longer in the inbox — archived, trashed or
+   * marked spam. Distinct from `deleted` because `threads.get` still answers
+   * for these, which is exactly how they used to come back as "new mail".
+   */
+  left: Set<string>
   /** threadId → the label ids now on it, as far as history says. */
   patches: Map<string, { added: Set<string>; removed: Set<string> }>
 }
 
 /**
- * What history says happened, sorted into "refetch this" and "patch this".
+ * What history says happened, sorted into "refetch this", "patch this" and
+ * "this is no longer here".
  *
  * A thread that is both patched and refetched is only refetched — the fetched
  * summary is authoritative and a patch on top of it could only be older.
+ *
+ * Records arrive in chronological order, so a thread archived and then moved
+ * back within one window resolves to whichever happened last: the `INBOX`
+ * label being added again removes it from `left` rather than leaving both
+ * facts recorded and letting the caller guess.
  */
 function readHistory(records: RawHistoryRecord[]): Changes {
   const changed = new Set<string>()
   const deleted = new Set<string>()
+  const left = new Set<string>()
   const patches = new Map<string, { added: Set<string>; removed: Set<string> }>()
 
   const patchFor = (threadId: string) => {
@@ -191,6 +233,24 @@ function readHistory(records: RawHistoryRecord[]): Changes {
         const threadId = entry.message?.threadId
         if (threadId === undefined) continue
         for (const labelId of entry.labelIds ?? []) {
+          // Left the inbox, or came back to it. Checked before `PATCHABLE`
+          // because these are not flags on a row — they decide whether the row
+          // belongs to the list at all. Each label reads in both directions:
+          // INBOX removed is an archive and INBOX added is an un-archive; TRASH
+          // added is a trashing and TRASH removed is a restore.
+          const inbox = labelId === LEFT_WHEN_REMOVED
+          const banished = LEFT_WHEN_ADDED.has(labelId)
+          if (inbox || banished) {
+            const leaving = side === (inbox ? 'removed' : 'added')
+            if (leaving) left.add(threadId)
+            else {
+              // Back in the inbox. Refetched rather than patched: the summary
+              // in hand is from before it left, if it is held at all.
+              left.delete(threadId)
+              changed.add(threadId)
+            }
+            continue
+          }
           // A label this cannot reconstruct locally — a user label, whose NAME
           // the cache holds and whose id says nothing — means refetch.
           if (!PATCHABLE.has(labelId)) changed.add(threadId)
@@ -202,25 +262,44 @@ function readHistory(records: RawHistoryRecord[]): Changes {
 
   // A deleted thread is not worth a request to look at.
   for (const id of deleted) changed.delete(id)
-  return { changed, deleted, patches }
+  return { changed, deleted, left, patches }
 }
 
-/** The cached list with the deltas applied: deletions removed, patches
+/**
+ * Is this list the inbox?
+ *
+ * `composeQuery` defaults to `in:inbox` when there is no explicit query, and
+ * ANDs the category and unread filters onto it — so every list except an
+ * explicit search is inbox-scoped, and only those may treat "archived" as
+ * "gone from this list".
+ */
+function scopedToInbox(options: ListThreadsOptions): boolean {
+  return options.query === undefined || options.query === ''
+}
+
+/** The cached list with the deltas applied: departures removed, patches
  *  applied, refetched summaries replacing their stale twins, newest first. */
 function merge(
   cached: MailThreadSummary[],
   refetched: MailThreadSummary[],
-  deleted: Set<string>,
+  gone: Set<string>,
   patches: Changes['patches'],
 ): MailThreadSummary[] {
   const replacements = new Map(refetched.map((thread) => [thread.id, thread]))
 
   const kept = cached
-    .filter((thread) => !deleted.has(thread.id))
+    .filter((thread) => !gone.has(thread.id))
     .map((thread) => replacements.get(thread.id) ?? patch(thread, patches.get(thread.id)))
 
   // A thread whose first message just arrived is not in the cached list at all.
-  const added = refetched.filter((thread) => !cached.some((c) => c.id === thread.id))
+  //
+  // **`gone` is filtered here too, not only above.** Filtering `kept` alone is
+  // what let an archived thread return: the cache had already dropped it (this
+  // app's own write), so it failed the "is it cached?" test and arrived through
+  // this branch as new mail — at the top of the list, since the sort is by date.
+  const added = refetched.filter(
+    (thread) => !gone.has(thread.id) && !cached.some((c) => c.id === thread.id),
+  )
 
   return [...added, ...kept].sort((a, b) => b.date.localeCompare(a.date))
 }
@@ -235,10 +314,17 @@ function patch(
 /**
  * Which question a cached list answers.
  *
- * The query and the category, because a cached answer belongs to the question
- * that produced it — serving the inbox for a search would be a list that
- * quietly does not match its own query.
+ * **Every option that narrows the list, or the key is a lie.** The query, the
+ * category and the unread filter all become part of the Gmail query
+ * (`composeQuery`), so all three belong here. `unread` was missing, and the
+ * consequence was not a stale list but a wrong one: flipping "unread only" with
+ * a warm cache served the whole inbox back unfiltered, and a cold one wrote the
+ * unread-only list under the plain inbox's key so the unfiltered list then
+ * showed only unread threads.
+ *
+ * `pageToken` is deliberately absent — a later page never consults the cache
+ * (see `syncThreads`), so it has no key to belong to.
  */
 export function cacheKey(options: ListThreadsOptions): string {
-  return `${options.query ?? ''}|${options.category ?? ''}`
+  return `${options.query ?? ''}|${options.category ?? ''}|${options.unread === true ? 'unread' : ''}`
 }
