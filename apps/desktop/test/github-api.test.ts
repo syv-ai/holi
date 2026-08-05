@@ -122,8 +122,8 @@ describe('GitHubApi.viewer', () => {
   })
 
   it('keeps a name when there is one', async () => {
-    const t = api([{ body: { ...VIEWER, name: 'Nicolai Thomsen' } }])
-    expect((await t.client.viewer()).name).toBe('Nicolai Thomsen')
+    const t = api([{ body: { ...VIEWER, name: 'Ada Holm' } }])
+    expect((await t.client.viewer()).name).toBe('Ada Holm')
   })
 })
 
@@ -160,8 +160,8 @@ describe('GitHubApi.repos', () => {
   })
 
   it('maps owner kind from the owner type', async () => {
-    // Both must work: this is the grouping the picker uses, and Nicolai's
-    // vaults live under personal accounts *and* orgs.
+    // Both must work: this is the grouping the picker uses, and real vaults
+    // live under personal accounts *and* orgs.
     const t = api([
       {
         body: [

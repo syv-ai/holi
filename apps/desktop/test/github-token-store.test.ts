@@ -57,7 +57,7 @@ const auth = (over: Partial<StoredAuth> = {}): StoredAuth => ({
   token: TOKEN,
   accountId: 583231,
   login: 'nthomsencph',
-  name: 'Nicolai Thomsen',
+  name: 'Ada Holm',
   avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
   scopes: ['repo', 'read:user', 'read:org'],
   ...over,

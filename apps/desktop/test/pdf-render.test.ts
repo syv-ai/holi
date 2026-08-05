@@ -198,7 +198,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
         { key: 'closing', label: 'Closing', type: 'text', required: false },
         { key: 'sender', label: 'Sender', type: 'text', required: false },
       ],
-      meta: { recipient: 'ACME A/S', date: '2026-07-08', closing: 'Med venlig hilsen', sender: 'Nicolai' },
+      meta: { recipient: 'ACME A/S', date: '2026-07-08', closing: 'Med venlig hilsen', sender: 'Ada' },
     })
     expect((await readFile(letterOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
 
@@ -216,7 +216,7 @@ describe('renderPdf — branded set (integration — needs typst on PATH)', () =
         { key: 're', label: 'Re', type: 'text', required: false },
         { key: 'date', label: 'Date', type: 'date', required: false },
       ],
-      meta: { to: 'Teamet', from: 'Nicolai', re: 'Deadline', date: '2026-07-08' },
+      meta: { to: 'Teamet', from: 'Ada', re: 'Deadline', date: '2026-07-08' },
     })
     expect((await readFile(memoOut)).subarray(0, 5).toString('latin1')).toBe('%PDF-')
   }, 30_000)

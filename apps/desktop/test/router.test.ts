@@ -738,7 +738,7 @@ const VIEWER = {
   login: 'nthomsencph',
   id: 583231,
   avatar_url: 'https://avatars.githubusercontent.com/u/583231?v=4',
-  name: 'Nicolai Thomsen',
+  name: 'Ada Holm',
   type: 'User',
 }
 
@@ -758,7 +758,7 @@ const seeded = (): StoredAuth => ({
   token: TOKEN,
   accountId: 583231,
   login: 'nthomsencph',
-  name: 'Nicolai Thomsen',
+  name: 'Ada Holm',
   avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
   scopes: ['repo', 'read:user', 'read:org'],
 })
@@ -826,7 +826,7 @@ describe('auth', () => {
     expect(await caller.auth.status()).toEqual({
       viewer: {
         login: 'nthomsencph',
-        name: 'Nicolai Thomsen',
+        name: 'Ada Holm',
         avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
       },
     })
@@ -873,7 +873,7 @@ describe('auth', () => {
       kind: 'granted',
       viewer: {
         login: 'nthomsencph',
-        name: 'Nicolai Thomsen',
+        name: 'Ada Holm',
         avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
       },
     })

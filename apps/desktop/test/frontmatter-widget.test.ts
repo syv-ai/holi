@@ -111,12 +111,12 @@ describe('frontmatterSummary', () => {
     expect(frontmatterSummary(1, null)).toBe('1 char')
   })
   it('appends last-updated + author when a commit is known', () => {
-    expect(frontmatterSummary(14, { date: '2026-07-01T09:30:00Z', author: 'Nicolai' })).toBe(
-      '14 chars · Last updated 01/07/26, Nicolai',
+    expect(frontmatterSummary(14, { date: '2026-07-01T09:30:00Z', author: 'Ada' })).toBe(
+      '14 chars · Last updated 01/07/26, Ada',
     )
   })
   it('falls back to the char count when the commit date is unparseable', () => {
-    expect(frontmatterSummary(14, { date: 'nope', author: 'Nicolai' })).toBe('14 chars')
+    expect(frontmatterSummary(14, { date: 'nope', author: 'Ada' })).toBe('14 chars')
   })
 })
 
@@ -131,7 +131,7 @@ describe('frontmatterDecorations summary data', () => {
   })
 
   it('reflects a commit dispatched via setFrontmatterCommit', () => {
-    const commit = { date: '2026-07-01T09:30:00Z', author: 'Nicolai' }
+    const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
     const state = stateFor(DOC, [frontmatterCommitField])
       .update({ effects: setFrontmatterCommit.of(commit) })
       .state

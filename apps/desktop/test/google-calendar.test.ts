@@ -84,7 +84,7 @@ describe('resolveCalendars', () => {
   const MIXED = {
     [CAL_LIST]: {
       items: [
-        { id: 'primary', summary: 'Nicolai', primary: true, accessRole: 'owner', backgroundColor: '#039be5' },
+        { id: 'primary', summary: 'Ada', primary: true, accessRole: 'owner', backgroundColor: '#039be5' },
         { id: 'holidays', summary: 'syv.ai holidays', accessRole: 'owner', backgroundColor: '#0b8043' },
         { id: 'jane', summary: 'Jane Doe', accessRole: 'reader', backgroundColor: '#d50000' },
         { id: 'room3', summary: 'Meeting Room 3', accessRole: 'freeBusyReader' },

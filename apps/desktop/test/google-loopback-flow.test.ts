@@ -14,7 +14,7 @@ function idToken(claims: Record<string, unknown>): string {
   return `header.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`
 }
 
-const IDENTITY = { sub: 'google-sub-1', email: 'nicolai@syv.ai' }
+const IDENTITY = { sub: 'google-sub-1', email: 'ada@syv.ai' }
 
 const GRANT = {
   access_token: 'at-1',

@@ -219,7 +219,7 @@ describe('sanitizeMailHtml — links', () => {
 describe('sanitizeMailHtml — ordinary mail', () => {
   it('leaves the markup a real message is made of alone', () => {
     const { html } = sanitizeMailHtml(
-      '<div><h1>Q2</h1><p>Hi <b>Nicolai</b>,</p><ul><li>one</li></ul>' +
+      '<div><h1>Q2</h1><p>Hi <b>Ada</b>,</p><ul><li>one</li></ul>' +
         '<table><tr><td>cell</td></tr></table><blockquote>quoted</blockquote></div>',
     )
     const dom = parse(html)

@@ -30,7 +30,7 @@ afterEach(async () => {
 
 const AUTH = {
   sub: 'sub-1',
-  email: 'nicolai@syv.ai',
+  email: 'ada@syv.ai',
   refreshToken: 'rt-1',
   accessToken: 'at-1',
   expiresAt: 5_000,

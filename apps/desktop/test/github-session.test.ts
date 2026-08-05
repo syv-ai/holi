@@ -75,7 +75,7 @@ const VIEWER = {
   login: 'nthomsencph',
   id: 583231,
   avatar_url: 'https://avatars.githubusercontent.com/u/583231?v=4',
-  name: 'Nicolai Thomsen',
+  name: 'Ada Holm',
   type: 'User',
 }
 
@@ -83,7 +83,7 @@ const stored = (over: Partial<StoredAuth> = {}): StoredAuth => ({
   token: TOKEN,
   accountId: 583231,
   login: 'nthomsencph',
-  name: 'Nicolai Thomsen',
+  name: 'Ada Holm',
   avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
   scopes: ['repo', 'read:user', 'read:org'],
   ...over,
@@ -127,7 +127,7 @@ describe('GitHubSession', () => {
     expect(t.s.viewer).toEqual({
       accountId: 583231,
       login: 'nthomsencph',
-      name: 'Nicolai Thomsen',
+      name: 'Ada Holm',
       avatarUrl: 'https://avatars.githubusercontent.com/u/583231?v=4',
     })
     expect(t.s.token()).toBe(TOKEN)
