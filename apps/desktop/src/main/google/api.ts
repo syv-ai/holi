@@ -102,11 +102,49 @@ export class GoogleApi {
   }
 
   /**
-   * A write. **The only verb here that changes anything at Google** (D68).
+   * The shared write path: token, request, and Google's refusal turned into a
+   * `GoogleApiError`. What each verb does with a *successful* response is the
+   * only thing that differs, so that is the only thing left to the callers.
    *
-   * No query-parameter path, deliberately: every Gmail write this app makes
-   * carries its arguments in the body, and a second `URLSearchParams` builder
-   * would be an unused branch of the one function that can do damage.
+   * No query-parameter path, deliberately: every write this app makes carries
+   * its arguments in the body, bar the one literal `?sendUpdates=none` the
+   * calendar appends itself. A second `URLSearchParams` builder would be an
+   * unused branch of the one function that can do damage.
+   */
+  async #write(method: string, url: string, body?: unknown): Promise<Response> {
+    let token: string
+    try {
+      token = await this.#deps.accessToken()
+    } catch (err) {
+      // A dead grant surfaces here rather than as a 401, because the refresh
+      // failed before a request was ever made.
+      throw new GoogleApiError(
+        'reconnect',
+        401,
+        err instanceof Error ? err.message : 'not connected to Google',
+      )
+    }
+
+    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    // A 403 here is most often `insufficientPermissions` — a grant older than
+    // GOOGLE_SCOPES — which `classify` maps to `scope` so the UI can offer the
+    // reconnect that actually fixes it. See `GoogleSession.missingScopes`.
+    if (!res.ok) throw await classify(res)
+    return res
+  }
+
+  /**
+   * A write. **The verb the four mail label changes go through** (D68).
    *
    * **Returns nothing, deliberately.** Gmail's write endpoints do not all
    * answer with a body, so a parsed result would be `T | null` and every caller
@@ -117,34 +155,27 @@ export class GoogleApi {
    * reverts the UI to a state the mailbox no longer has.
    */
   async post(url: string, body: unknown): Promise<void> {
-    let token: string
-    try {
-      token = await this.#deps.accessToken()
-    } catch (err) {
-      throw new GoogleApiError(
-        'reconnect',
-        401,
-        err instanceof Error ? err.message : 'not connected to Google',
-      )
-    }
-
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-
-    // A 403 here is most often `insufficientPermissions` — a grant older than
-    // GOOGLE_SCOPES — which `classify` maps to `scope` so the UI can offer the
-    // reconnect that actually fixes it. See `GoogleSession.missingScopes`.
-    if (!res.ok) throw await classify(res)
+    const res = await this.#write('POST', url, body)
     // Drained rather than ignored: leaving a body unread holds the connection
     // open. Whether it parses is not this function's business.
+    await res.text().catch(() => '')
+  }
+
+  /**
+   * A partial update — `events.patch` (D70).
+   *
+   * `PATCH` rather than `PUT`: `events.update` replaces the whole resource, so
+   * every field the caller did not think to send comes back blank. Moving an
+   * event must not be able to erase its description.
+   */
+  async patch(url: string, body: unknown): Promise<void> {
+    const res = await this.#write('PATCH', url, body)
+    await res.text().catch(() => '')
+  }
+
+  /** A delete — `events.delete` (D70). Answers 204 with no body. */
+  async del(url: string): Promise<void> {
+    const res = await this.#write('DELETE', url)
     await res.text().catch(() => '')
   }
 
@@ -165,29 +196,7 @@ export class GoogleApi {
    * it as a failure.
    */
   async postJson<T>(url: string, body: unknown): Promise<T | null> {
-    let token: string
-    try {
-      token = await this.#deps.accessToken()
-    } catch (err) {
-      throw new GoogleApiError(
-        'reconnect',
-        401,
-        err instanceof Error ? err.message : 'not connected to Google',
-      )
-    }
-
-    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    })
-
-    if (!res.ok) throw await classify(res)
+    const res = await this.#write('POST', url, body)
     // The catch is the whole design, not defensiveness: past this line Google
     // has already done the thing.
     return await res.json().catch(() => null)

@@ -8,7 +8,15 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../src/main/google/api'
-import { enabledCalendarIds, listAgenda, listCalendars, resolveCalendars } from '../src/main/google/calendar'
+import {
+  createEvent,
+  deleteEvent,
+  enabledCalendarIds,
+  listAgenda,
+  listCalendars,
+  resolveCalendars,
+  updateEvent,
+} from '../src/main/google/calendar'
 
 /**
  * A fake Google that answers by URL. Each entry may be a single page or a list
@@ -601,5 +609,150 @@ describe('refusals are classified, not passed through raw', () => {
 
     await expect(api.get('https://x')).rejects.toMatchObject({ code: 'reconnect' })
     expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * Calendar writes (D70) — and the refusal that keeps them inside the undoable
+ * tier.
+ *
+ * An event carrying attendees emails them on create, and emails cancellations
+ * on delete. That is `send` wearing a different hat, so it must not arrive on
+ * the agent's side of the line by accident. The tests that matter here assert
+ * **Holi refused** — the request never reached the fake — rather than that
+ * Google returned an error, because Google would happily have done it.
+ */
+describe('calendar writes', () => {
+  /** Records every write and answers reads from `event`. */
+  function writable(event?: Record<string, unknown>) {
+    const writes: { url: string; method: string; body: unknown }[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      if (method !== 'GET') {
+        writes.push({
+          url,
+          method,
+          body: init?.body === undefined ? undefined : JSON.parse(String(init.body)),
+        })
+        return { ok: true, status: 200, json: async () => ({ id: 'ev-1' }), text: async () => '{}' }
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => event ?? {},
+        text: async () => JSON.stringify(event ?? {}),
+      }
+    }) as unknown as typeof globalThis.fetch
+    return {
+      writes,
+      api: new GoogleApi({ accessToken: async () => 'at-1', fetch: fetchImpl }),
+    }
+  }
+
+  const PRIMARY = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+  const SOLO = { id: 'ev-1', summary: 'Deep work' }
+  const WITH_ATTENDEES = {
+    id: 'ev-2',
+    summary: 'Q2 review',
+    attendees: [{ email: 'ada@syv.ai' }, { email: 'bo@syv.ai' }],
+  }
+
+  it('creates a timed event with dateTime and a time zone', async () => {
+    const { writes, api } = writable()
+
+    const result = await createEvent(api, {
+      title: 'Deep work',
+      start: '2026-08-06T09:00:00Z',
+      end: '2026-08-06T11:00:00Z',
+    })
+
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.method).toBe('POST')
+    expect(writes[0]!.url).toContain(PRIMARY)
+    const body = writes[0]!.body as { start: Record<string, string>; end: Record<string, string> }
+    expect(body.start.dateTime).toBe('2026-08-06T09:00:00Z')
+    expect(body.start.date).toBeUndefined()
+    expect(body.start.timeZone).toBeTruthy()
+    expect(result.id).toBe('ev-1')
+  })
+
+  it('creates an all-day event with date, not dateTime', async () => {
+    // Sending dateTime for an all-day event silently produces a
+    // midnight-to-midnight timed block: correct in a list, wrong in a day view.
+    const { writes, api } = writable()
+
+    await createEvent(api, {
+      title: 'Off',
+      start: '2026-08-06',
+      end: '2026-08-07',
+      allDay: true,
+    })
+
+    const body = writes[0]!.body as { start: Record<string, string>; end: Record<string, string> }
+    expect(body.start.date).toBe('2026-08-06')
+    expect(body.start.dateTime).toBeUndefined()
+    expect(body.end.date).toBe('2026-08-07')
+  })
+
+  it('carries sendUpdates=none on every write', async () => {
+    const { writes, api } = writable(SOLO)
+
+    await createEvent(api, { title: 'A', start: '2026-08-06T09:00:00Z', end: '2026-08-06T10:00:00Z' })
+    await updateEvent(api, 'ev-1', { start: '2026-08-06T10:00:00Z' })
+    await deleteEvent(api, 'ev-1')
+
+    expect(writes).toHaveLength(3)
+    for (const write of writes) expect(write.url).toContain('sendUpdates=none')
+  })
+
+  it('refuses to delete an event that has attendees, without calling Google', async () => {
+    const { writes, api } = writable(WITH_ATTENDEES)
+
+    await expect(deleteEvent(api, 'ev-2')).rejects.toThrow(/attendee/i)
+
+    // The refusal is ours. Google would have sent the cancellations.
+    expect(writes).toHaveLength(0)
+  })
+
+  it('refuses to move an event that has attendees, without calling Google', async () => {
+    const { writes, api } = writable(WITH_ATTENDEES)
+
+    await expect(updateEvent(api, 'ev-2', { start: '2026-08-06T12:00:00Z' })).rejects.toThrow(
+      /attendee/i,
+    )
+
+    expect(writes).toHaveLength(0)
+  })
+
+  it('deletes a solo event', async () => {
+    const { writes, api } = writable(SOLO)
+
+    await deleteEvent(api, 'ev-1')
+
+    expect(writes).toHaveLength(1)
+    expect(writes[0]!.method).toBe('DELETE')
+    expect(writes[0]!.url).toContain('/events/ev-1')
+  })
+
+  it('moves a solo event by patching only what changed', async () => {
+    const { writes, api } = writable(SOLO)
+
+    await updateEvent(api, 'ev-1', { start: '2026-08-06T10:00:00Z', end: '2026-08-06T12:00:00Z' })
+
+    expect(writes[0]!.method).toBe('PATCH')
+    const body = writes[0]!.body as Record<string, unknown>
+    // A patch that also sent `summary: undefined` would blank the title.
+    expect(body.summary).toBeUndefined()
+    expect((body.start as Record<string, string>).dateTime).toBe('2026-08-06T10:00:00Z')
+  })
+
+  it('treats an empty attendees array as no attendees', async () => {
+    // Google returns `attendees: []` on some solo events. Refusing those would
+    // make the agent unable to touch its own blocks.
+    const { writes, api } = writable({ id: 'ev-1', summary: 'Deep work', attendees: [] })
+
+    await deleteEvent(api, 'ev-1')
+
+    expect(writes).toHaveLength(1)
   })
 })

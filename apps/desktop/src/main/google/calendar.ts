@@ -357,3 +357,127 @@ function byStart(a: CalendarEvent, b: CalendarEvent): number {
   const tb = b.allDay ? Date.parse(`${b.start}T00:00:00`) : Date.parse(b.start)
   return ta - tb || a.title.localeCompare(b.title)
 }
+
+/**
+ * Calendar writes — the agent's time-blocking surface (D70).
+ *
+ * **Every function here is bounded by one rule: it must not email anyone.**
+ * An event carrying attendees sends invitations on create and cancellations on
+ * delete, which makes it the calendar's version of `send` — and `send` is the
+ * one thing on the far side of the line the agent may not cross alone.
+ *
+ * The bound is enforced here rather than in `SKILL.md` on purpose: the agent is
+ * the thing being bounded, so a rule it can read and reason about is not a
+ * bound. `NewEvent` has no `attendees` field at all, which handles creation;
+ * `updateEvent` and `deleteEvent` read the event first, which is what covers
+ * the events the agent did not create.
+ *
+ * Writes target `primary` only. A subscribed calendar is someone else's, and
+ * "which of your twenty calendars did you mean" is not a question worth an API.
+ */
+const PRIMARY_EVENTS = `${BASE}/calendars/primary/events`
+
+/**
+ * `sendUpdates=none` on every write, belt-and-braces with the attendee refusal.
+ *
+ * The refusal is the real wall — this is the second one, for the case where an
+ * event acquires attendees between the read and the write.
+ */
+const NO_MAIL = 'sendUpdates=none'
+
+export interface NewEvent {
+  title: string
+  /** ISO instant, or `YYYY-MM-DD` when `allDay`. */
+  start: string
+  end: string
+  allDay?: boolean
+  location?: string
+  description?: string
+}
+
+export interface EventPatch {
+  title?: string
+  start?: string
+  end?: string
+  allDay?: boolean
+}
+
+/**
+ * An all-day event uses `date`; a timed one uses `dateTime` **and** a
+ * `timeZone`.
+ *
+ * Sending `dateTime` for an all-day event does not fail. It creates a
+ * midnight-to-midnight timed block, which reads correctly in an agenda list and
+ * is visibly wrong in a day view — the kind of bug that ships.
+ */
+function endpoint(value: string, allDay: boolean): Record<string, string> {
+  if (allDay) return { date: value }
+  return {
+    dateTime: value,
+    // The machine's zone. Google requires one alongside `dateTime`, and the
+    // instant is already absolute, so this only decides how it is displayed.
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }
+}
+
+/** The event as Google holds it, for the one field this module asks about. */
+interface RawAttendees {
+  attendees?: unknown[]
+  summary?: string
+}
+
+/**
+ * Refuse anything that would put mail in someone's inbox.
+ *
+ * An empty `attendees` array is *not* attendees — Google returns one on some
+ * solo events, and refusing those would leave the agent unable to move its own
+ * blocks.
+ */
+async function assertNobodyIsInvited(api: GoogleApi, eventId: string): Promise<void> {
+  const event = await api.get<RawAttendees>(
+    `${PRIMARY_EVENTS}/${encodeURIComponent(eventId)}`,
+  )
+  if (Array.isArray(event.attendees) && event.attendees.length > 0) {
+    // Read by the agent, so it says what to do instead rather than only what
+    // went wrong.
+    throw new Error(
+      `"${event.summary ?? eventId}" has attendees, so changing it would email them. ` +
+        'Holi does not let me do that — ask the user to make this change in Google Calendar.',
+    )
+  }
+}
+
+/** Create a solo event. `NewEvent` has no `attendees` field: the type is the
+ *  first wall, and there is no way to express an invitation here. */
+export async function createEvent(api: GoogleApi, event: NewEvent): Promise<{ id: string | null }> {
+  const created = await api.postJson<{ id?: string }>(`${PRIMARY_EVENTS}?${NO_MAIL}`, {
+    summary: event.title,
+    start: endpoint(event.start, event.allDay === true),
+    end: endpoint(event.end, event.allDay === true),
+    ...(event.location === undefined ? {} : { location: event.location }),
+    ...(event.description === undefined ? {} : { description: event.description }),
+  })
+  return { id: created?.id ?? null }
+}
+
+/**
+ * Move or retitle an event. Refuses if anyone is invited.
+ *
+ * A `PATCH`, so fields the caller did not mention keep their values — an
+ * `update` would blank the description of every event the agent moved.
+ */
+export async function updateEvent(api: GoogleApi, id: string, patch: EventPatch): Promise<void> {
+  await assertNobodyIsInvited(api, id)
+  await api.patch(`${PRIMARY_EVENTS}/${encodeURIComponent(id)}?${NO_MAIL}`, {
+    ...(patch.title === undefined ? {} : { summary: patch.title }),
+    ...(patch.start === undefined ? {} : { start: endpoint(patch.start, patch.allDay === true) }),
+    ...(patch.end === undefined ? {} : { end: endpoint(patch.end, patch.allDay === true) }),
+  })
+}
+
+/** Delete an event. Refuses if anyone is invited — a delete would email them a
+ *  cancellation, which is not something the agent may do on its own. */
+export async function deleteEvent(api: GoogleApi, id: string): Promise<void> {
+  await assertNobodyIsInvited(api, id)
+  await api.del(`${PRIMARY_EVENTS}/${encodeURIComponent(id)}?${NO_MAIL}`)
+}
