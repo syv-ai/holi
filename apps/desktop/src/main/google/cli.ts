@@ -121,10 +121,22 @@ case "\$cmd" in
     post "\$cmd" "\$@" --data-urlencode "body@-"
     ;;
   reply)
-    # reply <threadId>   — the body is read from STDIN. Recipients and the
-    # subject come from the thread, so there is nothing to get wrong here.
-    [ $# -ge 1 ] || { echo "holi-google reply <threadId>  (body on stdin)" >&2; exit 2; }
-    post reply --data-urlencode "threadId=\$1" --data-urlencode "body@-"
+    # reply <threadId> [--all]  — the body is read from STDIN. Recipients and
+    # the subject come from the thread, so there is nothing to get wrong here.
+    # Without --all this replies to the sender only: the confirmation prompt
+    # cannot show a derived recipient list, so it must not silently be everyone.
+    [ $# -ge 1 ] || { echo "holi-google reply <threadId> [--all]  (body on stdin)" >&2; exit 2; }
+    thread_id="\$1"; shift
+    reply_all=""
+    while [ $# -gt 0 ]; do
+      case "\$1" in
+        --all) reply_all=true; shift ;;
+        *) echo "holi-google reply: unknown option \$1" >&2; exit 2 ;;
+      esac
+    done
+    set -- --data-urlencode "threadId=\$thread_id"
+    [ -n "\$reply_all" ] && set -- "\$@" --data-urlencode "all=true"
+    post reply "\$@" --data-urlencode "body@-"
     ;;
   schedule)
     # schedule --title <t> --start <iso> --end <iso> [--all-day] [--location <l>]
@@ -195,7 +207,7 @@ usage: holi-google <command>
 
   reaches another person — Holi asks the user every time
     send --to <addr> --subject <text> [--cc <addr>]   (body on stdin)
-    reply <threadId>                                  (body on stdin)
+    reply <threadId> [--all]                          (body on stdin)
 USAGE
     exit 2
     ;;

@@ -86,10 +86,51 @@ describe('the send gate asks', () => {
     )
   })
 
-  it('gives a reason a person can act on', async () => {
-    const decision = await decide(bash('holi-google send --to ada@syv.ai'))
+  /**
+   * The prompt is the whole consent surface, and consent to send needs to know
+   * *to whom*. The body is on stdin and cannot be shown — but the recipients
+   * usually can be, and a prompt that says only "this sends mail" asks the user
+   * to approve something they cannot see.
+   */
+  it('names the recipients in the reason, so the prompt is not blind', async () => {
+    const reason = (await decide(bash('holi-google send --to ada@syv.ai --subject x')))
+      .hookSpecificOutput?.permissionDecisionReason
 
-    expect(decision.hookSpecificOutput?.permissionDecisionReason).toMatch(/send|reach|person|mail/i)
+    expect(reason).toContain('ada@syv.ai')
+  })
+
+  it('names every recipient, including cc', async () => {
+    const reason = (
+      await decide(bash('holi-google send --to ada@syv.ai --cc bo@syv.ai --subject x'))
+    ).hookSpecificOutput?.permissionDecisionReason
+
+    expect(reason).toContain('ada@syv.ai')
+    expect(reason).toContain('bo@syv.ai')
+  })
+
+  // A reply's recipients are derived from the thread, so they are NOT in the
+  // command. Saying so is the honest answer; implying the prompt showed them
+  // would be worse than saying nothing.
+  it('says plainly that a reply’s recipients are not visible in the command', async () => {
+    const reason = (await decide(bash('holi-google reply t1'))).hookSpecificOutput
+      ?.permissionDecisionReason
+
+    expect(reason).toMatch(/thread/i)
+    expect(reason).toMatch(/sender/i)
+  })
+
+  it('warns that reply --all widens the audience', async () => {
+    const reason = (await decide(bash('holi-google reply t1 --all'))).hookSpecificOutput
+      ?.permissionDecisionReason
+
+    expect(reason).toMatch(/everyone|all/i)
+  })
+
+  it('still says it cannot be recalled, and that allowing it before does not skip this', async () => {
+    const reason = (await decide(bash('holi-google send --to ada@syv.ai')))
+      .hookSpecificOutput?.permissionDecisionReason
+
+    expect(reason).toMatch(/recall|undo|cannot be/i)
   })
 })
 

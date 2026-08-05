@@ -884,6 +884,7 @@ export async function replyToThread(
   api: GoogleApi,
   threadId: string,
   body: string,
+  options: { all?: boolean } = {},
 ): Promise<{ id: string | null }> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
     format: 'metadata',
@@ -904,9 +905,22 @@ export async function replyToThread(
   const to = parseAddresses(headerOf(target.payload, 'From'))
     .map((address) => address.email)
     .filter((email) => email !== '')
-  const cc = parseAddresses(headerOf(target.payload, 'Cc'))
-    .map((address) => address.email)
-    .filter((email) => email !== '')
+  /**
+   * **Reply, not reply-all — and the default matters more here than usual.**
+   *
+   * Copying the thread's `Cc` turns one instruction into a message to six
+   * people, on the single operation that reaches people at all. And the user
+   * approving the confirmation cannot check it: a reply's recipients are
+   * *derived from the thread*, so they never appear in the command being
+   * approved. A default that silently widens an audience nobody can see is the
+   * wrong default; reply-all stays available, but has to be asked for.
+   */
+  const cc =
+    options.all === true
+      ? parseAddresses(headerOf(target.payload, 'Cc'))
+          .map((address) => address.email)
+          .filter((email) => email !== '')
+      : []
 
   const subject = headerOf(target.payload, 'Subject')?.trim() ?? ''
   // `Re: Re: Re:` is what a naive prefix produces on a long thread.

@@ -211,7 +211,12 @@ describe('writes', () => {
 
     await post(url('/reply'), { threadId: 't1', body: 'Yes.' })
 
-    expect(reply).toHaveBeenCalledWith('t1', 'Yes.')
+    // Reply to the sender by default; reply-all has to be asked for, because
+    // the confirmation prompt cannot show a recipient list it never saw.
+    expect(reply).toHaveBeenCalledWith('t1', 'Yes.', false)
+
+    await post(url('/reply'), { threadId: 't1', body: 'Yes.', all: true })
+    expect(reply).toHaveBeenLastCalledWith('t1', 'Yes.', true)
   })
 
   it('drafts, passing the thread through when there is one', async () => {

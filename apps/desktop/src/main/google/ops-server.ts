@@ -51,7 +51,7 @@ export interface GoogleOps {
   trash(id: string): Promise<void>
   draft(mail: OutgoingMail & { threadId?: string }): Promise<{ id: string | null }>
   send(mail: OutgoingMail): Promise<{ id: string | null }>
-  reply(threadId: string, body: string): Promise<{ id: string | null }>
+  reply(threadId: string, body: string, all: boolean): Promise<{ id: string | null }>
   schedule(event: NewEvent): Promise<{ id: string | null }>
   reschedule(id: string, patch: EventPatch): Promise<void>
   unschedule(id: string): Promise<void>
@@ -289,7 +289,9 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
           throw new BadRequest('reply needs a threadId')
         }
         if (typeof text !== 'string') throw new BadRequest('reply needs a body')
-        return ops.reply(threadId, text)
+        // Defaults to a reply to the sender. Widening to everyone on the thread
+        // has to be asked for — see `replyToThread`.
+        return ops.reply(threadId, text, body.all === true)
       }
       case '/schedule': {
         const { title, start, end, allDay, location, description } = body

@@ -105,7 +105,11 @@ holi-google draft --thread <threadId> --to ada@syv.ai --subject 'Re: Q2 budget' 
 Sounds good.
 EOF
 
-holi-google reply <threadId> <<'EOF'     # recipients and subject come from the thread
+holi-google reply <threadId> <<'EOF'     # to the SENDER; subject from the thread
+Yes, Tuesday works.
+EOF
+
+holi-google reply <threadId> --all <<'EOF'   # to everyone on the thread
 Yes, Tuesday works.
 EOF
 
@@ -122,6 +126,15 @@ draft, say so plainly and say where it is, rather than implying it went out.
 For `reply`, do not pass recipients or a subject: they are derived from the
 thread, including the headers that keep the message *in* that thread. Composing
 a `send` by hand instead would start a new one.
+
+**`reply` goes to the sender. `--all` goes to everyone on the thread.** Use
+`--all` only when the user asked for it, or when the answer is plainly for the
+whole thread — the confirmation they see cannot list a derived recipient set, so
+widening it is a decision they cannot check.
+
+**What the user sees when they approve a send:** the command, the recipients
+Holi could read from it, and nothing else. **The message text is never shown to
+them.** So say what you are about to send, in chat, before you send it.
 
 ## Acting on the calendar
 

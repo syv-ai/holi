@@ -296,7 +296,7 @@ async function main(): Promise<void> {
     // New messages and events — nothing cached to patch.
     draft: ({ threadId, ...mail }) => createDraft(googleApiFor(), mail, threadId),
     send: (mail) => sendMessage(googleApiFor(), mail),
-    reply: (threadId, body) => replyToThread(googleApiFor(), threadId, body),
+    reply: (threadId, body, all) => replyToThread(googleApiFor(), threadId, body, { all }),
     schedule: (event) => createEvent(googleApiFor(), event),
     reschedule: (id, patch) => updateEvent(googleApiFor(), id, patch),
     unschedule: (id) => deleteEvent(googleApiFor(), id),

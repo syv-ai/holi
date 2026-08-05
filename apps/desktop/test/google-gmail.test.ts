@@ -1310,7 +1310,26 @@ describe('send, draft and reply', () => {
     // m3 is the last inbound message; m2 is the user's own and must not be the
     // recipient — replying to yourself is the classic version of this bug.
     expect(headerIn(raw, 'To')).toBe('ada@syv.ai')
-    expect(headerIn(raw, 'Cc')).toBe('bo@syv.ai')
+  })
+
+  // Reply, not reply-all. Copying the thread's Cc by default means one
+  // instruction reaches six people instead of one, on the single operation
+  // that reaches people at all — and the user approving the prompt cannot see
+  // the recipient list, because it is derived rather than typed.
+  it('does not copy the thread’s Cc unless reply-all was asked for', async () => {
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.')
+
+    expect(headerIn(rawOf(posts[0]!.body), 'Cc')).toBeUndefined()
+  })
+
+  it('copies the Cc when reply-all is asked for explicitly', async () => {
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.', { all: true })
+
+    expect(headerIn(rawOf(posts[0]!.body), 'Cc')).toBe('bo@syv.ai')
   })
 
   it('does not double the Re: prefix on an already-Re: subject', async () => {

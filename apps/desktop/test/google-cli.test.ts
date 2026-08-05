@@ -78,8 +78,8 @@ beforeEach(async () => {
       calls.push(['send', mail])
       return { id: 'm-1' }
     },
-    reply: async (threadId, body) => {
-      calls.push(['reply', { threadId, body }])
+    reply: async (threadId, body, all) => {
+      calls.push(['reply', { threadId, body, all }])
       return { id: 'm-2' }
     },
     schedule: async (event) => {
@@ -265,7 +265,24 @@ describe('holi-google writes', () => {
   it('replies with the body on stdin and nothing else to get wrong', async () => {
     await runWithInput(bin, ['reply', 't1'], { env, input: 'Ja tak.' })
 
-    expect(calls).toEqual([['reply', { threadId: 't1', body: 'Ja tak.' }]])
+    expect(calls).toEqual([['reply', { threadId: 't1', body: 'Ja tak.', all: false }]])
+  })
+
+  it('replies to the sender by default, and to everyone only with --all', async () => {
+    await runWithInput(bin, ['reply', 't1', '--all'], { env, input: 'Ja tak.' })
+
+    expect(calls).toEqual([['reply', { threadId: 't1', body: 'Ja tak.', all: true }]])
+  })
+
+  it('rejects an unknown reply option rather than treating it as --all', async () => {
+    // `\${2:+...}` would have set all=true for ANY second argument.
+    const failure = await runWithInput(bin, ['reply', 't1', '--everyone'], {
+      env,
+      input: 'x',
+    })
+
+    expect(failure.code).toBe(2)
+    expect(failure.stderr).toContain('unknown option')
   })
 
   it('schedules a timed block and an all-day one', async () => {

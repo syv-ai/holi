@@ -66,6 +66,36 @@ function readStdin() {
  * generated script. Missing any one of them is how a gate gets believed in
  * while never firing — see D67 §5, whose rule matched none of them.
  */
+/**
+ * Who this command reaches, as far as the command itself can say.
+ *
+ * The prompt is the entire consent surface, and consenting to a send means
+ * knowing *to whom*. The body is on stdin and genuinely cannot be shown here —
+ * but the recipients usually can be, and "this sends mail" alone asks the user
+ * to approve something they cannot see.
+ *
+ * A `reply` is the honest exception: its recipients are derived from the thread
+ * inside Holi, so they are nowhere in the command. Saying so plainly is better
+ * than a reassuring sentence that implies the prompt showed them.
+ */
+function audienceOf(command) {
+  if (/\breply\b/.test(command)) {
+    return /--all\b/.test(command)
+      ? 'It goes to everyone on the thread (--all). Holi works the recipients out ' +
+          'from the thread, so they are not visible in this command.'
+      : 'It goes to the sender of the thread. Holi works that out from the thread, ' +
+          'so the recipient is not visible in this command.'
+  }
+  // `--to a@b.c --cc d@e.f`, repeated as often as the caller likes.
+  const recipients = [...command.matchAll(/--(?:to|cc)[= ]+(?:"([^"]+)"|'([^']+)'|(\S+))/g)]
+    .map((m) => m[1] ?? m[2] ?? m[3])
+    .filter(Boolean)
+  if (recipients.length === 0) {
+    return 'Holi could not read the recipients out of this command, so check it before allowing.'
+  }
+  return `It goes to: ${recipients.join(', ')}.`
+}
+
 function isSend(command) {
   // The command word, however it was spelled, followed by the subcommand.
   // `[^|;&]*` keeps the two adjacent within one pipeline stage, so
@@ -101,8 +131,9 @@ if (typeof command !== 'string') {
 
 if (isSend(command)) {
   ask(
-    'This sends mail from your account to someone else. It cannot be recalled, ' +
-      'so Holi asks every time — even if you have allowed this command before.',
+    `This sends mail from your account. ${audienceOf(command)} ` +
+      'It cannot be recalled, so Holi asks every time — even if you have allowed ' +
+      'this command before. The message text is on stdin and is not shown here.',
   )
 }
 
