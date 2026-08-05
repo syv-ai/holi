@@ -112,7 +112,7 @@ export function Shell() {
   const todayLinkCount = useAtomValue(todayLinkCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
   // settings panel shares this atom rather than holding its own answer.
-  const [googleAccount] = useGoogleAccount()
+  const { account: googleAccount } = useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)

@@ -39,7 +39,7 @@ import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
 import type { LoopbackFlow as GoogleFlow } from './google/loopback-flow'
 import type { GoogleSession } from './google/session'
-import { GoogleApi } from './google/api'
+import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './google/api'
 import {
   listAgenda,
   resolveCalendars,
@@ -50,15 +50,18 @@ import {
 import type { CalendarPrefsStore } from './google/calendar-prefs'
 import type { GoogleData } from './google/data'
 import {
+  fetchCategoryCounts,
   fetchMailCounts,
   listThreads,
   readThread,
+  type CategoryCounts,
   type MailAddress,
   type MailCategory,
   type MailCounts,
   type MailPage,
   type MailThread,
 } from './google/gmail'
+import type { ImagePrefsStore } from './google/image-prefs'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
@@ -116,6 +119,12 @@ export interface RouterDeps {
    * current data and must not be handed a stale answer (D67).
    */
   googleData?: GoogleData
+  /**
+   * Senders whose remote images always load. Optional like the rest; absent
+   * means the standing exceptions are simply empty, so every message blocks
+   * until the user says otherwise — the safe direction to degrade in.
+   */
+  imagePrefs?: ImagePrefsStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -1378,7 +1387,7 @@ export function createRouter(deps: RouterDeps) {
     markRead: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().markRead(input.id)
+        await googleWrites().markRead(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1387,14 +1396,14 @@ export function createRouter(deps: RouterDeps) {
       // coerced "false" reads as true, which is how a star refuses to turn off.
       .input(fields({ id: 'string', starred: 'boolean' }))
       .mutation(async ({ input }) => {
-        await googleWrites().setStarred(input.id, input.starred)
+        await googleWrites().setStarred(input.id, input.starred).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
     archive: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().archive(input.id)
+        await googleWrites().archive(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1403,7 +1412,7 @@ export function createRouter(deps: RouterDeps) {
     trash: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().trash(input.id)
+        await googleWrites().trash(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1421,13 +1430,86 @@ export function createRouter(deps: RouterDeps) {
     /**
      * The address book, for `@`-completion.
      *
-     * Fetched once per mount rather than per keystroke — it is a corpus to
-     * filter locally, not a search endpoint. `listContacts` never throws, so a
-     * cold or unpermitted contacts API leaves completion running off the
-     * senders in loaded threads instead of breaking the dropdown.
+     * A corpus to filter locally, not a search endpoint — so it is fetched
+     * whole, and `googleData` holds it for the life of the connected account.
+     * Without that hold every `MailView` mount cost up to four People requests
+     * for a dropdown. Falls back to a direct fetch when the cache is absent,
+     * like every other read here. `listContacts` never throws, so a cold or
+     * unpermitted contacts API leaves completion running off the senders in
+     * loaded threads instead of breaking the dropdown.
      */
-    contacts: t.procedure.query((): Promise<MailAddress[]> => listContacts(googleApi())),
+    contacts: t.procedure.query(
+      (): Promise<MailAddress[]> => deps.googleData?.contacts() ?? listContacts(googleApi()),
+    ),
+
+    /**
+     * Unread per Gmail tab, for the category picker.
+     *
+     * Its own procedure rather than part of `mailCounts` because it is paid
+     * for differently: five requests, and only when the picker is opened. See
+     * `fetchCategoryUnread` for why these are counted rather than estimated,
+     * and why `labels.get` is the wrong source despite being one request.
+     */
+    categoryCounts: t.procedure.query((): Promise<CategoryCounts> => fetchCategoryCounts(googleApi())),
+
+    /**
+     * The senders whose remote images always load.
+     *
+     * Read by the mail reader to decide whether to block, and by settings to
+     * say how many standing exceptions exist — a permission the user cannot
+     * see is not one they can revoke.
+     */
+    imageSenders: t.procedure.query(async (): Promise<string[]> => (await deps.imagePrefs?.read()) ?? []),
+
+    allowImagesFrom: t.procedure
+      .input(fields({ sender: 'string' }))
+      .mutation(async ({ input }) => {
+        await imagePrefs().allow(input.sender)
+        return { ok: true as const }
+      }),
+
+    forgetImageSenders: t.procedure.mutation(async () => {
+      await imagePrefs().clear()
+      return { ok: true as const }
+    }),
   })
+
+  /**
+   * Google's own verdict, in a code that survives the trip to the renderer.
+   *
+   * `GoogleApiError.code` distinguishes "that scope was never granted" from
+   * "you are rate limited" — the difference between an action the user can take
+   * and one they must not be sent on. It does not survive serialization: an
+   * error crossing the IPC seam keeps only its message and its tRPC code
+   * (`main/trpc-call.ts`), so without this mapping the renderer is left
+   * matching on prose. This codebase has made that mistake once already, in
+   * `ipc-link.ts`'s own note — vault settings blamed a missing sign-in for what
+   * was really a 404.
+   *
+   * The messages still say what they said, so a caller that has not been taught
+   * the codes reads the same sentence it read before.
+   */
+  function rethrowGoogle(error: unknown): never {
+    if (!(error instanceof GoogleApiError)) throw error
+    const codes: Record<GoogleErrorCode, TRPCError['code']> = {
+      reconnect: 'UNAUTHORIZED',
+      scope: 'FORBIDDEN',
+      'rate-limit': 'TOO_MANY_REQUESTS',
+      'not-found': 'NOT_FOUND',
+      unknown: 'INTERNAL_SERVER_ERROR',
+    }
+    throw new TRPCError({ code: codes[error.code], message: error.message, cause: error })
+  }
+
+  function imagePrefs(): ImagePrefsStore {
+    if (deps.imagePrefs === undefined) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'the Google connector is not configured',
+      })
+    }
+    return deps.imagePrefs
+  }
 
   /** No store configured means no explicit choices — every calendar follows the
    *  default rule rather than the agenda coming back empty. */

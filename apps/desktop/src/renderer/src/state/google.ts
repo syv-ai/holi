@@ -31,14 +31,28 @@ export const googleAccountAtom = atom<GoogleAccount | null | undefined>(undefine
  */
 export const googleMissingScopesAtom = atom<string[]>([])
 
+export interface GoogleAccountState {
+  /** `undefined` — not asked yet. `null` — asked, nothing connected. */
+  account: GoogleAccount | null | undefined
+  setAccount: (account: GoogleAccount | null | undefined) => void
+  missingScopes: string[]
+  /** Re-read both halves from main. */
+  refresh: () => Promise<void>
+}
+
 /**
  * Read the account, asking main the first time anyone does.
  *
  * The fetch is guarded on the atom rather than on a ref, so several components
  * mounting at once still produce one query — the first write moves every reader
  * out of `undefined` before the others' effects run.
+ *
+ * **An object, not a tuple.** It was a tuple while it held two related things;
+ * at four it had already produced `const [account, , missingScopes]` in a test,
+ * and a positional API whose callers skip slots is one rename away from being
+ * silently wrong.
  */
-export function useGoogleAccount() {
+export function useGoogleAccount(): GoogleAccountState {
   const [account, setAccount] = useAtom(googleAccountAtom)
   const [missingScopes, setMissingScopes] = useAtom(googleMissingScopesAtom)
 
@@ -69,5 +83,5 @@ export function useGoogleAccount() {
     void refresh()
   }, [account, refresh])
 
-  return [account, setAccount, missingScopes, refresh] as const
+  return { account, setAccount, missingScopes, refresh }
 }

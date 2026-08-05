@@ -17,7 +17,7 @@ vi.mock('../../lib/trpc', () => ({
 }))
 
 function Probe() {
-  const [account, , missingScopes] = useGoogleAccount()
+  const { account, missingScopes } = useGoogleAccount()
   return (
     <>
       <span data-testid="account">
@@ -42,14 +42,14 @@ beforeEach(() => {
 })
 
 test('starts unknown, then reports the connected account', async () => {
-  statusMock.mockResolvedValue({ account: { email: 'nicolai@syv.ai' }, missingScopes: [] })
+  statusMock.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
 
   const { getByTestId } = renderProbe()
 
   // Unknown is a third state on purpose: the shell hides the chips until the
   // answer is in, so a disconnected app never flashes them on launch.
   expect(getByTestId('account').textContent).toBe('unknown')
-  await waitFor(() => expect(getByTestId('account').textContent).toBe('nicolai@syv.ai'))
+  await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
 })
 
 test('reports no account when nothing is connected', async () => {
@@ -87,7 +87,7 @@ test('carries the scopes a stored grant is missing — connected is not the same
   // still lists, and only the new calls fail. Nothing else in the UI can tell
   // that apart from a broken feature.
   statusMock.mockResolvedValue({
-    account: { email: 'nicolai@syv.ai' },
+    account: { email: 'ada@syv.ai' },
     missingScopes: ['https://www.googleapis.com/auth/gmail.modify'],
   })
 
@@ -95,7 +95,7 @@ test('carries the scopes a stored grant is missing — connected is not the same
 
   await waitFor(() => expect(getByTestId('missing').textContent).toBe('1'))
   // Connected AND insufficient, at the same time.
-  expect(getByTestId('account').textContent).toBe('nicolai@syv.ai')
+  expect(getByTestId('account').textContent).toBe('ada@syv.ai')
 })
 
 test('an unreachable connector reports no missing scopes rather than a stale list', async () => {
@@ -115,7 +115,7 @@ test('a write is visible to every reader — connecting lights the chips up', as
   await waitFor(() => expect(getByTestId('account').textContent).toBe('none'))
 
   // What vault settings does on a successful connect.
-  store.set(googleAccountAtom, { email: 'nicolai@syv.ai' })
+  store.set(googleAccountAtom, { email: 'ada@syv.ai' })
 
-  await waitFor(() => expect(getByTestId('account').textContent).toBe('nicolai@syv.ai'))
+  await waitFor(() => expect(getByTestId('account').textContent).toBe('ada@syv.ai'))
 })
