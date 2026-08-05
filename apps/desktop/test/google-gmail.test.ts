@@ -23,6 +23,9 @@ import {
   fetchCategoryUnread,
   fetchCategoryCounts,
   textOnly,
+  sendMessage,
+  createDraft,
+  replyToThread,
 } from '../src/main/google/gmail'
 
 const b64 = (s: string) => Buffer.from(s, 'utf8').toString('base64url')
@@ -1117,5 +1120,233 @@ describe('thread mutations', () => {
     // refused — the one divergence a delta sync cannot detect, because from
     // Gmail's side nothing ever changed.
     await expect(archiveThread(api, 't1')).rejects.toThrow()
+  })
+})
+
+/**
+ * Sending, drafting and replying (D70).
+ *
+ * The fake **refuses the way Google refuses**: a `raw` that is not valid
+ * base64url comes back 400. That is the whole point of writing it this way —
+ * a fake that accepts any string would pass a plain-base64 bug straight through
+ * to the first real send, which is exactly the failure mode D69 named.
+ */
+describe('send, draft and reply', () => {
+  /** Decode what the fake was handed back into an RFC-822 document. */
+  function rawOf(body: unknown): string {
+    const raw = (body as { raw?: string; message?: { raw?: string } }).raw
+      ?? (body as { message?: { raw?: string } }).message?.raw
+    if (raw === undefined) throw new Error('the request carried no raw message')
+    return Buffer.from(raw, 'base64url').toString('utf8')
+  }
+
+  function headerIn(raw: string, name: string): string | undefined {
+    const line = raw
+      .split('\r\n\r\n')[0]!
+      .split('\r\n')
+      .find((l) => l.toLowerCase().startsWith(`${name.toLowerCase()}:`))
+    return line?.slice(line.indexOf(':') + 1).trim()
+  }
+
+  /** A Gmail that serves one thread and accepts writes — validating `raw` the
+   *  way Gmail does, so an encoding bug fails here rather than in a mailbox. */
+  function mailbox(thread?: Record<string, unknown>, sendResponse: unknown = { id: 'm-9' }) {
+    const posts: { url: string; body: unknown }[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        return { ok: true, status: 200, json: async () => thread ?? {}, text: async () => '{}' }
+      }
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      const raw = (body.raw ?? (body.message as { raw?: string } | undefined)?.raw) as
+        | string
+        | undefined
+      if (raw !== undefined && !/^[A-Za-z0-9_-]+$/.test(raw)) {
+        // Gmail's own refusal for a `raw` in the wrong alphabet or with padding.
+        return {
+          ok: false,
+          status: 400,
+          text: async () => JSON.stringify({ error: { errors: [{ reason: 'invalidArgument' }] } }),
+          json: async () => ({}),
+        }
+      }
+      posts.push({ url, body })
+      return { ok: true, status: 200, json: async () => sendResponse, text: async () => '{}' }
+    })
+    const api = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+    return { posts, api }
+  }
+
+  /** A two-message thread: Ada wrote, the user replied, Ada wrote again. */
+  const THREAD = {
+    id: 't1',
+    messages: [
+      {
+        id: 'm1',
+        labelIds: ['INBOX'],
+        internalDate: '1000',
+        payload: {
+          headers: [
+            header('Message-ID', '<msg-1@mail.example>'),
+            header('Subject', 'Q2 budget'),
+            header('From', 'Ada Holm <ada@syv.ai>'),
+            header('To', 'me@syv.ai'),
+          ],
+        },
+      },
+      {
+        id: 'm2',
+        labelIds: ['SENT'],
+        internalDate: '2000',
+        payload: {
+          headers: [
+            header('Message-ID', '<msg-2@mail.example>'),
+            header('Subject', 'Re: Q2 budget'),
+            header('From', 'me@syv.ai'),
+            header('To', 'ada@syv.ai'),
+          ],
+        },
+      },
+      {
+        id: 'm3',
+        labelIds: ['INBOX'],
+        internalDate: '3000',
+        payload: {
+          headers: [
+            header('Message-ID', '<msg-3@mail.example>'),
+            header('Subject', 'Re: Q2 budget'),
+            header('From', 'Ada Holm <ada@syv.ai>'),
+            header('To', 'me@syv.ai'),
+            header('Cc', 'Bo <bo@syv.ai>'),
+          ],
+        },
+      },
+    ],
+  }
+
+  it('posts a base64url raw message to messages/send', async () => {
+    const { posts, api } = mailbox()
+
+    const result = await sendMessage(api, {
+      to: ['ada@syv.ai'],
+      subject: 'Q2 budget',
+      body: 'Here it is.',
+    })
+
+    expect(posts).toHaveLength(1)
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages/send')
+    expect(headerIn(rawOf(posts[0]!.body), 'To')).toBe('ada@syv.ai')
+    expect(result.id).toBe('m-9')
+  })
+
+  it('reports success when the response body cannot be read — a resend is worse', async () => {
+    // Google accepted it. The mail is gone. Anything but success here makes the
+    // caller try again, and a real person gets two copies.
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token <')
+      },
+      text: async () => '<html>',
+    }))
+    const flaky = new GoogleApi({
+      accessToken: async () => 'at-1',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+
+    await expect(
+      sendMessage(flaky, { to: ['ada@syv.ai'], subject: 'x', body: 'y' }),
+    ).resolves.toEqual({ id: null })
+  })
+
+  it('drafts through the drafts endpoint, filed into its thread', async () => {
+    const { posts, api } = mailbox(undefined, { id: 'd-1' })
+
+    const result = await createDraft(
+      api,
+      { to: ['ada@syv.ai'], subject: 'Q2 budget', body: 'Draft.' },
+      't1',
+    )
+
+    expect(posts[0]!.url).toBe('https://gmail.googleapis.com/gmail/v1/users/me/drafts')
+    // Without threadId the draft is a loose message that never joins the thread.
+    expect((posts[0]!.body as { message: { threadId?: string } }).message.threadId).toBe('t1')
+    expect(result.id).toBe('d-1')
+  })
+
+  it('carries In-Reply-To AND References so the reply stays in its thread', async () => {
+    // The failure this exists for: with In-Reply-To alone the send succeeds,
+    // returns an id, and Gmail files it as a brand new thread.
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.')
+
+    const raw = rawOf(posts[0]!.body)
+    expect(headerIn(raw, 'In-Reply-To')).toBe('<msg-3@mail.example>')
+    expect(headerIn(raw, 'References')).toBe(
+      '<msg-1@mail.example> <msg-2@mail.example> <msg-3@mail.example>',
+    )
+  })
+
+  it('addresses the reply to the last sender who is not the user', async () => {
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.')
+
+    const raw = rawOf(posts[0]!.body)
+    // m3 is the last inbound message; m2 is the user's own and must not be the
+    // recipient — replying to yourself is the classic version of this bug.
+    expect(headerIn(raw, 'To')).toBe('ada@syv.ai')
+    expect(headerIn(raw, 'Cc')).toBe('bo@syv.ai')
+  })
+
+  it('does not double the Re: prefix on an already-Re: subject', async () => {
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.')
+
+    expect(headerIn(rawOf(posts[0]!.body), 'Subject')).toBe('Re: Q2 budget')
+  })
+
+  it('adds Re: when the thread subject has none', async () => {
+    const plain = {
+      id: 't2',
+      messages: [
+        {
+          id: 'm1',
+          labelIds: ['INBOX'],
+          internalDate: '1000',
+          payload: {
+            headers: [
+              header('Message-ID', '<only@mail.example>'),
+              header('Subject', 'Lunch'),
+              header('From', 'ada@syv.ai'),
+            ],
+          },
+        },
+      ],
+    }
+    const { posts, api } = mailbox(plain)
+
+    await replyToThread(api, 't2', 'Yes.')
+
+    expect(headerIn(rawOf(posts[0]!.body), 'Subject')).toBe('Re: Lunch')
+  })
+
+  it('files the reply into the thread by id, not only by headers', async () => {
+    const { posts, api } = mailbox(THREAD)
+
+    await replyToThread(api, 't1', 'Looks right to me.')
+
+    expect((posts[0]!.body as { threadId?: string }).threadId).toBe('t1')
+  })
+
+  it('refuses to reply to a thread with nothing to reply to', async () => {
+    const { api } = mailbox({ id: 't3', messages: [] })
+
+    await expect(replyToThread(api, 't3', 'Hello?')).rejects.toThrow(/no message/i)
   })
 })

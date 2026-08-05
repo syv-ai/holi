@@ -25,6 +25,7 @@
  */
 import type { GoogleApi } from './api'
 import { fetchLabelNames } from './labels'
+import { buildRfc822, toBase64Url, type OutgoingMail } from './mime'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -817,4 +818,113 @@ async function modifyThread(
     ...(labels.add === undefined ? {} : { addLabelIds: labels.add }),
     ...(labels.remove === undefined ? {} : { removeLabelIds: labels.remove }),
   })
+}
+
+/**
+ * Send a message (D70).
+ *
+ * `id: null` is a **success** — `postJson` returns `null` when Google accepted
+ * the request and the response body could not be read. The field is named `id`
+ * rather than the result being `string | null` so that no caller can mistake
+ * the absence of an id for the absence of a sent mail.
+ */
+export async function sendMessage(
+  api: GoogleApi,
+  mail: OutgoingMail,
+): Promise<{ id: string | null }> {
+  const sent = await api.postJson<{ id?: string }>(`${BASE}/messages/send`, {
+    raw: toBase64Url(buildRfc822(mail)),
+  })
+  return { id: sent?.id ?? null }
+}
+
+/**
+ * Create a draft — the outbound operation that reaches nobody, and the one the
+ * skill teaches as the default.
+ *
+ * `threadId` is what files it in the conversation. Without it Gmail creates a
+ * loose draft that looks correct in the drafts list and is not attached to
+ * anything.
+ */
+export async function createDraft(
+  api: GoogleApi,
+  mail: OutgoingMail,
+  threadId?: string,
+): Promise<{ id: string | null }> {
+  const draft = await api.postJson<{ id?: string }>(`${BASE}/drafts`, {
+    message: {
+      raw: toBase64Url(buildRfc822(mail)),
+      ...(threadId === undefined ? {} : { threadId }),
+    },
+  })
+  return { id: draft?.id ?? null }
+}
+
+/**
+ * Reply to a thread, threaded correctly and addressed correctly.
+ *
+ * Both of those are derived here rather than asked of the caller, because both
+ * are things an LLM would get plausibly wrong: replying to the thread's *first*
+ * sender rather than its last, or to the user's own last message; and building
+ * `References` from the message being answered instead of the whole chain.
+ *
+ * Reads the raw thread rather than going through `readThread`, which drops the
+ * two things this needs — the RFC-822 `Message-ID` of each message, and the
+ * `SENT` label that says which ones are the user's own.
+ */
+export async function replyToThread(
+  api: GoogleApi,
+  threadId: string,
+  body: string,
+): Promise<{ id: string | null }> {
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'metadata',
+    metadataHeaders: ['Message-ID', 'Subject', 'From', 'To', 'Cc'],
+  })
+  const messages = thread.messages ?? []
+  if (messages.length === 0) {
+    throw new Error(`thread ${threadId} has no message to reply to`)
+  }
+
+  // The last message the user did NOT send. `SENT` is Gmail's own label, so it
+  // needs no comparison against the connected address — which would be wrong
+  // for aliases and send-as addresses anyway (see `summarize`). Falling back to
+  // the last message covers a thread the user started and nobody answered.
+  const inbound = [...messages].reverse().find((m) => m.labelIds?.includes('SENT') !== true)
+  const target = inbound ?? messages[messages.length - 1]!
+
+  const to = parseAddresses(headerOf(target.payload, 'From'))
+    .map((address) => address.email)
+    .filter((email) => email !== '')
+  const cc = parseAddresses(headerOf(target.payload, 'Cc'))
+    .map((address) => address.email)
+    .filter((email) => email !== '')
+
+  const subject = headerOf(target.payload, 'Subject')?.trim() ?? ''
+  // `Re: Re: Re:` is what a naive prefix produces on a long thread.
+  const replySubject = /^re:/i.test(subject) ? subject : `Re: ${subject}`
+
+  // The WHOLE chain, in order, not just the message being answered. Gmail
+  // threads on References; In-Reply-To alone sends fine and starts a new thread.
+  const references = messages
+    .map((message) => headerOf(message.payload, 'Message-ID'))
+    .filter((id): id is string => id !== null && id !== '')
+  const inReplyTo = headerOf(target.payload, 'Message-ID') ?? undefined
+
+  const sent = await api.postJson<{ id?: string }>(`${BASE}/messages/send`, {
+    raw: toBase64Url(
+      buildRfc822({
+        to,
+        cc,
+        subject: replySubject,
+        body,
+        ...(inReplyTo === undefined ? {} : { inReplyTo }),
+        references,
+      }),
+    ),
+    // Belt and braces with the headers: the id files it in the thread even if a
+    // Message-ID was missing, which is rare but legal.
+    threadId,
+  })
+  return { id: sent?.id ?? null }
 }
