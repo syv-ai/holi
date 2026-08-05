@@ -16,7 +16,7 @@
  * `getWindow` closure reads `mainWindow` lazily.
  */
 import { readFile, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
@@ -323,6 +323,7 @@ async function main(): Promise<void> {
     googlePort: () => googleOps.port(),
     googleToken: () => googleOps.token(),
     googleBin: () => googleCliPath,
+    googleBinDir: () => dirname(googleCliPath),
   })
   registerAgentIpc({ agent })
 

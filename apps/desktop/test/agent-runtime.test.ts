@@ -140,6 +140,38 @@ describe('buildAgentEnv', () => {
     expect(env.HOLI_GOOGLE_BIN).toBe('/data/bin/holi-google')
   })
 
+  /**
+   * The gate matches command text, so the command text has to be predictable
+   * (D70). With only `$HOLI_GOOGLE_BIN`, the agent types
+   * `"$HOLI_GOOGLE_BIN" send` and any rule keyed on the name `holi-google`
+   * matches nothing — which is exactly the hole D67 §5's planned
+   * `Bash(holi-google send:*)` had.
+   */
+  it('prepends the google bin dir to PATH so the bare name resolves', () => {
+    const env = buildAgentEnv(
+      { PATH: '/usr/bin:/bin' },
+      { googleBin: '/data/bin/holi-google', googleBinDir: '/data/bin' },
+    )
+
+    expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
+    // Prepended, not appended: another holi-google earlier in PATH would win.
+    expect(env.PATH!.startsWith('/data/bin:')).toBe(true)
+    // And the old spelling still works — the skill has always used it, and the
+    // hook covers both.
+    expect(env.HOLI_GOOGLE_BIN).toBe('/data/bin/holi-google')
+  })
+
+  it('leaves PATH alone when there is no google bin dir', () => {
+    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
+    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { googleBinDir: null }).PATH).toBe(
+      '/usr/bin:/bin',
+    )
+  })
+
+  it('still sets a usable PATH when the parent had none', () => {
+    expect(buildAgentEnv({}, { googleBinDir: '/data/bin' }).PATH).toBe('/data/bin')
+  })
+
   it('omits the Google keys when the channel is not running', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin' }, { googlePort: null, googleToken: null })
     expect(env.HOLI_GOOGLE_PORT).toBeUndefined()

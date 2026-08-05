@@ -69,6 +69,9 @@ export interface AgentManagerDeps {
   googlePort?: () => number | null
   googleToken?: () => string | null
   googleBin?: () => string | null
+  /** The directory holding it, prepended to the child's PATH so the agent can
+   *  type the bare name — which is what the send gate matches on (D70). */
+  googleBinDir?: () => string | null
   log?: (msg: string) => void
 }
 
@@ -269,6 +272,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           googlePort: deps.googlePort?.() ?? null,
           googleToken: deps.googleToken?.() ?? null,
           googleBin: deps.googleBin?.() ?? null,
+          googleBinDir: deps.googleBinDir?.() ?? null,
         }),
         cols,
         rows,

@@ -68,6 +68,16 @@ export interface AgentEnvOpts {
   /** Absolute path to the generated `holi-google` command, as `$HOLI_GOOGLE_BIN`
    *  — the same shape as `$TYPST_BIN`, and what the seeded skill invokes. */
   googleBin?: string | null
+  /**
+   * The directory holding that command, **prepended to `PATH`** (D70).
+   *
+   * This exists for the send gate, not for convenience. The gate is a
+   * `PreToolUse` hook matching the command text, so the command text has to be
+   * something a rule can match — and `"$HOLI_GOOGLE_BIN" send` contains no
+   * `holi-google` at all. That is precisely why D67 §5's planned
+   * `Bash(holi-google send:*)` rule would never have fired.
+   */
+  googleBinDir?: string | null
 }
 
 export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
@@ -92,6 +102,12 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   if (opts.googlePort != null) env.HOLI_GOOGLE_PORT = String(opts.googlePort)
   if (opts.googleToken) env.HOLI_GOOGLE_TOKEN = opts.googleToken
   if (opts.googleBin) env.HOLI_GOOGLE_BIN = opts.googleBin
+  // Prepended, never appended: an earlier `holi-google` on the inherited PATH
+  // would otherwise win, and the agent would be talking to something else
+  // entirely under a name the gate trusts.
+  if (opts.googleBinDir) {
+    env.PATH = env.PATH ? `${opts.googleBinDir}:${env.PATH}` : opts.googleBinDir
+  }
   return env
 }
 
