@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { installGoogleCli } from '../src/main/google/cli'
+import { GOOGLE_CLI_SCRIPT, installGoogleCli } from '../src/main/google/cli'
 import { createGoogleOpsServer, type GoogleOpsServer } from '../src/main/google/ops-server'
 
 const run = promisify(execFile)
@@ -107,5 +107,16 @@ describe('holi-google', () => {
   it('never receives a Google credential — only the loopback token', async () => {
     const { stdout } = await run(bin, ['agenda'], { env })
     expect(stdout).not.toMatch(/access_token|refresh_token|Bearer/)
+  })
+
+  // The header comment is a security claim in a file the user is invited to
+  // read. It said "it can only read (the granted scopes are readonly)" for a
+  // day after D68 made the Gmail grant `gmail.modify` — true when written, and
+  // silently false afterwards. The same claim in SKILL.md is pinned by
+  // `seed-content.test.ts`; this is its twin, so the pair cannot drift apart
+  // again the next time the scopes move.
+  it('does not claim the grant is read-only — the wall is the missing subcommand', () => {
+    expect(GOOGLE_CLI_SCRIPT).not.toMatch(/scopes are readonly|only read \(/)
+    expect(GOOGLE_CLI_SCRIPT).toContain('gmail.modify')
   })
 })
