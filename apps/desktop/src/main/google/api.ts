@@ -8,8 +8,11 @@
  * "reconnect Google" apart from "you are rate limited" apart from "that scope
  * was never granted".
  *
- * `post` is the only verb that changes anything at Google (D68). Everything it
- * can reach is bounded by `GOOGLE_SCOPES`, which buys thread state and no
+ * `post` and `postJson` are the verbs that change anything at Google (D68,
+ * D70) — they differ only in whether the answer is read, and that difference
+ * exists because a write reported as failed after Google accepted it is a
+ * second email rather than a stale button. Everything they can reach is
+ * bounded by `GOOGLE_SCOPES`, which buys thread state, drafts and sends, and no
  * ability to delete a mailbox's contents outright.
  *
  * The token arrives as a **getter returning a promise**, never a string: it is
@@ -143,6 +146,51 @@ export class GoogleApi {
     // Drained rather than ignored: leaving a body unread holds the connection
     // open. Whether it parses is not this function's business.
     await res.text().catch(() => '')
+  }
+
+  /**
+   * A write whose answer is worth reading — `messages.send` and `drafts.create`
+   * both return an id the agent is handed back (D70).
+   *
+   * **Not `post` with a parse bolted on, and the difference is the point.**
+   * `post` drains and discards because reporting a completed archive as failed
+   * reverts the UI to a state the mailbox no longer has. Here the same mistake
+   * costs more: a send Google *accepted*, reported as failed, is a second email
+   * to a real person once the caller retries.
+   *
+   * So the two outcomes are split by what Google said, not by what we could
+   * read. A non-2xx throws, exactly as `post` throws. A 2xx whose body is empty
+   * or unparseable resolves to **`null`** — "it worked; we could not read what
+   * it said". `null` is a success with an unknown id, and no caller may treat
+   * it as a failure.
+   */
+  async postJson<T>(url: string, body: unknown): Promise<T | null> {
+    let token: string
+    try {
+      token = await this.#deps.accessToken()
+    } catch (err) {
+      throw new GoogleApiError(
+        'reconnect',
+        401,
+        err instanceof Error ? err.message : 'not connected to Google',
+      )
+    }
+
+    const res = await (this.#deps.fetch ?? globalThis.fetch)(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    })
+
+    if (!res.ok) throw await classify(res)
+    // The catch is the whole design, not defensiveness: past this line Google
+    // has already done the thing.
+    return await res.json().catch(() => null)
   }
 
   /**

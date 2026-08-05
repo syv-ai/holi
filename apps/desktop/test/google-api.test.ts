@@ -35,6 +35,7 @@ function apiWith(response: Parameters<typeof fetchWith>[0], token = 'at-1') {
 }
 
 const MODIFY = 'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify'
+const SEND = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send'
 
 describe('post', () => {
   it('sends a POST carrying the bearer token and a JSON body', async () => {
@@ -98,5 +99,66 @@ describe('post', () => {
     })
 
     await expect(api.post(MODIFY, {})).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * `postJson` — `post`'s twin for the two writes whose answer is worth reading
+ * (`messages.send`, `drafts.create` both return an id).
+ *
+ * It is deliberately **not** `post` with a parse bolted on. `post` drains and
+ * discards because turning a completed archive into a reported failure reverts
+ * the UI to a state the mailbox no longer has. Here the same mistake is worse:
+ * a send that Google accepted, reported as failed, is a second email to a real
+ * person. So an unreadable 2xx body is `null` — "it worked, we could not read
+ * what it said" — and never a throw.
+ */
+describe('postJson', () => {
+  it('returns the parsed body on 200', async () => {
+    const { calls, api } = apiWith({ json: async () => ({ id: 'm-1', threadId: 't1' }) })
+
+    await expect(api.postJson<{ id: string }>(SEND, { raw: 'x' })).resolves.toEqual({
+      id: 'm-1',
+      threadId: 't1',
+    })
+    expect(calls[0]!.init.method).toBe('POST')
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ raw: 'x' })
+  })
+
+  it('returns null when a 200 carries no body', async () => {
+    const { api } = apiWith({
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input')
+      },
+      text: async () => '',
+    })
+
+    await expect(api.postJson(SEND, {})).resolves.toBeNull()
+  })
+
+  // The test that stops a double send. Google answered 2xx — the mail is gone.
+  // Whatever the body was, reporting failure here makes the agent try again.
+  it('returns null rather than throwing when a 200 body is not JSON', async () => {
+    const { api } = apiWith({
+      json: async () => {
+        throw new SyntaxError('Unexpected token <')
+      },
+      text: async () => '<html>proxy says hello</html>',
+    })
+
+    await expect(api.postJson(SEND, {})).resolves.toBeNull()
+  })
+
+  it('throws on a 403 exactly as post does', async () => {
+    const { api } = apiWith({
+      status: 403,
+      text: async () =>
+        JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+    })
+
+    const error = await api.postJson(SEND, {}).catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(GoogleApiError)
+    expect((error as GoogleApiError).code).toBe('scope')
   })
 })
