@@ -105,12 +105,15 @@ export class GoogleApi {
    * carries its arguments in the body, and a second `URLSearchParams` builder
    * would be an unused branch of the one function that can do damage.
    *
-   * Returns `null` when the response carries no JSON. That is not defensive
-   * padding — Gmail's write endpoints do not all answer with a body, and
-   * throwing on `res.json()` would report a *completed* archive as failed,
-   * which then reverts the UI to a state the mailbox no longer has.
+   * **Returns nothing, deliberately.** Gmail's write endpoints do not all
+   * answer with a body, so a parsed result would be `T | null` and every caller
+   * would have to handle a `null` that means "it worked". None of them wants
+   * the body at all — so the response is drained and discarded here, and the
+   * only thing a caller learns is whether it threw. Reading `res.json()` and
+   * letting it throw would report a *completed* archive as failed, which then
+   * reverts the UI to a state the mailbox no longer has.
    */
-  async post<T>(url: string, body: unknown): Promise<T | null> {
+  async post(url: string, body: unknown): Promise<void> {
     let token: string
     try {
       token = await this.#deps.accessToken()
@@ -133,11 +136,13 @@ export class GoogleApi {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
-    if (!res.ok) throw await classify(res)
     // A 403 here is most often `insufficientPermissions` — a grant older than
     // GOOGLE_SCOPES — which `classify` maps to `scope` so the UI can offer the
     // reconnect that actually fixes it. See `GoogleSession.missingScopes`.
-    return await res.json().catch(() => null)
+    if (!res.ok) throw await classify(res)
+    // Drained rather than ignored: leaving a body unread holds the connection
+    // open. Whether it parses is not this function's business.
+    await res.text().catch(() => '')
   }
 
   /**

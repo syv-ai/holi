@@ -183,7 +183,7 @@ function headerOf(part: RawPart | undefined, name: string): string | null {
 }
 
 /**
- * `"Nicolai Thomsen" <nicolai@syv.ai>` → `{ name, email }`.
+ * `"Ada Holm" <ada@syv.ai>` → `{ name, email }`.
  *
  * **Both halves travel**, where this used to keep only the name. The name is
  * still what a list shows — a column of addresses is far harder to scan than a
@@ -213,7 +213,7 @@ function parseAddress(value: string | null): MailAddress {
 function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
   // Split on commas that are not inside quotes — a display name may contain one
-  // ("Thomsen, Nicolai" <…>), and splitting naively mangles it into two people.
+  // ("Holm, Ada" <…>), and splitting naively mangles it into two people.
   return value
     .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
     .map((a) => parseAddress(a))
@@ -412,6 +412,61 @@ export async function fetchMailCounts(api: GoogleApi): Promise<MailCounts | null
   } catch {
     return null
   }
+}
+
+/**
+ * How many unread threads sit in one tab.
+ *
+ * **Counted, not estimated, and not read off the label.** Three ways to get
+ * this number and only one of them is right:
+ *
+ * - `resultSizeEstimate` is an estimate, and the category picker has always
+ *   refused to show one — a number people trust and that is wrong is worse
+ *   than no number.
+ * - `labels.get` on `CATEGORY_PROMOTIONS` is exact but counts the **whole
+ *   mailbox**, archived mail included. It would answer a question nobody asked,
+ *   and Holi can now archive without reading, so the gap is one this app makes.
+ * - `threads.list` scoped to the inbox returns the actual ids. Counting them is
+ *   exact and scoped to what the tab holds. Ids only, so a page of 500 is a
+ *   small response and never the N+1 a list view pays.
+ *
+ * `more` is what honesty costs past the page: at 500 the answer becomes "500+"
+ * rather than a number that quietly means "at least".
+ */
+export interface CategoryCount {
+  count: number
+  /** There is at least one more page — render `500+`, not `500`. */
+  more: boolean
+}
+
+/** Gmail's maximum for `threads.list`. */
+const COUNT_PAGE_SIZE = '500'
+
+export async function fetchCategoryUnread(
+  api: GoogleApi,
+  category: MailCategory,
+): Promise<CategoryCount | null> {
+  try {
+    const page = await api.get<{ threads?: unknown[]; nextPageToken?: string }>(`${BASE}/threads`, {
+      q: `in:inbox ${categoryQuery(category)} is:unread`,
+      maxResults: COUNT_PAGE_SIZE,
+    })
+    return { count: (page.threads ?? []).length, more: page.nextPageToken !== undefined }
+  } catch {
+    // One tab's number, not the picker. A failure here must leave the other
+    // four counts and the tabs themselves working.
+    return null
+  }
+}
+
+export type CategoryCounts = Partial<Record<MailCategory, CategoryCount | null>>
+
+/** Every tab's unread count, concurrently — five requests, and only when the
+ *  picker is actually opened. See `MailView`. */
+export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCounts> {
+  const categories: MailCategory[] = ['primary', 'social', 'promotions', 'updates', 'forums']
+  const counts = await Promise.all(categories.map((c) => fetchCategoryUnread(api, c)))
+  return Object.fromEntries(categories.map((c, index) => [c, counts[index]!]))
 }
 
 /**
@@ -656,36 +711,51 @@ export function textOnly(thread: MailThread): AgentMailThread {
   }
 }
 
+/** The boolean columns of a summary, named by the type rather than by hand — so
+ *  a flag that is renamed or stops being a boolean fails to compile here. */
+type MailFlag = {
+  [K in keyof MailThreadSummary]: MailThreadSummary[K] extends boolean ? K : never
+}[keyof MailThreadSummary]
+
 /**
- * System labels a cached summary can be re-derived from without refetching it,
- * and the mapping that does it. **These two are one decision** — a label added
- * to the set but not to `applyLabelDelta` is silently ignored, and the reverse
- * makes a delta refetch when it did not need to.
+ * Which system label sets which flag — **one table, read from both ends.**
+ *
+ * The set of patchable labels and the mapping that applies them used to be two
+ * declarations that had to agree: a label in the set with no entry in the
+ * mapping is silently ignored, and the reverse makes a delta refetch when it
+ * did not need to. Deriving `PATCHABLE_LABELS` from the table's own keys makes
+ * that drift inexpressible rather than merely warned against.
  *
  * A *user* label is deliberately absent: the cache holds label NAMES, and
  * `Label_12` cannot become one without a lookup — so that case refetches, which
- * is both correct and rare.
+ * is both correct and rare. `INBOX`, `TRASH` and `SPAM` are absent for a
+ * different reason: they are not flags on a row, they decide whether the row is
+ * in the list at all, and `mail-sync` handles them as departures.
  *
  * Two callers, and they arrive from opposite directions: `mail-sync` applying
  * what `history.list` reports, and `cache` applying a write this app just made.
  * Both are "a label moved; update the flags", and neither should own its own
  * copy of the answer.
  */
-export const PATCHABLE_LABELS = new Set(['UNREAD', 'STARRED', 'IMPORTANT', 'DRAFT'])
+const LABEL_FLAGS = {
+  UNREAD: 'unread',
+  STARRED: 'starred',
+  IMPORTANT: 'important',
+  DRAFT: 'hasDraft',
+} as const satisfies Record<string, MailFlag>
+
+export const PATCHABLE_LABELS: ReadonlySet<string> = new Set(Object.keys(LABEL_FLAGS))
 
 export function applyLabelDelta(
   thread: MailThreadSummary,
   change: { added: ReadonlySet<string>; removed: ReadonlySet<string> },
 ): MailThreadSummary {
-  const flag = (label: string, current: boolean) =>
-    change.added.has(label) ? true : change.removed.has(label) ? false : current
-  return {
-    ...thread,
-    unread: flag('UNREAD', thread.unread),
-    starred: flag('STARRED', thread.starred),
-    important: flag('IMPORTANT', thread.important),
-    hasDraft: flag('DRAFT', thread.hasDraft),
+  const patched = { ...thread }
+  for (const [label, flag] of Object.entries(LABEL_FLAGS) as [string, MailFlag][]) {
+    if (change.added.has(label)) patched[flag] = true
+    else if (change.removed.has(label)) patched[flag] = false
   }
+  return patched
 }
 
 /**

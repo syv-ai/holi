@@ -40,9 +40,11 @@ describe('post', () => {
   it('sends a POST carrying the bearer token and a JSON body', async () => {
     const { calls, api } = apiWith({ json: async () => ({ id: 't1' }) })
 
-    const result = await api.post<{ id: string }>(MODIFY, { removeLabelIds: ['UNREAD'] })
+    // Nothing comes back. Gmail's write endpoints do not all answer with a
+    // body, so a parsed result would be `T | null` and every caller would have
+    // to handle a `null` that means success. None of them wants the body.
+    await expect(api.post(MODIFY, { removeLabelIds: ['UNREAD'] })).resolves.toBeUndefined()
 
-    expect(result).toEqual({ id: 't1' })
     expect(calls).toHaveLength(1)
     expect(calls[0]!.url).toBe(MODIFY)
     expect(calls[0]!.init.method).toBe('POST')
@@ -95,6 +97,6 @@ describe('post', () => {
       text: async () => '',
     })
 
-    await expect(api.post(MODIFY, {})).resolves.toBeNull()
+    await expect(api.post(MODIFY, {})).resolves.toBeUndefined()
   })
 })
