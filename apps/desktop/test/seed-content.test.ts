@@ -115,12 +115,22 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('markdown link')
     expect(skill).toContain('rfc822msgid')
     // The agent's boundary, stated as what is true rather than what used to be.
-    // This asserted 'read-only' until D68: the scope is `gmail.modify` now, so
-    // telling the agent its connection is read-only would be a false invariant
-    // in a prompt it reasons from. What actually stops it is that `holi-google`
-    // has no write subcommand.
-    expect(skill).toContain('no subcommand that writes')
+    // This has now been wrong twice, in opposite directions, which is why it is
+    // pinned at all: it asserted 'read-only' until D68 made the scope
+    // gmail.modify, and asserted 'no subcommand that writes' until D70 added
+    // nine of them. A false invariant in a prompt the agent reasons from is
+    // worse than none, because it reasons *from* it.
     expect(skill).not.toContain('scopes are read-only')
+    expect(skill).not.toContain('no subcommand that writes')
+    expect(skill).not.toContain('You have no write commands')
+
+    // What is true now: the line is reversibility, drafting is preferred over
+    // sending, and sending prompts the user every time (D70).
+    expect(skill).toContain('undo')
+    expect(skill).toContain('draft')
+    expect(skill).toMatch(/asks? the user every time|every time/)
+    // And the structural bound the agent cannot talk its way around.
+    expect(skill).toContain('attendees')
   })
 
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {

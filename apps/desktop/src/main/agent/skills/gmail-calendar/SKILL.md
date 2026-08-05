@@ -1,35 +1,44 @@
 ---
 name: gmail-calendar
-description: Read the user's Google Calendar and Gmail — their agenda, and mail search/read — and link an event or thread into a task or note. Use whenever the user asks about their schedule, a meeting, or an email.
+description: Read and act on the user's Google Calendar and Gmail — their agenda, mail search/read, triage, drafting, sending, and time-blocking — and link an event or thread into a task or note. Use whenever the user asks about their schedule, a meeting, or an email.
 ---
 
 # Gmail & Calendar
 
-The user's Google account is connected to Holi. You can **read** their calendar
-and mail through one command. You cannot send mail, change their calendar, or
-alter a thread: `holi-google` has no subcommand that writes, so these are not
-merely discouraged — there is nothing to call.
+The user's Google account is connected to Holi. One command, `holi-google`,
+reads and acts on both.
 
-(Holi's own UI can mark read, star, archive and trash a thread. That surface is
-deliberately not exposed to you. Do not attempt to reach it another way.)
+**The rule that sorts everything you can do here: you may do anything the user
+can undo, and Holi asks them first for the two things they cannot.**
+
+| | What | Why |
+| --- | --- | --- |
+| Just do it | `mark-read`, `star`, `archive`, `trash`, `draft`, `schedule`, `reschedule`, `unschedule` | each has a one-click undo in Gmail or Google Calendar |
+| Holi asks the user, every time | `send`, `reply` | mail that has reached someone cannot be recalled |
+| Not possible at all | deleting mail permanently; touching an event that has **attendees** | the first is not granted; the second would email people, so Holi refuses it |
+
+You do not need to ask permission before the first group — that is what the
+group is. For `send` and `reply`, a prompt appears for the user **every single
+time**, even if they allowed it before. That is expected. It is not an error and
+not something to work around.
 
 ## The command
 
-`$HOLI_GOOGLE_BIN` is the absolute path to the `holi-google` command. Everything
-returns JSON on stdout.
+`holi-google` is on your `PATH`. (`$HOLI_GOOGLE_BIN` is its absolute path and
+also works.) Everything returns JSON on stdout.
 
 ```sh
-"$HOLI_GOOGLE_BIN" agenda                      # the next 7 days
-"$HOLI_GOOGLE_BIN" agenda 2026-08-04T00:00:00Z 2026-08-05T00:00:00Z
-"$HOLI_GOOGLE_BIN" search 'from:jane is:unread'
-"$HOLI_GOOGLE_BIN" search ''                   # the inbox
-"$HOLI_GOOGLE_BIN" read <threadId>
+holi-google agenda                      # the next 7 days
+holi-google agenda 2026-08-04T00:00:00Z 2026-08-05T00:00:00Z
+holi-google search 'from:jane is:unread'
+holi-google search ''                   # the inbox
+holi-google read <threadId>
 ```
 
-If `$HOLI_GOOGLE_BIN` is empty, or the command says Holi is not running or
-Google is not connected, tell the user to connect Google in Holi's vault
-settings. Do not try to reach Google another way — there is no other way, and
-the tokens are deliberately unreachable from here.
+If the command says Holi is not running or Google is not connected, tell the
+user to connect Google in Holi's vault settings. Do not try to reach Google
+another way — there is no other way, and the tokens are deliberately
+unreachable from here.
 
 `search` takes **Gmail's own query grammar** verbatim: `from:`, `to:`,
 `subject:`, `is:unread`, `has:attachment`, `newer_than:7d`, and so on. Quote the
@@ -73,6 +82,67 @@ from HTML otherwise. Do not expect markup, and do not ask for it: Holi's own
 mail reader renders sanitized HTML, but this command strips it deliberately,
 because a table layout would cost you context and tell you nothing.
 
+## Acting on mail
+
+```sh
+holi-google mark-read <threadId> [--unread]
+holi-google star <threadId> [--off]
+holi-google archive <threadId>          # out of the inbox, still in All Mail
+holi-google trash <threadId>            # Gmail's trash, recoverable for 30 days
+```
+
+**Writing mail — the body always comes from stdin**, so a multi-line message
+survives intact:
+
+```sh
+holi-google draft --to ada@syv.ai --subject 'Q2 budget' <<'EOF'
+Hi Ada,
+
+Here are the numbers.
+EOF
+
+holi-google draft --thread <threadId> --to ada@syv.ai --subject 'Re: Q2 budget' <<'EOF'
+Sounds good.
+EOF
+
+holi-google reply <threadId> <<'EOF'     # recipients and subject come from the thread
+Yes, Tuesday works.
+EOF
+
+holi-google send --to ada@syv.ai --subject 'Q2 budget' [--cc bo@syv.ai] <<'EOF'
+Hi Ada,
+EOF
+```
+
+**Prefer `draft` unless the user asked you to send.** A draft reaches nobody,
+needs no confirmation, and leaves them one click from sending — so "write Ada a
+reply about the budget" means `draft`, and only "send it" means `send`. When you
+draft, say so plainly and say where it is, rather than implying it went out.
+
+For `reply`, do not pass recipients or a subject: they are derived from the
+thread, including the headers that keep the message *in* that thread. Composing
+a `send` by hand instead would start a new one.
+
+## Acting on the calendar
+
+```sh
+holi-google schedule --title 'Deep work' --start 2026-08-06T09:00:00Z --end 2026-08-06T11:00:00Z
+holi-google schedule --title 'Off' --start 2026-08-06 --end 2026-08-07 --all-day
+holi-google reschedule <eventId> [--start <iso>] [--end <iso>] [--title <t>]
+holi-google unschedule <eventId>
+```
+
+This is for **the user's own time** — blocking out work, moving their own
+blocks. Events with attendees are refused by Holi, because changing or deleting
+one emails everybody on it. If the user wants that, say you cannot do it from
+here and offer to let them do it in Google Calendar.
+
+`unschedule` deletes a real event off a real calendar. Confirm with the user in
+chat before using it on anything you did not just create.
+
+Read the agenda before scheduling. An agent that blocks out an hour the user
+already has a meeting in has made their day worse, not better.
+
 ## Linking an email or event into the vault
 
 This is the part that matters. A link to mail or calendar is **an ordinary
@@ -115,9 +185,13 @@ due: 2026-08-04
 
 ## Rules
 
-- **You have no write commands.** If asked to send mail, reply, or create/move
-  an event, say plainly that you cannot do it from here, and offer the
-  alternative: you can draft the text, and the user sends it from Gmail.
+- **Draft before you send.** Sending is the one thing here nobody can take
+  back, so it is the one thing to be asked for rather than inferred.
+- **One thread at a time when it is destructive.** Archiving twenty threads
+  because the user said "clean up my inbox" is twenty things for them to undo.
+  Say what you propose to archive, then do it.
+- **`trash` is not `delete`.** It is recoverable for 30 days. Permanent deletion
+  is not something Holi can do at all, so never promise it.
 - **Do not cache.** Ask the command again rather than reusing an old answer;
   the user's calendar changes while you work.
 - **Do not copy mail bodies into the vault** unless the user asks. Link instead
