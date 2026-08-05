@@ -190,6 +190,9 @@ export function MailView() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [counts, setCounts] = useState<MailCounts | null>(null)
+  /** The address book, fetched once. A corpus to filter locally, not a search
+   *  endpoint — completing from it must not cost a request per keystroke. */
+  const [contacts, setContacts] = useState<MailAddress[]>([])
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
@@ -243,6 +246,22 @@ export function MailView() {
   }, [])
 
   useEffect(loadCounts, [loadCounts])
+
+  /**
+   * The address book, once per mount.
+   *
+   * A failure is silent and leaves `contacts` empty, which is not a degraded
+   * state so much as the state this feature shipped in: completion still runs
+   * off the senders in loaded threads. That is also what happens on a grant
+   * that predates `contacts.readonly` — settings is where that gets said, not
+   * a dropdown.
+   */
+  useEffect(() => {
+    void trpc.google.contacts
+      .query()
+      .then(setContacts)
+      .catch(() => setContacts([]))
+  }, [])
 
   /**
    * The next page, **appended**.
@@ -418,6 +437,7 @@ export function MailView() {
             searchOpen={searchOpen}
             onSearchOpenChange={setSearchOpen}
             people={threads}
+            contacts={contacts}
             category={category}
             onCategoryChange={setCategory}
             searching={submitted !== ''}
@@ -644,6 +664,7 @@ function MailToolbar({
   searchOpen,
   onSearchOpenChange,
   people,
+  contacts,
   category,
   onCategoryChange,
   searching,
@@ -658,6 +679,7 @@ function MailToolbar({
   searchOpen: boolean
   onSearchOpenChange: (open: boolean) => void
   people: ThreadSummary[]
+  contacts: MailAddress[]
   category: MailCategory | null
   onCategoryChange: (category: MailCategory | null) => void
   searching: boolean
@@ -672,6 +694,7 @@ function MailToolbar({
         <SearchField
           query={query}
           onQueryChange={onQueryChange}
+          contacts={contacts}
           onSubmit={onSubmit}
           people={people}
           onClose={() => {
@@ -746,12 +769,14 @@ function SearchField({
   onQueryChange,
   onSubmit,
   people,
+  contacts,
   onClose,
 }: {
   query: string
   onQueryChange: (value: string) => void
   onSubmit: (value: string) => void
   people: ThreadSummary[]
+  contacts: MailAddress[]
   onClose: () => void
 }): React.JSX.Element {
   const ref = useRef<HTMLInputElement>(null)
@@ -764,8 +789,8 @@ function SearchField({
 
   const mention = mentionAt(query)
   const matches = useMemo(
-    () => (mention === null ? [] : matchPeople(people, mention.term)),
-    [people, mention],
+    () => (mention === null ? [] : matchPeople(people, mention.term, contacts)),
+    [people, contacts, mention],
   )
   useEffect(() => setHighlighted(0), [mention?.term])
 
@@ -904,22 +929,36 @@ export function replaceMention(query: string, mention: Mention, email: string): 
 }
 
 /**
- * People from the mail already in hand.
+ * People to complete from — **two sources, ranked by evidence** (D68).
  *
- * **The local corpus only** — there is no contacts scope (`GOOGLE_SCOPES` is
- * `gmail.readonly` + `calendar.readonly`), so this cannot see an address book,
- * and asking for one would mean a new Google API and a fresh consent screen.
- * What it can see is everyone who has written to you in the threads loaded,
- * which is most of who anyone searches for. A People API source would merge in
- * here behind these results, ranked below them.
+ * 1. Senders across the threads in hand, counted. Who you actually hear from is
+ *    the strongest signal there is, and it needs no request at all.
+ * 2. The real address book, from the People API (`contacts.readonly`). Broader,
+ *    and it reaches people who have not written to you recently — but with no
+ *    frequency to rank on, so it sits behind.
+ *
+ * The local corpus is deliberately **not** replaced by contacts. It is what
+ * keeps completion working when the contacts request is cold, refused, or the
+ * grant predates the scope — and in the common case it is the better answer.
  */
-export function matchPeople(threads: { from: MailAddress }[], term: string): Person[] {
+export function matchPeople(
+  threads: { from: MailAddress }[],
+  term: string,
+  contacts: MailAddress[] = [],
+): Person[] {
   const byEmail = new Map<string, Person>()
   for (const { from } of threads) {
     if (from.email === '') continue
     const existing = byEmail.get(from.email)
     if (existing === undefined) byEmail.set(from.email, { ...from, count: 1 })
     else existing.count++
+  }
+  // `count: 0` is what puts the address book below everyone who has actually
+  // written, and it is why this loop runs second: a contact already seen as a
+  // sender keeps its count rather than being flattened to zero.
+  for (const contact of contacts) {
+    if (contact.email === '' || byEmail.has(contact.email)) continue
+    byEmail.set(contact.email, { ...contact, count: 0 })
   }
 
   const needle = term.toLowerCase()

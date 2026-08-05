@@ -15,6 +15,7 @@ import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
 const threadMock = vi.fn()
 const readMock = vi.fn()
 const countsMock = vi.fn()
+const contactsMock = vi.fn()
 const markReadMock = vi.fn()
 const setStarredMock = vi.fn()
 const archiveMock = vi.fn()
@@ -26,6 +27,7 @@ vi.mock('../../../lib/trpc', () => ({
       threads: { query: (input: unknown) => threadMock(input) },
       thread: { query: (input: { id: string }) => readMock(input) },
       mailCounts: { query: () => countsMock() },
+      contacts: { query: () => contactsMock() },
       markRead: { mutate: (input: { id: string }) => markReadMock(input) },
       setStarred: { mutate: (input: unknown) => setStarredMock(input) },
       archive: { mutate: (input: { id: string }) => archiveMock(input) },
@@ -142,6 +144,7 @@ beforeEach(() => {
     ],
   })
   countsMock.mockReset().mockResolvedValue({ unread: 3, total: 120 })
+  contactsMock.mockReset().mockResolvedValue([])
   markReadMock.mockReset().mockResolvedValue({ ok: true })
   setStarredMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
@@ -714,6 +717,34 @@ test('people are ranked by how often you actually hear from them', () => {
   // Matched on either half: people search by the name they see in the list.
   expect(matchPeople(threads, 'krifa').map((p) => p.name)).toEqual(['Anders Skøt'])
   expect(matchPeople(threads, 'mette').map((p) => p.name)).toEqual(['Mette Nielsen'])
+})
+
+test('the address book fills in behind senders, never over them', () => {
+  const threads = [{ from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } }]
+  const contacts = [
+    // Someone who has not written recently — the whole reason to want contacts.
+    { name: 'Signe Holm', email: 'signe@syv.ai' },
+    // The same person as the sender above, as the address book has them.
+    { name: 'Mette N.', email: 'mette@syv.ai' },
+  ]
+
+  const all = matchPeople(threads, '', contacts)
+
+  // Whoever actually writes to you outranks the address book, which carries no
+  // frequency to rank on.
+  expect(all.map((p) => p.email)).toEqual(['mette@syv.ai', 'signe@syv.ai'])
+  // Not duplicated, and the sender's own count survives — a contact must not
+  // flatten someone already ranked to zero.
+  expect(all[0]!.count).toBe(1)
+  expect(all[0]!.name).toBe('Mette Nielsen')
+})
+
+test('no contacts is not a broken dropdown — the sender corpus still answers', () => {
+  // What a cold contacts API, a refusal, or a grant predating contacts.readonly
+  // all look like here. Completion has to keep working.
+  const threads = [{ from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } }]
+
+  expect(matchPeople(threads, 'mette', []).map((p) => p.email)).toEqual(['mette@syv.ai'])
 })
 
 test('typing @ in the search box offers people from the mail on screen', async () => {

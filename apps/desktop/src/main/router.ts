@@ -53,11 +53,13 @@ import {
   fetchMailCounts,
   listThreads,
   readThread,
+  type MailAddress,
   type MailCategory,
   type MailCounts,
   type MailPage,
   type MailThread,
 } from './google/gmail'
+import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
@@ -1415,6 +1417,16 @@ export function createRouter(deps: RouterDeps) {
      * rather than guessing.
      */
     mailCounts: t.procedure.query((): Promise<MailCounts | null> => fetchMailCounts(googleApi())),
+
+    /**
+     * The address book, for `@`-completion.
+     *
+     * Fetched once per mount rather than per keystroke — it is a corpus to
+     * filter locally, not a search endpoint. `listContacts` never throws, so a
+     * cold or unpermitted contacts API leaves completion running off the
+     * senders in loaded threads instead of breaking the dropdown.
+     */
+    contacts: t.procedure.query((): Promise<MailAddress[]> => listContacts(googleApi())),
   })
 
   /** No store configured means no explicit choices — every calendar follows the
