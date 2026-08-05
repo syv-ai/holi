@@ -19,6 +19,8 @@ import { listThreads } from '../src/main/google/gmail'
 
 const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
 const WINDOW = { timeMin: '2026-08-04T00:00:00Z', timeMax: '2026-08-11T00:00:00Z' }
+/** `cacheKey({})` — query, category and the unread filter, all empty. */
+const INBOX_KEY = '||'
 
 let dir: string
 let path: string
@@ -139,6 +141,82 @@ describe('createGoogleData', () => {
     expect(g.seen[before]).toContain('/history')
   })
 
+  /**
+   * The address book is fetched once, not once per mount.
+   *
+   * `MailView` asks on every mount, and the People API is paged — so without a
+   * hold, opening and closing the mail tab three times spent a dozen requests
+   * against a rate-limited API to populate a dropdown. An address book is also
+   * the least time-sensitive thing this connector holds: a contact saved today
+   * is not why completion missed someone.
+   */
+  describe('contacts', () => {
+    /** A People API that counts how many times it was actually asked. */
+    function peopleApi() {
+      let calls = 0
+      const fetchImpl = vi.fn(async (url: string) => {
+        calls++
+        const body = url.includes('otherContacts')
+          ? { otherContacts: [] }
+          : { connections: [{ names: [{ displayName: 'Jane' }], emailAddresses: [{ value: 'jane@syv.ai' }] }] }
+        return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+      }) as unknown as typeof globalThis.fetch
+      const subject = createGoogleData({
+        api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+        cache,
+      })
+      return { data: subject, calls: () => calls }
+    }
+
+    it('is fetched once however many times it is asked for', async () => {
+      const { data: subject, calls } = peopleApi()
+      subject.useAccount('sub-a')
+
+      const first = await subject.contacts()
+      const second = await subject.contacts()
+
+      expect(first).toEqual([{ name: 'Jane', email: 'jane@syv.ai' }])
+      expect(second).toEqual(first)
+      // Two collections, one round. A second `contacts()` costs nothing.
+      expect(calls()).toBe(2)
+    })
+
+    it('two callers racing produce one fetch, not two', async () => {
+      // A promise is held rather than a value precisely for this: two messages
+      // mounting together used to be two round trips.
+      const { data: subject, calls } = peopleApi()
+      subject.useAccount('sub-a')
+
+      await Promise.all([subject.contacts(), subject.contacts()])
+
+      expect(calls()).toBe(2)
+    })
+
+    it('is dropped when the account changes', async () => {
+      // Unlike the cached mail it is not keyed by account, so nothing else
+      // would stop one account completing to another's contacts.
+      const { data: subject, calls } = peopleApi()
+      subject.useAccount('sub-a')
+      await subject.contacts()
+
+      subject.useAccount('sub-b')
+      await subject.contacts()
+
+      expect(calls()).toBe(4)
+    })
+
+    it('is dropped on disconnect', async () => {
+      const { data: subject, calls } = peopleApi()
+      subject.useAccount('sub-a')
+      await subject.contacts()
+
+      subject.forget()
+      await subject.contacts()
+
+      expect(calls()).toBe(4)
+    })
+  })
+
   it('the agent’s ops server never reads the cache', async () => {
     const g = google()
     // Exactly what `main/index.ts` hands `createGoogleOpsServer`: the raw
@@ -225,7 +303,7 @@ describe('mutations', () => {
     expect(posts).toEqual([
       'https://gmail.googleapis.com/gmail/v1/users/me/threads/t1/modify',
     ])
-    expect(cache.readThreads('|')![0]!.unread).toBe(false)
+    expect(cache.readThreads(INBOX_KEY)![0]!.unread).toBe(false)
   })
 
   it('leaves the cache untouched when Google refuses, and rethrows', async () => {
@@ -236,7 +314,7 @@ describe('mutations', () => {
 
     // Still unread on disk. A cache that recorded a write Google refused is a
     // divergence no later sync can find.
-    expect(cache.readThreads('|')![0]!.unread).toBe(true)
+    expect(cache.readThreads(INBOX_KEY)![0]!.unread).toBe(true)
   })
 
   it('stars in both directions', async () => {
@@ -244,19 +322,19 @@ describe('mutations', () => {
     await subject.threads({})
 
     await subject.setStarred('t1', true)
-    expect(cache.readThreads('|')![0]!.starred).toBe(true)
+    expect(cache.readThreads(INBOX_KEY)![0]!.starred).toBe(true)
 
     await subject.setStarred('t1', false)
-    expect(cache.readThreads('|')![0]!.starred).toBe(false)
+    expect(cache.readThreads(INBOX_KEY)![0]!.starred).toBe(false)
   })
 
   it('archive and trash remove the thread from the cached list', async () => {
     const { data: subject } = mutable()
     await subject.threads({})
-    expect(cache.readThreads('|')).toHaveLength(1)
+    expect(cache.readThreads(INBOX_KEY)).toHaveLength(1)
 
     await subject.archive('t1')
-    expect(cache.readThreads('|')).toHaveLength(0)
+    expect(cache.readThreads(INBOX_KEY)).toHaveLength(0)
   })
 
   it('a refused archive leaves the thread in the list', async () => {
@@ -265,6 +343,6 @@ describe('mutations', () => {
 
     await expect(subject.archive('t1')).rejects.toThrow()
 
-    expect(cache.readThreads('|')).toHaveLength(1)
+    expect(cache.readThreads(INBOX_KEY)).toHaveLength(1)
   })
 })

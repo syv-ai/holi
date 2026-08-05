@@ -1,7 +1,7 @@
 /**
  * The Google cache — what a launch paints before Google answers.
  *
- * **This overturns D67 §7's "nothing persisted", on Nicolai's call.** What it
+ * **This overturns D67 §7's "nothing persisted", by an explicit call.** What it
  * is not is a mirror: it holds the last N threads for the questions actually
  * asked, and Google stays the source of truth. Anything past the tail is a
  * request, an account change wipes it, and Disconnect deletes the file. What it
@@ -87,8 +87,13 @@ export interface GoogleCache {
  * on read — the row parses fine and is simply wrong. **Bump this whenever a
  * cached type changes.** `2` is where `from` became `{ name, email }` instead
  * of a bare display name.
+ *
+ * `3` is not a type change: `cacheKey` gained the unread filter, so every key
+ * written before it is a question this build no longer asks. The rows would
+ * never be read again and would sit on disk until the account changed — wiping
+ * is both free and the only way the old keys ever leave.
  */
-const SHAPE_VERSION = '2'
+const SHAPE_VERSION = '3'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (
