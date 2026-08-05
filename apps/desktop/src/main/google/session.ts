@@ -88,6 +88,27 @@ export const GOOGLE_SCOPES = [
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 
 /**
+ * The scopes Google grants under a different name than you request them.
+ *
+ * **A token response does not echo the strings you sent.** Ask for `email` and
+ * the grant comes back as `https://www.googleapis.com/auth/userinfo.email`;
+ * `profile` expands the same way. Everything else — `openid`, and every
+ * `.../auth/…` URL — is returned verbatim.
+ *
+ * Comparing the request against the grant without this reports `email` missing
+ * on a grant that is entirely correct, and settings then demands a reconnect
+ * that cannot possibly help: the mismatch is in the comparison, not the token.
+ * That is exactly how it failed in real use.
+ *
+ * Checked in both directions, because which side holds the short form is a
+ * detail of how the list was written rather than a fact worth relying on.
+ */
+const SCOPE_ALIASES: Record<string, string> = {
+  email: 'https://www.googleapis.com/auth/userinfo.email',
+  profile: 'https://www.googleapis.com/auth/userinfo.profile',
+}
+
+/**
  * Refresh this long before the token actually dies.
  *
  * Refreshing at exact expiry loses the race against clock skew and the flight
@@ -172,7 +193,16 @@ export class GoogleSession {
     const auth = this.#current()
     if (auth === null) return []
     const granted = new Set(auth.scopes)
-    return GOOGLE_SCOPES.filter((scope) => !granted.has(scope))
+    const has = (scope: string): boolean => {
+      if (granted.has(scope)) return true
+      const alias = SCOPE_ALIASES[scope]
+      if (alias !== undefined && granted.has(alias)) return true
+      // The other direction too: a short form in the grant against a URL here.
+      return Object.entries(SCOPE_ALIASES).some(
+        ([short, url]) => url === scope && granted.has(short),
+      )
+    }
+    return GOOGLE_SCOPES.filter((scope) => !has(scope))
   }
 
   /**

@@ -132,6 +132,50 @@ describe('missingScopes', () => {
     expect(session.missingScopes()).toEqual([])
   })
 
+  it('understands the scopes as GOOGLE returns them, not as we asked for them', async () => {
+    // The bug this exists for, reported from real use: reconnecting cleared
+    // nothing and settings went on demanding new permissions forever.
+    //
+    // Google does not echo the strings you sent. `email` is granted as
+    // `.../auth/userinfo.email` (and `profile` likewise); the rest come back
+    // verbatim. Comparing the request against the grant therefore reports
+    // `email` missing on a grant that is completely correct — and no amount of
+    // reconnecting can fix a mismatch that is in the comparison.
+    //
+    // The original test seeded `[...GOOGLE_SCOPES]`, which encoded what this
+    // code assumed rather than what Google sends, so it passed throughout.
+    const session = await connected(
+      auth({
+        scopes: [
+          'openid',
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/calendar.readonly',
+          'https://www.googleapis.com/auth/contacts.readonly',
+        ],
+      }),
+    )
+
+    expect(session.missingScopes()).toEqual([])
+  })
+
+  it('still catches a genuinely missing scope on a grant in Google’s own form', async () => {
+    // The alias must not become a blanket "close enough" that stops the guard
+    // noticing the thing it exists to notice.
+    const session = await connected(
+      auth({
+        scopes: [
+          'openid',
+          'https://www.googleapis.com/auth/userinfo.email',
+          'https://www.googleapis.com/auth/gmail.modify',
+          'https://www.googleapis.com/auth/calendar.readonly',
+        ],
+      }),
+    )
+
+    expect(session.missingScopes()).toEqual(['https://www.googleapis.com/auth/contacts.readonly'])
+  })
+
   it('is empty with no account — "not connected" is a different state the UI already renders', async () => {
     const session = await GoogleSession.load({
       store,
