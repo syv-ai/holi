@@ -23,12 +23,14 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ImageOff } from 'lucide-react'
 import { Button } from '@/primitives'
 import {
+  canvasFor,
   mailFrameDocument,
   openableLink,
   useMailPalette,
   type MailPalette,
 } from '../../lib/mail-frame'
 import { sanitizeMailHtml } from '../../lib/mail-html'
+import { useRemoteContent, type RemoteContentIdentity } from '../../state/mail-images'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here** — a caller must not pre-sanitize
@@ -36,7 +38,19 @@ interface SandboxedHtmlProps {
   html: string
   /** Names the frame for a screen reader, e.g. `message from Jane`. */
   label: string
+  /**
+   * Who this block belongs to, so an unblock can be remembered.
+   *
+   * Optional because not every block has an identity worth keeping: a calendar
+   * event description is re-rendered from whatever the agenda last fetched, and
+   * "always load images from this event" is not a sentence. Omitting it means
+   * the choice lives and dies with this component, which is where it lived for
+   * everything before.
+   */
+  identity?: RemoteContentIdentity
 }
+
+const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
 
 /**
  * One block of untrusted HTML: a sandboxed frame, with images held back.
@@ -45,26 +59,64 @@ interface SandboxedHtmlProps {
  * stashing the stripped URLs and putting them back) keeps one code path —
  * whatever renders has been through the sanitizer under the current setting,
  * always.
+ *
+ * **The unblock is remembered outside this component** ([[state/mail-images]]),
+ * and it has to be: the reader unmounts every time a thread closes, so a choice
+ * held in local state was lost on the way out and the banner came back on the
+ * next open. What stays local is only the fallback for a block with no identity.
  */
-export function SandboxedHtml({ html, label }: SandboxedHtmlProps): React.JSX.Element {
-  const [allowRemoteContent, setAllowRemoteContent] = useState(false)
-  const palette = useMailPalette()
+export function SandboxedHtml({
+  html,
+  label,
+  identity = NO_IDENTITY,
+}: SandboxedHtmlProps): React.JSX.Element {
+  const remote = useRemoteContent(identity)
+  /** The unblock for a block with nothing to remember it by. */
+  const [allowedLocally, setAllowedLocally] = useState(false)
+  const allowRemoteContent = remote.allowed || allowedLocally
+
+  const themed = useMailPalette()
   const sanitized = useMemo(
     () => sanitizeMailHtml(html, { allowRemoteContent }),
     [html, allowRemoteContent],
   )
+  // From the RAW html, so loading images cannot flip the canvas underneath the
+  // message — see `bringsOwnDesign`.
+  const palette = useMemo(() => canvasFor(html, themed), [html, themed])
+
+  const loadOnce = () => {
+    setAllowedLocally(true)
+    remote.allowOnce()
+  }
 
   return (
     <>
       {sanitized.blockedRemoteCount > 0 && (
-        <div className="mb-2 flex items-center gap-2 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
+        <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md bg-secondary px-2 py-1 text-[11px] text-muted-foreground">
           <ImageOff size={12} className="shrink-0" />
           <span className="min-w-0 flex-1">
             Images blocked — loading them tells the sender you opened this.
           </span>
-          <Button variant="ghost" size="xs" onClick={() => setAllowRemoteContent(true)}>
+          <Button variant="ghost" size="xs" className="shrink-0" onClick={loadOnce}>
             Load images
           </Button>
+          {/* The standing version of the same permission. Offered only when
+              there is an address to attach it to, because "always" with nobody
+              to be always about would store an empty sender and unblock every
+              message whose `From` could not be parsed. */}
+          {remote.sender !== null && (
+            <Button
+              variant="ghost"
+              size="xs"
+              className="shrink-0"
+              onClick={() => {
+                setAllowedLocally(true)
+                remote.allowSenderAlways()
+              }}
+            >
+              Always from this sender
+            </Button>
+          )}
         </div>
       )}
       <HtmlFrame

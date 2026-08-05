@@ -13,12 +13,14 @@ import { getDefaultStore } from 'jotai'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { AgendaView } from '../AgendaView'
 import { activeRemoteAtom } from '../../../state/vaults'
+import { resetMailImagesForTests } from '../../../state/mail-images'
 
 const agendaMock = vi.fn()
 const agendaCachedMock = vi.fn()
 const calendarsMock = vi.fn()
 const setCalendarMock = vi.fn()
 const createTaskMock = vi.fn()
+const imageSendersMock = vi.fn(() => Promise.resolve<string[]>([]))
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -27,6 +29,11 @@ vi.mock('../../../lib/trpc', () => ({
       agendaCached: { query: () => agendaCachedMock() },
       calendars: { query: () => calendarsMock() },
       setCalendar: { mutate: (input: unknown) => setCalendarMock(input) },
+      // Reached through `SandboxedHtml`, which every event description renders
+      // in. The double has to carry it or the panel throws on mount.
+      imageSenders: { query: () => imageSendersMock() },
+      allowImagesFrom: { mutate: () => Promise.resolve({ ok: true }) },
+      forgetImageSenders: { mutate: () => Promise.resolve({ ok: true }) },
     },
     tasks: { create: { mutate: (input: unknown) => createTaskMock(input) } },
   },
@@ -41,7 +48,7 @@ function deferred<T>() {
 }
 
 const CALENDARS = [
-  { id: 'primary', name: 'Nicolai', mine: true, color: '#039be5', enabled: true },
+  { id: 'primary', name: 'Ada', mine: true, color: '#039be5', enabled: true },
   { id: 'jane', name: 'Jane Doe', mine: false, color: '#d50000', enabled: false },
   { id: 'room3', name: 'Meeting Room 3', mine: false, color: null, enabled: false },
 ]
@@ -55,7 +62,7 @@ function event(overrides: Record<string, unknown> = {}) {
     allDay: false,
     htmlLink: 'https://calendar.google.com/x',
     calendarId: 'primary',
-    calendarName: 'Nicolai',
+    calendarName: 'Ada',
     mine: true,
     color: '#039be5',
     myResponse: null,
@@ -78,6 +85,9 @@ beforeEach(() => {
   calendarsMock.mockReset().mockResolvedValue(CALENDARS)
   setCalendarMock.mockReset().mockResolvedValue({ ok: true })
   createTaskMock.mockReset().mockResolvedValue({ path: 'tasks/q2-review.md' })
+  imageSendersMock.mockReset().mockResolvedValue([])
+  // Module state on jotai's default store, shared by every test in this file.
+  resetMailImagesForTests()
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -108,7 +118,7 @@ test('separates the calendars you own from the ones you only watch', async () =>
 test('shows subscribed calendars switched off, and yours switched on', async () => {
   const { menu } = await openPicker()
 
-  expect(within(menu).getByRole('menuitemcheckbox', { name: /Nicolai/ })).toBeChecked()
+  expect(within(menu).getByRole('menuitemcheckbox', { name: /Ada/ })).toBeChecked()
   expect(within(menu).getByRole('menuitemcheckbox', { name: /Jane Doe/ })).not.toBeChecked()
 })
 

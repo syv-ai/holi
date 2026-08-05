@@ -23,6 +23,7 @@ import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { createSession } from './github/electron'
 import { createGoogleSession } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
+import { createImagePrefs } from './google/image-prefs'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
@@ -125,6 +126,15 @@ async function main(): Promise<void> {
   const calendarPrefs = createCalendarPrefs(
     join(app.getPath('userData'), 'google-calendars.json'),
   )
+  /**
+   * Senders whose remote images always load.
+   *
+   * In `userData` beside the calendar choices, not in a vault: this is a
+   * decision about the connected *account*, and a vault is a shared git repo —
+   * pushing "this newsletter may be told the account holder read it" to
+   * teammates is not a preference, it is a disclosure.
+   */
+  const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
   // Bound to the session's token *getter*, never a token: the getter refreshes
   // and single-flights, so every call goes through the one authority.
   const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
@@ -200,6 +210,7 @@ async function main(): Promise<void> {
     googleSession,
     calendarPrefs,
     googleData,
+    imagePrefs,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {

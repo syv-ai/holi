@@ -18,6 +18,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
 import { useGoogleAccount } from '../../state/google'
+import { useAlwaysAllowedSenders, useForgetImageSenders } from '../../state/mail-images'
 import { trpc } from '../../lib/trpc'
 
 /** The flow's transient state. "Connected" is deliberately absent — that is the
@@ -33,7 +34,7 @@ const OUTCOME: Record<string, string> = {
 }
 
 export function GoogleConnection() {
-  const [account, setAccount, missingScopes, refreshGoogle] = useGoogleAccount()
+  const { account, setAccount, missingScopes, refresh: refreshGoogle } = useGoogleAccount()
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   /** Set while a connect is in flight, so unmounting cancels it rather than
    *  leaving a listener holding a port for the life of the app. */
@@ -147,6 +148,35 @@ export function GoogleConnection() {
             cannot delete mail permanently or change your calendar.
           </p>
         ))}
+      {connected && <ImageSenders />}
     </section>
+  )
+}
+
+/**
+ * The standing "always load images from this sender" permissions.
+ *
+ * **Shown because it is revocable, and revocable because it is shown.** Every
+ * one of these is a disclosure the user agreed to once, in a mail reader,
+ * possibly months ago — a permission that cannot be seen or withdrawn from
+ * settings is not one they can be said to still be giving. Absent entirely when
+ * there are none, so the common case costs no words.
+ */
+function ImageSenders(): React.JSX.Element | null {
+  const senders = useAlwaysAllowedSenders()
+  const forget = useForgetImageSenders()
+
+  if (senders === undefined || senders.size === 0) return null
+
+  return (
+    <p className="flex items-baseline gap-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1">
+        Images load automatically from {senders.size}{' '}
+        {senders.size === 1 ? 'sender' : 'senders'}.
+      </span>
+      <Button variant="ghost" size="xs" className="shrink-0" onClick={() => void forget()}>
+        Forget them
+      </Button>
+    </p>
   )
 }
