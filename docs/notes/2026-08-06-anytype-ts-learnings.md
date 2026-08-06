@@ -11,6 +11,12 @@ markdown-and-path native, and that difference cascades through everything above 
 value is concentrated in their **Electron main process** and their **repo-level agent/QA
 conventions**, both of which are architecture-neutral and both of which are ahead of ours.
 
+> **Scope, and a correction.** This note covers the engineering. It originally read as though the
+> product side yielded nothing, which was too quick — the *architecture* doesn't transfer, but
+> several of the knowledge-management ideas it enables are reachable from files and a grep. Those are
+> in the companion note, [`2026-08-06-anytype-ts-knowledge-model.md`](2026-08-06-anytype-ts-knowledge-model.md),
+> whose headline item (dates as query pages) is the highest value-to-cost idea in the whole review.
+
 ---
 
 ## The licence bounds the answer: nothing here can be *directly* used
