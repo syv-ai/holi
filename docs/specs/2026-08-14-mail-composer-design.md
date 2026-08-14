@@ -323,10 +323,9 @@ and `googleData`'s Google-first ordering sit under this feature as facts. D70's 
 them by hand is the first task of the plan, before any composer code exists — and it is a
 narrower, more honest ask than "verify Google", which is what the plan first said.
 
-**One inbound call is also unproven and hides it well:** the People contacts fetch behind
-recipient autocomplete. `listContacts` never rejects and caches `[]` on refusal, so a scope or
-`readMask` failure is indistinguishable from an empty address book. Chips will still work; they
-will simply never suggest anyone, which reads as a design choice rather than a bug.
+**The address book behind the recipient chips is proven** — `@`-completion in the mail search
+field already returns real contacts, so `listContacts` and its `readMask` are exercised and §6's
+autocomplete is building on something that works.
 
 **On what the preview claims.** It renders through Holi's sanitiser and D69's paper decision, so
 it is exactly what *Holi* would show — which is to say, exactly what will be sent. It is not a

@@ -91,11 +91,6 @@ fakes written from documentation, and the composer sits directly on all of them.
       ask again* → ask it to send again. **The prompt must reappear.** No unit test in this repo
       can assert this, and a gate that does not fire is worse than no gate because it is
       believed in.
-- [ ] **Check that contacts autocomplete actually returns people.** It is an *inbound* call and it
-      is still unproven, because `listContacts` never rejects — it caches `[]` on refusal, so a
-      scope or `readMask` failure looks exactly like an empty address book. Open the mail pane and
-      confirm the recipient dropdown suggests real senders. If it is empty, fix it before Task 8,
-      whose autocomplete is built on it.
 - [ ] Record the results in `docs/decisions.md` under D70 and in
       `prd/_phase2-google-mail-calendar.md`'s proven/unproven list. If reply threading is broken,
       fix it before Task 1 — every reply in this plan inherits it.
