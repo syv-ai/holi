@@ -357,3 +357,182 @@ describe('mutations', () => {
     expect(cache.readThreads(INBOX_KEY)).toHaveLength(1)
   })
 })
+
+/**
+ * The composer's writes (D71).
+ *
+ * §7 earns itself here. A sent *message* is not a label delta and `patchThread`
+ * cannot express one — but a draft appearing and disappearing **is** one, which
+ * is what makes the thread's *Continue draft* chip arrive and leave without a
+ * refetch.
+ */
+describe('composer writes', () => {
+  /** A Gmail that records what was asked of it and can be told to refuse. */
+  function composer({ writesFail = false } = {}) {
+    const calls: { method: string; url: string }[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const ok = (body: unknown) => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      })
+      const method = init?.method ?? 'GET'
+      const path_ = new URL(url).pathname
+
+      if (method !== 'GET') {
+        calls.push({ method, url })
+        if (writesFail) {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({}),
+            text: async () =>
+              JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+          }
+        }
+        return ok({ id: 'x-1' })
+      }
+
+      calls.push({ method, url })
+      if (path_.endsWith('/settings/sendAs')) {
+        if (writesFail) {
+          return {
+            ok: false,
+            status: 403,
+            json: async () => ({}),
+            text: async () =>
+              JSON.stringify({ error: { errors: [{ reason: 'insufficientPermissions' }] } }),
+          }
+        }
+        return ok({ sendAs: [{ sendAsEmail: 'Ada@syv.ai', isDefault: true }] })
+      }
+      if (path_.endsWith('/labels')) return ok({ labels: [] })
+      if (path_.endsWith('/profile')) return ok({ historyId: '100' })
+      if (path_.endsWith('/threads')) return ok({ threads: [{ id: 't1' }] })
+      if (path_.includes('/threads/')) {
+        return ok({
+          id: 't1',
+          messages: [
+            {
+              id: 'm1',
+              internalDate: '1000000000000',
+              labelIds: ['INBOX'],
+              payload: {
+                headers: [
+                  { name: 'Subject', value: 'Q2 budget' },
+                  { name: 'Message-ID', value: '<msg-1@mail.example>' },
+                ],
+              },
+            },
+          ],
+        })
+      }
+      return ok({})
+    }) as unknown as typeof globalThis.fetch
+
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.useAccount('sub-a')
+    return { data: subject, calls }
+  }
+
+  const MAIL = { to: ['bo@example.com'], subject: 'Q2 budget', body: 'Here it is.' }
+
+  it('a saved draft makes the thread show one, without a refetch', async () => {
+    const { data: subject } = composer()
+    expect((await subject.threads({})).threads[0]!.hasDraft).toBe(false)
+
+    await subject.saveDraft({ mail: MAIL, threadId: 't1' })
+
+    expect((await subject.threads({})).threads[0]!.hasDraft).toBe(true)
+  })
+
+  it('sending clears the thread’s draft flag', async () => {
+    const { data: subject } = composer()
+    await subject.saveDraft({ mail: MAIL, threadId: 't1' })
+
+    await subject.sendMail({ mail: MAIL, draftId: 'd-1', threadId: 't1' })
+
+    expect((await subject.threads({})).threads[0]!.hasDraft).toBe(false)
+  })
+
+  it('discarding clears it too', async () => {
+    const { data: subject } = composer()
+    await subject.saveDraft({ mail: MAIL, threadId: 't1' })
+
+    await subject.discardDraft({ draftId: 'd-1', threadId: 't1' })
+
+    expect((await subject.threads({})).threads[0]!.hasDraft).toBe(false)
+  })
+
+  it('does not record a draft Google refused', async () => {
+    // The ordering the whole module exists for. A cache that records a write
+    // Google refused is the one divergence a delta sync can never repair.
+    const { data: subject } = composer({ writesFail: true })
+
+    await expect(subject.saveDraft({ mail: MAIL, threadId: 't1' })).rejects.toMatchObject({
+      code: 'scope',
+    })
+
+    expect((await subject.threads({})).threads[0]!.hasDraft).toBe(false)
+  })
+
+  it('sends a draft through drafts/send, a thread through messages/send', async () => {
+    const { data: subject, calls } = composer()
+
+    await subject.sendMail({ mail: MAIL, draftId: 'd-1', threadId: 't1' })
+    expect(calls.some((c) => c.url.endsWith('/drafts/send'))).toBe(true)
+
+    calls.length = 0
+    await subject.sendMail({ mail: MAIL, threadId: 't1' })
+    expect(calls.some((c) => c.url.endsWith('/messages/send'))).toBe(true)
+
+    calls.length = 0
+    await subject.sendMail({ mail: MAIL })
+    expect(calls.some((c) => c.url.endsWith('/messages/send'))).toBe(true)
+    expect(calls.some((c) => c.url.includes('/threads/'))).toBe(false)
+  })
+
+  it('leaves the cache alone for a message that belongs to no thread', async () => {
+    const { data: subject } = composer()
+
+    await expect(subject.sendMail({ mail: MAIL })).resolves.toEqual({ id: 'x-1' })
+  })
+
+  describe('sendAs', () => {
+    it('fetches once for two callers, like the address book', async () => {
+      const { data: subject, calls } = composer()
+
+      const [a, b] = await Promise.all([subject.sendAs(), subject.sendAs()])
+
+      expect(a).toEqual(['ada@syv.ai'])
+      expect(b).toEqual(['ada@syv.ai'])
+      expect(calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(1)
+    })
+
+    it('refetches for a different account', async () => {
+      const { data: subject, calls } = composer()
+      await subject.sendAs()
+
+      subject.useAccount('sub-b')
+      await subject.sendAs()
+
+      expect(calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(2)
+    })
+
+    it('does not latch a failure, unlike the address book', async () => {
+      // `listContacts` never rejects, so `contacts()` can memoise safely. This
+      // one can reject, and a memoised rejection would keep every reply-all
+      // copying the user on their own messages until the account changed.
+      const failing = composer({ writesFail: true })
+      await expect(failing.data.sendAs()).rejects.toMatchObject({ code: 'scope' })
+
+      await expect(failing.data.sendAs()).rejects.toMatchObject({ code: 'scope' })
+
+      expect(failing.calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(2)
+    })
+  })
+})

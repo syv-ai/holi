@@ -36,6 +36,12 @@ import {
 } from './calendar'
 import {
   archiveThread,
+  deleteDraft,
+  listSendAs,
+  saveDraft as saveGmailDraft,
+  sendDraft,
+  sendInThread,
+  sendMessage,
   setThreadRead,
   setThreadStarred,
   trashThread,
@@ -43,6 +49,7 @@ import {
   type MailAddress,
   type MailPage,
 } from './gmail'
+import type { OutgoingMail } from './mime'
 import { cacheKey, syncThreads } from './mail-sync'
 import { listContacts } from './people'
 
@@ -72,11 +79,39 @@ export interface GoogleData {
   setStarred(id: string, starred: boolean): Promise<void>
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
+  /**
+   * The composer's writes (D71), on the same Google-first ordering.
+   *
+   * A sent *message* is not a label delta and `patchThread` cannot express one
+   * — but a draft appearing and disappearing **is** one, which is what lets the
+   * thread's *Continue draft* chip arrive and leave without a refetch.
+   */
+  sendMail(input: ComposeWrite): Promise<{ id: string | null }>
+  saveDraft(input: ComposeWrite): Promise<{ id: string | null }>
+  discardDraft(input: { draftId: string; threadId?: string }): Promise<void>
+  /**
+   * Every address this account may send from, fetched **once per connected
+   * account** — the same one-promise-not-one-value trick as `contacts()`, so
+   * two mounts make one request. Needed by reply-all, which has to exclude
+   * every alias and not merely the connected address.
+   */
+  sendAs(): Promise<string[]>
   /** The account this cache belongs to. Called on connect; a different `sub`
    *  wipes everything before anything can be read. */
   useAccount(sub: string): void
   /** Disconnect. Leaves no file on disk. */
   forget(): void
+}
+
+/**
+ * One shape for send and save, because the composer treats them as one act:
+ * `draftId` present means an existing draft, `threadId` present means it
+ * belongs to a conversation, and either may be absent.
+ */
+export interface ComposeWrite {
+  mail: OutgoingMail
+  draftId?: string
+  threadId?: string
 }
 
 export interface GoogleDataDeps {
@@ -92,6 +127,24 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    *  rejects, so this can never latch a failure permanently — a refusal caches
    *  `[]` until the account changes, which is the same answer it would give. */
   let addressBook: Promise<MailAddress[]> | null = null
+  /**
+   * The send-as aliases, held the same way — but with one difference that
+   * matters. `listContacts` never rejects, so `addressBook` can never latch a
+   * failure. `listSendAs` *can* reject (a missing scope is a 403), and a
+   * memoised rejection would keep every reply-all copying the user on their own
+   * messages until the account changed. So a failure clears the memo.
+   */
+  let aliases: Promise<string[]> | null = null
+
+  /** `DRAFT` is one of the four patchable labels, so a draft arriving or
+   *  leaving is expressible as a delta on the cached thread. */
+  const draftDelta = (threadId: string | undefined, present: boolean): void => {
+    if (threadId === undefined) return
+    cache.patchThread(threadId, {
+      added: present ? ['DRAFT'] : [],
+      removed: present ? [] : ['DRAFT'],
+    })
+  }
 
   return {
     async agenda(window, overrides) {
@@ -151,6 +204,42 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
+    sendMail({ mail, draftId, threadId }) {
+      return write(
+        () => {
+          // A draft is sent through `drafts.send` so Gmail removes it
+          // atomically; anything else would leave an orphan draft behind a
+          // message the user has already sent.
+          if (draftId !== undefined) return sendDraft(api(), draftId)
+          if (threadId !== undefined) return sendInThread(api(), threadId, mail)
+          return sendMessage(api(), mail)
+        },
+        // Whatever the route, the thread no longer has an unsent draft in it.
+        () => draftDelta(threadId, false),
+      )
+    },
+
+    saveDraft({ mail, draftId, threadId }) {
+      return write(
+        () => saveGmailDraft(api(), mail, { draftId, threadId }),
+        () => draftDelta(threadId, true),
+      )
+    },
+
+    discardDraft({ draftId, threadId }) {
+      return write(
+        () => deleteDraft(api(), draftId),
+        () => draftDelta(threadId, false),
+      )
+    },
+
+    sendAs() {
+      return (aliases ??= listSendAs(api()).catch((error: unknown) => {
+        aliases = null
+        throw error
+      }))
+    },
+
     useAccount(sub) {
       // The address book belongs to whoever was connected, exactly as the
       // cached mail does — and unlike the mail it is not keyed by account, so
@@ -158,11 +247,13 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       // contacts. `cache.useAccount` no-ops on an unchanged account; this does
       // not, and the cost of being wrong that way is one extra request.
       addressBook = null
+      aliases = null
       cache.useAccount(sub)
     },
 
     forget() {
       addressBook = null
+      aliases = null
       cache.destroy()
     },
   }
@@ -181,9 +272,10 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
  * Optimism belongs in the renderer, where a revert costs a re-render and
  * nothing is persisted. It does not belong on disk.
  */
-async function write(send: () => Promise<void>, record: () => void): Promise<void> {
-  await send()
+async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> {
+  const result = await send()
   record()
+  return result
 }
 
 /**
