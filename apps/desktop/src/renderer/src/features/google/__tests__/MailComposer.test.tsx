@@ -61,7 +61,7 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
   const onSent = vi.fn()
   const onDiscarded = vi.fn()
   const onClose = vi.fn()
-  render(
+  const { unmount } = render(
     <MailComposer
       intent={REPLY}
       sendAs={['ada@syv.ai']}
@@ -71,7 +71,7 @@ function mount(props: Partial<React.ComponentProps<typeof MailComposer>> = {}) {
       {...props}
     />,
   )
-  return { onSent, onDiscarded, onClose }
+  return { onSent, onDiscarded, onClose, unmount }
 }
 
 const subjectField = (): HTMLElement => screen.getByRole('textbox', { name: 'Subject' })
@@ -512,6 +512,52 @@ describe('discarding', () => {
     await user.click(screen.getByRole('button', { name: 'Discard draft' }))
     await waitFor(() => expect(onDiscarded).toHaveBeenCalled())
     expect(discardDraft).toHaveBeenCalledWith({ draftId: 'd-1', threadId: 't1' })
+  })
+
+  /**
+   * A discard that failed left the draft in Gmail and closed the composer
+   * anyway — so the failure it had just set was rendered at nothing, the user
+   * was told the opposite of what happened, and the unmount save could then
+   * recreate the draft they had asked to delete.
+   */
+  it('stays open and says so when the discard is refused', async () => {
+    const user = setup()
+    discardDraft.mockRejectedValue(new Error('offline'))
+    const { onDiscarded } = mount()
+    await user.type(subjectField(), 'a')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveState()).toBe('Saved'))
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Compose mail' })).toBeVisible())
+    expect(onDiscarded).not.toHaveBeenCalled()
+    expect(subjectField()).toHaveValue('Re: Q2 budgeta')
+  })
+
+  it('does not save the draft it just deleted back into existence', async () => {
+    // The unmount save is what makes closing non-lossy, and after a discard it
+    // is the opposite: a `create` for the message the user just threw away,
+    // reappearing in Drafts moments after they binned it.
+    const user = setup()
+    const { onDiscarded, unmount } = mount()
+    await user.type(subjectField(), 'a')
+    await vi.advanceTimersByTimeAsync(2000)
+    await waitFor(() => expect(saveState()).toBe('Saved'))
+    await user.type(subjectField(), 'b') // dirty again
+
+    await user.click(screen.getByRole('button', { name: 'Discard' }))
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }))
+    await waitFor(() => expect(onDiscarded).toHaveBeenCalled())
+
+    // The parent removes the composer once it hears back — which is what runs
+    // the unmount save.
+    saveDraft.mockClear()
+    unmount()
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(saveDraft).not.toHaveBeenCalled()
   })
 
   it('Keep forces a save instead of losing the text', async () => {

@@ -1540,6 +1540,22 @@ describe('the composer surface', () => {
     return { api, calls, drafts }
   }
 
+  /**
+   * A part's bytes as `drafts.get` hands them over: base64url of the content
+   * **after** its transfer encoding has been undone. Gmail decodes that itself,
+   * so a part written base64 (which the text parts are, to keep a long
+   * paragraph under the 998-octet line limit) comes back as plain text — and a
+   * double that skipped this step would hand `readDraft` base64 and call it the
+   * message.
+   */
+  function partData(content: string, encoding: string | undefined): string {
+    const bytes =
+      encoding?.toLowerCase() === 'base64'
+        ? Buffer.from(content.replace(/\r\n/g, ''), 'base64')
+        : Buffer.from(content, 'utf8')
+    return bytes.toString('base64url')
+  }
+
   /** Turn a stored `raw` back into the payload shape `drafts.get` returns, so
    *  `readDraft` is exercised against Gmail's actual response shape rather than
    *  against the bytes we happened to send. */
@@ -1562,7 +1578,12 @@ describe('the composer surface', () => {
         const [partHead = '', ...partRest] = chunk.replace(/^\r\n/, '').split('\r\n\r\n')
         return {
           mimeType: partHead.includes('text/html') ? 'text/html' : 'text/plain',
-          body: { data: Buffer.from(partRest.join('\r\n\r\n'), 'utf8').toString('base64url') },
+          body: {
+            data: partData(
+              partRest.join('\r\n\r\n'),
+              /Content-Transfer-Encoding:\s*(\S+)/i.exec(partHead)?.[1],
+            ),
+          },
         }
       })
       return { id: `m-${record.id}`, threadId: record.threadId, payload: { headers, parts } }
@@ -1574,7 +1595,7 @@ describe('the composer surface', () => {
       payload: {
         headers,
         mimeType: 'text/plain',
-        body: { data: Buffer.from(body, 'utf8').toString('base64url') },
+        body: { data: partData(body, headerIn(text, 'Content-Transfer-Encoding') ?? undefined) },
       },
     }
   }
@@ -1847,6 +1868,7 @@ describe('the composer surface', () => {
       expect(draft.foreign).toBe(false)
       expect(draft.markdown).toBe(markdown)
       expect(draft.subject).toBe('Q2 budget')
+      expect(draft.text).toBe(markdown)
       expect(draft.to.map((a) => a.email)).toEqual(['bo@example.com'])
     })
 
@@ -1875,6 +1897,24 @@ describe('the composer surface', () => {
       // existed, and of anything from a plain-text client.
       expect(draft.html).toBeNull()
       expect(draft.text).toBe('plain words')
+    })
+
+    /**
+     * "Byte-exact" has to include the bytes nobody looks at.
+     *
+     * `replyBody` opens with two blank lines so the cursor sits above the quoted
+     * original. Trimming on the way back in deletes exactly that: the user saves
+     * a half-written reply, reopens it, and their writing space is gone with
+     * their text flush against the `---`. It reads as the editor eating input.
+     */
+    it('preserves the leading blank lines a reply is written into', async () => {
+      const markdown = '\n\nmy answer\n\n---\n\n> what they wrote\n'
+      const raw = toBase64Url(buildRfc822({ ...MAIL, body: markdown, html: '<p>x</p>' }))
+      const { api } = composer({ drafts: [{ id: 'd-1', threadId: 't1', raw }] })
+
+      const draft = await readDraft(api, 'd-1')
+
+      expect(draft.markdown).toBe(markdown)
     })
 
     it('carries cc, which is what a reply-all draft is for', async () => {

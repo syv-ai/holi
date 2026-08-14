@@ -50,7 +50,7 @@ import {
   type MailAddress,
   type MailPage,
 } from './gmail'
-import type { OutgoingMail } from './mime'
+import type { MailPart, OutgoingMail } from './mime'
 import { cacheKey, syncThreads } from './mail-sync'
 import { listContacts } from './people'
 
@@ -146,14 +146,43 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
   let aliases: Promise<string[]> | null = null
 
   /**
+   * The most recently forwarded message's bytes, held so the autosave does not
+   * fetch them again every two seconds.
+   *
+   * **One slot, not a map.** A composer forwards exactly one message, so a slot
+   * is all that is ever live — and the bytes are the largest thing in this
+   * module, which is an argument against keeping a history of them. Switching
+   * forwards evicts the previous one.
+   *
+   * A rejection is never latched: memoising one would strand every later
+   * forward of that message on a failure that has since passed. Same rule as
+   * `aliases`, and for the same reason.
+   */
+  let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
+
+  /**
    * The mail, with a forwarded message's attachments fetched and attached.
    *
-   * Resolved per write rather than held: the bytes are large, and the write is
-   * the only thing that ever needs them.
+   * The fetch is memoised because the *write* is not a one-off: autosave runs
+   * on every 2s of idle typing, and each run rebuilt the whole message. A 20MB
+   * forward meant re-downloading and re-uploading 20MB per pause, against a
+   * rate-limited API, with all of it in main's heap each time. The bytes cannot
+   * change while the source message id does not.
    */
   const resolved = async (input: ComposeWrite): Promise<OutgoingMail> => {
     if (input.forwardOf === undefined) return input.mail
-    const attachments = await fetchMessageAttachments(api(), input.forwardOf.messageId)
+    const { messageId } = input.forwardOf
+    if (forwarded === null || forwarded.messageId !== messageId) {
+      forwarded = { messageId, bytes: fetchMessageAttachments(api(), messageId) }
+    }
+    const pending = forwarded
+    let attachments: MailPart[]
+    try {
+      attachments = await pending.bytes
+    } catch (error) {
+      if (forwarded === pending) forwarded = null
+      throw error
+    }
     // An empty list stays absent, so forwarding a message with nothing attached
     // takes the multipart/alternative path rather than building an empty
     // multipart/mixed — which displays as a mysteriously missing attachment.

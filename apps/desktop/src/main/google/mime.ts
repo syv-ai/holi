@@ -119,17 +119,32 @@ function render(body: Body): string {
   return `${head}${CRLF}${CRLF}${body.content}`
 }
 
-/** A leaf carrying text. `8bit` because the charset is declared and the
- *  transport is Gmail's own API, not an SMTP hop that might be 7-bit. */
+/**
+ * A leaf carrying text, base64'd and wrapped.
+ *
+ * **Not `8bit`, and the reason is line length rather than the charset.** RFC
+ * 5322 caps a line at 998 octets — the same limit `wrapBase64` exists for — and
+ * the text parts had nothing enforcing it. The composer wraps *visually*, so a
+ * paragraph is one logical line, and `marked` renders it as a single
+ * `<p>…</p>`; a long paragraph is ordinary writing, and it produced a line no
+ * standard allows. Base64 makes the limit structural instead of a thing to
+ * remember, and reuses the wrapper already trusted for attachments rather than
+ * introducing a quoted-printable encoder with its own escaping rules.
+ *
+ * Nothing downstream sees the difference: Gmail's API returns a part's body
+ * already decoded from its transfer encoding, so `readDraft` reads the same
+ * bytes back either way — and Gmail re-encodes on delivery regardless (observed
+ * during D70's verification, where an `8bit` part arrived quoted-printable).
+ */
 function textBody(mimeType: string, content: string): Body {
   return {
     headers: [
       // Declared explicitly: without a charset the body is read as US-ASCII,
       // and a Danish sentence arrives as mojibake having been sent perfectly.
       ['Content-Type', `${mimeType}; charset="UTF-8"`],
-      ['Content-Transfer-Encoding', '8bit'],
+      ['Content-Transfer-Encoding', 'base64'],
     ],
-    content,
+    content: wrapBase64(Buffer.from(content, 'utf8').toString('base64')),
   }
 }
 
@@ -213,6 +228,13 @@ function randomBoundary(): string {
  * `multipart/mixed` when there are attachments. The single-part path is what
  * the agent's `holi-google send` has always produced and is pinned byte for
  * byte by a test, because changing it would change a surface already in use.
+ *
+ * **That pin was repointed once, deliberately** (2026-08-14): the text parts
+ * moved from `8bit` to `base64`, because nothing was keeping a long paragraph
+ * under RFC 5322's 998-octet line limit (see `textBody`). It is a change of
+ * transfer encoding and not of the surface — every client decodes it, the
+ * recipient reads the same characters, and `readDraft` gets the same bytes back
+ * because Gmail's API undoes the encoding before handing a part over.
  *
  * `makeBoundary` is injectable so tests can assert where each boundary landed;
  * production never passes it.

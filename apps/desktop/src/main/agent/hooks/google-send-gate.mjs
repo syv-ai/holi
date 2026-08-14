@@ -141,11 +141,26 @@ if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
  *
  * Matched on the tool *name*, which the harness supplies — there is no command
  * string to parse and nothing to spell three ways.
+ *
+ * **Two loose tests rather than one exact one**, because the point of a
+ * fallback is the connector nobody enumerated. Keying on the server being
+ * called `Gmail` and the tool *starting* with `send` describes the one
+ * connector that existed when this was written; `send_email` on a Workspace
+ * server, or `messages_send` on any of them, is the same irreversible act under
+ * a name this rule never learned. A false match costs one extra prompt; a miss
+ * costs a mail that reached a person unasked.
  */
-const MCP_SENDS = /^mcp__.*[Gg]mail.*__(send|reply|forward)/
+/** A sending verb standing alone in the name — so `messages_send` matches and
+ *  `resend_webhook` does not. */
+const SENDS = /(?:^|_)(send|reply|forward)(?:_|$)/i
+/** …and it has to be about mail. The prompt this raises talks about a message
+ *  reaching a person; asking it of `mcp__slack__send_message` would be a
+ *  confusing lie rather than a cautious win. */
+const MAILISH = /gmail|mail|email/i
 
 if (typeof payload.tool_name === 'string' && payload.tool_name.startsWith('mcp__')) {
-  if (MCP_SENDS.test(payload.tool_name)) {
+  const tool = payload.tool_name.slice(payload.tool_name.lastIndexOf('__') + 2)
+  if (SENDS.test(tool) && MAILISH.test(payload.tool_name)) {
     ask(
       'This sends mail through a claude.ai Gmail connector rather than through Holi. ' +
         'Holi cannot see the recipients or the message, and none of its own protections ' +

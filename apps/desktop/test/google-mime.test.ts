@@ -27,8 +27,26 @@ function headersOf(raw: string): Record<string, string> {
   return out
 }
 
+/**
+ * The text a reader ends up with.
+ *
+ * The text parts are base64 on the wire — see `textBody`, where that is what
+ * keeps a long paragraph under the 998-octet line limit — and Gmail decodes the
+ * transfer encoding before anything reads a part. So these tests assert the
+ * decoded text, which is the thing that has to be right, rather than the wire
+ * form, which is an encoding detail.
+ */
+function decodeText(content: string): string {
+  return Buffer.from(content.replace(/\r\n/g, ''), 'base64').toString('utf8')
+}
+
 function bodyOf(raw: string): string {
-  return raw.split('\r\n\r\n').slice(1).join('\r\n\r\n')
+  return decodeText(raw.split('\r\n\r\n').slice(1).join('\r\n\r\n'))
+}
+
+/** A part's decoded content, given the whole part (headers included). */
+function partBodyOf(part: string): string {
+  return decodeText(part.split('\r\n\r\n').slice(1).join('\r\n\r\n'))
 }
 
 describe('buildRfc822', () => {
@@ -38,7 +56,7 @@ describe('buildRfc822', () => {
 
     expect(h.to).toBe('ada@syv.ai')
     expect(h.subject).toBe('Q2 budget')
-    expect(bodyOf(raw)).toBe('Here it is.')
+    expect(bodyOf(raw)).toBe('Here it is.') // decoded — see `decodeText`
   })
 
   it('separates headers with CRLF, not bare newlines', () => {
@@ -78,7 +96,7 @@ describe('buildRfc822', () => {
 
     expect(h['content-type']).toMatch(/text\/plain/)
     expect(h['content-type']).toMatch(/charset="?UTF-8"?/i)
-    expect(raw).toContain('Vi ses på mødet i går — hilsen Ada')
+    expect(bodyOf(raw)).toBe('Vi ses på mødet i går — hilsen Ada')
   })
 
   it('encodes a non-ASCII subject as an RFC 2047 word', () => {
@@ -170,9 +188,9 @@ describe('buildRfc822 — single part, unchanged', () => {
         'MIME-Version: 1.0',
         'X-Holi-Source: markdown',
         'Content-Type: text/plain; charset="UTF-8"',
-        'Content-Transfer-Encoding: 8bit',
+        'Content-Transfer-Encoding: base64',
         '',
-        'Here it is.',
+        Buffer.from('Here it is.', 'utf8').toString('base64'),
       ].join('\r\n'),
     )
   })
@@ -209,18 +227,18 @@ describe('buildRfc822 — multipart/alternative', () => {
   it('carries the markdown in the plain part and the html in the html part', () => {
     const parts = partsOf(buildRfc822(MAIL, fixedBoundaries('ALT')), 'ALT')
 
-    expect(parts[0]).toContain('\r\n\r\nHere it is.')
-    expect(parts[1]).toContain('\r\n\r\n<p>Here it is.</p>')
+    expect(partBodyOf(parts[0]!)).toBe('Here it is.')
+    expect(partBodyOf(parts[1]!)).toBe('<p>Here it is.</p>')
   })
 
-  it('declares UTF-8 and 8bit on both parts, so Danish survives either way', () => {
+  it('declares UTF-8 on both parts, so Danish survives either way', () => {
     const danish = { ...MAIL, body: 'på mødet', html: '<p>på mødet</p>' }
     const parts = partsOf(buildRfc822(danish, fixedBoundaries('ALT')), 'ALT')
 
     for (const part of parts) {
       expect(part).toMatch(/charset="UTF-8"/)
-      expect(part).toMatch(/Content-Transfer-Encoding: 8bit/)
-      expect(part).toContain('på mødet')
+      expect(part).toMatch(/Content-Transfer-Encoding: base64/)
+      expect(partBodyOf(part)).toContain('på mødet')
     }
   })
 
@@ -257,6 +275,23 @@ describe('buildRfc822 — multipart/alternative', () => {
     const raw = buildRfc822({ ...BASE, body: '', html: '' })
 
     expect(headersOf(raw)['content-type']).toBe('text/plain; charset="UTF-8"')
+  })
+
+  /**
+   * RFC 5322 caps a line at 998 octets, and `wrapBase64` exists because a
+   * longer one "is refused outright by some servers and silently truncated by
+   * others". The text parts had no equivalent: the composer wraps visually
+   * rather than inserting newlines, so a paragraph is one logical line, and
+   * `marked` emits it as a single `<p>…</p>`. A long paragraph is ordinary
+   * writing, not an exotic input.
+   */
+  it('emits no line over 998 octets, however long the paragraph', () => {
+    const paragraph = 'ni har en meget lang sætning her — '.repeat(80) // ~2.8kB, and non-ASCII
+    const raw = buildRfc822({ ...BASE, body: paragraph, html: `<p>${paragraph}</p>` })
+
+    for (const line of raw.split('\r\n')) {
+      expect(Buffer.byteLength(line, 'utf8'), line.slice(0, 60)).toBeLessThanOrEqual(998)
+    }
   })
 
   it('treats a whitespace-only body as empty rather than as a failed render', () => {

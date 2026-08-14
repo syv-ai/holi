@@ -240,15 +240,19 @@ function decodeBody(data: string | undefined): string {
  * Prefers `text/plain`; falls back to converting `text/html`. Attachments are
  * skipped — a part with a filename is a file, not the message.
  */
-export function bodyTextOf(payload: RawPart | undefined): string {
+export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
   const plain = findPart(payload, 'text/plain')
-  if (plain !== null) return decodeBody(plain.body?.data).trim()
+  if (plain !== null) {
+    const text = decodeBody(plain.body?.data)
+    return trim ? text.trim() : text
+  }
 
   const html = findPart(payload, 'text/html')
   if (html !== null) return htmlToText(decodeBody(html.body?.data))
 
   // A single-part message carries its body on the payload itself.
-  return decodeBody(payload?.body?.data).trim()
+  const text = decodeBody(payload?.body?.data)
+  return trim ? text.trim() : text
 }
 
 /**
@@ -1154,9 +1158,15 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to
     // trust, and the renderer converts the html instead.
-    markdown: foreign ? null : bodyTextOf(payload),
+    // Untrimmed, unlike everywhere else this is read. Trimming is right for a
+    // message being *displayed* and wrong for one being *reopened for editing*:
+    // `replyBody` starts a reply with two blank lines so the cursor sits above
+    // the quote, and trimming deletes exactly that — the user saves, reopens,
+    // and their writing space is gone with their text flush against the `---`.
+    // "Byte-exact" has to include the bytes nobody looks at.
+    markdown: foreign ? null : bodyTextOf(payload, { trim: false }),
     html: bodyHtmlOf(payload),
-    text: bodyTextOf(payload),
+    text: bodyTextOf(payload, { trim: false }),
     foreign,
   }
 }

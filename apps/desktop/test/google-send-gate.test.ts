@@ -282,4 +282,32 @@ describe('the claude.ai Gmail connector', () => {
   it('ignores an unrelated MCP server entirely', async () => {
     expect(decisionOf(await decide(mcp('mcp__azure_devops__create_pr')))).toBe('defer')
   })
+
+  /**
+   * The point of a fallback is the case nobody enumerated.
+   *
+   * Keying on the server being called `Gmail` and the tool *starting* with
+   * `send` describes one connector that exists today. A Workspace connector
+   * (`send_email`) or a resource-first name (`messages_send`) is the same act
+   * under a name this rule never learned, and the cost of missing one is a mail
+   * that reached a person unasked — against one extra prompt for a false match.
+   */
+  it('asks for a send however the connector spells it', async () => {
+    for (const name of [
+      'mcp__google_workspace__send_email',
+      'mcp__gmail__messages_send',
+      'mcp__my_mail_tools__forward_message',
+      'mcp__email_relay__reply_all',
+    ]) {
+      expect(decisionOf(await decide(mcp(name))), name).toBe('ask')
+    }
+  })
+
+  it('still ignores a send that has nothing to do with mail', async () => {
+    // The prompt this gate raises is about mail reaching a person. Asking it of
+    // a chat message would be a confusing lie, not a cautious win.
+    for (const name of ['mcp__slack__send_message', 'mcp__azure_devops__resend_webhook']) {
+      expect(decisionOf(await decide(mcp(name))), name).toBe('defer')
+    }
+  })
 })

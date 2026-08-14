@@ -624,4 +624,31 @@ describe('forwarded attachments', () => {
     const message = sent[0]!.message as { raw: string }
     expect(Buffer.from(message.raw, 'base64url').toString('utf8')).toContain('filename="f0.pdf"')
   })
+
+  /**
+   * The autosave runs every 2s of idle typing, and each run rebuilt the whole
+   * message — which for a forward meant downloading the original's attachments
+   * again. A 20MB forward re-fetched and re-uploaded 20MB per pause, against a
+   * rate-limited API, holding it all in main's heap each time. The bytes cannot
+   * change while the source message id does not.
+   */
+  it('fetches a forwarded message’s bytes once, not once per autosave', async () => {
+    const { data: subject, urls } = forwarding(1)
+
+    await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-1' } })
+    await subject.saveDraft({ mail: MAIL, draftId: 'd-1', forwardOf: { messageId: 'src-1' } })
+    await subject.sendMail({ mail: MAIL, forwardOf: { messageId: 'src-1' } })
+
+    expect(urls.filter((url) => url.includes('/attachments/a0'))).toHaveLength(1)
+  })
+
+  it('fetches again for a different message, and after a failure', async () => {
+    // Memoising a rejection would strand every later forward of that message.
+    const { data: subject, urls } = forwarding(1)
+
+    await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-1' } })
+    await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-2' } })
+
+    expect(urls.filter((url) => url.includes('/attachments/a0')).length).toBeGreaterThan(1)
+  })
 })

@@ -366,13 +366,23 @@ export function MailComposer({
 
   const discard = async (): Promise<void> => {
     if (draftRef.current !== null) {
-      await trpc.google.discardDraft
-        .mutate({
+      try {
+        await trpc.google.discardDraft.mutate({
           draftId: draftRef.current,
           ...(threadId === undefined ? {} : { threadId }),
         })
-        .catch((error: unknown) => setFailure(describeSendFailure(error)))
+      } catch (error: unknown) {
+        // Closing here would unmount the composer, so the failure just set would
+        // render at nothing and the user would be told the draft was thrown away
+        // while it sat in Gmail. It stays open, saying so, with the text intact.
+        setFailure(describeSendFailure(error))
+        return
+      }
     }
+    // The draft is gone, so there is nothing left to save — and the unmount save
+    // below is a `create`, which would put the message the user just discarded
+    // straight back into Drafts.
+    dirtyRef.current = false
     onDiscarded()
   }
 
