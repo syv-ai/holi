@@ -84,6 +84,21 @@ export function MailComposer({
   onReconnect,
 }: MailComposerProps): React.JSX.Element {
   const threadId = intent.kind === 'new' ? undefined : intent.threadId
+  /**
+   * A forward carries the original's attachments (D71).
+   *
+   * The message id travels, never the bytes: main fetches them and hands them
+   * to `buildRfc822`, so there is no base64 in renderer state, no file picker
+   * and no size-cap UI to design.
+   */
+  // Memoised: a fresh object each render would change `save`'s identity every
+  // render, and the autosave effect depends on `save` — so the 2s debounce
+  // would reschedule itself continuously instead of settling.
+  const forwardOf = useMemo(
+    () => (intent.kind === 'forward' ? { messageId: intent.parent.id } : undefined),
+    [intent],
+  )
+  const forwarded = intent.kind === 'forward' ? intent.parent.attachments : []
 
   // The opening state, computed once and deliberately never again: `sendAs`
   // arrives asynchronously, and recomputing on it would rewrite the recipients
@@ -198,6 +213,7 @@ export function MailComposer({
       const result = await trpc.google.saveDraft.mutate({
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
+        ...(forwardOf === undefined ? {} : { forwardOf }),
         mail: payload(),
       })
       if (result.id !== null) draftRef.current = result.id
@@ -227,7 +243,7 @@ export function MailComposer({
         void save()
       }
     }
-  }, [payload, threadId])
+  }, [payload, threadId, forwardOf])
 
   const markDirty = useCallback(() => {
     dirtyRef.current = true
@@ -274,6 +290,7 @@ export function MailComposer({
       const result = await trpc.google.send.mutate({
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
         ...(threadId === undefined ? {} : { threadId }),
+        ...(forwardOf === undefined ? {} : { forwardOf }),
         mail: payload(),
       })
       onSent(result)
@@ -284,7 +301,7 @@ export function MailComposer({
     } finally {
       setSending(false)
     }
-  }, [onSent, payload, save, threadId])
+  }, [onSent, payload, save, threadId, forwardOf])
 
   const attemptSend = (): void => {
     if (subject.trim() === '' && !confirmingSubject) {
@@ -386,6 +403,15 @@ export function MailComposer({
           onBlur={() => void save()}
         />
       </div>
+
+      {forwarded.length > 0 && (
+        <p className="text-xs text-muted-foreground" data-testid="forwarded-attachments">
+          {/* Named, because the user is about to send files they cannot see.
+              The bytes are fetched in main at send time; this is the only
+              account of what will travel. */}
+          Attached: {forwarded.map((file) => file.filename).join(', ')}
+        </p>
+      )}
 
       <div className="flex gap-1 text-xs" role="tablist" aria-label="Compose view">
         {(['edit', 'preview'] as const).map((which) => (

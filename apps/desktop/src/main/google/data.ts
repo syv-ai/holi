@@ -38,6 +38,7 @@ import {
   archiveThread,
   deleteDraft,
   listSendAs,
+  fetchMessageAttachments,
   saveDraft as saveGmailDraft,
   sendDraft,
   sendInThread,
@@ -112,6 +113,14 @@ export interface ComposeWrite {
   mail: OutgoingMail
   draftId?: string
   threadId?: string
+  /**
+   * Forward the attachments of this message (D71).
+   *
+   * A message id rather than the files themselves: main fetches the bytes and
+   * hands them to `buildRfc822`, so nothing base64 crosses the IPC seam. That
+   * is what makes forwarding work with no file picker and no size-cap UI.
+   */
+  forwardOf?: { messageId: string }
 }
 
 export interface GoogleDataDeps {
@@ -135,6 +144,22 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    * messages until the account changed. So a failure clears the memo.
    */
   let aliases: Promise<string[]> | null = null
+
+  /**
+   * The mail, with a forwarded message's attachments fetched and attached.
+   *
+   * Resolved per write rather than held: the bytes are large, and the write is
+   * the only thing that ever needs them.
+   */
+  const resolved = async (input: ComposeWrite): Promise<OutgoingMail> => {
+    if (input.forwardOf === undefined) return input.mail
+    const attachments = await fetchMessageAttachments(api(), input.forwardOf.messageId)
+    // An empty list stays absent, so forwarding a message with nothing attached
+    // takes the multipart/alternative path rather than building an empty
+    // multipart/mixed — which displays as a mysteriously missing attachment.
+    if (attachments.length === 0) return input.mail
+    return { ...input.mail, attachments }
+  }
 
   /** `DRAFT` is one of the four patchable labels, so a draft arriving or
    *  leaving is expressible as a delta on the cached thread. */
@@ -204,24 +229,27 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       )
     },
 
-    sendMail({ mail, draftId, threadId }) {
+    sendMail(input) {
+      const { draftId, threadId } = input
       return write(
-        () => {
+        async () => {
           // A draft is sent through `drafts.send` so Gmail removes it
           // atomically; anything else would leave an orphan draft behind a
           // message the user has already sent.
-          if (draftId !== undefined) return sendDraft(api(), draftId)
-          if (threadId !== undefined) return sendInThread(api(), threadId, mail)
-          return sendMessage(api(), mail)
+          if (draftId !== undefined) return await sendDraft(api(), draftId)
+          const mail = await resolved(input)
+          if (threadId !== undefined) return await sendInThread(api(), threadId, mail)
+          return await sendMessage(api(), mail)
         },
         // Whatever the route, the thread no longer has an unsent draft in it.
         () => draftDelta(threadId, false),
       )
     },
 
-    saveDraft({ mail, draftId, threadId }) {
+    saveDraft(input) {
+      const { draftId, threadId } = input
       return write(
-        () => saveGmailDraft(api(), mail, { draftId, threadId }),
+        async () => saveGmailDraft(api(), await resolved(input), { draftId, threadId }),
         () => draftDelta(threadId, true),
       )
     },

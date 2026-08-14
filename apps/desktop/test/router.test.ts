@@ -1660,3 +1660,63 @@ describe('google composer procedures', () => {
     })
   })
 })
+
+describe('google forwarding', () => {
+  it('passes forwardOf through, so main can fetch the bytes', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-fwd-'))
+    dirs.push(base)
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+    hosts.push(host)
+    const calls: unknown[] = []
+    const caller = createRouter({
+      registry,
+      session: await idleSession(base),
+      host,
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+      googleData: {
+        sendMail: async (input: unknown) => {
+          calls.push(input)
+          return { id: 'm-1' }
+        },
+      } as never,
+    }).createCaller({})
+
+    await caller.google.send({
+      mail: { to: ['bo@example.com'], subject: 'Fwd: Q2', body: 'x' },
+      forwardOf: { messageId: 'src-1' },
+    })
+
+    expect(calls[0]).toMatchObject({ forwardOf: { messageId: 'src-1' } })
+  })
+
+  it('refuses a forwardOf without a message id', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-fwd2-'))
+    dirs.push(base)
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+    hosts.push(host)
+    const caller = createRouter({
+      registry,
+      session: await idleSession(base),
+      host,
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+      googleData: { sendMail: async () => ({ id: 'm-1' }) } as never,
+    }).createCaller({})
+
+    await expect(
+      caller.google.send({
+        mail: { to: ['bo@example.com'], subject: 'x', body: 'y' },
+        forwardOf: {},
+      } as never),
+    ).rejects.toThrow(/messageId/i)
+  })
+})

@@ -536,3 +536,92 @@ describe('composer writes', () => {
     })
   })
 })
+
+/**
+ * Forwarding attachments through the write surface (D71).
+ *
+ * The renderer names a message; main fetches the bytes. These assert that the
+ * fetch happens on the write path and that the empty case stays empty.
+ */
+describe('forwarded attachments', () => {
+  function forwarding(attachmentCount: number) {
+    const urls: string[] = []
+    const sent: Record<string, unknown>[] = []
+    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+      const ok = (body: unknown) => ({
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      })
+      urls.push(url)
+      const path_ = new URL(url).pathname
+
+      if (init?.method === 'POST') {
+        sent.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+        return ok({ id: 'm-1' })
+      }
+      if (path_.includes('/attachments/')) return ok({ data: 'AAEC', size: 3 })
+      if (path_.includes('/messages/')) {
+        return ok({
+          id: 'src-1',
+          payload: {
+            parts: Array.from({ length: attachmentCount }, (_, i) => ({
+              filename: `f${i}.pdf`,
+              mimeType: 'application/pdf',
+              body: { attachmentId: `a${i}`, size: 3 },
+            })),
+          },
+        })
+      }
+      if (path_.endsWith('/labels')) return ok({ labels: [] })
+      if (path_.endsWith('/profile')) return ok({ historyId: '100' })
+      return ok({})
+    }) as unknown as typeof globalThis.fetch
+
+    const subject = createGoogleData({
+      api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
+      cache,
+    })
+    subject.useAccount('sub-a')
+    return { data: subject, urls, sent }
+  }
+
+  const MAIL = { to: ['bo@example.com'], subject: 'Fwd: Q2', body: 'See below.' }
+
+  it('fetches the original’s bytes in main, never across the IPC seam', async () => {
+    const { data: subject, urls, sent } = forwarding(1)
+
+    await subject.sendMail({ mail: MAIL, forwardOf: { messageId: 'src-1' } })
+
+    expect(urls.some((url) => url.includes('/attachments/a0'))).toBe(true)
+    const raw = Buffer.from(String(sent[0]!.raw), 'base64url').toString('utf8')
+    expect(raw).toContain('multipart/mixed')
+    expect(raw).toContain('filename="f0.pdf"')
+  })
+
+  it('takes the alternative path when the original had no attachments', async () => {
+    // An empty multipart/mixed displays as a message with a mysteriously
+    // missing attachment.
+    const { data: subject, sent } = forwarding(0)
+
+    await subject.sendMail({
+      mail: { ...MAIL, html: '<p>See below.</p>' },
+      forwardOf: { messageId: 'src-1' },
+    })
+
+    const raw = Buffer.from(String(sent[0]!.raw), 'base64url').toString('utf8')
+    expect(raw).toContain('multipart/alternative')
+    expect(raw).not.toContain('multipart/mixed')
+  })
+
+  it('carries the attachments onto a saved draft too, not only a send', async () => {
+    // A forward saved as a draft and sent later must still have its files.
+    const { data: subject, sent } = forwarding(1)
+
+    await subject.saveDraft({ mail: MAIL, forwardOf: { messageId: 'src-1' } })
+
+    const message = sent[0]!.message as { raw: string }
+    expect(Buffer.from(message.raw, 'base64url').toString('utf8')).toContain('filename="f0.pdf"')
+  })
+})

@@ -1202,3 +1202,49 @@ function threadIdOf(message: RawMessage | undefined): string | null {
   const threadId = message?.threadId
   return threadId === undefined || threadId === '' ? null : threadId
 }
+
+/**
+ * An attachment as it appears in a message payload, with the id needed to
+ * fetch it. `attachmentsOf` deliberately drops that id — it feeds the reader,
+ * which shows names and sizes and never downloads anything.
+ */
+interface AttachmentRef {
+  filename: string
+  mimeType: string
+  attachmentId: string
+}
+
+function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
+  if (part === undefined) return []
+  const id = part.body?.attachmentId
+  const here: AttachmentRef[] =
+    part.filename !== undefined && part.filename !== '' && id !== undefined
+      ? [
+          {
+            filename: part.filename,
+            mimeType: part.mimeType ?? 'application/octet-stream',
+            attachmentId: id,
+          },
+        ]
+      : []
+  return [...here, ...(part.parts ?? []).flatMap((child) => attachmentRefsOf(child))]
+}
+
+/**
+ * Every attachment on a message, as MIME parts ready for `buildRfc822` (D71).
+ *
+ * **This is why a forward carries its files without a file picker.** The
+ * renderer names a message; main fetches the bytes and hands them straight to
+ * the assembler. Nothing base64 ever crosses the IPC seam, so there is no
+ * attachment blob in renderer state and no size cap to design.
+ */
+export async function fetchMessageAttachments(
+  api: GoogleApi,
+  messageId: string,
+): Promise<MailPart[]> {
+  const message = await api.get<RawMessage>(`${BASE}/messages/${encodeURIComponent(messageId)}`, {
+    format: 'full',
+  })
+  const refs = attachmentRefsOf(message.payload)
+  return await Promise.all(refs.map((ref) => fetchAttachment(api, messageId, ref.attachmentId, ref)))
+}

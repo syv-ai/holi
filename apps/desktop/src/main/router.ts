@@ -268,7 +268,12 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
  * stricter "reject any empty html" would have re-broken sending an empty
  * message.
  */
-function composeInput(raw: unknown): { draftId?: string; threadId?: string; mail: OutgoingMail } {
+function composeInput(raw: unknown): {
+  draftId?: string
+  threadId?: string
+  forwardOf?: { messageId: string }
+  mail: OutgoingMail
+} {
   if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
   const input = raw as Record<string, unknown>
 
@@ -304,12 +309,27 @@ function composeInput(raw: unknown): { draftId?: string; threadId?: string; mail
     throw new Error('mail.html must be a string')
   }
 
+  /**
+   * A forward names the message whose attachments travel with it — never the
+   * files. Main fetches the bytes, so nothing base64 crosses the IPC seam.
+   */
+  const forward = input.forwardOf
+  let forwardOf: { messageId: string } | undefined
+  if (forward !== undefined && forward !== null) {
+    const messageId = (forward as { messageId?: unknown }).messageId
+    if (typeof messageId !== 'string' || messageId === '') {
+      throw new Error('forwardOf.messageId must be a string')
+    }
+    forwardOf = { messageId }
+  }
+
   const cc = addresses('cc')
   const draftId = optionalId('draftId')
   const threadId = optionalId('threadId')
   return {
     ...(draftId === undefined ? {} : { draftId }),
     ...(threadId === undefined ? {} : { threadId }),
+    ...(forwardOf === undefined ? {} : { forwardOf }),
     mail: {
       to: addresses('to'),
       ...(cc.length === 0 ? {} : { cc }),

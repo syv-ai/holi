@@ -34,6 +34,7 @@ import {
   readDraft,
   listSendAs,
   fetchAttachment,
+  fetchMessageAttachments,
 } from '../src/main/google/gmail'
 import { buildRfc822, toBase64Url } from '../src/main/google/mime'
 
@@ -1882,5 +1883,92 @@ describe('the composer surface', () => {
 
       await expect(readDraft(api, 'gone')).rejects.toMatchObject({ code: 'not-found' })
     })
+  })
+})
+
+/**
+ * Forwarding the original's attachments (D71).
+ *
+ * The bytes are fetched HERE, in main, from a message id the renderer supplied.
+ * That is what buys a forward that carries its files with no file picker, no
+ * base64 in renderer state, and no size cap to design.
+ */
+describe('fetchMessageAttachments', () => {
+  function messageWith(payload: unknown, data = 'AAEC') {
+    const fetchImpl = vi.fn(async (url: string) => {
+      const body = new URL(url).pathname.includes('/attachments/')
+        ? { data, size: 3 }
+        : { id: 'm1', payload }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+      }
+    })
+    return new GoogleApi({
+      accessToken: async () => 'at',
+      fetch: fetchImpl as unknown as typeof globalThis.fetch,
+    })
+  }
+
+  it('finds an attachment however deeply nested, and fetches its bytes', async () => {
+    const api = messageWith({
+      mimeType: 'multipart/mixed',
+      parts: [
+        { mimeType: 'text/plain', body: { data: 'aGk' } },
+        {
+          mimeType: 'multipart/related',
+          parts: [
+            {
+              filename: 'q2.pdf',
+              mimeType: 'application/pdf',
+              body: { attachmentId: 'a1', size: 3 },
+            },
+          ],
+        },
+      ],
+    })
+
+    const parts = await fetchMessageAttachments(api, 'm1')
+
+    expect(parts).toHaveLength(1)
+    expect(parts[0]!.filename).toBe('q2.pdf')
+    expect(parts[0]!.mimeType).toBe('application/pdf')
+  })
+
+  it('converts the bytes to standard base64 on the way through', async () => {
+    const bytes = Buffer.from([0xfb, 0xef, 0xbe])
+    const api = messageWith(
+      {
+        parts: [
+          { filename: 'x.bin', mimeType: 'application/octet-stream', body: { attachmentId: 'a1' } },
+        ],
+      },
+      bytes.toString('base64url'),
+    )
+
+    const [part] = await fetchMessageAttachments(api, 'm1')
+
+    expect(part!.data).toBe(bytes.toString('base64'))
+  })
+
+  it('ignores a body part, which has no attachmentId', async () => {
+    // An inline text part is not a file, and a forward that attached the
+    // message body as a download would be nonsense.
+    const api = messageWith({
+      parts: [{ mimeType: 'text/plain', body: { data: 'aGk' } }],
+    })
+
+    expect(await fetchMessageAttachments(api, 'm1')).toEqual([])
+  })
+
+  it('returns nothing for a message with no attachments at all', async () => {
+    // The empty case matters: `data.ts` leaves `attachments` absent for it, so
+    // the forward takes the multipart/alternative path rather than building an
+    // empty multipart/mixed.
+    const api = messageWith({ mimeType: 'text/plain', body: { data: 'aGk' } })
+
+    expect(await fetchMessageAttachments(api, 'm1')).toEqual([])
   })
 })
