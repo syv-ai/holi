@@ -91,7 +91,7 @@ describe('buildAgentEnv', () => {
     expect(env.PATH).toBe('/usr/bin')
     expect(env.HOME).toBe('/Users/nic')
     expect(env.TERM).toBe('xterm-256color')
-    // the user's own ~/.claude stays in play (PRD) — we never redirect it
+    // No configDir given → no redirect, and the key is absent rather than empty.
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
   })
 
@@ -191,6 +191,37 @@ describe('buildAgentEnv', () => {
     expect(env.HOLI_GOOGLE_PORT).toBeUndefined()
     expect(env.HOLI_GOOGLE_TOKEN).toBeUndefined()
     expect(env.HOLI_GOOGLE_BIN).toBeUndefined()
+  })
+
+  /**
+   * D72: the vault agent runs on Holi's own config directory, not the machine's
+   * `~/.claude` — that is what keeps home skills, plugins, marketplaces and the
+   * machine's MCP servers out of a vault session.
+   */
+  it('points the agent at Holi own config directory when given one', () => {
+    const env = buildAgentEnv({ PATH: '/usr/bin' }, { configDir: '/data/agent-config' })
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
+  })
+
+  it('strips an inherited CLAUDE_CONFIG_DIR (reserved, D72)', () => {
+    // Stronger than the HOLI_* keys: an inherited value would silently put the
+    // agent back on the machine config this decision exists to keep out — or on
+    // a directory a committed `.env` chose.
+    const base = { PATH: '/usr/bin', CLAUDE_CONFIG_DIR: '/Users/ada/.claude' }
+    expect(buildAgentEnv(base).CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(buildAgentEnv(base, { configDir: null }).CLAUDE_CONFIG_DIR).toBeUndefined()
+    expect(buildAgentEnv(base, { configDir: '/data/agent-config' }).CLAUDE_CONFIG_DIR).toBe(
+      '/data/agent-config',
+    )
+  })
+
+  it('carries the config dir alongside the PATH prepend', () => {
+    const env = buildAgentEnv(
+      { PATH: '/usr/bin:/bin' },
+      { configDir: '/data/agent-config', googleBinDir: '/data/bin' },
+    )
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
+    expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
   })
 })
 

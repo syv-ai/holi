@@ -78,6 +78,16 @@ export interface AgentEnvOpts {
    * `Bash(holi-google send:*)` rule would never have fired.
    */
   googleBinDir?: string | null
+  /**
+   * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR` (D72).
+   *
+   * This is the whole of the isolation: the variable relocates *every*
+   * `~/.claude` path — settings, skills, plugins, marketplaces, MCP — and
+   * `~/.claude.json` with them, so a vault session sees Holi's config and the
+   * vault's, and nothing from the machine. Absolute path only; the agent's cwd
+   * is the vault and Claude Code resolves this against nothing useful.
+   */
+  configDir?: string | null
 }
 
 export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
@@ -96,6 +106,11 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   delete env.HOLI_GOOGLE_PORT
   delete env.HOLI_GOOGLE_TOKEN
   delete env.HOLI_GOOGLE_BIN
+  // Reserved for the same reason and more strongly (D72): an inherited value
+  // would put the agent straight back on the machine's `~/.claude`, which is the
+  // one thing this variable exists to prevent.
+  delete env.CLAUDE_CONFIG_DIR
+  if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
   if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
   if (opts.hookToken) env.HOLI_HOOK_TOKEN = opts.hookToken
   if (opts.typstBin) env.TYPST_BIN = opts.typstBin
