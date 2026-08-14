@@ -30,6 +30,7 @@ const saveDraftMock = vi.fn()
 const sendMock = vi.fn()
 const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
+const draftsMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -51,6 +52,7 @@ vi.mock('../../../lib/trpc', () => ({
       send: { mutate: (input: unknown) => sendMock(input) },
       discardDraft: { mutate: (input: unknown) => discardDraftMock(input) },
       draft: { query: (input: unknown) => draftMock(input) },
+      drafts: { query: () => draftsMock() },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -177,6 +179,7 @@ beforeEach(() => {
   sendMock.mockReset().mockResolvedValue({ id: 'm-9' })
   discardDraftMock.mockReset().mockResolvedValue({ ok: true })
   draftMock.mockReset().mockResolvedValue(null)
+  draftsMock.mockReset().mockResolvedValue([])
   // The remote-content choice now outlives a component, which is the whole
   // point of it — so it has to be put back between tests or one test's
   // "Load images" silently satisfies the next test's assertion.
@@ -1313,4 +1316,133 @@ test('open in Gmail is still there — leaving is a choice, not a fallback', asy
   await user.click(await screen.findByRole('button', { name: 'open in Gmail' }))
 
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
+})
+
+/**
+ * The Drafts view (D71).
+ *
+ * It exists so that no route to a half-written message ends at a browser. The
+ * cases below are the three it answers: a draft that belongs to no thread, a
+ * thread that has one, and a thread that has two.
+ */
+function draft(overrides: Record<string, unknown> = {}) {
+  return {
+    draftId: 'd-1',
+    threadId: null,
+    to: [{ name: 'Bo Berg', email: 'bo@example.com' }],
+    subject: 'Half written',
+    snippet: 'I was going to say',
+    date: '2026-08-12T08:00:00.000Z',
+    ...overrides,
+  }
+}
+
+test('Drafts lists a draft that belongs to no thread at all', async () => {
+  // Without this view its only route back is Gmail, which is the thing being
+  // removed.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+
+  expect(await screen.findByText('Half written')).toBeInTheDocument()
+  expect(screen.getByText('Bo Berg')).toBeInTheDocument()
+})
+
+test('a draft with no recipient reads as (no recipient), not as a blank row', async () => {
+  // A blank row on the screen where the user is hunting for something they
+  // half-wrote reads as a rendering bug, and the draft looks lost.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft({ to: [] })])
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+
+  expect(await screen.findByText('(no recipient)')).toBeInTheDocument()
+})
+
+test('opening a draft loads it into the composer', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  draftMock.mockResolvedValue({
+    draftId: 'd-1',
+    threadId: null,
+    to: [{ name: 'Bo Berg', email: 'bo@example.com' }],
+    cc: [],
+    subject: 'Half written',
+    markdown: 'I was going to say',
+    html: null,
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+
+  await user.click(await screen.findByText('Half written'))
+
+  await screen.findByRole('region', { name: 'Compose mail' })
+  expect(draftMock).toHaveBeenCalledWith({ id: 'd-1' })
+})
+
+test('Drafts says so when there are none, rather than showing an empty pane', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+
+  expect(await screen.findByText('No drafts.')).toBeInTheDocument()
+})
+
+test('Continue draft opens the newest draft in the open thread', async () => {
+  // A thread with two drafts: this opens the newer, and the older stays
+  // reachable in the Drafts list.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ hasDraft: true })]))
+  draftsMock.mockResolvedValue([
+    draft({ draftId: 'old', threadId: 't1', date: '2026-08-01T00:00:00.000Z' }),
+    draft({ draftId: 'new', threadId: 't1', date: '2026-08-12T00:00:00.000Z' }),
+  ])
+  draftMock.mockResolvedValue({
+    draftId: 'new',
+    threadId: 't1',
+    to: [],
+    cc: [],
+    subject: 'Half written',
+    markdown: 'x',
+    html: null,
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  await user.click(await screen.findByRole('button', { name: 'continue draft' }))
+
+  await waitFor(() => expect(draftMock).toHaveBeenCalledWith({ id: 'new' }))
+})
+
+test('no Continue draft on a thread that has none', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary({ hasDraft: false })]))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  await screen.findByRole('article')
+  expect(screen.queryByRole('button', { name: 'continue draft' })).toBeNull()
+})
+
+test('the thread list comes back when Mail is chosen again', async () => {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await screen.findByText('No drafts.')
+
+  await user.click(screen.getByRole('button', { name: 'Mail' }))
+
+  expect(await screen.findByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
 })

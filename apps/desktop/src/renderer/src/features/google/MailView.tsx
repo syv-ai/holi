@@ -73,6 +73,7 @@ import {
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
 import { MailComposer } from './MailComposer'
+import { DraftsList, type DraftSummary } from './DraftsList'
 import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
 import type {
@@ -227,6 +228,12 @@ export function MailView() {
    *  them. `[]` until it resolves; the cost of being early is copying the user
    *  on their own reply, which they can see and remove. */
   const [sendAs, setSendAs] = useState<string[]>([])
+  /** The Drafts view, shown instead of the thread list (D71). */
+  const [showDrafts, setShowDrafts] = useState(false)
+  /** Bumped after a save or a discard, so the Drafts list refetches. */
+  const [draftsGeneration, setDraftsGeneration] = useState(0)
+  /** The Gmail draft the composer is continuing, if any. */
+  const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
@@ -348,7 +355,22 @@ export function MailView() {
     const parent = replyTarget(open)
     if (parent === null) return
     setComposeKey((key) => key + 1)
+    setContinuing(undefined)
     setComposing({ kind: 'reply', threadId: open.id, subject: open.subject, parent, all })
+  }
+
+  /**
+   * Continue a draft from the Drafts list.
+   *
+   * The intent is `new` even for a draft that belongs to a thread: the composer
+   * loads everything — recipients, subject, body — from `google.draft`, so an
+   * intent that also computed them would be overwritten a moment later and any
+   * disagreement between the two would flicker on screen.
+   */
+  const continueDraft = (draft: DraftSummary): void => {
+    setComposeKey((key) => key + 1)
+    setContinuing(draft.draftId)
+    setComposing({ kind: 'new' })
   }
 
   const startForward = (): void => {
@@ -356,7 +378,37 @@ export function MailView() {
     const parent = replyTarget(open)
     if (parent === null) return
     setComposeKey((key) => key + 1)
+    setContinuing(undefined)
     setComposing({ kind: 'forward', threadId: open.id, subject: open.subject, parent })
+  }
+
+  /**
+   * Open the newest draft filed in the open thread.
+   *
+   * Asked of `google.drafts` rather than tracked: the draft may have been
+   * written in Gmail, by the agent, or in a previous session, and the thread
+   * summary only carries the fact that ONE exists.
+   */
+  const openThreadDraft = (): void => {
+    if (open === null) return
+    void trpc.google.drafts
+      .query()
+      .then((drafts) => {
+        const mine = drafts.filter((draft) => draft.threadId === open.id)
+        // Newest by date. `listDrafts` makes no ordering promise, so this does
+        // not assume one.
+        const newest = mine.sort((a, b) => a.date.localeCompare(b.date)).pop()
+        if (newest !== undefined) continueDraft(newest)
+      })
+      .catch(() => setWriteError('Could not open that draft.'))
+  }
+
+  /** Both exits from the composer refresh the Drafts list — a draft has just
+   *  appeared, moved or gone. */
+  const closeComposer = (): void => {
+    setComposing(null)
+    setContinuing(undefined)
+    setDraftsGeneration((generation) => generation + 1)
   }
 
   /**
@@ -369,7 +421,7 @@ export function MailView() {
    */
   const onComposerSent = (): void => {
     const intent = composing
-    setComposing(null)
+    closeComposer()
     if (open === null || intent === null || intent.kind === 'new') return
 
     void trpc.google.thread
@@ -623,19 +675,46 @@ export function MailView() {
             </div>
           )}
 
+          {/* Drafts sits beside the tabs rather than inside the category
+              picker: a draft is not a Gmail tab, and burying the only route
+              back to a new-message draft inside a menu about tabs is how it
+              stays unreachable. */}
+          <div className="flex shrink-0 gap-1 border-b border-border px-2 py-1">
+            <Button
+              variant={showDrafts ? 'ghost' : 'secondary'}
+              size="xs"
+              aria-pressed={!showDrafts}
+              onClick={() => setShowDrafts(false)}
+            >
+              Mail
+            </Button>
+            <Button
+              variant={showDrafts ? 'secondary' : 'ghost'}
+              size="xs"
+              aria-pressed={showDrafts}
+              onClick={() => setShowDrafts(true)}
+            >
+              Drafts
+            </Button>
+          </div>
+
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {list.kind === 'loading' && <Note>Loading…</Note>}
-            {list.kind === 'disconnected' && (
+            {showDrafts && (
+              <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />
+            )}
+            {!showDrafts && list.kind === 'loading' && <Note>Loading…</Note>}
+            {!showDrafts && list.kind === 'disconnected' && (
               <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
             )}
-            {list.kind === 'error' && <Note>{list.message}</Note>}
+            {!showDrafts && list.kind === 'error' && <Note>{list.message}</Note>}
             {/* Naming the filter matters: an empty tab and an empty mailbox look
                 identical otherwise, which is exactly how defaulting to Primary
                 read as "my mail is gone". */}
-            {list.kind === 'ready' && list.threads.length === 0 && (
+            {!showDrafts && list.kind === 'ready' && list.threads.length === 0 && (
               <Note>{emptyMessage(filter, unreadOnly)}</Note>
             )}
-            {list.kind === 'ready' &&
+            {!showDrafts &&
+              list.kind === 'ready' &&
               list.threads.map((thread) => (
                 <ThreadRow
                   key={thread.id}
@@ -644,7 +723,7 @@ export function MailView() {
                   onOpen={() => openThread(thread)}
                 />
               ))}
-            {list.kind === 'ready' && list.nextPageToken !== null && (
+            {!showDrafts && list.kind === 'ready' && list.nextPageToken !== null && (
               <div className="p-2">
                 {/* A button, not an infinite scroller: one flick of a trackpad
                     against a rate-limited API spends a minute's quota. */}
@@ -677,7 +756,23 @@ export function MailView() {
       {/* The reader */}
       <ResizablePanel id="mail-reader" minSize={280}>
         <div className="flex h-full min-h-0 min-w-0 flex-col">
-          {openId === null ? (
+          {/* A draft opened from the Drafts list has no thread behind it, so the
+              reader pane is where it goes: the list selects and the pane shows,
+              which is how every other selection in this view already works. */}
+          {composing !== null && openId === null ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <MailComposer
+                key={composeKey}
+                intent={composing}
+                draftId={continuing}
+                sendAs={sendAs}
+                suggestions={contacts}
+                onSent={onComposerSent}
+                onDiscarded={closeComposer}
+                onClose={closeComposer}
+              />
+            </div>
+          ) : openId === null ? (
             <Note>Pick a thread to read it.</Note>
           ) : open === null ? (
             <Note>Loading…</Note>
@@ -784,6 +879,22 @@ export function MailView() {
                     <ReplyAll size={14} />
                   </Button>
                 </Tooltip>
+                {/* "Continue draft" — the thread's own unsent draft, opened
+                    where it was written. It opens the NEWEST draft for the
+                    thread; a thread with two of them shows the other in the
+                    Drafts list, which is the whole answer to that ambiguity. */}
+                {openSummary?.hasDraft === true && (
+                  <Tooltip content="continue your draft">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="continue draft"
+                      onClick={openThreadDraft}
+                    >
+                      <PenLine size={14} />
+                    </Button>
+                  </Tooltip>
+                )}
                 <Tooltip content="forward">
                   <Button
                     variant="ghost"
@@ -830,11 +941,12 @@ export function MailView() {
                   <MailComposer
                     key={composeKey}
                     intent={composing}
+                    draftId={continuing}
                     sendAs={sendAs}
                     suggestions={contacts}
                     onSent={onComposerSent}
-                    onDiscarded={() => setComposing(null)}
-                    onClose={() => setComposing(null)}
+                    onDiscarded={closeComposer}
+                    onClose={closeComposer}
                   />
                 )}
               </div>
