@@ -1,21 +1,22 @@
 /**
  * Mail — search, read, triage, and link a thread into the vault.
  *
- * A list on the left, the open thread on the right. **Triage, not a mail
- * client** (D68, amending the PRD non-goal): opening marks read, and a thread
- * can be starred, archived or trashed. There is still no label editing and no
- * reply box.
- *
- * The two absences are not the same kind of absence, and the difference is
- * worth keeping straight:
+ * A list on the left, the open thread on the right. Opening marks read; a
+ * thread can be starred, archived or trashed; and since D71 it can be replied
+ * to, replied-all to, and forwarded without leaving. There is still no label
+ * editing.
  *
  * - **Permanent delete cannot happen.** It needs `https://mail.google.com/`,
  *   which Holi does not request. Trash is Gmail's trash — recoverable for 30
- *   days — which is why the button says trash and not delete.
- * - **Replying opens Gmail because no compose surface is built**, *not* because
- *   the scope forbids it. `gmail.modify` permits sending. Do not restore the
- *   old comment here claiming otherwise; it would read as a reason not to build
- *   one, and the reason is simply that nobody has.
+ *   days — which is why the button says trash and not delete. This paragraph
+ *   is the one this file keeps having to restore; the bound is the scope, and
+ *   it has not moved.
+ * - **Replying no longer opens Gmail.** It used to, and the note here said so
+ *   because no compose surface was built — never because the scope forbade it.
+ *   One is built now ([[MailComposer]]), and it mounts *inline at the foot of
+ *   the thread*: when you are replying, the thing you are replying to is the
+ *   context you need, and a modal hides it. A new message is a dialog, because
+ *   it has no context to preserve.
  *
  * **Writes are optimistic here and nowhere below.** The list paints the change
  * immediately and restores the previous list if Google refuses, because a
@@ -45,8 +46,10 @@ import {
   MailOpen,
   Paperclip,
   PenLine,
+  Forward,
   RefreshCw,
   Reply,
+  ReplyAll,
   Search,
   Star,
   Trash2,
@@ -69,6 +72,8 @@ import {
   Tooltip,
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
+import { MailComposer } from './MailComposer'
+import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
 import type {
   MailAddress,
@@ -210,6 +215,18 @@ export function MailView() {
    * on failure, whether that undo is still valid. See `write`.
    */
   const listGeneration = useRef(0)
+  /** The inline composer's intent, or `null` when it is closed (D71). */
+  const [composing, setComposing] = useState<ComposeIntent | null>(null)
+  /**
+   * Bumped on every open, so React remounts the composer rather than reusing
+   * it. Without this, clicking Reply and then Forward would leave the first
+   * intent's draft state in place — `composeFrom` runs once, on mount.
+   */
+  const [composeKey, setComposeKey] = useState(0)
+  /** Every address the account may send from, so reply-all excludes all of
+   *  them. `[]` until it resolves; the cost of being early is copying the user
+   *  on their own reply, which they can see and remove. */
+  const [sendAs, setSendAs] = useState<string[]>([])
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
@@ -289,6 +306,82 @@ export function MailView() {
       .then(setContacts)
       .catch(() => setContacts([]))
   }, [])
+
+  /**
+   * The send-as aliases, for reply-all (D71).
+   *
+   * Failure leaves the list empty rather than blocking the view: the cost is
+   * that a reply-all to a message addressed to an alias copies the user on
+   * their own reply, which is visible as a chip they can remove. Refusing to
+   * open the composer over it would be far worse.
+   */
+  useEffect(() => {
+    void trpc.google.sendAs
+      .query()
+      .then(setSendAs)
+      .catch(() => setSendAs([]))
+  }, [])
+
+  /**
+   * The message a reply should answer.
+   *
+   * The last message the user did **not** send, falling back to the last one —
+   * the same rule `replyToThread` applies in main, and for the same reason:
+   * replying to your own last reply addresses the message to yourself. A thread
+   * the user started and nobody answered falls back correctly.
+   *
+   * `SENT` is not in the renderer's `ThreadMessage`, so this compares against
+   * `sendAs` instead. An empty `sendAs` degrades to "the last message", which is
+   * the old behaviour rather than a wrong one.
+   */
+  const replyTarget = (thread: Thread): ThreadMessage | null => {
+    if (thread.messages.length === 0) return null
+    const mine = new Set(sendAs.map((address) => address.toLowerCase()))
+    const inbound = [...thread.messages]
+      .reverse()
+      .find((message) => !mine.has(message.from.email.toLowerCase()))
+    return inbound ?? thread.messages[thread.messages.length - 1]!
+  }
+
+  const startCompose = (all: boolean): void => {
+    if (open === null) return
+    const parent = replyTarget(open)
+    if (parent === null) return
+    setComposeKey((key) => key + 1)
+    setComposing({ kind: 'reply', threadId: open.id, subject: open.subject, parent, all })
+  }
+
+  const startForward = (): void => {
+    if (open === null) return
+    const parent = replyTarget(open)
+    if (parent === null) return
+    setComposeKey((key) => key + 1)
+    setComposing({ kind: 'forward', threadId: open.id, subject: open.subject, parent })
+  }
+
+  /**
+   * A sent message, painted before Google is asked again.
+   *
+   * The file's standing rule — optimism in the renderer, never on disk. The
+   * appended message carries no id from `google.send` (`id: null` is a
+   * success), and it does not need one: display needs no id, and the refetch
+   * below replaces it with the real thing.
+   */
+  const onComposerSent = (): void => {
+    const intent = composing
+    setComposing(null)
+    if (open === null || intent === null || intent.kind === 'new') return
+
+    void trpc.google.thread
+      .query({ id: open.id })
+      .then(setOpen)
+      .catch(() => {
+        // The send succeeded; only the refetch failed. Leaving the thread as it
+        // was is right — inventing a message here would show the user a copy of
+        // something we cannot confirm arrived.
+      })
+    load()
+  }
 
   /**
    * The next page, **appended**.
@@ -668,16 +761,37 @@ export function MailView() {
                     <Trash2 size={14} />
                   </Button>
                 </Tooltip>
-                {/* Reply is a handoff, not a compose box — because no compose
-                    surface is built, not because the scope forbids it. */}
-                <Tooltip content="reply in Gmail">
+                {/* Reply, reply-all and forward all open the same inline
+                    composer below. `lastInbound` rather than the last message:
+                    replying to your own last reply addresses you. */}
+                <Tooltip content="reply">
                   <Button
                     variant="ghost"
                     size="icon-xs"
-                    aria-label="reply in Gmail"
-                    onClick={() => void window.holi.openExternal(open.webUrl)}
+                    aria-label="reply"
+                    onClick={() => startCompose(false)}
                   >
                     <Reply size={14} />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="reply to everyone">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="reply to everyone"
+                    onClick={() => startCompose(true)}
+                  >
+                    <ReplyAll size={14} />
+                  </Button>
+                </Tooltip>
+                <Tooltip content="forward">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label="forward"
+                    onClick={startForward}
+                  >
+                    <Forward size={14} />
                   </Button>
                 </Tooltip>
                 <Tooltip content="open in Gmail">
@@ -708,6 +822,21 @@ export function MailView() {
                     initiallyOpen={index === open.messages.length - 1}
                   />
                 ))}
+
+                {/* Inline, at the foot of the thread, inside the same scroller
+                    — so the message being answered stays on screen while the
+                    answer is written. */}
+                {composing !== null && (
+                  <MailComposer
+                    key={composeKey}
+                    intent={composing}
+                    sendAs={sendAs}
+                    suggestions={contacts}
+                    onSent={onComposerSent}
+                    onDiscarded={() => setComposing(null)}
+                    onClose={() => setComposing(null)}
+                  />
+                )}
               </div>
             </>
           )}

@@ -25,6 +25,11 @@ const categoryCountsMock = vi.fn()
 const imageSendersMock = vi.fn()
 const allowImagesFromMock = vi.fn()
 const forgetImageSendersMock = vi.fn()
+const sendAsMock = vi.fn()
+const saveDraftMock = vi.fn()
+const sendMock = vi.fn()
+const discardDraftMock = vi.fn()
+const draftMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -41,6 +46,11 @@ vi.mock('../../../lib/trpc', () => ({
       imageSenders: { query: () => imageSendersMock() },
       allowImagesFrom: { mutate: (input: unknown) => allowImagesFromMock(input) },
       forgetImageSenders: { mutate: () => forgetImageSendersMock() },
+      sendAs: { query: () => sendAsMock() },
+      saveDraft: { mutate: (input: unknown) => saveDraftMock(input) },
+      send: { mutate: (input: unknown) => sendMock(input) },
+      discardDraft: { mutate: (input: unknown) => discardDraftMock(input) },
+      draft: { query: (input: unknown) => draftMock(input) },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -162,6 +172,11 @@ beforeEach(() => {
   imageSendersMock.mockReset().mockResolvedValue([])
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
+  sendAsMock.mockReset().mockResolvedValue(['ada@syv.ai'])
+  saveDraftMock.mockReset().mockResolvedValue({ id: 'd-1' })
+  sendMock.mockReset().mockResolvedValue({ id: 'm-9' })
+  discardDraftMock.mockReset().mockResolvedValue({ ok: true })
+  draftMock.mockReset().mockResolvedValue(null)
   // The remote-content choice now outlives a component, which is the whole
   // point of it — so it has to be put back between tests or one test's
   // "Load images" silently satisfies the next test's assertion.
@@ -1205,4 +1220,97 @@ test('does not churn the frame when nothing about the policy changed', async () 
   await frameOf(article)
 
   expect(article.querySelector('iframe')).toBe(first)
+})
+
+/**
+ * Replying without leaving (D71).
+ *
+ * The handoff these replace opened Gmail in a browser. What matters now is that
+ * the composer appears *inside the thread* — the message being answered has to
+ * stay on screen — and that sending refreshes the thread rather than inventing
+ * a message.
+ */
+async function openForCompose() {
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+  return user
+}
+
+test('reply opens a composer inside the thread, not a browser', async () => {
+  const user = await openForCompose()
+
+  await user.click(await screen.findByRole('button', { name: 'reply' }))
+
+  const composer = await screen.findByRole('region', { name: 'Compose mail' })
+  expect(composer).toBeInTheDocument()
+  // The thing being replied to is still on screen beside it.
+  expect(screen.getByText('a body')).toBeInTheDocument()
+  expect(openExternal).not.toHaveBeenCalled()
+})
+
+test('reply addresses the sender; reply-all copies the rest', async () => {
+  const user = await openForCompose()
+
+  await user.click(await screen.findByRole('button', { name: 'reply' }))
+
+  const chips = await screen.findAllByTestId('chip-name')
+  expect(chips.map((c) => c.textContent)).toEqual(['Jane'])
+})
+
+test('forward opens with no recipients at all', async () => {
+  const user = await openForCompose()
+
+  await user.click(await screen.findByRole('button', { name: 'forward' }))
+
+  await screen.findByRole('region', { name: 'Compose mail' })
+  expect(screen.queryAllByTestId('chip-name')).toEqual([])
+})
+
+test('switching from reply to forward rebuilds the composer', async () => {
+  // `composeFrom` runs once, on mount. Without a remount the second intent
+  // would open showing the first one's recipients.
+  const user = await openForCompose()
+  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  expect((await screen.findAllByTestId('chip-name')).length).toBe(1)
+
+  await user.click(screen.getByRole('button', { name: 'forward' }))
+
+  await screen.findByRole('region', { name: 'Compose mail' })
+  expect(screen.queryAllByTestId('chip-name')).toEqual([])
+})
+
+test('sending closes the composer and refetches the thread', async () => {
+  const user = await openForCompose()
+  await user.click(await screen.findByRole('button', { name: 'reply' }))
+  const before = readMock.mock.calls.length
+
+  await user.click(await screen.findByRole('button', { name: 'Send' }))
+
+  await waitFor(() =>
+    expect(screen.queryByRole('region', { name: 'Compose mail' })).not.toBeInTheDocument(),
+  )
+  expect(sendMock).toHaveBeenCalledTimes(1)
+  expect(readMock.mock.calls.length).toBeGreaterThan(before)
+})
+
+test('a failed send keeps the composer open with the text intact', async () => {
+  const user = await openForCompose()
+  sendMock.mockRejectedValue(new Error('no network'))
+  await user.click(await screen.findByRole('button', { name: 'reply' }))
+
+  await user.click(await screen.findByRole('button', { name: 'Send' }))
+
+  await waitFor(() => expect(screen.getByText('no network')).toBeVisible())
+  expect(screen.getByRole('region', { name: 'Compose mail' })).toBeInTheDocument()
+})
+
+test('open in Gmail is still there — leaving is a choice, not a fallback', async () => {
+  const user = await openForCompose()
+
+  await user.click(await screen.findByRole('button', { name: 'open in Gmail' }))
+
+  expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
