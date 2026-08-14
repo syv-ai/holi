@@ -11,7 +11,9 @@ import { cleanup, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
+import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../../../state/mail-images'
+import { activeDialogAtom } from '../../../state/dialogs'
 
 const threadMock = vi.fn()
 const readMock = vi.fn()
@@ -1445,4 +1447,40 @@ test('the thread list comes back when Mail is chosen again', async () => {
   await user.click(screen.getByRole('button', { name: 'Mail' }))
 
   expect(await screen.findByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
+})
+
+/**
+ * A new message (D71).
+ *
+ * A dialog, where a reply is inline — a reply needs the thing it answers on
+ * screen and a fresh message has no context to preserve.
+ */
+test('new message opens the compose dialog rather than an inline composer', async () => {
+  // Asserted against the real registry atom, not a mock: the entry it writes IS
+  // the contract with `DialogHost`.
+  const store = getDefaultStore()
+  store.set(activeDialogAtom, null)
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: 'new message' }))
+
+  expect(store.get(activeDialogAtom)).toEqual({ id: 'compose-mail', size: 'lg' })
+})
+
+test('new message does not disturb an open thread', async () => {
+  // The dialog is a separate surface; opening it must not close what is being
+  // read behind it.
+  const store = getDefaultStore()
+  store.set(activeDialogAtom, null)
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(screen.getByRole('button', { name: 'new message' }))
+
+  expect(screen.getByRole('article')).toBeInTheDocument()
 })

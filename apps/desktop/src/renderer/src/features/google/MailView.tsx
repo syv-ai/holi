@@ -84,6 +84,7 @@ import type {
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
+import { openDialogAtom } from '../../state/dialogs'
 import { useGlobalPanelLayout } from '../../state/preferences'
 
 /** Mirrors `main/google/gmail.ts`. */
@@ -236,6 +237,7 @@ export function MailView() {
   const [continuing, setContinuing] = useState<string | undefined>(undefined)
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
+  const openDialog = useSetAtom(openDialogAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -679,7 +681,7 @@ export function MailView() {
               picker: a draft is not a Gmail tab, and burying the only route
               back to a new-message draft inside a menu about tabs is how it
               stays unreachable. */}
-          <div className="flex shrink-0 gap-1 border-b border-border px-2 py-1">
+          <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
             <Button
               variant={showDrafts ? 'ghost' : 'secondary'}
               size="xs"
@@ -696,6 +698,20 @@ export function MailView() {
             >
               Drafts
             </Button>
+            {/* A new message is a DIALOG, where a reply is inline: a reply needs
+                the thing it answers on screen, and a fresh message has no
+                context to preserve. */}
+            <Tooltip content="write a new message">
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="ml-auto"
+                aria-label="new message"
+                onClick={() => openDialog({ id: 'compose-mail', size: 'lg' })}
+              >
+                <PenLine size={14} />
+              </Button>
+            </Tooltip>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">

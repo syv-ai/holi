@@ -1,4 +1,5 @@
 import { useAtomValue, useSetAtom } from 'jotai'
+import { ComposeMailDialog } from '@/features/google/ComposeMailDialog'
 import { ConvertToPdf } from '@/features/pdf/ConvertToPdf'
 import { CreateTask } from '@/features/tasks/CreateTask'
 import { Dialog } from '@/primitives'
@@ -19,6 +20,7 @@ export function DialogHost(): React.JSX.Element | null {
       {active.id === 'convert-to-pdf' && (
         <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
       )}
+      {active.id === 'compose-mail' && <ComposeMailDialog onClose={() => close()} />}
     </Dialog>
   )
 }

@@ -112,6 +112,9 @@ export function MailComposer({
   /** No save has any business happening before the first real edit. Ultramail
    *  shipped without this guard and left zombie empty drafts behind. */
   const dirtyRef = useRef(false)
+  /** State updates are skipped once this is false. The save on unmount below
+   *  outlives the component on purpose, and its result has nowhere to go. */
+  const mountedRef = useRef(true)
 
   /** The current values, readable from inside an async save without capturing
    *  a stale closure. */
@@ -190,7 +193,7 @@ export function MailComposer({
       return
     }
     savingRef.current = true
-    setSaveState('saving')
+    if (mountedRef.current) setSaveState('saving')
     try {
       const result = await trpc.google.saveDraft.mutate({
         ...(draftRef.current === null ? {} : { draftId: draftRef.current }),
@@ -208,13 +211,15 @@ export function MailComposer({
        * the whole time.
        */
       if (!queuedRef.current) dirtyRef.current = false
-      setSaveState(queuedRef.current ? 'dirty' : 'saved')
-      setFailure(null)
+      if (mountedRef.current) {
+        setSaveState(queuedRef.current ? 'dirty' : 'saved')
+        setFailure(null)
+      }
     } catch {
       // The text is untouched. A refused save is retried on the next edit or on
       // Send; it never discards what the user wrote.
       dirtyRef.current = true
-      setSaveState('error')
+      if (mountedRef.current) setSaveState('error')
     } finally {
       savingRef.current = false
       if (queuedRef.current) {
@@ -234,6 +239,26 @@ export function MailComposer({
     const timer = setTimeout(() => void save(), AUTOSAVE_IDLE_MS)
     return () => clearTimeout(timer)
   }, [to, cc, subject, markdown, save])
+
+  /**
+   * A forced save on the way out.
+   *
+   * This is what makes closing safe rather than lossy: a dismissed composer
+   * leaves its text in Gmail Drafts, where the Drafts view (D71, Task 12) can
+   * find it again. Without it, closing a dirty composer inside the 2s idle
+   * window silently discards everything typed since the last save.
+   *
+   * The save deliberately outlives the component, so its state updates are
+   * suppressed rather than issued at nothing.
+   */
+  const saveOnUnmount = useRef(save)
+  saveOnUnmount.current = save
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false
+      if (dirtyRef.current) void saveOnUnmount.current()
+    }
+  }, [])
 
   // ---- sending ------------------------------------------------------------
 
