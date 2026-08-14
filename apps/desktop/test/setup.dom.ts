@@ -19,6 +19,25 @@ globalThis.ResizeObserver ??= class {
 }
 
 /**
+ * jsdom implements no media queries at all, and `window.matchMedia` is simply
+ * absent. `codemirror-markdown-tables` asks `(any-hover: none)` to decide
+ * whether to show its touch affordances, so mounting any editor stack throws
+ * without this.
+ *
+ * Answers "no match", which is the pointer-capable desktop this app ships as.
+ */
+globalThis.matchMedia ??= ((query: string) => ({
+  matches: false,
+  media: query,
+  onchange: null,
+  addListener: () => {},
+  removeListener: () => {},
+  addEventListener: () => {},
+  removeEventListener: () => {},
+  dispatchEvent: () => false,
+})) as typeof globalThis.matchMedia
+
+/**
  * Park resizable handles far from the origin.
  *
  * `react-resizable-panels` listens for `pointerdown` on the document in the

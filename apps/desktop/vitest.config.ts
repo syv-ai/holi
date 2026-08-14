@@ -63,6 +63,12 @@ export default defineConfig({
           include: ['src/renderer/**/*.test.tsx'],
           environment: 'jsdom',
           setupFiles: ['test/setup.dom.ts'],
+          // `codemirror-markdown-tables` depends on `@mobily/ts-belt`, whose ESM
+          // build uses directory imports (`.../Function`) that Node will not
+          // resolve. Inlining hands them to Vite, which does. This only surfaced
+          // when `editor/extensions.ts` gained its first test (D71) — nothing in
+          // this suite had ever imported the editor stack before.
+          server: { deps: { inline: [/codemirror-markdown-tables/, /@mobily[/\\]ts-belt/] } },
         },
       },
     ],

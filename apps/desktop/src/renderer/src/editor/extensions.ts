@@ -95,6 +95,50 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
 }
 
 /**
+ * The editor stack for writing a mail (D71).
+ *
+ * **`baseEditorExtensions` cannot be reused, and not merely for convenience.**
+ * It takes `docExists`, `taskByPath`, `readNote`, `mentionData`, `nav` and
+ * `notePath` — all vault machinery a composer has no access to and no business
+ * having. More to the point, its markdown layers are *about the vault*:
+ * `[[wiki links]]` mean nothing to a recipient, and `@`-mention completion
+ * would paste vault paths into an email.
+ *
+ * So this is a third stack rather than a parameterised second one. What it
+ * keeps is everything that makes markdown pleasant to type — history, bracket
+ * matching, line wrapping, GFM tables and ⌘B/⌘I/⌘K — and nothing that knows a
+ * vault exists.
+ */
+export function mailComposerExtensions(): Extension[] {
+  return [
+    history(),
+    drawSelection(),
+    dropCursor(),
+    indentOnInput(),
+    bracketMatching(),
+    indentUnit.of('    '),
+    EditorView.lineWrapping,
+    // Same GFM base as the notes editor: the table widget needs the Lezer GFM
+    // Table grammar in the tree, which plain markdown() (CommonMark) omits.
+    markdown({ base: markdownLanguage }),
+    markdownTables(),
+    // Table completion only. No `mentionSource` — `@` is how you type an email
+    // address — and no `slashCommands`, whose commands are all vault actions.
+    autocompletion({ override: [markdownTableAutocompleter()] }),
+    EditorState.allowMultipleSelections.of(true),
+    formattingKeymap,
+    keymap.of([
+      ...completionKeymap,
+      { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
+      indentWithTab,
+      ...historyKeymap,
+      ...defaultKeymap,
+    ]),
+    editorTheme,
+  ]
+}
+
+/**
  * The editor stack for a plain (non-markdown) text file — a `.json`, `.csv`,
  * `.env` and the like (spec §Arbitrary files). Same theme and editing keymap as
  * the notes editor, but NONE of the markdown-specific layers: no live-preview
