@@ -35,22 +35,31 @@
  * narrowest dimension of the narrowest panel on a word nobody reads twice.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+/**
+ * `SquarePen` writes something new; `FilePen` continues something half-written.
+ * They were both `PenLine`, so the button that opens a blank message and the
+ * chip meaning "there is an unsent draft in here" were the same glyph — two
+ * different promises behind one picture. `FilePen` is used for every draft
+ * marker in the pillar (the row chip, the reader's continue button, and the
+ * Drafts list), so the three agree.
+ */
 import {
   Archive,
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FilePen,
   FileText,
+  Forward,
   Link2,
   MailMinus,
   MailOpen,
   Paperclip,
-  PenLine,
-  Forward,
   RefreshCw,
   Reply,
   ReplyAll,
   Search,
+  SquarePen,
   Star,
   Trash2,
   X,
@@ -76,6 +85,7 @@ import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
 import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
+import { listStamp, messageStamp } from '../../lib/mail-stamp'
 import type {
   MailAddress,
   MailAttachment as Attachment,
@@ -175,16 +185,6 @@ type ListState =
   | { kind: 'error'; message: string }
 
 const NOT_CONNECTED = /not connected|connect Google|no longer valid|not configured/i
-
-function shortDate(iso: string): string {
-  if (iso === '') return ''
-  const date = new Date(iso)
-  const today = new Date()
-  const sameDay = date.toDateString() === today.toDateString()
-  return sameDay
-    ? date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 export function MailView() {
   const [query, setQuery] = useState('')
@@ -714,7 +714,7 @@ export function MailView() {
                 aria-label="new message"
                 onClick={() => openDialog({ id: 'compose-mail', size: 'lg' })}
               >
-                <PenLine size={14} />
+                <SquarePen size={14} />
               </Button>
             </Tooltip>
           </div>
@@ -912,7 +912,7 @@ export function MailView() {
                       aria-label="continue draft"
                       onClick={openThreadDraft}
                     >
-                      <PenLine size={14} />
+                      <FilePen size={14} />
                     </Button>
                   </Tooltip>
                 )}
@@ -952,6 +952,8 @@ export function MailView() {
                     // the same way, and a ten-message thread that opens fully
                     // expanded buries the part that is new.
                     initiallyOpen={index === open.messages.length - 1}
+                    position={index + 1}
+                    total={open.messages.length}
                   />
                 ))}
 
@@ -1466,14 +1468,14 @@ function ThreadRow({
         {/* "You started replying and stopped" — a third state, distinct from
             both answered and untouched, and the only trace of it in the list. */}
         {thread.hasDraft && (
-          <PenLine size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
+          <FilePen size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
         )}
         {/* "You replied and are waiting on them" — see `answered` in
             main/google/gmail.ts for why it is the LAST message that decides. */}
         {thread.answered && (
           <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
         )}
-        <span className="shrink-0 text-[10px] text-muted-foreground">{shortDate(thread.date)}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground">{listStamp(thread.date)}</span>
       </span>
       <span className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}>
         {thread.subject}
@@ -1577,18 +1579,23 @@ function unreadLabel(
 /**
  * One message in a thread, collapsible.
  *
- * Collapsed shows the line a reader scans for — who, when, and the first of
- * what they said. Expanding is what costs a frame, so a long thread only builds
- * the documents it is actually showing.
+ * Collapsed shows the line a reader scans for — who, when, where in the thread,
+ * and the first of what they said. Expanding is what costs a frame, so a long
+ * thread only builds the documents it is actually showing.
  */
 function MessageBlock({
   message,
   threadUrl,
   initiallyOpen,
+  position,
+  total,
 }: {
   message: ThreadMessage
   threadUrl: string
   initiallyOpen: boolean
+  /** 1-based, as it reads on screen. */
+  position: number
+  total: number
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(initiallyOpen)
 
@@ -1600,7 +1607,7 @@ function MessageBlock({
         variant="ghost"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
-        aria-label={`${expanded ? 'collapse' : 'expand'} message from ${message.from.name}`}
+        aria-label={`${expanded ? 'collapse' : 'expand'} message ${position} of ${total} from ${message.from.name}`}
         className="block h-auto w-full rounded px-1 py-1 text-left"
       >
         <span className="flex items-baseline gap-2 text-xs">
@@ -1610,7 +1617,15 @@ function MessageBlock({
             <ChevronRight size={12} className="shrink-0 self-center text-muted-foreground" />
           )}
           <span className="min-w-0 flex-1 truncate font-medium">{message.from.name}</span>
-          <span className="shrink-0 text-muted-foreground">{shortDate(message.date)}</span>
+          {/* Where you are in the conversation. Suppressed on a one-message
+              thread: "1/1" on every notification is noise that says nothing,
+              and the count is only ever asked of a thread that has a middle. */}
+          {total > 1 && (
+            <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+              {position}/{total}
+            </span>
+          )}
+          <span className="shrink-0 text-muted-foreground">{messageStamp(message.date)}</span>
         </span>
         {!expanded && (
           <span className="block truncate pl-5 text-[11px] text-muted-foreground">
@@ -1621,18 +1636,53 @@ function MessageBlock({
 
       {expanded && (
         <div className="pl-1">
-          <p className="mb-2 flex flex-wrap items-baseline gap-x-1 text-[11px] text-muted-foreground">
-            <AddressLink address={message.from} />
-            {message.to.length > 0 && <span>to</span>}
-            <AddressList addresses={message.to} />
-            {message.cc.length > 0 && <span>· cc</span>}
-            <AddressList addresses={message.cc} />
-          </p>
+          <MessageAddresses message={message} />
           <MessageBody message={message} />
           <Attachments attachments={message.attachments} webUrl={threadUrl} />
         </div>
       )}
     </article>
+  )
+}
+
+/**
+ * Who a message went to, as labelled rows rather than as a sentence.
+ *
+ * This used to read `Anthropic to ada@syv.ai · cc …` — running prose, which is
+ * fine for the common case and unreadable the moment a message has four
+ * recipients and three on copy. A reader checking whether they were on `To` or
+ * on `Cc` is doing a lookup, and a lookup wants a column.
+ *
+ * **A row is absent, never empty.** `From` is always there; the other three
+ * appear only when the header carried something, so a plain two-party message
+ * still renders as two lines rather than four with two blanks.
+ *
+ * **`Bcc` will be empty on almost everything, and that is correct.** Gmail
+ * strips it from received mail by design — it survives only on the copy of a
+ * message the account itself sent. So this row is effectively a Sent-mailbox
+ * feature, and its absence on inbox mail is not a plumbing failure.
+ */
+function MessageAddresses({ message }: { message: ThreadMessage }): React.JSX.Element {
+  const rows: { label: string; addresses: MailAddress[] }[] = [
+    { label: 'From', addresses: [message.from] },
+    { label: 'To', addresses: message.to },
+    { label: 'Cc', addresses: message.cc },
+    { label: 'Bcc', addresses: message.bcc },
+  ]
+
+  return (
+    <dl className="mb-2 grid grid-cols-[auto_1fr] gap-x-2 text-[11px] text-muted-foreground">
+      {rows
+        .filter((row) => row.addresses.length > 0)
+        .map((row) => (
+          <div key={row.label} className="col-span-2 grid grid-cols-subgrid items-baseline">
+            <dt className="shrink-0">{row.label}</dt>
+            <dd className="flex min-w-0 flex-wrap items-baseline gap-x-1">
+              <AddressList addresses={row.addresses} />
+            </dd>
+          </div>
+        ))}
+    </dl>
   )
 }
 

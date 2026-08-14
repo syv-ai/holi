@@ -112,6 +112,7 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
         from: { name: 'Jane', email: 'jane@example.com' },
         to: [{ name: 'Ada', email: 'ada@syv.ai' }],
         cc: [],
+        bcc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
         ...message,
@@ -159,6 +160,7 @@ beforeEach(() => {
         from: { name: 'Jane', email: 'jane@example.com' },
         to: [{ name: 'Ada', email: 'ada@syv.ai' }],
         cc: [],
+        bcc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
         body: 'a body',
@@ -655,6 +657,7 @@ test('opens the newest message and collapses the history above it', async () => 
         from: { name: 'Jane', email: 'jane@example.com' },
         to: [],
         cc: [],
+        bcc: [],
         date: '2026-08-03T09:00:00.000Z',
         attachments: [],
         body: 'the older question',
@@ -665,6 +668,7 @@ test('opens the newest message and collapses the history above it', async () => 
         from: { name: 'Mette', email: 'mette@syv.ai' },
         to: [],
         cc: [],
+        bcc: [],
         date: '2026-08-04T09:00:00.000Z',
         attachments: [],
         body: 'the newest answer',
@@ -678,13 +682,54 @@ test('opens the newest message and collapses the history above it', async () => 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
   // A ten-message thread that opens fully expanded buries the part that is new.
-  const older = await screen.findByRole('button', { name: /expand message from Jane/i })
-  expect(screen.getByRole('button', { name: /collapse message from Mette/i })).toBeInTheDocument()
+  const older = await screen.findByRole('button', { name: /expand message 1 of 2 from Jane/i })
+  expect(screen.getByRole('button', { name: /collapse message 2 of 2 from Mette/i })).toBeInTheDocument()
 
   await user.click(older)
   expect(
-    await screen.findByRole('button', { name: /collapse message from Jane/i }),
+    await screen.findByRole('button', { name: /collapse message 1 of 2 from Jane/i }),
   ).toBeInTheDocument()
+})
+
+/**
+ * The metadata header.
+ *
+ * Labelled rows, not the running `Jane to ada@syv.ai · cc …` sentence this used
+ * to be — a reader checking whether they were addressed or copied is doing a
+ * lookup, and a lookup wants a column. A row is ABSENT rather than blank when
+ * the header carried nothing.
+ */
+test('names the fields a message actually has, and no others', async () => {
+  withMessage({ body: 'hello', html: null }, { cc: [{ name: 'Bo', email: 'bo@example.com' }] })
+
+  const reader = await openThread()
+
+  expect(within(reader).getByText('From')).toBeInTheDocument()
+  expect(within(reader).getByText('To')).toBeInTheDocument()
+  expect(within(reader).getByText('Cc')).toBeInTheDocument()
+  // Gmail strips Bcc from delivered mail, so it is empty here — and an empty
+  // row would claim the message had one.
+  expect(within(reader).queryByText('Bcc')).not.toBeInTheDocument()
+})
+
+test('shows Bcc when the message carries one', async () => {
+  // Only ever true of the account's own sent copy. See `MailMessage.bcc`.
+  withMessage({ body: 'hello', html: null }, { bcc: [{ name: 'Kim', email: 'kim@syv.ai' }] })
+
+  const reader = await openThread()
+
+  expect(within(reader).getByText('Bcc')).toBeInTheDocument()
+  expect(within(reader).getByRole('button', { name: /about Kim/i })).toBeInTheDocument()
+})
+
+/** Where you are in the conversation — suppressed when there is no conversation
+ *  to be in the middle of. */
+test('a one-message thread shows no position counter', async () => {
+  withMessage({ body: 'hello', html: null })
+
+  const reader = await openThread()
+
+  expect(within(reader).queryByText('1/1')).not.toBeInTheDocument()
 })
 
 test('an address is a person you can act on, not just a name', async () => {
@@ -1375,6 +1420,7 @@ test('opening a draft loads it into the composer', async () => {
     threadId: null,
     to: [{ name: 'Bo Berg', email: 'bo@example.com' }],
     cc: [],
+    bcc: [],
     subject: 'Half written',
     markdown: 'I was going to say',
     html: null,
@@ -1403,6 +1449,7 @@ test('opening a draft closes the thread it would otherwise hide behind', async (
     threadId: null,
     to: [{ name: 'Bo Berg', email: 'bo@example.com' }],
     cc: [],
+    bcc: [],
     subject: 'Half written',
     markdown: 'I was going to say',
     html: null,
@@ -1444,6 +1491,7 @@ test('Continue draft opens the newest draft in the open thread', async () => {
     threadId: 't1',
     to: [],
     cc: [],
+    bcc: [],
     subject: 'Half written',
     markdown: 'x',
     html: null,

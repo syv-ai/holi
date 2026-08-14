@@ -32,6 +32,17 @@ export interface ThreadMessage {
   /** Who else saw this. A reply-all is a different act from a reply, and this
    *  header is the only thing that says which one is called for. */
   cc: MailAddress[]
+  /**
+   * Who saw it without the others knowing.
+   *
+   * **Almost always empty, and that is Gmail rather than a gap here.** The
+   * header is stripped from delivered mail by design — it survives only on the
+   * copy of a message the account itself sent, which is to say in the Sent
+   * mailbox. Displayed when present; never used to address a reply, because
+   * quietly copying somebody the sender chose to hide is not a thing a reply
+   * should do on its own.
+   */
+  bcc: MailAddress[]
   date: string
   /** Plain text — the fallback, and what a text-only message carries. */
   body: string

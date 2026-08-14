@@ -43,6 +43,7 @@ const PARENT: ThreadMessage = {
   from: { name: 'Bo Berg', email: 'bo@example.com' },
   to: [{ name: 'Ada Holm', email: 'ada@syv.ai' }],
   cc: [],
+  bcc: [],
   date: '2026-08-12T08:30:00.000Z',
   body: 'The numbers are attached.',
   html: null,

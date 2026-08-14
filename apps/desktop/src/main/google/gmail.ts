@@ -104,6 +104,17 @@ export interface MailMessage {
   /** Who else saw this. A reply-all is a different act from a reply, and this
    *  header is the only thing that says which one is called for. */
   cc: MailAddress[]
+  /**
+   * Who saw it without the others knowing.
+   *
+   * **Empty on delivered mail, and that is Gmail's doing rather than a gap
+   * here.** The header is stripped on delivery by design; it survives only on
+   * the account's own copy of a message it sent — the Sent mailbox. Carried so
+   * the reader can show it there. It is never fed to reply-all: copying
+   * somebody the sender deliberately hid is not a thing a reply decides on its
+   * own. See `composeFrom`, which reads `to` and `cc` only.
+   */
+  bcc: MailAddress[]
   date: string
   /** Every part with a filename, however deep. **No extra request** — the
    *  thread is already fetched at `format=full`, so the parts are in hand. */
@@ -691,6 +702,9 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       from: parseAddress(headerOf(message.payload, 'From')),
       to: parseAddresses(headerOf(message.payload, 'To')),
       cc: parseAddresses(headerOf(message.payload, 'Cc')),
+      // Present only on the account's own sent copy — see `MailMessage.bcc`.
+      // No extra request: this thread is already read at `format=full`.
+      bcc: parseAddresses(headerOf(message.payload, 'Bcc')),
       date: isoDate(message),
       body: bodyTextOf(message.payload),
       html: bodyHtmlOf(message.payload),
