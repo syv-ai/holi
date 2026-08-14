@@ -1869,6 +1869,12 @@ describe('the composer surface', () => {
 
       expect(draft.foreign).toBe(true)
       expect(draft.markdown).toBeNull()
+      // No `text/html` part at all — so "convert the html" would convert
+      // nothing. The plain text IS the message, and it travels for that case:
+      // this is the shape of every draft the agent wrote before the marker
+      // existed, and of anything from a plain-text client.
+      expect(draft.html).toBeNull()
+      expect(draft.text).toBe('plain words')
     })
 
     it('carries cc, which is what a reply-all draft is for', async () => {

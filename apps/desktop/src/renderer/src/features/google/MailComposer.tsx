@@ -71,6 +71,8 @@ interface LoadedDraft {
   subject: string
   markdown: string
   foreign: boolean
+  /** The thread the draft is filed in, if any — see `applyLoaded`. */
+  threadId: string | undefined
 }
 
 export function MailComposer({
@@ -83,7 +85,19 @@ export function MailComposer({
   onClose,
   onReconnect,
 }: MailComposerProps): React.JSX.Element {
-  const threadId = intent.kind === 'new' ? undefined : intent.threadId
+  /**
+   * The thread this message belongs to, and therefore what every save and the
+   * send rebuild the threading headers from.
+   *
+   * State rather than a derived value because a *continued* draft carries its
+   * own thread, which the intent cannot know: `continueDraft` opens every draft
+   * as `new` deliberately — recipients, subject and body all arrive from
+   * `google.draft` a moment later, and a second source for them would flicker —
+   * so `applyLoaded` is where a continued reply learns its thread.
+   */
+  const [threadId, setThreadId] = useState<string | undefined>(
+    intent.kind === 'new' ? undefined : intent.threadId,
+  )
   /**
    * A forward carries the original's attachments (D71).
    *
@@ -145,6 +159,7 @@ export function MailComposer({
     setSubject(draft.subject)
     setMarkdown(draft.markdown)
     setForeign(draft.foreign)
+    if (draft.threadId !== undefined) setThreadId(draft.threadId)
     // Loading is not an edit. Marking it dirty would save the draft straight
     // back over itself, which for a foreign draft means replacing the
     // original's formatting before the user has touched anything.
@@ -161,14 +176,22 @@ export function MailComposer({
         if (cancelled) return
         // `markdown` is null exactly when `X-Holi-Source` was absent, which is
         // main telling the renderer to convert — main cannot, since turndown
-        // needs a DOM and main has none.
-        const body = draft.markdown ?? mailHtmlToMarkdown(draft.html ?? '')
+        // needs a DOM and main has none. With no html either there is nothing
+        // to convert and the plain text IS the message: converting `''` would
+        // open blank and autosave that over a real draft on the first keystroke.
+        const body =
+          draft.markdown ?? (draft.html === null ? draft.text : mailHtmlToMarkdown(draft.html))
         applyLoaded({
           to: draft.to,
           cc: draft.cc,
           subject: draft.subject,
           markdown: body,
           foreign: draft.foreign,
+          // The draft's own thread, which outranks the intent: `continueDraft`
+          // opens every draft as `new` on purpose, so this is the only place the
+          // thread of a continued reply is known. Losing it rebuilds the draft
+          // with no `In-Reply-To` and moves it out of its conversation.
+          threadId: draft.threadId ?? undefined,
         })
       })
       .catch((error: unknown) => {
@@ -199,14 +222,16 @@ export function MailComposer({
 
   // ---- autosave -----------------------------------------------------------
 
-  const save = useCallback(async (): Promise<void> => {
-    if (!dirtyRef.current) return
-    if (savingRef.current) {
-      // Latest-wins: coalesce every request arriving mid-flight into one
-      // trailing save, rather than queueing a call per keystroke.
-      queuedRef.current = true
-      return
-    }
+  /**
+   * One save, and then the trailing one it may have queued — as a single
+   * promise, so awaiting it means the composer is actually quiescent.
+   *
+   * The recursion is what makes that true. Starting the queued save with a bare
+   * `void save()` (which is what this was) leaves it outside the chain: a caller
+   * awaiting the save it triggered gets control back while a later one is still
+   * on the wire. Harmless for the autosave, and not harmless for Send.
+   */
+  const runSave = useCallback(async (): Promise<void> => {
     savingRef.current = true
     if (mountedRef.current) setSaveState('saving')
     try {
@@ -238,12 +263,37 @@ export function MailComposer({
       if (mountedRef.current) setSaveState('error')
     } finally {
       savingRef.current = false
-      if (queuedRef.current) {
-        queuedRef.current = false
-        void save()
-      }
+    }
+    if (queuedRef.current) {
+      queuedRef.current = false
+      await runSave()
     }
   }, [payload, threadId, forwardOf])
+
+  /** The chain currently in flight, so a caller arriving mid-save can await the
+   *  whole of it rather than just setting the queued flag and walking away. */
+  const inFlightRef = useRef<Promise<void> | null>(null)
+
+  const save = useCallback(async (): Promise<void> => {
+    if (!dirtyRef.current) return
+    if (savingRef.current) {
+      // Latest-wins: coalesce every request arriving mid-flight into one
+      // trailing save, rather than queueing a call per keystroke — then wait for
+      // the chain that will run it, which now includes that trailing save.
+      queuedRef.current = true
+      await inFlightRef.current
+      return
+    }
+    // `runSave` sets `savingRef` before its first await, so the ref below is
+    // assigned before any other caller can observe the flag and read it.
+    const chain = runSave()
+    inFlightRef.current = chain
+    try {
+      await chain
+    } finally {
+      if (inFlightRef.current === chain) inFlightRef.current = null
+    }
+  }, [runSave])
 
   const markDirty = useCallback(() => {
     dirtyRef.current = true

@@ -986,6 +986,13 @@ export interface DraftBody {
    */
   markdown: string | null
   html: string | null
+  /**
+   * The `text/plain` part, always. The fallback for a foreign draft with no
+   * `text/html` at all — every draft the agent wrote before the marker existed,
+   * and anything from a plain-text client. Without it "convert the html"
+   * converts nothing and the composer opens blank over a real message.
+   */
+  text: string
   /** No `X-Holi-Source`. Not a gate: a foreign draft opens for editing after a
    *  conversion, and there is no read-only state anywhere in this feature. */
   foreign: boolean
@@ -1149,6 +1156,7 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     // trust, and the renderer converts the html instead.
     markdown: foreign ? null : bodyTextOf(payload),
     html: bodyHtmlOf(payload),
+    text: bodyTextOf(payload),
     foreign,
   }
 }

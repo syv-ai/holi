@@ -217,6 +217,36 @@ describe('autosave', () => {
     expect(saveDraft.mock.calls[0]![0]).toMatchObject({ threadId: 't1' })
   })
 
+  /**
+   * The thread a continued draft belongs to comes from the draft, not from the
+   * intent — `continueDraft` opens every draft as `new`, deliberately, because
+   * recipients, subject and body are all loaded a moment later and a second
+   * source for them would flicker. `threadId` travelled with them by accident:
+   * without it every autosave rebuilds the draft with no `In-Reply-To`, quietly
+   * moving a reply out of its conversation.
+   */
+  it('keeps a continued draft in the thread it belongs to', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-4',
+      threadId: 't7',
+      to: [{ name: 'Bo', email: 'bo@example.com' }],
+      cc: [],
+      subject: 'Re: Q2 budget',
+      markdown: 'half a reply',
+      html: '<p>half a reply</p>',
+      text: 'half a reply',
+      foreign: false,
+    })
+    mount({ intent: { kind: 'new' }, draftId: 'd-4' })
+    await waitFor(() => expect(subjectField()).toHaveValue('Re: Q2 budget'))
+
+    await user.type(subjectField(), '!')
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({ draftId: 'd-4', threadId: 't7' })
+  })
+
   it('says Not saved and keeps the text when the save is refused', async () => {
     const user = setup()
     saveDraft.mockRejectedValue(new Error('offline'))
@@ -302,6 +332,42 @@ describe('sending', () => {
     expect(saveDraft).toHaveBeenCalled()
   })
 
+  /**
+   * Send racing the autosave, which is the half "forces a save before sending"
+   * did not cover. `save()` returns immediately when one is already in flight —
+   * it only sets the queued flag — so awaiting it awaited nothing, and Send went
+   * out while the create was still on the wire. `draftId` was therefore still
+   * unknown, main took the compose branch, and the user got a sent message AND
+   * an orphan draft: the exact "one delivered, one orphaned" pair the CLI's
+   * `send --draft` was added to prevent.
+   */
+  it('waits for an in-flight save, so the send is of the draft rather than a second message', async () => {
+    const user = setup()
+    let resolve: ((value: { id: string }) => void) | undefined
+    saveDraft.mockImplementationOnce(
+      () =>
+        new Promise<{ id: string }>((r) => {
+          resolve = r
+        }),
+    )
+    mount()
+
+    await user.type(subjectField(), 'a')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(saveDraft).toHaveBeenCalledTimes(1) // the create is on the wire
+
+    await user.type(subjectField(), 'b') // dirty again, mid-flight
+    const clicked = user.click(screen.getByRole('button', { name: 'Send' }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(send).not.toHaveBeenCalled() // still waiting on the save
+
+    resolve?.({ id: 'd-1' })
+    await clicked
+
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+    expect(send.mock.calls[0]![0]).toMatchObject({ draftId: 'd-1' })
+  })
+
   it('offers Reconnect for a scope failure, and keeps the text', async () => {
     const user = setup()
     send.mockRejectedValue(Object.assign(new Error('nope'), { data: { code: 'FORBIDDEN' } }))
@@ -381,6 +447,37 @@ describe('a draft written outside Holi', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     expect(saveDraft).not.toHaveBeenCalled()
+  })
+
+  /**
+   * A draft with no `text/html` part at all — which is every draft the agent
+   * wrote through `holi-google draft` before the marker shipped, and anything
+   * from a plain-text client. `html` is null and `markdown` is null (no marker),
+   * so converting the html means converting nothing: the composer opened blank
+   * and the first keystroke autosaved that blank over the user's message.
+   */
+  it('opens a plain-text foreign draft with its text, not blank', async () => {
+    const user = setup()
+    draftQuery.mockResolvedValue({
+      draftId: 'd-9',
+      threadId: null,
+      to: [],
+      cc: [],
+      subject: 'From the agent',
+      markdown: null,
+      html: null,
+      text: 'a short poem about a turtle',
+      foreign: true,
+    })
+    mount({ intent: { kind: 'new' }, draftId: 'd-9' })
+    await waitFor(() => expect(screen.getByTestId('foreign-notice')).toBeVisible())
+
+    await user.type(subjectField(), '!')
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(saveDraft.mock.calls[0]![0]).toMatchObject({
+      mail: { body: 'a short poem about a turtle' },
+    })
   })
 
   it('shows no notice for a draft Holi wrote, and uses its markdown verbatim', async () => {
