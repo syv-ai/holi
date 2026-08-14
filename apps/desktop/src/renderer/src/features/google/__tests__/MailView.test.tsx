@@ -1389,6 +1389,37 @@ test('opening a draft loads it into the composer', async () => {
   expect(draftMock).toHaveBeenCalledWith({ id: 'd-1' })
 })
 
+test('opening a draft closes the thread it would otherwise hide behind', async () => {
+  // The composer lives in the reader pane, which is only reached when nothing
+  // is open. With a thread open the click fell through to the thread view and
+  // the composer rendered at the foot of its scroller — off-screen, so the
+  // click looked like it did nothing, and the draft being edited had no
+  // relationship to the conversation displayed above it.
+  const user = userEvent.setup()
+  threadMock.mockResolvedValue(page([summary()]))
+  draftsMock.mockResolvedValue([draft()])
+  draftMock.mockResolvedValue({
+    draftId: 'd-1',
+    threadId: null,
+    to: [{ name: 'Bo Berg', email: 'bo@example.com' }],
+    cc: [],
+    subject: 'Half written',
+    markdown: 'I was going to say',
+    html: null,
+    text: 'I was going to say',
+    foreign: false,
+  })
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('article')
+
+  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await user.click(await screen.findByText('Half written'))
+
+  await screen.findByRole('region', { name: 'Compose mail' })
+  expect(screen.queryByRole('article')).toBeNull()
+})
+
 test('Drafts says so when there are none, rather than showing an empty pane', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))

@@ -232,8 +232,12 @@ export function buildRfc822(
    * the renderer, and it reaches the recipient as a blank message. An empty
    * body rendering to nothing is not that bug — an empty message is allowed to
    * send (D71) — so the two cases are separated rather than both refused.
+   *
+   * Trimmed, because "prose that exists" is what the test is actually asking:
+   * `marked` renders whitespace to nothing quite correctly, and comparing the
+   * raw string made a stray space fail every autosave with an internal error.
    */
-  if (mail.html === '' && mail.body !== '') {
+  if (mail.html === '' && mail.body.trim() !== '') {
     throw new Error('html is empty while the body is not — the render produced nothing')
   }
 

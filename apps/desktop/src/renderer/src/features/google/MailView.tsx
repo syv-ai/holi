@@ -365,14 +365,19 @@ export function MailView() {
    * Continue a draft from the Drafts list.
    *
    * The intent is `new` even for a draft that belongs to a thread: the composer
-   * loads everything — recipients, subject, body — from `google.draft`, so an
-   * intent that also computed them would be overwritten a moment later and any
-   * disagreement between the two would flicker on screen.
+   * loads everything — recipients, subject, body, and the thread — from
+   * `google.draft`, so an intent that also computed them would be overwritten a
+   * moment later and any disagreement between the two would flicker on screen.
    */
   const continueDraft = (draft: DraftSummary): void => {
     setComposeKey((key) => key + 1)
     setContinuing(draft.draftId)
     setComposing({ kind: 'new' })
+    // The composer renders in the reader pane, which is only reached with
+    // nothing open. Leaving a thread open sent it to the foot of that thread's
+    // scroller instead — off-screen, so the click read as doing nothing, under
+    // a conversation the draft may have no relation to.
+    setOpenId(null)
   }
 
   const startForward = (): void => {

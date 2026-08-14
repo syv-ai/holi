@@ -258,6 +258,16 @@ describe('buildRfc822 — multipart/alternative', () => {
 
     expect(headersOf(raw)['content-type']).toBe('text/plain; charset="UTF-8"')
   })
+
+  it('treats a whitespace-only body as empty rather than as a failed render', () => {
+    // `marked` renders '   ' to '', which is not the bug above — there was no
+    // prose to render. Comparing the untrimmed body made a stray space or a
+    // stray newline throw, so every autosave failed with an internal message
+    // and Send surfaced the same raw error.
+    for (const body of ['   ', '\t', '\n\n']) {
+      expect(() => buildRfc822({ ...BASE, body, html: '' })).not.toThrow()
+    }
+  })
 })
 
 describe('buildRfc822 — multipart/mixed', () => {
