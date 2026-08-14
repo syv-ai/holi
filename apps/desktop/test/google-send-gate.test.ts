@@ -239,3 +239,47 @@ describe('sending an existing draft', () => {
     )
   })
 })
+
+/**
+ * Gmail's MCP connectors (2026-08-14).
+ *
+ * The agent used one in preference to `holi-google`, and every such call sailed
+ * past this gate — an MCP tool call is not a shell command, so a `Bash` matcher
+ * never saw it. `disableClaudeAiConnectors` is the real fix; this is the
+ * fallback for a vault whose settings regress.
+ */
+describe('the claude.ai Gmail connector', () => {
+  const mcp = (name: string) => ({
+    hook_event_name: 'PreToolUse',
+    tool_name: name,
+    tool_input: { to: ['ada@syv.ai'] },
+  })
+
+  it('asks before a connector send', async () => {
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__send_message')))).toBe('ask')
+  })
+
+  it('asks before a connector reply and a forward', async () => {
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__reply')))).toBe('ask')
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__forward')))).toBe('ask')
+  })
+
+  it('says the mail bypasses Holi, because that is the part the user cannot see', async () => {
+    const d = await decide(mcp('mcp__claude_ai_Gmail__send_message'))
+
+    expect(d.hookSpecificOutput?.permissionDecisionReason ?? '').toMatch(/connector|rather than through Holi/i)
+  })
+
+  it('has no opinion on a connector draft, which reaches nobody', async () => {
+    // This gates what cannot be undone, not what it dislikes.
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__create_draft')))).toBe('defer')
+  })
+
+  it('has no opinion on reading mail through a connector', async () => {
+    expect(decisionOf(await decide(mcp('mcp__claude_ai_Gmail__search_threads')))).toBe('defer')
+  })
+
+  it('ignores an unrelated MCP server entirely', async () => {
+    expect(decisionOf(await decide(mcp('mcp__azure_devops__create_pr')))).toBe('defer')
+  })
+})

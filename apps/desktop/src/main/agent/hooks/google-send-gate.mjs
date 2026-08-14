@@ -130,6 +130,34 @@ if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
   ask('Holi could not read this tool call, so it is asking rather than assuming it is safe.')
 }
 
+/**
+ * A claude.ai Gmail **connector** call (2026-08-14).
+ *
+ * The agent reached for one of these in preference to `holi-google`, and every
+ * such call used to sail straight past this gate — an MCP tool call is not a
+ * shell command, so the `Bash` matcher never saw it. `disableClaudeAiConnectors`
+ * in the seeded settings is the real fix; this is the fallback for a vault whose
+ * settings regress or whose user turns the connector back on deliberately.
+ *
+ * Matched on the tool *name*, which the harness supplies — there is no command
+ * string to parse and nothing to spell three ways.
+ */
+const MCP_SENDS = /^mcp__.*[Gg]mail.*__(send|reply|forward)/
+
+if (typeof payload.tool_name === 'string' && payload.tool_name.startsWith('mcp__')) {
+  if (MCP_SENDS.test(payload.tool_name)) {
+    ask(
+      'This sends mail through a claude.ai Gmail connector rather than through Holi. ' +
+        'Holi cannot see the recipients or the message, and none of its own protections ' +
+        'apply — the mail is sent with a separate connection to Google. ' +
+        'It cannot be recalled, so Holi asks every time.',
+    )
+  }
+  // A read or a draft through the connector reaches nobody, so this hook has no
+  // opinion — it gates what cannot be undone, not what it dislikes.
+  defer()
+}
+
 // Not a shell command at all — nothing here can send anything.
 if (payload.tool_name !== 'Bash') defer()
 

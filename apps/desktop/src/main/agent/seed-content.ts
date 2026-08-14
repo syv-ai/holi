@@ -169,8 +169,36 @@ const SETTINGS_JSON =
         // per Bash call.
         PreToolUse: [
           { matcher: 'Bash', hooks: [{ type: 'command', command: hookCommand('google-send-gate') }] },
+          // The same gate, over Gmail's *MCP* tools (2026-08-14).
+          //
+          // A `Bash` matcher sees only Bash. When a claude.ai Gmail connector is
+          // available the agent will happily reach for it instead of
+          // `holi-google` — observed in real use — and every one of those calls
+          // sailed past this gate, because an MCP tool call is not a shell
+          // command. `disableClaudeAiConnectors` below is the real fix; this is
+          // the belt to its braces, for a vault whose settings regress or whose
+          // user re-enables the connector deliberately.
+          {
+            matcher: 'mcp__.*[Gg]mail.*',
+            hooks: [{ type: 'command', command: hookCommand('google-send-gate') }],
+          },
         ],
       },
+      /**
+       * No claude.ai cloud connectors in a vault (2026-08-14).
+       *
+       * The agent used a claude.ai **Gmail** connector to write a draft, in
+       * preference to `holi-google` — which routes around every guarantee this
+       * app makes about mail: main is the sole token authority (D67), the send
+       * gate is a hook on `Bash` (D70), and the cache is patched by Holi's own
+       * writes (D68). None of those apply to a tool Holi never sees.
+       *
+       * Settable in any scope, and `true` in *any* source wins, so this checked-in
+       * project file opts the vault out and a user-level `false` cannot undo it.
+       * It does **not** touch skills or plugins inherited from `~/.claude` —
+       * project settings cannot reach those, and that is a separate decision.
+       */
+      disableClaudeAiConnectors: true,
       permissions: {
         // seeded egress gating (PRD §Security posture) — the user still
         // approves each one, they just don't slip through unasked
@@ -328,8 +356,27 @@ export function settingsWithRequired(existing: string | null): string | null {
   const required = JSON.parse(SETTINGS_JSON) as {
     hooks: { PreToolUse: unknown[] }
     permissions: { ask: string[] }
+    disableClaudeAiConnectors: boolean
   }
   let changed = false
+
+  /**
+   * No claude.ai cloud connectors (2026-08-14).
+   *
+   * Merged here as well as seeded, because **a seed that only runs at creation
+   * is a migration that never happens** — D70's own lesson, and the reason the
+   * send gate was absent from every established vault when it shipped. Every
+   * vault that exists today has a `settings.json`, so the creation path would
+   * have reached none of them.
+   *
+   * Only ever set to `true`, and only when absent: a user who deliberately set
+   * it `false` has said something, and re-asserting it on every vault open would
+   * be Holi arguing with them once a session.
+   */
+  if (settings.disableClaudeAiConnectors === undefined) {
+    settings.disableClaudeAiConnectors = required.disableClaudeAiConnectors
+    changed = true
+  }
 
   // The gate. Matched by the script it runs rather than by deep-equality, so a
   // user who reordered or annotated the entry does not get a duplicate.

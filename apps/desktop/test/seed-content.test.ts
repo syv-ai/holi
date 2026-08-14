@@ -467,7 +467,23 @@ describe('settingsWithRequired', () => {
     const twice = settingsWithRequired(once)
 
     expect(twice).toBeNull()
-    expect(parse(once).hooks.PreToolUse).toHaveLength(1)
+    // Two matchers, not two copies: `Bash` for the CLI and `mcp__…Gmail…` for
+    // the claude.ai connector, which a Bash matcher cannot see. Seeding again
+    // adds neither.
+    expect(parse(once).hooks.PreToolUse).toHaveLength(2)
+    expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
+      'Bash',
+      'mcp__.*[Gg]mail.*',
+    ])
+  })
+
+  it('opts the vault out of claude.ai cloud connectors', () => {
+    // The agent reached for a claude.ai Gmail connector in preference to
+    // `holi-google`, routing around main-as-sole-token-authority, the send gate
+    // and the cache. `true` in any scope wins, so this checked-in file settles it.
+    const seeded = settingsWithRequired(JSON.stringify({ hooks: {}, permissions: {} }))
+
+    expect(parse(seeded).disableClaudeAiConnectors).toBe(true)
   })
 
   // Their file, and unparseable JSON is not something to "fix" by overwriting.
@@ -501,5 +517,43 @@ describe('ensureSeeded — settings.json', () => {
       SEED_FILES['.claude/hooks/google-send-gate.mjs'],
     )
     await rm(root, { recursive: true, force: true })
+  })
+})
+
+describe('the connector opt-out reaches vaults that already exist', () => {
+  // D70's own lesson, applied to itself: a seed that only runs at creation is a
+  // migration that never happens. Every vault that exists today already has a
+  // settings.json, so the creation path reaches none of them.
+  it('adds the opt-out to an established vault on the merge path', () => {
+    const before = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+      permissions: { ask: [] },
+    })
+
+    const after = settingsWithRequired(before)
+
+    expect(JSON.parse(after!).disableClaudeAiConnectors).toBe(true)
+  })
+
+  it('does not argue with a user who deliberately set it false', () => {
+    // Re-asserting it every vault open would be Holi overruling a stated choice
+    // once a session. The vault is theirs.
+    const before = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+      permissions: {
+        ask: [
+          'Bash(curl:*)',
+          'Bash(wget:*)',
+          'Bash(holi-google archive:*)',
+          'Bash(holi-google trash:*)',
+          'Bash(holi-google unschedule:*)',
+          'Bash(holi-google send:*)',
+          'Bash(holi-google reply:*)',
+        ],
+      },
+      disableClaudeAiConnectors: false,
+    })
+
+    expect(settingsWithRequired(before)).toBeNull()
   })
 })
