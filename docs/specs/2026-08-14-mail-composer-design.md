@@ -314,10 +314,19 @@ pillar where almost nothing else can be tested at all (D69): **markdown→HTML**
 Unproven until run against a real account: whether Gmail preserves `X-Holi-Source` on a draft
 round-trip, and how the rendered HTML actually looks in Gmail, Outlook and Apple Mail. **Neither
 is load-bearing any more** — the first decides byte-exact versus well-converted (§4), and the
-second is a fidelity question rather than a correctness one. What *is* load-bearing and still
-unproven is everything under it: D70's `send`, `drafts.create` and reply threading have never met
-a real mailbox, and the composer sits directly on all three. Verifying them by hand is the first
-task of the plan, before any composer code exists.
+second is a fidelity question rather than a correctness one.
+
+**What is load-bearing is the outbound path, and only the outbound path.** Mail read, the four
+triage writes and the calendar agenda are proven in real use, so `GoogleApi.post`, `modifyThread`
+and `googleData`'s Google-first ordering sit under this feature as facts. D70's `messages.send`,
+`drafts.create`, reply threading and `postJson`'s unreadable-2xx path have never run. Verifying
+them by hand is the first task of the plan, before any composer code exists — and it is a
+narrower, more honest ask than "verify Google", which is what the plan first said.
+
+**One inbound call is also unproven and hides it well:** the People contacts fetch behind
+recipient autocomplete. `listContacts` never rejects and caches `[]` on refusal, so a scope or
+`readMask` failure is indistinguishable from an empty address book. Chips will still work; they
+will simply never suggest anyone, which reads as a design choice rather than a bug.
 
 **On what the preview claims.** It renders through Holi's sanitiser and D69's paper decision, so
 it is exactly what *Holi* would show — which is to say, exactly what will be sent. It is not a

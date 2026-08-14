@@ -73,10 +73,14 @@ regress, nothing an agent can talk around. Widening needs a decision that names 
 
 ---
 
-## Task 0 — Verify D70 by hand. Nobody writes composer code first.
+## Task 0 — Verify D70's **outbound** calls by hand. Nobody writes composer code first.
 
-Nothing in this repo has ever talked to Google. `sendMessage`, `createDraft` and
-`replyToThread` are fakes written from documentation, and the composer sits directly on them.
+**Scope this precisely, because the broader version is false.** Mail read, the four triage writes
+and the calendar agenda are proven in real use — so `GoogleApi.post`, `modifyThread`, the trash
+endpoint and `googleData`'s Google-first write ordering are facts, not assumptions, and this
+feature inherits them. What has never run is everything **outbound**: `buildRfc822`,
+`messages.send`, `drafts.create`, reply threading, and `postJson`'s unreadable-2xx path. Those are
+fakes written from documentation, and the composer sits directly on all of them.
 
 - [ ] Ask the Holi agent, in a real vault, to draft a mail. Confirm it appears in Gmail Drafts,
       addressed correctly and filed in the right thread.
@@ -87,12 +91,19 @@ Nothing in this repo has ever talked to Google. `sendMessage`, `createDraft` and
       ask again* → ask it to send again. **The prompt must reappear.** No unit test in this repo
       can assert this, and a gate that does not fire is worse than no gate because it is
       believed in.
-- [ ] Record the results in `docs/decisions.md` under D70. If reply threading is broken, fix it
-      before Task 1 — every reply in this plan inherits it.
+- [ ] **Check that contacts autocomplete actually returns people.** It is an *inbound* call and it
+      is still unproven, because `listContacts` never rejects — it caches `[]` on refusal, so a
+      scope or `readMask` failure looks exactly like an empty address book. Open the mail pane and
+      confirm the recipient dropdown suggests real senders. If it is empty, fix it before Task 8,
+      whose autocomplete is built on it.
+- [ ] Record the results in `docs/decisions.md` under D70 and in
+      `prd/_phase2-google-mail-calendar.md`'s proven/unproven list. If reply threading is broken,
+      fix it before Task 1 — every reply in this plan inherits it.
 
 **Do not start Task 1 until this passes.** This is the pillar's standing failure mode: a test
 that asserts what the code assumes, rather than what Google does, passes while the feature is
-broken. It has happened four times.
+broken. It has happened four times — and a fifth time in prose, where "nothing in this repo has
+ever talked to Google" outlived its own truth in four documents.
 
 ---
 
