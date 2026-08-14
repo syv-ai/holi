@@ -70,6 +70,11 @@ import {
 } from '@/primitives'
 import { SandboxedHtml } from './SandboxedHtml'
 import { matchHotkey } from '../../lib/hotkey'
+import type {
+  MailAddress,
+  MailAttachment as Attachment,
+  ThreadMessage,
+} from '../../lib/mail-types'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
@@ -78,13 +83,14 @@ import { useGlobalPanelLayout } from '../../state/preferences'
 /** Mirrors `main/google/gmail.ts`. */
 type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
 
-/** Mirrors `MailAddress` in `main/google/gmail.ts`. `email` is `''` when the
- *  header carried nothing that looks like an address — the one case where no
- *  `mailto:` may be offered. */
-interface MailAddress {
-  name: string
-  email: string
-}
+/**
+ * `MailAddress`, `Attachment` and `ThreadMessage` used to be declared here.
+ *
+ * They moved to `lib/mail-types.ts` when the composer landed (D71), because
+ * `compose-intent` needs the same shapes and a second copy of a mail message is
+ * exactly how the `to` and `cc` fields drift apart — one file gains a field,
+ * the other keeps compiling, and a reply-all quietly stops copying somebody.
+ */
 
 /**
  * Gmail's tabs, plus the default: no tab at all.
@@ -123,25 +129,6 @@ interface ThreadSummary {
   /** User label names, already resolved in main. */
   labels: string[]
   unsubscribeUrl: string | null
-}
-
-interface Attachment {
-  filename: string
-  mimeType: string
-  size: number
-}
-
-interface ThreadMessage {
-  id: string
-  from: MailAddress
-  to: MailAddress[]
-  cc: MailAddress[]
-  date: string
-  /** Plain text — the fallback, and what a text-only message carries. */
-  body: string
-  /** Raw, unsanitized HTML, or null. Only `MessageBody` may touch this. */
-  html: string | null
-  attachments: Attachment[]
 }
 
 interface Thread {
