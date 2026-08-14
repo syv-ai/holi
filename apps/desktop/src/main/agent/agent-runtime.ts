@@ -187,12 +187,20 @@ export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
- * Best-effort login probe against the user's own `~/.claude` (the PRD keeps
- * the CLI on its real config — no CLAUDE_CONFIG_DIR redirect). Only powers a
- * header hint: `/login` works in the same terminal if this is wrong.
+ * Best-effort login probe: does `dir` carry a logged-in Claude Code?
+ *
+ * `dir` is **the config directory the child will actually use** — since D72
+ * that is Holi's own, not the machine's home, and asking the wrong one would
+ * report a login the relocated agent does not have. It is also the reason this
+ * is a file read: the logged-out state is visible in the terminal as
+ * `Not logged in`, and Holi does not infer Claude Code's state from its output.
+ *
+ * Only powers a header hint — `/login` works in the same terminal if this is
+ * wrong. Defaults to the home directory, which is where a config dir-less
+ * session (tests) would look anyway.
  */
-export function isClaudeAuthenticated(home: string = homedir()): boolean {
-  for (const path of [join(home, '.claude.json'), join(home, '.claude', '.claude.json')]) {
+export function isClaudeAuthenticated(dir: string = homedir()): boolean {
+  for (const path of [join(dir, '.claude.json'), join(dir, '.claude', '.claude.json')]) {
     try {
       const parsed = JSON.parse(readFileSync(path, 'utf8')) as { oauthAccount?: unknown }
       if (parsed.oauthAccount != null) return true

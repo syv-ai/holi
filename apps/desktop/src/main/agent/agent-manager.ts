@@ -41,6 +41,9 @@ export interface AgentStatus {
    *  each vault change; sticky until a restart, which is what actually re-reads
    *  config. Drives the AgentPanel's "shared config changed; restart" nudge. */
   configStale: boolean
+  /** The config directory the agent runs on has a logged-in Claude Code. Read
+   *  from a file, never from the terminal — and from Holi's own config dir since
+   *  D72, which costs exactly one `/login` the first time it is used. */
   authenticated: boolean
 }
 
@@ -171,7 +174,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     running: session !== null,
     working,
     configStale,
-    authenticated: isClaudeAuthenticated(),
+    // Of the config dir the child runs on (D72) — the machine's home may well be
+    // logged in while this one is not, and the panel's notice is for this one.
+    authenticated: isClaudeAuthenticated(deps.configDir ?? undefined),
   })
 
   const pushStatus = () => send('agent:status', status())
