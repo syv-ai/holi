@@ -21,6 +21,10 @@ Employees connect their **@syv.ai Gmail and Google Calendar** to Holi — read a
 - **Link**: an email or event attaches to a **task** or **note** as a plain markdown link in the body — never frontmatter, never a `[[wiki-link]]`. `related[]` does not exist ([`tasks.md`](tasks.md)).
 - **The agent gets the same surface**, through a `holi-google` command rather than an MCP server, bounded by reversibility and gated on send ([`agent.md`](agent.md)).
 
+## Goals — not yet built
+- **Create a task from an event**, seeded with the link in its body. `tasks.create` takes an optional `description` for exactly this, so the plumbing exists and the affordance does not.
+- **A task that lights up for a recurring event series** — the reminders/agenda tie-in ([`tasks.md`](tasks.md), [`daily-notes.md`](daily-notes.md)). Untouched by D67–D70.
+
 ## Non-goals
 - Being a full email client. Holi reads, triages, links and composes; it does not replace Gmail.
 - Persisting mail/calendar as vault content. Google stays the source of truth. There **is** a bounded on-disk cache in `userData` (not in a vault — mail is account data and a vault is a shared git repo), reconciled by a `history.list` delta. It is a cache, not a mirror: a wrong entry is a performance problem, and the next sync repairs it.
