@@ -21,8 +21,8 @@ read-only and the marker is an optimisation rather than a gate.
 ## What the grilling changed, relative to the spec
 
 `docs/specs/2026-08-14-mail-composer-design.md` was approved in outline. Seven clauses were
-overturned or sharpened on 2026-08-14; **Task 16 writes them back into the spec and D71**, and
-until it runs the spec and this plan disagree. This plan is the current one.
+overturned or sharpened on 2026-08-14, and **the spec and D71 have been amended to match** — they
+are law and this table is the summary, not the source. Read the spec for the reasoning.
 
 | Spec said | Now |
 | --- | --- |
@@ -533,12 +533,8 @@ knows what is going along. A forward of a message with no attachments must take 
 
 ### Task 16 — the living docs are law
 
-- [ ] Amend `docs/specs/2026-08-14-mail-composer-design.md` for all seven changes in the table at
-      the top of this plan. §4's read-only branch, the 350ms number, §9's alias wart and §10's two
-      exclusions are now wrong and must not survive as text somebody re-derives from.
-- [ ] Amend `docs/decisions.md` D71: the no-read-only principle, the marker demoted to an
-      optimisation, `turndown` as the second half of the format story, and the **scope policy**
-      (`gmail.modify` is max-minus-irreversible; the bound is the token, not a code path).
+- [x] ~~Amend the spec and D71 for all seven changes~~ — **done 2026-08-14, before the build.**
+      The spec and the ledger are current; this plan's table is a summary of them, not a substitute.
 - [ ] Record Task 0's and the Task 7 checkpoint's results under D70 and D71 — what was proven
       against a real account, and what remains unproven.
 - [ ] Consolidate into `prd/_phase2-google-mail-calendar.md` once built, per the D67–D70 pattern.
