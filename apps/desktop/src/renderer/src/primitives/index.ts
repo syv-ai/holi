@@ -53,3 +53,5 @@ export {
 } from './Select'
 export { Textarea } from './Textarea'
 export { Tooltip, TooltipProvider } from './Tooltip'
+
+export { ChipInput, type ChipInputProps } from './ChipInput'
