@@ -203,6 +203,24 @@ export class GoogleApi {
   }
 
   /**
+   * A replacing write whose answer is worth reading — `drafts.update` (D71).
+   *
+   * `PUT`, and the contrast with `patch` above is the whole reason both exist.
+   * `patch` is used where a partial update is wanted precisely *because*
+   * replacing would erase fields the caller did not send. Here replacement is
+   * what Gmail offers and what is wanted: a draft is rewritten whole on every
+   * save, threading headers included, because a saved draft can be sent from a
+   * phone and has to carry them itself.
+   *
+   * `null` on an unreadable 2xx means the same as it does in `postJson`: it
+   * worked, and we could not read what it said.
+   */
+  async putJson<T>(url: string, body: unknown): Promise<T | null> {
+    const res = await this.#write('PUT', url, body)
+    return await res.json().catch(() => null)
+  }
+
+  /**
    * Follow `nextPageToken` until the pages run out.
    *
    * Google paginates *everything*, and the default page size is small enough

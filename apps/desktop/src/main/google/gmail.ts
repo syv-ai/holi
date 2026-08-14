@@ -25,7 +25,7 @@
  */
 import type { GoogleApi } from './api'
 import { fetchLabelNames } from './labels'
-import { buildRfc822, toBase64Url, type OutgoingMail } from './mime'
+import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mime'
 
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -147,6 +147,8 @@ interface RawPart {
 
 interface RawMessage {
   id?: string
+  /** Absent on a loose draft that belongs to no conversation (D71). */
+  threadId?: string
   labelIds?: string[]
   snippet?: string
   internalDate?: string
@@ -949,4 +951,254 @@ export async function replyToThread(
     threadId,
   })
   return { id: sent?.id ?? null }
+}
+
+/**
+ * The composer's Gmail surface (D71).
+ *
+ * Everything below either reaches another human or edits something that will,
+ * and none of it existed while replying meant opening a browser. The agent's
+ * functions above are deliberately left alone: `createDraft` and
+ * `replyToThread` derive their own recipients, which is right for an LLM
+ * working from an instruction and wrong for a UI where the user has already
+ * been shown chips they may have edited.
+ */
+
+export interface DraftSummary {
+  draftId: string
+  threadId: string | null
+  to: MailAddress[]
+  subject: string
+  snippet: string
+  date: string
+}
+
+export interface DraftBody {
+  draftId: string
+  threadId: string | null
+  to: MailAddress[]
+  cc: MailAddress[]
+  subject: string
+  /**
+   * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
+   * from Holi. `null` means the renderer must convert `html` itself — main
+   * cannot, because `turndown` needs a DOM and main has none.
+   */
+  markdown: string | null
+  html: string | null
+  /** No `X-Holi-Source`. Not a gate: a foreign draft opens for editing after a
+   *  conversion, and there is no read-only state anywhere in this feature. */
+  foreign: boolean
+}
+
+/** The header `buildRfc822` writes on everything it builds. */
+const SOURCE_HEADER_NAME = 'X-Holi-Source'
+
+/**
+ * The `In-Reply-To` and `References` for a reply into `threadId`.
+ *
+ * Resolved from a fresh `format=metadata` read every time, per send *and* per
+ * save. Never held in the renderer and never baked at mount: `drafts.update`
+ * replaces the whole draft, so a save that omits these strips them, and a draft
+ * later sent from a phone starts a new conversation.
+ *
+ * The cost is one cheap metadata read per autosave. If that ever shows up as
+ * slow the tunable is to resolve on create and send only — and the price of
+ * that is exactly the phone case above.
+ */
+async function threadingHeaders(
+  api: GoogleApi,
+  threadId: string,
+): Promise<{ inReplyTo?: string; references: string[] }> {
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'metadata',
+    metadataHeaders: ['Message-ID'],
+  })
+  const messages = thread.messages ?? []
+  // The WHOLE chain, oldest first. Gmail threads on References; In-Reply-To
+  // alone sends fine and lands as a brand new thread.
+  const references = messages
+    .map((message) => headerOf(message.payload, 'Message-ID'))
+    .filter((id): id is string => id !== null && id !== '')
+  const last = references[references.length - 1]
+  return { references, ...(last === undefined ? {} : { inReplyTo: last }) }
+}
+
+/**
+ * Send into an existing thread, with the recipients the caller supplies.
+ *
+ * **Not `replyToThread`.** That one derives its own `to` and `cc` from the
+ * thread, which is the right default for the agent and the wrong one here: the
+ * composer has already shown the user chips they may have edited, and deriving
+ * would silently discard the edit. This derives *only* the threading headers.
+ */
+export async function sendInThread(
+  api: GoogleApi,
+  threadId: string,
+  mail: OutgoingMail,
+): Promise<{ id: string | null }> {
+  const threading = await threadingHeaders(api, threadId)
+  const sent = await api.postJson<{ id?: string }>(`${BASE}/messages/send`, {
+    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    // Belt and braces with the headers: the id files it in the thread even if a
+    // Message-ID was missing, which is rare but legal.
+    threadId,
+  })
+  return { id: sent?.id ?? null }
+}
+
+/**
+ * Create or replace the composer's draft — the one call the autosave loop wants.
+ *
+ * `createDraft` above is the agent's and stays as it is; this one exists
+ * because an autosave has to be able to *update*. A create on every save makes
+ * a second draft, and the user watches their message fork.
+ */
+export async function saveDraft(
+  api: GoogleApi,
+  mail: OutgoingMail,
+  opts: { draftId?: string; threadId?: string } = {},
+): Promise<{ id: string | null }> {
+  const threading =
+    opts.threadId === undefined ? {} : await threadingHeaders(api, opts.threadId)
+  const message = {
+    raw: toBase64Url(buildRfc822({ ...mail, ...threading })),
+    ...(opts.threadId === undefined ? {} : { threadId: opts.threadId }),
+  }
+
+  if (opts.draftId === undefined) {
+    const draft = await api.postJson<{ id?: string }>(`${BASE}/drafts`, { message })
+    return { id: draft?.id ?? null }
+  }
+
+  // PUT, not PATCH: Gmail replaces the whole draft, which is why the threading
+  // headers above are rebuilt on every save rather than assumed to survive.
+  const draft = await api.putJson<{ id?: string }>(
+    `${BASE}/drafts/${encodeURIComponent(opts.draftId)}`,
+    { id: opts.draftId, message },
+  )
+  return { id: draft?.id ?? opts.draftId }
+}
+
+/**
+ * Send a draft.
+ *
+ * `drafts.send`, **not** `messages.send` followed by `drafts.delete`. Gmail
+ * removes the draft atomically; the two-call version leaves an orphan draft
+ * whenever the second call fails — a message the user already sent, still
+ * sitting in Drafts looking unsent.
+ */
+export async function sendDraft(api: GoogleApi, draftId: string): Promise<{ id: string | null }> {
+  const sent = await api.postJson<{ id?: string }>(`${BASE}/drafts/send`, { id: draftId })
+  return { id: sent?.id ?? null }
+}
+
+export async function deleteDraft(api: GoogleApi, draftId: string): Promise<void> {
+  await api.del(`${BASE}/drafts/${encodeURIComponent(draftId)}`)
+}
+
+/** `drafts.list` carries no headers at all, so each draft costs a metadata
+ *  read. Capped rather than unbounded — a Drafts view is a list a human reads. */
+const DRAFT_LIST_CAP = 50
+
+export async function listDrafts(api: GoogleApi): Promise<DraftSummary[]> {
+  const page = await api.get<{ drafts?: { id?: string }[] }>(`${BASE}/drafts`, {
+    maxResults: String(DRAFT_LIST_CAP),
+  })
+  const ids = (page.drafts ?? [])
+    .map((draft) => draft.id)
+    .filter((id): id is string => id !== undefined)
+
+  const summaries = await Promise.all(
+    ids.map(async (id) => {
+      const draft = await api.get<{ id?: string; message?: RawMessage }>(
+        `${BASE}/drafts/${encodeURIComponent(id)}`,
+        { format: 'metadata', metadataHeaders: ['To', 'Subject'] },
+      )
+      const message = draft.message
+      return {
+        draftId: id,
+        threadId: threadIdOf(message),
+        to: parseAddresses(headerOf(message?.payload, 'To')),
+        subject: headerOf(message?.payload, 'Subject') ?? '',
+        snippet: message?.snippet ?? '',
+        date: message === undefined ? '' : isoDate(message),
+      }
+    }),
+  )
+  return summaries
+}
+
+export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftBody> {
+  const draft = await api.get<{ id?: string; message?: RawMessage }>(
+    `${BASE}/drafts/${encodeURIComponent(draftId)}`,
+    { format: 'full' },
+  )
+  const message = draft.message
+  const payload = message?.payload
+  const foreign = headerOf(payload, SOURCE_HEADER_NAME) === null
+
+  return {
+    draftId,
+    threadId: threadIdOf(message),
+    to: parseAddresses(headerOf(payload, 'To')),
+    cc: parseAddresses(headerOf(payload, 'Cc')),
+    subject: headerOf(payload, 'Subject') ?? '',
+    // The marker means the text/plain part IS the markdown that produced this
+    // draft, so it round-trips byte-exact. Without it there is nothing here to
+    // trust, and the renderer converts the html instead.
+    markdown: foreign ? null : bodyTextOf(payload),
+    html: bodyHtmlOf(payload),
+    foreign,
+  }
+}
+
+/**
+ * Every address this account may send from — the connected one plus its aliases.
+ *
+ * Needed so reply-all can exclude *all* of them. Missing an alias copies the
+ * user on their own reply, which reads as a bug in the recipient's client
+ * rather than in this one. No new OAuth scope: `gmail.modify` already permits
+ * `settings.sendAs.list`.
+ */
+export async function listSendAs(api: GoogleApi): Promise<string[]> {
+  const settings = await api.get<{ sendAs?: { sendAsEmail?: string }[] }>(`${BASE}/settings/sendAs`)
+  return (settings.sendAs ?? [])
+    .map((entry) => entry.sendAsEmail)
+    .filter((email): email is string => email !== undefined && email !== '')
+    // Lowercased because these are compared against header addresses.
+    .map((email) => email.toLowerCase())
+}
+
+/**
+ * Fetch one attachment's bytes, ready for `buildRfc822`.
+ *
+ * **The conversion is the point.** `attachments.get` answers base64**url**;
+ * MIME needs standard base64. The alphabets differ in three characters, so the
+ * mistake produces a file that opens as garbage — and only the recipient ever
+ * sees it. The filename and type come from the caller because the wire answer
+ * carries neither.
+ */
+export async function fetchAttachment(
+  api: GoogleApi,
+  messageId: string,
+  attachmentId: string,
+  part: { filename: string; mimeType: string },
+): Promise<MailPart> {
+  const message = encodeURIComponent(messageId)
+  const attachment = encodeURIComponent(attachmentId)
+  const body = await api.get<{ data?: string }>(
+    `${BASE}/messages/${message}/attachments/${attachment}`,
+  )
+  return {
+    filename: part.filename,
+    mimeType: part.mimeType,
+    data: Buffer.from(body.data ?? '', 'base64url').toString('base64'),
+  }
+}
+
+/** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */
+function threadIdOf(message: RawMessage | undefined): string | null {
+  const threadId = message?.threadId
+  return threadId === undefined || threadId === '' ? null : threadId
 }
