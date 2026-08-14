@@ -1491,3 +1491,172 @@ describe('history', () => {
     expect(after.length).toBe(before.length + 1)
   })
 })
+
+/**
+ * The composer's procedures (D71).
+ *
+ * The router is where the renderer's payload stops being trusted, so most of
+ * these are about a bad shape being refused rather than reaching `buildRfc822`
+ * as something that looks like a header.
+ */
+describe('google composer procedures', () => {
+  const MAIL = { to: ['bo@example.com'], subject: 'Q2 budget', body: 'Here it is.' }
+
+  /** A router with a fake `googleData`, recording what each procedure asked of
+   *  it. No network: these tests are about the seam, not about Gmail. */
+  async function googleRig(overrides: Record<string, unknown> = {}) {
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-google-'))
+    dirs.push(base)
+    const root = join(base, 'clone')
+    await mkdir(root, { recursive: true })
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({
+      registry,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { pullIntervalMs: 3_600_000, healIntervalMs: 3_600_000, commitQuietMs: 3_600_000 },
+    })
+    hosts.push(host)
+
+    const calls: { name: string; input: unknown }[] = []
+    const record =
+      <T>(name: string, result: T) =>
+      async (input: unknown): Promise<T> => {
+        calls.push({ name, input })
+        return result
+      }
+
+    const googleData = {
+      sendMail: record('sendMail', { id: 'm-1' }),
+      saveDraft: record('saveDraft', { id: 'd-1' }),
+      discardDraft: record('discardDraft', undefined),
+      sendAs: async () => {
+        calls.push({ name: 'sendAs', input: undefined })
+        return ['ada@syv.ai']
+      },
+      ...overrides,
+    } as never
+
+    const caller = createRouter({
+      registry,
+      session: await idleSession(base),
+      host,
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+      googleData,
+    }).createCaller({})
+
+    return { caller, calls }
+  }
+
+  it('send passes the mail straight through to the write surface', async () => {
+    const { caller, calls } = await googleRig()
+
+    const result = await caller.google.send({ mail: MAIL, threadId: 't1' })
+
+    expect(result).toEqual({ id: 'm-1' })
+    expect(calls).toEqual([
+      { name: 'sendMail', input: { threadId: 't1', mail: { ...MAIL } } },
+    ])
+  })
+
+  it('send carries the html the renderer previewed', async () => {
+    // The settled shape: the renderer previewed those exact bytes and main
+    // sends them, so the preview is the artifact rather than a likeness.
+    const { caller, calls } = await googleRig()
+
+    await caller.google.send({ mail: { ...MAIL, html: '<p>Here it is.</p>' } })
+
+    expect((calls[0]!.input as { mail: { html: string } }).mail.html).toBe('<p>Here it is.</p>')
+  })
+
+  it('saveDraft returns the draft id the composer needs to update in place', async () => {
+    const { caller } = await googleRig()
+
+    expect(await caller.google.saveDraft({ mail: MAIL })).toEqual({ id: 'd-1' })
+  })
+
+  it('discardDraft carries the thread so the cached chip can go', async () => {
+    const { caller, calls } = await googleRig()
+
+    await caller.google.discardDraft({ draftId: 'd-1', threadId: 't1' })
+
+    expect(calls[0]).toEqual({ name: 'discardDraft', input: { draftId: 'd-1', threadId: 't1' } })
+  })
+
+  it('sendAs comes back from the cached account data', async () => {
+    const { caller } = await googleRig()
+
+    expect(await caller.google.sendAs()).toEqual(['ada@syv.ai'])
+  })
+
+  it('refuses a mail that is not an object', async () => {
+    const { caller } = await googleRig()
+
+    await expect(caller.google.send({ mail: 'hello' } as never)).rejects.toThrow(/mail/i)
+  })
+
+  it('refuses recipients that are not strings', async () => {
+    const { caller } = await googleRig()
+
+    await expect(
+      caller.google.send({ mail: { ...MAIL, to: [{ email: 'x' }] } } as never),
+    ).rejects.toThrow(/to/i)
+  })
+
+  it('refuses a missing subject rather than sending an undefined one', async () => {
+    const { caller } = await googleRig()
+
+    const noSubject = { mail: { to: ['a@b.c'], body: 'x' } } as never
+
+    await expect(caller.google.send(noSubject)).rejects.toThrow(/subject/i)
+  })
+
+  it('drops an empty cc rather than sending an empty header', async () => {
+    const { caller, calls } = await googleRig()
+
+    await caller.google.send({ mail: { ...MAIL, cc: [] } })
+
+    expect((calls[0]!.input as { mail: Record<string, unknown> }).mail).not.toHaveProperty('cc')
+  })
+
+  it('maps a Google refusal onto a tRPC code rather than prose', async () => {
+    // The renderer decides between Reconnect and Retry on the code. Matching on
+    // the message is the mistake ipc-link.ts already records having made once.
+    const { GoogleApiError } = await import('../src/main/google/api')
+    const { caller } = await googleRig({
+      sendMail: async () => {
+        throw new GoogleApiError('scope', 403, 'this Google permission was not granted')
+      },
+    })
+
+    await expect(caller.google.send({ mail: MAIL })).rejects.toMatchObject({ code: 'FORBIDDEN' })
+  })
+
+  it('refuses to send at all when the connector is not configured', async () => {
+    // Reads degrade to a direct fetch; a write cannot. Succeeding at Google
+    // while the list on screen still says otherwise is worse than saying no.
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-nogoogle-'))
+    dirs.push(base)
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+    hosts.push(host)
+    const caller = createRouter({
+      registry,
+      session: await idleSession(base),
+      host,
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+    }).createCaller({})
+
+    await expect(caller.google.send({ mail: MAIL })).rejects.toMatchObject({
+      code: 'PRECONDITION_FAILED',
+    })
+  })
+})

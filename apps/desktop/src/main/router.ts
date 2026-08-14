@@ -52,15 +52,21 @@ import type { GoogleData } from './google/data'
 import {
   fetchCategoryCounts,
   fetchMailCounts,
+  listDrafts,
+  listSendAs,
   listThreads,
+  readDraft,
   readThread,
   type CategoryCounts,
+  type DraftBody,
+  type DraftSummary,
   type MailAddress,
   type MailCategory,
   type MailCounts,
   type MailPage,
   type MailThread,
 } from './google/gmail'
+import type { OutgoingMail } from './google/mime'
 import type { ImagePrefsStore } from './google/image-prefs'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
@@ -250,6 +256,69 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
   'updates',
   'forums',
 ]
+
+/**
+ * The composer's payload, which `fields` cannot express (D71).
+ *
+ * `fields` handles strings and booleans; a mail carries arrays and a nested
+ * object. Validated for **shape** only — the semantic rules stay in
+ * `buildRfc822`, which is the last thing to see the message and already refuses
+ * a newline in any header and an empty `html` that had body text to render.
+ * Duplicating those here would mean two places to disagree, and the plan's
+ * stricter "reject any empty html" would have re-broken sending an empty
+ * message.
+ */
+function composeInput(raw: unknown): { draftId?: string; threadId?: string; mail: OutgoingMail } {
+  if (raw === null || typeof raw !== 'object') throw new Error('input must be an object')
+  const input = raw as Record<string, unknown>
+
+  const optionalId = (key: 'draftId' | 'threadId'): string | undefined => {
+    const value = input[key]
+    if (value === undefined || value === null) return undefined
+    if (typeof value !== 'string' || value === '') throw new Error(`${key} must be a string`)
+    return value
+  }
+
+  const mail = input.mail
+  if (mail === null || typeof mail !== 'object') throw new Error('mail must be an object')
+  const m = mail as Record<string, unknown>
+
+  const addresses = (key: 'to' | 'cc'): string[] => {
+    const value = m[key]
+    if (value === undefined || value === null) return []
+    if (!Array.isArray(value)) throw new Error(`mail.${key} must be an array`)
+    return value.map((address) => {
+      if (typeof address !== 'string') throw new Error(`mail.${key} must be strings`)
+      return address
+    })
+  }
+
+  const text = (key: 'subject' | 'body'): string => {
+    const value = m[key]
+    if (typeof value !== 'string') throw new Error(`mail.${key} must be a string`)
+    return value
+  }
+
+  const html = m.html
+  if (html !== undefined && html !== null && typeof html !== 'string') {
+    throw new Error('mail.html must be a string')
+  }
+
+  const cc = addresses('cc')
+  const draftId = optionalId('draftId')
+  const threadId = optionalId('threadId')
+  return {
+    ...(draftId === undefined ? {} : { draftId }),
+    ...(threadId === undefined ? {} : { threadId }),
+    mail: {
+      to: addresses('to'),
+      ...(cc.length === 0 ? {} : { cc }),
+      subject: text('subject'),
+      body: text('body'),
+      ...(html === undefined || html === null ? {} : { html }),
+    },
+  }
+}
 
 /** A category arrives as a string (`fields` is string-only) and is narrowed
  *  here. An unknown value means "no category", not an error: the worst it can
@@ -1433,6 +1502,61 @@ export function createRouter(deps: RouterDeps) {
         await googleWrites().trash(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
+
+    /**
+     * The composer (D71).
+     *
+     * The reads go straight to Google like `thread` does — a drafts list is not
+     * cached, and `readDraft` is the one call that answers "is this ours?".
+     * The writes go through `googleWrites()` so a draft appearing or leaving
+     * moves the cached thread with it.
+     */
+    drafts: t.procedure.query((): Promise<DraftSummary[]> => listDrafts(googleApi())),
+
+    draft: t.procedure
+      .input(fields({ id: 'string' }))
+      .query(({ input }): Promise<DraftBody> => readDraft(googleApi(), input.id)),
+
+    /**
+     * Every address this account may send from.
+     *
+     * Through `googleData` so it is fetched once per account, with a direct
+     * fetch as the fallback — same shape as `contacts`. Unlike `contacts` this
+     * one can refuse: `listSendAs` throws on a missing scope rather than
+     * answering an empty list, because an empty list would silently turn every
+     * reply-all into one that copies the user on their own message.
+     */
+    sendAs: t.procedure.query(
+      (): Promise<string[]> => deps.googleData?.sendAs() ?? listSendAs(googleApi()),
+    ),
+
+    saveDraft: t.procedure.input(composeInput).mutation(async ({ input }) => {
+      return await googleWrites().saveDraft(input).catch(rethrowGoogle)
+    }),
+
+    discardDraft: t.procedure
+      .input(fields({ draftId: 'string', threadId: 'string?' }))
+      .mutation(async ({ input }) => {
+        await googleWrites().discardDraft(input).catch(rethrowGoogle)
+        return { ok: true as const }
+      }),
+
+    /**
+     * Send.
+     *
+     * One procedure for every case: a `draftId` sends that draft, a `threadId`
+     * sends into that conversation, and neither sends a new message.
+     *
+     * **This is deliberately not hook-gated, and the omission is the design.**
+     * D70's gate intercepts the *agent's* `Bash`, because an agent sending mail
+     * is an act the user did not individually authorise. A user pressing Send
+     * has already authorised it — prompting here would be a dialog asking
+     * permission for the click that opened it. The next reader will otherwise
+     * assume this was forgotten.
+     */
+    send: t.procedure.input(composeInput).mutation(async ({ input }) => {
+      return await googleWrites().sendMail(input).catch(rethrowGoogle)
+    }),
 
     /**
      * How much mail there is, for the list footer.
