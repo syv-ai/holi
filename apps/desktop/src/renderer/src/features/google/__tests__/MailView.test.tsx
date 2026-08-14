@@ -1259,6 +1259,26 @@ test('unblocking builds a NEW frame, because a document cannot shed a CSP', asyn
   )
 })
 
+test('“always from this sender” rebuilds the frame too, not just the banner', async () => {
+  // Reported from real use: "if I click to allow images from a sender, the
+  // image still doesn't show." The one-off path was fixed by keying the iframe
+  // on the policy flag; this asserts the standing path takes the same route,
+  // since it reaches `allowRemoteContent` through a different atom.
+  withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
+  const user = userEvent.setup()
+
+  const article = await openThread()
+  const before = article.querySelector('iframe')
+  await frameOf(article)
+
+  await user.click(within(article).getByRole('button', { name: /always from this sender/i }))
+
+  await waitFor(() => expect(article.querySelector('iframe')).not.toBe(before))
+  expect((await frameOf(article)).querySelector('img')?.getAttribute('src')).toBe(
+    'https://cdn.test/logo.png',
+  )
+})
+
 test('does not churn the frame when nothing about the policy changed', async () => {
   // The key is the flag, not a fresh value per render — keying on something
   // unstable would rebuild the document on every render, losing scroll position
