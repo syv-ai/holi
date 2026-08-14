@@ -23,7 +23,6 @@ import {
   AgentRuntime,
   buildAgentArgs,
   buildAgentEnv,
-  isClaudeAuthenticated,
   resolveClaudeBin,
   type SpawnPty,
 } from './agent-runtime'
@@ -41,10 +40,6 @@ export interface AgentStatus {
    *  each vault change; sticky until a restart, which is what actually re-reads
    *  config. Drives the AgentPanel's "shared config changed; restart" nudge. */
   configStale: boolean
-  /** The config directory the agent runs on has a logged-in Claude Code. Read
-   *  from a file, never from the terminal — and from Holi's own config dir since
-   *  D72, which costs exactly one `/login` the first time it is used. */
-  authenticated: boolean
 }
 
 export interface AgentManagerDeps {
@@ -75,11 +70,8 @@ export interface AgentManagerDeps {
   /** The directory holding it, prepended to the child's PATH so the agent can
    *  type the bare name — which is what the send gate matches on (D70). */
   googleBinDir?: () => string | null
-  /** Holi's own Claude Code config directory (D72), provisioned once at startup
-   *  by `ensureAgentConfigDir`. A plain value rather than a getter because
-   *  `status()` reads it synchronously to answer "is the agent logged in": the
-   *  answer is a key in a file *inside this directory*, and asking the machine's
-   *  `~/.claude` instead would report a login the relocated agent does not have.
+  /** Holi's own Claude Code config directory (D72), provisioned at startup by
+   *  `ensureAgentConfigDir` and handed to the child as `$CLAUDE_CONFIG_DIR`.
    *  Omitted (tests, and only tests) → the agent runs on the machine config. */
   configDir?: string | null
   log?: (msg: string) => void
@@ -174,9 +166,6 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     running: session !== null,
     working,
     configStale,
-    // Of the config dir the child runs on (D72) — the machine's home may well be
-    // logged in while this one is not, and the panel's notice is for this one.
-    authenticated: isClaudeAuthenticated(deps.configDir ?? undefined),
   })
 
   const pushStatus = () => send('agent:status', status())

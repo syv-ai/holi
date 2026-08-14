@@ -50,7 +50,7 @@ const onFlushRequest = pushChannel<void>('vault:flush')
 const onAgentData = pushChannel<Uint8Array | string>('agent-pty:data')
 /** The session ended. */
 const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
-/** running / working / configStale / authenticated — the header dot + hints. */
+/** running / working / configStale — the header dot + the stale-config hint. */
 const onAgentStatus = pushChannel<unknown>('agent:status')
 
 /** A reminder fired and its notification was clicked — open this task, switching

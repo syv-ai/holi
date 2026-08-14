@@ -4,10 +4,10 @@
  *
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
  * real spawn path only (plan decision 6) — tests inject a fake PTY and never
- * touch it. Everything above the PTY (env, args, binary discovery, the auth
- * probe) is a pure function.
+ * touch it. Everything above the PTY (env, args, binary discovery) is a pure
+ * function.
  */
-import { accessSync, constants, readFileSync } from 'node:fs'
+import { accessSync, constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -187,29 +187,11 @@ export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string |
 }
 
 /**
- * Best-effort login probe: does `dir` carry a logged-in Claude Code?
- *
- * `dir` is **the config directory the child will actually use** — since D72
- * that is Holi's own, not the machine's home, and asking the wrong one would
- * report a login the relocated agent does not have. It is also the reason this
- * is a file read: the logged-out state is visible in the terminal as
- * `Not logged in`, and Holi does not infer Claude Code's state from its output.
- *
- * Only powers a header hint — `/login` works in the same terminal if this is
- * wrong. Defaults to the home directory, which is where a config dir-less
- * session (tests) would look anyway.
+ * There is deliberately **no login probe** (D72). Claude Code asks for the login
+ * itself, in the terminal the panel is already showing; a second copy of that
+ * state in Holi's chrome has to be kept in sync with a `/login` that fires none
+ * of the events Holi has — so it was correct exactly until it mattered.
  */
-export function isClaudeAuthenticated(dir: string = homedir()): boolean {
-  for (const path of [join(dir, '.claude.json'), join(dir, '.claude', '.claude.json')]) {
-    try {
-      const parsed = JSON.parse(readFileSync(path, 'utf8')) as { oauthAccount?: unknown }
-      if (parsed.oauthAccount != null) return true
-    } catch {
-      // missing or unparseable — try the fallback, then give up
-    }
-  }
-  return false
-}
 
 export interface AgentRuntimeDeps {
   spawnPty?: SpawnPty

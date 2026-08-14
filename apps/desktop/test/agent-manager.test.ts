@@ -332,24 +332,15 @@ describe('AgentManager', () => {
   })
 
   /**
-   * The panel's "not logged in (run /login below)" line reads this flag. Once
-   * the agent moved off `~/.claude` (D72), asking the machine's home would
-   * report a login the relocated agent does not have — the notice would be
-   * silently wrong on exactly the launch it exists for. And the answer is a
-   * file: Holi never infers Claude Code's state from the terminal.
+   * There is no `authenticated` flag, and that is the decision rather than an
+   * omission (D72): Claude Code asks for the login in the terminal the panel
+   * already shows, and a second copy of that state in Holi's chrome goes stale
+   * the moment `/login` is typed — which fires no spawn, no turn and no exit.
    */
-  it('answers "logged in" from the config directory, not from the machine home', async () => {
-    const configDir = await mkdtemp(join(tmpdir(), 'holi-cfg-'))
-    cleanups.push(() => rm(configDir, { recursive: true, force: true }))
-    const r = await rig({ configDir })
-
-    expect(r.manager.status().authenticated).toBe(false)
-
-    await writeFile(
-      join(configDir, '.claude.json'),
-      JSON.stringify({ oauthAccount: { emailAddress: 'ada@syv.ai' } }),
-    )
-    expect(r.manager.status().authenticated).toBe(true)
+  it('reports no login state at all — the terminal below says it', async () => {
+    const r = await rig({ configDir: '/data/agent-config' })
+    await r.manager.start({ vaultId: VAULT })
+    expect(r.manager.status()).not.toHaveProperty('authenticated')
   })
 
   it('seeds the session with a prompt (reconcile) as the last spawn arg', async () => {

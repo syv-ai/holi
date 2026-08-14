@@ -346,14 +346,12 @@ export function AgentPanel() {
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}
-        {/* The agent has its own Claude config (D72), so it is logged out even on
-            a machine where the user's own Claude Code is not — worth saying, or
-            the notice reads as a bug. Sourced from a file, never from the PTY. */}
-        {!status.authenticated && (
-          <span className="truncate text-muted-foreground">
-            not logged in — the agent has its own Claude config; run /login below
-          </span>
-        )}
+        {/* No login notice here, deliberately (D72). Claude Code asks for the
+            login itself, in the terminal directly below this bar — a second copy
+            in the header is duplicate state, and duplicate state has to be kept
+            honest: `/login` fires none of the events that push status, so the
+            header's copy went stale the moment it mattered. Deleted rather than
+            watched. */}
       </PanelHeader>
       <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
       </aside>

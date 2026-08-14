@@ -89,7 +89,9 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 - Drawer lifecycle: opening the drawer starts (or re-attaches to) the session; the terminal is the **live** surface. The drawer's **history affordance** relaunches the session with `--resume`. Scrollback is ephemeral; durable history is CC's own sessions.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it.
 
-**Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. The probe reads `oauthAccount` out of `<configDir>/.claude.json`; when it is absent the panel header says so and names the reason, and `/login` in the terminal below is the fix. **Read from the file, never from the terminal** — the words `Not logged in` are on screen and scraping them is the tempting shortcut, and Holi does not infer Claude Code's state from its output.
+**Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. So the first launch after the relocation is logged out, once, ever.
+
+**Holi says nothing about it, and that is the decision.** Claude Code prints `Not logged in · Please run /login` in the terminal the drawer is already showing, and `/login` is typed into that same terminal. A notice in Holi's header would be a **second copy of state Holi does not own** — and duplicate state has to be kept honest: `/login` spawns nothing, opens no turn and exits nothing, so it fires none of the events Holi has to refresh on, and the header's copy is wrong from the moment the user acts on it. The fix for a stale mirror is not a fresher mirror. There is **no login probe at all** — no `authenticated` field on agent status, and nothing reading `<configDir>/.claude.json`.
 
 ## Config layering (pure CC-native)
 

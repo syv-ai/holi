@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -6,7 +6,6 @@ import {
   AgentRuntime,
   buildAgentArgs,
   buildAgentEnv,
-  isClaudeAuthenticated,
   resolveClaudeBin,
   type PtyProcess,
 } from '../src/main/agent/agent-runtime'
@@ -279,30 +278,6 @@ describe('resolveClaudeBin', () => {
 
   it('returns null when claude is nowhere to be found', () => {
     expect(resolveClaudeBin({ PATH: '/nonexistent', HOME: '/nonexistent' })).toBeNull()
-  })
-})
-
-describe('isClaudeAuthenticated', () => {
-  it('is true when ~/.claude.json carries a non-null oauthAccount', async () => {
-    const home = await tempDir()
-    await writeFile(join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@b.c' } }))
-    expect(isClaudeAuthenticated(home)).toBe(true)
-  })
-
-  it('falls back to ~/.claude/.claude.json', async () => {
-    const home = await tempDir()
-    await mkdir(join(home, '.claude'))
-    await writeFile(join(home, '.claude', '.claude.json'), JSON.stringify({ oauthAccount: { id: 'x' } }))
-    expect(isClaudeAuthenticated(home)).toBe(true)
-  })
-
-  it('is false for a null oauthAccount, a missing file, or garbage', async () => {
-    const home = await tempDir()
-    expect(isClaudeAuthenticated(home)).toBe(false)
-    await writeFile(join(home, '.claude.json'), JSON.stringify({ oauthAccount: null }))
-    expect(isClaudeAuthenticated(home)).toBe(false)
-    await writeFile(join(home, '.claude.json'), 'not json')
-    expect(isClaudeAuthenticated(home)).toBe(false)
   })
 })
 
