@@ -31,8 +31,15 @@ const turndown = new TurndownService({
   bulletListMarker: '-',
 })
 
-// Tables and strikethrough. Without these a quoted table flattens into a run of
-// prose, which is the wart this module was added to remove.
+/**
+ * Tables and strikethrough. Without these a quoted DATA table flattens into a
+ * run of prose, which is the wart this module was added to remove.
+ *
+ * The plugin covers only half the problem, and the half it leaves is worse than
+ * the one it fixes: a table with no heading row is `keep()`-ed, meaning its raw
+ * markup is emitted verbatim. See `unwrapLayoutTables`, which removes those
+ * before the converter runs.
+ */
 turndown.use(gfm)
 
 /**
@@ -49,6 +56,68 @@ turndown.addRule('strikethrough', {
 })
 
 /**
+ * Is this table holding DATA, or is it holding a layout?
+ *
+ * Mail is built out of the second kind — MJML and every newsletter builder
+ * before it nest borderless spacer tables several deep, because that is the only
+ * layout primitive mail clients have agreed on in thirty years. None of them has
+ * a heading row.
+ *
+ * This matters because `turndown-plugin-gfm` converts a table **only** when its
+ * first row is a heading row, and calls `turndown.keep()` on every other one —
+ * meaning it emits the raw `<table>` markup. Quoting a newsletter therefore
+ * produced screens of `cellpadding="0"` where the message should have been.
+ *
+ * **Deliberately stricter than the plugin's own `isHeadingRow`.** The two tests
+ * have to agree about which tables the plugin will convert, and disagreement in
+ * one direction is harmless (a data table gets unwrapped into prose) while
+ * disagreement in the other puts raw markup back in front of the user. So the
+ * bar here is the plugin's `every(TH)` condition and nothing softer: anything
+ * this calls a layout table is a table the plugin would certainly have kept.
+ */
+function isDataTable(table: HTMLTableElement): boolean {
+  const first = table.rows[0]
+  if (first === undefined || first.cells.length === 0) return false
+  return [...first.cells].every((cell) => cell.nodeName === 'TH')
+}
+
+/**
+ * Layout tables out, their content kept, before `turndown` ever sees them.
+ *
+ * Done as a DOM pass rather than as a turndown rule, and the reason is the cell
+ * rules: the GFM plugin converts `<td>` and `<tr>` *unconditionally*, so
+ * overriding only the `TABLE` rule would hand the replacement a body that had
+ * already been rendered into `| pipe | syntax |`. Overriding all three means
+ * re-deriving the plugin's private heading-row test inside turndown's rule
+ * pipeline. Removing the tables first is one pass with nothing to keep in sync.
+ *
+ * **Every cell becomes its own block.** A two-column layout is two things, and
+ * running them together would silently join a caption to the paragraph beside
+ * it. The blank blocks that spacer cells leave behind are collapsed by the
+ * newline pass in `mailHtmlToMarkdown`.
+ *
+ * The markup is already sanitised when this runs, so building a DOM from it is
+ * not a second exposure — see the module note on ordering.
+ */
+function unwrapLayoutTables(root: HTMLElement): void {
+  // Static list, and outer-first is fine: unwrapping an outer table MOVES its
+  // nested tables into the replacement rather than detaching them, so they are
+  // still connected when their turn comes.
+  for (const table of root.querySelectorAll('table')) {
+    if (isDataTable(table)) continue
+    const replacement = root.ownerDocument.createElement('div')
+    for (const row of table.rows) {
+      for (const cell of row.cells) {
+        const block = root.ownerDocument.createElement('div')
+        block.append(...cell.childNodes)
+        replacement.append(block)
+      }
+    }
+    table.replaceWith(replacement)
+  }
+}
+
+/**
  * Convert a mail's HTML to markdown the composer can edit.
  *
  * The output is trimmed and normalised: runs of three or more blank lines
@@ -58,8 +127,11 @@ turndown.addRule('strikethrough', {
  */
 export function mailHtmlToMarkdown(html: string): string {
   const safe = sanitizeMailHtml(html, { allowRemoteContent: true })
+  const host = document.createElement('div')
+  host.innerHTML = safe.html
+  unwrapLayoutTables(host)
   return turndown
-    .turndown(safe.html)
+    .turndown(host.innerHTML)
     .replace(/[ \t]+$/gm, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim()

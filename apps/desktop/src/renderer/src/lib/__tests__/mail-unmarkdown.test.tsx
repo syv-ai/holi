@@ -41,6 +41,45 @@ describe('mailHtmlToMarkdown', () => {
     expect(markdown).toMatch(/\| *-+ *\|/)
   })
 
+  /**
+   * A LAYOUT table is not a data table, and mail is built almost entirely out of
+   * the first kind.
+   *
+   * `turndown-plugin-gfm` converts a table only when its first row is a heading
+   * row, and calls `turndown.keep()` on every other one — so an MJML newsletter,
+   * which nests borderless spacer tables several deep and has never heard of
+   * `<th>`, came through the reply quote as raw `<table>` markup. The user saw
+   * three screens of `cellpadding="0"` where the message should have been.
+   *
+   * The fixture is the shape that actually arrives: nested, `role="presentation"`,
+   * inline styles, no heading row anywhere.
+   */
+  it('unwraps a layout table instead of emitting its markup', () => {
+    const markdown = mailHtmlToMarkdown(
+      '<table role="presentation" cellpadding="0"><tbody><tr><td style="padding:20px">' +
+        '<table role="presentation"><tbody><tr><td><p>the actual message</p></td></tr></tbody></table>' +
+        '</td></tr></tbody></table>',
+    )
+
+    expect(markdown).not.toContain('<table')
+    expect(markdown).not.toContain('cellpadding')
+    expect(markdown).toContain('the actual message')
+  })
+
+  it('keeps the cells of a layout table as separate blocks', () => {
+    // Unwrapping must not run two unrelated cells together into one line —
+    // a two-column layout is two things, not one sentence.
+    const markdown = mailHtmlToMarkdown(
+      '<table><tbody><tr><td>left</td><td>right</td></tr>' +
+        '<tr><td>second row</td><td>and its neighbour</td></tr></tbody></table>',
+    )
+
+    expect(markdown).not.toContain('<table')
+    expect(markdown).toContain('left')
+    expect(markdown).toContain('right')
+    expect(markdown).not.toMatch(/leftright/)
+  })
+
   it('keeps strikethrough', () => {
     expect(mailHtmlToMarkdown('<p><del>gone</del></p>')).toBe('~~gone~~')
   })
@@ -107,6 +146,26 @@ describe('the round trip', () => {
     ['a heading', '<h2>Heading</h2>', 'Heading</h2>'],
   ])('survives html → markdown → html for %s', (_name, html, expected) => {
     expect(renderMailMarkdown(mailHtmlToMarkdown(html))).toContain(expected)
+  })
+
+  /**
+   * The second caller, and the one with the higher stakes.
+   *
+   * A quote that unwraps badly is ugly. A *draft* that unwraps badly has eaten
+   * something the user wrote and is about to send — and a Gmail-composed draft
+   * is exactly the case that arrives full of layout tables.
+   */
+  it('leaves a foreign draft editable rather than full of markup', () => {
+    const draft =
+      '<div><table role="presentation"><tbody><tr><td>' +
+      '<p>Hi Bo — <strong>the numbers</strong> are below.</p>' +
+      '</td></tr></tbody></table></div>'
+
+    const markdown = mailHtmlToMarkdown(draft)
+
+    expect(markdown).not.toContain('<table')
+    expect(markdown).toContain('**the numbers**')
+    expect(renderMailMarkdown(markdown)).toContain('<strong>the numbers</strong>')
   })
 
   it('survives for a table, which is the one that used to flatten', () => {
