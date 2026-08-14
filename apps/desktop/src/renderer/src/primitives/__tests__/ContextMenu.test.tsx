@@ -41,3 +41,17 @@ test('reports selection through the item onSelect', async () => {
   await userEvent.click(await screen.findByRole('menuitem', { name: /Delete/ }))
   expect(onDelete).toHaveBeenCalledOnce()
 })
+
+// The surface carries its edge in ELEVATION, not in a hairline. A border plus a
+// shadow reads as two edges on a floating surface; the shadow alone is what the
+// menu is meant to sit on. `border-*` colour utilities are not what this bans —
+// only the bare `border` that draws the 1px line.
+test('the menu surface has no border, only elevation', async () => {
+  render(<Menu />)
+  fireEvent.contextMenu(screen.getByText('a row'))
+  await screen.findByRole('menuitem', { name: /Delete/ })
+  const surface = document.querySelector('[data-slot="context-menu-content"]')
+  expect(surface).not.toBeNull()
+  expect(surface!.classList.contains('border')).toBe(false)
+  expect(surface!.classList.contains('shadow-popover')).toBe(true)
+})

@@ -83,7 +83,7 @@ function ContextMenuSubContent({
     <ContextMenuPrimitive.SubContent
       data-slot="context-menu-sub-content"
       className={cn(
-        "z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
+        "z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
         className
       )}
       {...props}
@@ -92,9 +92,14 @@ function ContextMenuSubContent({
 }
 
 // The house context-menu look: a fixed-width (w-56), rounded-lg, text-xs popover
-// with a heavy shadow; items compact (px-2 py-1) with their keyboard hint floated
-// right via ContextMenuShortcut. Every context menu is this primitive fed
-// different items — there is no per-surface menu component (decided 2026-08-01).
+// with a heavy shadow and NO border; items compact (px-2 py-1) with their keyboard
+// hint floated right via ContextMenuShortcut. Every context menu is this primitive
+// fed different items — there is no per-surface menu component (decided 2026-08-01).
+//
+// The border came off on 2026-08-14, here and on Tooltip/DropdownMenu/Popover
+// together: elevation separates a floating surface, and a hairline over it draws
+// a second edge. `--shadow-popover` was deepened in the same change, because md
+// was only ever enough beside a drawn border.
 function ContextMenuContent({
   className,
   ...props
@@ -104,7 +109,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          "z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
+          "z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
           className
         )}
         {...props}

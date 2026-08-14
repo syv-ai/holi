@@ -42,10 +42,16 @@
   /* Selection follows the brand by default, so recolouring --primary alone
      recolours the selection; a theme can still set --selection outright. */
   --selection: color-mix(in srgb, var(--primary) 30%, transparent);
-  /* Elevation, copied verbatim from Tailwind's md/lg so `.shadow-popover` /
-     `.shadow-dialog` (below) match the utilities they replace. Themable because
-     they're consumed through var() — Tailwind bakes its own shadow-* in. */
-  --shadow-popover: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  /* Elevation. Themable because they're consumed through var() — Tailwind bakes
+     its own shadow-* in.
+
+     `--shadow-popover` is deliberately HEAVIER than Tailwind's md, which it used
+     to copy verbatim. Overlays used to carry a 1px border as well, and md was
+     enough beside a drawn edge; without the border the shadow is the only thing
+     separating a floating surface from the page, and at 0.1 alpha it was not
+     doing that job. `--shadow-dialog` is untouched — a dialog sits over a
+     scrim, which is its own separation. */
+  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
   --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* ── Editor chip tokens (per-vault themeable) ────────────────────────
@@ -84,10 +90,16 @@
   --input: var(--color-neutral-200);
   --ring: var(--color-sky-600);
 
-  /* Only the scrollbar needs a light-mode default; --selection (brand-derived)
-     and the shadows (black-alpha) read fine on a light surface. */
   --scrollbar-thumb: var(--color-neutral-300);
   --scrollbar-thumb-hover: var(--color-neutral-400);
+
+  /* The popover shadow is softened here, and it did not use to be overridden at
+     all — the old note said black-alpha "reads fine on a light surface", which
+     was true of the 0.1 alpha it described. The dark-first value is now carrying
+     the edge a border used to draw, and that weight on white paper reads as
+     smudge rather than elevation. --selection stays brand-derived and needs no
+     light arm. */
+  --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
