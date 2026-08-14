@@ -50,7 +50,16 @@ export interface GoogleOps {
   archive(id: string): Promise<void>
   trash(id: string): Promise<void>
   draft(mail: OutgoingMail & { threadId?: string }): Promise<{ id: string | null }>
-  send(mail: OutgoingMail): Promise<{ id: string | null }>
+  /**
+   * Send a composed message, or send a draft that already exists.
+   *
+   * **The draft form is not a convenience.** `draft` followed by a composed
+   * `send` produces *two* messages and orphans the draft — found against a real
+   * account on 2026-08-14, after the agent had done exactly that. `drafts.send`
+   * makes Gmail delete the draft atomically, which is the only way "draft it,
+   * then send it" ends with one message.
+   */
+  send(input: { mail: OutgoingMail } | { draftId: string }): Promise<{ id: string | null }>
   reply(threadId: string, body: string, all: boolean): Promise<{ id: string | null }>
   schedule(event: NewEvent): Promise<{ id: string | null }>
   reschedule(id: string, patch: EventPatch): Promise<void>
@@ -281,8 +290,14 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
           ...mail(),
           ...(typeof body.threadId === 'string' ? { threadId: body.threadId } : {}),
         })
-      case '/send':
-        return ops.send(mail())
+      case '/send': {
+        // `--draft` and a composed message are alternatives, not a merge: a
+        // draft already carries its recipients, subject and threading headers,
+        // and taking half from each is how a send goes somewhere unintended.
+        const draftId = body.draftId
+        if (typeof draftId === 'string' && draftId !== '') return ops.send({ draftId })
+        return ops.send({ mail: mail() })
+      }
       case '/reply': {
         const { threadId, body: text } = body
         if (typeof threadId !== 'string' || threadId === '') {

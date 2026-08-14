@@ -35,6 +35,7 @@ import {
   listThreads,
   readThread,
   replyToThread,
+  sendDraft,
   sendMessage,
   textOnly,
 } from './google/gmail'
@@ -295,7 +296,10 @@ async function main(): Promise<void> {
 
     // New messages and events — nothing cached to patch.
     draft: ({ threadId, ...mail }) => createDraft(googleApiFor(), mail, threadId),
-    send: (mail) => sendMessage(googleApiFor(), mail),
+    send: (input) =>
+      'draftId' in input
+        ? sendDraft(googleApiFor(), input.draftId)
+        : sendMessage(googleApiFor(), input.mail),
     reply: (threadId, body, all) => replyToThread(googleApiFor(), threadId, body, { all }),
     schedule: (event) => createEvent(googleApiFor(), event),
     reschedule: (id, patch) => updateEvent(googleApiFor(), id, patch),

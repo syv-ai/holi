@@ -198,3 +198,44 @@ describe('the send gate fails closed', () => {
     expect((await decide('garbage')).code).toBe(0)
   })
 })
+
+/**
+ * `send --draft` (2026-08-14).
+ *
+ * A draft send still reaches a human, so it must still ask — and the prompt has
+ * to be honest about what it can and cannot show. The recipients live in the
+ * draft, not in the command, and claiming otherwise is worse than saying so.
+ */
+describe('sending an existing draft', () => {
+  const reasonOf = (d: Decision) => d.hookSpecificOutput?.permissionDecisionReason ?? ''
+
+  it('asks, exactly as a composed send does', async () => {
+    expect(decisionOf(await decide(bash('holi-google send --draft d-1')))).toBe('ask')
+  })
+
+  it('says the recipients are in the draft rather than pretending to show them', async () => {
+    const reason = reasonOf(await decide(bash('holi-google send --draft d-1')))
+
+    expect(reason).toMatch(/draft/i)
+    expect(reason).toMatch(/not in this command|in the draft rather than/i)
+  })
+
+  it('does not claim it could not read the recipients', async () => {
+    // The generic fallback would be a lie here: nothing failed to parse, there
+    // is simply nothing to parse. Telling the user to "check the command" sends
+    // them to look at something that does not contain the answer.
+    const reason = reasonOf(await decide(bash('holi-google send --draft d-1')))
+
+    expect(reason).not.toMatch(/could not read the recipients/i)
+  })
+
+  it('still asks through $HOLI_GOOGLE_BIN', async () => {
+    expect(decisionOf(await decide(bash('"$HOLI_GOOGLE_BIN" send --draft d-1')))).toBe('ask')
+  })
+
+  it('does not fire on a draft subcommand, which reaches nobody', async () => {
+    expect(decisionOf(await decide(bash('holi-google draft --to ada@syv.ai --subject x')))).toBe(
+      'defer',
+    )
+  })
+})

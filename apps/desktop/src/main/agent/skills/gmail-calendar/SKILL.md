@@ -116,12 +116,24 @@ EOF
 holi-google send --to ada@syv.ai --subject 'Q2 budget' [--cc bo@syv.ai] <<'EOF'
 Hi Ada,
 EOF
+
+holi-google send --draft <draftId>       # send a draft you already wrote
 ```
+
+**If you drafted it, send it with `--draft`.** `draft` returns an `id`; pass
+that id back. Composing the same message a second time with `--to` sends a
+*separate* mail and leaves your draft sitting unsent in Drafts — the user ends
+up with one message delivered and one orphan they have to clean up. `--draft`
+makes Gmail delete the draft as it sends, so "draft it" then "send it" ends with
+exactly one message. Take no body on stdin with `--draft`: the draft already has
+one.
 
 **Prefer `draft` unless the user asked you to send.** A draft reaches nobody,
 needs no confirmation, and leaves them one click from sending — so "write Ada a
 reply about the budget" means `draft`, and only "send it" means `send`. When you
 draft, say so plainly and say where it is, rather than implying it went out.
+**Keep the `id` `draft` gives you**: if they then say "send it", that id is what
+turns your draft into the sent message rather than into a duplicate.
 
 For `reply`, do not pass recipients or a subject: they are derived from the
 thread, including the headers that keep the message *in* that thread. Composing

@@ -101,24 +101,36 @@ case "\$cmd" in
     post trash --data-urlencode "id=\$1"
     ;;
   draft|send)
-    # draft|send --to <addr> --subject <text> [--cc <addr>] [--thread <id>]
-    # The message body is read from STDIN.
-    to=""; subject=""; cc=""; thread=""
+    # draft --to <addr> --subject <text> [--cc <addr>] [--thread <id>]
+    # send  --to <addr> --subject <text> [--cc <addr>]
+    # send  --draft <draftId>          <- sends a draft that already exists
+    # The message body is read from STDIN, except for send --draft.
+    to=""; subject=""; cc=""; thread=""; draft_id=""
     while [ $# -gt 0 ]; do
       case "\$1" in
         --to) to="\$2"; shift 2 ;;
         --subject) subject="\$2"; shift 2 ;;
         --cc) cc="\$2"; shift 2 ;;
         --thread) thread="\$2"; shift 2 ;;
+        --draft) draft_id="\$2"; shift 2 ;;
         *) echo "holi-google \$cmd: unknown option \$1" >&2; exit 2 ;;
       esac
     done
-    [ -n "\$to" ] || { echo "holi-google \$cmd --to <addr> --subject <text>  (body on stdin)" >&2; exit 2; }
-    set -- --data-urlencode "to=\$to" --data-urlencode "subject=\$subject"
-    [ -n "\$cc" ] && set -- "\$@" --data-urlencode "cc=\$cc"
-    [ -n "\$thread" ] && set -- "\$@" --data-urlencode "threadId=\$thread"
-    # @- is the whole point: curl reads the body from stdin and encodes it.
-    post "\$cmd" "\$@" --data-urlencode "body@-"
+    if [ -n "\$draft_id" ]; then
+      # A draft already carries its recipients, subject and threading headers,
+      # so there is nothing to compose and NOTHING TO READ FROM STDIN — reading
+      # it here would block forever on a command with no pipe.
+      [ "\$cmd" = send ] || { echo "holi-google draft: --draft is only for send" >&2; exit 2; }
+      [ -z "\$to" ] || { echo "holi-google send: --draft and --to are alternatives" >&2; exit 2; }
+      post send --data-urlencode "draftId=\$draft_id"
+    else
+      [ -n "\$to" ] || { echo "holi-google \$cmd --to <addr> --subject <text>  (body on stdin)" >&2; exit 2; }
+      set -- --data-urlencode "to=\$to" --data-urlencode "subject=\$subject"
+      [ -n "\$cc" ] && set -- "\$@" --data-urlencode "cc=\$cc"
+      [ -n "\$thread" ] && set -- "\$@" --data-urlencode "threadId=\$thread"
+      # @- is the whole point: curl reads the body from stdin and encodes it.
+      post "\$cmd" "\$@" --data-urlencode "body@-"
+    fi
     ;;
   reply)
     # reply <threadId> [--all]  — the body is read from STDIN. Recipients and
@@ -207,6 +219,7 @@ usage: holi-google <command>
 
   reaches another person — Holi asks the user every time
     send --to <addr> --subject <text> [--cc <addr>]   (body on stdin)
+    send --draft <draftId>                            (sends an existing draft)
     reply <threadId> [--all]                          (body on stdin)
 USAGE
     exit 2

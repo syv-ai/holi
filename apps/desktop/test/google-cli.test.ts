@@ -238,7 +238,43 @@ describe('holi-google writes', () => {
       input: body,
     })
 
-    expect(calls).toEqual([['send', { to: ['ada@syv.ai'], subject: 'Møde på tirsdag', body }]])
+    const mail = { to: ['ada@syv.ai'], subject: 'Møde på tirsdag', body }
+    expect(calls).toEqual([['send', { mail }]])
+  })
+
+  /**
+   * `draft` then `send --draft` — the loop that used to make two messages.
+   *
+   * Composing a second time with `--to` sent a separate mail and left the draft
+   * orphaned in Drafts. Found against a real account on 2026-08-14, after the
+   * agent had done exactly that, unprompted.
+   */
+  it('sends an existing draft by id, composing nothing', async () => {
+    await run(bin, ['send', '--draft', 'd-1'], { env })
+
+    expect(calls).toEqual([['send', { draftId: 'd-1' }]])
+  })
+
+  it('does not read stdin for send --draft', async () => {
+    // The failure this prevents is a HANG, not a wrong message: `--data-urlencode
+    // body@-` blocks forever on a command nobody piped anything into, and the
+    // agent sits there until something gives up.
+    const finished = run(bin, ['send', '--draft', 'd-1'], { env })
+
+    await expect(finished).resolves.toBeDefined()
+  })
+
+  it('refuses --draft together with --to rather than guessing which wins', async () => {
+    // Alternatives, not a merge — a draft already carries its recipients.
+    await expect(
+      run(bin, ['send', '--draft', 'd-1', '--to', 'eve@evil.example'], { env }),
+    ).rejects.toMatchObject({ code: 2 })
+    expect(calls).toEqual([])
+  })
+
+  it('refuses --draft on the draft subcommand, which has nothing to send', async () => {
+    await expect(run(bin, ['draft', '--draft', 'd-1'], { env })).rejects.toMatchObject({ code: 2 })
+    expect(calls).toEqual([])
   })
 
   it('drafts with cc and a thread', async () => {

@@ -79,6 +79,15 @@ function readStdin() {
  * than a reassuring sentence that implies the prompt showed them.
  */
 function audienceOf(command) {
+  // `send --draft <id>` is the second honest exception. The draft carries its
+  // own recipients inside Gmail, so like a reply they are nowhere in the
+  // command — and unlike a reply, the user can go and look at the draft.
+  if (/--draft\b/.test(command)) {
+    return (
+      'It sends a draft that already exists in Gmail. The recipients are in the ' +
+      'draft rather than in this command, so open it in Drafts if you want to check them.'
+    )
+  }
   if (/\breply\b/.test(command)) {
     return /--all\b/.test(command)
       ? 'It goes to everyone on the thread (--all). Holi works the recipients out ' +

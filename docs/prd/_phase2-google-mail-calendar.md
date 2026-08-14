@@ -51,7 +51,7 @@ Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP
 
 **Still unproven, and to be treated as broken:** `postJson`'s unreadable-2xx path, the three `events.*` writes, **`drafts.create` with a `threadId`** (the draft made during the pass was a new message, so a draft *filed into a thread* has never been made for real), and the whole of D71's composer UI.
 
-**A wart the pass found.** `holi-google draft` then `holi-google send` produces two messages — `send` composes afresh rather than sending the draft, orphaning it. The agent's path only; the composer sends a draft through `drafts.send`, which Gmail deletes atomically.
+**A wart the pass found, fixed the same day.** `holi-google draft` then `holi-google send` produced two messages — `send` composed afresh rather than sending the draft, orphaning it. **`send --draft <draftId>`** now routes to `drafts.send`, the same call the composer uses, so Gmail deletes the draft as it sends. A draft id and composed fields are alternatives rather than a merge; the draft wins outright, because taking half of each is how a send goes somewhere nobody chose.
 
 *The two paragraphs above replace a blanket "nothing in this repo has ever talked to Google", which was true when it was written and had survived into four documents after it stopped being true — the pillar's own failure mode applied to its own prose.*
 

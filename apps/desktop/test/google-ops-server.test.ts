@@ -199,9 +199,9 @@ describe('writes', () => {
       body,
     })
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ to: ['ada@syv.ai'], subject: 'Møde på tirsdag', body }),
-    )
+    expect(send).toHaveBeenCalledWith({
+      mail: expect.objectContaining({ to: ['ada@syv.ai'], subject: 'Møde på tirsdag', body }),
+    })
     expect(await res.json()).toEqual({ id: 'm-1' })
   })
 
@@ -303,4 +303,53 @@ describe('writes', () => {
     expect(res.status).toBe(502)
     expect((await res.json()).error).toMatch(/attendees/)
   })
+  /**
+   * Sending a draft that already exists (D70, amended 2026-08-14).
+   *
+   * `draft` then a composed `send` produced TWO messages and orphaned the draft —
+   * found against a real account, after the agent had done exactly that.
+   */
+  describe('send --draft', () => {
+    it('sends the draft by id, composing nothing', async () => {
+      const send = vi.fn(async () => ({ id: 'm-sent' }))
+      const { url } = await serve({ send })
+
+      const res = await post(url('/send'), { draftId: 'd-1' })
+
+      expect(send).toHaveBeenCalledWith({ draftId: 'd-1' })
+      expect(await res.json()).toEqual({ id: 'm-sent' })
+    })
+
+    it('prefers the draft over any composed fields that came with it', async () => {
+      // Alternatives, not a merge. A draft already carries its recipients,
+      // subject and threading headers, and taking half from each is how a send
+      // goes somewhere nobody chose.
+      const send = vi.fn(async () => ({ id: 'm-sent' }))
+      const { url } = await serve({ send })
+
+      await post(url('/send'), { draftId: 'd-1', to: ['eve@evil.example'], subject: 'x', body: 'y' })
+
+      expect(send).toHaveBeenCalledWith({ draftId: 'd-1' })
+    })
+
+    it('still composes when no draftId is given', async () => {
+      const send = vi.fn(async () => ({ id: 'm-1' }))
+      const { url } = await serve({ send })
+
+      await post(url('/send'), { to: ['ada@syv.ai'], subject: 's', body: 'b' })
+
+      expect(send).toHaveBeenCalledWith({ mail: expect.objectContaining({ to: ['ada@syv.ai'] }) })
+    })
+
+    it('treats an empty draftId as absent rather than sending nothing', async () => {
+      const send = vi.fn(async () => ({ id: 'm-1' }))
+      const { url } = await serve({ send })
+
+      const res = await post(url('/send'), { draftId: '', to: ['ada@syv.ai'], subject: 's', body: 'b' })
+
+      expect(res.status).toBe(200)
+      expect(send).toHaveBeenCalledWith({ mail: expect.objectContaining({ to: ['ada@syv.ai'] }) })
+    })
+  })
+
 })
