@@ -12,7 +12,7 @@ The in-app Claude Code instance. This PRD covers its runtime, config, context in
 
 Each employee's Electron app spawns **their own `claude`** in a **node-pty** PTY, authenticated with **their** Claude account, pointed at the vault's **clone directory**, rendered live in an **xterm.js drawer**. The agent works the vault with its native `Read/Write/Edit/Bash/Glob/Grep` tools, and that is the entire integration: its writes are file writes, picked up by the editor's watcher and the sync engine like any other.
 
-Holi builds **no prompt content**. `--append-system-prompt` is empty; vault conventions live in `AGENTS.md` (which CC reads natively via a `CLAUDE.md` shim) and capabilities are `.claude/skills/`. The only per-turn injection, through a **`UserPromptSubmit` hook**, is **the current focused note/file** — the one piece of state the agent cannot discover itself; it gets tasks, backrefs, and sync-state with native `Glob`/`grep`/`git`. Config layering is **pure CC-native** — the repo's `.claude/` is the shared layer, the user's own `~/.claude` is the personal layer, Holi composes and syncs nothing. History is **`claude --resume`** — CC's own session picker, full-fidelity replay in the terminal; conversations stay machine-local.
+Holi builds **no prompt content**. `--append-system-prompt` is empty; vault conventions live in `AGENTS.md` (which CC reads natively via a `CLAUDE.md` shim) and capabilities are `.claude/skills/`. The only per-turn injection, through a **`UserPromptSubmit` hook**, is **the current focused note/file** — the one piece of state the agent cannot discover itself; it gets tasks, backrefs, and sync-state with native `Glob`/`grep`/`git`. Config layering is **pure CC-native** — the repo's `.claude/` is the shared layer and Holi composes and syncs nothing — but it is layered over **Holi's own config directory rather than the machine's `~/.claude`**, so a vault agent inherits the vault and not the laptop. History is **`claude --resume`** — CC's own session picker, full-fidelity replay in the terminal; conversations stay machine-local.
 
 It renders in a **right-hand resizable drawer** (`AgentPanel`), toggled with **⌘J** and opened automatically by the reconcile flow. The agent also gains one role it did not have before: it is the **conflict resolver**. When a pull cannot merge, Holi hands the merge to the agent rather than to a three-pane diff UI.
 
@@ -53,7 +53,7 @@ These are load-bearing — they dissolved several risks outright:
 - *As a member*, when the assistant edits `roadmap.md` while I have it open with unsaved changes, both survive — the editor merges its write into my buffer.
 - *As a member*, when a pull can't merge, I click **"Ask Claude to reconcile"** and my local agent resolves the conflict in the drawer, where I can watch it and answer if it asks.
 - *As any user*, I pick up an old conversation from `claude --resume`'s session picker in the drawer — the full transcript replays right there in the terminal.
-- *As any user*, my `~/.claude` setup and `CLAUDE.local.md` tweaks work in Holi exactly as they do in my shell — Holi never touches them.
+- *As any user*, my `CLAUDE.local.md` tweaks work in Holi exactly as they do in my shell, and my `~/.claude` is never written to. **It is also never read** — a vault agent runs on Holi's own config directory, so my personal skills and plugins are not in the vault (Config layering).
 
 ---
 
@@ -66,7 +66,7 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 **Spawn (Electron main).**
 - Binary: resolve `claude` on `PATH`; surface a clear "Claude CLI not found" error if absent.
 - Working directory: **the vault's clone directory** — a real git repo, which is also why the agent can run git commands against it directly.
-- **No `CLAUDE_CONFIG_DIR` override** — the agent runs against the user's own `~/.claude`.
+- **`CLAUDE_CONFIG_DIR` → `userData/agent-config/`** — Holi's own, shared by every vault, so the machine's `~/.claude` is out of play (see Config layering). Reserved like the `HOLI_*` keys: any inherited value is stripped before ours is set, since an inherited one would silently put the agent back on the config this exists to exclude.
 - **No `--append-system-prompt` content** (empty) — conventions come from `AGENTS.md`/`CLAUDE.md`, which CC reads natively (see Per-turn context).
 - **`TYPST_BIN`** in the env when a typst binary is resolvable (find-only at spawn, non-blocking; see Rendering PDFs).
 - Env hygiene, ported from the template: strip `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` (so a Holi launched from a Claude shell doesn't refuse), inherit a usable `PATH` + `HOME` (GUI-launched Electron ships a stripped PATH and can't find node/ripgrep otherwise), set `TERM=xterm-256color`.
@@ -89,13 +89,15 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 - Drawer lifecycle: opening the drawer starts (or re-attaches to) the session; the terminal is the **live** surface. The drawer's **history affordance** relaunches the session with `--resume`. Scrollback is ephemeral; durable history is CC's own sessions.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it.
 
-**Auth.** Per-user Claude account, already present per the Assumptions. If the probe finds no auth (port `claude_config::is_authenticated` against `~/.claude`), the drawer falls back to the `claude auth login` PTY flow — an edge case, kept because it's already written.
+**Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. The probe reads `oauthAccount` out of `<configDir>/.claude.json`; when it is absent the panel header says so and names the reason, and `/login` in the terminal below is the fix. **Read from the file, never from the terminal** — the words `Not logged in` are on screen and scraping them is the tempting shortcut, and Holi does not infer Claude Code's state from its output.
 
 ## Config layering (pure CC-native)
 
 Holi builds **no config composition and no per-user config sync**. The layering is exactly Claude Code's own; Holi's only job is that the shared files exist in the working dir — and now they simply *are* in the repo.
 
 **Why:** a composed per-launch config dir and a per-user config-sync subsystem are machinery CC already provides for free. **Rejected:** the composed three-tier config dir and the per-user config-sync subsystem.
+
+**Holi does own a config *directory*, and that is not a walk-back of the sentence above.** What was rejected was Holi *composing* config — merging tiers into a directory each launch, which is CC's job. What ships is a **relocation**: `CLAUDE_CONFIG_DIR` points the agent at `userData/agent-config/`, and the layering inside it is still exactly Claude Code's own. Holi builds nothing there; it creates the directory and asserts one key in a settings file it merges rather than owns.
 
 **Shared (committed to the repo).**
 - `.claude/` — shared **skills** and **commands**, and `settings.json` with **seeded permission defaults** plus the `UserPromptSubmit` hook config (which emits only the focused-note line). (Persona files are deferred — see Per-turn context.)
@@ -106,8 +108,12 @@ CC reads all of this from the cwd natively — **zero extra machinery**. A teamm
 
 **This got strictly simpler.** The shared layer used to sync because a mirror materialized it out of a CRDT store; it now syncs because it is committed, which is also how every developer already ships shared Claude config.
 
-**Personal (machine-local, untouched by Holi).**
-- The user's own **`~/.claude`** — global config, personal skills, plugins, auth.
+**Personal (machine-local).**
+- **The machine's `~/.claude` is not in play at all.** A vault agent runs on `userData/agent-config/`, so the user's global settings, personal skills, plugins, marketplaces and MCP servers are excluded **by construction** rather than by a list of things to switch off — a list needs extending every time Claude Code grows a new kind of user-level content, and fails open when it hasn't been. The agent sees Holi's config and the vault's; whose laptop it is running on stops being an input.
+  - **This was found, not foreseen.** The agent drafted an email through a **claude.ai Gmail connector** instead of `holi-google`, routing around the token authority, the send gate and the cache in one call — because the connector was simply *there*, inherited from an account the vault never mentioned. The connector was the symptom; the inheritance was the fault.
+  - **It costs one `/login`, once, ever.** Credentials are keyed to the config directory (measured — a symlinked `~/.claude.json` does not restore them), so the first launch after this shipped is logged out and the panel says so. One shared directory for every vault, because per-vault would charge that per vault while buying separate settings nothing needs — and **per-vault session history comes free regardless**, since Claude Code keys transcripts by working directory.
+  - **What is lost, deliberately:** transcripts already under `~/.claude/projects/` are invisible to the relocated agent, so `--resume` starts empty once. Copying them across would mean rewriting another program's internal state store, which is a worse bet than a sentence in a release note.
+  - **The vault's own `.claude/` is untouched and still outranks everything.** Isolation is from the machine, not from the vault: a vault may declare its own skills and MCP servers, which is why `--strict-mcp-config` stays off.
 - **`CLAUDE.local.md`** in the clone — CC's native personal-per-project layer.
 - **`USER.local.md`** (the agent's model of *you*) — personal and machine-local, and therefore **gitignored** by the vault template. This is a real requirement now, not a property of the sync engine: nothing stops `git add -A` from committing it, so `.gitignore` is what enforces the privacy the old design got from a server boundary.
 
@@ -136,6 +142,8 @@ Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.lo
 **Rejected:** the old rich system prompt + per-turn prefix (`build_system_prompt`/`build_per_turn_prefix`, fill-indicators, related tasks, backrefs, sync-state injection). This is precisely the "agent engineering on top of Claude Code" the old repo overdid; it is deleted, not ported.
 
 ## Tool surface: native only
+
+**"No MCP server" was a statement about what Holi declares, and for a long time it was not a statement about what the agent could reach.** The session inherited the machine's `~/.claude` and the user's claude.ai account, so an `azure-devops` server and a set of cloud connectors were in the tool list of every vault agent — none of them declared here, and one of them used to send mail. Since the agent moved to Holi's own config directory (§Config layering) the sentence below describes the agent's actual surface, and not merely Holi's contribution to it.
 
 **There is no MCP server.** The three v1 ops are gone, each for a reason that survives scrutiny:
 
@@ -172,6 +180,7 @@ So the tool surface is still **zero ops**, and it now holds for external data to
   - **It matches `Bash` broadly and decides in the script**, with no `if` condition. The agent can spell the command three ways — the bare name via `PATH`, `$HOLI_GOOGLE_BIN`, an absolute path — and a condition matching one of them fails **open** while still reading like protection. That is not hypothetical: D67 specified `Bash(holi-google send:*)` while the skill invoked `"$HOLI_GOOGLE_BIN" send`, so the gate as designed could never have fired. **A gate specified against a command string nobody checked against the invocation fails open, silently.**
   - **It fails closed.** Unparseable input, an unexpected shape, any internal error → `ask`. A gate that crashes into "no opinion" is a gate that opens.
   - **It names the recipients** it can read from the command, and says plainly when it cannot — a reply's recipients are derived from the thread and are *not* in the command. The message body is on stdin and is never shown, which is why the skill requires the agent to say what it is about to send before sending it.
+  - **A `Bash` matcher sees only Bash, and that hole was found in real use.** The agent sent through a claude.ai **Gmail connector**; an MCP tool call is not a shell command, so the gate deferred and a message could have reached a person unasked. The honest limit recorded below said *cooperative, not adversarial* — this was worse than that admits, because a **cooperative** agent walked around the gate without trying, by reaching for the more convenient of two tools it could see. The gate now also matches `mcp__.*[Gg]mail.*`, but a matcher chasing tool names is belt: **the braces are that the agent no longer inherits tools nobody in this app declared** (§Config layering), plus `disableClaudeAiConnectors: true` asserted in both the vault's settings and Holi's own config dir, so a vault whose settings regress still gets no cloud connectors. **The lesson generalises past Gmail:** a gate that enumerates *how* a capability is reached is only ever as complete as the last inventory of tools; the durable control is over which tools exist.
   - **The honest limit:** this gates a *cooperative* agent, not an adversarial one. No string match survives `eval` or `sh -c`. The supported claim is "the agent never sends without you seeing it", not "the agent cannot send".
 - **A managed file that only lands at vault creation is a migration that never happens** (D70). `ensureSeeded` was write-if-absent and ran only on clone/adopt, so the gate would have been absent from every vault that already existed — the hook file unwritten, `PreToolUse` unwired, and `send` reaching a real mailbox with nothing asking. `.claude/settings.json` is now **merged** key-wise (as `.gitignore` already was line-wise: add what Holi requires, keep the user's own hooks and rules, leave malformed JSON alone), and seeding runs on **every vault open**. Any future managed file inherits this or repeats the bug.
 - **Git history is the recovery story.** This is *better* than the snapshot timeline it replaces: every autosave commit is a restore point, `git revert` and `git checkout` are the restore mechanism, and an agent that wrecks the working tree is undone by a command the user already knows. Destructive edits are recoverable as long as the last autosave commit predates them — which is the argument for the autosave debounce being short.

@@ -59,7 +59,7 @@ sets `CLAUDE_CONFIG_DIR` when it is supplied.
 stripped when no `configDir` is given; it is stripped and replaced when one is;
 `PATH` prepending still works alongside it.
 
-- [ ] Write the failing tests · run `pnpm exec vitest run --project node test/agent-runtime.test.ts` · implement · re-run · commit
+- [x] Write the failing tests · run `pnpm exec vitest run --project node test/agent-runtime.test.ts` · implement · re-run · commit
 
 ## Task 2 — provision the shared config directory
 
@@ -100,7 +100,7 @@ existing key; the seeded settings carry the connector opt-out; `isLoggedIn` is
 false for a missing file, false for malformed JSON, false when `oauthAccount` is
 absent, true when it is present.
 
-- [ ] Write the failing tests · run · implement · re-run · commit
+- [x] Write the failing tests · run · implement · re-run · commit
 
 ## Task 3 — say that a login is needed, without reading the terminal
 
@@ -128,15 +128,16 @@ agent still starts, and `/login` is a thing the user types into it.
 **Gotcha.** Check once per launch, not on a timer. The answer changes exactly
 once, and polling a file to watch for it is the same instinct as polling the PTY.
 
-- [ ] Write the failing tests · run `pnpm exec vitest run --project dom` · implement · re-run · commit
+- [x] Done in **main, not the renderer** — the panel already had this notice and it was
+      about to start lying. See the D72 amendment; no `AgentPanel.test.tsx` was written.
 
 ## Task 4 — verification, including the part only a human can do
 
-- [ ] `pnpm exec node node_modules/typescript/bin/tsc --noEmit` → 0
-- [ ] `pnpm exec eslint src` → 0 errors
-- [ ] `pnpm exec vitest run --project node` → **≥ 1199** (background it; ~110s)
-- [ ] `pnpm exec vitest run --project dom` → **≥ 337**
-- [ ] from `packages/shared`: `pnpm exec vitest run` → **229**
+- [x] `pnpm exec node node_modules/typescript/bin/tsc --noEmit` → 0
+- [x] `pnpm exec eslint src` → 0 errors
+- [x] `pnpm exec vitest run --project node` → **≥ 1199** (background it; ~110s)
+- [x] `pnpm exec vitest run --project dom` → **≥ 337**
+- [x] from `packages/shared`: `pnpm exec vitest run` → **229**
 - [ ] **Ask the user to run it** (this environment cannot keep a GUI Electron
       alive) and confirm, in a real vault: the panel says a login is needed;
       `/login` works once and sticks across a restart; **`/skills` no longer
@@ -147,11 +148,11 @@ once, and polling a file to watch for it is the same instinct as polling the PTY
 
 ## Task 5 — the record
 
-- [ ] Amend D72 with what was built, the suite numbers, and anything the build
+- [x] Amend D72 with what was built, the suite numbers, and anything the build
       contradicted. **D70's "still unproven" list is now stale in one respect** —
       the gate's MCP blind spot was found in real use and is recorded in D72;
       make sure D70 points at it rather than reading as if the gate were whole.
-- [ ] Consolidate into `prd/agent.md` (§Tool surface and §Permissions) once
+- [x] Consolidate into `prd/agent.md` (§Tool surface and §Permissions) once
       built, per the D67–D71 pattern.
 
 ---

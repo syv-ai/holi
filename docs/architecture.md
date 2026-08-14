@@ -117,7 +117,8 @@ Electron main spawns **`claude`** in a **node-pty** PTY, with the **vault clone*
 ### Config layering
 **Pure CC-native layering — Holi composes nothing and syncs no personal config:**
 - **Shared:** the repo carries `.claude/` (persona, shared skills/commands, `settings.json` with seeded permission defaults and the `UserPromptSubmit` hook), `AGENTS.md`, and `MEMORY.md`. They travel because they are **committed** — which is also how every developer already ships shared Claude config.
-- **Personal (machine-local):** the user's own `~/.claude` + `CLAUDE.local.md` + `USER.local.md`, plus `.holi/settings.local.json`/`theme.local.json`. Holi never **syncs** these (the `.local.` marker is the whole rule, D65); it may read a local override it defines (e.g. `theme.local.json`) and shows them in the tree under show-hidden, but they never leave the machine.
+- **Personal (machine-local):** `CLAUDE.local.md` + `USER.local.md`, plus `.holi/settings.local.json`/`theme.local.json`. Holi never **syncs** these (the `.local.` marker is the whole rule, D65); it may read a local override it defines (e.g. `theme.local.json`) and shows them in the tree under show-hidden, but they never leave the machine.
+- **The machine's `~/.claude` is not a layer at all.** `CLAUDE_CONFIG_DIR` points a vault agent at `userData/agent-config/` (shared by every vault), so the user's global settings, personal skills, plugins, marketplaces and MCP servers are excluded by construction — the agent inherits the vault, not the laptop. Costs one `/login`, once; per-vault session history survives it because Claude Code keys transcripts by cwd. See `prd/agent.md` §Config layering.
 - **`.gitignore` is now what enforces personal privacy.** It used to be a server boundary; it is now a file, and the vault seed must carry it.
 
 ### Per-turn context
