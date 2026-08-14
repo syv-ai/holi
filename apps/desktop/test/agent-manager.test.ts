@@ -56,7 +56,14 @@ afterEach(async () => {
   for (const fn of cleanups.splice(0)) await fn()
 })
 
-async function rig(opts: { bin?: string | null; active?: string | null; turnSafetyMs?: number } = {}): Promise<Rig> {
+async function rig(
+  opts: {
+    bin?: string | null
+    active?: string | null
+    turnSafetyMs?: number
+    configDir?: string | null
+  } = {},
+): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
   const workRoot = join(dir, 'work')
   await mkdir(workRoot, { recursive: true })
@@ -105,6 +112,7 @@ async function rig(opts: { bin?: string | null; active?: string | null; turnSafe
     hookToken: () => 'tkn',
     turnSafetyMs: opts.turnSafetyMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
+    configDir: opts.configDir,
     warmTypst: () => {
       warmed += 1
     },
@@ -315,6 +323,12 @@ describe('AgentManager', () => {
     const spawn = r.spawns[0]!
     expect(spawn.opts.env.HOLI_HOOK_PORT).toBe('4242')
     expect(spawn.opts.env.HOLI_HOOK_TOKEN).toBe('tkn')
+  })
+
+  it('spawns the child on Holi own config directory (D72)', async () => {
+    const r = await rig({ configDir: '/data/agent-config' })
+    await r.manager.start({ vaultId: VAULT })
+    expect(r.spawns[0]!.opts.env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
   })
 
   it('seeds the session with a prompt (reconcile) as the last spawn arg', async () => {

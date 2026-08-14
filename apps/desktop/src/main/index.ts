@@ -48,6 +48,7 @@ import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
+import { ensureAgentConfigDir } from './agent/agent-config-dir'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { createHookServer } from './agent/hook-server'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
@@ -313,8 +314,13 @@ async function main(): Promise<void> {
     onTurnEnd: () => agent.setTurnActive(false),
   })
   await hookServer.start()
+  // D72: the vault agent runs on Holi's config directory, not the machine's
+  // `~/.claude`. Provisioned per app launch (not per session, and not once ever)
+  // so a later change to what Holi seeds actually reaches an existing install.
+  const agentConfigDir = await ensureAgentConfigDir(app.getPath('userData'))
   agent = createAgentManager({
     host,
+    configDir: agentConfigDir,
     getWindow: () => mainWindow,
     hookPort: () => hookServer.port(),
     hookToken: () => hookServer.token(),

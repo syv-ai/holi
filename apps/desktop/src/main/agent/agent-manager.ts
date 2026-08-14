@@ -72,6 +72,13 @@ export interface AgentManagerDeps {
   /** The directory holding it, prepended to the child's PATH so the agent can
    *  type the bare name — which is what the send gate matches on (D70). */
   googleBinDir?: () => string | null
+  /** Holi's own Claude Code config directory (D72), provisioned once at startup
+   *  by `ensureAgentConfigDir`. A plain value rather than a getter because
+   *  `status()` reads it synchronously to answer "is the agent logged in": the
+   *  answer is a key in a file *inside this directory*, and asking the machine's
+   *  `~/.claude` instead would report a login the relocated agent does not have.
+   *  Omitted (tests, and only tests) → the agent runs on the machine config. */
+  configDir?: string | null
   log?: (msg: string) => void
 }
 
@@ -273,6 +280,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           googleToken: deps.googleToken?.() ?? null,
           googleBin: deps.googleBin?.() ?? null,
           googleBinDir: deps.googleBinDir?.() ?? null,
+          configDir: deps.configDir ?? null,
         }),
         cols,
         rows,
