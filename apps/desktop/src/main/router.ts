@@ -61,6 +61,7 @@ import {
   type DraftBody,
   type DraftSummary,
   type MailAddress,
+  type MailboxName,
   type MailCategory,
   type MailCounts,
   type MailPage,
@@ -345,6 +346,14 @@ function composeInput(raw: unknown): {
  *  do is compose a query Gmail answers nothing to. */
 function asMailCategory(value: string | undefined): MailCategory | undefined {
   return MAIL_CATEGORIES.find((c) => c === value)
+}
+
+/** The same narrowing for the mailbox, with the same forgiveness: an
+ *  unrecognised value falls back to the inbox rather than refusing the request.
+ *  The cost of being wrong is a list of the wrong mailbox, which the user can
+ *  see and correct; the cost of throwing is a mail pane that shows an error. */
+function asMailbox(value: string | undefined): MailboxName | undefined {
+  return value === 'sent' ? 'sent' : undefined
 }
 
 /** Batch inputs the string-only `fields` helper cannot express. Each throws on a
@@ -1445,6 +1454,7 @@ export function createRouter(deps: RouterDeps) {
           pageToken: 'string?',
           category: 'string?',
           unread: 'boolean?',
+          mailbox: 'string?',
         }),
       )
       .query(({ input }): Promise<MailPage> => {
@@ -1453,6 +1463,7 @@ export function createRouter(deps: RouterDeps) {
           pageToken: input.pageToken,
           category: asMailCategory(input.category),
           unread: input.unread,
+          mailbox: asMailbox(input.mailbox),
         }
         // Cached AND current: the delta brings the cached list up to date, so
         // this is fast without ever being stale.

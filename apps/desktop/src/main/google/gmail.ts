@@ -391,6 +391,30 @@ export interface ListThreadsOptions {
    * belongs to the caller; this just ANDs what it is given.
    */
   unread?: boolean
+  /**
+   * Which mailbox this list is of. `inbox` when absent.
+   *
+   * A **query term**, like `category` and `unread` beside it — `in:sent` is
+   * grammar Gmail already speaks and the search box already passes through, so
+   * Sent costs one word rather than a second listing path with its own summary
+   * shape and its own bugs.
+   *
+   * It is the base term rather than an extra one, so an explicit query replaces
+   * it entirely: a search escapes the mailbox exactly as it escapes the tabs.
+   * `mail-sync` reads it for a second purpose — see `mailboxLabel` there, where
+   * it decides which label's movement means a thread has left this list.
+   */
+  mailbox?: MailboxName
+}
+
+/** The mailboxes the list can be of. Not every Gmail label — only the two that
+ *  are places the user navigates to. */
+export type MailboxName = 'inbox' | 'sent'
+
+/** Gmail's own label for a mailbox, which is what `history.list` is scoped by
+ *  and what a departure is measured against. */
+export function mailboxLabel(mailbox: MailboxName | undefined): string {
+  return mailbox === 'sent' ? 'SENT' : 'INBOX'
 }
 
 export interface MailPage {
@@ -568,7 +592,11 @@ export async function fetchThreadSummaries(
  *  grammar — so there is one way to narrow a list rather than several that can
  *  disagree with each other. */
 function composeQuery(options: ListThreadsOptions): string {
-  const parts = [options.query !== undefined && options.query !== '' ? options.query : 'in:inbox']
+  // The mailbox is the BASE term, so an explicit query replaces it rather than
+  // ANDing with it — searching from inside Sent searches the mailbox, the same
+  // way searching from inside a category tab leaves the tab.
+  const base = options.mailbox === 'sent' ? 'in:sent' : 'in:inbox'
+  const parts = [options.query !== undefined && options.query !== '' ? options.query : base]
   if (options.category !== undefined) parts.push(categoryQuery(options.category))
   if (options.unread === true) parts.push('is:unread')
   return parts.join(' ')

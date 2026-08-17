@@ -527,6 +527,40 @@ describe('listThreads', () => {
     expect(q).toContain('category:promotions')
   })
 
+  /**
+   * The Sent mailbox is a **query**, exactly as the category tabs are.
+   *
+   * Gmail has no separate endpoint for it and does not need one: `in:sent` is
+   * the same grammar the search box already speaks, so Sent costs one term
+   * rather than a second listing path with its own summary shape and its own
+   * bugs.
+   */
+  it('lists Sent by asking for it, not through a second code path', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { mailbox: 'sent' })
+
+    expect(new URL(seen[0]!).searchParams.get('q')).toBe('in:sent')
+  })
+
+  it('defaults to the inbox when no mailbox is named', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { mailbox: 'inbox' })
+
+    expect(new URL(seen[0]!).searchParams.get('q')).toBe('in:inbox')
+  })
+
+  it('lets an explicit query escape the mailbox, as it escapes the tabs', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread })
+
+    await listThreads(api, { query: 'from:jane', mailbox: 'sent' })
+
+    // A search that silently stayed inside Sent would come back empty for a
+    // reason the user cannot see — the same argument as the category tabs.
+    expect(new URL(seen[0]!).searchParams.get('q')).toBe('from:jane')
+  })
+
   it('returns the page token so the list can load more', async () => {
     const { api } = gmail([{ id: 't1' }], { t1: thread }, [], 'page-2')
 

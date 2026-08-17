@@ -24,6 +24,7 @@ import {
   applyLabelDelta,
   fetchThreadSummaries,
   listThreads,
+  mailboxLabel,
   PATCHABLE_LABELS,
   type ListThreadsOptions,
   type MailPage,
@@ -43,7 +44,7 @@ const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 const PATCHABLE = PATCHABLE_LABELS
 
 /**
- * Labels whose movement means a thread **left the inbox** rather than merely
+ * Labels whose movement means a thread **left the mailbox** rather than merely
  * changed inside it.
  *
  * This is the distinction `messagesDeleted` does not cover and that nothing
@@ -52,8 +53,13 @@ const PATCHABLE = PATCHABLE_LABELS
  * back through `merge`'s "new mail" branch and the thread reappears at the top
  * of the list it was just archived out of — permanently, because the cursor
  * advances past the event that would have explained it.
+ *
+ * **Which label counts as "removed" depends on the mailbox**, which is why it is
+ * a parameter and not a constant here. For the inbox it is `INBOX`; for Sent it
+ * is `SENT`, a label a message never actually loses — so in Sent the only
+ * departures are the two below, which is correct. Archiving a conversation you
+ * sent does not un-send it.
  */
-const LEFT_WHEN_REMOVED = 'INBOX'
 const LEFT_WHEN_ADDED = new Set(['TRASH', 'SPAM'])
 
 interface RawHistoryMessage {
@@ -97,13 +103,21 @@ export async function syncThreads(
 
   if (cached === null || since === null) return fullSync(api, cache, options, key)
 
+  // The mailbox this list is of, as Gmail labels it. Used twice, and both uses
+  // were hardcoded to INBOX before Sent existed: the scope of the delta, and
+  // the label whose removal means a thread has left.
+  const label = mailboxLabel(options.mailbox)
+
   let page: RawHistoryPage
   try {
     page = await api.get<RawHistoryPage>(`${BASE}/history`, {
       startHistoryId: since,
-      // Scoped to the inbox: everything else that happens in a mailbox — a
+      // Scoped to this mailbox: everything else that happens elsewhere — a
       // label on an archived thread, a message in Spam — is noise to this list.
-      labelId: 'INBOX',
+      // Asking about the INBOX while showing Sent would mean a message the user
+      // just sent never arrived, and never arrived *again* either: the cursor
+      // advances past the event that would have explained it.
+      labelId: label,
     })
   } catch (error) {
     // Gmail keeps roughly a week. Older than that is a resync, not a failure,
@@ -114,20 +128,20 @@ export async function syncThreads(
     throw error
   }
 
-  const { changed, deleted, left, patches } = readHistory(page.history ?? [])
+  const { changed, deleted, left, patches } = readHistory(page.history ?? [], label)
 
   /**
-   * "Left the inbox" only means "left this list" for a list that IS the inbox.
+   * "Left the mailbox" only means "left this list" for a list that IS a mailbox.
    *
    * A search (`from:jane`) may still legitimately match an archived thread, so
    * there the same event becomes a **refetch** instead — which is what it was
    * before departures existed, and it keeps the row while bringing it up to
-   * date. The category and unread lists are inbox-scoped, so they get the
+   * date. The category and unread lists are mailbox-scoped, so they get the
    * removal; only an explicit query opts out.
    */
-  const inbox = scopedToInbox(options)
-  const gone = inbox ? new Set([...deleted, ...left]) : deleted
-  if (!inbox) for (const id of left) changed.add(id)
+  const mailbox = scopedToMailbox(options)
+  const gone = mailbox ? new Set([...deleted, ...left]) : deleted
+  if (!mailbox) for (const id of left) changed.add(id)
 
   // Only the threads that actually moved, and never one we already know has
   // gone — refetching a thread in order to drop it is a request spent on
@@ -202,7 +216,7 @@ interface Changes {
  * label being added again removes it from `left` rather than leaving both
  * facts recorded and letting the caller guess.
  */
-function readHistory(records: RawHistoryRecord[]): Changes {
+function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Changes {
   const changed = new Set<string>()
   const deleted = new Set<string>()
   const left = new Set<string>()
@@ -233,15 +247,17 @@ function readHistory(records: RawHistoryRecord[]): Changes {
         const threadId = entry.message?.threadId
         if (threadId === undefined) continue
         for (const labelId of entry.labelIds ?? []) {
-          // Left the inbox, or came back to it. Checked before `PATCHABLE`
+          // Left the mailbox, or came back to it. Checked before `PATCHABLE`
           // because these are not flags on a row — they decide whether the row
           // belongs to the list at all. Each label reads in both directions:
           // INBOX removed is an archive and INBOX added is an un-archive; TRASH
-          // added is a trashing and TRASH removed is a restore.
-          const inbox = labelId === LEFT_WHEN_REMOVED
+          // added is a trashing and TRASH removed is a restore. In Sent the
+          // first pair never fires — a message does not lose SENT — so trash
+          // and spam are the only ways out, which is the whole difference.
+          const home = labelId === leftWhenRemoved
           const banished = LEFT_WHEN_ADDED.has(labelId)
-          if (inbox || banished) {
-            const leaving = side === (inbox ? 'removed' : 'added')
+          if (home || banished) {
+            const leaving = side === (home ? 'removed' : 'added')
             if (leaving) left.add(threadId)
             else {
               // Back in the inbox. Refetched rather than patched: the summary
@@ -266,14 +282,14 @@ function readHistory(records: RawHistoryRecord[]): Changes {
 }
 
 /**
- * Is this list the inbox?
+ * Is this list a whole mailbox?
  *
- * `composeQuery` defaults to `in:inbox` when there is no explicit query, and
- * ANDs the category and unread filters onto it — so every list except an
- * explicit search is inbox-scoped, and only those may treat "archived" as
- * "gone from this list".
+ * `composeQuery` uses the mailbox as its base term when there is no explicit
+ * query, and ANDs the category and unread filters onto it — so every list
+ * except an explicit search is mailbox-scoped, and only those may treat
+ * "left the mailbox" as "gone from this list".
  */
-function scopedToInbox(options: ListThreadsOptions): boolean {
+function scopedToMailbox(options: ListThreadsOptions): boolean {
   return options.query === undefined || options.query === ''
 }
 
@@ -326,5 +342,11 @@ function patch(
  * (see `syncThreads`), so it has no key to belong to.
  */
 export function cacheKey(options: ListThreadsOptions): string {
-  return `${options.query ?? ''}|${options.category ?? ''}|${options.unread === true ? 'unread' : ''}`
+  const parts = [
+    options.query ?? '',
+    options.category ?? '',
+    options.unread === true ? 'unread' : '',
+    options.mailbox ?? '',
+  ]
+  return parts.join('|')
 }

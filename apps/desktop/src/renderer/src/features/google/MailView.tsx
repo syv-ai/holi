@@ -67,10 +67,6 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Button,
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
   Input,
   Popover,
   PopoverContent,
@@ -83,6 +79,13 @@ import {
 import { SandboxedHtml } from './SandboxedHtml'
 import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
+import {
+  CATEGORIES,
+  MailboxPicker,
+  type CategoryCounts,
+  type MailCategory,
+  type MailboxView,
+} from './MailboxPicker'
 import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
 import { listStamp, messageStamp } from '../../lib/mail-stamp'
@@ -97,9 +100,6 @@ import { openNoteTabAtom } from '../../state/panes'
 import { openDialogAtom } from '../../state/dialogs'
 import { useGlobalPanelLayout } from '../../state/preferences'
 
-/** Mirrors `main/google/gmail.ts`. */
-type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
-
 /**
  * `MailAddress`, `Attachment` and `ThreadMessage` used to be declared here.
  *
@@ -108,24 +108,6 @@ type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
  * exactly how the `to` and `cc` fields drift apart — one file gains a field,
  * the other keeps compiling, and a reply-all quietly stops copying somebody.
  */
-
-/**
- * Gmail's tabs, plus the default: no tab at all.
- *
- * **`null` is first and is the default, deliberately.** `category:primary`
- * matches nothing unless the account actually *uses* inbox categories, and any
- * non-Default inbox layout — Priority Inbox, Multiple Inboxes, Important-first
- * — switches them off. Defaulting to Primary emptied a real inbox
- * ("Email view says No threads"). The tabs are offered; they are not assumed.
- */
-const CATEGORIES: { value: MailCategory | null; label: string }[] = [
-  { value: null, label: 'All mail' },
-  { value: 'primary', label: 'Primary' },
-  { value: 'social', label: 'Social' },
-  { value: 'promotions', label: 'Promotions' },
-  { value: 'updates', label: 'Updates' },
-  { value: 'forums', label: 'Forums' },
-]
 
 interface ThreadSummary {
   id: string
@@ -161,16 +143,6 @@ interface MailCounts {
   total: number
 }
 
-/** Mirrors `CategoryCount` in `main/google/gmail.ts`. `more` means the answer
- *  ran past one page, so it renders as `500+` rather than as a number that
- *  quietly means "at least". */
-interface CategoryCount {
-  count: number
-  more: boolean
-}
-
-type CategoryCounts = Partial<Record<MailCategory, CategoryCount | null>>
-
 type ListState =
   | { kind: 'loading' }
   | {
@@ -202,9 +174,15 @@ export function MailView() {
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
-  /** Which Gmail tab the list is showing; `null` is the whole inbox, and the
-   *  default — see `CATEGORIES`. */
-  const [category, setCategory] = useState<MailCategory | null>(null)
+  /**
+   * Where the list is pointed — a tab, Sent, or Drafts.
+   *
+   * One union rather than the `category` + `showDrafts` pair this used to be:
+   * those could express "Drafts, filtered to Promotions", which is not a place,
+   * and every reader had to remember which of the two won. `All mail` is the
+   * default — see `CATEGORIES` in [[MailboxPicker]] for why not Primary.
+   */
+  const [view, setView] = useState<MailboxView>({ kind: 'category', category: null })
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   /** Unread per Gmail tab. `null` until the picker is first opened — five
@@ -229,8 +207,6 @@ export function MailView() {
    *  them. `[]` until it resolves; the cost of being early is copying the user
    *  on their own reply, which they can see and remove. */
   const [sendAs, setSendAs] = useState<string[]>([])
-  /** The Drafts view, shown instead of the thread list (D71). */
-  const [showDrafts, setShowDrafts] = useState(false)
   /** Bumped after a save or a discard, so the Drafts list refetches. */
   const [draftsGeneration, setDraftsGeneration] = useState(0)
   /** The Gmail draft the composer is continuing, if any. */
@@ -242,20 +218,30 @@ export function MailView() {
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
 
+  const showDrafts = view.kind === 'drafts'
+  const searching = submitted !== ''
+
   /**
-   * The category actually sent.
+   * What actually narrows the request.
    *
-   * **A search escapes the tab**, exactly as Gmail's own search does. ANDing
-   * the category onto an explicit query silently narrows it, and a search that
-   * comes back empty for a reason the user cannot see is worse than no tabs.
+   * **A search escapes the place it was started from**, exactly as Gmail's own
+   * search does — the tab and the mailbox alike. ANDing either onto an explicit
+   * query silently narrows it, and a search that comes back empty for a reason
+   * the user cannot see is worse than no tabs at all.
+   *
+   * `unread` is the exception, and deliberately: it is a *state*, not a place,
+   * so it survives a search. It is dropped for Sent and Drafts instead, where
+   * "unread" is not a thing a message can be.
    */
-  const filter = submitted === '' ? (category ?? undefined) : undefined
+  const filter = searching || view.kind !== 'category' ? undefined : (view.category ?? undefined)
+  const mailbox = searching || view.kind !== 'sent' ? undefined : ('sent' as const)
+  const unreadFilter = view.kind === 'category' && unreadOnly ? true : undefined
 
   const load = useCallback(() => {
     setList({ kind: 'loading' })
     listGeneration.current++
     void trpc.google.threads
-      .query({ query: submitted, category: filter, unread: unreadOnly || undefined })
+      .query({ query: submitted, category: filter, unread: unreadFilter, mailbox })
       .then((page) =>
         setList({
           kind: 'ready',
@@ -268,7 +254,7 @@ export function MailView() {
         const message = err instanceof Error ? err.message : 'Could not load your mail.'
         setList(NOT_CONNECTED.test(message) ? { kind: 'disconnected' } : { kind: 'error', message })
       })
-  }, [submitted, filter, unreadOnly])
+  }, [submitted, filter, unreadFilter, mailbox])
 
   useEffect(load, [load])
 
@@ -452,7 +438,7 @@ export function MailView() {
   const loadMore = (pageToken: string) => {
     setLoadingMore(true)
     void trpc.google.threads
-      .query({ query: submitted, category: filter, unread: unreadOnly || undefined, pageToken })
+      .query({ query: submitted, category: filter, unread: unreadFilter, mailbox, pageToken })
       .then((page) => {
         listGeneration.current++
         setList((previous) =>
@@ -647,15 +633,16 @@ export function MailView() {
             onSearchOpenChange={setSearchOpen}
             people={threads}
             contacts={contacts}
-            category={category}
-            onCategoryChange={setCategory}
-            searching={submitted !== ''}
+            view={view}
+            onViewChange={setView}
+            searching={searching}
             unreadOnly={unreadOnly}
             onUnreadChange={setUnreadOnly}
             unreadCount={counts?.unread ?? null}
             inboxUnread={counts?.unread ?? null}
             categoryCounts={categoryCounts}
             onCategoryMenuOpen={loadCategoryCounts}
+            onCompose={() => openDialog({ id: 'compose-mail', size: 'lg' })}
             onRefresh={() => {
               load()
               loadCounts()
@@ -682,43 +669,6 @@ export function MailView() {
             </div>
           )}
 
-          {/* Drafts sits beside the tabs rather than inside the category
-              picker: a draft is not a Gmail tab, and burying the only route
-              back to a new-message draft inside a menu about tabs is how it
-              stays unreachable. */}
-          <div className="flex shrink-0 items-center gap-1 border-b border-border px-2 py-1">
-            <Button
-              variant={showDrafts ? 'ghost' : 'secondary'}
-              size="xs"
-              aria-pressed={!showDrafts}
-              onClick={() => setShowDrafts(false)}
-            >
-              Mail
-            </Button>
-            <Button
-              variant={showDrafts ? 'secondary' : 'ghost'}
-              size="xs"
-              aria-pressed={showDrafts}
-              onClick={() => setShowDrafts(true)}
-            >
-              Drafts
-            </Button>
-            {/* A new message is a DIALOG, where a reply is inline: a reply needs
-                the thing it answers on screen, and a fresh message has no
-                context to preserve. */}
-            <Tooltip content="write a new message">
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                className="ml-auto"
-                aria-label="new message"
-                onClick={() => openDialog({ id: 'compose-mail', size: 'lg' })}
-              >
-                <SquarePen size={14} />
-              </Button>
-            </Tooltip>
-          </div>
-
           <div className="min-h-0 flex-1 overflow-y-auto">
             {showDrafts && (
               <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />
@@ -732,7 +682,7 @@ export function MailView() {
                 identical otherwise, which is exactly how defaulting to Primary
                 read as "my mail is gone". */}
             {!showDrafts && list.kind === 'ready' && list.threads.length === 0 && (
-              <Note>{emptyMessage(filter, unreadOnly)}</Note>
+              <Note>{emptyMessage(view, filter, unreadOnly)}</Note>
             )}
             {!showDrafts &&
               list.kind === 'ready' &&
@@ -1030,10 +980,21 @@ function explainWriteFailure(err: unknown): string {
   return message === '' ? 'That didn’t stick. Try again.' : message
 }
 
-/** Why the list is empty, in the terms the user set it to be. */
-function emptyMessage(filter: MailCategory | undefined, unreadOnly: boolean): string {
-  if (unreadOnly && filter === undefined) return 'Nothing unread.'
-  if (filter === undefined) return 'No threads.'
+/**
+ * Why the list is empty, in the terms the user set it to be.
+ *
+ * Naming the filter matters: an empty tab and an empty mailbox look identical
+ * otherwise, which is exactly how defaulting to Primary once read as "my mail
+ * is gone". The tabs sentence is only appended for a *tab* — pinned to Sent it
+ * would explain a Gmail feature that has nothing to do with why Sent is empty.
+ */
+function emptyMessage(
+  view: MailboxView,
+  filter: MailCategory | undefined,
+  unreadOnly: boolean,
+): string {
+  if (view.kind === 'sent') return 'Nothing sent.'
+  if (filter === undefined) return unreadOnly ? 'Nothing unread.' : 'No threads.'
   const label = CATEGORIES.find((c) => c.value === filter)?.label ?? filter
   const nothing = unreadOnly ? `Nothing unread in ${label}` : `Nothing in ${label}`
   return `${nothing}. Gmail’s tabs only apply if your inbox uses them.`
@@ -1058,8 +1019,8 @@ function MailToolbar({
   onSearchOpenChange,
   people,
   contacts,
-  category,
-  onCategoryChange,
+  view,
+  onViewChange,
   searching,
   unreadOnly,
   onUnreadChange,
@@ -1067,6 +1028,7 @@ function MailToolbar({
   inboxUnread,
   categoryCounts,
   onCategoryMenuOpen,
+  onCompose,
   onRefresh,
 }: {
   query: string
@@ -1076,8 +1038,8 @@ function MailToolbar({
   onSearchOpenChange: (open: boolean) => void
   people: ThreadSummary[]
   contacts: MailAddress[]
-  category: MailCategory | null
-  onCategoryChange: (category: MailCategory | null) => void
+  view: MailboxView
+  onViewChange: (view: MailboxView) => void
   searching: boolean
   unreadOnly: boolean
   onUnreadChange: (unread: boolean) => void
@@ -1085,6 +1047,7 @@ function MailToolbar({
   inboxUnread: number | null
   categoryCounts: CategoryCounts | null
   onCategoryMenuOpen: () => void
+  onCompose: () => void
   onRefresh: () => void
 }): React.JSX.Element {
   if (searchOpen) {
@@ -1119,48 +1082,60 @@ function MailToolbar({
         </Button>
       </Tooltip>
 
-      {/* A state, not a place — so unlike the category tabs it survives a
-          search, and it is a toggle rather than an entry in the picker. */}
-      <Tooltip content={unreadOnly ? 'showing unread only' : 'show unread only'}>
-        <Button
-          variant={unreadOnly ? 'secondary' : 'ghost'}
-          size="xs"
-          className="gap-1"
-          aria-label="show unread only"
-          aria-pressed={unreadOnly}
-          onClick={() => onUnreadChange(!unreadOnly)}
-        >
-          <MailOpen size={14} />
-          {unreadCount !== null && unreadCount > 0 && (
-            <span className="text-[10px] text-muted-foreground">{unreadCount}</span>
-          )}
-        </Button>
-      </Tooltip>
+      {/* A state, not a place — so unlike the mailbox it survives a search, and
+          it is a toggle rather than an entry in the picker. Absent for Sent and
+          Drafts, where a message has no unread state to filter on and the
+          control would be a switch that does nothing. */}
+      {view.kind === 'category' && (
+        <Tooltip content={unreadOnly ? 'showing unread only' : 'show unread only'}>
+          <Button
+            variant={unreadOnly ? 'secondary' : 'ghost'}
+            size="xs"
+            className="gap-1"
+            aria-label="show unread only"
+            aria-pressed={unreadOnly}
+            onClick={() => onUnreadChange(!unreadOnly)}
+          >
+            <MailOpen size={14} />
+            {unreadCount !== null && unreadCount > 0 && (
+              <span className="text-[10px] text-muted-foreground">{unreadCount}</span>
+            )}
+          </Button>
+        </Tooltip>
+      )}
 
       {/* Gone during a search, as Gmail's own tabs are: a picker reading
           "Promotions" over unfiltered results claims a filter that is not
           applied. Clearing the search brings it back. */}
       {!searching && (
-        <CategoryPicker
-          category={category}
-          onChange={onCategoryChange}
+        <MailboxPicker
+          view={view}
+          onChange={onViewChange}
           counts={categoryCounts}
           inboxUnread={inboxUnread}
           onOpen={onCategoryMenuOpen}
         />
       )}
 
-      <Tooltip content="refresh">
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          className={searching ? '' : 'ml-auto'}
-          aria-label="refresh mail"
-          onClick={onRefresh}
-        >
-          <RefreshCw size={14} />
-        </Button>
-      </Tooltip>
+      {/* Compose and refresh, together at the right end. Compose used to sit a
+          row below, on the strip that carried the Mail/Drafts buttons; that
+          strip is gone with the merge, and the two icon actions that are always
+          available belong on the row that is always there. */}
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {/* A new message is a DIALOG, where a reply is inline: a reply needs the
+            thing it answers on screen, and a fresh message has no context to
+            preserve. */}
+        <Tooltip content="write a new message">
+          <Button variant="ghost" size="icon-xs" aria-label="new message" onClick={onCompose}>
+            <SquarePen size={14} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="refresh">
+          <Button variant="ghost" size="icon-xs" aria-label="refresh mail" onClick={onRefresh}>
+            <RefreshCw size={14} />
+          </Button>
+        </Tooltip>
+      </div>
     </div>
   )
 }
@@ -1499,82 +1474,6 @@ function ThreadRow({
   )
 }
 
-/**
- * Which Gmail tab the list is showing, and how much unread sits in each.
- *
- * **The counts are counted, not estimated**, which is the condition on which
- * they exist at all: this used to show none, because the obvious source is
- * `resultSizeEstimate` and an estimate presented as a count is a number people
- * trust and it is wrong. `fetchCategoryUnread` lists the tab's unread thread
- * ids in the inbox and counts them — exact, correctly scoped, and honest past
- * one page (`500+`). Read the note there for why `labels.get`, which is one
- * request instead of five, is nevertheless the wrong source.
- *
- * They are also **not fetched until this is opened**. Five requests for a
- * dropdown nobody touched is exactly the kind of cost the mail cache exists to
- * avoid paying.
- *
- * Unread rather than total, because that is what a tab badge means: "is there
- * anything in here for me" is the question, and "how much promotional mail do
- * I own" is not.
- */
-function CategoryPicker({
-  category,
-  onChange,
-  counts,
-  inboxUnread,
-  onOpen,
-}: {
-  category: MailCategory | null
-  onChange: (category: MailCategory | null) => void
-  counts: CategoryCounts | null
-  /** The whole inbox's unread, which is what "All mail" means here. Already in
-   *  hand from `mailCounts`, so it costs nothing. */
-  inboxUnread: number | null
-  onOpen: () => void
-}) {
-  const current = CATEGORIES.find((c) => c.value === category)
-  return (
-    <DropdownMenu onOpenChange={(open) => open && onOpen()}>
-      <Tooltip content="Gmail’s tabs — only useful if your inbox uses them">
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="xs" className="ml-auto" aria-label="choose a category">
-            {current?.label ?? 'All mail'}
-          </Button>
-        </DropdownMenuTrigger>
-      </Tooltip>
-      <DropdownMenuContent align="end">
-        {CATEGORIES.map((option) => (
-          <DropdownMenuItem key={option.value ?? 'all'} onSelect={() => onChange(option.value)}>
-            <span className="flex w-full items-baseline justify-between gap-4">
-              <span>{option.label}</span>
-              {/* Nothing at all rather than a zero while the counts are in
-                  flight, or when one tab's request failed: an absent number
-                  says "not known", and `0` would say "nothing here". */}
-              <span className="text-[10px] text-muted-foreground tabular-nums">
-                {unreadLabel(option.value, counts, inboxUnread)}
-              </span>
-            </span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-/** The number beside one tab, or `''` when there is nothing truthful to put
- *  there. `0` is rendered — "nothing unread" is a real answer, and a blank
- *  would read as "still loading". */
-function unreadLabel(
-  value: MailCategory | null,
-  counts: CategoryCounts | null,
-  inboxUnread: number | null,
-): string {
-  if (value === null) return inboxUnread === null ? '' : String(inboxUnread)
-  const count = counts?.[value]
-  if (count === undefined || count === null) return ''
-  return count.more ? `${count.count}+` : String(count.count)
-}
 
 /**
  * One message in a thread, collapsible.

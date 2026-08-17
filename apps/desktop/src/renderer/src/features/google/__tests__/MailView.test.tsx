@@ -122,6 +122,21 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
   })
 }
 
+/**
+ * Point the list somewhere — a tab, Sent, or Drafts.
+ *
+ * All three used to be reached differently: the tabs through a dropdown, Mail
+ * and Drafts through a pair of buttons on a strip of their own. One picker now,
+ * so one helper.
+ */
+async function chooseMailbox(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string | RegExp,
+): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
+  await user.click(await screen.findByRole('menuitem', { name: label }))
+}
+
 /** Mount, open the one thread, and hand back the reader pane. */
 async function openThread(): Promise<HTMLElement> {
   const user = userEvent.setup()
@@ -254,7 +269,7 @@ test('a search is not narrowed by the category, as in Gmail itself', async () =>
   const user = userEvent.setup()
 
   render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
   await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
 
@@ -274,7 +289,7 @@ test('says which tab is empty, rather than implying the inbox is', async () => {
   const user = userEvent.setup()
 
   render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
 
   // An empty tab and an empty mailbox look identical otherwise — which is
@@ -287,7 +302,7 @@ test('lets the user look at Promotions', async () => {
   const user = userEvent.setup()
 
   render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: /choose a category/i }))
+  await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
 
   await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
@@ -1135,7 +1150,7 @@ test('the category picker spends nothing until it is opened', async () => {
 
   expect(categoryCountsMock).not.toHaveBeenCalled()
 
-  await user.click(screen.getByRole('button', { name: 'choose a category' }))
+  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
 
   await waitFor(() => expect(categoryCountsMock).toHaveBeenCalledTimes(1))
 })
@@ -1152,7 +1167,7 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  await user.click(screen.getByRole('button', { name: 'choose a category' }))
+  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
 
   const menu = await screen.findByRole('menu')
   expect(within(menu).getByRole('menuitem', { name: /Primary/ })).toHaveTextContent('4')
@@ -1164,6 +1179,100 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
   // A tab whose own request failed shows nothing — an absent number says "not
   // known", where 0 would say "nothing here".
   expect(within(menu).getByRole('menuitem', { name: /Social/ })).not.toHaveTextContent(/\d/)
+})
+
+/**
+ * The merge, and the mailbox it made room for.
+ *
+ * Three controls said where the list was pointed — a Mail/Drafts button pair, a
+ * category dropdown, and between them no way at all to reach Sent. One picker
+ * now, with the tabs above a separator and the two real mailboxes below it.
+ */
+test('offers the tabs, Sent and Drafts from one control', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await user.click(screen.getByRole('button', { name: 'choose a mailbox' }))
+
+  const menu = await screen.findByRole('menu')
+  for (const label of [/^All mail/, /Primary/, /Social/, /Promotions/, /Updates/, /Forums/]) {
+    expect(within(menu).getByRole('menuitem', { name: label })).toBeInTheDocument()
+  }
+  expect(within(menu).getByRole('menuitem', { name: 'Sent' })).toBeInTheDocument()
+  expect(within(menu).getByRole('menuitem', { name: 'Drafts' })).toBeInTheDocument()
+})
+
+test('asks Gmail for the Sent mailbox, and says so on the trigger', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await chooseMailbox(user, 'Sent')
+
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
+  // The label is the whole affordance — a picker that has to be opened to say
+  // where you are is a button, not a picker.
+  expect(screen.getByRole('button', { name: 'choose a mailbox' })).toHaveTextContent('Sent')
+})
+
+test('drops the unread filter in Sent, where a message cannot be unread', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await user.click(screen.getByRole('button', { name: /show unread only/i }))
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ unread: true }))
+
+  await chooseMailbox(user, 'Sent')
+
+  // Not merely unsent — the control is gone, because a switch that does nothing
+  // is worse than no switch.
+  await waitFor(() => expect(queryOf(2).unread).toBeUndefined())
+  expect(screen.queryByRole('button', { name: /show unread only/i })).toBeNull()
+})
+
+test('says Nothing sent rather than explaining Gmail’s tabs', async () => {
+  threadMock.mockResolvedValue(page([]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await chooseMailbox(user, 'Sent')
+
+  expect(await screen.findByText(/nothing sent/i)).toBeInTheDocument()
+  expect(screen.queryByText(/tabs only apply/i)).toBeNull()
+})
+
+test('a search escapes the mailbox, as it escapes the tabs', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await chooseMailbox(user, 'Sent')
+  await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
+
+  await user.click(screen.getByRole('button', { name: /search mail/i }))
+  await user.type(await screen.findByRole('combobox', { name: /search mail/i }), 'from:jane{Enter}')
+
+  await waitFor(() => expect(queryOf(2)).toMatchObject({ query: 'from:jane' }))
+  expect(queryOf(2).mailbox).toBeUndefined()
+})
+
+test('compose sits on the toolbar row, in line with refresh', async () => {
+  // It used to live on a strip of its own below, carrying the Mail/Drafts
+  // buttons. That strip is gone with the merge.
+  threadMock.mockResolvedValue(page([summary()]))
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  const compose = screen.getByRole('button', { name: 'new message' })
+  const refresh = screen.getByRole('button', { name: 'refresh mail' })
+
+  expect(compose.parentElement).toBe(refresh.parentElement)
 })
 
 /**
@@ -1412,7 +1521,7 @@ test('Drafts lists a draft that belongs to no thread at all', async () => {
   draftsMock.mockResolvedValue([draft()])
   render(<MailView />)
 
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
 
   expect(await screen.findByText('Half written')).toBeInTheDocument()
   expect(screen.getByText('Bo Berg')).toBeInTheDocument()
@@ -1426,7 +1535,7 @@ test('a draft with no recipient reads as (no recipient), not as a blank row', as
   draftsMock.mockResolvedValue([draft({ to: [] })])
   render(<MailView />)
 
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
 
   expect(await screen.findByText('(no recipient)')).toBeInTheDocument()
 })
@@ -1447,7 +1556,7 @@ test('opening a draft loads it into the composer', async () => {
     foreign: false,
   })
   render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
 
   await user.click(await screen.findByText('Half written'))
 
@@ -1480,7 +1589,7 @@ test('opening a draft closes the thread it would otherwise hide behind', async (
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await screen.findByRole('article')
 
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
   await user.click(await screen.findByText('Half written'))
 
   await screen.findByRole('region', { name: 'Compose mail' })
@@ -1492,7 +1601,7 @@ test('Drafts says so when there are none, rather than showing an empty pane', as
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
 
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
 
   expect(await screen.findByText('No drafts.')).toBeInTheDocument()
 })
@@ -1540,10 +1649,10 @@ test('the thread list comes back when Mail is chosen again', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
-  await user.click(await screen.findByRole('button', { name: 'Drafts' }))
+  await chooseMailbox(user, 'Drafts')
   await screen.findByText('No drafts.')
 
-  await user.click(screen.getByRole('button', { name: 'Mail' }))
+  await chooseMailbox(user, /^All mail/)
 
   expect(await screen.findByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
 })

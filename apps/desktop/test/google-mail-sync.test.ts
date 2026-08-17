@@ -494,6 +494,95 @@ describe('syncThreads', () => {
     })
   })
 
+  /**
+   * Sent is a different mailbox, so it is a different list — and the delta
+   * machinery was written knowing only about the inbox.
+   *
+   * Two things were hardcoded to `INBOX`: the label `history.list` is scoped
+   * to, and the label whose *removal* means a thread has left. Neither is right
+   * for Sent. Scoping the delta to INBOX would mean a newly sent message never
+   * appeared, and worse, it would never appear *again* — the cursor advances
+   * past the event that would have explained it. And "INBOX was removed" is
+   * what archiving a conversation does, which has nothing to do with whether
+   * the account sent it.
+   */
+  describe('the Sent mailbox', () => {
+    it('is not served the inbox from the inbox’s cache entry', async () => {
+      const inbox = gmail({
+        list: [{ id: 't1' }],
+        threads: { t1: rawThread('t1', 'Something received') },
+      })
+      await syncThreads(inbox.api, cache, {})
+
+      const sent = gmail({
+        list: [{ id: 't9' }],
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
+      })
+      const page = await syncThreads(sent.api, cache, { mailbox: 'sent' })
+
+      expect(page.threads.map((t) => t.subject)).toEqual(['Something sent'])
+    })
+
+    it('scopes the delta to SENT rather than to the inbox', async () => {
+      const first = gmail({
+        list: [{ id: 't9' }],
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
+      })
+      await syncThreads(first.api, cache, { mailbox: 'sent' })
+
+      const second = gmail({ history: { historyId: '5001' } })
+      await syncThreads(second.api, cache, { mailbox: 'sent' })
+
+      const history = second.seen.find((url) => new URL(url).pathname.endsWith('/history'))!
+      expect(new URL(history).searchParams.get('labelId')).toBe('SENT')
+    })
+
+    it('keeps a sent thread that was archived out of the inbox', async () => {
+      // Archiving removes INBOX. In the inbox list that means the thread is
+      // gone; in Sent it means nothing at all — the account still sent it.
+      const first = gmail({
+        list: [{ id: 't9' }],
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
+      })
+      await syncThreads(first.api, cache, { mailbox: 'sent' })
+
+      const second = gmail({
+        history: {
+          historyId: '5002',
+          history: [
+            { labelsRemoved: [{ message: { id: 't9-m1', threadId: 't9' }, labelIds: ['INBOX'] }] },
+          ],
+        },
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
+      })
+      const page = await syncThreads(second.api, cache, { mailbox: 'sent' })
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t9'])
+    })
+
+    it('drops a sent thread that was trashed', async () => {
+      // The departure that IS real for Sent, and the one `LEFT_WHEN_ADDED`
+      // already covered.
+      const first = gmail({
+        list: [{ id: 't9' }],
+        threads: { t9: rawThread('t9', 'Something sent', ['SENT']) },
+      })
+      await syncThreads(first.api, cache, { mailbox: 'sent' })
+
+      const second = gmail({
+        history: {
+          historyId: '5002',
+          history: [
+            { labelsAdded: [{ message: { id: 't9-m1', threadId: 't9' }, labelIds: ['TRASH'] }] },
+          ],
+        },
+      })
+      const page = await syncThreads(second.api, cache, { mailbox: 'sent' })
+
+      expect(page.threads).toEqual([])
+    })
+  })
+
   it('goes straight to Gmail for a later page, never to the cache', async () => {
     const first = gmail({ list: [{ id: 't1' }], threads: { t1: rawThread('t1', 'One') } })
     await syncThreads(first.api, cache, {})

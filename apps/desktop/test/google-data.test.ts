@@ -13,14 +13,21 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleApi } from '../src/main/google/api'
 import { openGoogleCache, type GoogleCache } from '../src/main/google/cache'
-import { createGoogleData, type GoogleData } from '../src/main/google/data'
+import { createGoogleData, threadsCacheKey, type GoogleData } from '../src/main/google/data'
 import { listAgenda } from '../src/main/google/calendar'
 import { listThreads } from '../src/main/google/gmail'
 
 const CAL_LIST = 'https://www.googleapis.com/calendar/v3/users/me/calendarList'
 const WINDOW = { timeMin: '2026-08-04T00:00:00Z', timeMax: '2026-08-11T00:00:00Z' }
-/** `cacheKey({})` — query, category and the unread filter, all empty. */
-const INBOX_KEY = '||'
+/**
+ * The plain inbox's cache entry.
+ *
+ * Derived rather than spelled out. It was `'||'`, which broke the moment
+ * `cacheKey` grew a fourth segment for the mailbox — and a test that hardcodes
+ * a key is asserting the key's *format*, which is nobody's contract, instead of
+ * "the thing the cache wrote under is the thing this reads back".
+ */
+const INBOX_KEY = threadsCacheKey({})
 
 let dir: string
 let path: string
