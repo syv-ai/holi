@@ -31,6 +31,8 @@ import {
 } from '../../lib/mail-frame'
 import { sanitizeMailHtml } from '../../lib/mail-html'
 import { useRemoteContent, type RemoteContentIdentity } from '../../state/mail-images'
+import { registerMailFrame } from '../../state/mail-frames'
+import { matchHotkey } from '../../lib/hotkey'
 
 interface SandboxedHtmlProps {
   /** Raw and untrusted. Sanitizing happens **here** — a caller must not pre-sanitize
@@ -124,6 +126,7 @@ export function SandboxedHtml({
         palette={palette}
         allowRemoteContent={allowRemoteContent}
         label={label}
+        registerAs={identity.key}
       />
     </>
   )
@@ -135,6 +138,13 @@ interface HtmlFrameProps {
   palette: MailPalette
   allowRemoteContent: boolean
   label: string
+  /**
+   * Publish this frame's document under this key, so in-thread find can reach
+   * it ([[state/mail-frames]]). `null` for a block with no stable identity — a
+   * calendar event description, which is re-rendered from whatever the agenda
+   * last fetched and is not part of any thread.
+   */
+  registerAs: string | null
 }
 
 /**
@@ -151,6 +161,7 @@ function HtmlFrame({
   palette,
   allowRemoteContent,
   label,
+  registerAs,
 }: HtmlFrameProps): React.JSX.Element {
   const ref = useRef<HTMLIFrameElement>(null)
   const [height, setHeight] = useState(0)
@@ -212,12 +223,46 @@ function HtmlFrame({
     // Capture: `load` on an <img> does not bubble.
     document_.addEventListener('load', measure, true)
 
+    /**
+     * ⌘F pressed **over the message** has to be forwarded out by hand.
+     *
+     * A keydown inside an iframe does not cross the frame boundary — it is a
+     * separate document with a separate event path, so React never sees it. The
+     * effect is that find works everywhere in the pane except over the text the
+     * user is actually reading, which is the one place they will press it.
+     *
+     * Re-dispatched onto the host frame element rather than invoked through a
+     * callback prop, so it enters React's tree at the point the frame occupies
+     * and the pane's existing handler decides what to do with it — one place
+     * that knows what ⌘F means, not two.
+     */
+    const onFrameKeyDown = (event: KeyboardEvent) => {
+      if (!matchHotkey(event, '⌘F')) return
+      event.preventDefault()
+      frame?.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: event.key,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+          bubbles: true,
+        }),
+      )
+    }
+    document_.addEventListener('keydown', onFrameKeyDown)
+
+    // Published last: the document is written and wired by this point, so a
+    // searcher that reads the registry never gets a half-built page.
+    const unregister =
+      registerAs === null ? undefined : registerMailFrame(registerAs, document_)
+
     return () => {
       document_.removeEventListener('click', onClick)
       document_.removeEventListener('load', measure, true)
+      document_.removeEventListener('keydown', onFrameKeyDown)
       observer.disconnect()
+      unregister?.()
     }
-  }, [html, palette, allowRemoteContent])
+  }, [html, palette, allowRemoteContent, registerAs])
 
   return (
     <iframe

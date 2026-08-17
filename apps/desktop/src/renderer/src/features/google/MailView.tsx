@@ -82,6 +82,7 @@ import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
 import { ThreadMenu, type ThreadActions } from './ThreadMenu'
 import { SelectionBar } from './SelectionBar'
+import { MESSAGE_BODY_ATTR, ThreadFind } from './ThreadFind'
 import {
   CATEGORIES,
   MailboxPicker,
@@ -167,6 +168,12 @@ export function MailView() {
    *  fire a request per keystroke against a rate-limited API. */
   const [submitted, setSubmitted] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  /** The find bar over the OPEN THREAD — a different search from the list's,
+   *  which queries Gmail. See `onKeyDown` for how ⌘F chooses between them. */
+  const [findOpen, setFindOpen] = useState(false)
+  /** The thread's scroller. What actually moves when find steps to a match: the
+   *  match itself is inside a frame that never scrolls. */
+  const readerRef = useRef<HTMLDivElement>(null)
   const [list, setList] = useState<ListState>({ kind: 'loading' })
   const [counts, setCounts] = useState<MailCounts | null>(null)
   /** The address book, fetched once. A corpus to filter locally, not a search
@@ -475,6 +482,9 @@ export function MailView() {
    * in hand.
    */
   const openThread = (thread: ThreadSummary) => {
+    // A find bar left open over a different conversation would be showing a
+    // count for messages that are no longer on screen.
+    setFindOpen(false)
     setOpenId(thread.id)
     setOpenSummary(thread)
     setOpen(null)
@@ -709,7 +719,22 @@ export function MailView() {
     }
     if (!matchHotkey(event.nativeEvent, '⌘F')) return
     event.preventDefault()
-    setSearchOpen(true)
+    /**
+     * Two searches, and which one you meant depends on where you were.
+     *
+     * With a thread open and the keystroke coming from the reader, ⌘F means
+     * "find in what I am reading" — it always did, and it opened a Gmail query
+     * against the whole mailbox instead. From the list, it still means the list
+     * search. The reader is marked with a data attribute rather than measured,
+     * because a keydown forwarded out of a message frame is re-dispatched on
+     * the frame element and has to land in the same branch.
+     */
+    const fromReader =
+      openId !== null &&
+      event.target instanceof Element &&
+      event.target.closest('[data-mail-pane="reader"]') !== null
+    if (fromReader) setFindOpen(true)
+    else setSearchOpen(true)
   }
 
   return (
@@ -847,7 +872,7 @@ export function MailView() {
 
       {/* The reader */}
       <ResizablePanel id="mail-reader" minSize={280}>
-        <div className="flex h-full min-h-0 min-w-0 flex-col">
+        <div className="flex h-full min-h-0 min-w-0 flex-col" data-mail-pane="reader">
           {/* A draft opened from the Drafts list has no thread behind it, so the
               reader pane is where it goes: the list selects and the pane shows,
               which is how every other selection in this view already works. */}
@@ -1012,7 +1037,15 @@ export function MailView() {
               {/* One scroller for the whole thread. Each message renders at its
                   full height inside it, so the thread reads as one column —
                   see `SandboxedHtml` for how a frame is sized to its content. */}
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
+              {findOpen && (
+                <ThreadFind
+                  messageIds={open.messages.map((message) => message.id)}
+                  scroller={readerRef.current}
+                  onClose={() => setFindOpen(false)}
+                />
+              )}
+
+              <div ref={readerRef} className="min-h-0 flex-1 overflow-y-auto px-4 pb-8">
                 {open.messages.map((message, index) => (
                   <MessageBlock
                     key={message.id}
@@ -1025,6 +1058,7 @@ export function MailView() {
                     initiallyOpen={index === open.messages.length - 1}
                     position={index + 1}
                     total={open.messages.length}
+                    forceExpanded={findOpen}
                   />
                 ))}
 
@@ -1195,6 +1229,28 @@ function MailToolbar({
   onCompose: () => void
   onRefresh: () => void
 }): React.JSX.Element {
+  const searchButtonRef = useRef<HTMLButtonElement>(null)
+  /**
+   * Closing the search must hand the keyboard back to the pane.
+   *
+   * ⌘F is bound on the pane's container, so React only sees the keystroke when
+   * focus is already inside it — that is what makes the shortcut belong to mail
+   * rather than stealing ⌘F from every other surface in the app. The cost is
+   * that focus escaping to `document.body` makes it dead, and unmounting the
+   * search input did exactly that: nothing took its place, so ⌘F silently
+   * stopped working until something in the pane was clicked.
+   *
+   * The icon that replaces the field is the honest destination — it is where
+   * the control went, it is visibly focusable, and it keeps the tab order
+   * sensible. Guarded on `wasOpen` so mounting the pane does not steal focus
+   * from wherever the user actually is.
+   */
+  const wasOpen = useRef(searchOpen)
+  useEffect(() => {
+    if (wasOpen.current && !searchOpen) searchButtonRef.current?.focus()
+    wasOpen.current = searchOpen
+  }, [searchOpen])
+
   if (searchOpen) {
     return (
       <div className="flex h-11 shrink-0 items-center gap-1 px-2">
@@ -1218,6 +1274,7 @@ function MailToolbar({
     <div className="flex h-11 shrink-0 items-center gap-1 px-2">
       <Tooltip content="search mail (⌘F)">
         <Button
+          ref={searchButtonRef}
           variant="ghost"
           size="icon-xs"
           aria-label="search mail"
@@ -1684,6 +1741,7 @@ function MessageBlock({
   initiallyOpen,
   position,
   total,
+  forceExpanded,
 }: {
   message: ThreadMessage
   threadUrl: string
@@ -1691,8 +1749,19 @@ function MessageBlock({
   /** 1-based, as it reads on screen. */
   position: number
   total: number
+  /**
+   * Open regardless of what the reader chose, while a find is running.
+   *
+   * A collapsed message has no frame, so it cannot be searched and its matches
+   * cannot be counted — a count that silently excluded them would read as "not
+   * in this thread". Layered OVER the local state rather than replacing it, so
+   * closing the find restores exactly the collapse the reader had, with nothing
+   * to save or put back.
+   */
+  forceExpanded: boolean
 }): React.JSX.Element {
   const [expanded, setExpanded] = useState(initiallyOpen)
+  const shown = expanded || forceExpanded
 
   return (
     <article className="border-b border-border/50 py-2 last:border-0">
@@ -1701,12 +1770,12 @@ function MessageBlock({
       <Button
         variant="ghost"
         onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-        aria-label={`${expanded ? 'collapse' : 'expand'} message ${position} of ${total} from ${message.from.name}`}
+        aria-expanded={shown}
+        aria-label={`${shown ? 'collapse' : 'expand'} message ${position} of ${total} from ${message.from.name}`}
         className="block h-auto w-full rounded px-1 py-1 text-left"
       >
         <span className="flex items-baseline gap-2 text-xs">
-          {expanded ? (
+          {shown ? (
             <ChevronDown size={12} className="shrink-0 self-center text-muted-foreground" />
           ) : (
             <ChevronRight size={12} className="shrink-0 self-center text-muted-foreground" />
@@ -1722,14 +1791,14 @@ function MessageBlock({
           )}
           <span className="shrink-0 text-muted-foreground">{messageStamp(message.date)}</span>
         </span>
-        {!expanded && (
+        {!shown && (
           <span className="block truncate pl-5 text-[11px] text-muted-foreground">
             {message.body.slice(0, 200)}
           </span>
         )}
       </Button>
 
-      {expanded && (
+      {shown && (
         <div className="pl-1">
           <MessageAddresses message={message} />
           <MessageBody message={message} />
@@ -1907,7 +1976,16 @@ function fileSize(bytes: number): string {
  */
 function MessageBody({ message }: { message: ThreadMessage }) {
   if (message.html === null) {
-    return <p className="whitespace-pre-wrap break-words text-sm">{message.body}</p>
+    // Marked so in-thread find can reach it: a text-only message renders in the
+    // app's own document and so publishes no frame to the registry.
+    return (
+      <p
+        {...{ [MESSAGE_BODY_ATTR]: message.id }}
+        className="whitespace-pre-wrap break-words text-sm"
+      >
+        {message.body}
+      </p>
+    )
   }
   return (
     <SandboxedHtml

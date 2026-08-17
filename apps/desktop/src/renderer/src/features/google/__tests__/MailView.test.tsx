@@ -13,6 +13,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
 import { getDefaultStore } from 'jotai'
 import { resetMailImagesForTests } from '../../../state/mail-images'
+import { resetMailFramesForTests } from '../../../state/mail-frames'
 import { activeDialogAtom } from '../../../state/dialogs'
 
 const threadMock = vi.fn()
@@ -203,6 +204,10 @@ beforeEach(() => {
   // point of it — so it has to be put back between tests or one test's
   // "Load images" silently satisfies the next test's assertion.
   resetMailImagesForTests()
+  // The frame registry is module state on a store the whole suite shares, so a
+  // test that mounted a message would otherwise hand the next one a document
+  // belonging to a component that has since unmounted.
+  resetMailFramesForTests()
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
   window.holi = { openExternal }
@@ -1179,6 +1184,176 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
   // A tab whose own request failed shows nothing — an absent number says "not
   // known", where 0 would say "nothing here".
   expect(within(menu).getByRole('menuitem', { name: /Social/ })).not.toHaveTextContent(/\d/)
+})
+
+/**
+ * ⌘F with a thread open means "find in what I am reading".
+ *
+ * It opened the LIST search instead — a Gmail query against the whole mailbox,
+ * which is a reasonable thing to want and never what ⌘F means with a
+ * conversation in front of you.
+ */
+
+/** A two-message thread, both plain text, with a term in each. */
+function twoMessageThread() {
+  threadMock.mockResolvedValue(page([summary({ messageCount: 2 })]))
+  readMock.mockResolvedValue({
+    id: 't1',
+    subject: 'Q2 budget',
+    webUrl: 'https://mail.google.com/x',
+    messages: [
+      {
+        id: 'm1',
+        from: { name: 'Jane', email: 'jane@example.com' },
+        to: [],
+        cc: [],
+        bcc: [],
+        date: '2026-08-03T09:00:00.000Z',
+        attachments: [],
+        body: 'the budget question',
+        html: null,
+      },
+      {
+        id: 'm2',
+        from: { name: 'Mette', email: 'mette@syv.ai' },
+        to: [],
+        cc: [],
+        bcc: [],
+        date: '2026-08-04T09:00:00.000Z',
+        attachments: [],
+        body: 'the budget answer',
+        html: null,
+      },
+    ],
+  })
+}
+
+/**
+ * Put the keyboard inside the reader.
+ *
+ * A message header is the focusable thing in there that mutates nothing. It
+ * collapses the message as a side effect, which is useful rather than a
+ * nuisance: it leaves the whole thread collapsed, so a find that reports two
+ * matches has had to expand it.
+ */
+async function focusReader(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: /collapse message 2 of 2/i }))
+}
+
+test('⌘F in the reader finds in the thread, not in the mailbox', async () => {
+  twoMessageThread()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  await focusReader(user)
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  expect(await screen.findByRole('textbox', { name: /find in conversation/i })).toBeInTheDocument()
+  // And NOT the Gmail query against the whole mailbox.
+  expect(screen.queryByRole('combobox', { name: /search mail/i })).toBeNull()
+})
+
+test('⌘F in the list still opens the mailbox search', async () => {
+  twoMessageThread()
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await screen.findByRole('button', { name: /collapse message 2 of 2/i })
+  // Back to the list, where ⌘F means the other thing.
+  await user.click(screen.getByRole('button', { name: 'refresh mail' }))
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  expect(await screen.findByRole('combobox', { name: /search mail/i })).toBeInTheDocument()
+})
+
+test('counts every match across the thread and steps through them', async () => {
+  twoMessageThread()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await focusReader(user)
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  await user.type(await screen.findByRole('textbox', { name: /find in conversation/i }), 'budget')
+
+  // Both messages, though `focusReader` left the whole thread COLLAPSED —
+  // a collapsed message has no frame, so a search has to expand the thread or
+  // the count reads as "not in this conversation".
+  // Queried by role, not by text: "1/2" is also what a two-message thread's
+  // position indicator says, and the two mean entirely different things.
+  expect(await screen.findByRole('status')).toHaveTextContent('1/2')
+
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('2/2'))
+
+  // Wraps rather than stopping at the end.
+  await user.keyboard('{Enter}')
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1/2'))
+})
+
+test('says so when nothing matches, rather than showing 0/0', async () => {
+  twoMessageThread()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await focusReader(user)
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  await user.type(await screen.findByRole('textbox', { name: /find in conversation/i }), 'zzz')
+
+  expect(await screen.findByText(/no matches/i)).toBeInTheDocument()
+})
+
+test('closing the find takes every mark with it', async () => {
+  twoMessageThread()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await focusReader(user)
+  await user.keyboard('{Meta>}f{/Meta}')
+  await user.type(await screen.findByRole('textbox', { name: /find in conversation/i }), 'budget')
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1/2'))
+
+  await user.click(screen.getByRole('button', { name: 'close find' }))
+
+  await waitFor(() =>
+    expect(document.querySelectorAll('[data-holi-find]')).toHaveLength(0),
+  )
+  // The text is intact, not left in pieces by the unwrapping.
+  expect(screen.getByText(/the budget answer/)).toBeInTheDocument()
+})
+
+/**
+ * ⌘F, and where the keyboard goes when the search closes.
+ *
+ * The binding is on the pane's container, which is what "with this pane
+ * focused" actually means — a keydown only reaches it when focus is already
+ * inside, so mail's ⌘F cannot fire while the user is typing in the editor. The
+ * cost is that focus escaping to `document.body` makes the shortcut dead, and
+ * closing the search field is exactly what used to do that: the input unmounts,
+ * nothing takes its place, and ⌘F silently stopped working until something in
+ * the pane was clicked.
+ */
+test('⌘F still works after the search has been closed', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  await user.click(await screen.findByRole('button', { name: /search mail/i }))
+  const field = await screen.findByRole('combobox', { name: /search mail/i })
+  await user.type(field, 'budget{Enter}')
+  await user.keyboard('{Escape}')
+
+  // The field is gone and the icon is back.
+  const icon = await screen.findByRole('button', { name: /search mail/i })
+  // Focus stayed in the pane rather than falling to the body.
+  expect(document.activeElement).toBe(icon)
+
+  await user.keyboard('{Meta>}f{/Meta}')
+
+  expect(await screen.findByRole('combobox', { name: /search mail/i })).toBeInTheDocument()
 })
 
 /**
