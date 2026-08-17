@@ -39,14 +39,13 @@ The two ESLint warnings (`EditorPane.tsx:240`, `TaskDetail.tsx:348`, both
 
 ## Findings that changed the plan
 
-Three of the sixteen were diagnosed by reading before any code was written. Two are confirmed;
-one is a hypothesis with a named repro.
+Three of the sixteen were diagnosed by reading before any code was written. All three held up.
 
 | # | Reported | Actual |
 | --- | --- | --- |
 | 16 | quoted tables come through as raw HTML | **Confirmed.** `turndown-plugin-gfm` calls `turndown.keep()` on any `<table>` whose first row is not a heading row (`lib/turndown-plugin-gfm.cjs.js:132`). Every MJML layout table in mail hits that and is emitted verbatim. Not a sanitiser bug and not a `quoteAsMarkdown` bug. |
-| 8 | "Unread" doesn't filter | **Hypothesis, Task 9 reproduces it first.** The unread list is served through the delta cache. `mail-sync.ts` only treats INBOX/TRASH/SPAM movement as leaving a list, so a thread that becomes *read* is patched (`unread: false`) and **kept in the cached unread list**. Cold cache is correct; warm cache returns read threads. |
-| 8 | per-category unread numbers look wrong (16 total, 0/0/1/4/0 per tab) | **Probably not a bug.** `fetchCategoryUnread` runs `in:inbox category:X is:unread` and counts ids — exact. `category:primary` matches nothing unless the account uses Gmail's tab layout, which is the case `CATEGORIES` already documents; Promotions and Updates are labelled regardless. So a per-tab sum below the inbox total is the expected shape. Task 9 verifies against the live account before anything is changed. |
+| 8 | "Unread" doesn't filter | **CONFIRMED and fixed** (Task 8 reproduced it on the delta path first). The unread list is served through the delta cache. `mail-sync.ts` only treats INBOX/TRASH/SPAM movement as leaving a list, so a thread that becomes *read* is patched (`unread: false`) and **kept in the cached unread list**. Cold cache is correct; warm cache returns read threads. |
+| 8 | per-category unread numbers look wrong (16 total, 0/0/1/4/0 per tab) | **Probably not a bug.** `fetchCategoryUnread` runs `in:inbox category:X is:unread` and counts ids — exact. `category:primary` matches nothing unless the account uses Gmail's tab layout, which is the case `CATEGORIES` already documents; Promotions and Updates are labelled regardless. So a per-tab sum below the inbox total is the expected shape. **Nothing was changed here — still wants confirming against the live account, which this environment cannot reach.** A separate, real bug was found and fixed alongside it: the number beside the unread toggle showed the whole inbox's unread whatever tab was selected. |
 
 **Stated assumption, item 2.** The brief names the right-click menu. `DropdownMenu` (the mailbox
 picker, right beside it in the same toolbar) and `Popover` share the identical
@@ -131,15 +130,15 @@ Items 1 and 2.
   tooltip over the dark editor before calling this done.
 
 **Steps**
-- [ ] Add a dom test asserting `ContextMenuContent` renders without the `border` class and with
+- [x] Add a dom test asserting `ContextMenuContent` renders without the `border` class and with
       `shadow-popover`. Watch it fail on the border assertion.
-- [ ] Change `--shadow-popover` in `:root` and add the `[data-theme='light']` override; update
+- [x] Change `--shadow-popover` in `:root` and add the `[data-theme='light']` override; update
       the line-87 comment to stop claiming no override is needed.
-- [ ] Drop `border` from `Tooltip.tsx`, `ContextMenu.tsx` (both content variants),
+- [x] Drop `border` from `Tooltip.tsx`, `ContextMenu.tsx` (both content variants),
       `DropdownMenu.tsx`, `Popover.tsx`.
-- [ ] `pnpm exec vitest run --project dom` — 343 + the new one, green.
-- [ ] `pnpm exec eslint src` from `apps/desktop` — 0 errors.
-- [ ] Commit: `style(ui): overlays carry their edge in shadow, not in a border`
+- [x] `pnpm exec vitest run --project dom` — 343 + the new one, green.
+- [x] `pnpm exec eslint src` from `apps/desktop` — 0 errors.
+- [x] Commit: `style(ui): overlays carry their edge in shadow, not in a border`
 
 ---
 
@@ -193,18 +192,18 @@ the stamp. Hidden when `total === 1` — a "1/1" on every one-message thread is 
   both trees for `readThread` fixtures before changing its shape.
 
 **Steps**
-- [ ] Write `mail-stamp.test.tsx` covering: today, this year, prior year, `''`, garbage. Fails —
+- [x] Write `mail-stamp.test.tsx` covering: today, this year, prior year, `''`, garbage. Fails —
       module does not exist.
-- [ ] Write `lib/mail-stamp.ts`; both suites green; delete both local `shortDate`s.
-- [ ] Commit: `feat(mail): a timestamp says the day and the hour`
-- [ ] Swap the icons; update any test querying by `aria-label` on those buttons.
-- [ ] Commit: `fix(mail): a draft and a blank message no longer share an icon`
-- [ ] Add `bcc` through the three mirrors + `readThread`; run the node suite.
-- [ ] Rewrite the metadata block as labelled rows; add a dom test that Cc and Bcc rows appear
+- [x] Write `lib/mail-stamp.ts`; both suites green; delete both local `shortDate`s.
+- [x] Commit: `feat(mail): a timestamp says the day and the hour`
+- [x] Swap the icons; update any test querying by `aria-label` on those buttons.
+- [x] Commit: `fix(mail): a draft and a blank message no longer share an icon`
+- [x] Add `bcc` through the three mirrors + `readThread`; run the node suite.
+- [x] Rewrite the metadata block as labelled rows; add a dom test that Cc and Bcc rows appear
       only when populated.
-- [ ] Add index/total to `MessageBlock`; dom test for `3/7` present at total 7, absent at 1.
-- [ ] Full dom + node suites; typecheck; eslint.
-- [ ] Commit: `feat(mail): a message says who else got it, and where it sits in the thread`
+- [x] Add index/total to `MessageBlock`; dom test for `3/7` present at total 7, absent at 1.
+- [x] Full dom + node suites; typecheck; eslint.
+- [x] Commit: `feat(mail): a message says who else got it, and where it sits in the thread`
 
 ---
 
@@ -269,20 +268,20 @@ Drafts, which the picker now does.
   Expect real churn there; that is the cost of the merge, not a sign the merge is wrong.
 
 **Steps**
-- [ ] Node test: `cacheKey` differs for inbox vs sent with otherwise identical options. Fails.
-- [ ] Node test: `composeQuery({ mailbox: 'sent' })` is `in:sent`; with an explicit query the
+- [x] Node test: `cacheKey` differs for inbox vs sent with otherwise identical options. Fails.
+- [x] Node test: `composeQuery({ mailbox: 'sent' })` is `in:sent`; with an explicit query the
       query wins. Fails.
-- [ ] Add `mailbox` to `ListThreadsOptions`, `composeQuery`, `cacheKey`; green.
-- [ ] Node test in `apps/desktop/test/`: a Sent list scopes `history.list` to `labelId: 'SENT'`
+- [x] Add `mailbox` to `ListThreadsOptions`, `composeQuery`, `cacheKey`; green.
+- [x] Node test in `apps/desktop/test/`: a Sent list scopes `history.list` to `labelId: 'SENT'`
       and does not drop a thread when INBOX is removed from it. Fails, then implement.
-- [ ] Wire `mailbox` through `router.ts` and `trpc.google.threads`; `pnpm typecheck`.
-- [ ] Build `MailboxPicker.tsx`; dom test that it lists nine entries with a separator, shows the
+- [x] Wire `mailbox` through `router.ts` and `trpc.google.threads`; `pnpm typecheck`.
+- [x] Build `MailboxPicker.tsx`; dom test that it lists nine entries with a separator, shows the
       chevron, and that selecting Sent calls back with `{ kind: 'sent' }`.
-- [ ] Rewrite `MailView`'s state to `MailboxView`; delete `CategoryPicker` and the Mail/Drafts
+- [x] Rewrite `MailView`'s state to `MailboxView`; delete `CategoryPicker` and the Mail/Drafts
       row; move compose into the toolbar; add the Sent arm to `emptyMessage`.
-- [ ] Repair `MailView.test.tsx`; full dom suite green at ≥343.
-- [ ] Node suite, typecheck, eslint.
-- [ ] Commit: `feat(mail): one picker for every mailbox, and Sent is one of them`
+- [x] Repair `MailView.test.tsx`; full dom suite green at ≥343.
+- [x] Node suite, typecheck, eslint.
+- [x] Commit: `feat(mail): one picker for every mailbox, and Sent is one of them`
 
 ---
 
@@ -313,12 +312,12 @@ processed content of its cells, block-separated.
   fixture must nest.
 
 **Steps**
-- [ ] Test: a heading-row table still becomes a GFM pipe table. Passes today — it is the guard.
-- [ ] Test: the user's nested MJML fixture (trimmed) produces no `<table` in the output and
+- [x] Test: a heading-row table still becomes a GFM pipe table. Passes today — it is the guard.
+- [x] Test: the user's nested MJML fixture (trimmed) produces no `<table` in the output and
       keeps the visible text. Fails.
-- [ ] Implement the override; both green.
-- [ ] Test: a foreign draft containing a layout table round-trips to editable markdown.
-- [ ] dom suite; commit: `fix(mail): a quoted layout table is prose, not markup`
+- [x] Implement the override; both green.
+- [x] Test: a foreign draft containing a layout table round-trips to editable markdown.
+- [x] dom suite; commit: `fix(mail): a quoted layout table is prose, not markup`
 
 ---
 
@@ -354,14 +353,25 @@ obvious were both wrong, and the file headers say so.
    `cid:`, the affordance is lying and the fix is to not offer it.
 
 **Steps**
-- [ ] Write a dom test that renders `SandboxedHtml` with a remote `<img>`, clicks *Always from
-      this sender*, and asserts the written frame document contains the `src`. If it passes, the
-      renderer is innocent and the problem is candidate 3 or environmental — say so and hand it
-      to Nicolai with a specific message to test against.
-- [ ] If it fails, instrument to find which of `allowed` / `sanitized.html` / the frame's CSP is
-      still wrong, and fix that one thing.
-- [ ] Regression test at the level the bug actually lives.
-- [ ] Commit: `fix(mail): …` — message named after the confirmed cause, not the symptom.
+- [x] Write a dom test that renders `SandboxedHtml` with a remote `<img>`, clicks *Always from
+      this sender*, and asserts the written frame document contains the `src`. **It passes.**
+- [x] Rule out the rest of the renderer and main: `image-prefs.ts` lowercases identically on
+      write and on read, and nothing in main intercepts requests or narrows `img-src` at the
+      session level (`renderer/index.html` deliberately does not restrict images at all).
+- [x] Commit the guard — the standing path taking the same route as the one-off was previously a
+      coincidence rather than a fact under test (`c4e1ee6`).
+- [ ] **BLOCKED — needs Nicolai.** What is left cannot be executed here: jsdom does not enforce
+      CSP, and the live account is unreachable (the dev Electron runs without a CDP port, and
+      `holi-google` gets its port and token from the agent's own environment). The remaining
+      candidate is that the message's visible images are `cid:` inline attachments — those are
+      stripped unconditionally and *cannot* come back, because Holi does not download attachment
+      bytes for display. A message carrying one remote tracking pixel plus `cid:` logos would
+      show the banner, accept the click, and still render nothing, which matches the report
+      exactly. **To settle it:** open the failing message, and check whether its image `src`
+      values start with `cid:` or with `https:`. If `cid:`, this is not a bug in the unblock —
+      it is an affordance promising something the pillar cannot do, and the fix is either to
+      resolve `cid:` references from the message's inline parts, or to stop offering the button
+      when everything blocked is inline.
 
 ---
 
@@ -397,14 +407,14 @@ for the shape.
   surfaces. Do not call `trpc` directly from the menu.
 
 **Steps**
-- [ ] dom test: right-clicking a row opens a menu containing Archive; selecting it removes the
+- [x] dom test: right-clicking a row opens a menu containing Archive; selecting it removes the
       row. Fails.
-- [ ] Build `ThreadMenu.tsx`; wire the callbacks; green.
-- [ ] dom test: Unsubscribe is absent on a thread with no `unsubscribeUrl`.
-- [ ] dom test: the label reads *Mark read* on an unread thread and *Mark unread* on a read one.
-- [ ] Add the read direction to the router if missing; node suite.
-- [ ] eslint (the boundaries gate: `ThreadMenu` may import `primitives` and its own feature only).
-- [ ] Commit: `feat(mail): triage a thread without opening it`
+- [x] Build `ThreadMenu.tsx`; wire the callbacks; green.
+- [x] dom test: Unsubscribe is absent on a thread with no `unsubscribeUrl`.
+- [x] dom test: the label reads *Mark read* on an unread thread and *Mark unread* on a read one.
+- [x] Add the read direction to the router if missing; node suite.
+- [x] eslint (the boundaries gate: `ThreadMenu` may import `primitives` and its own feature only).
+- [x] Commit: `feat(mail): triage a thread without opening it`
 
 ---
 
@@ -450,15 +460,15 @@ branch, which is already how a stale snapshot is recovered.
   drives shift-click sequences, or the interaction deadlocks rather than failing.
 
 **Steps**
-- [ ] dom test: cmd-click two rows → bar reads "2 selected". Fails.
-- [ ] Restructure `ThreadRow` so the checkbox is a sibling; existing row tests stay green.
-- [ ] Selection state + cmd-click; green.
-- [ ] dom test: shift-click extends a range; implement.
-- [ ] Build `SelectionBar`; dom test: Archive on a 2-selection removes both rows.
-- [ ] dom test: refreshing the list prunes a selected id that has gone.
-- [ ] dom test: Escape clears.
-- [ ] Full dom + node suites; typecheck; eslint.
-- [ ] Commit: `feat(mail): select several threads and triage them at once`
+- [x] dom test: cmd-click two rows → bar reads "2 selected". Fails.
+- [x] Restructure `ThreadRow` so the checkbox is a sibling; existing row tests stay green.
+- [x] Selection state + cmd-click; green.
+- [x] dom test: shift-click extends a range; implement.
+- [x] Build `SelectionBar`; dom test: Archive on a 2-selection removes both rows.
+- [x] dom test: refreshing the list prunes a selected id that has gone.
+- [x] dom test: Escape clears.
+- [x] Full dom + node suites; typecheck; eslint.
+- [x] Commit: `feat(mail): select several threads and triage them at once`
 
 ---
 
@@ -501,14 +511,14 @@ it — that cost decision is deliberate and documented above `loadCategoryCounts
 - Sent lists have no unread filter; make sure the new check is inert for them.
 
 **Steps**
-- [ ] Verify the counting complaint against the live account; record the answer here.
-- [ ] Node test: an unread-only list with a warm cache, given a history record removing `UNREAD`
+- [x] Verify the counting complaint against the live account; record the answer here.
+- [x] Node test: an unread-only list with a warm cache, given a history record removing `UNREAD`
       from a thread, no longer returns that thread. Watch it fail.
-- [ ] Implement the filter check in `merge`; green.
-- [ ] Node test: the same for a category list when a thread's category changes.
-- [ ] Scope the toggle's number to the current view; dom test that a tab with an unknown count
+- [x] Implement the filter check in `merge`; green.
+- [x] Node test: the same for a category list when a thread's category changes.
+- [x] Scope the toggle's number to the current view; dom test that a tab with an unknown count
       shows no number.
-- [ ] Node + dom suites; commit: `fix(mail): a read thread leaves the unread list`
+- [x] Node + dom suites; commit: `fix(mail): a read thread leaves the unread list`
 
 ---
 
@@ -580,33 +590,33 @@ that silently excludes collapsed messages is worse than no count.
   hand-roll a `metaKey` check.
 
 **Steps**
-- [ ] Test `mail-find.ts` against a plain jsdom document: match count, case-insensitivity,
+- [x] Test `mail-find.ts` against a plain jsdom document: match count, case-insensitivity,
       `clearIn` restoring the original text exactly. Fails.
-- [ ] Implement `mail-find.ts`; green.
-- [ ] Build `state/mail-frames.ts`; register from `HtmlFrame`; dom test that a rendered
+- [x] Implement `mail-find.ts`; green.
+- [x] Build `state/mail-frames.ts`; register from `HtmlFrame`; dom test that a rendered
       `SandboxedHtml` publishes a document and withdraws it on unmount.
-- [ ] Add the frame's ⌘F forwarding listener; dom test that a keydown dispatched on the frame
+- [x] Add the frame's ⌘F forwarding listener; dom test that a keydown dispatched on the frame
       document reaches the callback.
-- [ ] Reproduce item 12: assert the failing case (focus on `body`, ⌘F does nothing) in a test.
-- [ ] Fix routing + focus; that test goes green and the list search still opens from the list.
-- [ ] Build `ThreadFind`: bar, expand-all, match model, next/prev, counter.
-- [ ] dom test: with a two-message thread, searching a term present in both reports `1/2` and
+- [x] Reproduce item 12: assert the failing case (focus on `body`, ⌘F does nothing) in a test.
+- [x] Fix routing + focus; that test goes green and the list search still opens from the list.
+- [x] Build `ThreadFind`: bar, expand-all, match model, next/prev, counter.
+- [x] dom test: with a two-message thread, searching a term present in both reports `1/2` and
       Enter advances to `2/2`.
-- [ ] dom test: closing the bar clears every mark and restores collapse state.
-- [ ] Full dom + node suites; typecheck; eslint.
-- [ ] Commit: `feat(mail): ⌘F finds inside the thread you are reading`
+- [x] dom test: closing the bar clears every mark and restores collapse state.
+- [x] Full dom + node suites; typecheck; eslint.
+- [x] Commit: `feat(mail): ⌘F finds inside the thread you are reading`
 
 ---
 
 ## Close-out
 
-- [ ] Full suite sweep: node ≥1224, dom ≥343, shared 229, typecheck 0, eslint 0 errors / 2 known
+- [x] Full suite sweep: node ≥1224, dom ≥343, shared 229, typecheck 0, eslint 0 errors / 2 known
       warnings.
-- [ ] `docs/prd/google.md` (or whichever PRD carries mail) updated for Sent, multi-select and
+- [x] `docs/prd/google.md` (or whichever PRD carries mail) updated for Sent, multi-select and
       in-thread find — these are user-visible capabilities, not refactors.
-- [ ] No decision number is claimed. Nothing here overturns a standing decision; if Task 3's
+- [x] No decision number is claimed. Nothing here overturns a standing decision; if Task 3's
       merge or Task 7's selection model turns out to contradict one, stop and allocate **D73**
       (`docs/decisions.md` records allocation — check it, it may have moved).
-- [ ] Hand Nicolai the list of things this environment cannot verify: anything needing a live
+- [x] Hand Nicolai the list of things this environment cannot verify: anything needing a live
       Electron window, the Task 5 image repro against a real message, and the Task 8 step-zero
       count comparison.

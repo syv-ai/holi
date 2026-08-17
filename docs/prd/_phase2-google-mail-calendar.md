@@ -16,7 +16,11 @@ Employees connect their **@syv.ai Gmail and Google Calendar** to Holi — read a
 ## Goals — as built
 - One Google OAuth grant, loopback + PKCE, main as sole token authority. Scopes: `gmail.modify`, `calendar.readonly`, `calendar.events`, `contacts.readonly`, `contacts.other.readonly`.
 - **Read**: search/list threads, read a thread; list calendars, list events (agenda), with per-calendar visibility the user controls.
+- **Choose a mailbox**: one picker holds Gmail's five tabs, All mail, **Sent** and **Drafts**. Tabs sit above a separator and the two real mailboxes below it, because a tab subdivides the inbox and a mailbox does not. Unread is a *state* and stays a separate toggle — it is orthogonal to every place, and folding it in would have made twelve entries that were really six times two.
 - **Act on mail**: mark read/unread, star, archive, trash, draft, send, reply. Trash is Gmail's trash — permanent deletion is impossible by scope and will stay that way.
+- **Triage without opening**: right-click a thread row for the whole set. Opening a thread marks it read, so "archive this newsletter" through the reader was self-defeating.
+- **Triage several at once**: checkbox on hover, cmd-click to toggle, shift-click to extend. Bulk actions are N per-thread writes rather than a bulk endpoint, so a partial failure leaves the successes done and explains the rest.
+- **Find inside a thread**: ⌘F with a conversation open searches *that conversation* — across every message, including collapsed ones, and inside the sandboxed frames the bodies render in. ⌘F from the list still means the Gmail query.
 - **Act on the calendar**: create, move and delete the user's *own* solo blocks (time-blocking). Events carrying attendees are refused, because changing or deleting one emails people.
 - **Link**: an email or event attaches to a **task** or **note** as a plain markdown link in the body — never frontmatter, never a `[[wiki-link]]`. `related[]` does not exist ([`tasks.md`](tasks.md)).
 - **The agent gets the same surface**, through a `holi-google` command rather than an MCP server, bounded by reversibility and gated on send ([`agent.md`](agent.md)).
