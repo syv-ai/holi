@@ -1182,6 +1182,128 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
 })
 
 /**
+ * Multi-select.
+ *
+ * The selection is a MODE: while one exists the toolbar gives way to the
+ * selection bar, because search, the mailbox picker and refresh would each
+ * destroy or invalidate the selection, and offering them is offering a way to
+ * lose work silently.
+ */
+
+/** Three rows, so a shift-range has a middle. */
+function threeThreads() {
+  threadMock.mockResolvedValue(
+    page([
+      summary({ id: 't1', subject: 'One' }),
+      summary({ id: 't2', subject: 'Two' }),
+      summary({ id: 't3', subject: 'Three' }),
+    ]),
+  )
+}
+
+test('builds a selection with cmd-click and says how big it is', async () => {
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.keyboard('{Meta>}')
+  await user.click(screen.getByRole('button', { name: /One/ }))
+  await user.click(screen.getByRole('button', { name: /Three/ }))
+  await user.keyboard('{/Meta}')
+
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+  // Cmd-click selects rather than opening — the thread was never fetched.
+  expect(readMock).not.toHaveBeenCalled()
+})
+
+test('shift-click takes everything in between', async () => {
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.click(screen.getByRole('checkbox', { name: /select One/i }))
+  await user.keyboard('{Shift>}')
+  await user.click(screen.getByRole('checkbox', { name: /select Three/i }))
+  await user.keyboard('{/Shift}')
+
+  expect(await screen.findByText('3 selected')).toBeInTheDocument()
+})
+
+test('archives every selected thread through the same per-thread write', async () => {
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.click(screen.getByRole('checkbox', { name: /select One/i }))
+  await user.click(screen.getByRole('checkbox', { name: /select Two/i }))
+  await user.click(await screen.findByRole('button', { name: 'archive' }))
+
+  await waitFor(() => expect(archiveMock).toHaveBeenCalledTimes(2))
+  expect(archiveMock).toHaveBeenCalledWith({ id: 't1' })
+  expect(archiveMock).toHaveBeenCalledWith({ id: 't2' })
+  // The bar goes with the selection rather than describing rows on their way out.
+  expect(screen.queryByText(/selected/)).toBeNull()
+})
+
+test('the toolbar gives way to the selection bar, and comes back', async () => {
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.click(screen.getByRole('checkbox', { name: /select One/i }))
+
+  // Every one of these would destroy or invalidate the selection.
+  expect(screen.queryByRole('button', { name: /search mail/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'refresh mail' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'choose a mailbox' })).toBeNull()
+
+  await user.click(screen.getByRole('button', { name: 'clear selection' }))
+
+  expect(await screen.findByRole('button', { name: 'refresh mail' })).toBeInTheDocument()
+})
+
+test('Escape clears a selection', async () => {
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.click(screen.getByRole('checkbox', { name: /select One/i }))
+  expect(await screen.findByText('1 selected')).toBeInTheDocument()
+
+  await user.keyboard('{Escape}')
+
+  await waitFor(() => expect(screen.queryByText(/selected/)).toBeNull())
+})
+
+test('forgets a selected thread that is no longer in the list', async () => {
+  // The list is replaced wholesale by every refresh and every optimistic write,
+  // so an id can outlive the row it names — and "3 selected" over two rows is a
+  // count of threads the user can neither see nor act on.
+  threeThreads()
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /One/ })
+
+  await user.click(screen.getByRole('checkbox', { name: /select One/i }))
+  await user.click(screen.getByRole('checkbox', { name: /select Two/i }))
+  expect(await screen.findByText('2 selected')).toBeInTheDocument()
+
+  // t1 goes away underneath the selection.
+  threadMock.mockResolvedValue(page([summary({ id: 't2', subject: 'Two' })]))
+  await user.click(screen.getByRole('button', { name: 'clear selection' }))
+  await user.click(await screen.findByRole('button', { name: 'refresh mail' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: /One/ })).toBeNull())
+
+  await user.click(screen.getByRole('checkbox', { name: /select Two/i }))
+  expect(await screen.findByText('1 selected')).toBeInTheDocument()
+})
+
+/**
  * The row context menu.
  *
  * Every verb in it already existed in the reader's header and every one cost an

@@ -67,6 +67,7 @@ import {
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Button,
+  Checkbox,
   Input,
   Popover,
   PopoverContent,
@@ -80,6 +81,7 @@ import { SandboxedHtml } from './SandboxedHtml'
 import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
 import { ThreadMenu, type ThreadActions } from './ThreadMenu'
+import { SelectionBar } from './SelectionBar'
 import {
   CATEGORIES,
   MailboxPicker,
@@ -185,6 +187,12 @@ export function MailView() {
    */
   const [view, setView] = useState<MailboxView>({ kind: 'category', category: null })
   const [unreadOnly, setUnreadOnly] = useState(false)
+  /** Thread ids picked for a bulk action. Empty means the toolbar is showing. */
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  /** Where the last toggle happened, so shift-click has something to extend
+   *  FROM. `null` before anything has been picked, when a shift-click can only
+   *  mean "select this one". */
+  const [anchor, setAnchor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   /** Unread per Gmail tab. `null` until the picker is first opened — five
    *  requests is not a price to pay for a dropdown nobody has touched. */
@@ -602,7 +610,72 @@ export function MailView() {
     openExternal: (url) => void window.holi.openExternal(url),
   }
 
-  const threads = list.kind === 'ready' ? list.threads : []
+  // Memoised for the identity, not the cost: the `[]` branch is a fresh array
+  // every render, which would re-run `live` below on every render for nothing.
+  const threads = useMemo(() => (list.kind === 'ready' ? list.threads : []), [list])
+
+  /**
+   * Selection, pruned to what is actually on screen.
+   *
+   * The list is replaced wholesale by every refresh, optimistic write and page
+   * load, so an id can outlive the row it names — and a bar reading "3 selected"
+   * over two rows is a count of threads the user cannot act on or even see.
+   * Derived rather than kept in sync by an effect: an effect would paint the
+   * stale count for a frame first, and there is no moment at which the wrong
+   * number is worth showing.
+   */
+  const live = useMemo(() => {
+    const present = new Set(threads.map((thread) => thread.id))
+    return new Set([...selected].filter((id) => present.has(id)))
+  }, [threads, selected])
+
+  /**
+   * Toggle one row, or extend from the last one toggled.
+   *
+   * Shift extends over the RENDERED order rather than any notion of the list's
+   * own — what the user is drawing a line through is what they can see.
+   */
+  const toggleSelected = (id: string, extend: boolean) => {
+    setSelected((previous) => {
+      const next = new Set(previous)
+      if (extend && anchor !== null) {
+        const from = threads.findIndex((thread) => thread.id === anchor)
+        const to = threads.findIndex((thread) => thread.id === id)
+        if (from !== -1 && to !== -1) {
+          const [lo, hi] = from < to ? [from, to] : [to, from]
+          // A range ADDS. Making it replace the selection would throw away
+          // everything picked before the shift, which is not what shift means
+          // anywhere else.
+          for (const thread of threads.slice(lo, hi + 1)) next.add(thread.id)
+          return next
+        }
+      }
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setAnchor(id)
+  }
+
+  const clearSelection = () => {
+    setSelected(new Set())
+    setAnchor(null)
+  }
+
+  /**
+   * One bulk action: the same per-thread write, once per selected thread.
+   *
+   * The selection is cleared FIRST, so the bar does not sit there describing
+   * rows that are already leaving. Failures still surface — each `write` raises
+   * its own `writeError` — and the ones that succeeded stay done, which is the
+   * honest outcome of a partial failure and the one a bulk endpoint would have
+   * had to invent an answer for.
+   */
+  const applyToSelection = (action: (id: string) => void) => {
+    const ids = [...live]
+    clearSelection()
+    for (const id of ids) action(id)
+  }
 
   /**
    * The open thread's row, as the list has it *now*.
@@ -627,6 +700,13 @@ export function MailView() {
    * from every other surface in the app.
    */
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // Escape drops a selection. The bar's own Clear button is the discoverable
+    // route; this is the one a keyboard reaches for first.
+    if (event.key === 'Escape' && selected.size > 0) {
+      event.preventDefault()
+      clearSelection()
+      return
+    }
     if (!matchHotkey(event.nativeEvent, '⌘F')) return
     event.preventDefault()
     setSearchOpen(true)
@@ -646,6 +726,16 @@ export function MailView() {
           out the message it exists to open. */}
       <ResizablePanel id="mail-list" defaultSize={320} minSize={220} maxSize={640}>
         <div className="flex h-full min-h-0 flex-col">
+          {live.size > 0 ? (
+            <SelectionBar
+              count={live.size}
+              onSetRead={(read) => applyToSelection((id) => void setRead(id, read))}
+              onSetStarred={(starred) => applyToSelection((id) => void setStarred(id, starred))}
+              onArchive={() => applyToSelection(threadActions.archive)}
+              onTrash={() => applyToSelection(threadActions.trash)}
+              onClear={clearSelection}
+            />
+          ) : (
           <MailToolbar
             query={query}
             onQueryChange={setQuery}
@@ -672,6 +762,7 @@ export function MailView() {
               if (categoryCounts !== null) loadCategoryCounts()
             }}
           />
+          )}
 
           {/* Above the list rather than beside the button that failed: archive
               and trash close the reader, so a message anchored there would
@@ -718,6 +809,9 @@ export function MailView() {
                     thread={thread}
                     active={openId === thread.id}
                     onOpen={() => openThread(thread)}
+                    selected={live.has(thread.id)}
+                    onToggle={({ extend }) => toggleSelected(thread.id, extend)}
+                    showCheckbox={live.size > 0}
                   />
                 </ThreadMenu>
               ))}
@@ -1450,78 +1544,129 @@ function ago(iso: string): string {
   return `${Math.round(minutes / 60)}h ago`
 }
 
-/** One thread in the list. */
+/**
+ * One thread in the list.
+ *
+ * **The checkbox is a SIBLING of the clickable area, not inside it.** The row
+ * used to be one `Button` wrapping everything, which cannot hold a checkbox: a
+ * control inside a button is invalid, its click would be swallowed by the
+ * button's, and the boundaries gate bans a native `<input>` outside
+ * `primitives/` anyway. So the row is a flex container now, with the selection
+ * control on the left and the open-this-thread button taking the rest.
+ *
+ * The checkbox appears on hover, and stays visible for every row once anything
+ * is selected — otherwise clearing a selection would leave rows whose state you
+ * could no longer see.
+ */
 function ThreadRow({
   thread,
   active,
   onOpen,
+  selected,
+  onToggle,
+  showCheckbox,
 }: {
   thread: ThreadSummary
   active: boolean
   onOpen: () => void
+  selected: boolean
+  /** `extend` is a shift-click: take everything between the last toggle and
+   *  this one, rather than just this one. */
+  onToggle: (options: { extend: boolean }) => void
+  showCheckbox: boolean
 }): React.JSX.Element {
   return (
-    <Button
-      variant="ghost"
-      onClick={onOpen}
-      className={`block h-auto w-full rounded-none border-b border-border/50 px-3 py-2 text-left ${
-        active ? 'bg-secondary' : ''
+    <div
+      className={`group/row flex items-start border-b border-border/50 ${
+        active ? 'bg-secondary' : selected ? 'bg-primary/10' : ''
       }`}
     >
-      <span className="flex items-baseline justify-between gap-2">
-        {/* Weight alone was too quiet to scan — an explicit dot is what makes
-            unread readable at a glance, and it holds the row's left edge so
-            read and unread stay aligned. */}
-        <span
-          aria-hidden
-          className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
-            thread.unread ? 'bg-primary' : 'bg-transparent'
-          }`}
+      <div
+        className={`flex shrink-0 self-stretch pt-2.5 pl-2 ${
+          showCheckbox || selected ? '' : 'opacity-0 group-hover/row:opacity-100'
+        }`}
+      >
+        <Checkbox
+          checked={selected}
+          aria-label={`select ${thread.subject}`}
+          // Mouse down rather than the Radix change event: shift-click needs the
+          // modifier, and `onCheckedChange` is handed a boolean and nothing else.
+          onClick={(event) => {
+            event.stopPropagation()
+            onToggle({ extend: event.shiftKey })
+          }}
         />
-        <span
-          className={`min-w-0 flex-1 truncate text-xs ${
-            thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-          }`}
-        >
-          {thread.from.name}
-          {thread.messageCount > 1 && (
-            <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
+      </div>
+      <Button
+        variant="ghost"
+        onClick={(event) => {
+          // Cmd/Ctrl-click selects instead of opening — the same gesture every
+          // list in the OS uses, and it means a selection can be built without
+          // going near the checkbox.
+          if (event.metaKey || event.ctrlKey || event.shiftKey) {
+            event.preventDefault()
+            onToggle({ extend: event.shiftKey })
+            return
+          }
+          onOpen()
+        }}
+        className="block h-auto min-w-0 flex-1 rounded-none bg-transparent px-3 py-2 text-left hover:bg-transparent"
+      >
+        <span className="flex items-baseline justify-between gap-2">
+          {/* Weight alone was too quiet to scan — an explicit dot is what makes
+              unread readable at a glance, and it holds the row's left edge so
+              read and unread stay aligned. */}
+          <span
+            aria-hidden
+            className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
+              thread.unread ? 'bg-primary' : 'bg-transparent'
+            }`}
+          />
+          <span
+            className={`min-w-0 flex-1 truncate text-xs ${
+              thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+            }`}
+          >
+            {thread.from.name}
+            {thread.messageCount > 1 && (
+              <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
+            )}
+          </span>
+          {thread.starred && (
+            <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
           )}
+          {/* "You started replying and stopped" — a third state, distinct from
+              both answered and untouched, and the only trace of it in the list. */}
+          {thread.hasDraft && (
+            <FilePen size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
+          )}
+          {/* "You replied and are waiting on them" — see `answered` in
+              main/google/gmail.ts for why it is the LAST message that decides. */}
+          {thread.answered && (
+            <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
+          )}
+          <span className="shrink-0 text-[10px] text-muted-foreground">{listStamp(thread.date)}</span>
         </span>
-        {thread.starred && (
-          <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
-        )}
-        {/* "You started replying and stopped" — a third state, distinct from
-            both answered and untouched, and the only trace of it in the list. */}
-        {thread.hasDraft && (
-          <FilePen size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
-        )}
-        {/* "You replied and are waiting on them" — see `answered` in
-            main/google/gmail.ts for why it is the LAST message that decides. */}
-        {thread.answered && (
-          <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
-        )}
-        <span className="shrink-0 text-[10px] text-muted-foreground">{listStamp(thread.date)}</span>
-      </span>
-      <span className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}>
-        {thread.subject}
-      </span>
-      <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
-        {thread.snippet}
-      </span>
-      {thread.labels.length > 0 && (
-        <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
-          {thread.labels.map((label) => (
-            <span
-              key={label}
-              className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
-            >
-              {label}
-            </span>
-          ))}
+        <span className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}>
+          {thread.subject}
         </span>
-      )}
-    </Button>
+        <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
+          {thread.snippet}
+        </span>
+        {thread.labels.length > 0 && (
+          <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
+            {thread.labels.map((label) => (
+              <span
+                key={label}
+                className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
+              >
+                {label}
+              </span>
+            ))}
+          </span>
+        )}
+      </Button>
+    </div>
   )
 }
 
