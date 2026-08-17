@@ -79,6 +79,7 @@ import {
 import { SandboxedHtml } from './SandboxedHtml'
 import { MailComposer } from './MailComposer'
 import { DraftsList, type DraftSummary } from './DraftsList'
+import { ThreadMenu, type ThreadActions } from './ThreadMenu'
 import {
   CATEGORIES,
   MailboxPicker,
@@ -476,7 +477,7 @@ export function MailView() {
     // Only when there is something to change. A request per open, for a thread
     // already read, against a rate-limited API, would spend exactly what the
     // `history.list` delta was built to save.
-    if (thread.unread) void markRead(thread.id)
+    if (thread.unread) void setRead(thread.id, true)
   }
 
   /**
@@ -535,10 +536,10 @@ export function MailView() {
     }
   }
 
-  const markRead = (id: string) =>
+  const setRead = (id: string, read: boolean) =>
     write(
-      () => trpc.google.markRead.mutate({ id }),
-      (threads) => threads.map((t) => (t.id === id ? { ...t, unread: false } : t)),
+      () => trpc.google.setRead.mutate({ id, read }),
+      (threads) => threads.map((t) => (t.id === id ? { ...t, unread: !read } : t)),
     )
 
   const setStarred = (id: string, starred: boolean) =>
@@ -570,7 +571,7 @@ export function MailView() {
    * no frontmatter field and nothing machine-owned, so "which tasks reference
    * this thread" stays a grep.
    */
-  const linkToTask = async (thread: Thread) => {
+  const linkToTask = async (thread: { subject: string; webUrl: string }) => {
     if (remote === null) return
     const { path } = await trpc.tasks.create.mutate({
       remote,
@@ -579,6 +580,26 @@ export function MailView() {
       description: `[${thread.subject}](${thread.webUrl})\n`,
     })
     openNote(path)
+  }
+
+  /**
+   * Everything a thread can have done to it, in one bundle.
+   *
+   * Passed to the row menu rather than reimplemented there, and that is the
+   * whole point: each of these goes through `write`, which owns the optimistic
+   * paint, the generation check that decides whether an undo is still valid,
+   * and `explainWriteFailure`. A menu calling `trpc` directly would need its own
+   * copy of all three, and the third is the one that matters — a silent revert
+   * is indistinguishable from the click never registering.
+   */
+  const threadActions: ThreadActions = {
+    setRead,
+    setStarred,
+    archive: (id) => void removeThread(id, () => trpc.google.archive.mutate({ id })),
+    trash: (id) => void removeThread(id, () => trpc.google.trash.mutate({ id })),
+    linkToTask: (thread) => void linkToTask(thread),
+    canLinkToTask: remote !== null,
+    openExternal: (url) => void window.holi.openExternal(url),
   }
 
   const threads = list.kind === 'ready' ? list.threads : []
@@ -687,12 +708,18 @@ export function MailView() {
             {!showDrafts &&
               list.kind === 'ready' &&
               list.threads.map((thread) => (
-                <ThreadRow
+                <ThreadMenu
                   key={thread.id}
                   thread={thread}
-                  active={openId === thread.id}
+                  actions={threadActions}
                   onOpen={() => openThread(thread)}
-                />
+                >
+                  <ThreadRow
+                    thread={thread}
+                    active={openId === thread.id}
+                    onOpen={() => openThread(thread)}
+                  />
+                </ThreadMenu>
               ))}
             {!showDrafts && list.kind === 'ready' && list.nextPageToken !== null && (
               <div className="p-2">

@@ -1502,10 +1502,23 @@ export function createRouter(deps: RouterDeps) {
      * disagreeing. What the agent does *not* get here is any route to `send`
      * without the hook that always asks.
      */
-    markRead: t.procedure
-      .input(fields({ id: 'string' }))
+    /**
+     * Read, in **both** directions — like `setStarred` below it.
+     *
+     * It was `markRead`, one-way, because the only caller was "opening a thread
+     * marks it read". Marking something unread again is a real triage move (it
+     * is how a thread gets put back on the pile), and main has always supported
+     * it: `setThreadRead` takes the direction, and the agent already uses both.
+     * The renderer simply had no way to ask.
+     *
+     * `fields()` checks booleans and never coerces — the same reason the note on
+     * `setStarred` gives, and the same failure it prevents: a coerced "false"
+     * reads as true, so the un-direction silently does nothing.
+     */
+    setRead: t.procedure
+      .input(fields({ id: 'string', read: 'boolean' }))
       .mutation(async ({ input }) => {
-        await googleWrites().setRead(input.id, true).catch(rethrowGoogle)
+        await googleWrites().setRead(input.id, input.read).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 

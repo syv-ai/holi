@@ -7,7 +7,7 @@
  * it, that a blocked message offers the unblock and that the unblock works, and
  * that a link in a message opens externally instead of navigating the app.
  */
-import { cleanup, render, screen, waitFor, within } from '@/test/render'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { MailView, matchPeople, mentionAt, replaceMention } from '../MailView'
@@ -19,7 +19,7 @@ const threadMock = vi.fn()
 const readMock = vi.fn()
 const countsMock = vi.fn()
 const contactsMock = vi.fn()
-const markReadMock = vi.fn()
+const setReadMock = vi.fn()
 const setStarredMock = vi.fn()
 const archiveMock = vi.fn()
 const trashMock = vi.fn()
@@ -41,7 +41,7 @@ vi.mock('../../../lib/trpc', () => ({
       thread: { query: (input: { id: string }) => readMock(input) },
       mailCounts: { query: () => countsMock() },
       contacts: { query: () => contactsMock() },
-      markRead: { mutate: (input: { id: string }) => markReadMock(input) },
+      setRead: { mutate: (input: unknown) => setReadMock(input) },
       setStarred: { mutate: (input: unknown) => setStarredMock(input) },
       archive: { mutate: (input: { id: string }) => archiveMock(input) },
       trash: { mutate: (input: { id: string }) => trashMock(input) },
@@ -185,7 +185,7 @@ beforeEach(() => {
   })
   countsMock.mockReset().mockResolvedValue({ unread: 3, total: 120 })
   contactsMock.mockReset().mockResolvedValue([])
-  markReadMock.mockReset().mockResolvedValue({ ok: true })
+  setReadMock.mockReset().mockResolvedValue({ ok: true })
   setStarredMock.mockReset().mockResolvedValue({ ok: true })
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
@@ -888,8 +888,8 @@ test('opening an unread thread marks it read, once, and the row stops being bold
 
   await user.click(row)
 
-  await waitFor(() => expect(markReadMock).toHaveBeenCalledWith({ id: 't1' }))
-  expect(markReadMock).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: true }))
+  expect(setReadMock).toHaveBeenCalledTimes(1)
   // Locally, with no second `threads.query`. A refetch would spend the whole
   // saving `history.list` exists for.
   await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(false))
@@ -905,18 +905,18 @@ test('opening an already-read thread spends no request at all', async () => {
   await screen.findByRole('article')
 
   // A request per open, for a thread already read, against a rate-limited API.
-  expect(markReadMock).not.toHaveBeenCalled()
+  expect(setReadMock).not.toHaveBeenCalled()
 })
 
 test('a refused mark-read puts the row back to unread', async () => {
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ unread: true })]))
-  markReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  setReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
-  await waitFor(() => expect(markReadMock).toHaveBeenCalled())
+  await waitFor(() => expect(setReadMock).toHaveBeenCalled())
   // The optimistic clear is undone: the mailbox still says unread, so the list
   // must too. This is the exact state a grant older than GOOGLE_SCOPES produces.
   await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(true))
@@ -992,7 +992,7 @@ test('a refused write says why, instead of silently snapping back', async () => 
   // (reconnect) was unguessable.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ unread: true })]))
-  markReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  setReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
@@ -1182,6 +1182,85 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
 })
 
 /**
+ * The row context menu.
+ *
+ * Every verb in it already existed in the reader's header and every one cost an
+ * open first — which for archiving a newsletter is backwards, since opening it
+ * marks it read on the way past.
+ */
+
+/** Right-click the one thread row and hand back the menu. */
+async function openRowMenu(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<HTMLElement> {
+  fireEvent.contextMenu(await screen.findByRole('button', { name: /Q2 budget/ }))
+  return await screen.findByRole('menu')
+}
+
+test('archives a thread from the row, without opening it', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const menu = await openRowMenu(user)
+  await user.click(within(menu).getByRole('menuitem', { name: 'Archive' }))
+
+  await waitFor(() => expect(archiveMock).toHaveBeenCalledWith({ id: 't1' }))
+  // Optimistic, through the same `write` the header buttons use.
+  await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
+  // The thread was never read, which is the whole point of triaging from here.
+  expect(readMock).not.toHaveBeenCalled()
+})
+
+test('offers the direction the thread is not already in', async () => {
+  threadMock.mockResolvedValue(page([summary({ unread: true, starred: true })]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const menu = await openRowMenu(user)
+
+  expect(within(menu).getByRole('menuitem', { name: 'Mark read' })).toBeInTheDocument()
+  expect(within(menu).getByRole('menuitem', { name: 'Unstar' })).toBeInTheDocument()
+})
+
+test('puts a read thread back on the pile', async () => {
+  // The move the reader's header cannot express at all: opening a thread is
+  // what marks it read, so "mark unread" has nowhere else to live.
+  threadMock.mockResolvedValue(page([summary({ unread: false })]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const menu = await openRowMenu(user)
+  await user.click(within(menu).getByRole('menuitem', { name: 'Mark unread' }))
+
+  await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: false }))
+})
+
+test('offers Unsubscribe only when the sender advertised one', async () => {
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  expect(within(await openRowMenu(user)).queryByRole('menuitem', { name: 'Unsubscribe' })).toBeNull()
+})
+
+test('surfaces a refused row action rather than silently reverting', async () => {
+  // A silent revert is indistinguishable from the click never registering,
+  // which is exactly how a missing gmail.modify grant presented in real use.
+  threadMock.mockResolvedValue(page([summary()]))
+  archiveMock.mockRejectedValue(new Error('this Google permission was not granted'))
+  const user = userEvent.setup()
+  render(<MailView />)
+
+  const menu = await openRowMenu(user)
+  await user.click(within(menu).getByRole('menuitem', { name: 'Archive' }))
+
+  expect(await screen.findByText(/Reconnect Google/)).toBeInTheDocument()
+  // And the row is back, because the write did not stick.
+  expect(await screen.findByRole('button', { name: /Q2 budget/ })).toBeInTheDocument()
+})
+
+/**
  * The number beside the unread toggle describes the list it sits above.
  *
  * It used to be the whole inbox's unread whatever tab was selected — so
@@ -1328,11 +1407,11 @@ test('a failed write does not roll back a refresh that landed while it was in fl
   threadMock.mockResolvedValue(page([summary({ unread: true })]))
   // Never settles until we say so, so "in flight" is a real moment.
   let refuse!: (err: Error) => void
-  markReadMock.mockReturnValue(new Promise((_resolve, reject) => (refuse = reject)))
+  setReadMock.mockReturnValue(new Promise((_resolve, reject) => (refuse = reject)))
   render(<MailView />)
 
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
-  await waitFor(() => expect(markReadMock).toHaveBeenCalled())
+  await waitFor(() => expect(setReadMock).toHaveBeenCalled())
 
   // A refresh lands with different mail entirely.
   threadMock.mockResolvedValue(page([{ ...summary(), id: 't9', subject: 'Newer thing' }]))
