@@ -471,6 +471,64 @@ describe('syncThreads', () => {
       expect(page.threads.map((t) => t.id)).toEqual(['t2'])
     })
 
+    /**
+     * A thread that stops being unread has left the unread list.
+     *
+     * The departure machinery only ever modelled leaving the *mailbox* —
+     * INBOX removed, TRASH or SPAM added. Nothing modelled leaving *this
+     * list*, so a thread read while the unread list was cached was patched
+     * to `unread: false` and kept: the delta path handed back a list of
+     * read mail under the unread key. A cold cache was correct, which is
+     * why this survived — it only ever went wrong on the second visit, and
+     * opening a thread is what marks it read.
+     */
+    it('drops a thread from the unread list once it has been read', async () => {
+      const first = gmail({
+        list: [{ id: 't1' }, { id: 't2' }],
+        threads: {
+          t1: rawThread('t1', 'One', ['INBOX', 'UNREAD']),
+          t2: rawThread('t2', 'Two', ['INBOX', 'UNREAD']),
+        },
+      })
+      expect((await syncThreads(first.api, cache, { unread: true })).threads).toHaveLength(2)
+
+      // Exactly what opening t1 produces.
+      const second = gmail({
+        history: {
+          historyId: '5002',
+          history: [
+            { labelsRemoved: [{ message: { id: 't1-m1', threadId: 't1' }, labelIds: ['UNREAD'] }] },
+          ],
+        },
+      })
+      const page = await syncThreads(second.api, cache, { unread: true })
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t2'])
+    })
+
+    it('keeps a read thread in the list that did not ask about unread', async () => {
+      // The same event, on the plain inbox: being read is a flag here, not a
+      // departure, and dropping the row would be the opposite bug.
+      const first = gmail({
+        list: [{ id: 't1' }],
+        threads: { t1: rawThread('t1', 'One', ['INBOX', 'UNREAD']) },
+      })
+      await syncThreads(first.api, cache, {})
+
+      const second = gmail({
+        history: {
+          historyId: '5002',
+          history: [
+            { labelsRemoved: [{ message: { id: 't1-m1', threadId: 't1' }, labelIds: ['UNREAD'] }] },
+          ],
+        },
+      })
+      const page = await syncThreads(second.api, cache, {})
+
+      expect(page.threads.map((t) => t.id)).toEqual(['t1'])
+      expect(page.threads[0]!.unread).toBe(false)
+    })
+
     it('does not overwrite the inbox with its own narrower answer', async () => {
       // The other direction, and the more damaging one: a cold unread-only
       // fetch used to be written under the inbox's key, so the unfiltered list

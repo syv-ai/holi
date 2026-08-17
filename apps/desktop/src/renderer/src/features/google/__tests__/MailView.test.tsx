@@ -1182,6 +1182,47 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
 })
 
 /**
+ * The number beside the unread toggle describes the list it sits above.
+ *
+ * It used to be the whole inbox's unread whatever tab was selected — so
+ * standing in Promotions with one unread thread, the button said 16.
+ */
+test('the unread badge follows the selected tab, not the whole inbox', async () => {
+  countsMock.mockResolvedValue({ unread: 16, total: 340 })
+  categoryCountsMock.mockResolvedValue({ promotions: { count: 1, more: false } })
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  expect(screen.getByRole('button', { name: /show unread only/i })).toHaveTextContent('16')
+
+  await chooseMailbox(user, /Promotions/)
+
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /show unread only/i })).toHaveTextContent('1'),
+  )
+})
+
+test('shows no number for a tab whose count was never fetched', async () => {
+  // `categoryCounts` is not paid for until the picker is opened, and this is
+  // the same rule the picker follows: an absent number says "not known", where
+  // a 0 would claim there is nothing there.
+  countsMock.mockResolvedValue({ unread: 16, total: 340 })
+  categoryCountsMock.mockResolvedValue({})
+  threadMock.mockResolvedValue(page([summary()]))
+  const user = userEvent.setup()
+  render(<MailView />)
+  await screen.findByRole('button', { name: /Q2 budget/ })
+
+  await chooseMailbox(user, /Forums/)
+
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /show unread only/i })).not.toHaveTextContent(/\d/),
+  )
+})
+
+/**
  * The merge, and the mailbox it made room for.
  *
  * Three controls said where the list was pointed — a Mail/Drafts button pair, a

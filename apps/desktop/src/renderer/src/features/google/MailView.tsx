@@ -638,7 +638,7 @@ export function MailView() {
             searching={searching}
             unreadOnly={unreadOnly}
             onUnreadChange={setUnreadOnly}
-            unreadCount={counts?.unread ?? null}
+            unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
             inboxUnread={counts?.unread ?? null}
             categoryCounts={categoryCounts}
             onCategoryMenuOpen={loadCategoryCounts}
@@ -978,6 +978,30 @@ function explainWriteFailure(err: unknown): string {
   if (NOT_CONNECTED.test(message)) return NOT_CONNECTED_MESSAGE
   if (/rate limit/i.test(message)) return RATE_LIMITED
   return message === '' ? 'That didn’t stick. Try again.' : message
+}
+
+/**
+ * The unread number the toggle should be showing.
+ *
+ * It showed the whole inbox's unread regardless of which tab was selected —
+ * so standing in Promotions with one unread thread, the button said 16, and
+ * the number beside the filter described a list the filter was not looking at.
+ *
+ * A tab's own count comes from `categoryCounts`, which is **not fetched until
+ * the picker is opened** — five requests for a dropdown nobody touched is the
+ * cost `loadCategoryCounts` exists to avoid, and filling this in would spend it
+ * on every mount. So an unknown count shows NOTHING, which is the same rule the
+ * picker itself follows: an absent number says "not known", where `0` would say
+ * "nothing here".
+ */
+function viewUnread(
+  view: MailboxView,
+  inboxUnread: number | null,
+  counts: CategoryCounts | null,
+): number | null {
+  if (view.kind !== 'category') return null
+  if (view.category === null) return inboxUnread
+  return counts?.[view.category]?.count ?? null
 }
 
 /**

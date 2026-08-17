@@ -148,7 +148,7 @@ export async function syncThreads(
   // nothing. This is the win: two changed threads cost two requests, not 25.
   const refetched = await fetchThreadSummaries(api, [...changed].filter((id) => !gone.has(id)))
 
-  const threads = merge(cached, refetched, gone, patches)
+  const threads = merge(cached, refetched, gone, patches, options)
   cache.writeThreads(key, threads)
   if (page.historyId !== undefined) cache.setHistoryId(key, page.historyId)
 
@@ -293,13 +293,40 @@ function scopedToMailbox(options: ListThreadsOptions): boolean {
   return options.query === undefined || options.query === ''
 }
 
+/**
+ * Does this thread still answer the question the list asked?
+ *
+ * **"Left the mailbox" and "left this list" are not the same thing**, and only
+ * the first was ever modelled. `LEFT_WHEN_ADDED` and the mailbox label handle a
+ * thread leaving the *place*; nothing handled a thread falling out of the
+ * *filter*, because the filter is expressed in a Gmail query and Gmail is not
+ * asked again on the delta path.
+ *
+ * The symptom was the unread list: opening a thread marks it read, which
+ * arrives as a `UNREAD` removal, which `applyLabelDelta` faithfully applies to
+ * the cached summary — and then the row stayed, so "unread only" served back a
+ * list of mail that had been read. A cold cache was correct, which is exactly
+ * why it survived: the list is only wrong on the second visit.
+ *
+ * Local, and free: the summary already carries both flags, so this costs no
+ * request. It is deliberately only the filters this module can evaluate — an
+ * explicit user query is Gmail's grammar and is not re-interpreted here.
+ */
+function stillMatches(thread: MailThreadSummary, options: ListThreadsOptions): boolean {
+  if (options.unread === true && !thread.unread) return false
+  if (options.category !== undefined && thread.category !== options.category) return false
+  return true
+}
+
 /** The cached list with the deltas applied: departures removed, patches
- *  applied, refetched summaries replacing their stale twins, newest first. */
+ *  applied, refetched summaries replacing their stale twins, threads that no
+ *  longer match this list's filter dropped, newest first. */
 function merge(
   cached: MailThreadSummary[],
   refetched: MailThreadSummary[],
   gone: Set<string>,
   patches: Changes['patches'],
+  options: ListThreadsOptions,
 ): MailThreadSummary[] {
   const replacements = new Map(refetched.map((thread) => [thread.id, thread]))
 
@@ -317,7 +344,11 @@ function merge(
     (thread) => !gone.has(thread.id) && !cached.some((c) => c.id === thread.id),
   )
 
-  return [...added, ...kept].sort((a, b) => b.date.localeCompare(a.date))
+  // AFTER the patches and the replacements, never before: what decides is the
+  // thread as it is now, not as the cache last saw it.
+  return [...added, ...kept]
+    .filter((thread) => stillMatches(thread, options))
+    .sort((a, b) => b.date.localeCompare(a.date))
 }
 
 function patch(
