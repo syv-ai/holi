@@ -91,22 +91,32 @@ The file under the editor can change for three reasons: **the agent wrote it**, 
 
 ## Panes & tabs
 
-**Status: designed here, not built.** The shell today shows **one** doc at a time with a `notes ↔ board` toggle. This section is the missing owner for the shell chrome: [`../architecture.md`](../architecture.md) constrains the pane system ("the pane/tab system must not assume tabs are notes"), [`vault-apps.md`](vault-apps.md) §Tabs depends on it, and [`daily-notes.md`](daily-notes.md) assumes it.
+**Status: built.** The shell is a tab strip over a pane, and a tab is a discriminated union — `state/panes.ts` is the owner. This section described itself as unbuilt for three weeks after it shipped, including the "forward constraint" below, which the implementation honoured on its first commit.
+
+The section still matters because two other PRDs depend on it by name: [`vault-apps.md`](vault-apps.md) §Tabs needs non-note tab kinds, and [`../architecture.md`](../architecture.md) states the constraint.
 
 ### Tabs — preview vs pinned
 
-Port VS Code's two-state model, which the old repo also used:
-- **Preview tab** (italic title): a single-click in the file tree opens the doc **in the existing preview tab, replacing it**. Browsing a vault therefore costs one tab, not twenty.
-- **Pinned tab**: a **double-click** in the tree, a **double-click on the tab**, or **editing the doc** promotes the preview tab to pinned. Editing promoting a tab is the rule that matters: you can never lose your place by clicking away from something you were typing in.
-- Tabs are closeable and reorderable; the tab strip lives in the header bar the `notes/board` toggle occupies today.
+VS Code's two-state model, ported:
+- **Preview tab** (italic title): a single-click in the file tree opens the doc **in the existing preview tab, replacing it**. Browsing a vault costs one tab, not twenty.
+- **Pinned tab**: a **double-click** in the tree, a **double-click on the tab**, or **editing the doc** promotes the preview tab to pinned. Editing promoting a tab is the rule that matters — you can never lose your place by clicking away from something you were typing in. `pinActive` is that rule, fired once per edit rather than once per keystroke.
+- Tabs are closeable; the strip lives in the header bar.
 
-**The forward constraint (load-bearing):** a tab is **not** a note. Model a tab as a discriminated union (`{kind: 'note'} | {kind: 'board'} | {kind: 'app', …}`) from the first commit. A `Map<path, …>` tab store forecloses it.
+**A tab is not a note — and this is what that bought.** The union is `{ kind: 'note'; path; preview? } | { kind: 'board' } | { kind: 'agenda' } | { kind: 'mail' }`. Mail and the agenda arrived (D67) as *new kinds*, not as a rewrite — which is the entire return on modelling this as a union rather than the `Map<path, …>` that would have foreclosed it.
 
-**Open questions:** does each pane keep its own preview tab (VS Code) or is there one per window? Do tabs survive a restart, and where is the strip persisted (`.holi/settings.local.json`)? Does the board tab pin automatically, being unique?
+**The non-note surfaces are singletons**, and they behave differently from notes on purpose: there is only ever one board, one agenda, one mailbox, so each opens as a **leftmost** tab with a fixed home rather than landing wherever it was invoked. If it is already open it is focused **in place** — moving it would shuffle the strip under a user who clicked the same button twice. They are pinned by construction, having no preview state to be in, and they are account-wide rather than vault-scoped.
+
+**Two rules that read as tidiness and are not:**
+- **One buffer per file.** Opening a note that is already open *focuses* it instead of appending. Two tabs over one path means two buffers each with their own `base`, racing each other's saves — and the external-write reload story below assumes one.
+- **The active tab follows the document, not the index.** Closing a tab left of the active one shifts every later index, so keeping the number would silently move the user to a different file. In a UI that autosaves, that is a data-loss-shaped bug.
+
+**A rename retargets open tabs** rather than closing them (`retargetTab`/`retargetTabs`), and deleting a file closes its tab — so the strip cannot hold a path that no longer exists.
+
+**Not persisted.** Whether tabs survive a restart is still open; `.holi/settings.local.json` is where the answer would go. Deliberately unanswered rather than guessed at.
 
 ### Split panes
 
-Deferred behind tabs, but do not design them out: the state shape should be `panes[] → tabs[]`, not a flat `tabs[]`, so a split is a second pane rather than a rewrite.
+**The state shape is built; the second pane is not.** `Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but only `panes[0]` is rendered. A split is therefore a second array element rather than a rewrite — which was the whole point of paying for the shape early.
 
 ### Frontmatter reveal control
 

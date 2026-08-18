@@ -33,7 +33,7 @@ The living docs are the truth; this file is only the staging area.
 
 - **Reconcile → agent drawer (pt 5) — unbuilt.** `EditorPane.onConflict` raises only a banner (`Shell.tsx` wires it to a string); the pause-autosave → re-run-the-merge → hand-to-the-drawer path does not exist. The `pause` primitive is there (`active-vault.ts`, `sync.pause`); the drawer handoff is not.
 - **Local reminder evaluator (pt 8) — landed (2026-07-31).** A tray-resident runtime sweeps every vault on a 60s tick + launch catch-up, raises native notifications, and stamps a machine-local, gitignored delivery watermark (`.holi/settings.local.json`) that never commits. Pure `sweep` behind injected seams (`main/reminders/{sweep,delivered-log,runtime,notify}.ts`), `tray.ts`, keep-alive + first-run launch-at-login in `index.ts`; the stale server-mirror types are gone. Spec/plan: `specs/2026-07-28-reminder-runtime-design.md`, `plans/2026-07-28-reminder-runtime.md`. (Native banner *display* is unverifiable under `electron-vite dev` — an unsigned-binary bundle-id collision — so confirm banners + notification-click in a packaged build.)
-- **Version history over `git log` (also-settled) — landed & consolidated (2026-07-31).** The design now lives as prose in [`prd/vaults-sync.md`](../prd/vaults-sync.md) §History (per-file drawer + whole-vault commit dialog, flat log, inline `@codemirror/merge` diffs, restore-as-new-commit). Build plan: `plans/2026-07-28-version-history.md`.
+- **Version history over `git log` (also-settled) — landed & consolidated (2026-07-31).** The design now lives as prose in [`prd/vaults-sync.md`](prd/vaults-sync.md) §History (per-file drawer + whole-vault commit dialog, flat log, inline `@codemirror/merge` diffs, restore-as-new-commit). Build plan: `plans/2026-07-28-version-history.md`.
 
 Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkChips.ts`) still exists, where pt 4 wanted `note_rename` shipped as a `.claude/` vault skill instead. The `mcp__holi__*` tool surface is **already gone**. The pt-7 diff3 that this entry flagged as *new work* has **landed** (`packages/shared/src/merge3.ts`, wired via `lib/editor-reload.ts`).
 
@@ -60,95 +60,15 @@ Residue to retire: the `[[task:<id>]]` chip grammar (`wiki-links.ts`, `wikiLinkC
 
 **Rejected.** *Render every binary in place (retire text-by-construction).* Makes the agent blind — a PDF it cannot read is a document it cannot help with — and puts binary bloat in git with no authoring story. *Honor the PRD literally (convert incoming pdf/docx→markdown + archive).* Builds an import pipeline and an object-storage dependency for a flow that runs the other way, and archives away originals users may need intact. *Two co-equal representations of one document (binary + markdown companion, both truth).* Raises "which is truth" on every edit and sync; markdown-as-source with PDF-as-output keeps a single truth.
 
-**Consolidates into** (once the near-term surfaces exist): `vision.md` (binaries as assets the vault emits), `prd/notes-editor.md` (inline images + image viewer), `prd/_phase2-typst-export.md` (pulled forward, vault-skill delivery), and `prd/_phase2-pdf-docx-preview.md` (rewritten or retired — the convert-on-entry framing is dead).
+**Consolidates into** (once the near-term surfaces exist): `vision.md` (binaries as assets the vault emits), `prd/notes-editor.md` (inline images + image viewer), `prd/pdf-export.md` (pulled forward, vault-skill delivery), and `prd/_phase2-pdf-docx-preview.md` (rewritten or retired — the convert-on-entry framing is dead).
 
 *This entry stays in the inbox until the code matches it.*
 
 ---
 
-## D63 — A task lane move is a note-style rename.
-
-**Context.** The board's drag semantics have two axes (`prd/tasks.md` §Board UX): vertical rewrites `status`, horizontal moves the card to another lane — and because a task's **path is its identity**, moving lanes moves the `task.<name>.md` file into the target folder, which must rewrite every inbound `[[wiki-link]]` in the same pass or it silently breaks them. The board shipped with only the vertical axis; a cross-lane cell refused the drop, citing "the link rewrite it does not have yet". But the rewrite pass already exists — `notes.rename` (`vault/rename.ts` → `renameNote`) does exactly one-file-move + inbound-`[[link]]`-rewrite, and the daily-note archive sweep already reuses it rather than forking a second path.
-
-**Decision.** Agreed with Nicolai 2026-07-27.
-
-1. **`tasks.move({ remote, path, folder, status? }) → Task` reuses `renameNote`.** A lane change *is* a rename, so it takes the same single link-rewriting pass notes own — no bespoke task-move path (the same discipline `daily-notes.md` §Archiving applied to the archive sweep).
-2. **The diagonal (lane + column in one gesture) lands as one write burst.** When a `status` rides along, it is written to the file **in place first**, then the single `renameNote` carries the final content to the destination — one route call, one autosave commit, so a card is never half-dropped. `status: done` routes through the existing `rollForward`, never a bare `done` write, so a recurring task advances instead of persisting done, exactly as the card checkbox does.
-3. **Identity slug is preserved, collisions refuse.** The destination keeps the dragged file's basename (not a re-slug of `title` — they are allowed to disagree, per §Open questions), and a destination that already exists throws `CONFLICT` (mirroring `notes.rename`) rather than silently suffixing, which would change an existing task's identity.
-4. **The board decides the branch with a pure `dropIntent` reducer** (`status` / `move` / `move`+status / `noop`), so the diagonal subtlety is tested in isolation rather than inline in the drop handler.
-
-**Why.** Path-as-identity already bought the link rewrite for notes; a task lane move is the same operation on a `task.*.md` file, so a second implementation would be duplicated machinery with its own divergence risk. Writing status-in-place-then-rename keeps the diagonal atomic without a transaction: the existing autosave debounce coalesces the burst into one commit, satisfying the PRD's "a drag is one commit" without new debounce code.
-
-**Rejected.** *A dedicated task-move helper that writes the destination directly* — re-implements `renameNote`'s backref-scan-and-rewrite loop for no gain, and drifts from it. *Auto-suffix on collision (like `freeTaskPath` does for create)* — create suffixes because a repeated title is normal; a move must not silently rename an existing task's identity. *Move then a separate status write for the diagonal* — two route calls risk two commits and a visibly half-dropped card.
-
-**Consolidates into** `prd/tasks.md` §Board UX (the horizontal/diagonal drag semantics are now built, not deferred).
-
-*This entry stays in the inbox until consolidated into the PRD.*
-
----
-
-## D64 — A vault's theme is a whitelisted token map, not CSS.
-
-**Context.** The ask was per-vault customization of the app's look — "just colors and chrome, no change to layout" — authorable by the vault agent on the user's behalf. The old repo carried per-vault theme *CSS* guarded by a substring-blocklist validator, named in `architecture.md` §10 as the weak point. Two forks decided everything downstream: **what** the theme file is (constrained token map vs. raw scoped CSS + sanitizer) and **where** it lives (committed vault file vs. machine-local pref).
-
-**Decision.** Agreed with Nicolai 2026-08-02. **Landed** same day (`b160542`…`90efb2c`); design-of-record in [`specs/2026-08-02-per-vault-theming-design.md`](../specs/2026-08-02-per-vault-theming-design.md).
-
-1. **A whitelisted token map, not CSS.** `.holi/theme.json` carries `light`/`dark` blocks of whitelisted token → CSS *value*. "No layout change" is therefore **structural, not a promise**: the vocabulary has no token that can express spacing/size/position, and because values only ever become custom-property values consumed through `var()`, **no CSS is injected** — the §10 injection risk is gone by construction, not by a validator.
-2. **Colours + paint-only chrome only.** The 19 semantic colour tokens (+ `-foreground` pairs, `border`/`input`/`ring`), `scrollbar-thumb(-hover)`, `selection`; and `radius`, `shadow-popover`, `shadow-dialog`. Nothing else.
-3. **Committed base + personal override.** `.holi/theme.json` is committed (shared, agent-writable); `.holi/theme.local.json` (gitignored `*.local.*`) overrides **per key within each block**. Chosen over a localStorage pref, which the agent cannot write and which does not travel with the vault.
-4. **Applied on the document root.** Overriding the raw semantic tokens on `document.documentElement` re-cascades every `--color-*` utility (they are `var()` pointers via `@theme inline`) with zero component change — the onboarding-ritual mechanism generalised — and reaches Radix portals, which an inner wrapper would miss.
-5. **Agent authors it with native tools.** A seeded `.claude/skills/theme/SKILL.md` documents the schema + vocabulary; there is no `theme.write` route and no authoring UI (per "users are developers"). The one control is **Reset theme** in vault settings — the escape hatch back to standard, which a file makes awkward.
-6. **Two stores of the vocabulary, guarded.** The whitelist (TS) and the token defaults (CSS) must agree; a drift-guard test asserts every whitelisted token has a `--slug` definition, turning silent no-op drift into a red build.
-
-**Why.** "No layout change" is the load-bearing constraint, and a token map makes it unfalsifiable where a sanitizer only makes it likely; the same move deletes the injection surface the old validator was chasing. Committing the file (vs. a local pref) is what makes "the agent does it on the user's behalf" and "syncs to the team" both true, since the agent edits files and files sync.
-
-**Rejected.** *Raw scoped CSS + a sanitizer* — reintroduces the injection surface and downgrades "no layout" to best-effort. *Token map + a raw escape hatch* — two mental models for the same injection risk. *Titlebar/window-chrome as a knob* — the native macOS titlebar isn't CSS-reachable, so theming it needs a custom hidden titlebar, i.e. a layout change the constraint forbids; excluded until the constraint is relaxed. *A `theme:changed` push channel* — deferred; the renderer re-pulls on snapshot ticks (reapply is O(vault-activity)), which is correct and cheap for a local app.
-
-**Consolidates into** `architecture.md` §9 (the token tier now carries per-vault overrides) and §10 (the Theme-injection note, now resolved by construction). *Stays in the inbox until consolidated.*
-
----
-
-## D65 — Local-ness is legible from the name; no gitignored file wears a synced-looking name.
-
-**Context.** `isLocalOnlyPath` special-cased `USER.md` as machine-local despite an ordinary, synced-looking name — hidden magic: a file that appears to be in git but silently isn't. Separately, *all* `*.local.*` files were excluded from the vault snapshot **entirely** (not merely hidden), so the show-hidden toggle could never reveal them — but a personal theme or config file is the user's *content*, not plumbing they should be unable to see. Surfaced while testing per-vault theming (`.holi/theme.local.json` was invisible even under show-hidden).
-
-**Decision.** Agreed with Nicolai 2026-08-03. **Landed** same day.
-
-1. **The `.local.` marker is the whole rule.** `isLocalOnlyPath` is now *only* the `.local.` basename test — the `USER.md` special case is deleted, and the personal user model is **`USER.local.md`**. `LOCAL_ONLY_IGNORE_LINES` is `['*.local.*']`. A file's git-vs-local status is now inspectable from its name, never a special case.
-2. **Local files are content the tree shows under show-hidden.** `scanVault` filters on a new **`isNonContentPath`** (dirs/tmp/junk only); local files reach the snapshot as `files` — **out of the note graph** (local markdown like `USER.local.md` never becomes a linkable note). The tree's hidden gate is `isHiddenPath(p) || isLocalOnlyPath(p)`, so a root-level `USER.local.md` is gated by the toggle too, not shown always.
-3. **The leak guarantee is unchanged, keyed only on `*.local.*`.** Commit is still `git add -A` gated by `.gitignore` — the snapshot is display-only. A bare `USER.md` now *travels* (ordinary content); a `.local.` file never commits. The leak test asserts both halves.
-4. **The watcher still ignores local writes** (`.holi/context.local.json` is rewritten every agent turn — watching it would storm the rescan loop), except `theme.local.json`'s live-reload carve-out; local files refresh in the tree on the 30s heal rather than instantly.
-
-**Why.** A reader must be able to tell whether a file is shared or private *from its name* — the same honesty every other `.local.` file already has; a normal name that is secretly ignored is exactly the trap that publishes a private file the day the ignore line drifts. And show-hidden should reveal a user's own local files, because they are content, not plumbing.
-
-**Rejected.** *Keep `USER.md` special-cased* — the magic this fixes. *Exclude local files from the tree entirely* — treats user config as plumbing; wrong for a theme or a personal model the user edits. *Make local markdown first-class notes* — pollutes the link graph (backrefs, `[[ ]]` autocomplete, rename) with config files.
-
-**Consolidates into** `architecture.md` §3 (the tree shows local files under show-hidden) and the config-layering/security prose, `glossary.md` + `prd/agent.md` + `prd/auth-identity.md` (`USER.local.md`), and the `path-safety` docstrings. **Supersedes** `specs/2026-07-26-hidden-files-toggle-design.md`'s "local files stay out of the tree entirely." *Stays in the inbox until consolidated.*
-
----
-
-## D66 — PDF export templates live under a name that says what they are for.
-
-**Context.** The vault's branded-document templates — the Typst folders behind Convert-to-PDF, each `template.json` + `template.typ` + `assets/` — sat under `.holi/templates/`. In a notes app "templates" invites the wrong question ("templates for *notes*?"): the name named the mechanism, not the purpose. Flagged before growing the seeded set past `plain` to letter/report/memo/proposal, so one folder renames instead of a set migrating.
-
-**Decision.** Agreed with Nicolai 2026-08-04. **Landed** same day.
-
-1. **The convention is `.holi/document-templates/<slug>/`.** The single source is `TEMPLATES_REL` in `main/pdf/templates.ts`; `seed-content.ts` seeds `plain` there, the `md-to-pdf` skill and the Convert-to-PDF empty-state copy point there.
-2. **Flat, not categorised.** PDF export is the only kind of template Holi has, so the top-level name carries the purpose rather than a generic `templates/pdf/` nesting — a category segment is added only if a second template kind ever appears (YAGNI).
-3. **Hard cutover, no back-compat alias.** The old path is not read as a fallback. Templates are seeded into vaults at runtime (there is no committed `.holi/templates/` in the repo), and pre-release there are no real vaults to migrate; a legacy alias would be a second name for one truth.
-4. **The internal seed-source dir stays `main/agent/templates/plain/`.** It is build content bundled via `?raw`, not the vault convention; renaming it would churn import paths for no reader benefit.
-
-**Why.** A folder name in `.holi/` is read by users authoring templates and by the agent; it should answer "for what?" on sight. `document-templates` says these produce documents; `templates` alone said nothing.
-
-**Rejected.** *`.holi/pdf-templates`* — ties the name to today's only output when the pillar's aim is branded *documents* (Typst source and other targets are on the PRD's horizon). *`.holi/export-templates`* — "export" is the app's word, not the user's mental model of a branded letter/report. *Keep `.holi/templates` + a back-compat read* — carries the ambiguous name forever and doubles the truth.
-
-**Consolidates into** `prd/agent.md` (already updated) and the `_phase2-typst-export.md` template-set work that follows. Dated `specs/2026-07-26-*` and `plans/*` keep the old path as historical record. *Stays in the inbox until consolidated.*
-
----
-
 ## D67 — Google mail/calendar rides one main-held connector; the agent reaches it via a CLI, not MCP.
 
-**Context.** The largest deferred pillar: employees' @-account Gmail + Calendar, read and linked to tasks/notes, rebuilt natively on the Google APIs after Mailspring's death. Sign-in is GitHub (`auth-identity.md`), so there is no Google consent to ride on and no server to hold a refresh token — Google auth is a new per-user, per-machine desktop grant. The PRD stub (`prd/_phase2-google-mail-calendar.md`) left five load-bearing questions open: the desktop OAuth flow, whether MCP returns (against `agent.md`'s pure-CC stance), how a link is represented, polling-vs-push, and scope/verification/multi-account. Designed whole and top-down with Nicolai 2026-08-04.
+**Context.** The largest deferred pillar: employees' @-account Gmail + Calendar, read and linked to tasks/notes, rebuilt natively on the Google APIs after Mailspring's death. Sign-in is GitHub (`auth-identity.md`), so there is no Google consent to ride on and no server to hold a refresh token — Google auth is a new per-user, per-machine desktop grant. The PRD stub (`prd/google-mail-calendar.md`) left five load-bearing questions open: the desktop OAuth flow, whether MCP returns (against `agent.md`'s pure-CC stance), how a link is represented, polling-vs-push, and scope/verification/multi-account. Designed whole and top-down with Nicolai 2026-08-04.
 
 **Decision.** These stand together; full design in `specs/2026-08-04-google-mail-calendar-design.md`.
 
@@ -217,13 +137,25 @@ Four properties carry it, and each exists because the obvious alternative is wor
 
 **One contract was corrected while building.** The plan specified a single mailbox-wide `historyId()`. That is wrong: Gmail's cursor is mailbox-wide but each cached list is written at a different moment, so one shared cursor asks "what changed since 200?" against a list last written at 100 and silently loses everything between. `GoogleCache.historyId` takes the list key. Found by a test written after the first ten passed.
 
-**Consolidates into** `prd/_phase2-google-mail-calendar.md` (the five open questions became settled prose — done), and `prd/agent.md` (§Tool surface: the CLI surface for external data, and that the "MCP returns here" prediction was **declined**), `prd/tasks.md` (§Deferred: linking resolved to a body link), `prd/auth-identity.md` (the second, independent OAuth provider). **Consolidated 2026-08-05** into all three, together with D68–D70 — see below.
+**Consolidates into** `prd/google-mail-calendar.md` (the five open questions became settled prose — done), and `prd/agent.md` (§Tool surface: the CLI surface for external data, and that the "MCP returns here" prediction was **declined**), `prd/tasks.md` (§Deferred: linking resolved to a body link), `prd/auth-identity.md` (the second, independent OAuth provider). **Consolidated 2026-08-05** into all three, together with D68–D70 — see below.
 
 ---
 
-## Number allocation — **next free is D73**
+## Number allocation — **next free is D74**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
+
+**Spent and purged from this file, with where each one's prose now lives** — a number vanishing from the inbox means it was consolidated, not withdrawn:
+
+| | Consolidated into |
+|---|---|
+| D61 | spent amending D60 pt 2 (auto-push) — see D60 |
+| D63 — a task lane move is a note-style rename | [`prd/tasks.md`](prd/tasks.md) §Board UX |
+| D64 — a vault's theme is a whitelisted token map | [`architecture.md`](architecture.md) §9, §10 |
+| D65 — local-ness is legible from the name | [`architecture.md`](architecture.md) §3 + config layering, [`glossary.md`](glossary.md), [`prd/agent.md`](prd/agent.md), [`prd/auth-identity.md`](prd/auth-identity.md) |
+| D66 — document-templates lives under a name that says what it is for | [`prd/agent.md`](prd/agent.md) |
+| D71 — the mail composer: markdown is the source | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §Composing |
+| D73 — a mail thread and a calendar event are joined by the invite's UID | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §Goals — as built, §How a message is rendered |
 
 **D1–D59 are spent, and D60 supersedes all of them.** They are not listed here any more, and that is deliberate: their subjects — the CRDT doc store, the file↔CRDT bridge, the task record and its file projection, the SSE event stream, server-side membership, snapshot history, the git mirror — do not exist. A ledger of decisions about a deleted system is archaeology pretending to be law, and the docs are law.
 
@@ -291,7 +223,7 @@ The reasoning is not lost. Every one of them was written up in full in this file
 
 **Rejected.** *Renumbering `position` on drop* — checked and genuinely unnecessary; `readThreads` only orders by it and `writeThreads` deletes by key before reinserting from zero. *Dropping `otherContacts` rather than adding a scope* — offered, and declined: for a Workspace account it is most of the address book. *Inverting every write to undo it precisely* — "unarchive" is not expressible, so the snapshot stays, guarded. *Per-sender only, or per-message only, for images* — the two answer different questions. *`labels.get` for tab counts* — one request instead of five, and the wrong number.
 
-**Built 2026-08-05.** Suites: node 1013+, dom 205, shared 229, typecheck 0, eslint 0 errors. **Still nothing here talks to Google** — true on the day, and **superseded**: by 2026-08-14 mail read, the four triage writes and the calendar agenda had all run against a real account. See `prd/_phase2-google-mail-calendar.md` for what is proven and what is not; that is the live list, and this line is a record of a moment. The `readMask`/`contacts.other.readonly` fix, the departure handling against a real mailbox, and whether `history.list` scoped to `labelId: 'INBOX'` reports an `INBOX` removal at all are unproven until used — note that if it does *not* report it, part 1 is inert for this app's own writes and the remaining exposure is an archive done in Gmail's web UI never leaving Holi's cached list.
+**Built 2026-08-05.** Suites: node 1013+, dom 205, shared 229, typecheck 0, eslint 0 errors. **Still nothing here talks to Google** — true on the day, and **superseded**: by 2026-08-14 mail read, the four triage writes and the calendar agenda had all run against a real account. See `prd/google-mail-calendar.md` for what is proven and what is not; that is the live list, and this line is a record of a moment. The `readMask`/`contacts.other.readonly` fix, the departure handling against a real mailbox, and whether `history.list` scoped to `labelId: 'INBOX'` reports an `INBOX` removal at all are unproven until used — note that if it does *not* report it, part 1 is inert for this app's own writes and the remaining exposure is an archive done in Gmail's web UI never leaving Holi's cached list.
 
 ## D70 — The agent may do anything the user can undo, and nothing that reaches another human.
 
@@ -356,40 +288,7 @@ Three things it needed beyond the route:
 
 **Still unproven:** `postJson`'s unreadable-2xx path, the three `events.*` shapes, and **`drafts.create` with a `threadId`** — the draft written during the pass was a new message, so a draft *filed into a thread* has still never been made against a real mailbox.
 
-**Consolidates into (D67–D70, done 2026-08-05).** `prd/_phase2-google-mail-calendar.md` — no longer a stub: built-and-live status, the read-write goal set, the attendee bound, the cache-not-mirror non-goal, the superseded scope line, the declined MCP prediction, and the pillar's standing failure mode. `prd/agent.md` §Tool surface — the twelve-subcommand surface, and **the read-only bullet deleted**: it claimed the agent could not send "not by policy, but because no such scope exists", which was false in every clause and was the third file this week carrying that stale invariant. §Permissions gains the send gate as the one piece of machinery among the configuration, why it is a hook rather than a rule, why it matches `Bash` broadly, and the seed-on-open rule. `prd/auth-identity.md` — the scope row, and the scope-widening trap that has now bitten twice. *The living docs are law again; these four numbers survive only in code comments and git history.*
-
-## D71 — The mail composer: markdown is the source, HTML is an artifact of sending.
-
-**Context.** *"There is still no email composer in Holi."* True, and the shape of the gap is worth stating: **D70 gave the agent `send`, `draft` and `reply`, and gave the user none of them.** The tRPC router has no send procedure at all, and `MailView.tsx` has said so in its own module note since D68 — *"Replying opens Gmail because no compose surface is built, not because the scope forbids one."* Nicolai asked to first read `syv-ai/ultramail`, an abandoned internal Tauri/Rust/IMAP mail client, and merge in what worked.
-
-**Decision.** Designed in full in `docs/specs/2026-08-14-mail-composer-design.md`. The parts that are law:
-
-1. **Markdown is the source; HTML is produced at send and never edited.** Asked whether the rich mode should be a WYSIWYG, Nicolai answered that the point is *"just that the user can see what their email will look like in HTML before they send — like the preview feature for GitHub comments"*, and separately that *"everything stays markdown at its core, since Holi will be agentically driven."* Those two together kill the WYSIWYG: `Edit | Preview` tabs over the CodeMirror the note editor already uses, no second document model, and therefore no lossy round-trip to manage. The preview feeds the **existing** sanitiser and paper pipeline (D69), so it renders the exact HTML that will be sent rather than an impression of one.
-2. **The wire format is `multipart/alternative` with the plain part being the markdown verbatim.** Markdown reads well unrendered, so the plain part is a real message rather than a degraded fallback — and it is what makes a draft round-trip byte-exact.
-3. **Drafts live in Gmail, and every one of them opens.** Nicolai's revision, in one sentence: *"we need the integration to be seamless — no 'read-only, open in Gmail' state ever."* `X-Holi-Source: markdown` present → the `text/plain` part is the source, byte-exact. Absent → `turndown` converts the HTML, above a notice saying it was written elsewhere and that saving replaces its formatting. Editable either way. Sniffing for a `text/plain` part instead of a marker fails silently — Gmail *derives* one from rich HTML — which is why the marker survives even though its job shrank.
-4. **The marker is written unconditionally, by `buildRfc822`.** §2's premise is that an agent writes markdown, so the header states a fact that was already true — and without it the agent's own drafts would have been unmarked, therefore read-only, therefore excluded from *agent drafts it, user reads it and presses Send*. **D71 came within one conditional of forbidding the pillar's flagship loop.**
-5. **The renderer renders once, and hands main the bytes it previewed.** The preview needs HTML in the renderer, the MIME needs it in main; two renderers can drift, and "the preview is the exact HTML it is about to send" would have become *nearly* true — this pillar's standing failure mode in a different coat. Main assembles MIME around bytes it validates but does not produce, and gains no jsdom, no second sanitiser and no opinion about markdown.
-6. **UI send is not hook-gated, and that is stated rather than assumed.** D70's gate intercepts the *agent's* `Bash`. A user pressing Send has already confirmed; prompting again would be a dialog asking permission for the click that opened it. "Send always asks" is a claim about the agent only.
-7. **Scope policy: Holi holds `gmail.modify` and does not widen it.** Google's own description of that scope is *"Read, compose, and send emails (no permanent delete)"* — it is already "everything except the irreversible thing", which is the shape that keeps being asked for. OAuth has no negative scope, so **that bound lives in the token rather than in a code path**: nothing to review, nothing to regress, nothing an agent can talk around. It is what D70 tier 1 actually rests on, and taking `https://mail.google.com/` would demote it from *the token cannot* to *the code does not*. Widening needs a decision naming what it buys; today that would be settings-editing (`gmail.settings.basic`) or permanent deletion, and neither has been asked for.
-
-**What ultramail actually contributed.** None of its code — it is Tauri, Rust, IMAP/SMTP and SQLite. Its *conclusions*: the **pristine guard** (no autosave until the first real edit, or opening and closing a composer leaves a zombie draft) and the 350ms debounce; the reply/reply-all/forward table, including idempotent `Re:` and reply-all as `To ∪ Cc` minus self; a typed compose intent rather than a query string, because *"a typo in the kind silently produced an empty composer"*; and a per-variant send-failure action instead of a generic retry. Two of its conclusions arrived at Holi's own answers from the opposite direction, which is why they are recorded as confirmation rather than coincidence: **threading resolved at send rather than at composer-mount** (*"storing it at mount would lock in a stale parent"*), and **never auto-retrying a send whose outcome is unknown** (*"we cannot know whether SMTP completed"* — the same rule that makes `postJson` treat an unreadable 2xx as success). Different transport, identical conclusion: **the failure mode of a send is a duplicate, not a loss.** *Two of these did not survive the revision below and are recorded here as provenance, not as law: the 350ms debounce (a number from a client with a local database) and the exact wording of the threading rule.*
-
-**Rejected.** *Rich-text authoring (Tiptap)* — a second document model and a lossy markdown round-trip, to satisfy a request that was explicitly about *seeing* the HTML, not authoring it. *A local draft store* — two places a draft can live is the class of bug D69 spent a day on; Gmail drafts already sync everywhere and the agent's drafts and the user's become the same objects. *No drafts at all* — losing a half-written mail on close is the least forgivable bug a mail client has. *A modal reply* — it hides the thread you are replying to. *Passing raw HTML through `marked`* — `dompurify` makes it safe, which is exactly the problem: it would quietly make HTML authorable against §2, and would eat a stray `<` in ordinary prose. It is escaped instead, and the sanitiser goes back to being defence in depth rather than the mechanism. *The master scope* — see law 7. *A Gmail label as the draft marker* — verifiable by construction where the header is not, and kept in the plan as the swap if the header turns out not to survive; not taken now, because it costs a second call on every save and puts a visible label in the user's mailbox for a distinction that is Holi's business, not theirs.
-
-**Scope.** Reply, reply-all, forward, new message, a **Drafts view**, and **forward carrying its original attachments**. **Out, each its own decision:** user-added attachments (picking a file brings a size cap in main and base64 across the IPC seam — forward's passthrough keeps the bytes main-side and needs none of it), signatures, templates, send-later, and a From-picker.
-
-**Revised the same day, by a grilling that overturned more of the spec than it confirmed.** Seven clauses changed, and the interesting thing is that six of them fall out of one instruction — *no read-only state ever* — which was not a UI preference but a load-bearing correction:
-
-- **A read-only branch was the marker's only job.** Removing it demoted `X-Holi-Source` from a gate to an optimisation, and that retired the design's biggest unverified risk. Whether Gmail preserves an unknown header across a draft round-trip had never been checked against a real account, and the whole of §4 rested on it; now it decides only whether a reopened draft is *byte-exact* or *well converted*, because the conversion path had to exist anyway for drafts Holi never wrote. **A load-bearing assumption became a performance characteristic** — the better place for anything unproven to sit.
-- **The same instruction pulled the Drafts view into v1.** A new message has no thread, so `hasDraft` cannot surface it: closing one wrote a draft to Gmail that Holi could not reach. It also settles, without ceremony, what *Continue draft* means on a thread carrying two.
-- **And it pulled attachments into forward.** Forwarding is the operation people perform *in order to* move an attachment. Passthrough turned out far smaller than the deferred attachment table: main fetches the parts, so no file picker, no IPC base64, no size cap in the UI.
-- **350ms was a number borrowed from a client with a local database.** Against Gmail every save is a full RFC-822 upload. 2s idle, plus forced saves on blur/close/send, plus a visible *Saving/Saved/Not saved*, plus single-flight — because a second `create` in flight forks the user's message in two.
-- **The send-as wart was imaginary.** `gmail.modify` already permits `settings.sendAs.list`; a new scope was recommended and was wrong, and the correction came from reading Google's reference rather than reasoning about it. Which is the same lesson as the gate D67 §5 specified against a command string nobody checked: *the cheap check that nobody runs is the one that fails open.*
-- One clause was sharpened rather than overturned: **threading headers are resolved per save as well as per send.** "At send, not at mount" was the right principle stated as the wrong rule — `drafts.update` replaces the whole message and a saved draft can be sent from a phone, so a draft with no `In-Reply-To` sends fine and starts a new thread. The principle is that the *renderer* never holds them.
-
-**Planned in `docs/plans/2026-08-14-mail-composer.md`.** Its task 0 is verifying D70's outbound calls by hand, before any composer code exists: `send`, `drafts.create` and reply threading have never run against a real account, and this feature sits directly on all three. **The inbound half is not in question** — mail read, the four triage writes and the agenda are proven in real use, so `GoogleApi.post` and `googleData`'s write ordering are underneath this feature as facts rather than assumptions. The gap is exactly the outbound path, which is also the only path whose failure reaches another human.
-
-**Designed 2026-08-14, revised 2026-08-14, not yet built.**
+**Consolidates into (D67–D70, done 2026-08-05).** `prd/google-mail-calendar.md` — no longer a stub: built-and-live status, the read-write goal set, the attendee bound, the cache-not-mirror non-goal, the superseded scope line, the declined MCP prediction, and the pillar's standing failure mode. `prd/agent.md` §Tool surface — the twelve-subcommand surface, and **the read-only bullet deleted**: it claimed the agent could not send "not by policy, but because no such scope exists", which was false in every clause and was the third file this week carrying that stale invariant. §Permissions gains the send gate as the one piece of machinery among the configuration, why it is a hook rather than a rule, why it matches `Bash` broadly, and the seed-on-open rule. `prd/auth-identity.md` — the scope row, and the scope-widening trap that has now bitten twice. *The living docs are law again; these four numbers survive only in code comments and git history.*
 
 ## D72 — A vault agent inherits the vault, not the machine.
 
@@ -426,29 +325,3 @@ Three things it needed beyond the route:
 
 ---
 
-## D73 — A mail thread and a calendar event are joined by the invite's UID, and there is exactly one place that knows where a video call is.
-
-**Context.** The brief asked for two things about meetings in the mail list: a badge on threads carrying an `.ics`, and — "ideally" — a Join button so a Teams meeting could be opened from Holi. Both look like small additions and both have a trap under them.
-
-The first trap: **the list cannot see attachments.** `fetchThreadSummaries` fetches each thread at `format: 'metadata'`, which returns headers and no `payload.parts`, and `attachmentsOf` reads parts. `format: 'full'` would answer the question by downloading every body in the page to draw one icon — the exact N+1 `mail-sync` exists to avoid.
-
-The second trap was hidden by a wrong premise. The handoff recorded that `AgendaView` already had a working Join button resolving Meet, Zoom **and Teams**, so the mail side only had to reach it. Nicolai's answer to the design question was *"the agenda view does not have a join button for teams meetings"* — the premise was false, and the feature it was supposed to reuse did not work for the one vendor being asked about.
-
-**Decision.** Agreed with Nicolai 2026-08-18. **Built** same day.
-
-1. **A conferencing link is resolved in exactly one place: `conferenceUrlOf` in `main/google/calendar.ts`.** The mail side never parses one. Rejecting the alternative is the substance of this decision — see below.
-2. **The join between a thread and an event is the iCalendar `UID`.** `invite.ts` reads the `UID` out of the thread's `.ics` and asks the calendar for that event; the event's `conferenceUrl` is what a Join button opens. The UID is an identity iCalendar itself defines and Google indexes, so the match is a fact rather than a heuristic over subject lines and start times.
-3. **Attachment questions are asked backwards.** Rather than asking each thread what it holds, Gmail is asked once which threads hold an `.ics` (`q: has:attachment filename:ics`) and the answer is intersected with the page in hand — one request per page, the precedent `fetchCategoryUnread` set. **Bounded by the dates of the threads being intersected**, because `threads.list` is newest-first over the whole mailbox: unbounded, a page from three years ago intersects against this month's invites, matches nothing, and drops every badge with no error.
-4. **`conferenceData` is not the only source of a join link, and Google's silence is not the absence of a meeting.** Google populates `conferenceData` only for conferences *it* created; an Outlook-hosted Teams meeting synced in over Exchange has neither `conferenceData` nor `hangoutLink`, and its join link is an anchor in the invite body. `conferenceUrlOf` now falls back to the body and then the location, **matching the shape of a join link rather than taking the first `https://` it finds** — a real Teams invite also carries `aka.ms/JoinTeamsMeeting` and a "Learn More" page, either of which wins a first-URL race and opens a help page instead of the meeting. Google's structured fields still win: a rescheduled meeting gets `conferenceData` rewritten and a link left in prose does not.
-5. **"Nothing to join" and "no such meeting" are different answers.** `resolveThreadMeeting` returns null for no invite, for an event on no enabled calendar (declined, or never really invited), and for a meeting entirely in the past — all three render as no button. A resolved meeting with no video call at all renders as its calendar page instead. What null must never become is a button pointing at a plausible guess.
-6. **The lookup is paid for by whoever opens a meeting.** It runs from the reader, only for a thread whose summary already says it holds an `.ics`, and is not cached — a join link is exactly the fact that gets rewritten when a meeting moves, and a stale one sends the user to an empty room. Same reasoning as `agenda`.
-
-**Why the UID and not the `.ics`.** The `.ics` contains the join link too, and reading it there is fewer moving parts on the day. It also means two implementations of "where is the video call in this thing" — one over `conferenceData`/`hangoutLink`/prose in `calendar.ts`, one over iCalendar properties in the mail path — which agree today and drift the first time a vendor changes format, silently, in the direction of one surface offering a Join and the other not. That is the failure this pillar has already had once, in reverse: the agenda's button was missing for Teams for as long as Teams has been in use here, and nobody found out until it was asked about. The UID route means the mail side gains a Join *because* the calendar side works, so the two cannot disagree.
-
-**What it costs.** An invite that never reached the calendar — declined, or sent to an address that does not sync — gets a badge and no Join, where an `.ics` parser would have offered one. Accepted deliberately: the reversibility argument does not apply, but the drift argument does, and the case is rare next to "a meeting you were invited to and is on your calendar".
-
-**Rejected.** *`format: 'full'` for the list* — the N+1 the module exists to avoid, for an icon. *Parsing the conferencing URL out of the `.ics`* — a second resolver; see above. *Fetching each flagged thread's `.ics` to badge the list* — 2-3 requests per invite per page to draw an icon, when one scoped list answers for the whole page. *Matching thread to event by subject and time* — a heuristic where an exact identifier exists, and its failure mode is a Join button opening the wrong meeting. *Changing `--input` to fix the invisible checkbox* — unrelated to this decision but the same instinct, and refused for the same reason: a global change to repair one row.
-
-**Unverified against the real account.** Every claim here is tested against fixtures, including a body carrying the three decoy Microsoft URLs a real invite has — but this environment cannot reach the live Google account, and main-process code does not hot-reload. **The Teams fallback in particular is a hypothesis about what Exchange-synced invites look like**, well-founded and untested against one. `SHAPE_VERSION` is at 4 so no cached row survives the change.
-
-**Consolidates into `prd/_phase2-google-mail-calendar.md`** — the mail↔calendar join is a capability neither pillar's section currently claims. *Stays in the inbox until consolidated.*

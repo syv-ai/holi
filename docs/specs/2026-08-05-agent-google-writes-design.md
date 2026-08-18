@@ -170,7 +170,7 @@ D69 named it: *a test that asserts what the code assumes, rather than what the e
 system does, passes while the feature is broken.* It has now happened three times in this
 pillar. Nothing in this repo has ever talked to Google. *[Superseded 2026-08-14: mail read, the
 four triage writes and the calendar agenda have since run against a real account. The live list
-of what is proven is `prd/_phase2-google-mail-calendar.md`; the failure mode above still stands.]*
+of what is proven is `prd/google-mail-calendar.md`; the failure mode above still stands.]*
 
 So the fakes must **refuse the way Google refuses**:
 

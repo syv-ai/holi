@@ -37,7 +37,7 @@ land in the cache via the next `history.list` delta (mail) or the always-refetch
 asserts what the code assumes, rather than what the external system does, passes while the
 feature is broken.* Every fake added here must **refuse the way Google refuses**. Nothing in
 this repo has ever talked to Google. *[Superseded 2026-08-14 — see
-`prd/_phase2-google-mail-calendar.md` for what has since been proven.]*
+`prd/google-mail-calendar.md` for what has since been proven.]*
 
 ---
 

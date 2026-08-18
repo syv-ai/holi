@@ -1,7 +1,7 @@
 # Design: Typst PDF export — per-vault templates, UI + agent front doors
 
 **Status:** Approved direction (2026-07-26) — decomposed into slices below; each slice gets its own plan.
-**Decision:** D62 (`docs/decisions.md`) — the vault is text-first by authorship; PDFs are **outputs** rendered from markdown via Typst. This realizes and supersedes the `prd/_phase2-typst-export.md` stub, pulled forward by D62.
+**Decision:** D62 (`docs/decisions.md`) — the vault is text-first by authorship; PDFs are **outputs** rendered from markdown via Typst. This realizes and supersedes the `prd/pdf-export.md` stub, pulled forward by D62.
 
 ## Summary
 
@@ -95,4 +95,4 @@ Each slice is independently shippable and gets its own plan. Slice 1 is the next
 
 ## Supersedes
 
-`prd/_phase2-typst-export.md` (the stub) — this is its realization. That stub's "where rendering runs" open question is resolved: **in-app, Typst-only, binary downloaded on first use.**
+`prd/pdf-export.md` (the stub) — this is its realization. That stub's "where rendering runs" open question is resolved: **in-app, Typst-only, binary downloaded on first use.**

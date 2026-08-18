@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-04
 **Status:** approved, ready for planning (decompose into slice plans)
-**PRD refs:** `docs/prd/_phase2-google-mail-calendar.md` (the stub this fleshes out — do not duplicate it); `docs/prd/auth-identity.md` (the GitHub OAuth/keychain model a second provider slots beside); `docs/prd/agent.md` (§Tool surface, the "MCP returns here" line); `docs/prd/tasks.md` (§Deferred "Email/Calendar linking"); `docs/decisions.md` **D67**.
+**PRD refs:** `docs/prd/google-mail-calendar.md` (the stub this fleshes out — do not duplicate it); `docs/prd/auth-identity.md` (the GitHub OAuth/keychain model a second provider slots beside); `docs/prd/agent.md` (§Tool surface, the "MCP returns here" line); `docs/prd/tasks.md` (§Deferred "Email/Calendar linking"); `docs/decisions.md` **D67**.
 **Seams studied:** `apps/desktop/src/main/github/{device-flow,session,token-store,api}.ts`; `apps/desktop/src/renderer/src/components/Shell.tsx` (tab workspace + drawer idioms); `apps/desktop/src/renderer/src/features/*`.
 
 ## Problem

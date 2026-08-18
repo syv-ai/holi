@@ -1,7 +1,7 @@
 # Branded Typst document-template set — design
 
 **Date:** 2026-08-04
-**Implements:** `docs/prd/_phase2-typst-export.md` (the "set of branded syv.ai templates" goal).
+**Implements:** `docs/prd/pdf-export.md` (the "set of branded syv.ai templates" goal).
 **Builds on:** D66 (`.holi/document-templates/` convention), the shipped md→PDF pipeline
 (`main/pdf/*`, the `md-to-pdf` vault skill, `ConvertToPdf.tsx`).
 **Status:** approved, ready for planning.

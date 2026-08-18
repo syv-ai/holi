@@ -92,7 +92,7 @@ fakes written from documentation, and the composer sits directly on all of them.
       can assert this, and a gate that does not fire is worse than no gate because it is
       believed in.
 - [ ] Record the results in `docs/decisions.md` under D70 and in
-      `prd/_phase2-google-mail-calendar.md`'s proven/unproven list. If reply threading is broken,
+      `prd/google-mail-calendar.md`'s proven/unproven list. If reply threading is broken,
       fix it before Task 1 — every reply in this plan inherits it.
 
 **Do not start Task 1 until this passes.** This is the pillar's standing failure mode: a test
@@ -543,7 +543,7 @@ knows what is going along. A forward of a message with no attachments must take 
       The spec and the ledger are current; this plan's table is a summary of them, not a substitute.
 - [ ] Record Task 0's and the Task 7 checkpoint's results under D70 and D71 — what was proven
       against a real account, and what remains unproven.
-- [ ] Consolidate into `prd/_phase2-google-mail-calendar.md` once built, per the D67–D70 pattern.
+- [ ] Consolidate into `prd/google-mail-calendar.md` once built, per the D67–D70 pattern.
 
 ---
 
