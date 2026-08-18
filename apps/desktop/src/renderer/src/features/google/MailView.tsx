@@ -1724,6 +1724,7 @@ function ThreadRow({
   // half of that lives: `null` is no tab, which is not the same as Primary.
   const categoryLabel = thread.category === 'primary' ? null : categoryLabelOf(thread.category)
   const chips = categoryLabel !== null || thread.labels.length > 0
+  const subjectWeight = thread.unread ? 'font-medium' : ''
 
   return (
     <div
@@ -1772,84 +1773,113 @@ function ThreadRow({
         }}
         className="block h-auto min-w-0 flex-1 rounded-none bg-transparent py-3 pr-3 pl-2 text-left hover:bg-transparent"
       >
+        {/* Two columns, and which one can give is the whole layout: the text
+            column is the only thing that shrinks, so everything in it truncates
+            against the rail instead of pushing it off the row. */}
         <span className="flex items-baseline gap-2">
-          {/* Weight alone was too quiet to scan — an explicit dot is what makes
-              unread readable at a glance, and it holds the row's left edge so
-              read and unread stay aligned. */}
-          <span
-            aria-hidden
-            className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
-              thread.unread ? 'bg-primary' : 'bg-transparent'
-            }`}
-          />
-          <span
-            className={`min-w-0 flex-1 truncate text-xs ${
-              thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
-            }`}
-          >
-            {thread.from.name}
-          </span>
-          {/* A meeting, not a message. The distinction the list could not make
-              before: "Ada wrote to you" and "Ada expects you at 14:00" looked
-              identical, and the second is the one with a deadline on it. */}
-          {thread.hasInvite && (
-            <CalendarDays
-              size={11}
-              className="shrink-0 self-center text-muted-foreground"
-              aria-label="meeting invite"
-            />
-          )}
-          {thread.starred && (
-            <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
-          )}
-          {/* "You started replying and stopped" — a third state, distinct from
-              both answered and untouched, and the only trace of it in the list. */}
-          {thread.hasDraft && (
-            <FilePen size={11} className="shrink-0 self-center text-muted-foreground" aria-label="unsent draft" />
-          )}
-          {/* "You replied and are waiting on them" — see `answered` in
-              main/google/gmail.ts for why it is the LAST message that decides. */}
-          {thread.answered && (
-            <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
-          )}
-          {/* The count sits WITH the stamp, not inside the sender. Inside the
-              name it was the first thing the ellipsis ate on a narrow list, and
-              while it survived it read as part of the name. Everything from the
-              sender rightwards is `shrink-0` so the sender is the only thing
-              that can give, which is what puts the ellipsis where it belongs. */}
-          <span className="flex shrink-0 items-baseline gap-1 text-[10px] text-muted-foreground">
-            {thread.messageCount > 1 && <span>({thread.messageCount})</span>}
-            <span>{listStamp(thread.date)}</span>
-          </span>
-        </span>
-        <span
-          className={`mt-0.5 block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}
-        >
-          {thread.subject}
-        </span>
-        <span className="mt-0.5 block truncate pl-3.5 text-[11px] text-muted-foreground">
-          {thread.snippet}
-        </span>
-        {chips && (
-          <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
-            {/* Outlined, where a user label is filled: the tab a thread arrived
-                in is Gmail's classification, not a label the reader chose, and
-                one chip style for both would say they are the same thing. */}
-            {categoryLabel !== null && (
-              <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
-                {categoryLabel}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-baseline gap-2">
+              {/* Weight alone was too quiet to scan — an explicit dot is what
+                  makes unread readable at a glance, and it holds the row's left
+                  edge so read and unread stay aligned. */}
+              <span
+                aria-hidden
+                className={`mt-1 size-1.5 shrink-0 self-start rounded-full ${
+                  thread.unread ? 'bg-primary' : 'bg-transparent'
+                }`}
+              />
+              <span
+                className={`min-w-0 flex-1 truncate text-xs ${
+                  thread.unread ? 'font-semibold text-foreground' : 'text-muted-foreground'
+                }`}
+              >
+                {thread.from.name}
+              </span>
+              {/* These three stay on the sender's line rather than joining the
+                  rail: they are things *you* did — starred it, started a reply,
+                  answered it — where the rail holds what the thread simply is. */}
+              {thread.starred && (
+                <Star
+                  size={11}
+                  className="shrink-0 self-center text-muted-foreground"
+                  aria-label="starred"
+                />
+              )}
+              {/* "You started replying and stopped" — a third state, distinct
+                  from both answered and untouched, and the only trace of it in
+                  the list. */}
+              {thread.hasDraft && (
+                <FilePen
+                  size={11}
+                  className="shrink-0 self-center text-muted-foreground"
+                  aria-label="unsent draft"
+                />
+              )}
+              {/* "You replied and are waiting on them" — see `answered` in
+                  main/google/gmail.ts for why it is the LAST message that
+                  decides. */}
+              {thread.answered && (
+                <Reply
+                  size={11}
+                  className="shrink-0 self-center text-muted-foreground"
+                  aria-label="you replied"
+                />
+              )}
+            </span>
+            <span className={`mt-0.5 block truncate pl-3.5 text-xs ${subjectWeight}`}>
+              {thread.subject}
+            </span>
+            <span className="mt-0.5 block truncate pl-3.5 text-[11px] text-muted-foreground">
+              {thread.snippet}
+            </span>
+            {chips && (
+              <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
+                {/* Outlined, where a user label is filled: the tab a thread
+                    arrived in is Gmail's classification, not a label the reader
+                    chose, and one chip style for both would say they are the
+                    same thing. */}
+                {categoryLabel !== null && (
+                  <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+                    {categoryLabel}
+                  </span>
+                )}
+                {thread.labels.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
+                  >
+                    {label}
+                  </span>
+                ))}
               </span>
             )}
-            {thread.labels.map((label) => (
-              <span
-                key={label}
-                className="rounded bg-secondary px-1 py-px text-[10px] text-muted-foreground"
-              >
-                {label}
-              </span>
-            ))}
           </span>
-        )}
+
+          {/* The metadata rail: what the thread *is*, right-aligned, stacked
+              under the stamp.
+
+              **It takes the width it needs and no more** — no share of the card,
+              because a share is either too narrow for `30 Nov 2025 09:15` or too
+              wide for `Today 14:22`, and the list panel is resizable so it would
+              be both. `whitespace-nowrap` is what makes that true: without it
+              the rail is shrinkable, and flexbox narrows it and wraps the stamp
+              rather than truncating the text, which is exactly backwards. */}
+          <span
+            data-thread-meta
+            className="flex shrink-0 flex-col items-end gap-0.5 whitespace-nowrap text-[10px] text-muted-foreground"
+          >
+            <span>{listStamp(thread.date)}</span>
+            {(thread.hasInvite || thread.messageCount > 1) && (
+              <span className="flex items-center gap-1">
+                {/* A meeting, not a message. The distinction the list could not
+                    make before: "Ada wrote to you" and "Ada expects you at
+                    14:00" looked identical, and the second has a deadline. */}
+                {thread.hasInvite && <CalendarDays size={11} aria-label="meeting invite" />}
+                {thread.messageCount > 1 && <span>({thread.messageCount})</span>}
+              </span>
+            )}
+          </span>
+        </span>
       </Button>
     </div>
   )

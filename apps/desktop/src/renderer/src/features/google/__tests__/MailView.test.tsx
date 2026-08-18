@@ -393,6 +393,37 @@ test('says nothing about meetings on a thread that is not one', async () => {
   expect(screen.queryByLabelText('meeting invite')).not.toBeInTheDocument()
 })
 
+/**
+ * The metadata rail.
+ *
+ * Everything that is a *fact about* the thread — when it arrived, how many
+ * messages, whether it is a meeting — sits in one right-aligned group, and none
+ * of the thread's *text* is in it. That separation is the whole point: the rail
+ * takes only the width it needs, and the sender, subject and preview truncate
+ * against it instead of pushing it off the row. The count used to live inside
+ * the sender's own truncating span, where a narrow list ate it first.
+ */
+test('groups the stamp, the count and the meeting badge apart from the text', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true, messageCount: 3 })]))
+
+  render(<MailView />)
+
+  await screen.findByText('Q2 budget')
+  // Marked rather than found by shape: the stamp's own text is locale-dependent
+  // (`11:00 AM` under the test locale), so querying for it asserts Intl output
+  // instead of the layout under test.
+  const rail = document.querySelector('[data-thread-meta]')
+
+  expect(rail).not.toBeNull()
+  expect(rail!.textContent).toMatch(/\d{1,2}:\d{2}/)
+  expect(rail).toHaveTextContent('(3)')
+  expect(rail!.querySelector('[aria-label="meeting invite"]')).not.toBeNull()
+  // The truncating text is NOT in here. That is what lets it ellipsis behind
+  // the rail rather than push it off the row.
+  expect(rail).not.toHaveTextContent('Q2 budget')
+  expect(rail).not.toHaveTextContent('Jane')
+})
+
 test('shows user labels as chips', async () => {
   threadMock.mockResolvedValue(page([summary({ labels: ['Work/Clients', 'Receipts'] })]))
 
