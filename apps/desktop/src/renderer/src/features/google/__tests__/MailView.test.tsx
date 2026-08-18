@@ -331,6 +331,39 @@ test('marks a thread with an unsent draft', async () => {
   expect(await screen.findByLabelText('unsent draft')).toBeInTheDocument()
 })
 
+test('names the tab a thread came from, when it is not Primary', async () => {
+  threadMock.mockResolvedValue(page([summary({ category: 'promotions' })]))
+
+  render(<MailView />)
+
+  expect(await screen.findByText('Promotions')).toBeInTheDocument()
+})
+
+/**
+ * The two cases that must render NOTHING, for different reasons.
+ *
+ * `primary` is what the brief excluded — "not in Primary" — and `null` means the
+ * thread carries no `CATEGORY_*` label at all, which is not the same claim. See
+ * the `CATEGORIES` note in `MailboxPicker`: on an account that does not use
+ * Gmail's tabs, every thread is `null`, so calling that Primary would label a
+ * whole inbox with a tab it is not in.
+ */
+test('says nothing about the tab for Primary, and nothing when there is no tab', async () => {
+  threadMock.mockResolvedValue(page([summary({ category: 'primary' })]))
+
+  const view = render(<MailView />)
+
+  expect(await screen.findByText('Q2 budget')).toBeInTheDocument()
+  expect(screen.queryByText('Primary')).not.toBeInTheDocument()
+
+  view.unmount()
+  threadMock.mockResolvedValue(page([summary({ category: null })]))
+  render(<MailView />)
+
+  expect(await screen.findByText('Q2 budget')).toBeInTheDocument()
+  expect(screen.queryByText('Primary')).not.toBeInTheDocument()
+})
+
 test('shows user labels as chips', async () => {
   threadMock.mockResolvedValue(page([summary({ labels: ['Work/Clients', 'Receipts'] })]))
 

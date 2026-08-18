@@ -86,6 +86,7 @@ import { MESSAGE_BODY_ATTR, ThreadFind } from './ThreadFind'
 import {
   CATEGORIES,
   MailboxPicker,
+  categoryLabelOf,
   type CategoryCounts,
   type MailCategory,
   type MailboxView,
@@ -1632,20 +1633,35 @@ function ThreadRow({
   onToggle: (options: { extend: boolean }) => void
   showCheckbox: boolean
 }): React.JSX.Element {
+  // Not Primary, and in a tab at all. `categoryLabelOf` is where the second
+  // half of that lives: `null` is no tab, which is not the same as Primary.
+  const categoryLabel = thread.category === 'primary' ? null : categoryLabelOf(thread.category)
+  const chips = categoryLabel !== null || thread.labels.length > 0
+
   return (
     <div
-      className={`group/row flex items-start border-b border-border/50 ${
-        active ? 'bg-secondary' : selected ? 'bg-primary/10' : ''
+      className={`group/row flex items-stretch border-b border-border/50 ${
+        active
+          ? 'bg-secondary'
+          : selected
+            ? 'bg-primary/10 hover:bg-primary/20'
+            : 'hover:bg-accent/40'
       }`}
     >
       <div
-        className={`flex shrink-0 self-stretch pt-2.5 pl-2 ${
+        className={`flex shrink-0 items-center pl-1.5 ${
           showCheckbox || selected ? '' : 'opacity-0 group-hover/row:opacity-100'
         }`}
       >
         <Checkbox
           checked={selected}
           aria-label={`select ${thread.subject}`}
+          // `--input` and `--secondary` are the same neutral in both themes, so
+          // an unchecked box on the OPEN row drew its border in the colour of
+          // the surface behind it — invisible, exactly where the reader is most
+          // likely to reach for it. Fixed on the row rather than by moving
+          // `--input`, which every input in the app draws its edge from.
+          className={active ? 'border-muted-foreground' : ''}
           // Mouse down rather than the Radix change event: shift-click needs the
           // modifier, and `onCheckedChange` is handed a boolean and nothing else.
           onClick={(event) => {
@@ -1667,9 +1683,9 @@ function ThreadRow({
           }
           onOpen()
         }}
-        className="block h-auto min-w-0 flex-1 rounded-none bg-transparent px-3 py-2 text-left hover:bg-transparent"
+        className="block h-auto min-w-0 flex-1 rounded-none bg-transparent py-3 pr-3 pl-2 text-left hover:bg-transparent"
       >
-        <span className="flex items-baseline justify-between gap-2">
+        <span className="flex items-baseline gap-2">
           {/* Weight alone was too quiet to scan — an explicit dot is what makes
               unread readable at a glance, and it holds the row's left edge so
               read and unread stay aligned. */}
@@ -1685,9 +1701,6 @@ function ThreadRow({
             }`}
           >
             {thread.from.name}
-            {thread.messageCount > 1 && (
-              <span className="ml-1 text-muted-foreground">({thread.messageCount})</span>
-            )}
           </span>
           {thread.starred && (
             <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
@@ -1702,16 +1715,34 @@ function ThreadRow({
           {thread.answered && (
             <Reply size={11} className="shrink-0 self-center text-muted-foreground" aria-label="you replied" />
           )}
-          <span className="shrink-0 text-[10px] text-muted-foreground">{listStamp(thread.date)}</span>
+          {/* The count sits WITH the stamp, not inside the sender. Inside the
+              name it was the first thing the ellipsis ate on a narrow list, and
+              while it survived it read as part of the name. Everything from the
+              sender rightwards is `shrink-0` so the sender is the only thing
+              that can give, which is what puts the ellipsis where it belongs. */}
+          <span className="flex shrink-0 items-baseline gap-1 text-[10px] text-muted-foreground">
+            {thread.messageCount > 1 && <span>({thread.messageCount})</span>}
+            <span>{listStamp(thread.date)}</span>
+          </span>
         </span>
-        <span className={`block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}>
+        <span
+          className={`mt-0.5 block truncate pl-3.5 text-xs ${thread.unread ? 'font-medium' : ''}`}
+        >
           {thread.subject}
         </span>
-        <span className="block truncate pl-3.5 text-[11px] text-muted-foreground">
+        <span className="mt-0.5 block truncate pl-3.5 text-[11px] text-muted-foreground">
           {thread.snippet}
         </span>
-        {thread.labels.length > 0 && (
-          <span className="mt-1 flex flex-wrap gap-1 pl-3.5">
+        {chips && (
+          <span className="mt-1.5 flex flex-wrap gap-1 pl-3.5">
+            {/* Outlined, where a user label is filled: the tab a thread arrived
+                in is Gmail's classification, not a label the reader chose, and
+                one chip style for both would say they are the same thing. */}
+            {categoryLabel !== null && (
+              <span className="rounded border border-border px-1 py-px text-[10px] text-muted-foreground">
+                {categoryLabel}
+              </span>
+            )}
             {thread.labels.map((label) => (
               <span
                 key={label}

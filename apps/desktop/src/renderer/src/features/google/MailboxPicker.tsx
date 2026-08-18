@@ -93,6 +93,20 @@ export function mailboxLabelOf(view: MailboxView): string {
   return CATEGORIES.find((c) => c.value === view.category)?.label ?? 'All mail'
 }
 
+/**
+ * What a *thread* may say about the tab it arrived in, reusing the picker's own
+ * labels so a chip on a row and an entry in this menu cannot drift apart.
+ *
+ * `null` in, `null` out — deliberately not "All mail". On a row, `null` means
+ * the thread carries no `CATEGORY_*` label at all; "All mail" is a *place* you
+ * can point the list at. Naming the absence of a tab after the view that shows
+ * every tab would put a chip on every row of an account that does not use them.
+ */
+export function categoryLabelOf(category: MailCategory | null): string | null {
+  if (category === null) return null
+  return CATEGORIES.find((c) => c.value === category)?.label ?? null
+}
+
 /** Same identity as the union, flattened to something a menu item can key and
  *  compare on. */
 function idOf(view: MailboxView): string {
