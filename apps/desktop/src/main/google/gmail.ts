@@ -1319,6 +1319,69 @@ export async function fetchAttachment(
   }
 }
 
+/**
+ * The `.ics` in a thread, as text — or null when there is none.
+ *
+ * Owns the Gmail half of the meeting lookup and nothing else: which part is the
+ * invite, and how to get its bytes. What the bytes *mean* is `invite.ts`.
+ *
+ * Two shapes, because invites arrive in both and only one of them costs a
+ * request. Outlook attaches the invite (`filename: 'invite.ics'`, bytes behind
+ * an `attachmentId`); Google Calendar sends `text/calendar` **inline**, with the
+ * data in the part itself — for which there is no attachment id to fetch even if
+ * one wanted to.
+ *
+ * `format: 'full'`, which is the expensive fetch this module normally refuses.
+ * It is affordable here for the reason it is not in a list: this runs for ONE
+ * thread, only when a reader has already opened it — so the body was being
+ * downloaded anyway.
+ */
+export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
+  const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
+    format: 'full',
+  })
+
+  for (const message of thread.messages ?? []) {
+    const part = calendarPartOf(message.payload)
+    if (part === undefined) continue
+
+    // Inline: already in hand, no second request.
+    if (part.body?.data !== undefined) {
+      return Buffer.from(part.body.data, 'base64url').toString('utf8')
+    }
+    const attachmentId = part.body?.attachmentId
+    if (attachmentId === undefined || message.id === undefined) continue
+    const fetched = await fetchAttachment(api, message.id, attachmentId, {
+      filename: part.filename ?? 'invite.ics',
+      mimeType: part.mimeType ?? 'text/calendar',
+    })
+    return Buffer.from(fetched.data, 'base64').toString('utf8')
+  }
+  return null
+}
+
+/**
+ * The calendar part anywhere in a MIME tree.
+ *
+ * Both tests, not one: Outlook sends `text/calendar` but also `application/ics`
+ * and occasionally `application/octet-stream` with an `.ics` name, so matching
+ * on the type alone misses real invites and matching on the name alone misses
+ * the inline part, which has no filename.
+ */
+function calendarPartOf(part: RawPart | undefined): RawPart | undefined {
+  if (part === undefined) return undefined
+  const type = part.mimeType?.toLowerCase() ?? ''
+  const name = part.filename?.toLowerCase() ?? ''
+  if (type.startsWith('text/calendar') || type === 'application/ics' || name.endsWith('.ics')) {
+    return part
+  }
+  for (const child of part.parts ?? []) {
+    const found = calendarPartOf(child)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 /** Gmail omits `threadId` on a loose draft; `null` is "belongs to no thread". */
 function threadIdOf(message: RawMessage | undefined): string | null {
   const threadId = message?.threadId

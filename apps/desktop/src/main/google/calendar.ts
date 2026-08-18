@@ -262,6 +262,44 @@ export async function listAgenda(
     .sort(byStart)
 }
 
+/**
+ * The one event an invite is about, found by the `UID` in its `.ics`.
+ *
+ * The UID is the identity iCalendar itself defines, and Google indexes it — so
+ * this is an exact match rather than a guess from a subject line and a time,
+ * which is what "the mail thread and the calendar event are the same meeting"
+ * needs in order to be a fact rather than a heuristic.
+ *
+ * **Instances, from now on, one of them.** `singleEvents` expands a series, and
+ * without it a weekly meeting resolves to the series rule — whose start is the
+ * day the series began, so a Join built from it opens a link that may be a year
+ * stale. `timeMin` then makes "the invite you are reading" resolve to the
+ * occurrence actually coming up, which is the one a person reading their mail
+ * means. A meeting entirely in the past therefore answers `null`, deliberately:
+ * there is nothing to join.
+ *
+ * No palette request — the caller wants a link, not a tint, and the colour is
+ * one whole round-trip.
+ */
+export async function findEventByICalUid(
+  api: GoogleApi,
+  iCalUID: string,
+  options: { overrides?: CalendarOverrides; from?: string } = {},
+): Promise<CalendarEvent | null> {
+  const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
+  const timeMin = options.from ?? new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+  for (const calendar of calendars) {
+    const page = await api.get<{ items?: RawEvent[] }>(
+      `${BASE}/calendars/${encodeURIComponent(calendar.id)}/events`,
+      { iCalUID, singleEvents: 'true', orderBy: 'startTime', timeMin, maxResults: '1' },
+    )
+    const event = (page.items ?? []).filter(isWorthShowing)[0]
+    if (event !== undefined) return toCalendarEvent(event, calendar, {})
+  }
+  return null
+}
+
 /** Cancelled instances of a recurring series still come back (that is how a
  *  client learns they were cancelled), and an event the user declined is one
  *  they have already said they are not attending — neither belongs on an

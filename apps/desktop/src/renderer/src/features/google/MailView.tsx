@@ -63,6 +63,7 @@ import {
   SquarePen,
   Star,
   Trash2,
+  Video,
   X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -139,6 +140,23 @@ interface ThreadSummary {
   unsubscribeUrl: string | null
 }
 
+/**
+ * The meeting a thread turned out to be about. Mirrors `ThreadMeeting` in
+ * `main/google/invite.ts`.
+ *
+ * `conferenceUrl` is null for a meeting with no video call at all — which is a
+ * different answer from the whole thing being null, meaning there is no such
+ * meeting on the calendar.
+ */
+interface ThreadMeeting {
+  eventId: string
+  title: string
+  start: string
+  end: string
+  conferenceUrl: string | null
+  htmlLink: string
+}
+
 interface Thread {
   id: string
   subject: string
@@ -189,6 +207,16 @@ export function MailView() {
   const [open, setOpen] = useState<Thread | null>(null)
   const [openId, setOpenId] = useState<string | null>(null)
   const [openSummary, setOpenSummary] = useState<ThreadSummary | null>(null)
+  /**
+   * The meeting the open thread is about, once main has matched its invite to a
+   * calendar event. Null until then, and for every thread that is not a meeting.
+   *
+   * **Keyed by the thread it was asked about.** Two requests behind it, so open
+   * an invite and click something else and the answer lands after the reader has
+   * moved on — without the key, the second thread inherits the first one's Join
+   * button, pointing at a meeting it has nothing to do with.
+   */
+  const [meeting, setMeeting] = useState<(ThreadMeeting & { threadId: string }) | null>(null)
   /**
    * Where the list is pointed — a tab, Sent, or Drafts.
    *
@@ -493,10 +521,25 @@ export function MailView() {
     setOpenId(thread.id)
     setOpenSummary(thread)
     setOpen(null)
+    setMeeting(null)
     void trpc.google.thread
       .query({ id: thread.id })
       .then(setOpen)
       .catch(() => setOpenId(null))
+    // Only for a thread the list already says holds an `.ics`. Asking for every
+    // thread would be two requests per open to be told "not a meeting".
+    //
+    // A failure here is swallowed deliberately: the badge still says this is a
+    // meeting, and a banner over the reader because a *convenience* lookup
+    // failed would be louder than the thing it failed at.
+    if (thread.hasInvite) {
+      void trpc.google.meeting
+        .query({ id: thread.id })
+        .then((found) => {
+          if (found !== null) setMeeting({ ...found, threadId: thread.id })
+        })
+        .catch(() => undefined)
+    }
     // Only when there is something to change. A request per open, for a thread
     // already read, against a rate-limited API, would spend exactly what the
     // `history.list` delta was built to save.
@@ -902,6 +945,46 @@ export function MailView() {
             <>
               <div className="flex h-11 shrink-0 items-center gap-2 px-4">
                 <h3 className="min-w-0 flex-1 truncate text-sm font-medium">{open.subject}</h3>
+                {/* First, and the only button here with a clock on it: every
+                    other action in this header can wait until after the call.
+
+                    The link is NOT parsed out of the invite — main matched its
+                    `UID` to the calendar event and this is that event's
+                    `conferenceUrl`, the same one the agenda's Join uses. When
+                    the meeting has no video call, the event's own page is what
+                    is left worth reaching. */}
+                {meeting !== null && meeting.threadId === openId && (
+                  <Tooltip
+                    content={
+                      meeting.conferenceUrl !== null
+                        ? `join ${meeting.title}`
+                        : `open ${meeting.title} in Google Calendar`
+                    }
+                  >
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      className="shrink-0 gap-1"
+                      aria-label={
+                        meeting.conferenceUrl !== null
+                          ? 'join this meeting'
+                          : 'open this meeting in Google Calendar'
+                      }
+                      onClick={() =>
+                        void window.holi.openExternal(
+                          meeting.conferenceUrl ?? meeting.htmlLink,
+                        )
+                      }
+                    >
+                      {meeting.conferenceUrl !== null ? (
+                        <Video size={13} />
+                      ) : (
+                        <CalendarDays size={13} />
+                      )}
+                      {meeting.conferenceUrl !== null ? 'Join' : 'Meeting'}
+                    </Button>
+                  </Tooltip>
+                )}
                 <Tooltip content="make a task linking this thread">
                   <Button
                     variant="secondary"

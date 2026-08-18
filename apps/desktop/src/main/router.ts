@@ -47,6 +47,7 @@ import {
   type CalendarEvent,
   type CalendarOverrides,
 } from './google/calendar'
+import { resolveThreadMeeting, type ThreadMeeting } from './google/invite'
 import type { CalendarPrefsStore } from './google/calendar-prefs'
 import type { GoogleData } from './google/data'
 import {
@@ -1470,6 +1471,28 @@ export function createRouter(deps: RouterDeps) {
         return deps.googleData === undefined
           ? listThreads(googleApi(), options)
           : deps.googleData.threads(options)
+      }),
+
+    /**
+     * The meeting a thread is about, or `null`.
+     *
+     * Asked by the reader, and only for a thread whose summary says it carries
+     * an invite — so the two or three requests behind this are paid for by
+     * someone who opened a meeting, never by drawing a list. `null` is the
+     * answer for "no invite", "not on your calendar" and "already over" alike;
+     * see `resolveThreadMeeting` for why they are deliberately not
+     * distinguished.
+     *
+     * **Not cached.** A join link is exactly the kind of fact that gets
+     * rewritten when a meeting is moved, and a stale one sends the user to an
+     * empty room. Same reasoning as `agenda` above.
+     */
+    meeting: t.procedure
+      .input(fields({ id: 'string' }))
+      .query(async ({ input }): Promise<ThreadMeeting | null> => {
+        return await resolveThreadMeeting(googleApi(), input.id, {
+          overrides: await calendarOverrides(),
+        })
       }),
 
     /**

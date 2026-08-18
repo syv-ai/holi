@@ -34,6 +34,7 @@ const sendMock = vi.fn()
 const discardDraftMock = vi.fn()
 const draftMock = vi.fn()
 const draftsMock = vi.fn()
+const meetingMock = vi.fn()
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
@@ -56,6 +57,7 @@ vi.mock('../../../lib/trpc', () => ({
       discardDraft: { mutate: (input: unknown) => discardDraftMock(input) },
       draft: { query: (input: unknown) => draftMock(input) },
       drafts: { query: () => draftsMock() },
+      meeting: { query: (input: { id: string }) => meetingMock(input) },
     },
     tasks: { create: { mutate: vi.fn() } },
   },
@@ -192,6 +194,7 @@ beforeEach(() => {
   archiveMock.mockReset().mockResolvedValue({ ok: true })
   trashMock.mockReset().mockResolvedValue({ ok: true })
   categoryCountsMock.mockReset().mockResolvedValue({})
+  meetingMock.mockReset().mockResolvedValue(null)
   imageSendersMock.mockReset().mockResolvedValue([])
   allowImagesFromMock.mockReset().mockResolvedValue({ ok: true })
   forgetImageSendersMock.mockReset().mockResolvedValue({ ok: true })
@@ -411,6 +414,129 @@ test('offers an unsubscribe link for a newsletter', async () => {
   // Opened, never requested by Holi: an unsubscribe URL is a page to look at,
   // and firing it silently is a request made on the user's behalf.
   expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
+})
+
+/**
+ * Joining a meeting from the reader (item 8).
+ *
+ * The link is NOT parsed out of the `.ics`. Main matches the invite's `UID` to
+ * the calendar event Holi already has and hands back that event's
+ * `conferenceUrl` — one implementation of "where is the video call", in
+ * `calendar.ts`, rather than a second one growing on the mail side.
+ */
+const MEETING = {
+  eventId: 'e1',
+  title: 'Sprint review',
+  start: '2026-08-19T12:00:00.000Z',
+  end: '2026-08-19T13:00:00.000Z',
+  conferenceUrl: 'https://teams.microsoft.com/l/meetup-join/19%3aX/0',
+  htmlLink: 'https://calendar.google.com/event?eid=e1',
+}
+
+test('joins the meeting a thread is about', async () => {
+  withMessage({ body: 'are you free at 14:00?', html: null })
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  meetingMock.mockResolvedValue(MEETING)
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await user.click(await screen.findByRole('button', { name: /join/i }))
+
+  expect(meetingMock).toHaveBeenCalledWith({ id: 't1' })
+  expect(openExternal).toHaveBeenCalledWith(MEETING.conferenceUrl)
+})
+
+test('spends nothing looking for a meeting in a thread that has no invite', async () => {
+  withMessage({ body: 'lunch?', html: null })
+  threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  // The summary already says there is no `.ics`, so asking would be two
+  // requests to be told so.
+  expect(meetingMock).not.toHaveBeenCalled()
+  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
+})
+
+/**
+ * A meeting with no video call at all — a room booking, or a phone call. The
+ * event is still worth reaching, and "nothing to join" must not render as a
+ * Join button that opens something plausible.
+ */
+test('offers the calendar page when there is nothing to join', async () => {
+  withMessage({ body: 'in the kitchen', html: null })
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  meetingMock.mockResolvedValue({ ...MEETING, conferenceUrl: null })
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await user.click(await screen.findByRole('button', { name: /open this meeting/i }))
+
+  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
+  expect(openExternal).toHaveBeenCalledWith(MEETING.htmlLink)
+})
+
+test('says nothing when the invite is not on the calendar', async () => {
+  withMessage({ body: 'are you free at 14:00?', html: null })
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+  meetingMock.mockResolvedValue(null)
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+
+  await waitFor(() => expect(meetingMock).toHaveBeenCalled())
+  // Declined, or already over. Both are "there is nothing to join", and a
+  // button here would be a guess.
+  expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /open this meeting/i })).not.toBeInTheDocument()
+})
+
+/**
+ * The race: open an invite, then open something else before the lookup lands.
+ * Without keying the answer to the thread it was asked about, the second thread
+ * inherits the first one's Join button.
+ */
+test('does not offer one thread’s meeting on another thread', async () => {
+  readMock.mockImplementation(async ({ id }: { id: string }) => ({
+    id,
+    subject: id === 't1' ? 'Q2 budget' : 'Lunch',
+    webUrl: 'https://mail.google.com/x',
+    messages: [
+      {
+        id: `m-${id}`,
+        from: { name: 'Ada Holm', email: 'ada@syv.ai' },
+        to: [],
+        cc: [],
+        bcc: [],
+        date: '2026-08-04T09:00:00.000Z',
+        attachments: [],
+        body: 'hello',
+        html: null,
+      },
+    ],
+  }))
+  threadMock.mockResolvedValue(
+    page([
+      summary({ id: 't1', subject: 'Q2 budget', hasInvite: true }),
+      summary({ id: 't2', subject: 'Lunch', hasInvite: false }),
+    ]),
+  )
+  meetingMock.mockResolvedValue(MEETING)
+  const user = userEvent.setup()
+
+  render(<MailView />)
+  await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
+  await waitFor(() => expect(screen.getByRole('button', { name: /join/i })).toBeInTheDocument())
+  await user.click(screen.getByRole('button', { name: /Lunch/ }))
+
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument(),
+  )
 })
 
 test('loads the next page when asked', async () => {
