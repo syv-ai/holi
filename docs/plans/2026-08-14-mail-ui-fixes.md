@@ -360,18 +360,27 @@ obvious were both wrong, and the file headers say so.
       session level (`renderer/index.html` deliberately does not restrict images at all).
 - [x] Commit the guard — the standing path taking the same route as the one-off was previously a
       coincidence rather than a fact under test (`c4e1ee6`).
-- [ ] **BLOCKED — needs Nicolai.** What is left cannot be executed here: jsdom does not enforce
-      CSP, and the live account is unreachable (the dev Electron runs without a CDP port, and
-      `holi-google` gets its port and token from the agent's own environment). The remaining
-      candidate is that the message's visible images are `cid:` inline attachments — those are
-      stripped unconditionally and *cannot* come back, because Holi does not download attachment
-      bytes for display. A message carrying one remote tracking pixel plus `cid:` logos would
-      show the banner, accept the click, and still render nothing, which matches the report
-      exactly. **To settle it:** open the failing message, and check whether its image `src`
-      values start with `cid:` or with `https:`. If `cid:`, this is not a bug in the unblock —
-      it is an affordance promising something the pillar cannot do, and the fix is either to
-      resolve `cid:` references from the message's inline parts, or to stop offering the button
-      when everything blocked is inline.
+- [x] **Closed as not-reproducing, cause never identified** (2026-08-14). Nicolai reports it
+      working. Recorded rather than ticked as fixed, because **no commit in this batch touched
+      the image path** — sanitising, the frame CSP, the iframe key and the unblock atoms are all
+      untouched, and the only edit to `SandboxedHtml.tsx` was the find registry and the ⌘F
+      forwarding. So one of these is true and the file should not pretend otherwise:
+      (a) it was already correct on `main` and the report predated a rebuild — the iframe-key fix
+      landed before this session; (b) the message first tested had `cid:` inline images, which
+      are stripped unconditionally and *cannot* come back, since Holi does not download
+      attachment bytes for display — a message with one remote tracking pixel plus `cid:` logos
+      shows the banner, accepts the click and renders nothing, which fits the report exactly;
+      (c) it is intermittent.
+- **If it returns, start here.** Check whether the failing message's image `src` values begin
+      `cid:` or `https:`. `cid:` means this was never an unblock bug but an affordance promising
+      something the pillar cannot do, and the fix is to resolve `cid:` from the message's inline
+      parts or to stop offering the button when everything blocked is inline. `https:` means look
+      at the `document.write` race: a freshly-created iframe's initial `about:blank` can be
+      replaced by the browser's own async navigation after the effect has written to it, which is
+      exactly the shape of a bug that comes and goes.
+- **The failure direction is the safe one**, which is why this is closed rather than chased: the
+      symptom is remote content *not* loading after consent. Nothing here can leak a read receipt
+      the user did not agree to — the regression guard at `c4e1ee6` covers the path that would.
 
 ---
 
