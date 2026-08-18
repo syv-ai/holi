@@ -163,6 +163,17 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 
 ---
 
+## Images and other binaries
+
+**The vault is text-first *by authorship*, not by content** (D62). Any file lives in a vault as an ordinary committed file; what makes the vault text-first is that markdown is the thing you *write*, and a PDF is something it **emits** ([`pdf-export.md`](pdf-export.md)) rather than something it imports. That resolved a real contradiction: an earlier design had incoming PDFs converted to markdown on entry with the original archived to object storage, which is machinery serving a direction the work does not flow in — at Syv, rich documents are produced by the vault, not imported into it.
+
+- **Images render inline in the editor**, as a live-preview decoration like every other rendered element.
+- **A standalone image viewer** opens an image as its own tab; other binaries get a typed placeholder naming what they are, because a file the tree shows and the editor cannot open is a dead end.
+- **Non-markdown files stay out of the link graph.** They are not in `docs`, so the link-aware operations — rename, backrefs, move — remain markdown-only. An image is an asset referenced by path, not a wiki-linkable note.
+- **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one — the open question is kept in [`_phase2-pdf-docx-preview.md`](_phase2-pdf-docx-preview.md).
+
+**Rejected.** *Rendering every binary in place and retiring text-first* — makes the agent blind, since a PDF it cannot read is a document it cannot help with, and puts binary bloat in git with no authoring story. *Converting incoming PDFs/`.docx` to markdown and archiving the original* — an import pipeline and an object-storage dependency for a flow that runs the other way, and it archives away originals users may need intact. *Two co-equal representations of one document* — raises "which is truth" on every edit and every sync; markdown-as-source with PDF-as-output keeps one.
+
 ## Wiki-links & rename
 
 ### Grammar (one module, `packages/shared`)

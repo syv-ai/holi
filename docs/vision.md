@@ -18,6 +18,7 @@ An example of a shared vault (still work in progress and not refactored to work 
 - Markdown-native, path-based links. `[[folder/note.md]]` stays readable and portable — for humans and the agent.
 - A vault assistant that reads and writes the vault like you do. The agent keeps its native file tools; it's just another collaborator in the doc.
 - Each vault can have a .holi/.settings.json directory in which we store vault-level settings, and a .holi/.settings.local.json where we store local vault settings for only the user. Same pattern as is used for .claude. 
+- **The vault is text-first by *authorship*, not by content.** Any file lives in a vault as an ordinary committed file, and binaries are **assets it holds and documents it emits** — an agent drafts markdown, the vault renders a branded PDF. Nothing is converted on the way in: forcing an incoming PDF through a lossy converter serves a direction the work does not flow in.
 
 ## Product principles
 
@@ -32,10 +33,10 @@ A signed-in employee opens Holi and sees their latest used vault. They open a sh
 
 ## Beyond v1
 
-- PDF/docx preview
+Two things that were on this list have shipped and now have PRDs of their own: **Gmail + Calendar** ([`prd/google-mail-calendar.md`](prd/google-mail-calendar.md)) and **branded PDF export via Typst** ([`prd/pdf-export.md`](prd/pdf-export.md)). What remains:
+
+- PDF/docx preview in place
 - Google Drive mirror for vault documents
-- Google Gmail + Calendar sync (native to a Google-Workspace company)
-- Typst export (turn any doc into a branded syv.ai document).
 - Agent-authored HTML apps/widgets
 - An opt-in self-improvement loop scoped to personal memory.
 

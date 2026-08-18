@@ -18,6 +18,7 @@ Employees connect their **@syv.ai Gmail and Google Calendar** to Holi — read a
 - **Read**: search/list threads, read a thread; list calendars, list events (agenda), with per-calendar visibility the user controls.
 - **Choose a mailbox**: one picker holds Gmail's five tabs, All mail, **Sent** and **Drafts**. Tabs sit above a separator and the two real mailboxes below it, because a tab subdivides the inbox and a mailbox does not. Unread is a *state* and stays a separate toggle — it is orthogonal to every place, and folding it in would have made twelve entries that were really six times two.
 - **Act on mail**: mark read/unread, star, archive, trash, draft, send, reply. Trash is Gmail's trash — permanent deletion is impossible by scope and will stay that way.
+- **The list says what still needs you.** Unread carries an explicit dot, because weight alone was too quiet to scan. **`answered` means the LAST message in the thread is one the user sent** — so they have replied and are waiting on the other side. Deliberately *not* "a sent message exists somewhere in this thread", which is true forever in a long exchange and therefore says nothing about what is outstanding.
 - **Triage without opening**: right-click a thread row for the whole set. Opening a thread marks it read, so "archive this newsletter" through the reader was self-defeating.
 - **Triage several at once**: checkbox on hover, cmd-click to toggle, shift-click to extend. Bulk actions are N per-thread writes rather than a bulk endpoint, so a partial failure leaves the successes done and explains the rest.
 - **Find inside a thread**: ⌘F with a conversation open searches *that conversation* — across every message, including collapsed ones, and inside the sandboxed frames the bodies render in. ⌘F from the list still means the Gmail query.
@@ -28,6 +29,55 @@ Employees connect their **@syv.ai Gmail and Google Calendar** to Holi — read a
 - **Act on the calendar**: create, move and delete the user's *own* solo blocks (time-blocking). Events carrying attendees are refused, because changing or deleting one emails people.
 - **Link**: an email or event attaches to a **task** or **note** as a plain markdown link in the body — never frontmatter, never a `[[wiki-link]]`. `related[]` does not exist ([`tasks.md`](tasks.md)).
 - **The agent gets the same surface**, through a `holi-google` command rather than an MCP server, bounded by reversibility and gated on send ([`agent.md`](agent.md)).
+
+## The engine: one cache, and deltas over it
+
+**A mail refresh used to be `threads.list` plus one `threads.get` per thread — 26 requests for 25 threads**, nearly all of them re-downloading mail that had not changed. That number is why there is a cache at all. With `history.list` deltas on top of it, an unchanged refresh costs **one**.
+
+**A bounded last-N cache is not a mirror**, and the distinction is what keeps it compatible with "Google is the source of truth". It holds the last 500 threads for the questions actually asked, in `userData/google-cache.db`; anything past that tail is a request, and every read is checked against the connected account first. Google still decides what is true — the cache decides only what is painted before Google answers.
+
+Four properties carry it, and each exists because the obvious alternative is worse:
+
+- **`node:sqlite`, not a native module.** Built into Node 24 / Electron 43, so there is no `electron-rebuild` step and no compiled dependency in the packaging story. This is the only reason a database was affordable here.
+- **The file is unencrypted, on purpose.** SQLCipher is a native module — precisely what `node:sqlite` was chosen to avoid — and hand-encrypting columns would foreclose the FTS5 search the schema is shaped for. The protection is the OS account and full-disk encryption: what every desktop mail client relies on, and what already protects the vault's own notes sitting beside it.
+- **It lives in `userData`, not in a vault.** Mail is *account* data and a vault is a shared git repo, so caching an inbox there would push it to teammates on the next sync. (A per-vault cache was proposed; this is why it is not.)
+- **Account scope and disconnect are structural.** `useAccount(sub)` wipes everything when a different account connects, *before* any read can happen. Disconnect deletes the **file** and its `-wal`/`-shm` sidecars rather than the rows — emptying tables leaves recoverable mail on a disk the button had just promised was clean. Both hang off `googleSession.onChange` rather than the disconnect procedure, because `onChange` also fires for a **dead grant**, and a revoked connection is just as much "this is no longer yours to hold".
+
+**Rows are stored as whole JSON objects, so the schema cannot catch a type change** — a stale row parses cleanly and is simply wrong, at the render, far from the change that caused it. `SHAPE_VERSION` is the guard: bump it whenever a cached type changes, and the cache wipes. Wiping is free; that is what being a cache means.
+
+### Two rules that both come from one idea
+
+**A cache entry is an answer to a question, and the question has to be written down completely.** Both of the defects this pillar had here produced a *confidently wrong* list rather than a stale one, which is the failure mode a cache is supposed to make impossible:
+
+- **The key carries every option that narrows the list.** It was `query|category` while `unread` also composed into the Gmail query, so both lists shared one entry and were wrong in both directions: a warm cache served the whole inbox for "unread only", and a cold unread-only fetch wrote its narrower answer under the plain inbox's key.
+- **A departure is not a deletion, and not a refetch.** `history.list` reports archive as `labelsRemoved: ['INBOX']` and trash as `labelsAdded: ['TRASH']` — neither is `messagesDeleted`, which was the only thing that took a thread out of a cached list. So an archived thread was refetched (`threads.get` still answers; it is in All Mail), found absent from the cached list, and re-added as **new mail, at the top**, where it stuck: the merged list was written back and the cursor advanced, so no later delta mentioned it again. There is now a third bucket, `left`, applied to the *added* branch as well as the kept one — filtering only the latter is exactly what let it through. Both directions are handled (an `INBOX` addition is an un-archive), and for an explicit **search** a departure degrades to a refetch, because a search may still legitimately match an archived thread.
+
+**The history cursor is per list key, not mailbox-wide.** Gmail's cursor is mailbox-wide, but each cached list is written at a different moment — so one shared cursor asks "what changed since 200?" against a list last written at 100 and silently loses everything between.
+
+### The two processes take opposite orders, deliberately
+
+- **The renderer paints first and reverts on refusal.** A revert costs a re-render and nothing is persisted.
+- **Main calls Google first and touches the cache only on success.** A cached write Google refused is the one divergence a delta sync can never repair: history reports what changed *at Gmail*, and for a refused request nothing did — so no event exists to correct it and the wrong value survives every restart.
+
+That asymmetry is what makes optimism affordable in the renderer and unaffordable on disk. The optimistic undo is guarded by a generation counter: restoring a wholesale snapshot after the list has moved on would discard a concurrent write or a landed refresh, and when it has moved the recovery is to re-read rather than to invent an undo.
+
+**Anything acting on a thread goes through the one optimistic path.** A second path is not acceptable — it is how two views end up disagreeing with neither obviously wrong.
+
+**The agent is deliberately outside the cache, and the types enforce it.** `createGoogleOpsServer` is handed read functions that take no cache parameter and therefore *cannot* read one — so "the agent asks for current data" holds by construction rather than by remembering it while editing the wiring. Its *writes* are the opposite and for the same reason: it calls the identical bound method the router calls, so there is no second cache path and no stale-until-next-sync window.
+
+**Counts are counted, never estimated.** The obvious source is `resultSizeEstimate`, which is an estimate. The exact-looking alternative, `labels.get` on `CATEGORY_PROMOTIONS`, counts the **whole mailbox** including archived mail — a gap this app widens, since it can archive without reading. So each tab is `threads.list` scoped `in:inbox category:x is:unread`, ids only, counted, `500+` past one page. Five requests, spent only when the picker is actually opened.
+
+**`@`-completion ranks the local corpus first.** Senders across loaded threads carry a frequency count; contacts from the People API arrive at zero and sit behind them. The local corpus is deliberately **not** replaced — it is what keeps completion working when the contacts request is cold, refused, or the grant predates the scope, and in the common case "who actually writes to you" is the better answer anyway.
+
+## Calendar: whose day it is, and why it has no incremental sync
+
+**The default is calendars you own**, not calendars Google marks `selected`. Honouring `selected` was not enough: a Workspace account is subscribed to colleagues, rooms and birthdays, all `selected`, because in Google Calendar they live in separate columns. Holi showed every one of them as though they were the user's own day, and *"what am I doing today"* is not answerable from a list that also contains what four other people are doing. Subscribed calendars start off and a picker switches them on.
+
+- **Overrides are stored per calendar, not as an enabled set**, so a calendar created later follows the default rule instead of arriving silently off.
+- **That store lives in main on purpose**: the agent's `holi-google agenda` resolves through it too. In the renderer, switching a colleague off would have hidden them from the panel while the agent kept reading their day.
+- **Events carry `mine`**, and the seeded skill tells the agent to read it before describing "your" schedule — *"you have four meetings tomorrow"* when three are Jane's is the failure that field exists to prevent.
+
+**Calendar gets no incremental sync, and that is a refusal rather than an omission.** `events.list`'s `syncToken` **cannot be combined with `timeMin`/`timeMax`** — Google's reference lists both among the parameters that cannot accompany `nextSyncToken`, alongside `iCalUID`, `orderBy`, `q` and `updatedMin`; an expired token returns 410. So an incrementally-synced agenda would mean mirroring **every event at every date, per calendar**, to serve a view that shows seven days. Refused. Calendar gets a cache for *paint* only: a separate `agendaCached` procedure the panel draws immediately and replaces the moment the live fetch lands — two procedures rather than one stale-while-revalidate answer, because there is no push channel to tell the renderer the second one arrived. **Quoted from the docs rather than recalled; do not re-derive it.**
 
 ## How a message is rendered — the part that is hostile input
 
@@ -91,6 +141,8 @@ Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP
 ## The standing failure mode of this pillar
 **Every response shape in every test is a fake written from documentation**, and *a test that asserts what the code assumes, rather than what the external system does, passes while the feature is broken.* That has now happened four times — `missingScopes` seeded with the request form of the scopes, `otherContacts` needing `readMask` rather than `personFields`, the same call needing its own scope, and a permission rule written against a command string nobody compared to the invocation. Treat any new Google call as broken until it has run against a real account once, and write fakes that **refuse the way Google refuses**.
 
+**A shape worth remembering: the silent 200.** `metadataHeaders` was sent as one comma-joined value; Gmail read it as a single header *name*, matched nothing, and answered **200 with no headers** — so every thread rendered as "(no subject)" from an empty sender. Nothing errored and no field was malformed; the data was simply absent. An API that answers 200 to a request it did not understand is the reason "the call succeeded" is not the same as "the call did what you meant".
+
 **What has actually run, as of 2026-08-14.** Proven in real use: **mail read** end to end — loopback + PKCE, token refresh, the thread list, opening a thread, the sanitised reader, search, categories and the `history.list` delta — the **four triage writes** (mark read, star, archive, trash), the **calendar agenda**, and the **People address book** — `@`-completion in the mail search field returns real contacts, so `listContacts`, its `readMask` and `contacts.other.readonly` are all exercised. That is a bigger claim than it looks: triage working means `GoogleApi.post`, `modifyThread`, the trash endpoint and `googleData`'s Google-first write ordering are all real rather than assumed.
 
 **The outbound half is now proven too, 2026-08-14.** The agent drafted, sent and replied from a real vault, and the delivered message's raw source was read rather than trusted: `References` carried the whole chain oldest-first with `In-Reply-To` on the last of them, and **the reply threaded**. That is the assertion this pillar had been deferring — with `In-Reply-To` alone a reply sends fine, returns an id, and starts a new conversation, and nothing in the response says so. `buildRfc822`, `messages.send` and `drafts.create` are therefore real, and `X-Holi-Source: markdown` was present in the delivered headers. The send gate fires; there is **no "don't ask again" affordance** on a hook-driven `ask`, so the opt-out it was designed to survive cannot be reached at all.
@@ -100,6 +152,18 @@ Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP
 **A wart the pass found, fixed the same day.** `holi-google draft` then `holi-google send` produced two messages — `send` composed afresh rather than sending the draft, orphaning it. **`send --draft <draftId>`** now routes to `drafts.send`, the same call the composer uses, so Gmail deletes the draft as it sends. A draft id and composed fields are alternatives rather than a merge; the draft wins outright, because taking half of each is how a send goes somewhere nobody chose.
 
 *The two paragraphs above replace a blanket "nothing in this repo has ever talked to Google", which was true when it was written and had survived into four documents after it stopped being true — the pillar's own failure mode applied to its own prose.*
+
+## Rejected — the alternatives, so nobody re-proposes them
+
+**Auth and reach.** *Google's device flow* — not approved for the sensitive/restricted scopes; a verification dead end. *Each consumer refreshing its own token* — refresh tokens rotate on use, so two independent refreshers race and invalidate each other; main single-flights instead. *An internal Workspace-only OAuth app* — erases verification but bakes "@syv.ai only" into the product. *An MCP server for the agent* — reintroduces a process lifecycle and a handshake to deliver what a documented command returning JSON already delivers; see [`agent.md`](agent.md) §Tool surface.
+
+**Storage.** *Persisting mail to disk* — originally rejected as contradicting "Google is the source of truth", then **overturned**: a bounded last-N cache is not a mirror, and 26 requests per refresh was the cost of purity. *A per-vault cache* — proposed, and refused: mail is account data and a vault is a shared git repo. *Encrypting the cache* — SQLCipher is the native module `node:sqlite` was chosen to avoid, and column encryption forecloses FTS5. *Emptying the tables on disconnect* — leaves recoverable mail on a disk the button promised was clean.
+
+**Writes.** *Mark-read alone* — the same consent screen and CASA tier buys the whole triage surface, and splitting it spends the user's attention twice for nothing. *Leaving mail read-only and being honest about it* — offered and declined: the bold state is what an inbox is scanned by, and a reader that never clears it makes the list wrong for anyone using both Holi and Gmail. *Optimistic cache writes in main* — the one divergence no later sync can find. *Patching only the visible list* — two views disagreeing, with neither obviously wrong. *A `TRASH` label via `modify`* — answers 200 and trashes nothing, which is why trash has its own endpoint and its own test asserting the body carries no such label. *Inverting every write to undo it precisely* — "unarchive" is not expressible, so the snapshot stays, guarded.
+
+**Reading and rendering.** *Extracting mail as plain text instead of sanitising HTML* — argued during the build on the grounds that it removes the XSS and tracking class by construction, and **overruled**: a mail reader that cannot render mail is not a mail reader, and "we removed the feature so we would not have to secure it" is not a security win. *Rich-text authoring for the composer* — a second document model and a lossy round-trip, to satisfy a request that was about *seeing* the HTML. *A local draft store* — two places a draft can live. *Per-sender only, or per-message only, for images* — the two answer different questions. *`labels.get` for tab counts* — one request instead of five, and the wrong number, because it counts archived mail too.
+
+**Linking.** *A frontmatter link field* — the `related[]` ghost [`tasks.md`](tasks.md) killed. A link is a plain markdown link in the file body; the chip is render-time URL detection, computed rather than stored.
 
 ## Dependencies
 [`auth-identity.md`](auth-identity.md) (a second OAuth provider alongside GitHub, keychain token storage, and the scope-widening trap), [`agent.md`](agent.md) (the `holi-google` command surface and the send gate — *not* an MCP surface), [`tasks.md`](tasks.md) (linking an email/event to a task; create-from-event).
