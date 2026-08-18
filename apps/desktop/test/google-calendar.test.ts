@@ -471,6 +471,83 @@ describe('listAgenda', () => {
     expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBe('https://meet.google.com/abc')
   })
 
+  /**
+   * The case that made this fallback necessary: a Teams meeting organised in
+   * Outlook and synced into Google Calendar.
+   *
+   * Google populates `conferenceData` for conferences *it* created (Meet, or an
+   * add-on that writes the field). A Teams invite that arrives over the wire
+   * from Exchange has neither `conferenceData` nor `hangoutLink` — the join link
+   * is in the invite's own body — so the agenda's Join button, which asks only
+   * for `conferenceUrl`, was silently absent from exactly the meetings a Teams
+   * shop has all day.
+   */
+  it('finds the join link in the body of a Teams invite Google did not create', async () => {
+    const description = [
+      '<div>________________________________________________________________________________</div>',
+      '<div>Microsoft Teams Need help? <a href="https://aka.ms/JoinTeamsMeeting">Join help</a></div>',
+      '<div><a href="https://teams.microsoft.com/l/meetup-join/19%3ameeting_YjQ%40thread.v2/0',
+      '?context=%7b%22Tid%22%3a%22aaa%22%2c%22Oid%22%3a%22bbb%22%7d">Join the meeting now</a></div>',
+      '<div>Meeting ID: 123 456 789 012</div>',
+      '<div><a href="https://www.microsoft.com/en-us/microsoft-teams/">Learn More</a></div>',
+    ].join('')
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('t', 'Sprint review', '2026-08-04T09:00:00Z', {
+            location: 'Microsoft Teams Meeting',
+            description,
+          }),
+        ],
+      },
+    })
+
+    // The meetup-join link, and none of the three other Microsoft URLs in the
+    // same body — which is why this matches on the shape of a join link rather
+    // than taking the first `https://` it finds.
+    expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBe(
+      'https://teams.microsoft.com/l/meetup-join/19%3ameeting_YjQ%40thread.v2/0' +
+        '?context=%7b%22Tid%22%3a%22aaa%22%2c%22Oid%22%3a%22bbb%22%7d',
+    )
+  })
+
+  it('reads no join link out of a body that only links to help pages', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('t', 'Coffee', '2026-08-04T09:00:00Z', {
+            location: 'Kitchen',
+            description: 'Notes: https://docs.google.com/document/d/1 and https://aka.ms/whatever',
+          }),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBeNull()
+  })
+
+  it('prefers conferenceData over a link in the body', async () => {
+    const { api } = googleApi({
+      [CAL_LIST]: { items: [{ id: 'primary', summary: 'Me', accessRole: 'owner' }] },
+      [eventsUrl('primary')]: {
+        items: [
+          timed('t', 'Sync', '2026-08-04T09:00:00Z', {
+            conferenceData: {
+              entryPoints: [{ entryPointType: 'video', uri: 'https://syv.zoom.us/j/999' }],
+            },
+            // A stale link left in the body of a rescheduled invite. Google's
+            // own field is the one that gets rewritten; the prose does not.
+            description: 'Old room: https://teams.microsoft.com/l/meetup-join/19%3aold/0',
+          }),
+        ],
+      },
+    })
+
+    expect((await listAgenda(api, WINDOW))[0]!.conferenceUrl).toBe('https://syv.zoom.us/j/999')
+  })
+
   it('lets a per-event colour override the calendar colour', async () => {
     const { api } = googleApi({
       [CAL_LIST]: {

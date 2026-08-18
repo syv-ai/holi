@@ -75,8 +75,9 @@ export interface CalendarEvent {
   /** People, not rooms — a booked room is an `attendee` to Google. */
   attendeeCount: number
   organizer: string | null
-  /** The conferenceData video entry point, falling back to `hangoutLink`.
-   *  Meet, Zoom or Teams — `hangoutLink` alone is Meet-only. */
+  /** Meet, Zoom or Teams. `conferenceData`'s video entry point, then
+   *  `hangoutLink` (Meet-only), then a join link recognised in the invite's own
+   *  body — see `conferenceUrlOf` for why the third is needed. */
   conferenceUrl: string | null
   recurring: boolean
 }
@@ -294,13 +295,75 @@ function asRsvp(status: string | undefined): RsvpStatus | null {
   return RSVP_STATUSES.find((s) => s === status) ?? null
 }
 
-/** The video link, whoever hosts it. `hangoutLink` is Meet-only, so it is the
- *  fallback rather than the answer — a Zoom or Teams meeting has no hangoutLink
- *  at all and used to lose its join link entirely. */
+/**
+ * Join links Holi will follow out of an invite's prose, recognised by the shape
+ * of the URL.
+ *
+ * An allowlist, and deliberately not "the first `https://` in the body". A real
+ * Teams invite also carries `aka.ms/JoinTeamsMeeting`, a "Learn More" page and
+ * often a dial-in lookup — any of which wins a first-URL race and sends the user
+ * to a help page instead of the meeting.
+ *
+ * Scoped to the three the type already promises: Meet, Zoom, Teams. Adding a
+ * host here is cheap; guessing at one is not, because the failure is silent — a
+ * Join button that opens the wrong page.
+ */
+const JOIN_LINKS: RegExp[] = [
+  /^https:\/\/teams\.microsoft\.(?:com|us)\/l\/meetup-join\//i,
+  /^https:\/\/teams\.live\.com\/meet\//i,
+  /^https:\/\/[\w.-]*zoom\.us\/(?:j|w|my)\//i,
+  /^https:\/\/meet\.google\.com\/[a-z]{3}-/i,
+]
+
+/**
+ * The first recognised join link in a block of text, or null.
+ *
+ * The text is an invite body, which Google hands over as HTML, so a URL arrives
+ * inside `href="…"` with its ampersands escaped — hence both the delimiter set
+ * and the `&amp;` unescape. Trailing sentence punctuation is trimmed, because a
+ * link written into prose ends up with the full stop attached.
+ */
+function joinLinkIn(text: string | undefined): string | null {
+  if (text === undefined) return null
+  for (const raw of text.match(/https:\/\/[^\s"'<>]+/gi) ?? []) {
+    const url = raw.replace(/&amp;/gi, '&').replace(/[.,;:)]+$/, '')
+    if (JOIN_LINKS.some((pattern) => pattern.test(url))) return url
+  }
+  return null
+}
+
+/**
+ * The video link, whoever hosts it.
+ *
+ * Four sources, in descending order of how much Google itself vouches for them:
+ *
+ * 1. `conferenceData`'s video entry point — the structured answer.
+ * 2. `hangoutLink` — Meet-only, so a fallback rather than the answer.
+ * 3. the invite's own body, then its location.
+ *
+ * (3) exists because Google only fills `conferenceData` for conferences *it*
+ * created — Meet, or an add-on that writes the field. A Teams meeting organised
+ * in Outlook and synced in over Exchange has neither structured field, and its
+ * join link lives in the body as an anchor. Without this, the agenda's Join
+ * button was silently missing from exactly the meetings a Teams shop has all
+ * day. `location` is second because "Microsoft Teams Meeting" is what it usually
+ * says, and on the occasions it holds the URL the body holds it too.
+ *
+ * Google's structured fields win over the prose deliberately: when a meeting is
+ * moved, `conferenceData` is rewritten and a link left in the description is
+ * not.
+ */
 function conferenceUrlOf(event: RawEvent): string | null {
   const video = event.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')
-  return video?.uri ?? event.hangoutLink ?? null
+  return (
+    video?.uri ??
+    event.hangoutLink ??
+    joinLinkIn(event.description) ??
+    joinLinkIn(event.location) ??
+    null
+  )
 }
+
 
 function toCalendarEvent(
   event: RawEvent,
