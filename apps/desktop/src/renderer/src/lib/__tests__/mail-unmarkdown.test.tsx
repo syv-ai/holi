@@ -66,6 +66,92 @@ describe('mailHtmlToMarkdown', () => {
     expect(markdown).toContain('the actual message')
   })
 
+  /**
+   * The email that actually did it, trimmed but not simplified.
+   *
+   * The hand-built fixture above is the *shape*; this is the thing itself — an
+   * MJML build (Claude.ai's sign-in mail), which is what a real inbox is full
+   * of. Every property that made the bug possible is kept: sibling section
+   * tables at the top level, four levels of `role="presentation"` nesting,
+   * `font-size:0px` spacer cells, a button that is an `<a>` inside a `<p>`
+   * inside a `bgcolor` cell, a two-column footer, and — the whole reason the
+   * plugin's fallback fired — no `<th>` anywhere in the document.
+   *
+   * A reply sent from the build between `0f57f6f` and `2b3098f` put this
+   * message's raw markup into the mail as text, starting `<table align="center"
+   * border="0" cellpadding="0"`, which is what the recipient received. The
+   * synthetic fixture would not have caught it any better than it did; what
+   * this adds is that the regression is now pinned to real markup rather than
+   * to markup written by someone who already knew the answer.
+   */
+  it('converts a real MJML newsletter to prose, not markup', () => {
+    const mjml =
+      '<table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" ' +
+      'style="width:100%;"><tbody><tr><td ' +
+      'style="direction:ltr;font-size:0px;padding:20px 0;text-align:center;"><div ' +
+      'class="mj-column-per-100 mj-outlook-group-fix" ' +
+      'style="font-size:0px;display:inline-block;width:100%;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td ' +
+      'align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table ' +
+      'border="0" cellpadding="0" cellspacing="0" role="presentation" ' +
+      'style="border-collapse:collapse;"><tbody><tr><td style="width:112px;"><img alt="Claude" ' +
+      'src="https://claude.test/logo.png" width="112" height="33"></td></tr></tbody></table>' +
+      '</td></tr></tbody></table></div></td></tr></table><table align="center" border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" style="width:100%;"><tbody><tr><td ' +
+      'style="direction:ltr;font-size:0px;padding:20px 0;text-align:center;"><div ' +
+      'class="mj-column-per-100 mj-outlook-group-fix" ' +
+      'style="font-size:0px;display:inline-block;width:100%;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td ' +
+      'align="center" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div ' +
+      'style="font-size: 28px; font-weight: bold; color: #141413;">Sign in to Claude.ai</div>' +
+      '</td></tr><tr><td align="center" ' +
+      'style="font-size:0px;padding:10px 25px;word-break:break-word;"><div ' +
+      'style="font-size: 18px; color: #141413;">Click the button below to finish signing ' +
+      'in.</div></td></tr><tr><td align="center" class="layout-btn" ' +
+      'style="font-size:0px;padding:10px 25px;word-break:break-word;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" style="border-collapse:separate;">' +
+      '<tbody><tr><td align="center" bgcolor="#141413" role="presentation" ' +
+      'style="border-radius:10px;background:#141413;" valign="middle"><p ' +
+      'style="display: inline-block; background: #141413; color: #ffffff; margin: 0;"><a ' +
+      'href="https://claude.test/magic-link" style="color: white; padding: 14px 36px;">Sign ' +
+      'in</a></p></td></tr></tbody></table></td></tr></tbody></table></div></td></tr></table>' +
+      '<table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" ' +
+      'style="width:100%;"><tbody><tr><td ' +
+      'style="direction:ltr;font-size:0px;padding:20px 0;text-align:center;"><div ' +
+      'class="mj-column-per-65 mj-outlook-group-fix" ' +
+      'style="font-size:0px;display:inline-block;width:100%;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td ' +
+      'align="left" style="font-size:0px;padding:10px 25px;word-break:break-word;"><div ' +
+      'style="font-size:14px;color:#7B7974;">Anthropic, PBC</div></td></tr></tbody></table>' +
+      '</div><div class="mj-column-per-35 mj-outlook-group-fix" ' +
+      'style="font-size:0px;display:inline-block;width:100%;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" width="100%"><tbody><tr><td ' +
+      'align="right" style="font-size:0px;padding:10px 25px;word-break:break-word;"><table ' +
+      'align="right" border="0" cellpadding="0" cellspacing="0" role="presentation" ' +
+      'style="display:inline-table;"><tbody><tr><td style="padding:0 6px;"><table border="0" ' +
+      'cellpadding="0" cellspacing="0" role="presentation" style="width:20px;"><tbody><tr><td ' +
+      'style="font-size:0;height:20px;width:20px;"><a href="https://social.test/x"><img alt="" ' +
+      'height="20" src="https://claude.test/x.png" width="20"></a></td></tr></tbody></table>' +
+      '</td></tr></tbody></table></td></tr></tbody></table></div></td></tr></table>'
+
+    const markdown = mailHtmlToMarkdown(mjml)
+
+    // Not one byte of the layout survives as markup.
+    expect(markdown).not.toContain('<table')
+    expect(markdown).not.toContain('cellpadding')
+    expect(markdown).not.toContain('role="presentation"')
+    expect(markdown).not.toContain('mj-column')
+    // The message does.
+    expect(markdown).toContain('Sign in to Claude.ai')
+    expect(markdown).toContain('Click the button below to finish signing in.')
+    expect(markdown).toContain('[Sign in](https://claude.test/magic-link)')
+    expect(markdown).toContain('Anthropic, PBC')
+    // The two footer columns are separate blocks. `\s*` would be wrong here —
+    // the blank line between them IS the separation; what must not happen is
+    // the two ending up on one line.
+    expect(markdown).not.toMatch(/Anthropic, PBC[^\n]*!\[/)
+  })
+
   it('keeps the cells of a layout table as separate blocks', () => {
     // Unwrapping must not run two unrelated cells together into one line —
     // a two-column layout is two things, not one sentence.
