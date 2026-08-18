@@ -88,6 +88,13 @@ export interface MailThreadSummary {
    *  sends. The `mailto:` form is ignored — acting on it would mean composing
    *  mail on the user's behalf, which the read-only scope forbids anyway. */
   unsubscribeUrl: string | null
+  /**
+   * A calendar invite (`.ics`) is attached somewhere in this thread.
+   *
+   * The one field here that does **not** come from the thread's own metadata —
+   * see `fetchInviteIds` for why it cannot, and what is asked instead.
+   */
+  hasInvite: boolean
 }
 
 export interface MailAttachment {
@@ -583,9 +590,59 @@ export async function fetchThreadSummaries(
   )
 
   const names = await labelNames
-  return threads
+  const summaries = threads
     .map((thread) => summarize(thread, names))
-    .filter((t): t is MailThreadSummary => t !== null)
+    .filter((t): t is Omit<MailThreadSummary, 'hasInvite'> => t !== null)
+
+  const invites = await fetchInviteIds(api, summaries)
+  return summaries.map((summary) => ({ ...summary, hasInvite: invites.has(summary.id) }))
+}
+
+/**
+ * Which of these threads carry a calendar invite.
+ *
+ * **The question is asked backwards, deliberately.** A thread's attachments are
+ * not knowable from the summary fetch: it asks for `format: 'metadata'`, which
+ * returns headers and no `payload.parts`, and `attachmentsOf` reads parts.
+ * `format: 'full'` would answer it — by downloading every body in the page to
+ * draw one icon, which is the N+1 this module exists to avoid. So instead of
+ * asking each thread what it holds, Gmail is asked once which threads hold an
+ * `.ics`, and the answer is intersected with the page in hand. Same move as
+ * `fetchCategoryUnread`: a scoped list rather than a fatter per-thread fetch.
+ *
+ * **The date window is what makes the intersection sound.** `threads.list` is
+ * newest-first across the whole mailbox, so unbounded this answers "the most
+ * recent threads with an .ics" — intersect that with a page from three years ago
+ * and it matches nothing, silently dropping every badge. The window is taken
+ * from the dates of the threads being intersected, with a day of slack either
+ * side because Gmail reads `after:`/`before:` in the account's own timezone.
+ *
+ * No mailbox term: the ids may have come from the inbox, from Sent or from a
+ * search, and a superset costs nothing when the result is intersected anyway.
+ * Gmail excludes spam and trash from an unqualified search on its own.
+ */
+async function fetchInviteIds(
+  api: GoogleApi,
+  summaries: Omit<MailThreadSummary, 'hasInvite'>[],
+): Promise<Set<string>> {
+  if (summaries.length === 0) return new Set()
+
+  const stamps = summaries.map((s) => Date.parse(s.date)).filter((ms) => !Number.isNaN(ms))
+  if (stamps.length === 0) return new Set()
+  const DAY = 86400
+  const after = Math.floor(Math.min(...stamps) / 1000) - DAY
+  const before = Math.ceil(Math.max(...stamps) / 1000) + DAY
+
+  const page = await api.get<{ threads?: { id?: string }[] }>(`${BASE}/threads`, {
+    q: `has:attachment filename:ics after:${after} before:${before}`,
+    // Gmail's ceiling, and ids are all that comes back — a list costs the same
+    // quota whether it answers one or five hundred. Deliberately far above any
+    // real window rather than a cap that would silently lose badges.
+    maxResults: '500',
+  })
+
+  const ids = new Set((page.threads ?? []).map((t) => t.id))
+  return new Set(summaries.map((s) => s.id).filter((id) => ids.has(id)))
 }
 
 /** The user's own query, the category tab and the unread filter, in Gmail's one
@@ -659,7 +716,12 @@ export function unsubscribeUrlOf(header: string | null): string | null {
   return null
 }
 
-function summarize(thread: RawThread, labelNames: Map<string, string>): MailThreadSummary | null {
+/** Everything derivable from the metadata fetch — which is everything except
+ *  `hasInvite`, whose absence here is the point. */
+function summarize(
+  thread: RawThread,
+  labelNames: Map<string, string>,
+): Omit<MailThreadSummary, 'hasInvite'> | null {
   const messages = thread.messages ?? []
   const first = messages[0]
   const last = messages[messages.length - 1]

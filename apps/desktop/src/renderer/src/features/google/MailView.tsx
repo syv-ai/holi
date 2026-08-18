@@ -45,6 +45,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
  */
 import {
   Archive,
+  CalendarDays,
   ChevronDown,
   ChevronRight,
   ExternalLink,
@@ -130,6 +131,9 @@ interface ThreadSummary {
   /** An unsent draft sits in this thread. */
   hasDraft: boolean
   category: MailCategory | null
+  /** A calendar invite is attached somewhere in the thread — resolved in main by
+   *  one scoped query, not by inflating the summary fetch. See `fetchInviteIds`. */
+  hasInvite: boolean
   /** User label names, already resolved in main. */
   labels: string[]
   unsubscribeUrl: string | null
@@ -1702,6 +1706,16 @@ function ThreadRow({
           >
             {thread.from.name}
           </span>
+          {/* A meeting, not a message. The distinction the list could not make
+              before: "Ada wrote to you" and "Ada expects you at 14:00" looked
+              identical, and the second is the one with a deadline on it. */}
+          {thread.hasInvite && (
+            <CalendarDays
+              size={11}
+              className="shrink-0 self-center text-muted-foreground"
+              aria-label="meeting invite"
+            />
+          )}
           {thread.starred && (
             <Star size={11} className="shrink-0 self-center text-muted-foreground" aria-label="starred" />
           )}

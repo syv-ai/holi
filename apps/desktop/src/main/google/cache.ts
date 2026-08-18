@@ -92,8 +92,14 @@ export interface GoogleCache {
  * written before it is a question this build no longer asks. The rows would
  * never be read again and would sit on disk until the account changed — wiping
  * is both free and the only way the old keys ever leave.
+ *
+ * `4` is `MailThreadSummary.hasInvite`, and with it every cached `CalendarEvent`
+ * whose `conferenceUrl` predates the join-link fallback. Both are the same
+ * failure the version exists to prevent: the old row parses cleanly and is
+ * simply missing something the UI now draws, so a Teams meeting would keep
+ * showing no Join and an invite no badge until the cache happened to turn over.
  */
-const SHAPE_VERSION = '3'
+const SHAPE_VERSION = '4'
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta (

@@ -57,21 +57,32 @@ function queryParam(url: string): string {
   return new URL(url).searchParams.get('q') ?? ''
 }
 
-/** A fake Gmail that answers threads.list, threads.get and labels.list. */
+/**
+ * A fake Gmail that answers threads.list, threads.get and labels.list.
+ *
+ * `invites` is the answer to the *second* threads.list — the `filename:ics`
+ * question `fetchThreadSummaries` asks to find calendar invites. It has to be
+ * routed separately from `list`, because answering both from one array would
+ * make every thread an invite and the intersection would test nothing.
+ */
 function gmail(
   list: { id: string }[],
   threads: Record<string, unknown>,
   labels: RawLabel[] = [],
   nextPageToken?: string,
+  invites: { id: string }[] = [],
 ) {
   const seen: string[] = []
   const fetchImpl = vi.fn(async (url: string) => {
     seen.push(url)
     const path = new URL(url).pathname
+    const isIcs = queryParam(url).includes('filename:ics')
     const body = path.endsWith('/labels')
       ? { labels }
       : path.endsWith('/threads')
-        ? { threads: list, nextPageToken }
+        ? isIcs
+          ? { threads: invites }
+          : { threads: list, nextPageToken }
         : threads[path.split('/').pop()!] ?? {}
     return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
   }) as unknown as typeof globalThis.fetch
@@ -255,6 +266,76 @@ describe('listThreads', () => {
     const second = gmail([{ id: 't1' }], { t1: thread })
     await listThreads(second.api, { query: 'from:x is:unread' })
     expect(new URL(second.seen[0]!).searchParams.get('q')).toBe('from:x is:unread')
+  })
+
+  /**
+   * The meeting badge (item 8).
+   *
+   * A thread's attachments are NOT knowable from the summary fetch: it asks for
+   * `format: 'metadata'`, which returns headers and no `payload.parts`, and
+   * `attachmentsOf` reads parts. Asking for `format: 'full'` would download
+   * every body in the page to draw one icon — the exact N+1 this module exists
+   * to avoid. So the question is turned around: Gmail is asked which threads
+   * hold an `.ics`, once, and the answer is intersected with the page.
+   */
+  it('marks the threads holding a calendar invite, and only those', async () => {
+    const second = { ...thread, id: 't2' }
+    const { api } = gmail([{ id: 't1' }, { id: 't2' }], { t1: thread, t2: second }, [], undefined, [
+      { id: 't2' },
+    ])
+
+    const page = await listThreads(api)
+
+    expect(page.threads.map((t) => [t.id, t.hasInvite])).toEqual([
+      ['t1', false],
+      ['t2', true],
+    ])
+  })
+
+  it('asks one scoped question about invites, without inflating the per-thread fetch', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread }, [], undefined, [{ id: 't1' }])
+
+    await listThreads(api)
+
+    const lists = seen.filter((u) => new URL(u).pathname.endsWith('/threads'))
+    expect(lists).toHaveLength(2)
+    expect(queryParam(lists[1]!)).toContain('filename:ics')
+    // The whole point: every thread is still fetched at metadata detail.
+    const gets = seen.filter((u) => /\/threads\/t1$/.test(new URL(u).pathname))
+    expect(gets).toHaveLength(1)
+    expect(new URL(gets[0]!).searchParams.get('format')).toBe('metadata')
+  })
+
+  /**
+   * The silently-wrong case, and the reason this is not just `filename:ics`.
+   *
+   * `threads.list` is newest-first over the whole mailbox. Unbounded, the invite
+   * question answers "the most recent threads with an .ics" — so scrolling back
+   * to a page from 2001 would intersect it against this year's invites, match
+   * nothing, and drop every badge. The window comes from the dates of the very
+   * threads being intersected.
+   */
+  it('bounds the invite question to the dates of the threads it is intersecting', async () => {
+    const { api, seen } = gmail([{ id: 't1' }], { t1: thread }, [], undefined, [{ id: 't1' }])
+
+    await listThreads(api)
+
+    const q = queryParam(seen.filter((u) => new URL(u).pathname.endsWith('/threads'))[1]!)
+    // The fixture's newest message is epoch ms 1000000060000 — 2001-09-09.
+    const after = Number(/after:(\d+)/.exec(q)![1])
+    const before = Number(/before:(\d+)/.exec(q)![1])
+    expect(after).toBeLessThan(1000000000)
+    expect(before).toBeGreaterThan(1000000060)
+  })
+
+  it('asks nothing about invites when there is nothing to intersect', async () => {
+    const { api, seen } = gmail([], {})
+
+    const page = await listThreads(api)
+
+    expect(page.threads).toEqual([])
+    // One list, and no second question about a page that has no threads in it.
+    expect(seen.filter((u) => new URL(u).pathname.endsWith('/threads'))).toHaveLength(1)
   })
 
   it('takes the subject from the first message and the sender from the last', async () => {

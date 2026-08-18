@@ -89,6 +89,7 @@ function summary(overrides: Record<string, unknown> = {}) {
     hasDraft: false,
     category: null,
     labels: [],
+    hasInvite: false,
     unsubscribeUrl: null,
     ...overrides,
   }
@@ -362,6 +363,31 @@ test('says nothing about the tab for Primary, and nothing when there is no tab',
 
   expect(await screen.findByText('Q2 budget')).toBeInTheDocument()
   expect(screen.queryByText('Primary')).not.toBeInTheDocument()
+})
+
+/**
+ * The meeting badge (item 8).
+ *
+ * A thread with an `.ics` on it is a meeting, and until now the list said
+ * nothing about the difference between "Ada wrote to you" and "Ada is expecting
+ * you at 14:00". `hasInvite` is resolved in main by one scoped query — see
+ * `fetchInviteIds` — so the row only has to draw it.
+ */
+test('marks a thread carrying a calendar invite', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
+
+  render(<MailView />)
+
+  expect(await screen.findByLabelText('meeting invite')).toBeInTheDocument()
+})
+
+test('says nothing about meetings on a thread that is not one', async () => {
+  threadMock.mockResolvedValue(page([summary({ hasInvite: false })]))
+
+  render(<MailView />)
+
+  expect(await screen.findByText('Q2 budget')).toBeInTheDocument()
+  expect(screen.queryByLabelText('meeting invite')).not.toBeInTheDocument()
 })
 
 test('shows user labels as chips', async () => {
