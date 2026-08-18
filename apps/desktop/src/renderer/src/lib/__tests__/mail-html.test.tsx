@@ -95,17 +95,22 @@ describe('sanitizeMailHtml — embedding and exfiltration', () => {
 })
 
 describe('sanitizeMailHtml — styling', () => {
-  it('drops a <style> block, frame or no frame', () => {
-    // The sandboxed frame WOULD contain a stylesheet safely, so this looks like
-    // a rule that outlived its reason. It did not: DOMPurify strips stylesheet
-    // contents as an mXSS mitigation, and forcing them back changes how it
-    // parses — measured, on the payload in the mXSS test above, which stops
-    // being neutralised. Nicer newsletters are not worth that.
-    const { html } = sanitizeMailHtml('<style>body{display:none}</style><p>hi</p>')
+  it('keeps <style> out of the markup, and hands the sheet over separately', () => {
+    // Why the tag stays forbidden: DOMPurify strips stylesheet contents as an
+    // mXSS mitigation, and forcing them back changes how it *parses* — measured,
+    // on the payload in the mXSS test above, which stops being neutralised.
+    //
+    // What changed is that this no longer costs the newsletter its design. The
+    // sheet is lifted from the raw markup before sanitizing and travels in `css`,
+    // so DOMPurify's input is untouched and the frame still gets the stylesheet.
+    // Both halves are asserted here, because the value of this design is exactly
+    // that they hold at the same time.
+    const { html, css } = sanitizeMailHtml('<style>body{display:none}</style><p>hi</p>')
 
     expect(html).not.toContain('display:none')
     expect(parse(html).querySelector('style')).toBeNull()
     expect(parse(html).textContent).toBe('hi')
+    expect(css).toBe('body{display:none}')
   })
 
   it('keeps inline styles — that is how designed mail is actually built', () => {
@@ -157,15 +162,80 @@ describe('sanitizeMailHtml — remote content', () => {
     expect(parse(result.html).querySelector('img')?.getAttribute('src')).toBe(src)
   })
 
-  it('leaves a stylesheet no route to fetch, since the whole block is gone', () => {
+  it('leaves a stylesheet no route to fetch, now that the stylesheet survives', () => {
     // `@import` and `url()` inside a <style> are remote fetches no attribute
-    // pass can see. Nothing scrubs them because nothing has to — and the
-    // frame's `default-src 'none'` is the backstop if that ever changes.
+    // pass can see. Once the sheet is carried into the frame instead of dropped,
+    // "nothing scrubs them because nothing has to" stops being true — the frame's
+    // `default-src 'none'` is still the backstop, but it is no longer the only
+    // thing standing there.
     const result = sanitizeMailHtml(
       '<style>@import "https://tracker.test/x.css";p{background:url(https://tracker.test/p.png)}</style>',
     )
 
     expect(result.html).not.toContain('tracker.test')
+    expect(result.css).not.toContain('tracker.test')
+    expect(result.css).not.toContain('@import')
+  })
+
+  /**
+   * The stylesheet is carried, not dropped — and this is the case it exists for.
+   *
+   * MJML puts column widths in a `min-width` media query and leaves the inline
+   * width at 100%, which is its *mobile* fallback. With the sheet gone, every
+   * multi-column newsletter rendered permanently stacked: a two-column footer
+   * became two rows, and a product grid became one tall column.
+   */
+  it('carries the stylesheet that holds a column layout', () => {
+    const result = sanitizeMailHtml(
+      '<style>@media only screen and (min-width:480px){' +
+        '.mj-column-per-65{width:65%!important}.mj-column-per-35{width:35%!important}}</style>' +
+        '<div class="mj-column-per-65" style="width:100%">left</div>',
+    )
+
+    expect(result.css).toContain('min-width:480px')
+    expect(result.css).toContain('.mj-column-per-65{width:65%!important}')
+    // And it is still not in the markup — see the mXSS reasoning above.
+    expect(parse(result.html).querySelector('style')).toBeNull()
+    expect(result.html).not.toContain('65%')
+  })
+
+  it('joins several stylesheets in the order the message declared them', () => {
+    const result = sanitizeMailHtml(
+      '<style>p{color:red}</style><p>x</p><style>p{color:blue}</style>',
+    )
+
+    expect(result.css.indexOf('red')).toBeLessThan(result.css.indexOf('blue'))
+  })
+
+  it('counts and strips a remote image the stylesheet asks for, like an inline one', () => {
+    const result = sanitizeMailHtml(
+      '<style>.hero{background:url(https://tracker.test/p.png);color:red}</style>',
+    )
+
+    // Same promise as the inline-style pass: the declaration goes, its
+    // neighbours stay, and the count is what makes the banner honest.
+    expect(result.css).not.toContain('tracker.test')
+    expect(result.css).toContain('color:red')
+    expect(result.blockedRemoteCount).toBe(1)
+  })
+
+  it('leaves the stylesheet’s remote images alone once the user has loaded them', () => {
+    const result = sanitizeMailHtml(
+      '<style>.hero{background:url(https://cdn.test/p.png)}</style>',
+      { allowRemoteContent: true },
+    )
+
+    expect(result.css).toContain('cdn.test')
+    expect(result.blockedRemoteCount).toBe(0)
+  })
+
+  it('does not count a data: url in the stylesheet', () => {
+    const result = sanitizeMailHtml(
+      '<style>.hero{background:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)}</style>',
+    )
+
+    expect(result.css).toContain('data:image')
+    expect(result.blockedRemoteCount).toBe(0)
   })
 
   it('leaves a data: url in CSS alone, and does not count it', () => {
@@ -230,6 +300,6 @@ describe('sanitizeMailHtml — ordinary mail', () => {
   })
 
   it('is empty for an empty body rather than throwing', () => {
-    expect(sanitizeMailHtml('')).toEqual({ html: '', blockedRemoteCount: 0 })
+    expect(sanitizeMailHtml('')).toEqual({ html: '', css: '', blockedRemoteCount: 0 })
   })
 })

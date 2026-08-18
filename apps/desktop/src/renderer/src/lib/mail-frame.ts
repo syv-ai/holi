@@ -7,10 +7,12 @@
  * longer that page. Two things follow, and both are why the frame exists.
  *
  * 1. **The message cannot reach the app.** No selector it writes can match an
- *    app element, because there are none in its document. That is what lets
- *    `<style>` blocks be *allowed* again — they were banned only because inline
- *    rendering gave a message's stylesheet the run of the app, and a newsletter
- *    without its stylesheet is a newsletter with its design removed.
+ *    app element, because there are none in its document. That is what makes a
+ *    message's *stylesheet* safe to honour — a newsletter without its stylesheet
+ *    is a newsletter with its design removed. Note the sheet arrives as `css`
+ *    text and is written into a `<style>` element *this* module builds; the
+ *    `<style>` **tag** stays forbidden in the markup, for a parser reason that
+ *    has nothing to do with framing ([[mail-html]]).
  * 2. **A second, far stricter CSP applies.** The frame document declares
  *    `default-src 'none'`, so remote content is blocked by the *browser* and
  *    not only by our attribute pass — including the routes a sanitizer cannot
@@ -140,6 +142,25 @@ function safeCssValue(value: string): string {
   return value.trim().replace(/[^\w\s#(),./%-]/g, '')
 }
 
+/**
+ * A whole stylesheet, made safe to interpolate into a `<style>` element.
+ *
+ * The same job as `safeCssValue` above and a much lighter touch, because the
+ * input is a whole sheet rather than one value: everything CSS legitimately
+ * contains has to survive, including `>` child combinators, `<` in range media
+ * queries, and every brace. Exactly one sequence is removed — `</`, which no
+ * stylesheet needs and which is the only way out of the element.
+ *
+ * That is the whole guard, deliberately. This is not a CSS validator: the sheet
+ * lands in a document holding nothing but the message, so a rule that restyles
+ * `body` is the message restyling itself. What it must not do is stop being CSS,
+ * and what it must not reach is the network — the second is `sanitizeMailHtml`'s
+ * (`@import` and remote `url()`) and the CSP's.
+ */
+function safeStylesheet(css: string): string {
+  return css.replace(/<\//g, '')
+}
+
 export function readMailPalette(root: HTMLElement = document.documentElement): MailPalette {
   const computed = getComputedStyle(root)
   const read = (token: string, fallback: string): string => {
@@ -196,6 +217,13 @@ export function useMailPalette(): MailPalette {
 export interface MailFrameOptions {
   /** Already through `sanitizeMailHtml`. Nothing else may be passed here. */
   html: string
+  /**
+   * The message's own stylesheet, from the same `sanitizeMailHtml` call.
+   *
+   * Optional because most mail has none, and because a caller that has not
+   * thought about it should get today's behaviour rather than a type error.
+   */
+  css?: string
   palette: MailPalette
   /** Widens the frame's `img-src`. The sanitizer has made the matching
    *  decision about attributes; this is the same call, enforced by the browser. */
@@ -209,7 +237,12 @@ export interface MailFrameOptions {
  * message's own rules win: these are defaults for mail that brings none, not a
  * restyling of mail that does.
  */
-export function mailFrameDocument({ html, palette, allowRemoteContent }: MailFrameOptions): string {
+export function mailFrameDocument({
+  html,
+  css = '',
+  palette,
+  allowRemoteContent,
+}: MailFrameOptions): string {
   // `default-src 'none'` covers script, frame, object, connect and font in one
   // go; only what a message legitimately needs is added back.
   const imgSrc = allowRemoteContent ? "img-src data: https: http:" : "img-src data:"
@@ -217,24 +250,31 @@ export function mailFrameDocument({ html, palette, allowRemoteContent }: MailFra
     '; ',
   )
 
+  // Three sheets, and the order is the design: defaults the message may
+  // override, then the message, then the handful of rules it may not.
+  const sheets = [defaults(palette), css === '' ? '' : safeStylesheet(css), INVARIANTS]
+    .filter((sheet) => sheet !== '')
+    .map((sheet) => `<style>${sheet}</style>`)
+    .join('\n')
+
   return `<!doctype html>
 <html><head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
-<style>
+${sheets}
+</head><body>${html}</body></html>`
+}
+
+/** Defaults for mail that brings none — first, and specificity-free, so a
+ *  message's own rules win. Not a restyling of mail that brought its own. */
+function defaults(palette: MailPalette): string {
+  return `
 html { color-scheme: ${palette.scheme}; }
-/* The frame is sized to this content by the app, so it must never scroll
-   vertically on its own — a message that scrolls inside the thread is a
-   scroll area within a scroll area, and the wheel stops meaning one thing.
-   Horizontal is left alone: a wide table has to go somewhere, and clipping
-   it would silently hide content rather than let the user reach it. */
-html { overflow-y: hidden; }
 body {
   margin: 0; padding: 12px;
   background: ${palette.background}; color: ${palette.foreground};
   font: 13px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
   overflow-wrap: break-word;
-  overflow-x: auto;
 }
 img { max-width: 100%; height: auto; }
 table { max-width: 100%; }
@@ -243,9 +283,28 @@ blockquote {
   margin: 0.5em 0; padding-left: 0.75em;
   border-left: 2px solid ${palette.border}; color: ${palette.muted};
 }
-</style>
-</head><body>${html}</body></html>`
+`
 }
+
+/**
+ * The rules a message does not get to override, and the only ones — **last**,
+ * where the message's own stylesheet cannot reach them.
+ *
+ * These are structural rather than aesthetic. The frame is sized to its content
+ * by the app, so a message that turns vertical scrolling back on becomes a
+ * scroll area inside the thread, and the wheel stops meaning one thing.
+ * `overflow-x: auto` is the other half of the same: a wide table has to go
+ * somewhere, and a message setting `visible` would push it under the frame edge,
+ * where it is silently clipped rather than reachable.
+ *
+ * Before the message's sheet was honoured this sat among the defaults, where it
+ * happened to be safe because nothing could override anything. It is here now
+ * because that stopped being true.
+ */
+const INVARIANTS = `
+html { overflow-y: hidden; }
+body { overflow-x: auto; }
+`
 
 /** Schemes a mail link may hand to the OS, or `null` to refuse. DOMPurify has
  *  already dropped `javascript:`; this is the second gate, at the point of

@@ -17,6 +17,7 @@ import {
   useMailPalette,
   type MailPalette,
 } from '../mail-frame'
+import { sanitizeMailHtml } from '../mail-html'
 
 const PALETTE: MailPalette = {
   background: '#101010',
@@ -84,6 +85,88 @@ describe('mailFrameDocument — theming', () => {
     const html = doc({ html: '<style>body{background:#fff}</style><p>hi</p>' })
 
     expect(html.indexOf('color-scheme')).toBeLessThan(html.indexOf('body{background:#fff}'))
+  })
+})
+
+describe('mailFrameDocument — the message’s own stylesheet', () => {
+  /**
+   * The sheet is lifted out of the markup by `sanitizeMailHtml` and arrives here
+   * as text, which is the whole point: it never goes through DOMPurify's HTML
+   * parser, so the mXSS behaviour that made `<style>` a forbidden *tag* is
+   * untouched, and the message still gets its design.
+   */
+  it('carries the message stylesheet, after its own defaults so the message wins', () => {
+    const html = doc({ css: '@media (min-width:480px){.col{width:65%}}' })
+
+    expect(html).toContain('@media (min-width:480px){.col{width:65%}}')
+    expect(html.indexOf('color-scheme')).toBeLessThan(html.indexOf('.col{width:65%}'))
+  })
+
+  it('adds no empty stylesheet for a message that brought none', () => {
+    // Two <style> elements are the floor (defaults, then the invariants); a
+    // third empty one would be noise in every message that is just prose.
+    expect(doc().match(/<style>/g)).toHaveLength(2)
+  })
+
+  /**
+   * The two modules, composed the way `SandboxedHtml` composes them.
+   *
+   * Each half is covered on its own — `mail-html` lifts the sheet, this file
+   * carries it — and the bug that would survive both is the seam: the sheet
+   * being lifted correctly and then not passed on. That is not a hypothetical
+   * shape, it is the whole fix, and it would put the stacked layout back with
+   * every unit test still green.
+   */
+  it('carries an MJML column layout all the way from raw markup into the document', () => {
+    const raw =
+      '<style>@media only screen and (min-width:480px){' +
+      '.mj-column-per-65{width:65%!important}.mj-column-per-35{width:35%!important}}</style>' +
+      '<div class="mj-column-per-65" style="display:inline-block;width:100%">left</div>' +
+      '<div class="mj-column-per-35" style="display:inline-block;width:100%">right</div>'
+    const sanitized = sanitizeMailHtml(raw)
+
+    const html = doc({ html: sanitized.html, css: sanitized.css })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+
+    // The rule that decides whether the two divs sit side by side or stack.
+    expect(html).toContain('.mj-column-per-65{width:65%!important}')
+    expect(html).toContain('min-width:480px')
+    // And it is in a stylesheet, not loose in the body.
+    expect(parsed.body.querySelector('style')).toBeNull()
+    expect(parsed.body.querySelectorAll('div')).toHaveLength(2)
+  })
+
+  /**
+   * A stylesheet is interpolated into markup by hand, exactly like the palette
+   * values `safeCssValue` guards — so it gets the same treatment for the same
+   * reason. `</` is the only sequence that matters and no stylesheet needs one.
+   */
+  it('neutralises a stylesheet that tries to close its own element', () => {
+    const html = doc({ css: '}</style><img src=x onerror=alert(1)><style>' })
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+
+    // The payload survives as *text* — that is the correct outcome, not a
+    // near-miss. Asserting the substring is absent would be asserting the wrong
+    // thing; what matters is that the browser never sees an element. So: no
+    // <img> anywhere in the document, and the payload still sitting in a
+    // stylesheet where it means nothing.
+    expect(parsed.querySelector('img')).toBeNull()
+    expect(parsed.querySelectorAll('style')).toHaveLength(3)
+    const sheets = [...parsed.querySelectorAll('style')]
+    expect(sheets.some((sheet) => sheet.textContent?.includes('onerror'))).toBe(true)
+  })
+
+  /**
+   * The frame is sized by the app, so a message that can turn scrolling back on
+   * becomes a scroll area inside the thread — the one thing a reader must never
+   * do. Aesthetics go before the message; this goes after it.
+   */
+  it('keeps the no-scroll rule after the message, which cannot override it', () => {
+    const html = doc({ css: 'html{overflow-y:scroll}body{overflow:visible}' })
+
+    expect(html.lastIndexOf('overflow-y: hidden')).toBeGreaterThan(
+      html.indexOf('html{overflow-y:scroll}'),
+    )
   })
 })
 

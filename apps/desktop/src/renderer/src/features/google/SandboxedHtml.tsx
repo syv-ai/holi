@@ -123,6 +123,7 @@ export function SandboxedHtml({
       )}
       <HtmlFrame
         html={sanitized.html}
+        css={sanitized.css}
         palette={palette}
         allowRemoteContent={allowRemoteContent}
         label={label}
@@ -135,6 +136,9 @@ export function SandboxedHtml({
 interface HtmlFrameProps {
   /** Sanitizer output. Nothing else may be passed. */
   html: string
+  /** The message's own stylesheet, from the same sanitize call — its column
+   *  layouts live in there, so dropping it stacks every multi-column mail. */
+  css: string
   palette: MailPalette
   allowRemoteContent: boolean
   label: string
@@ -158,6 +162,7 @@ interface HtmlFrameProps {
  */
 function HtmlFrame({
   html,
+  css,
   palette,
   allowRemoteContent,
   label,
@@ -174,7 +179,7 @@ function HtmlFrame({
     if (document_ == null) return
 
     document_.open()
-    document_.write(mailFrameDocument({ html, palette, allowRemoteContent }))
+    document_.write(mailFrameDocument({ html, css, palette, allowRemoteContent }))
     document_.close()
 
     /**
@@ -262,7 +267,7 @@ function HtmlFrame({
       observer.disconnect()
       unregister?.()
     }
-  }, [html, palette, allowRemoteContent, registerAs])
+  }, [html, css, palette, allowRemoteContent, registerAs])
 
   return (
     <iframe

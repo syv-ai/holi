@@ -28,15 +28,24 @@
  *    What stays here is the `<form>` family and `<base>` — exfiltration and URL
  *    retargeting, which no amount of framing makes acceptable.
  *
- * **`<style>` stays forbidden even though the frame would contain it**, and the
- * reason is worth recording because it is not the obvious one. DOMPurify strips
- * stylesheet *contents* by default as an mXSS mitigation, and forcing them back
- * (`ADD_TAGS: ['style']`) measurably changes how it parses: on the classic
- * `<svg><style><img src=x onerror=…>` payload it stops neutralising the `<img>`
- * inside the style and lets it out into the document as a real element. That is
- * a parser-level regression traded for nicer newsletters, so the trade is
- * declined. Inline `style` attributes — how the large majority of mail is
- * actually designed, since Gmail is itself hostile to `<style>` — are kept.
+ * **`<style>` stays a forbidden TAG, and the message still gets its stylesheet.**
+ * Those are not in tension, and the distinction is the whole design. Forcing the
+ * tag back (`ADD_TAGS: ['style']`) measurably changes how DOMPurify *parses*: on
+ * the classic `<svg><style><img src=x onerror=…>` payload it stops neutralising
+ * the `<img>` inside the style and lets it out as a real element. That is a
+ * parser-level regression, and it is declined. But the regression is about the
+ * sheet passing through the HTML parser — not about the sheet existing. So the
+ * sheet is lifted out of the raw markup as *text* before sanitizing, scrubbed as
+ * CSS here, and carried to the frame in `css`, where `mail-frame.ts` puts it in
+ * a `<style>` element the app wrote. DOMPurify's input and behaviour are exactly
+ * what they were.
+ *
+ * **Why bother**: MJML — which most marketing mail is built with — puts its
+ * column widths in a `min-width` media query and leaves the inline width at
+ * 100%, its *mobile* fallback. With the sheet dropped, every multi-column
+ * message rendered permanently stacked: a two-column footer became two rows and
+ * a product grid became one tall column. Inline `style` attributes are kept as
+ * they always were, and are still how the majority of mail is designed.
  *
  * `target` is stripped so a link cannot navigate anything itself — `MailView`
  * intercepts the click and hands the URL to `window.holi.openExternal`, which
@@ -47,6 +56,16 @@ import DOMPurify from 'dompurify'
 export interface SanitizedMail {
   /** Safe to hand to `dangerouslySetInnerHTML`. */
   html: string
+  /**
+   * The message's own stylesheet, lifted out of the markup and scrubbed of the
+   * things that fetch. `''` when the message brought none.
+   *
+   * **Belongs in a `<style>` element the app writes**, never back into the
+   * message's markup — see the module note. `mail-frame.ts` is the only intended
+   * consumer, and it applies its own guard against a sheet closing the element
+   * it lands in.
+   */
+  css: string
   /** How many remote loads were stripped. `> 0` is what makes the UI offer
    *  "load images"; `0` means there is nothing to unblock. */
   blockedRemoteCount: number
@@ -67,7 +86,8 @@ export interface SanitizeMailOptions {
  * `link` and `meta` would let a message redeclare the frame's own CSP.
  *
  * `style` is listed to make the intent explicit; DOMPurify would drop its
- * contents regardless (see the module note on why that default is left alone).
+ * contents regardless. The sheet is not lost — `stylesheetOf` lifts it out of
+ * the raw markup first, and it reaches the frame through `css` (module note).
  */
 const FORBID_TAGS = [
   'style',
@@ -105,6 +125,36 @@ const DATA_URI = /^\s*data:/i
  * the user their images were blocked to stop a disclosure that never existed.
  */
 const CSS_REMOTE_URL = /url\(\s*['"]?\s*(?:https?:)?\/\//i
+
+/**
+ * Every `<style>` block's contents, lifted from the raw markup.
+ *
+ * A regex over untrusted HTML, deliberately — building a DOM to find the sheets
+ * would mean parsing that HTML with the app's own parser *before* it has been
+ * sanitized, which is the thing this module exists to avoid. The capture is
+ * treated as CSS text and nothing else: it is scrubbed here and guarded again
+ * where it is interpolated, so a mis-capture costs a broken stylesheet rather
+ * than an injection. Non-greedy, so it stops at the first close tag.
+ */
+const STYLE_BLOCK = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi
+
+/** A stylesheet fetching another stylesheet. Removed **always**, not blocked and
+ *  restorable: it is not an image, so "load images" would never bring it back,
+ *  and counting it would promise a fix that button cannot deliver. The frame's
+ *  `default-src 'none'` refuses it too — this is the near half of the same. */
+const CSS_IMPORT = /@import\b[^;}]*;?/gi
+
+/**
+ * One declaration whose value fetches something remote, e.g.
+ * `background-image: url(https://tracker/p.png)`.
+ *
+ * Bounded by `[^;{}]`, so it cannot run past the declaration it starts in and
+ * take a neighbouring rule with it. Declaration-level for the same reason
+ * `stripRemoteCss` is: a tracking background sits among the colours and spacing
+ * that make the message readable.
+ */
+const CSS_REMOTE_DECLARATION =
+  /[a-zA-Z-]+\s*:\s*[^;{}]*url\(\s*['"]?\s*(?:https?:)?\/\/[^;{}]*/g
 
 export function sanitizeMailHtml(html: string, options: SanitizeMailOptions = {}): SanitizedMail {
   const fragment = DOMPurify.sanitize(html, {
@@ -151,9 +201,48 @@ export function sanitizeMailHtml(html: string, options: SanitizeMailOptions = {}
     }
   }
 
+  // AFTER the attribute pass, so its blocked urls join the same count — the
+  // banner is one statement about the whole message, not one per mechanism.
+  const stylesheet = stylesheetOf(html, allowRemote)
+  blockedRemoteCount += stylesheet.blocked
+
   const host = document.createElement('div')
   host.append(fragment)
-  return { html: host.innerHTML, blockedRemoteCount }
+  return { html: host.innerHTML, css: stylesheet.css, blockedRemoteCount }
+}
+
+/**
+ * The message's stylesheet, as text, ready for a `<style>` the app writes.
+ *
+ * Read from the **raw** markup rather than from the sanitized fragment, because
+ * by then it is gone — `style` is a forbidden tag and always will be (module
+ * note). That ordering is the point of the whole approach: DOMPurify sees the
+ * same input it always did, and the sheet takes a route that never touches an
+ * HTML parser.
+ *
+ * Scrubbing is only about what *fetches*. It is deliberately not an attempt to
+ * validate CSS or to police what a message may do to its own page: the sheet
+ * lands in a document containing nothing but that message, so a rule that
+ * restyles `body` is the message restyling itself. The two things it cannot be
+ * allowed to do — reach the network, and stop being CSS — are handled here and
+ * in `mail-frame.ts` respectively.
+ */
+function stylesheetOf(html: string, allowRemote: boolean): { css: string; blocked: number } {
+  const sheets = [...html.matchAll(STYLE_BLOCK)].map((match) => match[1] ?? '')
+  if (sheets.length === 0) return { css: '', blocked: 0 }
+
+  // Joined in document order, which is the order they cascade in.
+  let css = sheets.join('\n').replace(CSS_IMPORT, '')
+
+  let blocked = 0
+  if (!allowRemote) {
+    css = css.replace(CSS_REMOTE_DECLARATION, () => {
+      blocked++
+      return ''
+    })
+  }
+
+  return { css: css.trim(), blocked }
 }
 
 /**
