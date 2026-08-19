@@ -16,7 +16,7 @@ Living docs carry decisions as **prose, never as numbers**. D-numbers exist for 
 |---|---|
 | D60 — the vault is a GitHub repo; there is no server | `vision.md`, `architecture.md`, `glossary.md` and every PRD (2026-07-21). Held open afterwards only to track code that had not caught up; the last gap, the reconcile → agent-drawer handoff, is now recorded in [`prd/agent.md`](prd/agent.md) §The agent as merge resolver where it belongs |
 | D61 | spent amending D60 pt 2 (auto-push) — see D60 |
-| D62 — text-first by authorship; binaries are assets | `vision.md` §Key design choices, [`prd/notes-editor.md`](prd/notes-editor.md) §Images and other binaries, [`prd/pdf-export.md`](prd/pdf-export.md), and [`roadmap.md`](roadmap.md) (the surviving blob-storage question, and the import-conversion stub D62 superseded — that stub is deleted, and its reasoning is in this row plus git history) |
+| D62 — text-first by authorship; binaries are assets | `vision.md` §Key design choices, [`prd/notes-editor.md`](prd/notes-editor.md) §Images and other binaries, [`prd/pdf-export.md`](prd/pdf-export.md), and [`not-built.md`](not-built.md) (the surviving blob-storage question, and the import-conversion stub D62 superseded — that stub is deleted, and its reasoning is in this row plus git history) |
 | D63 — a task lane move is a note-style rename | [`prd/tasks.md`](prd/tasks.md) §Board UX |
 | D64 — a vault's theme is a whitelisted token map | [`architecture.md`](architecture.md) §9, §10 |
 | D65 — local-ness is legible from the name | [`architecture.md`](architecture.md) §3 + config layering, [`glossary.md`](glossary.md), [`prd/agent.md`](prd/agent.md), [`prd/auth-identity.md`](prd/auth-identity.md) |

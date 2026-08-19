@@ -161,7 +161,7 @@ Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP
 
 **Linking.** *A frontmatter link field* — the `related[]` ghost [`tasks.md`](tasks.md) killed. A link is a plain markdown link in the file body; the chip is render-time URL detection, computed rather than stored.
 
-**What is not built** — creating a task from an event, and a task that tracks a recurring series — is in [`../roadmap.md`](../roadmap.md).
+**What is not built** — creating a task from an event, and a task that tracks a recurring series — is in [`../not-built.md`](../not-built.md).
 
 ## Dependencies
 [`auth-identity.md`](auth-identity.md) (a second OAuth provider alongside GitHub, keychain token storage, and the scope-widening trap), [`agent.md`](agent.md) (the `holi-google` command surface and the send gate — *not* an MCP surface), [`tasks.md`](tasks.md) (linking an email/event to a task; create-from-event).

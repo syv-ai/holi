@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 **Status:** approved, ready for planning
-**PRD refs:** `docs/prd/vaults-sync.md` §Edge cases ("Large binaries in an adopted repo"); `docs/roadmap.md` §Notes & editor, "Where large binaries live at scale" (the deferred vault-size question that survives D62; it was written in a since-deleted phase-2 stub); `docs/decisions.md` D62.
+**PRD refs:** `docs/prd/vaults-sync.md` §Edge cases ("Large binaries in an adopted repo"); `docs/not-built.md` §Notes & editor, "Where large binaries live at scale" (the deferred vault-size question that survives D62; it was written in a since-deleted phase-2 stub); `docs/decisions.md` D62.
 
 ## Problem
 

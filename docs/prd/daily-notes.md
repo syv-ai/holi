@@ -27,7 +27,7 @@ Porting notes: port the well-tested **untouched-stub heuristic** (old `is_untouc
 **Non-goals**
 - Daily notes in **shared** vaults — out of scope by design.
 - The wiki-link grammar and rename internals — [`notes-editor.md`](notes-editor.md).
-- Daily-note templates / configurable seed content — deferred post-v1 ([`../roadmap.md`](../roadmap.md)).
+- Daily-note templates / configurable seed content — deferred post-v1 ([`../not-built.md`](../not-built.md)).
 - Reminders about the daily note.
 
 ---
@@ -79,7 +79,7 @@ So if your laptop and your desktop each create today's note before either syncs,
 Use a local-date formatter, **not `toISOString()`** — the latter is UTC and reports the wrong day on either side of local midnight, which is exactly when a daily-note feature is most likely to be used. `shared/dates.ts`'s `formatDate` is UTC-based and is for epoch math, not for asking a device what day it is.
 
 - **Edge:** a session spanning local midnight — re-evaluate the date per call, so opening the vault after midnight lands on *tomorrow's* note.
-- **A "home" timezone preference for travellers is deferred** ([`../roadmap.md`](../roadmap.md)). "Today" is already an *input* rather than something computed, so an override would only change who supplies the date — which is why it stays cheap to add and unmotivated until someone is annoyed by it.
+- **A "home" timezone preference for travellers is deferred.** "Today" is already an *input* rather than something computed, so an override would only change who supplies the date — which is why it stays cheap to add and unmotivated until someone is annoyed by it.
 
 ---
 

@@ -14,7 +14,7 @@ The editor **reads and writes the file directly**. There is no CRDT binding, no 
 
 Wiki-links are **path-based `[[folder/note.md]]`**, parsed by one grammar module in `packages/shared` (port `vaultRefs.ts` from the old repo), with a thin renderer in the editor. **Why path-based:** links stay human-readable in raw markdown, so Claude can follow *and author* them naturally, and they match Obsidian mental models. **Rejected:** stable doc IDs rendered as paths (opaque `[[doc:a1b2]]` in raw md — harder for the agent to read and author) and hybrid id+slug links. There is now **only one link grammar** — the `[[task:<id>]]` token is gone with task ids, so a link to a task is a link to a file like any other.
 
-Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and in-place viewing of binaries Holi cannot render are **out of scope** here — both are in [`../roadmap.md`](../roadmap.md).
+Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and in-place viewing of binaries Holi cannot render are **out of scope** here — both are in [`../not-built.md`](../not-built.md).
 
 ---
 
@@ -29,11 +29,11 @@ Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and in-place view
 - Rename + link rewrite in one pass; backrefs and delete surfacing without a server.
 
 **Non-goals (v1)**
-- **Multiplayer cursors, presence avatars, and character-level co-editing** — deferred with the collaboration engine ([`../roadmap.md`](../roadmap.md)). This is the largest single subtraction from the previous design, and it is deliberate.
+- **Multiplayer cursors, presence avatars, and character-level co-editing** — deferred with the collaboration engine, and there is no design, because the engine it would ride on does not exist. This is the largest single subtraction from the previous design, and it is deliberate.
 - A View-Transitions source↔rendered morph and its supporting machinery — **rejected**, see the callout at the top.
 - Any animation of CodeMirror decorations — banned.
 - Agent-authored apps / sandboxed `htmlBlock` iframe widgets in notes.
-- **Opening a binary Holi cannot render** — a PDF or `.docx` gets a typed placeholder, not a viewer ([`../roadmap.md`](../roadmap.md)).
+- **Opening a binary Holi cannot render** — a PDF or `.docx` gets a typed placeholder, not a viewer ([`../not-built.md`](../not-built.md)).
 - Rich-text WYSIWYG that diverges from markdown-as-source; the source of truth stays markdown text on disk.
 
 ---
@@ -121,7 +121,7 @@ VS Code's two-state model, ported:
 `Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but **only one pane
 renders** — `Shell.tsx` reads `panes[workspace.active]` and draws a single strip. The array shape is
 what makes a split a second element rather than a rewrite, which was the whole point of paying for
-it early. The split itself is in [`../roadmap.md`](../roadmap.md).
+it early. The split itself is in [`../not-built.md`](../not-built.md).
 
 ### Frontmatter reveal control
 
@@ -206,7 +206,7 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 - **Images render inline in the editor**, as a live-preview decoration like every other rendered element.
 - **A standalone image viewer** opens an image as its own tab; other binaries get a typed placeholder naming what they are, because a file the tree shows and the editor cannot open is a dead end.
 - **Non-markdown files stay out of the link graph.** They are not in `docs`, so the link-aware operations — rename, backrefs, move — remain markdown-only. An image is an asset referenced by path, not a wiki-linkable note.
-- **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one ([`../roadmap.md`](../roadmap.md)). There is no object storage, so it is a decision as much as a build.
+- **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one. There is no object storage, so it is a decision as much as a build.
 
 **Rejected.** *Rendering every binary in place and retiring text-first* — makes the agent blind, since a PDF it cannot read is a document it cannot help with, and puts binary bloat in git with no authoring story. *Converting incoming PDFs/`.docx` to markdown and archiving the original* — an import pipeline and an object-storage dependency for a flow that runs the other way, and it archives away originals users may need intact. *Two co-equal representations of one document* — raises "which is truth" on every edit and every sync; markdown-as-source with PDF-as-output keeps one.
 

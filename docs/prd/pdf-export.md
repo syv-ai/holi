@@ -21,8 +21,9 @@ Turn any Holi markdown doc into a **branded syv.ai document** by rendering it th
 ## Non-goals
 - **A WYSIWYG document designer.** Templates are code, authored once and chosen by users — the standing "users are developers, so prefer a documented schema over a builder" rule.
 - **Round-tripping Typst back into markdown.** The PDF is an artifact; the markdown is the document.
+- **Any output target other than PDF** — the `.typ` source, or a Google Docs export. Asked once during design and **nobody has asked since**; it should not be built until someone does.
 
-**What is not built** — templates beyond `plain`, distributing a template set across vaults, and any output target other than PDF — is in [`../roadmap.md`](../roadmap.md).
+**What is not built** — templates beyond `plain`, and distributing a template set across vaults — is in [`../not-built.md`](../not-built.md).
 
 ## Resolved, and worth not re-litigating
 - **Where rendering runs** → locally, against a resolved-and-pinned Typst binary. The original recommendation was a server-side Typst service for font and asset consistency; there is no server (D60), and pinning the version plus committing the assets into the vault buys the same consistency without one.

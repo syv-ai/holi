@@ -26,9 +26,9 @@ The default surface is a **stripped kanban board** — Todo / Doing / Done, swim
 
 **Non-goals (v1)**
 
-- **No time-grouped board view** ("Today / This week / Later") and **no multi-bucket date system** — deferred, and if it returns it returns as an *option* rather than a mode to configure ([`../roadmap.md`](../roadmap.md)).
+- **No time-grouped board view** ("Today / This week / Later") and **no multi-bucket date system** — one board layout is a property of the design, not an omission ([`../not-built.md`](../not-built.md)).
 - **No inline note-checkbox ↔ task sync** — rejected: it reintroduces note↔task coupling.
-- **No assignees.** A shared vault's tasks belong to the vault; a reminder notifies everyone ([`../roadmap.md`](../roadmap.md)).
+- **No assignees.** A shared vault's tasks belong to the vault; a reminder notifies everyone ([`../not-built.md`](../not-built.md)).
 - **No locks and no presence.** Presence required a server push channel that no longer exists. Two people editing the same task file is an ordinary git conflict, handled by the ordinary conflict path.
 - **No conflict dialog.** See [Concurrency](#concurrency).
 
