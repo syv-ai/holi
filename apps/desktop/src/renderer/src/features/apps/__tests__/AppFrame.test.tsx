@@ -14,9 +14,11 @@ import { AppFrame } from '../AppFrame'
 import { snapshotAtom, activeRemoteAtom } from '../../../state/vaults'
 import { workspaceAtom, openApp } from '../../../state/panes'
 
-const docsMock = vi.fn(() => Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }]))
-const readMock = vi.fn(() => Promise.resolve('# A'))
-const tasksMock = vi.fn(() => Promise.resolve([]))
+const docsMock = vi.fn((_input: unknown) =>
+  Promise.resolve([{ path: 'a.md', kind: 'note', updatedAt: '' }]),
+)
+const readMock = vi.fn((_input: unknown) => Promise.resolve('# A'))
+const tasksMock = vi.fn((_input: unknown) => Promise.resolve([]))
 
 vi.mock('../../../lib/trpc', () => ({
   trpc: {
