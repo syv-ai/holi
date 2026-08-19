@@ -27,7 +27,7 @@ It is also the cheapest place to put that explanation: it is the only screen eve
 ## Non-goals
 - **Inviting anyone.** Holi implements no invitations, and this is where a user first feels that: you join a repo you have *already* been given push access to on GitHub. Collaboration is GitHub's membership model ([`auth-identity.md`](auth-identity.md)), and onboarding does not paper over it.
 - **A system-dependency check.** Every user is a developer and git is assumed. A missing-git clone failure surfaces as an inline error that bounces back to act 2 — not a separate screen diagnosing the machine.
-- **Teaching the product.** No tour, no checklist, no sample content. The ritual gets you a vault; a personal vault then opens today's daily note ([`daily-notes.md`](daily-notes.md)), which is a better first screen than any tour.
+- **Replaying onboarding**, and **teaching the product** — no tour, no checklist, no sample content. The ritual gets you a vault; a personal vault then opens today's daily note ([`daily-notes.md`](daily-notes.md)), which is a better first screen than any tour.
 - **Being reachable again.** There is no "replay onboarding". Once a vault exists, the only remaining path is add-vault mode.
 
 ## Edge cases & risks
@@ -35,11 +35,8 @@ It is also the cheapest place to put that explanation: it is the only screen eve
 - **Repos that are already vaults** are excluded from the picker; adopting one twice is not a state worth having.
 - **`github.orgs` failing is non-fatal** — the picker still offers the personal account. **`github.repos` failing** shows an inline "couldn't load your repos" and leaves create working. Neither is allowed to block the only screen the user can act on.
 - **A create that fails** bounces to act 2 with the error's own message inline. No error-code discrimination: the prose GitHub returns is more useful than anything a mapping would produce.
-- **Adopting a repo that is not a vault** seeds nothing and produces an empty tree. The picker's filter is by push access, not by vault-ness — see Open questions.
+- **Adopting a repo that is not a vault** seeds nothing and produces an empty tree. The picker's filter is by push access, not by vault-ness, so a code repo can be adopted and will open as a vault with no `.holi/`. **Detecting it is cheap and is deliberately not done**: probing each repo for `.holi/` costs a request per repo to prevent something that is arguably not a mistake — a repo becomes a vault by being opened as one, and the vault seeds itself. If it turns out to confuse people, the probe is the fix, and it belongs on the picker rather than on the clone.
 - **The ported CSS is global** (`onboarding-ritual.css`, `.obrit-*`-prefixed). Collision risk is low and it was not converted to modules; it is the one place in the renderer that is not Tailwind.
-
-## Open questions
-- **Should the join picker distinguish a vault from any other repo?** It filters on push access alone, so a code repo can be adopted and will open as a vault with no `.holi/`. Cheap to detect (probe for `.holi/` via the API before offering it); unclear whether it is worth a request per repo, or whether the honest answer is to let it happen and let the vault seed itself.
 
 ## Dependencies
 [`auth-identity.md`](auth-identity.md) — the device-flow session, `github.orgs`/`github.repos`, and the access model onboarding surfaces. [`vaults-sync.md`](vaults-sync.md) — `createVaultAtom`/`addVaultAtom`, the clone, and what a vault is. [`daily-notes.md`](daily-notes.md) — what a personal vault opens onto once the ritual ends.

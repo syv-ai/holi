@@ -41,10 +41,10 @@ These are load-bearing — they dissolved several risks outright:
 - No custom history system — no JSONL parsing, no transcript reconstruction, no summarizer, no conversation store, no history search ops.
 - No config composition and no per-user config sync — personal agent config is machine-local, full stop.
 - No bespoke `safe`/`power_user` permission modes, no sandbox machinery.
-- No self-improvement / curator loop, no `activity.jsonl`, no threat scanner.
+- No self-improvement / curator loop, no `activity.jsonl`, no threat scanner ([`../roadmap.md`](../roadmap.md)).
 - No multi-adapter runtime abstraction — Holi targets Claude Code directly.
-- No vault apps in v1 — post-v1, design locked in [`vault-apps.md`](vault-apps.md).
-- Calendar/mail integration is **phase-2**.
+- No vault apps in v1 — post-v1, design in [`vault-apps.md`](vault-apps.md), status in [`../roadmap.md`](../roadmap.md).
+- **The agent does not propose a theme.** It authors one directly ([`../architecture.md`](../architecture.md) §9); a propose-and-approve flow is deferred ([`../roadmap.md`](../roadmap.md)).
 
 ## User stories
 
@@ -86,7 +86,8 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 - A **reader loop** on the PTY master forwards each chunk to the renderer; **EOF/EIO** ends the session (the template treats `EIO`/errno 5 as normal remote-hangup).
 - A **child-wait** task parks on the child, clears session state, then emits `exit` — clearing before emitting so a renderer that kills-on-exit doesn't race a dead child.
 - **One live session per vault.** Starting a new one kills the prior child (SIGTERM → SIGKILL of the process **group** so Claude's helper subprocesses die too).
-- Drawer lifecycle: opening the drawer starts (or re-attaches to) the session; the terminal is the **live** surface. The drawer's **history affordance** relaunches the session with `--resume`. Scrollback is ephemeral; durable history is CC's own sessions.
+- Drawer lifecycle: opening the drawer starts (or re-attaches to) the session; the terminal is the **live** surface. The drawer's **history affordance** relaunches the session with **bare `--resume`**, so Claude Code shows its own session picker in the terminal. Scrollback is ephemeral; durable history is CC's own sessions.
+  - **No `--resume <id>` shortcuts for recent sessions**, which was the obvious next affordance and is deliberately absent: the CLI's picker is the surface the user already knows, and a Holi-drawn list of recent sessions would be a second index over another program's session store — the same bet §Config layering declines when it refuses to migrate transcripts.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it.
 
 **Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. So the first launch after the relocation is logged out, once, ever.
@@ -114,6 +115,7 @@ CC reads all of this from the cwd natively — **zero extra machinery**. A teamm
 - **The machine's `~/.claude` is not in play at all.** A vault agent runs on `userData/agent-config/`, so the user's global settings, personal skills, plugins, marketplaces and MCP servers are excluded **by construction** rather than by a list of things to switch off — a list needs extending every time Claude Code grows a new kind of user-level content, and fails open when it hasn't been. The agent sees Holi's config and the vault's; whose laptop it is running on stops being an input.
   - **This was found, not foreseen.** The agent drafted an email through a **claude.ai Gmail connector** instead of `holi-google`, routing around the token authority, the send gate and the cache in one call — because the connector was simply *there*, inherited from an account the vault never mentioned. The connector was the symptom; the inheritance was the fault.
   - **It costs one `/login`, once, ever.** Credentials are keyed to the config directory (measured — a symlinked `~/.claude.json` does not restore them), so the first launch after this shipped is logged out and the panel says so. One shared directory for every vault, because per-vault would charge that per vault while buying separate settings nothing needs — and **per-vault session history comes free regardless**, since Claude Code keys transcripts by working directory.
+  - **An open unknown, and what it gates:** which shared `.claude/` files CC reads *at launch* versus *per use* is not established, so it is not known whether a config change arriving by pull needs the user to restart the session for it to take effect. Nothing nudges them today ([`../roadmap.md`](../roadmap.md)); the answer decides whether the nudge is needed at all, so it is a question to answer before it is a thing to build.
   - **What is lost, deliberately:** transcripts already under `~/.claude/projects/` are invisible to the relocated agent, so `--resume` starts empty once. Copying them across would mean rewriting another program's internal state store, which is a worse bet than a sentence in a release note.
   - **The vault's own `.claude/` is untouched and still outranks everything.** Isolation is from the machine, not from the vault: a vault may declare its own skills and MCP servers, which is why `--strict-mcp-config` stays off.
 - **`CLAUDE.local.md`** in the clone — CC's native personal-per-project layer.
@@ -155,7 +157,7 @@ Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.lo
 | **`task_set`** | `status: done` was ambiguous for a recurring task — roll forward, or end the series? | Resolved by convention, and the convention is safe: `done` rolls forward (Holi's watcher does the roll whoever wrote the file), and ending a series means deleting `recurrence` from the frontmatter. The conservative reading is the default one. |
 | **`note_rename`** | Had to preserve CRDT Doc identity and rewrite `[[links]]` atomically — a server operation. | There is no Doc identity to preserve; a rename is `git mv` plus a link rewrite. It ships as a **vault skill** in `.claude/`, which is a text operation Claude is good at. |
 
-**The cost, stated plainly.** A skill-driven rename is not atomic and can miss a link. That is a real regression against a server op, and it is accepted because the alternative is keeping an MCP server, its lifecycle, and its per-run bearer token alive for one tool. If misses prove common, the answer is to move rename into the app (where the file tree already implements it) and expose it to the agent as a **slash command** the user runs, not to resurrect the op surface.
+**The cost, stated plainly.** A skill-driven rename is not atomic and can miss a link. That is a real regression against a server op, and it is accepted because the alternative is keeping an MCP server, its lifecycle, and its per-run bearer token alive for one tool. If misses prove common, the answer is to move rename into the app (where the file tree already implements it) and expose it to the agent as a **slash command** the user runs ([`../roadmap.md`](../roadmap.md)), not to resurrect the op surface. **The trigger is observed misses**, not the possibility of them.
 
 **Everything else is native:** note read/write/append/backrefs → `Read/Write/Edit/Grep`; tasks → file ops; memory → edits on `USER.local.md`/`MEMORY.md`; skills → edits on skill files; asking the user → native `AskUserQuestion`; git → `Bash`; conversation recall → `claude --resume`.
 
@@ -194,7 +196,7 @@ So the tool surface is still **zero ops**, and it now holds for external data to
 
 The vault is a **regular git repo** and the agent may run **any** git it likes — commit, push, pull, resolve a merge. The one hazard is two git actors on one repo: Holi's own sync loop (autosave-commit on a quiet timer, periodic pull, push) and the agent. They must not contend on `.git/index.lock`, and an agent rebase/branch-switch must not strand Holi's loop.
 
-**Rule: while the agent is *working* (mid-turn), Holi suspends its sync loop; it resumes after the turn goes idle (with a short settle).** So at any moment there is a single active git actor. Holi keys this off the working/idle status it already tracks from PTY activity. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
+**Rule: while the agent is *working* (mid-turn), Holi suspends its sync loop; it resumes after the turn goes idle (with a short settle).** So at any moment there is a single active git actor. Holi keys this off Claude Code's own **hooks** (`UserPromptSubmit` starts the turn, `Stop` ends it) rather than inferring working/idle from PTY output — parsing a terminal to guess what another program is doing is a rabbit hole, and the hooks say it exactly. **`Stop` is not guaranteed** on an interrupt or a crash, so the pause is capped and a dead session resumes the vault rather than stranding it paused. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
 
 `AGENTS.md` states this to the agent plainly: *git is yours; Holi pauses its own sync while you work, and reconciles when you're done.* This **supersedes** the old AGENTS.md prohibition on the agent running git.
 
@@ -204,7 +206,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Ordinary editing needs no protocol.** The agent writes files; the editor's watcher reloads or 3-way merges ([`notes-editor.md`](notes-editor.md)); the sync engine commits. There is no soft lock, no frozen base, no positioned-ops translation, and no "Claude is editing…" presence state — the last of which existed to tell *co-authors* something, and there are no live co-authors in v1. **Staleness is Claude Code's own guard:** `Edit`/`Write` require a prior `Read` and fail if the file changed since.
 
-**Conflict resolution is where the agent earns its place.** When an auto-pull hits a textual conflict, Holi aborts the merge and offers **Ask Claude to reconcile**. Accepting it:
+**Conflict resolution is where the agent earns its place.** When an auto-pull hits a textual conflict, Holi aborts the merge and offers **Ask Claude to reconcile** — a banner in the editor and a quiet affordance in the footer. **Accepting it is the part that is specified and not built** ([`../roadmap.md`](../roadmap.md)); the sequence below is the design, and it is kept here because this pillar owns the reasoning for it:
 
 1. **Pauses autosave and auto-pull** for that vault (the same suspend as Git coexistence, held for the whole reconcile rather than just a turn), so nothing writes underneath the resolution.
 2. **Re-runs the merge for real**, leaving the conflict in the working tree.
@@ -216,7 +218,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Why this is safe to hand to an agent at all:** it operates inside git, mid-merge, on a repo whose pre-merge state is a commit. The worst outcome is recoverable with `git merge --abort`.
 
-**Status: designed, and the handoff is the one part not built.** `EditorPane.onConflict` raises a banner and nothing more; the pause → re-run-the-merge → seed-the-drawer path above does not exist. The `pause` primitive is there (`sync.pause` on the active vault) and the drawer takes a seeded `prompt`, so both ends of the handoff are built and the wire between them is not. This is the last remaining code gap from D60 — the decision that produced this pillar — and it is recorded here rather than in a decision inbox because a docs inbox is not a bug tracker.
+**What exists is both ends and not the wire.** `EditorPane.onConflict` raises the banner; `sync.pause` on the active vault is real; the drawer takes a seeded `prompt`. What no code does is join them — pause, re-run the merge, seed the drawer. It is the last remaining code gap from D60, the decision that produced this pillar, and it is tracked in [`../roadmap.md`](../roadmap.md) rather than here, because a PRD saying "designed, not built" about its own centrepiece is how a reader comes to believe a design is a description.
 
 ## Rendering PDFs
 
@@ -272,16 +274,3 @@ Each slice gets its own plan.
 - **[`notes-editor.md`](notes-editor.md)** — the editor's external-write handling, which is what makes the agent's file writes safe against an open buffer.
 - **[`tasks.md`](tasks.md)** — the task file convention, which is the agent's entire task interface and therefore belongs in the system prompt.
 - **[`auth-identity.md`](auth-identity.md)** — GitHub access; the push credential the agent's repo can reach.
-
-## Open questions
-
-- **`--resume` drawer UX.** Does relaunching the PTY with `--resume` inside the drawer feel native, or does the affordance need `--resume <id>` shortcuts for recent sessions?
-- **Shared-config pickup.** Which shared `.claude/` files does CC read at launch only vs per-use? Determines whether a pulled config change needs a restart nudge.
-- **Rename misses.** Does the rename skill lose links often enough to justify moving rename into the app as a slash command?
-
-## Deferred
-
-- **Self-improvement / curator loop.** Not in v1: designed around headless background forks, unproven value, and in a shared vault one person's background agent auto-editing **shared** skills/memory is a real hazard. If revived: scope auto-edits to the **personal** layer only; shared-layer changes become **proposals requiring approval**.
-- **Vault apps** — post-v1, design in [`vault-apps.md`](vault-apps.md).
-- **Agent theme proposals** — deferred.
-- **Calendar + mail** — **landed** (D67, 2026-08-04) as a skill + `holi-google` command over a loopback ops channel, and **made read-write** (D68–D70, 2026-08-05): mail triage, drafting, sending and replying, plus time-blocking on the user's own calendar. The long-standing expectation that it would bring back an MCP server did not survive the build; see §Tool surface. **Proven against a real account 2026-08-14** — drafting, sending and reply threading all ran, and the delivered headers were read rather than trusted (`References` carried the whole chain, and the reply threaded). The `events.*` calls have still only met fakes.

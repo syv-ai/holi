@@ -26,9 +26,9 @@ The default surface is a **stripped kanban board** — Todo / Doing / Done, swim
 
 **Non-goals (v1)**
 
-- **No time-grouped board view** ("Today / This week / Later") and **no multi-bucket date system** — deferred.
+- **No time-grouped board view** ("Today / This week / Later") and **no multi-bucket date system** — deferred, and if it returns it returns as an *option* rather than a mode to configure ([`../roadmap.md`](../roadmap.md)).
 - **No inline note-checkbox ↔ task sync** — rejected: it reintroduces note↔task coupling.
-- **No assignees.** A shared vault's tasks belong to the vault; a reminder notifies everyone.
+- **No assignees.** A shared vault's tasks belong to the vault; a reminder notifies everyone ([`../roadmap.md`](../roadmap.md)).
 - **No locks and no presence.** Presence required a server push channel that no longer exists. Two people editing the same task file is an ordinary git conflict, handled by the ordinary conflict path.
 - **No conflict dialog.** See [Concurrency](#concurrency).
 
@@ -120,6 +120,7 @@ Default and only board layout in v1.
 - **The lane-depth control stays deferred** — and the original reason survives the pivot intact. It would collapse `projects/a` and `projects/b` into one `projects` lane. Grouping is trivial; **dropping is not**: a collapsed lane has no unambiguous folder to move the file *into*, so the horizontal drag axis becomes undefined exactly when the control is on. Deferred until there is an answer.
 - **Filter bar:** exactly three controls — **text search**, **tag filter**, **done/hide toggle**. Nothing else. The bar is a search-and-narrow aid, not a second configuration surface.
 - **Virtual labels.** `overdue` and `p1`/`p2`/`p3` render as chips beside a task's real tags, and the filter's tag control matches them identically — so "show me the overdue p1s" is a tag query, not a bespoke control. They are **computed at render, never stored** (`packages/shared/src/labels.ts`): `overdue` from `due` + `status`, `pN` from `priority`. **Why not store them:** something would have to write `overdue` onto a task the moment it tipped over at midnight — and now every such write is a file rewrite and an autosave commit. A hundred tasks going overdue at midnight is a hundred commits on an idle vault. It would also make `tags` half machine-owned, so an agent deleting `overdue` would have it silently re-added.
+- **A link to an email or a calendar event is an ordinary markdown link in the body** — `[Q2 review](https://calendar.google.com/…)` — and the board renders a chip for it by **detecting the link at render time**, computed and never stored, exactly like `overdue` and `pN`. Not a frontmatter field (that is the `related[]` this design deleted on purpose) and not a `[[wiki-link]]`: those resolve to vault files, and a URL target would render as a permanent tombstone. Backrefs stay a grep for the URL. `tasks.create` takes an optional `description` so a task can be seeded with the link at creation ([`google-mail-calendar.md`](google-mail-calendar.md)).
 - **The card carries exactly one affordance:** the **complete checkbox**. Title, `due`, labels and tags are display; every other edit opens the detail view. The checkbox goes through the **complete** path, never a bare `status: done` write, so a recurring task rolls forward instead of persisting `done`.
 - **Drag semantics (both axes are real writes):**
   - **Vertical (between columns):** rewrites `status`. Dropping into Done triggers completion (recurrence roll-forward).
@@ -141,6 +142,8 @@ Default and only board layout in v1.
 **Complete:** setting `status = done`. If the task is recurring, Holi rolls it forward instead of persisting `done` (see below) and it returns to Todo at its next occurrence.
 
 **Delete:** `rm` the file, or delete from the board. A deleted task leaves any inbound wiki-link dangling, rendered as a tombstone — no cascade.
+
+**A title edit does not rename the file.** The filename is the identity, so silently moving a file on a title edit would rewrite every inbound link on a typo fix. The title and the filename are allowed to disagree, and a task whose slug no longer matches its title is a cosmetic mismatch rather than a broken link — which is the cheaper failure of the two.
 
 **Rename/move:** moving the file changes its identity, so inbound wiki-links are rewritten in the same pass. This is the one place tasks are not simpler than before: path-as-identity buys a link rewrite that stable ids did not need. It is the same machinery notes require anyway.
 
@@ -164,7 +167,7 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 - **Missed fires catch up on launch**, so quitting for the weekend loses nothing.
 - **The delivered-watermark is machine-local** — `.holi/settings.local.json`, gitignored, never committed. This is not a filing preference: a watermark in the repo would make **every reminder fire produce a commit**, and on a shared vault, a push. The old design reached the same conclusion for the same reason when it kept the version token out of the frontmatter.
 - **A reminder on a shared task notifies every member.** Tasks have no assignee, so there is no one else it could mean. If that proves noisy, the answer is assignees, not a private reminder channel.
-- **Above a coalesce threshold, raise one summary** rather than N notifications — six toasts is not six times the information, it is a wall you dismiss unread. A summary speaks for several tasks, so it carries no single task to focus.
+- **Above a coalesce threshold, raise one summary** rather than N notifications — six toasts is not six times the information, it is a wall you dismiss unread. A summary speaks for several tasks, so it carries no single task to focus. **The threshold is `>3`**, settled in the runtime design; it was called a number nobody can pick correctly in advance, and that was true — it was picked by choosing the smallest count at which a wall starts to feel like one, and it is a constant rather than a setting because nobody can tune it either.
 - **The anchor timezone is the machine's local time.** With evaluation local to the device there is no other frame available, and no ambiguity to resolve — this closes an open question the server design could not.
 
 ## Concurrency
@@ -193,6 +196,7 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 
 ## Edge cases & risks
 
+- **Task files in the notes tree.** They are ordinary markdown, so they would appear in it. The tree hides them behind a per-vault "show task files" toggle, off by default, with a status glyph on a task leaf when it is on — [`notes-editor.md`](notes-editor.md) FR-13 owns the behaviour. Both readings were defensible (rendering is honest, filtering is tidier), so the choice is the user's rather than the design's.
 - **A file named `task.*.md` that isn't a task** — there isn't one; the name is the definition. This is the whole reason the marker is in the filename rather than in frontmatter, where a copy-pasted `type: task` would create tasks by accident.
 - **Deleting a note a task links to:** the wiki-link dangles and renders as a tombstone. No cascade, no orphan rescue.
 - **Renaming a folder** moves its tasks with it, and their lane label changes because the lane *is* the folder. Nothing to update.
@@ -206,16 +210,3 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 - **[`../architecture.md`](../architecture.md)** — the sync engine (auto-pull, autosave commits, auto-push, reconcile) that carries every task write between machines.
 - **[`notes-editor.md`](notes-editor.md)** — the `[[wiki-link]]` grammar tasks use for all linking, and the rename/link-rewrite pass a lane move depends on.
 - **[`agent.md`](agent.md)** — the agent's native-tools-only surface.
-
-## Open questions
-
-- **Slug churn on title edit.** Does renaming a task's *title* rename the file? Leaning **no**: the filename is the identity, and silently moving a file on a title edit would rewrite links on every typo fix. The title and the filename are allowed to disagree.
-- **Tasks in the file tree.** Task files are ordinary markdown and will appear in the notes tree. Do they render there (with a task glyph), or are they filtered out of the tree because the board owns them? Rendering both is honest; filtering is tidier.
-- **Coalesce threshold** for the reminder summary — a number nobody can pick correctly in advance.
-
-## Deferred
-
-- **Time-grouped secondary board view** ("Today / This week / Later") — post-v1, as an *option*, not a mode to configure.
-- **Assignees**, and with them per-person reminders on shared tasks.
-- **Email/Calendar linking** — **decided and landed** (D67, 2026-08-04): **an ordinary markdown link in the task body**, e.g. `[Q2 review](https://calendar.google.com/…)`. Not a frontmatter field (that is the `related[]` this design deleted on purpose) and not a `[[wiki-link]]` (those resolve to vault files; these targets are URLs, and a wiki-link would render as a permanent tombstone). Backrefs stay a grep for the URL, and the board renders a chip by **detecting the link at render time** — computed, never stored, exactly like `overdue`/`pN`. `tasks.create` gained an optional `description` so create-from-event can seed the body with the link.
-- **Inline note-checkbox ↔ task sync** — rejected for v1.

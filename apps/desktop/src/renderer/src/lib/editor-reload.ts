@@ -18,7 +18,7 @@
  *   - **content comparison** — cannot race, because it compares the only two
  *     things that matter and holds no timing assumption at all.
  *
- * That closes `notes-editor.md` §Open question 2.
+ * This is `notes-editor.md` §External writes, first bullet.
  */
 import { merge3, type ConflictRegion } from '@holi/shared'
 

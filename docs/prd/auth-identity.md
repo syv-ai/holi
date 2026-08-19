@@ -37,6 +37,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 - **Invite flows.** Adding a collaborator is a GitHub action; Holi deep-links to it.
 - **Per-document ACLs within a vault** — the access unit is the repo.
 - **Google Workspace SSO** — removed, and it stayed removed. The phase-2 Gmail/Calendar work (D67) did add a **Google OAuth grant**, but it is about *data access*, not sign-in: see §A second provider below. Identity is still GitHub, alone.
+- **More than one GitHub account per install.** Personal GitHub for personal vaults and a work account for shared ones is a real pattern and is **not** supported: there is one session, keyed on one account id. The cost is stated rather than hidden — someone whose vaults span two accounts has to choose which one Holi is signed into, and the token store's shape means adding accounts later is additive rather than a rewrite.
 - **SCIM / directory provisioning, admin console, audit-log UI.**
 
 ---
@@ -65,6 +66,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 ### Identity & vaults
 6. **FR-6** After sign-in, fetch the viewer (`login`, `name`, `avatarUrl`) and cache it for offline display. Identity is the **GitHub account id**, not the login (logins are mutable).
 7. **FR-7** **Add vault** lists the user's repos (sorted by recent push, searchable) and clones the chosen one into the managed vault root.
+7b. **FR-7b** A vault may be **owned by the user or by one of their orgs**, and both are offered — the create picker lists the signed-in login plus every org from `github.orgs`, defaulting to the personal account ([`onboarding.md`](onboarding.md)). There is no "team vault" concept beyond who owns the repo. This is what `read:org` is for, and it is the only thing it is for; the scope is granted rather than avoided because "your repos" would otherwise be the wrong vault picker for a company.
 8. **FR-8** **New vault** creates a **private** repo, seeds it (a `.gitignore` covering `.holi/settings.local.json` and `USER.local.md`, a `.claude/` scaffold, an empty `AGENTS.md`/`MEMORY.md`, a daily-note folder), commits, pushes, and opens it.
 9. **FR-9** Vaults the user has added are remembered machine-locally, with their clone paths. This list is a *machine* fact, not an account fact — a second laptop starts empty and adds its own.
 
@@ -76,7 +78,7 @@ Holi's auth is **only** the GitHub token. Claude Code is assumed **already insta
 
 ### Token lifecycle
 14. **FR-14** A **401/403 from the API or a credential failure from git** puts the vault into a signed-out state and prompts re-authentication, preserving local work. Tokens are revoked from GitHub's side, not expired on a schedule Holi controls.
-15. **FR-15** **Sign-out** deletes the keychain entry and stops all sync. **Clones are left on disk** and the user is told where they are — deleting someone's files (which may hold unpushed commits) is not a sign-out side effect. Offer an explicit "also delete local clones" with an unpushed-work warning.
+15. **FR-15** **Sign-out** deletes the keychain entry and stops all sync. **Clones are left on disk** and the user is told where they are — deleting someone's files (which may hold unpushed commits) is not a sign-out side effect. Offer an explicit "also delete local clones" with an unpushed-work warning. **The warning has not been verified against a user who actually had unpushed work**, which is the one case it exists for — recorded as an unverified claim rather than a settled one.
 
 ### Offline
 16. **FR-16** Holi **works fully offline with no session check at all**. The clone is the vault; the editor, board, agent, and reminders are local. This is a substantial simplification over the previous design's 30-day offline grace window, which existed because a server owned the truth.
@@ -194,7 +196,7 @@ Key properties:
 
 ## Edge cases & risks
 
-- **The token is a broad `repo` grant.** It can read and write *every* repo the user has, not just their vaults. This is a real widening versus a server-mediated deploy key, and it is inherent to a desktop client acting as the user. Mitigations: the token stays in main and in the keychain, and Holi only ever runs git against its own managed clones. A **fine-grained personal access token** scoped to selected repos is a supported alternative for users who want it, and the sign-in screen should say so.
+- **The token is a broad `repo` grant.** It can read and write *every* repo the user has, not just their vaults. This is a real widening versus a server-mediated deploy key, and it is inherent to a desktop client acting as the user. Mitigations: the token stays in main and in the keychain, and Holi only ever runs git against its own managed clones. A **fine-grained personal access token** scoped to selected repos is a supported alternative for users who want it, and the sign-in screen should say so. **A GitHub App would be tighter still** — per-repo installation and short-lived tokens, a materially narrower grant than `repo` — and it is not what v1 uses, because it complicates the "any repo you own is a vault" story and adds an installation step per repo. That trade is worth revisiting if the broad grant proves uncomfortable in practice; until then the fine-grained PAT is the documented escape hatch.
 - **Renderer compromise.** `contextIsolation: true`, no `nodeIntegration`; the token never crosses to the renderer. A fully compromised main process can read the keychain — out of scope to defend for v1, unchanged from before.
 - **A private repo made public** exposes vault contents. Holi should surface repo visibility in the members panel, because a vault silently becoming public is the highest-severity thing that can happen to it and nothing else in the product would show it.
 - **Login rename / account reuse** — keyed on `accountId`, so display updates and identity does not.
@@ -213,10 +215,3 @@ Key properties:
 - **Platform:** Electron `safeStorage` / OS keychain (macOS Keychain, Windows Credential Vault, libsecret); system-browser launch from main; a GitHub OAuth app configured as a **public client with device flow enabled**.
 
 ---
-
-## Open questions
-
-1. **OAuth app vs GitHub App.** A GitHub App gives per-repo installation and short-lived tokens — a materially tighter grant than `repo`. It also complicates the "any repo you own is a vault" story and adds an installation step per repo. Leaning OAuth app for v1, with fine-grained PATs documented as the tighter option; revisit if the broad grant proves uncomfortable.
-2. **Org-owned vaults.** Do vaults live under `syv-ai/` or under personal accounts? This decides whether `read:org` is needed and whether "your repos" is the right vault picker.
-3. **Should sign-out offer to delete clones?** FR-15 says leave them and offer explicitly. Confirm the unpushed-work warning is enough.
-4. **Multiple accounts.** Personal GitHub for personal vaults, work account for shared ones — supported, or explicitly one account per Holi install? Leaning one, with the cost stated.

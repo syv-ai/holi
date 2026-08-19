@@ -14,7 +14,7 @@ The editor **reads and writes the file directly**. There is no CRDT binding, no 
 
 Wiki-links are **path-based `[[folder/note.md]]`**, parsed by one grammar module in `packages/shared` (port `vaultRefs.ts` from the old repo), with a thin renderer in the editor. **Why path-based:** links stay human-readable in raw markdown, so Claude can follow *and author* them naturally, and they match Obsidian mental models. **Rejected:** stable doc IDs rendered as paths (opaque `[[doc:a1b2]]` in raw md — harder for the agent to read and author) and hybrid id+slug links. There is now **only one link grammar** — the `[[task:<id>]]` token is gone with task ids, so a link to a task is a link to a file like any other.
 
-Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and PDF/docx preview ([`_phase2-pdf-docx-preview.md`](_phase2-pdf-docx-preview.md)) are **out of scope** here.
+Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and in-place viewing of binaries Holi cannot render are **out of scope** here — both are in [`../roadmap.md`](../roadmap.md).
 
 ---
 
@@ -29,11 +29,11 @@ Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and PDF/docx prev
 - Rename + link rewrite in one pass; backrefs and delete surfacing without a server.
 
 **Non-goals (v1)**
-- **Multiplayer cursors, presence avatars, and character-level co-editing** — deferred with the collaboration engine. This is the largest single subtraction from the previous design, and it is deliberate.
+- **Multiplayer cursors, presence avatars, and character-level co-editing** — deferred with the collaboration engine ([`../roadmap.md`](../roadmap.md)). This is the largest single subtraction from the previous design, and it is deliberate.
 - A View-Transitions source↔rendered morph and its supporting machinery — **rejected**, see the callout at the top.
 - Any animation of CodeMirror decorations — banned.
 - Agent-authored apps / sandboxed `htmlBlock` iframe widgets in notes.
-- PDF / docx preview — Phase 2.
+- **Opening a binary Holi cannot render** — a PDF or `.docx` gets a typed placeholder, not a viewer ([`../roadmap.md`](../roadmap.md)).
 - Rich-text WYSIWYG that diverges from markdown-as-source; the source of truth stays markdown text on disk.
 
 ---
@@ -69,6 +69,7 @@ Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and PDF/docx prev
 13. **File tree & folders.** Driven by the **filesystem** — the tree is a directory walk plus a watcher. Create/rename/move/delete through ordinary file operations.
     - **Folders are real directories.** They exist because a file is in them, and git does not track empty ones, so an empty folder is a transient local state rather than a row that outlives its contents. The old "vestigial empty folder" problem and its display-level workaround both disappear: there is no row to orphan.
     - **The tree is live** via the filesystem watcher, so a note created by your agent, by a pull, or in another window appears without a refetch.
+    - **Task files are hidden by default, behind a per-vault toggle.** They are ordinary markdown and would otherwise appear in the tree, which is honest and also noisy — the board owns them. So the tree offers "show task files" (off unless a vault opts in, alongside the show-hidden toggle), and when it is on a task leaf carries a **status glyph** and a done task's name is struck through. Both readings were defensible, so neither is imposed; this closes the question [`tasks.md`](tasks.md) shares.
 14. **Note creation.** Create a file at a path (validated via `packages/shared/path-safety`), open it in the editor.
 15. **Panes & tabs.** The shell holds more than one open doc at a time, VS Code's preview-vs-pinned model — see §Panes & tabs.
 16. **Frontmatter reveal control.** Frontmatter is hidden by default (FR-2) with an explicit control to edit it — see §Panes & tabs.
@@ -79,6 +80,7 @@ Agent-authored apps/widgets ([`vault-apps.md`](vault-apps.md)) and PDF/docx prev
 
 The file under the editor can change for three reasons: **the agent wrote it**, **a pull landed it**, or **another window/editor touched it**. All three are the same event, and the editor treats them identically.
 
+- **The editor's own save needs no attribution.** `base` is the text the editor last loaded *or saved*, and a save advances it before the watcher can report the write — so by the time the change comes back around, `disk === base` and the decision is "nothing happened here" (`lib/editor-reload.ts`). Nothing has to ask *was that me?*, which matters because the snapshot push carries no path and could not answer that question anyway. The three alternatives all race: **path + mtime bookkeeping** cannot separate two writes inside one mtime tick, and a coalesced watcher event covers both; **pausing the watcher across the write** treats a slow filesystem's late event as foreign. **Content comparison holds no timing assumption at all**, which is the whole reason it wins.
 - **Clean buffer → reload.** No unsaved edits, so there is nothing to lose. This is the overwhelmingly common case, because autosave fires on idle.
 - **Dirty buffer → 3-way merge.** `base` is the text last loaded or saved, `mine` is the buffer, `theirs` is what is now on disk. **This must be built.** The old `agent-merge` module is not a reusable merger: it forked a shadow `Y.Doc` from the base, replayed a diff onto it, and let Yjs reconcile positionally — the merge *was* the CRDT. What survives is the 2-way diff (`fast-diff` with semantic cleanup, which coalesces fragmented ops so a rewrite stays contiguous) and the shape of the idea. A diff3 that **reports conflicts rather than resolving them** is the piece to write; the report is what routes the case to reconcile, so a merger that silently picks a side would remove the feature.
 - **Unmergeable overlap → reconcile.** Both sides changed the same region. The editor stops autosaving that file and surfaces the vault's reconcile affordance — the same banner and the same **Ask Claude to reconcile** path a git conflict uses. One conflict story, whatever produced it.
@@ -114,23 +116,57 @@ VS Code's two-state model, ported:
 
 **Not persisted.** Whether tabs survive a restart is still open; `.holi/settings.local.json` is where the answer would go. Deliberately unanswered rather than guessed at.
 
-### Split panes
+### One pane, for now
 
-**The state shape is built; the second pane is not.** `Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but only `panes[0]` is rendered. A split is therefore a second array element rather than a rewrite — which was the whole point of paying for the shape early.
+`Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but **only one pane
+renders** — `Shell.tsx` reads `panes[workspace.active]` and draws a single strip. The array shape is
+what makes a split a second element rather than a rewrite, which was the whole point of paying for
+it early. The split itself is in [`../roadmap.md`](../roadmap.md).
 
 ### Frontmatter reveal control
 
-FR-2 hides frontmatter by default. Hiding it with no way back is not shippable, so it needs an explicit control, and the reveal-on-caret rule is **not** enough on its own — frontmatter is a structured header, not prose, and a caret wandering into it is as likely to be an accident as an intent.
+FR-2 hides frontmatter by default. Hiding it with no way back is not shippable, so it has an
+explicit control, and the reveal-on-caret rule is **not** enough on its own — frontmatter is a
+structured header, not prose, and a caret wandering into it is as likely to be an accident as an
+intent.
 
-**Shape:** a right-aligned **button group** in the header bar holding a **"show frontmatter"** toggle. Toggled on, frontmatter opens in a **separate, simpler editor** above the note body — a plain key/value surface, not the full markdown stack.
+**What it is: one in-editor widget with two states** (`editor/frontmatter.ts`). The region is
+*always* replaced by an atomic block decoration — collapsed, it is a **pill** carrying a summary and
+a validity dot; revealed, it hosts a **nested plain `EditorView`**, no markdown stack. Both the pill
+and a header chevron dispatch the same `toggleFrontmatter` effect. The nested editor's writes are
+dispatched back to the root over the region's range under a marker annotation, so the widget does
+not rebuild — and lose its caret — on its own write. Because the write-back reconstructs the `---`
+fences every time, breaking the YAML never dissolves the block: it turns the dot red and, via
+`frontmatterValid`, holds off the save.
 
-**Why a separate editor rather than just un-hiding the range:** frontmatter is YAML, and the note editor is a markdown editor — the live-preview decorations, slash menu, wiki-link chips and formatting hotkeys are all wrong inside it, and an errant `⌘B` writing `**bold**` into a YAML key produces a file the task and daily-note parsers reject. **This matters more now than it did:** a task *is* its frontmatter, and the task detail view and this editor are two surfaces onto the same bytes.
+**Why a separate editor rather than just un-hiding the range:** frontmatter is YAML, and the note
+editor is a markdown editor — the live-preview decorations, slash menu, wiki-link chips and
+formatting hotkeys are all wrong inside it, and an errant `⌘B` writing `**bold**` into a YAML key
+produces a file the task and daily-note parsers reject. **This matters more than it looks:** a task
+*is* its frontmatter, and the task detail view and this editor are two surfaces onto the same bytes.
 
-**Implementation note (the real cost):** the `EditorView` is currently trapped inside `EditorPane`'s effect closure and is never lifted to a ref or atom, so *nothing outside the pane can command the editor*. A header button that toggles a decoration needs that seam first. That, not the widget, is the work.
+**The cost that was predicted and then avoided.** This section long carried an implementation note
+saying the real work was a seam: the `EditorView` is trapped inside `EditorPane`'s effect closure and
+never lifted to a ref or atom, so nothing outside the pane can command the editor, and a header
+button toggling a decoration would need that lift first. **The widget owning its own nested view
+made the seam unnecessary** — the toggle is a `StateEffect` dispatched from inside the editor, so
+nothing outside it ever has to reach in. The model is the table widget
+(`codemirror-markdown-tables`), which had solved this shape already.
 
 ### Vault dropdown
 
-The vault `<select>` is a native element and cannot hold the "new vault" `+` button beside it, nor the settings gear. Replace with a custom dropdown whose list ends in a **"+ New vault…"** row, folding the header's three controls into one. It now also carries the per-vault **sync state** — pulled/ahead-by-N/reconciling — because that is where you look to know which vault you are in.
+The vault `<select>` was a native element, which cannot hold an action row —
+`features/vault/VaultPicker.tsx` replaced it with a Radix dropdown: a trigger naming the current
+vault, the vaults, and **"Add vault…"** pinned to the bottom. **The action belongs *in* the list
+rather than as a `+` beside it**, because switching and adding are one gesture: open the list, pick
+where to go. Radix supplies open/close, outside-click, Escape and focus management.
+
+**It does not carry the sync state, and the settings gear is still its own control.** Folding all
+three of the header's controls into the dropdown was the original design; what shipped folded one.
+The gear sits beside the board and today chips, and the sync state sits **bottom-left in the window
+footer**, where it doubles as the entry to the whole-vault commit history — a better home than the
+dropdown, because "where am I, and is my work elsewhere" is one glance and the footer is also where a
+conflict's quiet reconcile affordance belongs.
 
 ---
 
@@ -157,8 +193,8 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 
 ### The file seam
 - **Load:** read the file, seed the buffer, record it as the merge **base**.
-- **Save:** idle debounce or ⌘S writes the buffer and advances the base. A write the editor makes must be distinguishable from a foreign one, so the watcher doesn't treat the editor's own save as an external change and reload on top of it — an echo loop that produces a caret jump per keystroke pause.
-- **Undo:** plain CodeMirror `history`. The `Y.UndoManager` — which existed so undo unwound *your* edits and not a co-author's — is gone with the co-author.
+- **Save:** idle debounce or ⌘S writes the buffer and advances the base — **in that order**, which is what stops the watcher treating the editor's own save as an external change and reloading on top of it. The echo loop that ordering forecloses produces a caret jump per keystroke pause.
+- **Undo:** plain CodeMirror `history`. The `Y.UndoManager` — which existed so undo unwound *your* edits and not a co-author's — is gone with the co-author. **A foreign reload is not an undo step**, and that property is what the `UndoManager` used to provide: a reload is dispatched with `addToHistory:false`, via a minimal prefix/suffix diff that preserves the caret, so ⌘Z unwinds your keystrokes rather than backing out someone else's text. The tentative earlier answer — apply the reload as one undoable transaction — was rejected for contradicting exactly that. Design: [`../specs/2026-08-03-undo-external-reload-design.md`](../specs/2026-08-03-undo-external-reload-design.md).
 - **Teardown:** flush a dirty buffer on close, tab switch, vault switch, and app quit. An unflushed buffer is the one way this design can lose data that the CRDT design could not.
 
 ---
@@ -170,7 +206,7 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 - **Images render inline in the editor**, as a live-preview decoration like every other rendered element.
 - **A standalone image viewer** opens an image as its own tab; other binaries get a typed placeholder naming what they are, because a file the tree shows and the editor cannot open is a dead end.
 - **Non-markdown files stay out of the link graph.** They are not in `docs`, so the link-aware operations — rename, backrefs, move — remain markdown-only. An image is an asset referenced by path, not a wiki-linkable note.
-- **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one — the open question is kept in [`_phase2-pdf-docx-preview.md`](_phase2-pdf-docx-preview.md).
+- **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one ([`../roadmap.md`](../roadmap.md)). There is no object storage, so it is a decision as much as a build.
 
 **Rejected.** *Rendering every binary in place and retiring text-first* — makes the agent blind, since a PDF it cannot read is a document it cannot help with, and puts binary bloat in git with no authoring story. *Converting incoming PDFs/`.docx` to markdown and archiving the original* — an import pipeline and an object-storage dependency for a flow that runs the other way, and it archives away originals users may need intact. *Two co-equal representations of one document* — raises "which is truth" on every edit and every sync; markdown-as-source with PDF-as-output keeps one.
 
@@ -220,7 +256,7 @@ A grep over the vault for `[[<path>` — no index, no `link_index` table, no mai
 ---
 
 ## Edge cases & risks
-- **The watcher echoing the editor's own save** — the most likely bug in this PRD. A write must be attributable, or every autosave triggers a reload of the text just written.
+- **The watcher echoing the editor's own save** — named here as the most likely bug in this PRD, and closed by the base-advance-before-write ordering in [External writes](#external-writes) rather than by attributing writes.
 - **Selection spanning multiple lines.** Define the reveal set as every line the selection touches; re-render on collapse.
 - **A pull landing on the open note while you type.** The 3-way merge case, and the one worth writing a test against first: it is rare enough to go unnoticed and expensive enough to matter.
 - **Rename touching a note you have open.** The file moves under an open editor; the tab must follow the file rather than showing a phantom of a path that no longer exists.
@@ -236,19 +272,3 @@ A grep over the vault for `[[<path>` — no index, no `link_index` table, no mai
 - **[`agent.md`](agent.md)** — the agent writes notes with native tools; its writes arrive here as ordinary external writes.
 - **[`tasks.md`](tasks.md)** — task files are markdown in the same tree; task chips read their frontmatter.
 
----
-
-## Open questions
-1. **Do task files appear in the notes tree?** Shared with [`tasks.md`](tasks.md). They are markdown files, so by default they do.
-2. **Attributing a write.** Is the editor's own save distinguished by path+mtime bookkeeping, by pausing the watcher across the write, or by content comparison? The cheapest correct answer wins; content comparison is the only one that cannot race.
-
-*Resolved:* task references in prose → ordinary path wiki-links (§Task links). Formatting hotkey set → standard B/I/E/K/strikethrough, toggle-aware. **Undo across an external reload** → a foreign reload is a *co-author's* edit, not your undo step: it is dispatched with `addToHistory:false` (⌘Z unwinds your keystrokes, not the foreign text) via a minimal prefix/suffix diff that preserves the caret — *not* the tentative "single undoable transaction" leaning, which contradicted §Undo. Design: [`../specs/2026-08-03-undo-external-reload-design.md`](../specs/2026-08-03-undo-external-reload-design.md).
-
----
-
-## Out of scope / deferred
-- **Multiplayer cursors, presence, and character-level co-editing** — deferred with the collaboration engine.
-- **A View-Transitions morph and its machinery** — **rejected**, not deferred.
-- **Agent-authored apps / note-embedded widgets** — apps are a separate surface ([`vault-apps.md`](vault-apps.md)).
-- **PDF / docx preview** — Phase 2.
-- **Typst export** — Phase 2.

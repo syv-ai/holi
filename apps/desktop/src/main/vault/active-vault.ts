@@ -63,7 +63,7 @@ export type SyncState =
 export interface SyncTimings {
   /** Quiet before a rescan. Short: the file tree has to feel live. */
   rescanDebounceMs: number
-  /** Quiet before the commit check. `prd/vaults-sync.md` §Open question 1. */
+  /** Quiet before the commit check. `prd/vaults-sync.md` §Committing FR-4. */
   commitQuietMs: number
   /** The backstop. Rescans AND commits, whatever the watcher did or did not say. */
   healIntervalMs: number

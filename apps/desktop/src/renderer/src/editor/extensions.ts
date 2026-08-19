@@ -38,9 +38,9 @@ export interface EditorDeps {
  * **CodeMirror's own history is back.** It was deliberately absent while
  * `Y.UndoManager` owned undo, and the CRDT went with D60 — so without this,
  * ⌘Z did nothing at all. Whether an external reload should be undoable is a
- * separate and still-open question (`notes-editor.md` §Open question 3): a
- * `merge3` result arriving as one big change is undoable here, which is not
- * obviously right, but silently having no undo is obviously wrong.
+ * separate question, and it is settled: it should not be. `lib/apply-reload.ts`
+ * dispatches a reload with `addToHistory:false`, so ⌘Z unwinds your keystrokes
+ * rather than backing out a co-author's text (`notes-editor.md` §Undo).
  *
  * One shared `autocompletion` instance hosts every completion source.
  */

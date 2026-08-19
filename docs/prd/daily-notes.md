@@ -27,7 +27,7 @@ Porting notes: port the well-tested **untouched-stub heuristic** (old `is_untouc
 **Non-goals**
 - Daily notes in **shared** vaults — out of scope by design.
 - The wiki-link grammar and rename internals — [`notes-editor.md`](notes-editor.md).
-- Daily-note templates / configurable seed content — deferred post-v1.
+- Daily-note templates / configurable seed content — deferred post-v1 ([`../roadmap.md`](../roadmap.md)).
 - Reminders about the daily note.
 
 ---
@@ -74,10 +74,12 @@ So if your laptop and your desktop each create today's note before either syncs,
 
 **The device's local date.** A personal vault has a single owner and therefore a single clock, and that clock is on the machine.
 
+**And a vault is personal unless Holi positively knows otherwise** — more than one GitHub collaborator, checked when online. **Every failure defaults to personal**: offline, signed out, or a failed request all leave you with a daily note rather than without one, because the cost of a stray daily note in a shared vault is a file you delete, and the cost of the reverse is a feature that silently stops working on a plane. There is **no local "this vault is personal" override**; it was the leaning and it did not ship, because a marker that can drift from the collaborator list is a second answer to a question that already has one.
+
 Use a local-date formatter, **not `toISOString()`** — the latter is UTC and reports the wrong day on either side of local midnight, which is exactly when a daily-note feature is most likely to be used. `shared/dates.ts`'s `formatDate` is UTC-based and is for epoch math, not for asking a device what day it is.
 
 - **Edge:** a session spanning local midnight — re-evaluate the date per call, so opening the vault after midnight lands on *tomorrow's* note.
-- **Optional refinement (deferred):** a "home" timezone preference for travellers; default = device-local.
+- **A "home" timezone preference for travellers is deferred** ([`../roadmap.md`](../roadmap.md)). "Today" is already an *input* rather than something computed, so an override would only change who supplies the date — which is why it stays cheap to add and unmotivated until someone is annoyed by it.
 
 ---
 
@@ -104,7 +106,7 @@ Port the old sweep's ergonomics: (a) **move** the prior-day root note into `jour
 - **On personal-vault open:** create-if-absent → open the note → navigate to the editor. (Shared-vault open lands on the last-viewed surface, no daily note.)
 - **Sidebar "Today":** a dedicated entry (personal vault only) that opens today's daily note, creating it if needed.
 - **Keyboard shortcut:** a global shortcut opens today's daily note.
-- **Task-count badge:** the "Today" entry shows a count of **open tasks that link to today's note** — a grep over task files for a wiki-link to the daily's path. Zero → no badge.
+- **Task-count badge:** the "Today" entry shows a count of **open tasks that link to today's note** — a grep over task files for a wiki-link to the daily's path. Zero → no badge. **Linking-to, not due-today**, deliberately: the daily note is where you gather the day, so what belongs on it is what you have pointed at it. Due-today is a board question, and answering it here would put two different counts on two surfaces with no way to tell them apart. In a shared vault nothing links to the daily path, so the badge stays hidden.
 - **Empty-state recovery:** if the panes reach zero tabs, "Open today's daily note" remains the recovery CTA.
 
 ---
@@ -117,7 +119,7 @@ Port the old sweep's ergonomics: (a) **move** the prior-day root note into `jour
 - **Two devices, same morning, both offline:** identical bytes at an identical path — git merges silently. See [Idempotency](#idempotency).
 - **Two devices, same morning, both *edited*:** a genuine conflict on one file, handled by the vault's ordinary reconcile path ([`vaults-sync.md`](vaults-sync.md)). The blast radius is one day's note.
 - **A vault that becomes shared.** A personal vault is "personal" because it has one collaborator — which can change on GitHub without Holi being told. Adding a collaborator to a vault with daily notes reintroduces every problem personal-only scoping avoids. Holi should stop auto-creating dailies once a vault has more than one collaborator, and say why. *(This is a new edge the old design could not have: "personal" used to be a `kind` column the server owned, and now it is an observation about a GitHub repo.)*
-- **The sweep running on a vault with unpublished work** — it commits like anything else and publishes when you do.
+- **The sweep running on a vault with unpushed work** — it commits like anything else, and the automatic push carries it out with everything else waiting.
 
 ---
 
@@ -128,9 +130,3 @@ Port the old sweep's ergonomics: (a) **move** the prior-day root note into `jour
 - **[`tasks.md`](tasks.md)** — task files, which the badge greps for links to today's note.
 
 ---
-
-## Open questions
-
-1. **Task-count badge semantics.** Tasks *linking to* today's note vs tasks *due today*? Defaulting to linking-to; confirm with [`tasks.md`](tasks.md).
-2. **Detecting "personal".** Is a vault personal because it has exactly one GitHub collaborator (checked on open, needs network) or because the user marked it so in `.holi/settings.local.json` (offline-safe, can drift)? Leaning: collaborator count when known, cached, with the local setting as an override.
-3. **Per-user timezone override** — deferred past v1. Device-local is correct for the common case, and "today" is already an input, so an override would only change who computes the date.

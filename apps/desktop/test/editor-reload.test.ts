@@ -8,9 +8,9 @@
  * no pausing the watcher across the write — all three of which race, and one of
  * which (`notes-editor.md` §Risks) is named as the most likely bug in the PRD.
  *
- * `notes-editor.md` §Open question 2 — "is the editor's own save distinguished
- * by path+mtime, by pausing the watcher, or by content comparison?" — is closed
- * by these tests. Content comparison is the only one that cannot race.
+ * `notes-editor.md` §External writes records the answer — content comparison,
+ * because it is the only one of the three that cannot race — and these tests are
+ * what closed it.
  */
 import { describe, expect, it } from 'vitest'
 import { decideReload, minimalChange } from '../src/renderer/src/lib/editor-reload'

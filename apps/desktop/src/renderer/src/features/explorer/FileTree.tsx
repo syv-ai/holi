@@ -118,7 +118,7 @@ export function FileTree({
   // The tree projects notes AND non-markdown files (spec §Arbitrary files); the
   // scanner keeps them in separate lists so link-aware ops stay markdown-only.
   // Task files join only when the per-vault toggle is on — the board owns them by
-  // default (prd/tasks.md §Open questions: tasks in the tree).
+  // default (prd/notes-editor.md FR-13: task files in the tree).
   const docPaths = useMemo(
     () => [
       ...snapshot.docs.map((d) => d.path),
