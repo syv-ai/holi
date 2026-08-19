@@ -1720,3 +1720,67 @@ describe('google forwarding', () => {
     ).rejects.toThrow(/messageId/i)
   })
 })
+
+/**
+ * The `apps.*` namespace — what a vault app may ask the vault for.
+ *
+ * These tests are the security boundary, not a convenience check. The refusal
+ * lives in main and is asserted here because the renderer is the process that
+ * hosts untrusted app code, and the process rendering untrusted code must not
+ * also be the process deciding what it may read.
+ */
+describe('apps', () => {
+  const appsRig = () =>
+    rig({
+      'inbox.md': '# Inbox\n\nnotes\n',
+      'USER.local.md': '# Ada Holm\n\nada@syv.ai\n',
+      'task.review.md': '---\ntitle: Review\nstatus: todo\n---\n',
+    })
+
+  it('reads an ordinary note', async () => {
+    const { caller } = await appsRig()
+    expect(await caller.apps.read({ remote: REMOTE, path: 'inbox.md' })).toContain('# Inbox')
+  })
+
+  it('refuses every file that configures the agent', async () => {
+    // `.claude/hooks/google-send-gate.mjs` IS the mail send gate, so a readable
+    // agent surface is an app reading its way toward the agent's configuration —
+    // and MEMORY.md/USER.local.md are what the user told the assistant privately.
+    const { caller } = await appsRig()
+    for (const path of ['AGENTS.md', 'CLAUDE.md', 'MEMORY.md', 'USER.local.md', '.claude/settings.json']) {
+      await expect(caller.apps.read({ remote: REMOTE, path })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+      })
+    }
+  })
+
+  it('refuses a path that leaves the vault, at the same boundary notes.read uses', async () => {
+    const { caller } = await appsRig()
+    await expect(caller.apps.read({ remote: REMOTE, path: '../outside.md' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    })
+  })
+
+  it('says NOT_FOUND for a missing note, distinguishably from a refusal', async () => {
+    const { caller } = await appsRig()
+    await expect(caller.apps.read({ remote: REMOTE, path: 'nope.md' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    })
+  })
+
+  it('lists the vault docs with the agent surface removed', async () => {
+    const { caller } = await appsRig()
+    const paths = (await caller.apps.docs({ remote: REMOTE })).map((d) => d.path)
+    expect(paths).toContain('inbox.md')
+    // Seeded by ensureSeeded, so their absence here is a filter doing work
+    // rather than a fixture that never had them.
+    expect(paths).not.toContain('AGENTS.md')
+    expect(paths).not.toContain('CLAUDE.md')
+    expect(paths).not.toContain('MEMORY.md')
+  })
+
+  it('lists the vault tasks', async () => {
+    const { caller } = await appsRig()
+    expect((await caller.apps.tasks({ remote: REMOTE })).map((t) => t.title)).toContain('Review')
+  })
+})
