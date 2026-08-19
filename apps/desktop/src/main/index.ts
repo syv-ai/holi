@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
+import { appFileAbsPath, appHeadHtml, appMimeFor, injectAppHead, parseAppUrl } from './apps/app-protocol'
 import { createSession } from './github/electron'
 import { createGoogleSession } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
@@ -44,6 +45,7 @@ import { createRouter } from './router'
 import { createVaultHost } from './vault/active-vault'
 import { VaultRegistry, vaultRoot } from './vault/registry'
 import { scanVault } from './vault/vault-store'
+import { readVaultTheme } from './vault/theme'
 import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
@@ -82,6 +84,13 @@ let tray: Tray | null = null
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'holi-vault',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
+  },
+  // The vault-app scheme (D74). Same privileges, and `standard` is load-bearing
+  // for a second reason here: it is what makes the URL's HOST parse as the app
+  // id, which is how one app's frame is confined to one app's directory.
+  {
+    scheme: 'holi-app',
     privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true },
   },
 ])
@@ -205,6 +214,51 @@ async function main(): Promise<void> {
     try {
       const bytes = await readFile(abs)
       return new Response(bytes, { headers: { 'content-type': mimeFor(abs) } })
+    } catch {
+      return new Response(null, { status: 404 })
+    }
+  })
+
+  /**
+   * A vault app, served from its own directory and its own origin (D74).
+   *
+   * The frame is `sandbox="allow-scripts"` with no `allow-same-origin`, so this
+   * origin is opaque: an app cannot fetch `holi-vault://`, cannot touch the
+   * renderer's DOM, and `localStorage` throws. Reaching the vault's content is
+   * the bridge's job, and the bridge refuses the agent surface in `apps.*`.
+   *
+   * **No `Content-Security-Policy` header, deliberately.** Network is allowed
+   * (vault-apps.md §Trust & isolation) — an app may `fetch` anywhere, which is
+   * Nicolai's explicit choice and its cost is written down rather than hidden.
+   * If a policy is ever added it must name `holi-app:` explicitly: `'self'`
+   * matches NOTHING in an opaque origin, so `default-src 'self'` would block the
+   * app's own `app.js` and read as a path bug rather than as a policy.
+   */
+  protocol.handle('holi-app', async (request) => {
+    const vault = host.active()
+    if (vault === null) return new Response(null, { status: 404 })
+    const parsed = parseAppUrl(request.url)
+    if (parsed === null) return new Response(null, { status: 400 })
+    const abs = appFileAbsPath(vault.root, parsed.appId, parsed.rel)
+    if (abs === null) return new Response(null, { status: 403 })
+
+    // The entry document is the one file that is rewritten: it carries the
+    // theme and the bridge. Everything else is served byte-for-byte.
+    if (parsed.rel === 'index.html') {
+      const html = await readFile(abs, 'utf8').catch(() => null)
+      if (html === null) return new Response(null, { status: 404 })
+      const theme = await readVaultTheme(vault.root)
+      // Dark unless the document is in light mode — mirrors `state/theme.ts`'s
+      // `activeMode`, which is dark-first because `data-theme` is unstamped.
+      const block = theme.dark
+      return new Response(injectAppHead(html, appHeadHtml(block)), {
+        headers: { 'content-type': appMimeFor(abs) },
+      })
+    }
+
+    try {
+      const bytes = await readFile(abs)
+      return new Response(bytes, { headers: { 'content-type': appMimeFor(abs) } })
     } catch {
       return new Response(null, { status: 404 })
     }
