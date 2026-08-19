@@ -525,6 +525,15 @@ export function createRouter(deps: RouterDeps) {
     return entry.path
   }
 
+  /** The vault's contents: the live cache when the vault asked about is the open
+   * one — a second walk could only disagree with what the renderer already has —
+   * and a fresh scan otherwise. */
+  async function snapshotFor(remote: string): Promise<VaultSnapshot> {
+    const active = deps.host.active()
+    if (active?.remote === remote) return active.snapshot()
+    return scanVault(await rootFor(remote))
+  }
+
   /** Every path from the renderer or the agent re-validates here. This is the
    * only thing between an input and the user's filesystem now that server-side
    * authorization is gone (architecture §10). */
@@ -743,13 +752,7 @@ export function createRouter(deps: RouterDeps) {
 
     snapshot: t.procedure
       .input(fields({ remote: 'string' }))
-      .query(async ({ input }): Promise<VaultSnapshot> => {
-        // The live vault's cache when it is the one being asked about — a
-        // second walk could only disagree with what the renderer already has.
-        const active = deps.host.active()
-        if (active?.remote === input.remote) return active.snapshot()
-        return scanVault(await rootFor(input.remote))
-      }),
+      .query(({ input }): Promise<VaultSnapshot> => snapshotFor(input.remote)),
 
     remove: t.procedure
       .input(fields({ remote: 'string' }))
