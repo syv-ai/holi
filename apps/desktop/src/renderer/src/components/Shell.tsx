@@ -28,6 +28,8 @@ import { DialogHost } from './DialogHost'
 import { EditorPane } from '@/composites'
 import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
+import { AppFrame } from '@/features/apps/AppFrame'
+import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
 import { fileIconFor } from '@/features/explorer/file-icons'
 import { ImageViewer } from '@/features/files/ImageViewer'
@@ -257,6 +259,11 @@ export function Shell() {
             onOpenPinned={openPin}
           />
 
+          {/* Below the tree and above the chips: an app is opened from a list of
+              things the vault holds, like a file, not from the nav rail. Renders
+              nothing at all until the vault has one. */}
+          <AppsSection />
+
           {/* Two rows, not one. Five chips across a sidebar this narrow made it
               scroll horizontally — and `flex-1` alone could not fix that, since
               a flex item's default `min-width: auto` refuses to shrink below its
@@ -437,7 +444,9 @@ export function Shell() {
             )}
           </div>
 
-          {tab?.kind === 'board' ? (
+          {tab?.kind === 'app' ? (
+            <AppFrame appId={tab.appId} />
+          ) : tab?.kind === 'board' ? (
             <BoardView />
           ) : tab?.kind === 'agenda' ? (
             <AgendaView />
