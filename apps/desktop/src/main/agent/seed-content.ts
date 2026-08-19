@@ -3,12 +3,14 @@
  * files private, the CLAUDE.md shim, the shared agent instructions, and the
  * per-turn context hook.
  *
- * **Seeding runs when a vault is created or adopted (`vaults.add`/`vaults.create`
- * → `ensureSeeded`), NOT on every subsequent open** (`vaults.open` does not
- * re-seed). Create-if-missing makes that safe and gives managed files simple
- * "born-with-the-vault" semantics: the file is written once, at birth, and a
- * member who edits — or deletes — it keeps that change (a plain open never
- * resurrects it; only re-adding the same vault would rewrite a missing one).
+ * **Seeding runs on vault creation, adoption AND every open** (`vaults.add`/
+ * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70).
+ * Create-if-missing is what makes running it that often safe, and it is also
+ * what makes a NEW managed file reach vaults that predate it with no migration:
+ * the next open writes the one file that is absent and touches nothing else. A
+ * member who edits a managed file keeps that change; one who deletes it gets it
+ * back on the next open, which is the price of the send gate being present in
+ * every vault.
  *
  * **`.gitignore` is the exception, and the reason this module matters.** An
  * adopted repo usually already has one, so create-if-missing would silently
@@ -30,6 +32,7 @@ import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
+import vaultAppsSkill from './skills/vault-apps/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -294,6 +297,7 @@ export const SEED_FILES: Record<string, string> = {
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
+  '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
 }
 
 export const GITIGNORE = '.gitignore'

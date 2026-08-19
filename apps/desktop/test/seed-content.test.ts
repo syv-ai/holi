@@ -57,6 +57,7 @@ describe('SEED_FILES', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
+      '.claude/skills/vault-apps/SKILL.md',
       '.holi/document-templates/_brand/brand.typ',
       '.holi/document-templates/_brand/figures.typ',
       '.holi/document-templates/contract/template.json',
@@ -555,5 +556,34 @@ describe('the connector opt-out reaches vaults that already exist', () => {
     })
 
     expect(settingsWithRequired(before)).toBeNull()
+  })
+})
+
+describe('ensureSeeded — the vault-apps skill', () => {
+  it('writes the authoring contract into a vault that never had it', async () => {
+    // This is what makes a new skill reach EXISTING vaults with no migration:
+    // ensureSeeded runs on vault open (D70), and create-if-missing means a
+    // brand-new seed file is the only thing it writes on that pass.
+    const root = await tempDir()
+    const written = await ensureSeeded(root)
+    expect(written).toContain('.claude/skills/vault-apps/SKILL.md')
+    const skill = await readFile(join(root, '.claude/skills/vault-apps/SKILL.md'), 'utf8')
+    // The three facts an app author cannot discover by reading the app's own
+    // code: where it goes, what the bridge offers, and that nothing persists.
+    expect(skill).toContain('.holi/apps/')
+    expect(skill).toContain('holi.docs.list()')
+    expect(skill).toContain('holi.docs.read(')
+    expect(skill).toContain('holi.tasks.list()')
+    expect(skill).toContain('holi.open(')
+    expect(skill).toMatch(/localStorage/)
+  })
+
+  it('never rewrites one the user has edited', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    const rel = '.claude/skills/vault-apps/SKILL.md'
+    await writeFile(join(root, rel), '# mine\n', 'utf8')
+    expect(await ensureSeeded(root)).not.toContain(rel)
+    expect(await readFile(join(root, rel), 'utf8')).toBe('# mine\n')
   })
 })
