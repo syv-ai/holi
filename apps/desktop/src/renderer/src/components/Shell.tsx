@@ -13,7 +13,7 @@
  * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { CalendarDays, History, Mail, Settings, SquareKanban } from 'lucide-react'
+import { CalendarDays, History, LayoutGrid, Mail, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
@@ -71,8 +71,9 @@ import {
 // colour literals are banned).
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text-amber-400' } as const
 
-/** The singleton tabs' pill text and tooltip. Notes use their filename/path
- *  instead, so they are absent here by design. */
+/** The singleton tabs' pill text and tooltip. Notes use their filename/path and
+ *  apps use their id instead — both are keyed by something the tab carries
+ *  rather than by its kind, so neither can live in a lookup like this. */
 const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail' } as const
 const TAB_LABEL: Partial<Record<string, string>> = {
   board: 'task board',
@@ -352,14 +353,19 @@ export function Shell() {
           <div className="flex h-11 items-center gap-1 px-2">
             {pane.tabs.map((t, i) => (
               <span
-                key={t.kind === 'note' ? t.path : t.kind}
+                key={t.kind === 'note' ? t.path : t.kind === 'app' ? `app:${t.appId}` : t.kind}
                 className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   i === pane.active
                     ? 'bg-secondary text-foreground'
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Tooltip content={TAB_LABEL[t.kind] ?? (t.kind === 'note' ? t.path : t.kind)}>
+                <Tooltip
+                  content={
+                    TAB_LABEL[t.kind] ??
+                    (t.kind === 'note' ? t.path : t.kind === 'app' ? `the ${t.appId} app` : t.kind)
+                  }
+                >
                   <Button
                     variant="ghost"
                     // Bare clickable on the pill — neutralise the ghost bg/padding so
@@ -376,16 +382,30 @@ export function Shell() {
                     }
                     onDoubleClick={() => setWorkspace((w) => pinTab(w, i))}
                   >
-                    {t.kind === 'board' ? (
-                      <SquareKanban size={14} />
+                    {/* The two kinds that carry data come first: `Tab`'s
+                        singletons are ONE member (`{kind: SingletonTab}`), and a
+                        member whose discriminant is a union of literals does not
+                        reduce in the negative branch — so `t.path` is only
+                        reachable by narrowing TO note, never by excluding the
+                        rest. */}
+                    {t.kind === 'note' ? (
+                      fileIconFor(t.path)
+                    ) : t.kind === 'app' ? (
+                      <LayoutGrid size={14} />
                     ) : t.kind === 'agenda' ? (
                       <CalendarDays size={14} />
                     ) : t.kind === 'mail' ? (
                       <Mail size={14} />
                     ) : (
-                      fileIconFor(t.path)
+                      <SquareKanban size={14} />
                     )}
-                    <span>{t.kind === 'note' ? t.path.split('/').at(-1) : TAB_NAME[t.kind]}</span>
+                    <span>
+                      {t.kind === 'note'
+                        ? t.path.split('/').at(-1)
+                        : t.kind === 'app'
+                          ? t.appId
+                          : TAB_NAME[t.kind]}
+                    </span>
                   </Button>
                 </Tooltip>
                 <Tooltip content="close tab">

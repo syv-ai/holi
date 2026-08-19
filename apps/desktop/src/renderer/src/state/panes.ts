@@ -29,17 +29,27 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
  * false means pinned. The board tab has no flag — it is pinned by construction,
  * being unique.
  */
+/** The unique surfaces: one board, one agenda, one mail. Opened from a nav
+ *  button rather than from a file, and pinned by construction.
+ *
+ *  **Named, not derived.** This was `Exclude<Tab, {kind:'note'}>['kind']`, which
+ *  encoded "every tab that is not a note is unique" — true until vault apps, of
+ *  which there are as many as the vault holds. Derived, `openSingleton(w,'app')`
+ *  typechecked and would have opened a tab with no `appId` at all. */
+export type SingletonTab = 'board' | 'agenda' | 'mail'
+
+/**
+ * The two categories are now named rather than derived (see `SingletonTab`): a
+ * tab is either *of* something — a note by path, an app by id — or it is one of
+ * the singleton surfaces.
+ */
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
-  | { kind: 'board' }
-  /** The Google agenda and mail (D67). **Singletons** like the board — there is
-   *  only ever one of each, and both are account-wide rather than vault-scoped. */
-  | { kind: 'agenda' }
-  | { kind: 'mail' }
-
-/** The non-note surfaces: unique, pinned by construction, and opened from a nav
- *  button rather than from a file. */
-export type SingletonTab = Exclude<Tab, { kind: 'note' }>['kind']
+  /** A vault app (D74), identified by its directory name under `.holi/apps/`.
+   *  There is one tab per app, not one per vault. */
+  | { kind: 'app'; appId: string }
+  /** The board, the Google agenda and mail (D67) — one of each, ever. */
+  | { kind: SingletonTab }
 
 export interface Pane {
   tabs: Tab[]
@@ -64,7 +74,9 @@ export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 
 function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
-  return a.kind === 'note' && b.kind === 'note' ? a.path === b.path : true
+  if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
+  if (a.kind === 'app' && b.kind === 'app') return a.appId === b.appId
+  return true
 }
 
 /**
@@ -108,6 +120,15 @@ export function openAgenda(workspace: Workspace): Workspace {
 
 export function openMail(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'mail')
+}
+
+/** Open a vault app in the active pane, or focus it if it is already there.
+ *  Dedupes by `appId`, exactly as `openTab` dedupes a note by path — two frames
+ *  over one app are two running copies of it, and the second is not the one you
+ *  were looking at. Appended rather than inserted leftmost: an app is opened
+ *  from the sidebar like a file, not from the nav rail like a singleton. */
+export function openApp(workspace: Workspace, appId: string): Workspace {
+  return openTab(workspace, { kind: 'app', appId })
 }
 
 /**

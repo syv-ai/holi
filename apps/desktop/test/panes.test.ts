@@ -12,8 +12,10 @@ import {
   closeTab,
   closeTabsForPaths,
   emptyWorkspace,
+  openApp,
   openPinned,
   openPreview,
+  openSingleton,
   openTab,
   pinActive,
   pinTab,
@@ -179,5 +181,49 @@ describe('closeTabsForPaths', () => {
     w = openTab(w, { kind: 'note', path: 'b.md' }) // active
     expect(closeTabsForPaths(w, ['b.md']).panes[0]!.active).toBe(0)
     expect(closeTabsForPaths(w, ['a.md', 'b.md']).panes[0]).toEqual({ tabs: [], active: -1 })
+  })
+})
+
+describe('openApp', () => {
+  it('opens an app tab and focuses it', () => {
+    const w = openApp(emptyWorkspace(), 'retro')
+    expect(w.panes[0]!.tabs).toEqual([{ kind: 'app', appId: 'retro' }])
+    expect(w.panes[0]!.active).toBe(0)
+  })
+
+  it('focuses an app that is already open instead of opening it twice', () => {
+    // Same rule as a note, for the same reason: two frames over one app are two
+    // running copies of it, and the second one is not the one you were looking at.
+    let w = openApp(emptyWorkspace(), 'retro')
+    w = openTab(w, { kind: 'note', path: 'a.md' })
+    w = openApp(w, 'retro')
+    expect(w.panes[0]!.tabs).toHaveLength(2)
+    expect(w.panes[0]!.active).toBe(0)
+  })
+
+  it('keeps two different apps apart', () => {
+    let w = openApp(emptyWorkspace(), 'a')
+    w = openApp(w, 'b')
+    expect(w.panes[0]!.tabs).toEqual([
+      { kind: 'app', appId: 'a' },
+      { kind: 'app', appId: 'b' },
+    ])
+    expect(w.panes[0]!.active).toBe(1)
+  })
+
+  it('behaves like any other tab when closed', () => {
+    let w = openApp(emptyWorkspace(), 'retro')
+    w = openTab(w, { kind: 'note', path: 'a.md' })
+    w = closeTab(w, 0)
+    expect(w.panes[0]!.tabs).toEqual([{ kind: 'note', path: 'a.md' }])
+  })
+
+  it('is not a singleton — the type says so', () => {
+    // The regression this reshape exists to prevent. SingletonTab used to be
+    // DERIVED (`Exclude<Tab, {kind:'note'}>['kind']`), which quietly meant
+    // "every non-note tab is unique" — so this call would have typechecked and
+    // opened a tab with no appId at all.
+    // @ts-expect-error 'app' is not a singleton surface
+    openSingleton(emptyWorkspace(), 'app')
   })
 })
