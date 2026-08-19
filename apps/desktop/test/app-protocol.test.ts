@@ -1,6 +1,13 @@
 import { sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { appFileAbsPath, parseAppUrl } from '../src/main/apps/app-protocol'
+import { APP_METHODS } from '@holi/shared'
+import { BRIDGE_JS } from '../src/main/apps/bridge-script'
+import {
+  appFileAbsPath,
+  appHeadHtml,
+  injectAppHead,
+  parseAppUrl,
+} from '../src/main/apps/app-protocol'
 
 const ROOT = '/vault/root'
 const APPS = `${ROOT}${sep}.holi${sep}apps`
@@ -68,5 +75,70 @@ describe('appFileAbsPath', () => {
       expect(out).not.toBeNull()
       expect(out!.startsWith(`${APPS}${sep}retro${sep}`)).toBe(true)
     }
+  })
+})
+
+describe('injectAppHead', () => {
+  const HEAD = '<!--injected-->'
+
+  it('puts the block immediately after the opening head tag', () => {
+    const out = injectAppHead('<html><head><title>x</title></head>', HEAD)
+    expect(out).toBe(`<html><head>${HEAD}<title>x</title></head>`)
+  })
+
+  it('matches a head tag carrying attributes', () => {
+    const out = injectAppHead('<html><head lang="en"><title>x</title></head>', HEAD)
+    expect(out).toBe(`<html><head lang="en">${HEAD}<title>x</title></head>`)
+  })
+
+  it('prepends when the document has no head — an app may ship a bare fragment', () => {
+    expect(injectAppHead('<h1>hi</h1>', HEAD)).toBe(`${HEAD}<h1>hi</h1>`)
+  })
+
+  it('changes nothing else about the document', () => {
+    // Remove what we added and the app's own bytes must come back exactly. Only
+    // the entry document is ever touched; every other file is served verbatim.
+    const src = '<html><head><title>x</title></head><body><p>a &amp; b</p></body></html>'
+    expect(injectAppHead(src, HEAD).replace(HEAD, '')).toBe(src)
+  })
+})
+
+describe('appHeadHtml', () => {
+  it('writes the resolved theme onto :root as custom properties', () => {
+    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' })
+    expect(out).toMatch(/<style>:root\{[^<]*--primary:oklch\(0\.7 0\.1 250\)[^<]*\}<\/style>/)
+  })
+
+  it('carries the bridge shim in a script tag', () => {
+    expect(appHeadHtml({})).toContain(`<script>${BRIDGE_JS}</script>`)
+  })
+
+  it('cannot be escaped by a hostile token value', () => {
+    // resolveTheme already refuses `<`/`>` — this is the second guard, because
+    // the head is built from a block and a caller could hand one over unresolved.
+    const out = appHeadHtml({ primary: '</style><script>alert(1)</script>' })
+    expect(out).not.toContain('alert(1)</script>')
+    expect(out.match(/<style>/g)).toHaveLength(1)
+    expect(out.match(/<\/style>/g)).toHaveLength(1)
+    expect(out.match(/<script>/g)).toHaveLength(1)
+    expect(out.match(/<\/script>/g)).toHaveLength(1)
+  })
+})
+
+describe('BRIDGE_JS', () => {
+  it('implements every method on the wire', () => {
+    // The shim is a string, so nothing typechecks it against APP_METHODS. This
+    // is what goes red when a method is added to the wire and not to the shim.
+    for (const method of APP_METHODS) {
+      expect(BRIDGE_JS).toContain(`'${method}'`)
+    }
+  })
+
+  it('does not reach for anything the frame cannot have', () => {
+    // The origin is opaque: localStorage throws, and there is no origin string
+    // to target a postMessage at — which is why '*' is correct here and the
+    // renderer is what verifies identity.
+    expect(BRIDGE_JS).not.toContain('localStorage')
+    expect(BRIDGE_JS).toContain("'*'")
   })
 })

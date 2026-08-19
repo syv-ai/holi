@@ -12,9 +12,10 @@
  * `index.ts` beside the vault one, so the two handlers read as the pair they are.
  */
 import { join } from 'node:path'
-import { APPS_DIR, isValidAppId, vaultRelPath } from '@holi/shared'
+import { APPS_DIR, isValidAppId, themeBlockToVars, vaultRelPath, type ThemeBlock } from '@holi/shared'
 import { absPathFor } from '../vault/vault-files'
 import { mimeFor } from '../vault/asset-protocol'
+import { BRIDGE_JS } from './bridge-script'
 
 /**
  * `holi-app://<appId>/<rel>` → its parts, or null when the scheme is wrong, the
@@ -93,4 +94,43 @@ const APP_MIME: Record<string, string> = {
 export function appMimeFor(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return APP_MIME[ext] ?? mimeFor(path)
+}
+
+/** Nothing themed may open a tag. The resolved theme is already whitelisted and
+ *  refuses `<`/`>` (see `resolveTheme`); this is the second guard, so a block
+ *  that reached here unresolved still cannot break out of the style block. */
+function cssSafe(value: string): string {
+  return String(value).replace(/[<>]/g, '')
+}
+
+/**
+ * The `<style>` + `<script>` an app cannot produce for itself: the vault's
+ * resolved theme as CSS custom properties on `:root`, then the bridge shim.
+ *
+ * The theme arrives this way rather than through a `holi.theme()` call because
+ * it is **ambient** — an app styles with `var(--primary)` and inherits a vault's
+ * palette without knowing there is such a thing as a theme. A getter would be a
+ * second source for the same fact.
+ */
+export function appHeadHtml(block: ThemeBlock): string {
+  const vars = Object.entries(themeBlockToVars(block))
+    .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
+    .join(';')
+  return `<style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`
+}
+
+/**
+ * Insert `head` immediately after the entry document's opening `<head…>`, or at
+ * the very top when there is none (an app may ship a bare fragment and let the
+ * browser build the head).
+ *
+ * Only ever applied to the entry document. Every other file an app ships is
+ * served byte-for-byte — an injected script in someone's `.js` would be a
+ * genuinely confusing thing to debug.
+ */
+export function injectAppHead(html: string, head: string): string {
+  const open = /<head[^>]*>/i.exec(html)
+  if (open === null) return `${head}${html}`
+  const at = open.index + open[0].length
+  return `${html.slice(0, at)}${head}${html.slice(at)}`
 }
