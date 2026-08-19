@@ -1106,6 +1106,7 @@ describe('vaults.add', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
+      '.claude/skills/vault-apps/SKILL.md',
       'AGENTS.md',
       'CLAUDE.md',
       'MEMORY.md',
