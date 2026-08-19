@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import {
   AGENT_CONFIG_FILES,
+  AGENT_SURFACE_FILES,
+  APPS_DIR,
+  appIdFromPath,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
   VAULT_CONFIG_FILES,
+  isAgentSurfacePath,
   isHiddenPath,
   isKeepFile,
   isLocalOnlyPath,
+  isValidAppId,
   isVaultConfigPath,
   vaultRelPath,
 } from '../src/path-safety'
@@ -177,5 +182,68 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
       expect(isLocalOnlyPath(path)).toBe(false)
       expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
     }
+  })
+})
+
+describe('isAgentSurfacePath (what a vault app may never touch)', () => {
+  it('matches the four managed instruction files', () => {
+    for (const path of AGENT_SURFACE_FILES) {
+      expect(isAgentSurfacePath(path)).toBe(true)
+    }
+    expect([...AGENT_SURFACE_FILES]).toEqual(['AGENTS.md', 'CLAUDE.md', 'MEMORY.md', 'USER.local.md'])
+  })
+
+  it('matches everything under .claude/ — settings, hooks and skills alike', () => {
+    // `.claude/hooks/google-send-gate.mjs` IS the mail send gate, so a readable
+    // or writable agent surface is an app escalating to the agent.
+    expect(isAgentSurfacePath('.claude/settings.json')).toBe(true)
+    expect(isAgentSurfacePath('.claude/hooks/google-send-gate.mjs')).toBe(true)
+    expect(isAgentSurfacePath('.claude/skills/theme/SKILL.md')).toBe(true)
+  })
+
+  it('is an exact match at the root, so a same-named note elsewhere is ordinary content', () => {
+    // The same rule isVaultConfigPath follows: `notes/AGENTS.md` is a note a
+    // human wrote about agents, not the file the agent loads.
+    expect(isAgentSurfacePath('notes/AGENTS.md')).toBe(false)
+    expect(isAgentSurfacePath('agents.md')).toBe(false)
+    expect(isAgentSurfacePath('inbox.md')).toBe(false)
+  })
+
+  it('leaves .holi/ alone — that is Holi config, not the agent surface', () => {
+    expect(isAgentSurfacePath('.holi/settings.json')).toBe(false)
+    expect(isAgentSurfacePath('.holi/theme.json')).toBe(false)
+  })
+})
+
+describe('isValidAppId', () => {
+  it('accepts a lowercase, dash-separated name', () => {
+    expect(isValidAppId('retro-board')).toBe(true)
+    expect(isValidAppId('csv2')).toBe(true)
+    expect(isValidAppId('a')).toBe(true)
+  })
+
+  it('rejects anything that would not survive being a URL host', () => {
+    // The id becomes the HOST of a `holi-app://` URL, and hosts are case-folded:
+    // `My_App` and `my_app` would collide, and a mixed-case directory would 404
+    // in a way that reads as a path bug. So the grammar is restricted instead.
+    for (const id of ['My_App', 'retro_board', 'retro board', 'Retro', '', '..', 'a/b']) {
+      expect(isValidAppId(id)).toBe(false)
+    }
+  })
+})
+
+describe('appIdFromPath', () => {
+  it('reads the id out of any path inside the app directory', () => {
+    expect(appIdFromPath('.holi/apps/retro/index.html')).toBe('retro')
+    expect(appIdFromPath('.holi/apps/retro/sub/app.js')).toBe('retro')
+    expect(appIdFromPath('.holi/apps/retro')).toBe('retro')
+  })
+
+  it('is null for an invalid id or a path outside APPS_DIR', () => {
+    expect(appIdFromPath('.holi/apps/My_App/index.html')).toBe(null)
+    expect(appIdFromPath('.holi/theme.json')).toBe(null)
+    expect(appIdFromPath('notes/x.md')).toBe(null)
+    expect(appIdFromPath('.holi/appsy/retro/index.html')).toBe(null)
+    expect(appIdFromPath(APPS_DIR)).toBe(null)
   })
 })

@@ -127,3 +127,53 @@ export const GITKEEP = '.gitkeep'
 export function isKeepFile(path: string): boolean {
   return (path.split('/').at(-1) ?? path) === GITKEEP
 }
+
+/**
+ * The files that configure the assistant rather than hold content: the shared
+ * instructions, the personal user model, and everything under `.claude/`.
+ *
+ * A vault app may neither read nor write them. `.claude/hooks/google-send-gate.mjs`
+ * IS the mail send gate (D70), so a readable-or-writable agent surface is an app
+ * escalating to the agent — a page from an untrusted directory reading the
+ * user's memory, or rewriting the hook that asks before mail leaves.
+ *
+ * `.holi/` is deliberately absent: that is Holi's own config, not the agent's,
+ * and it is where the app itself lives.
+ */
+export const AGENT_SURFACE_FILES: readonly string[] = [
+  'AGENTS.md',
+  'CLAUDE.md',
+  'MEMORY.md',
+  'USER.local.md',
+]
+
+/** Whether a vault-relative path is part of the agent surface. The four named
+ *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
+ *  ordinary note someone wrote); `.claude/` matches as a whole subtree. */
+export function isAgentSurfacePath(path: string): boolean {
+  return AGENT_SURFACE_FILES.includes(path) || path.startsWith('.claude/')
+}
+
+/** Where vault apps live. Already hidden from the tree by `isHiddenPath`. */
+export const APPS_DIR = '.holi/apps'
+
+/**
+ * Whether `id` may name an app.
+ *
+ * An app id is its directory name, and it becomes the **host** of a
+ * `holi-app://` URL — hosts are case-folded by every URL parser, so `My_App`
+ * and `my_app` would collide, and a mixed-case directory would 404 in a way
+ * that looks like a path bug rather than a naming one. The grammar is
+ * restricted instead: anything else is simply not an app.
+ */
+export function isValidAppId(id: string): boolean {
+  return /^[a-z0-9-]+$/.test(id)
+}
+
+/** `.holi/apps/<id>/…` → `<id>`, or null when the path is not under `APPS_DIR`
+ *  or the id is not one `isValidAppId` accepts. */
+export function appIdFromPath(path: string): string | null {
+  if (!path.startsWith(`${APPS_DIR}/`)) return null
+  const id = path.split('/')[2]
+  return id !== undefined && isValidAppId(id) ? id : null
+}
