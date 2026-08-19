@@ -6,15 +6,15 @@ been living in the same sections, and a reader could not tell them apart — a P
 reads as a specification is indistinguishable from one that reads as a plan, and both were being
 believed.
 
-> **Being built next: vault apps.** Slice 1 is **stateless apps** — app tabs, the sandboxed webview,
-> `holi.docs` / `holi.tasks` / `holi.theme` / `holi.open`, and the agent's authoring skill. **`holi.data`
-> is deliberately out of scope**, because where app state lives is undecided: the relay that was going
-> to hold it is gone, and the honest answers (a synced `data.json` merged by git, versus a
-> machine-local `node:sqlite` store in `userData` like the Google cache) differ per app rather than
-> per platform — a retro board's state is shared by nature, a CSV explorer's is nobody else's
-> business. That decision is worth making against real apps instead of hypotheticals, so slice 1
-> proves the risky part (an agent writes an app into `.holi/apps/` and you open it) without needing
-> it. Design in [`prd/vault-apps.md`](prd/vault-apps.md).
+> **Being built next: vault apps**, and **D74 settled how** — the trust model, the on-disk contract,
+> and a first slice. Slice 1 is **read-only ephemeral apps**: a per-app `holi-app://` origin, the
+> injected theme and bridge, an app tab, `holi.docs.read/list` + `holi.tasks.list` + `holi.open`, a
+> sidebar Apps section, and the authoring skill. **`holi.data` is deliberately absent**, because where
+> app state lives is per-app rather than per-platform — a retro board's state is shared by nature, a
+> CSV explorer's is nobody else's business — so it waits for real apps to say which was missed. A
+> consequence worth knowing before you build on it: the frame's opaque origin has **no `localStorage`
+> at all**, so slice-1 apps are genuinely blank on every open, and the retro board and poll cannot
+> ship until state resolves. Design in [`prd/vault-apps.md`](prd/vault-apps.md).
 
 Below this line there is **no ordering, no sizing, and no dates**. It is a list of what is missing,
 which is the only claim it can make honestly.
@@ -55,8 +55,10 @@ them does not. This is the last remaining code gap from D60, the decision that p
 
 **Vault apps.** Agent-authored in-vault apps as first-class tabs, with a scoped `holi.*` bridge.
 Designed in full in [`prd/vault-apps.md`](prd/vault-apps.md); slice 1 and the deferred state model
-are in the callout at the top of this file. The one v1 accommodation the design asks for is already
-honoured: the pane/tab system does not assume a tab is a note.
+are in the callout at the top of this file. **The one v1 accommodation the design asked for is only
+half honoured:** the pane system does not assume a tab is a note, but `SingletonTab` is derived as
+`Exclude<Tab, {kind:'note'}>` — "every non-note tab is unique" — so an app tab would typecheck as a
+singleton. Reshaping that union is part of slice 1.
 
 **Self-improvement / curator loop.** Designed around headless background forks and dropped from v1:
 unproven value, and in a shared vault one person's background agent auto-editing **shared** skills

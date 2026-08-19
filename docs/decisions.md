@@ -4,9 +4,9 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**The inbox is empty** (2026-08-18). Every decision through D73 has been consolidated into the doc that owns it, and the ledger below records where each one's prose went. An empty inbox is the resting state, not an unusual one — if this file has entries in it, there is consolidation owed.
+**The inbox is empty** (2026-08-19). Every decision through D74 has been consolidated into the doc that owns it, and the ledger below records where each one's prose went. An empty inbox is the resting state, not an unusual one — if this file has entries in it, there is consolidation owed.
 
-## Number allocation — **next free is D74**
+## Number allocation — **next free is D75**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
@@ -28,6 +28,7 @@ Living docs carry decisions as **prose, never as numbers**. D-numbers exist for 
 | D71 — the mail composer: markdown is the source | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §Composing |
 | D72 — a vault agent inherits the vault, not the machine | [`prd/agent.md`](prd/agent.md) §Config layering, §Runtime, §Auth, §Permissions |
 | D73 — a mail thread and a calendar event are joined by the invite's UID | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §Goals — as built, §How a message is rendered |
+| D74 — a vault app is a web app the user wrote, bounded by its own origin and barred from the agent surface | [`prd/vault-apps.md`](prd/vault-apps.md) §Trust & isolation, §Anatomy, §Runtime & surfaces, §The `holi.*` bridge, §State deferred, §Slice 1; [`glossary.md`](glossary.md) §Agent surface. Settles the isolation model (a per-app `holi-app://` origin, `allow-scripts` never with `allow-same-origin`), the reach (all vault content except `AGENTS.md`/`CLAUDE.md`/`MEMORY.md`/`USER.local.md`/`.claude/`, read *and* write, because a writable send-gate hook is an app escalating to the assistant), network allowed with its exfiltration cost stated, bridge + theme injected on serve, the tab union's singleton-by-subtraction bug, no manifest in slice 1, and personal apps split by location rather than by the `.local.` marker. **Deliberately does not decide where app state lives** — that is per-app rather than per-platform, so slice 1 ships no state API and the question waits for real apps |
 
 **D1–D59 are spent, and D60 supersedes all of them.** They are not listed here any more, and that is deliberate: their subjects — the CRDT doc store, the file↔CRDT bridge, the task record and its file projection, the SSE event stream, server-side membership, snapshot history, the git mirror — do not exist. A ledger of decisions about a deleted system is archaeology pretending to be law, and the docs are law.
 

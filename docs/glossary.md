@@ -87,6 +87,19 @@ Chat history is machine-local, never committed.
 - **MEMORY.md** — the vault's shared scratchpad memory. Committed.
 - **USER.local.md** — the agent's model of an individual user. **Personal, machine-local** (never committed).
 
+### Vault app
+An interactive tool the assistant writes into the vault: a directory under `.holi/apps/<name>/`
+containing an `index.html`, opened in Holi as a tab. The directory name is the app's identity. It
+runs in a frame with its **own origin**, so its only route to the vault is the `holi.*` bridge. A
+**personal app** is the same thing in `userData/apps/<name>/` — machine-local, never synced.
+
+### Agent surface
+The files inside a vault that **configure the assistant** rather than hold content: `AGENTS.md`,
+`CLAUDE.md`, `MEMORY.md`, `USER.local.md`, and all of `.claude/` (settings, hooks, skills).
+Distinct from **vault content** (notes, tasks, assets) and from **Holi config** (`.holi/`). The
+distinction matters wherever something less trusted than the user acts on the vault, because
+writing this surface changes what the assistant will do next.
+
 ### Per-turn context
 The fresh context (active note, linked tasks, memory fill-state) injected into every agent turn via a **`UserPromptSubmit` hook**.
 
