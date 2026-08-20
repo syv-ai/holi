@@ -103,6 +103,10 @@ have discovered that a drag can split the view.
       `accepted=true` while the left stayed dim, and the left edge did the mirror image.
 - [x] **The middle keeps no waiting state.** Over the source pane's middle both strips stayed dim
       and the drop was refused — the full-pane wash §9 removed has not come back as a hint.
+- [x] **No outline on any of them** (dropped after review): measured `borderWidth: 0px` and
+      `boxShadow: none` on both the resting and the lit strip. The fill alone carries it, resting at
+      `bg-primary/10` and lit at `bg-primary/25` — a heavier rest than the outlined version needed,
+      since the border had been doing most of the work of making a waiting strip findable.
 
 ## Not verified, and why
 

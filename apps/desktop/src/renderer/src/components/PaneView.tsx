@@ -27,10 +27,12 @@ import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import type { Pane, Tab } from '@/state/panes'
 import { TabStrip } from './TabStrip'
 
-/** How a drop target looks. The same treatment the file tree uses for its drop
- *  highlight, so a drag reads the same wherever it lands. The colour is left to
- *  the caller: an edge is drawn twice over, dim and then lit. */
-const DROP_BAND = 'pointer-events-none absolute ring-1 ring-inset'
+/** What every drop target shares: a plain wash, positioned out of flow.
+ *
+ *  `pointer-events-none` is the load-bearing half — it is what keeps the
+ *  overlay a single event target, so crossing a band fires no `dragleave` and
+ *  the highlight cannot flicker. The fill is left to the caller. */
+const DROP_BAND = 'pointer-events-none absolute'
 
 /**
  * A landing strip for a split, down one side of the pane.
@@ -46,7 +48,10 @@ function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean 
     <div
       data-testid={`pane-drop-${side}`}
       className={`${DROP_BAND} inset-y-0 ${side === 'before' ? 'left-0' : 'right-0'} ${
-        active ? 'bg-primary/20 ring-primary/60' : 'bg-primary/5 ring-primary/25'
+        // No outline: the fill alone says where it is. The resting state is
+        // heavier than it would be with one, because the border was carrying
+        // most of a waiting strip's visibility and it still has to be findable.
+        active ? 'bg-primary/25' : 'bg-primary/10'
       }`}
       style={{ width: 'min(25%, 120px)' }}
     />
@@ -275,7 +280,7 @@ export function PaneView({
             {zone === 'into' && (
               <div
                 data-testid="pane-drop-into"
-                className={`${DROP_BAND} inset-0 bg-primary/10 ring-primary/60`}
+                className={`${DROP_BAND} inset-0 bg-primary/10`}
               />
             )}
           </div>
