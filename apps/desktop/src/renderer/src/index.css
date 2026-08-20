@@ -327,6 +327,39 @@
 }
 
 /**
+ * The plate an image is viewed on.
+ *
+ * A PNG with an alpha channel is *ink on nothing*, and the vault is full of them
+ * — logos, diagrams, screenshots with rounded corners. Painted straight onto
+ * `--background`, a black-ink logo in a dark-first app is a 180x180 rectangle of
+ * background: the file opens, the viewer mounts, the image loads, and the pane
+ * looks empty except for the filename underneath. That is not a rendering
+ * failure anyone can diagnose by looking at it, which is what made it worth
+ * fixing properly rather than nudging a colour.
+ *
+ * The checkerboard is the convention every image tool shares (Preview, Figma,
+ * the browser's own image view), and it says the thing no flat colour can: this
+ * transparency is in the FILE, not in the app.
+ *
+ * **Light in both themes, deliberately.** The plate is paper, not chrome — a
+ * dark plate would hide exactly the dark ink this exists to reveal, and light
+ * ink on transparent is rare enough (and obviously an app icon when it happens)
+ * to be the acceptable half of the trade. It is applied to the `<img>` itself,
+ * so it covers precisely the image's own footprint: an opaque photo hides it
+ * completely, and no plate is drawn in the letterboxing around it.
+ */
+.holi-image-plate {
+  --plate: #ffffff;
+  --plate-alt: #e2e2e2;
+  background-color: var(--plate);
+  background-image:
+    linear-gradient(45deg, var(--plate-alt) 25%, transparent 25%, transparent 75%, var(--plate-alt) 75%),
+    linear-gradient(45deg, var(--plate-alt) 25%, transparent 25%, transparent 75%, var(--plate-alt) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+}
+
+/**
  * Themeable elevation. Tailwind v4 bakes shadow geometry into `shadow-md/lg`
  * at build time (only the shadow *colour* is a runtime var), so those utilities
  * can't follow a per-vault token. These plain classes consume the token through
