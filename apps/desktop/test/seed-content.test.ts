@@ -161,8 +161,8 @@ describe('SEED_FILES', () => {
 
   it('AGENTS.md grants the agent git (coexistence), not the old prohibition', () => {
     const agents = SEED_FILES['AGENTS.md']!
-    expect(agents).toContain('You may run git freely')
-    expect(agents).toContain('suspends its own auto-commit/pull loop')
+    expect(agents).toContain('Run git freely')
+    expect(agents).toContain('pauses its own commit/pull loop')
     expect(agents).not.toContain('Do not run') // the pre-coexistence prohibition
   })
 

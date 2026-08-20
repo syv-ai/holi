@@ -58,31 +58,29 @@ const AGENTS_MD = `# Agent rules
 
 ## What a vault is
 
-A git repository of markdown files for knowledge management. There is no database and no server: the file **is** the note, the task, and the record.
+A git repository of markdown files. No database, no server: the file **is** the note, the task, and the record.
 
-- A note is a \`.md\` file at a path, e.g. \`projects/q2/roadmap.md\`.
-- Links are path-based wiki-links: \`[[projects/q2/roadmap.md]]\` or \`[[path|Label]]\`
-- To rename a note, you must rewrite every \`[[link]]\` that points at it, Use grep
-
-## Files
-
-- Images, pdfs, whatever, live in the vault as committed files.
-- Embed images with standard markdown: \`![alt](logo.png)\`
+- A note is a \`.md\` file at a path: \`projects/q2/roadmap.md\`.
+- Links are path-based wiki-links: \`[[projects/q2/roadmap.md]]\` or \`[[path|Label]]\`.
+- Renaming a note means rewriting every \`[[link]]\` to it, in the same change. Grep \`[[<path>\` first.
+- Images, PDFs and anything else are ordinary committed files: \`![alt](logo.png)\`.
 
 ## Tasks
 
-- Task are editable .md files with a \`task.\` prefix: \`task.<name>.md\`, e.g. \`projects/q2/task.fix-login.md\`. glob \`**/task.*.md\` to find all
-- YAML frontmatter carries \`status\` (todo | doing | done), \`due\`, \`priority\`, \`tags\`, \`reminder\` and \`recurrence\`; the body is the description.
-- Link using ordinary wiki-link to its file, and its "area" is just the folder it sits in
+- A task is a \`.md\` file prefixed \`task.\`: \`projects/q2/task.fix-login.md\`. Glob \`**/task.*.md\`.
+- Frontmatter carries \`status\` (todo | doing | done), \`due\`, \`priority\`, \`tags\`, \`reminder\`, \`recurrence\`. The body is the description.
+- No task ids — link one like any note. Its "area" is the folder it sits in.
 
 ## Sync
 
-Edits are auto-committed every few seconds, and those commits push to GitHub on their own — there is no Publish step. Sync is automatic in both directions. You may run git freely — \`status\`, \`log\`, \`commit\`, \`push\`, \`pull\`, resolve a merge. While you are working, Holi suspends its own auto-commit/pull loop and resumes it when your turn goes idle, so there is only ever one git actor and you never contend on \`.git/index.lock\`. Switching branches pauses Holi's sync until you switch back. If you check out another branch or leave a rebase in progress, Holi's loop stays paused until the working tree returns to the default branch
+Edits auto-commit every few seconds and push on their own; pulls are automatic. There is no Publish step.
+
+Run git freely, merges included. Holi pauses its own commit/pull loop for the length of your turn, so you never contend on \`.git/index.lock\`. It stays paused while you are off the default branch or mid-rebase.
 
 ## Memory
 
-- \`MEMORY.md\` — shared with everyone in the vault. Vault conventions, environment quirks, ways-of-working
-- \`USER.local.md\` — your model of one individual. **Machine-local and gitignored** (the \`.local.\` in the name is what makes it so); it never reaches anyone else's clone. Keep personal detail here, not in \`MEMORY.md\`.
+- \`MEMORY.md\` — shared with the vault. Conventions, environment quirks, ways of working.
+- \`USER.local.md\` — your model of one person. The \`.local.\` is what makes it gitignored, so it never leaves this clone. Personal detail goes here, not in \`MEMORY.md\`.
 `
 
 const MEMORY_MD = `# Memory
