@@ -15,6 +15,20 @@
  * mode slice 1 proved worst: the app does not appear and there is nowhere to
  * look. It now appears, dimmed, with a menu item that finishes it.
  *
+ * **The rows are styled as tree rows, not as chips.** They used to be `Button
+ * size="xs"` wearing the chip look — 12px, `font-medium`, 24px tall, a 12px
+ * glyph — which read as a fourth chip row stuck under the tree. They are the
+ * same kind of thing as a file: something the vault holds, that you click to
+ * open. So they take the tree row's metrics verbatim (22px, `text-sm`,
+ * `font-normal`, a 14px glyph in the same `w-4` column, `text-primary` when
+ * open), and the icons line up with the tree's root-level file icons.
+ *
+ * The open row takes the tree's **selected** treatment (`bg-accent`), not its
+ * open-file one (`text-primary`). In dark mode `--primary` is sky-700 on a
+ * neutral-950 background — a good fill colour and a poor text colour, dark blue
+ * on black at roughly 3:1. A filled row says "this is the one" at least as
+ * clearly and stays legible.
+ *
  * The menu deliberately does NOT mirror the file tree's. Most of that menu —
  * New File, Cut, Copy, Paste, Duplicate — is about paths, and an app is not a
  * path: it is a directory whose name is also a `holi-app://` host. Duplicating
@@ -23,7 +37,7 @@
  * meaning at the level of "an app": open it, edit its source, rename it, delete
  * it, find it on disk.
  */
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { LayoutGrid } from 'lucide-react'
 import { useState } from 'react'
 import {
@@ -47,7 +61,7 @@ import {
   renameAppAtom,
   unregisteredAppIdsAtom,
 } from '../../state/apps'
-import { openApp, openPinned, workspaceAtom } from '../../state/panes'
+import { activeTab, openApp, openPinned, workspaceAtom } from '../../state/panes'
 import { activeRemoteAtom, backrefsForMany, vaultsAtom } from '../../state/vaults'
 
 const ID_RULE = 'lowercase letters, digits and dashes only'
@@ -78,7 +92,7 @@ export function AppsSection(): React.JSX.Element | null {
   const appFiles = useAtomValue(appFilesAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
-  const setWorkspace = useSetAtom(workspaceAtom)
+  const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const renameApp = useSetAtom(renameAppAtom)
   const registerApp = useSetAtom(registerAppAtom)
   const deleteApp = useSetAtom(deleteAppAtom)
@@ -150,6 +164,12 @@ export function AppsSection(): React.JSX.Element | null {
     </ContextMenuContent>
   )
 
+  /** The open app, so its row tints like the tree's open file does. */
+  const openAppId = (() => {
+    const tab = activeTab(workspace)
+    return tab?.kind === 'app' ? tab.appId : null
+  })()
+
   const row = (appId: string, registered: boolean) => {
     if (renaming?.appId === appId) {
       return (
@@ -176,15 +196,22 @@ export function AppsSection(): React.JSX.Element | null {
             <Button
               variant="ghost"
               size="xs"
-              className={`h-auto justify-start gap-1.5 px-1 py-1 hover:text-foreground ${
-                registered ? 'text-muted-foreground' : 'italic text-muted-foreground/60'
-              }`}
+              className={[
+                // A tree row's metrics, overriding the chip ones `size="xs"`
+                // brings: its own height, radius, 12px text, medium weight and
+                // 12px glyph would otherwise make this a chip under the tree.
+                "h-[22px] w-full justify-start gap-1 rounded px-2 text-sm font-normal [&_svg:not([class*='size-'])]:size-3.5",
+                appId === openAppId
+                  ? 'bg-accent text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                registered ? '' : 'italic opacity-60',
+              ].join(' ')}
               // An unregistered app has no manifest, so `openAppOp` refuses it —
               // a row that opens a refusal is worse than a row that does not open.
               onClick={registered ? () => setWorkspace((w) => openApp(w, appId)) : undefined}
             >
-              <LayoutGrid size={13} />
-              {appId}
+              <IconColumns appId={appId} />
+              <span className="min-w-0 flex-1 truncate text-left">{appId}</span>
             </Button>
           </ContextMenuTrigger>
         </Tooltip>
@@ -194,8 +221,17 @@ export function AppsSection(): React.JSX.Element | null {
   }
 
   return (
-    <div className="flex shrink-0 flex-col gap-0.5 px-2 pt-2">
-      <p className="px-1 text-[10px] uppercase tracking-wide text-muted-foreground">apps</p>
+    // No horizontal padding on the list: each row carries its own `px-2`, the
+    // way a tree row does, so a hover highlight spans the sidebar rather than
+    // floating inside an inset box — and the rows sit at the tree's indent
+    // instead of 8px further in.
+    <div className="flex shrink-0 flex-col pt-2">
+      {/* `text-xs`, not the 10px used in the settings panel: this sits directly
+          under 14px tree rows, and two typographic systems a few pixels apart
+          read as a mistake rather than as a hierarchy. */}
+      <p className="px-2 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        apps
+      </p>
       {appIds.map((appId) => row(appId, true))}
       {unregistered.map((appId) => row(appId, false))}
 
@@ -231,11 +267,13 @@ function RenameRow({
 }): React.JSX.Element {
   const [value, setValue] = useState(appId)
   return (
-    <div className="flex flex-col gap-0.5 py-0.5">
-      <Input
+    <div className="flex flex-col">
+      <div className="flex h-[22px] items-center gap-1 px-2">
+        <IconColumns appId={appId} />
+        <Input
         autoFocus
         aria-label={`rename ${appId}`}
-        className="h-[22px] rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
+        className="h-[22px] min-w-0 flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onFocus={(e) => e.target.select()}
@@ -246,8 +284,26 @@ function RenameRow({
         // No blur-to-cancel while a refusal is showing: the click that dismissed
         // it would also throw away the reason it was refused.
         onBlur={error === null ? onCancel : undefined}
-      />
-      {error !== null && <p className="px-1 text-[10px] text-destructive">{error}</p>}
+        />
+      </div>
+      {error !== null && <p className="pb-0.5 pl-10 pr-2 text-[10px] text-destructive">{error}</p>}
     </div>
+  )
+}
+
+/**
+ * The two fixed-width slots a tree row starts with: the chevron column (empty —
+ * an app has nothing to expand, exactly like a file) and the glyph. Keeping the
+ * empty one is what lines an app's icon up with the tree's root-level file
+ * icons directly above it, instead of half a column to the left.
+ */
+function IconColumns({ appId }: { appId: string }): React.JSX.Element {
+  return (
+    <>
+      <span className="w-4 shrink-0" aria-hidden="true" />
+      <span className="flex w-4 shrink-0 justify-center">
+        <LayoutGrid aria-hidden="true" data-app-icon={appId} />
+      </span>
+    </>
   )
 }
