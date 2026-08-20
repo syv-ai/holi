@@ -147,31 +147,18 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
   'USER.local.md',
 ]
 
-/** Where Holi seeds the vault's git hooks, and points `core.hooksPath` (D76). */
-export const GIT_HOOKS_DIR = '.holi/git-hooks'
-
-/**
- * Whether a vault-relative path is part of the agent surface.
+/** Whether a vault-relative path is part of the agent surface. The four named
+ *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
+ *  ordinary note someone wrote); `.claude/` matches as a whole subtree.
  *
- * The four named files match **exactly** (like `isVaultConfigPath`, so
- * `notes/AGENTS.md` is an ordinary note someone wrote); `.claude/` and
- * `.holi/git-hooks/` match as whole subtrees.
- *
- * **`.holi/git-hooks/` is here even though the rest of `.holi/` is not**, and
- * the exception is the point. A vault app is barred from writing
- * `.claude/hooks/google-send-gate.mjs` because a writable send gate is an app
- * escalating to the assistant (D74). A `pre-commit` is the same escalation with
- * a different filename: one runs on the agent's behalf, the other on git's, and
- * **both run as the user**, on every save, with their filesystem. Slice-1 apps
- * cannot write at all, so nothing exploits this today — but writes are coming,
- * and a rule added after the capability is a rule added after the incident.
- */
+ *  **Git hooks are deliberately absent, because they are not vault content.**
+ *  Holi's `pre-commit` lives in `.git/hooks/`, which git never commits and the
+ *  vault store never lists (`IGNORED_DIRS`) — so it is unreachable through the
+ *  app bridge by construction rather than by rule. A hook seeded into the
+ *  tracked tree WOULD need to be here, and that is one of the reasons it is not
+ *  seeded there. */
 export function isAgentSurfacePath(path: string): boolean {
-  return (
-    AGENT_SURFACE_FILES.includes(path) ||
-    path.startsWith('.claude/') ||
-    path.startsWith(`${GIT_HOOKS_DIR}/`)
-  )
+  return AGENT_SURFACE_FILES.includes(path) || path.startsWith('.claude/')
 }
 
 /** Where vault apps live. Already hidden from the tree by `isHiddenPath`. */

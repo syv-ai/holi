@@ -28,7 +28,12 @@ import { join } from 'node:path'
 import type { VaultSnapshot } from '@holi/shared'
 import type { GitDeps, GitRepo, PullResult, RepoStatus } from '../git'
 import { isIndexLockError, openRepo } from '../git'
-import { installGitHook, partitionBySize, type HeldBackFile } from './large-files'
+import {
+  installGitHook,
+  partitionBySize,
+  writeHookEndpoint,
+  type HeldBackFile,
+} from './large-files'
 import { readMaxCommittedFileBytes } from './vault-settings'
 import type { VaultRegistry } from './registry'
 import { scanVault } from './vault-store'
@@ -164,6 +169,10 @@ export async function openActiveVault(args: {
   /** The large-file gate's held-back set, pushed every commit tick (including
    *  empty, so a resolved file clears the surface). */
   onHeldBack?: (files: HeldBackFile[]) => void
+  /** Where the seeded pre-commit hook should reach Holi (D76). Absent leaves
+   *  the transforms unwired: the hook still runs and still exits 0, it just
+   *  finds no endpoint and does nothing. */
+  hookEndpoint?: () => { port: number; token: string } | null
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
@@ -177,6 +186,12 @@ export async function openActiveVault(args: {
   // failed install must not block opening the vault.
   await installGitHook(root, maxCommittedFileBytes).catch((err) =>
     console.error('[vault] pre-commit hook install failed:', err),
+  )
+  // Tell that hook how to reach us. Rewritten every open because the port is
+  // ephemeral and moves on every restart; best-effort for the same reason as
+  // the install above.
+  await writeHookEndpoint(root, args.hookEndpoint?.() ?? null).catch((err) =>
+    console.error('[vault] hook endpoint write failed:', err),
   )
 
   let closed = false
@@ -680,6 +695,9 @@ export async function openActiveVault(args: {
       if (pushTimer !== null) clearTimeout(pushTimer)
       pushTimer = null
       await watcher.close()
+      // Leave no stale port behind: a terminal commit after Holi quits would
+      // otherwise spend its curl timeout on a socket nobody is listening to.
+      await writeHookEndpoint(root, null).catch(() => {})
     },
   }
 }
@@ -701,6 +719,9 @@ export function createVaultHost(args: {
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
+  /** Read per open — the hook server binds after the host is built, and the
+   *  port moves on every restart. */
+  hookEndpoint?: () => { port: number; token: string } | null
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null
@@ -765,6 +786,7 @@ export function createVaultHost(args: {
           onSnapshot: args.onSnapshot,
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,
+          hookEndpoint: args.hookEndpoint,
           timings: args.timings,
         })
         return current

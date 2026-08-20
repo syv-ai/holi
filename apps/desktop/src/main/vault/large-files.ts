@@ -8,8 +8,8 @@
  * hook (below) is the same gate for the agent's own direct commits.
  */
 
-import { chmod, mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 
 /** The default cap when `.holi/settings.json` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
@@ -58,6 +58,43 @@ export function partitionBySize(
  * line-based read is a backstop (a filename with a newline is not handled), fine
  * because Holi's own commit path uses NUL and this only catches direct-git slips.
  */
+/**
+ * Where Holi tells its own git hook how to reach it: **port on line 1, token on
+ * line 2**, and nothing else.
+ *
+ * Two lines rather than JSON because the reader is POSIX `sh` inside a
+ * TypeScript template literal, where every backslash has to survive two
+ * readers — a `sed` backreference does not, and the first version of this
+ * silently produced a script that matched nothing.
+ *
+ * **Machine-local** (`.local.`, D65): it holds this instance's ephemeral port
+ * and per-instance token, both meaningless on another machine and one of them a
+ * credential. Rewritten on every vault open, because the port moves on every
+ * app restart. Mode 0600.
+ *
+ * A file rather than the environment, because a `git commit` typed in an
+ * ordinary terminal inherits nothing from Holi — and that terminal commit is
+ * exactly the case these transforms exist for: a `git mv` outside the app is
+ * what `relink` fixes.
+ */
+export const ENDPOINT_FILE = '.holi/hook-endpoint.local.txt'
+
+export async function writeHookEndpoint(
+  root: string,
+  endpoint: { port: number; token: string } | null,
+): Promise<void> {
+  const abs = join(root, ENDPOINT_FILE)
+  if (endpoint === null) {
+    await rm(abs, { force: true }).catch(() => {})
+    return
+  }
+  await mkdir(dirname(abs), { recursive: true })
+  await writeFile(abs, `${endpoint.port}\n${endpoint.token}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  })
+}
+
 export async function installGitHook(root: string, threshold: number): Promise<void> {
   const hooksDir = join(root, '.git', 'hooks')
   await mkdir(hooksDir, { recursive: true })
@@ -75,6 +112,32 @@ if [ -n "$offenders" ]; then
   echo "Keep them local, set up Git LFS, or 'git commit --no-verify' to override." >&2
   exit 1
 fi
+
+# ---- the vault transforms (D76) -----------------------------------------
+# Everything below this line is ADVISORY and exits 0 no matter what. The guard
+# above vetoes because git history is permanent and push is automatic, so an
+# oversized blob committed once is published forever. A transform is an opinion
+# about formatting or link hygiene, and an opinion does not outrank a save.
+#
+# A thin shim on purpose: it hands the commit to Holi and the real work happens
+# in TypeScript where it is tested. Holi not running is the normal case for a
+# terminal commit and must cost nothing.
+#
+# The endpoint file is two lines, port then token, precisely so this parses with
+# no backslashes: it is generated inside a TypeScript template literal, where
+# every escape has to survive two readers.
+endpoint="$(git rev-parse --show-toplevel)/${ENDPOINT_FILE}"
+if [ -f "$endpoint" ]; then
+  port=$(sed -n 1p "$endpoint")
+  token=$(sed -n 2p "$endpoint")
+  if [ -n "$port" ] && [ -n "$token" ]; then
+    # --max-time is not optional: a commit that blocks for thirty seconds has
+    # failed, as far as the person waiting on it is concerned.
+    curl -sS --max-time 10 -X POST \\
+      "http://127.0.0.1:$port/hooks/pre-commit?t=$token" >/dev/null 2>&1 || true
+  fi
+fi
+exit 0
 `
   const hookPath = join(hooksDir, 'pre-commit')
   await writeFile(hookPath, script, 'utf8')

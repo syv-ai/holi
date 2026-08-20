@@ -215,15 +215,12 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.holi/apps/retro/index.html')).toBe(false)
   })
 
-  it('matches .holi/git-hooks/ — a pre-commit runs as the user, like a send gate', () => {
-    expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(true)
-    expect(isAgentSurfacePath('.holi/git-hooks/anything')).toBe(true)
-    expect(isAgentSurfacePath('.holi/git-hooks/nested/deep')).toBe(true)
-  })
-
-  it('does not match a directory that merely starts with the same letters', () => {
-    expect(isAgentSurfacePath('.holi/git-hooks-notes.md')).toBe(false)
-    expect(isAgentSurfacePath('.holi/git-hooks')).toBe(false)
+  it('leaves git hooks out — they are not vault content', () => {
+    // Holi's pre-commit lives in `.git/hooks/`, which is never committed and
+    // never listed by the vault store, so an app cannot reach it at all. The
+    // rule would be needed for a hook seeded into the tracked tree, which is
+    // one of the reasons there isn't one.
+    expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(false)
   })
 })
 

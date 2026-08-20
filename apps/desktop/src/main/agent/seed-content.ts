@@ -206,6 +206,24 @@ const SETTINGS_JSON =
  * index the picker filters on; this file is the record that travels with the
  * clone, and the natural home for vault-level metadata as it accrues.
  */
+/**
+ * The vault's own settings, seeded once and then the user's.
+ *
+ * The `hooks` block says **which** pre-commit transforms run, and can never say
+ * what one is (D76): the script body ships in the binary and lives in
+ * `.git/hooks/`, where nothing can push it onto anyone's laptop. Keys are the
+ * transform names, kebab and all.
+ *
+ * `archive-done` is off because it moves task files, which changes what the
+ * board shows; a transform that rearranges someone's work is opt-in.
+ */
+const HOLI_SETTINGS =
+  JSON.stringify(
+    { hooks: { relink: true, 'archive-done': false, 'normalize-md': true } },
+    null,
+    2,
+  ) + '\n'
+
 const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
 
 /** The Plain template's manifest — a clean, unbranded layout with two optional
@@ -274,6 +292,7 @@ export const MANAGED_FILES: Record<string, string> = {
  */
 export const ONCE_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
+  '.holi/settings.json': HOLI_SETTINGS,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
   // The branded set and its shared brand foundation (D66 rename, spec

@@ -32,6 +32,10 @@ export interface AgentOpsDeps {
   /** Scaffold a new app directory: manifest, entry document. */
   initApp(appId: string): Promise<{ ok: true; created: string[] } | { ok: false; error: string }>
   /** Re-write the managed files Holi still owns (D75). */
+  /** Run the enabled pre-commit transforms over the staged set. Called by
+   *  Holi's own git hook, not by the agent — but it lives here because this is
+   *  where the loopback port and its token already are. */
+  runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
   refreshSeed(input: {
     path?: string
     force?: boolean
@@ -71,6 +75,15 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
           return json(await deps.initApp(id))
         } catch (error) {
           return json({ ok: false, error: message(error) })
+        }
+      }
+      case '/hooks/pre-commit': {
+        try {
+          return json(await deps.runPreCommitHooks())
+        } catch (error) {
+          // The hook ignores the body and exits 0 regardless; answering rather
+          // than 500ing keeps the shape one branch instead of two.
+          return json({ changed: [], failed: [{ error: message(error) }] })
         }
       }
       case '/seed/refresh': {

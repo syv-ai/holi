@@ -33,6 +33,9 @@ import { installHoliCli } from './agent/cli'
 import { createAgentOps } from './agent/ops'
 import { initAppOp, openAppOp } from './apps/app-ops'
 import { refreshManaged } from './agent/seed-content'
+import { runPreCommit } from './vault/hooks/runner'
+import { stagedChanges } from './vault/hooks/staged'
+import { readHookSettings, VAULT_TRANSFORMS } from './vault/hooks/transforms'
 import { GoogleApi } from './google/api'
 import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
 import {
@@ -201,6 +204,12 @@ async function main(): Promise<void> {
       void agent?.notifyVaultChanged()
     },
     onSyncState: (state) => send('vault:sync', state),
+    // How the seeded pre-commit hook reaches us. A getter, read at open, so a
+    // vault opened before the server bound still gets the live port.
+    hookEndpoint: () => {
+      const port = hookServer.port()
+      return port === null ? null : { port, token: hookServer.token() }
+    },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
@@ -392,6 +401,24 @@ async function main(): Promise<void> {
         const root = opsRoot()
         if (root === null) return { ok: false, error: 'no vault is open' }
         return initAppOp(root, appId)
+      },
+      /**
+       * Holi's own pre-commit hook, calling back in. The transforms run here
+       * rather than in the shell script so they are TypeScript and tested; the
+       * script is a curl and an `exit 0`.
+       */
+      runPreCommitHooks: async () => {
+        const root = opsRoot()
+        if (root === null) return { changed: [], failed: [] }
+        // No `notify` — Holi has no push seam into a live Claude Code session,
+        // and typing into the agent's PTY is not one. The run log
+        // (`.holi/hooks.local.log`) is the agent-readable surface, and it reads
+        // it when asked. Tracked in not-built.md.
+        const result = await runPreCommit(root, await stagedChanges(root), {
+          settings: await readHookSettings(root),
+          transforms: VAULT_TRANSFORMS,
+        })
+        return { changed: result.changed, failed: result.failed }
       },
       refreshSeed: async (input) => {
         const root = opsRoot()
