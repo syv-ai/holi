@@ -25,13 +25,12 @@ The living documentation for Holi. The PRDs, architecture, and vision are the **
 | [prd/onboarding.md](prd/onboarding.md) | First-run three-act ritual, create-or-join a vault, the add-vault mode that retired `AddVault` |
 | [prd/google-mail-calendar.md](prd/google-mail-calendar.md) | @syv.ai Gmail + Calendar: triage, the sandboxed reader, the composer, meetings |
 | [prd/pdf-export.md](prd/pdf-export.md) | Markdown → branded syv.ai PDFs via Typst, as a vault skill |
+| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: the per-app `holi-app://` origin, app tabs, the `holi.*` bridge, the authoring skill. Slice 1 only — app **state** is still undecided, see [not-built.md](not-built.md) |
 
 ## Designed, not built
 Not PRDs, because they describe nothing that exists — *yet*. [not-built.md](not-built.md) owns their status, and a doc graduates into the table above when it ships.
 
-| Doc | What it is |
-|---|---|
-| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: app tabs, the `holi.*` bridge. **Being built next**, slice 1 stateless — and its **state model is undecided**, because the differentiator rode a relay that no longer exists. See [not-built.md](not-built.md) |
+**The table is empty.** `prd/vault-apps.md` was its last entry and graduated on 2026-08-20 when slice 1 shipped; what remains unbuilt of that feature is a gap inside a built pillar, which is [not-built.md](not-built.md)'s job rather than a second table's.
 
 *Google mail/calendar and Typst export used to sit in a "phase 2 stubs" table here. Both are built and live and are PRDs above — a built pillar filed as a stub is a doc that lies about what the product does. The one remaining stub, PDF/docx import conversion, was **deleted**: D62 killed its premise (the vault emits rich documents rather than importing them), and what survived it — where large binaries live at scale, and viewing a binary Holi cannot render — is in [not-built.md](not-built.md).*
 

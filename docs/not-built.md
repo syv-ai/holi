@@ -6,16 +6,6 @@ been living in the same sections, and a reader could not tell them apart — a P
 reads as a specification is indistinguishable from one that reads as a plan, and both were being
 believed.
 
-> **Being built next: vault apps**, and **D74 settled how** — the trust model, the on-disk contract,
-> and a first slice. Slice 1 is **read-only ephemeral apps**: a per-app `holi-app://` origin, the
-> injected theme and bridge, an app tab, `holi.docs.read/list` + `holi.tasks.list` + `holi.open`, a
-> sidebar Apps section, and the authoring skill. **`holi.data` is deliberately absent**, because where
-> app state lives is per-app rather than per-platform — a retro board's state is shared by nature, a
-> CSV explorer's is nobody else's business — so it waits for real apps to say which was missed. A
-> consequence worth knowing before you build on it: the frame's opaque origin has **no `localStorage`
-> at all**, so slice-1 apps are genuinely blank on every open, and the retro board and poll cannot
-> ship until state resolves. Design in [`prd/vault-apps.md`](prd/vault-apps.md).
-
 Below this line there is **no ordering, no sizing, and no dates**. It is a list of what is missing,
 which is the only claim it can make honestly.
 
@@ -53,12 +43,23 @@ naming the conflicted paths. `EditorPane.onConflict` raises a banner and stops t
 exist** — `sync.pause` on the active vault, and the drawer's seeded `prompt` — and the wire between
 them does not. This is the last remaining code gap from D60, the decision that produced the pillar.
 
-**Vault apps.** Agent-authored in-vault apps as first-class tabs, with a scoped `holi.*` bridge.
-Designed in full in [`prd/vault-apps.md`](prd/vault-apps.md); slice 1 and the deferred state model
-are in the callout at the top of this file. **The one v1 accommodation the design asked for is only
-half honoured:** the pane system does not assume a tab is a note, but `SingletonTab` is derived as
-`Exclude<Tab, {kind:'note'}>` — "every non-note tab is unique" — so an app tab would typecheck as a
-singleton. Reshaping that union is part of slice 1.
+**Vault apps — state, writes, and a backend.** The feature itself is **built**: slice 1 shipped
+(2026-08-20), so an agent-authored app in `.holi/apps/<id>/` opens as a themed tab and reads the
+vault's notes and tasks. [`prd/vault-apps.md`](prd/vault-apps.md) describes it. What is absent is
+everything downstream of one undecided question — **where app state lives**, which the PRD's §State
+holds open on purpose: it is per-app rather than per-platform (a retro board's state is shared by
+nature; a CSV explorer's is nobody else's business), so it waits for real apps to say which kind was
+missed. Nothing here is blocked on design; each is additive against the surface that exists:
+
+- `holi.data` and **every write call** — the trust model already permits writes, so this is the
+  state question and nothing else.
+- The `utilityProcess` **backend** (`server.mjs`), `manifest.json`, and **personal apps** in
+  `userData/apps/` — each waits for an app that needs it.
+- **Auto-reload** and a **command-palette** entry — deliberately not slice-1 second surfaces.
+
+**The two apps this document keeps using as examples — the retro board and the poll — still cannot
+be built**, because both need shared state. That, rather than any missing API, is the measure of the
+gap.
 
 **Self-improvement / curator loop.** Designed around headless background forks and dropped from v1:
 unproven value, and in a shared vault one person's background agent auto-editing **shared** skills

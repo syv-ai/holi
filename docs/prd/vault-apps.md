@@ -1,8 +1,10 @@
-# PRD — Vault Apps *(next; nothing here is built yet)*
+# PRD — Vault Apps
 
 Just-in-time interactive apps the vault assistant creates on demand: small, reusable tools that live **in the vault**, sync to every member, and open **inside Holi** as first-class tabs.
 
-> **Nothing in this document describes code that exists**, which is why it is not in the PRD table — see [`../not-built.md`](../not-built.md). It is, however, **the next thing being built**, and D74 settled the trust model and the first slice below, so this is no longer a design waiting on an open question. What remains open is narrow and named: **where app state lives**.
+> **Slice 1 is built** (D74; §Slice 1 lists exactly what shipped) and **verified by hand on 2026-08-20** against a real vault — an app written into `.holi/apps/<id>/` opens as a themed tab, reads the vault's notes and tasks, refuses the agent surface, and holds nothing across a reload. The record, including what was *not* checked, is in [`../verification/2026-08-20-vault-apps-slice1.md`](../verification/2026-08-20-vault-apps-slice1.md).
+>
+> **What is still absent** is additive against that surface rather than a change to it: `holi.data` and every write (§State, deferred), the `utilityProcess` backend, `manifest.json`, personal apps in `userData`, the command-palette entry, auto-reload, and an agent action that opens an app.
 >
 > **What D74 killed:** this PRD's differentiator was a per-app **shared Yjs doc on the relay**, which gave every app live multiplayer for free. There is no relay ([`../vision.md`](../vision.md)). The replacement is *not* decided, and deliberately so — it is a per-app question rather than a platform one (a retro board's state is shared by nature; a CSV explorer's is nobody else's business), so it is worth deciding against real apps. **Slice 1 therefore ships no state API at all** and the apps it can host are genuinely ephemeral. See §State, deferred.
 
@@ -67,7 +69,9 @@ A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown 
 
 **`appId` is `[a-z0-9-]+`, and the reason is the URL.** The directory name becomes the **host** of a `holi-app://` URL, and hosts are case-folded — so `My_App/` and `my_app/` would collide, and a mixed-case directory would silently 404 in a way that looks like a path bug. Rather than canonicalize and explain it, the grammar is restricted: a directory whose name is not `[a-z0-9-]+` is **not an app** and does not appear in the Apps list. The authoring skill states it, so the agent names directories correctly by default.
 
-**The bridge and the theme are injected on serve.** When the handler serves the entry document it prepends a `<style>` of the vault's resolved theme tokens ([`../architecture.md`](../architecture.md) §9 — a whitelisted token map, never author-supplied CSS) and a `<script>` defining `window.holi` over `postMessage`. Every other file is served byte-for-byte. **Why inject rather than require a tag:** the app writes its own `index.html`, so a required `<script>` is one the agent can omit — and a missing bridge presents as an app that silently does nothing, which is the least diagnosable failure available.
+**The bridge and the theme are injected on serve.** When the handler serves the entry document it prepends a `<style>` of theme tokens ([`../architecture.md`](../architecture.md) §9 — a whitelisted token map, never author-supplied CSS) and a `<script>` defining `window.holi` over `postMessage`. Every other file is served byte-for-byte. **Why inject rather than require a tag:** the app writes its own `index.html`, so a required `<script>` is one the agent can omit — and a missing bridge presents as an app that silently does nothing, which is the least diagnosable failure available.
+
+**The `<style>` is Holi's own palette with the vault's theme laid over it**, not the vault's overrides alone. Injecting only the overrides is what shipped first, and it made an app in a vault with no theme — the ordinary case, since the seeded `theme.json` is empty — receive `:root{}`: every token the authoring skill tells authors to use resolved to nothing, and the app drew black text on a transparent page. Unit tests could not see it, because `:root{}` is a perfectly well-formed injection. The base lives in `main/apps/app-tokens.ts`, mirroring the renderer's dark defaults with the Tailwind palette references resolved to literals (a frame has no Tailwind build), and a test pins that every themeable token has one: a shade of drift is cosmetic, a missing token is an unreadable app.
 
 ## Runtime & surfaces
 
@@ -104,9 +108,9 @@ A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown 
 
 **Why not just decide it now:** every framing that picks one for all apps is wrong for half the examples in this document, and the per-app split (a declared `state: shared | local`, or two APIs) is a config space to document and police before a single app has asked for it. Slice 1's ephemeral apps are the evidence-gathering step — if apps feel crippled, *which* kind of state was missed is the answer, and that is a question real usage answers and speculation does not.
 
-## Slice 1 — what ships first
+## Slice 1 — what shipped
 
-The risky part of this feature is not any single capability; it is whether **an agent can write an app into a vault and have it open, themed, reading real vault data**. Slice 1 is exactly that and nothing else:
+The risky part of this feature was not any single capability; it was whether **an agent can write an app into a vault and have it open, themed, reading real vault data**. Slice 1 is exactly that and nothing else:
 
 - The `holi-app://` handler, its containment check, and the injected theme + bridge.
 - The `{kind:'app'; appId}` tab and the union reshape it forces.
