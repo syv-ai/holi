@@ -10,7 +10,7 @@
  * Where the caret actually lands is `test/tab-drop.test.ts`, on numbers. That
  * split is the whole reason `lib/tab-drop.ts` exists.
  */
-import { fireEvent, render, screen } from '@/test/render'
+import { act, fireEvent, render, screen } from '@/test/render'
 import { expect, test, vi } from 'vitest'
 import { TAB_MIME, parseTabPayload } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
@@ -134,4 +134,148 @@ test('a drop carrying junk is ignored rather than guessed at', () => {
   fireEvent(host, dragEvent('drop', dataTransfer))
 
   expect(onDropTab).not.toHaveBeenCalled()
+})
+
+/* ── Auto-slide ──────────────────────────────────────────────────────────
+ *
+ * jsdom cannot *compute* layout, but a test can *supply* it. Stubbing the two
+ * measurements the strip actually takes — `clientWidth` for the space it has and
+ * `getBoundingClientRect` for each pill — is enough to make the window clip for
+ * real, and what is under test here is the state machine, not the arithmetic:
+ * does a hover at the edge advance, does the continuous `dragover` stream reset
+ * the timer, does the window follow. The geometry itself is checked on numbers
+ * in `test/tab-drop.test.ts`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** Five tabs, 60px each, in a 200px strip — so only two fit and three are hidden. */
+const manyTabs: Tab[] = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'].map((name) => ({
+  kind: 'note',
+  path: `notes/${name}`,
+}))
+
+const PILL_WIDTH = 60
+const STRIP_WIDTH = 200
+
+function withFakeLayout(): () => void {
+  const rect = HTMLElement.prototype.getBoundingClientRect
+  const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')
+
+  HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
+    const box = {
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: PILL_WIDTH,
+      bottom: 24,
+      width: PILL_WIDTH,
+      height: 24,
+    }
+    return { ...box, toJSON: () => box } as DOMRect
+  }
+  Object.defineProperty(Element.prototype, 'clientWidth', {
+    configurable: true,
+    get: () => STRIP_WIDTH,
+  })
+
+  return () => {
+    HTMLElement.prototype.getBoundingClientRect = rect
+    if (clientWidth !== undefined) {
+      Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
+    }
+  }
+}
+
+/** With every pill 60px wide the host's stubbed rect is 60 too, so anything past
+ *  its midpoint is inside the 28px right-hand band. */
+const AT_RIGHT_EDGE = 50
+
+test('hovering the clipped edge slides the window to reach a hidden position', () => {
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    render(
+      <TabStrip
+        tabs={manyTabs}
+        active={0}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onClose={() => {}}
+        onDropTab={vi.fn()}
+      />,
+    )
+    // Two of five fit, and the active tab anchors the window to the left.
+    expect(screen.getByText('a.md')).toBeInTheDocument()
+    expect(screen.queryByText('c.md')).not.toBeInTheDocument()
+
+    const host = screen.getByTestId('tab-strip')
+    const dataTransfer = new FakeDataTransfer()
+    dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
+
+    const hover = () => {
+      const event = new Event('dragover', { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+      Object.defineProperty(event, 'clientX', { value: AT_RIGHT_EDGE })
+      fireEvent(host, event)
+    }
+
+    // Arriving at the edge steps once immediately, rather than doing nothing for
+    // a full interval first.
+    act(() => hover())
+    expect(screen.getByText('c.md')).toBeInTheDocument()
+    expect(screen.queryByText('a.md')).not.toBeInTheDocument()
+
+    // `dragover` fires continuously. A second one at the same edge must NOT
+    // re-arm: restarting the timer on every event would reset it forever and the
+    // strip would freeze one step from where it started.
+    act(() => hover())
+    // Still showing b+c. If the second hover had re-armed, it would have stepped
+    // again and the window would be c+d — which is why this asserts the tab that
+    // would have been dropped, not the one that survives either way.
+    expect(screen.getByText('b.md')).toBeInTheDocument()
+
+    act(() => void vi.advanceTimersByTime(400))
+    expect(screen.getByText('d.md')).toBeInTheDocument()
+    expect(screen.queryByText('b.md')).not.toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})
+
+test('the slide stops when the drag leaves, and takes its timer with it', () => {
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    render(
+      <TabStrip
+        tabs={manyTabs}
+        active={0}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onClose={() => {}}
+        onDropTab={vi.fn()}
+      />,
+    )
+    const host = screen.getByTestId('tab-strip')
+    const dataTransfer = new FakeDataTransfer()
+    dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
+
+    const event = new Event('dragover', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+    Object.defineProperty(event, 'clientX', { value: AT_RIGHT_EDGE })
+    act(() => void fireEvent(host, event))
+    expect(screen.getByText('c.md')).toBeInTheDocument()
+
+    // `relatedTarget` outside the host is a real leave, not a child crossing.
+    act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
+
+    // The window is back on the active tab, and no timer is still running.
+    expect(screen.getByText('a.md')).toBeInTheDocument()
+    act(() => void vi.advanceTimersByTime(2000))
+    expect(screen.getByText('a.md')).toBeInTheDocument()
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
 })

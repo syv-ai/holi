@@ -16,7 +16,7 @@
  * `overflow-hidden` on a flex child that cannot shrink clips nothing). Which
  * tabs survive it is `lib/tab-window.ts`, which is pure and tested on numbers.
  */
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
   DropdownMenu,
@@ -28,7 +28,15 @@ import {
 import { CalendarDays, LayoutGrid, Mail, SquareKanban } from 'lucide-react'
 import { fileIconFor } from '@/features/explorer/file-icons'
 import { tabWindow } from '@/lib/tab-window'
-import { TAB_MIME, dropIndex, parseTabPayload, tabPayload, type PillBox } from '@/lib/tab-drop'
+import {
+  SLIDE_MS,
+  TAB_MIME,
+  dropIndex,
+  parseTabPayload,
+  stripEdge,
+  tabPayload,
+  type PillBox,
+} from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
@@ -130,6 +138,42 @@ export function TabStrip({
    * strip being scrolled by anything else on screen.
    */
   const [caret, setCaret] = useState<{ index: number; x: number } | null>(null)
+  /**
+   * The index the window must keep visible *while a drag is in flight*.
+   *
+   * A drop position that is currently clipped is otherwise unreachable — the
+   * strip only slides for the **active** tab, so "move this to position 9 of
+   * 12" cannot be expressed at all. No new windowing logic is needed for it:
+   * `tabWindow`'s third rule is already "this index must stay visible", and
+   * `active` is merely its usual caller. A drag substitutes its own.
+   */
+  const [dragFocus, setDragFocus] = useState<number | null>(null)
+  /** The running slide, and which way it is going — kept in a ref so that the
+   *  continuous stream of `dragover` events does not restart the timer on every
+   *  frame and freeze the strip one step from where it started. */
+  const slideRef = useRef<{ edge: 'left' | 'right'; timer: ReturnType<typeof setInterval> } | null>(
+    null,
+  )
+
+  const stopSliding = () => {
+    if (slideRef.current !== null) clearInterval(slideRef.current.timer)
+    slideRef.current = null
+  }
+
+  // A drag that ends anywhere but here — dropped on another pane, cancelled with
+  // escape, or the component unmounting mid-drag — must not leave a timer
+  // sliding a strip nobody is dragging over.
+  useEffect(() => {
+    return () => {
+      if (slideRef.current !== null) clearInterval(slideRef.current.timer)
+    }
+  }, [])
+
+  const endDrag = () => {
+    stopSliding()
+    setCaret(null)
+    setDragFocus(null)
+  }
 
   // The strip's own width, which is the pane's width minus the trailing
   // controls. A ResizeObserver rather than a window listener: the pane resizes
@@ -172,12 +216,16 @@ export function TabStrip({
       }
     }
     if (changed) setWidths(next)
-  }, [tabs, widths, available, active])
+    // `dragFocus` belongs here: nothing else in this list changes when the
+    // window slides, so pills the slide reveals would stay measured at 0 and
+    // `tabWindow` would miscount from then on.
+  }, [tabs, widths, available, active, dragFocus])
 
   const window_ = tabWindow({
     widths: tabs.map((t) => widths[tabKey(t)] ?? 0),
     available,
-    active,
+    // While dragging, the window follows the pointer instead of the selection.
+    active: dragFocus ?? active,
     overflowWidth: OVERFLOW_WIDTH,
     gap: GAP,
   })
@@ -205,6 +253,29 @@ export function TabStrip({
    *  spec, so the MIME type is the only question a target may ask mid-drag. */
   const carriesTab = (e: React.DragEvent) => e.dataTransfer.types.includes(TAB_MIME)
 
+  /**
+   * Slide the window one tab per tick while the pointer sits at an end.
+   *
+   * `seed` is where to start counting from when nothing has slid yet — the
+   * outermost visible tab on that side, so the first step immediately reveals
+   * one more rather than re-selecting one already on screen. Re-arming is
+   * suppressed while the same edge is already running: `dragover` fires
+   * continuously, and restarting the interval on each one would reset the timer
+   * forever and the strip would never reach the second step.
+   */
+  const slide = (edge: 'left' | 'right' | null, seed: number) => {
+    if (edge === null) return stopSliding()
+    if (slideRef.current?.edge === edge) return
+    stopSliding()
+    const step = edge === 'left' ? -1 : 1
+    const clamp = (i: number) => Math.max(0, Math.min(i, tabs.length - 1))
+    const advance = () => setDragFocus((prev) => clamp((prev ?? seed) + step))
+    // One step now, then on the timer — a hover that has already arrived at the
+    // edge should do something before it does nothing for SLIDE_MS.
+    advance()
+    slideRef.current = { edge, timer: setInterval(advance, SLIDE_MS) }
+  }
+
   const dragOver = (e: React.DragEvent) => {
     if (onDropTab === undefined || !carriesTab(e)) return
     // Without this the drop event never fires — the commonest way HTML5
@@ -225,10 +296,15 @@ export function TabStrip({
           ? last.left + last.width - host.left
           : 0
     setCaret({ index, x })
+
+    // Hovering an end slides the window that way, so a clipped position is
+    // reachable. The seed is the outermost tab currently visible on that side.
+    const edge = stripEdge(host, e.clientX)
+    slide(edge, edge === 'left' ? window_.start : window_.end - 1)
   }
 
   const drop = (e: React.DragEvent) => {
-    setCaret(null)
+    endDrag()
     const tab = parseTabPayload(e.dataTransfer.getData(TAB_MIME))
     if (tab === null) return
     e.preventDefault()
@@ -252,7 +328,7 @@ export function TabStrip({
           // `dragleave` also fires when the pointer crosses into a child, so
           // clear only when the host itself was actually left.
           if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
-          setCaret(null)
+          endDrag()
         }}
         onDrop={drop}
       >
@@ -284,7 +360,7 @@ export function TabStrip({
                 e.dataTransfer.setData(TAB_MIME, tabPayload(t))
                 e.dataTransfer.effectAllowed = 'move'
               }}
-              onDragEnd={() => setCaret(null)}
+              onDragEnd={endDrag}
               className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                 i === active
                   ? focused
