@@ -20,6 +20,7 @@ files and it appears in their sidebar.
 .holi/apps/<id>/index.html      ← required: the entry document
 .holi/apps/<id>/app.js          ← anything else you like, beside it
 .holi/apps/<id>/style.css
+.holi/apps/<id>/app.yaml        ← required: write this LAST
 ```
 
 - `<id>` is the app's name and **must match `[a-z0-9-]+`** — lowercase letters,
@@ -29,7 +30,20 @@ files and it appears in their sidebar.
   entry document even if it is a stub.
 - Every other file is served beside it, untouched. Relative `src`/`href` work:
   `<script src="app.js">`, `<link rel="stylesheet" href="style.css">`.
-- It appears in the sidebar as soon as you save it. No restart, no registration.
+- `app.yaml` is what **registers** the app, and you write it **last**. Until it
+  exists the app does not appear, which is the point: you write an app one file
+  at a time, and without a marker it would show up in the sidebar the moment
+  `index.html` landed and open onto half a page.
+
+  ```yaml
+  name: Retro board          # optional — the label; defaults to the directory
+  icon: kanban               # optional — any lucide icon name
+  description: Sprint retros # optional — the sidebar tooltip
+  ```
+
+  Every key is optional. An **empty file registers the app**, so if you have
+  nothing to say, write nothing. `holi app init <id>` scaffolds one for you.
+- It appears in the sidebar as soon as the manifest lands. No restart.
 
 ## The API
 
@@ -96,19 +110,42 @@ These are not oversights — build within them rather than around them.
 It *can* use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
 
-## You cannot see the app run
+## Seeing whether it works
 
-There is no console you can read, no screenshot, and **no way for you to open the
-app yourself**. If it throws, the tab is blank and nothing tells either of you
-what happened. So build for that:
+You have two things and no more: a check that runs on every file you write, and
+a command that opens the app.
+
+```sh
+holi app open <id>          # opens (or focuses) the app's tab in Holi
+holi app init <id>          # scaffolds .holi/apps/<id>/ with a manifest
+```
+
+**The check speaks on its own.** Every time you write a file under
+`.holi/apps/`, a `vault-app check` runs and tells you what will not work — a
+syntax error and its line, a `.ts` file that has no bundler to build it, a
+`localStorage` call that will throw, a missing manifest. It never blocks a
+write and it says nothing at all when there is nothing wrong, so **if it is
+quiet, that is the answer**.
+
+**What it cannot tell you is whether the app is right.** It parses; it does not
+run. So the loop is:
+
+1. Write the files, manifest last.
+2. Read what the check says, if it says anything.
+3. `holi app open <id>`.
+4. **Ask the user what they see.** You still have no console, no screenshot
+   and no way to read the rendered page — opening the tab puts it in front of
+   them, not in front of you.
+
+Because step 4 is the only real verification, build so that a failure is
+legible in the page itself:
 
 - **Wrap the startup in a try/catch and render the error into the page.** A
-  visible message is the only diagnostic that exists here.
-- **Put something on screen before the first `await`**, so a failing call leaves
-  a page with a heading on it rather than a blank one.
-- Prefer plain DOM over anything clever: no build step, no bundler, no source map.
-- Re-read the files you wrote before saying it is done. That is the only check
-  available to you.
+  visible message is the only diagnostic the user can read back to you.
+- **Put something on screen before the first `await`**, so a failing call
+  leaves a page with a heading on it rather than a blank one.
+- Prefer plain DOM over anything clever: no build step, no bundler, no source
+  map, and nothing that needs compiling.
 
 ## Editing an app that is already open
 
@@ -192,9 +229,10 @@ wrong in a vault themed differently from yours.
 
 ## Before you say it is done
 
-- **Ask the user to open it** — it is in the sidebar, under **apps**. You cannot
-  open it yourself, so do not claim to have looked at it.
-- Say what it should show, so they can tell you when it does not.
+- **Write `app.yaml`**, if you have not. Without it the app does not exist.
+- **Open it: `holi app open <id>`.** Then say what it should show, so the
+  user can tell you when it does not — you have still never seen it render, so
+  do not claim to have looked at it.
 - If they already had it open, tell them to reload the tab (see above).
 - Ask what the user wants it to answer before adding a second screen to it. A
   small app that answers one question beats a dashboard nobody reads.

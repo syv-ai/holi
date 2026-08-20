@@ -108,7 +108,12 @@ file **is** the note, the task, and the record.
   a note. The full contract — the directory layout, the \`window.holi\` bridge
   that reads notes and tasks, and what an app deliberately cannot do — is the
   **vault-apps skill** in \`.claude/skills/\`. Read it before writing one.
-- You cannot open an app yourself. Ask the user to; it is in their sidebar.
+- An app becomes real when \`.holi/apps/<id>/app.yaml\` exists beside its
+  \`index.html\` — write the manifest **last**, so the tab never opens onto a
+  half-written page. \`holi app init <id>\` scaffolds one.
+- Open one with \`holi app open <id>\`. A check runs on every file you write
+  under \`.holi/apps/\` and tells you what will not work; it never blocks a
+  write, and it is quiet when there is nothing wrong.
 
 ## How your edits reach other people
 

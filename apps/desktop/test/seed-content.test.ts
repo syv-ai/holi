@@ -597,13 +597,13 @@ describe('ensureSeeded — the vault-apps skill', () => {
     // The three facts an agent gets WRONG rather than misses, each learned by
     // reading the skill back as a reader who knows nothing about Holi:
     // the status union (it guesses `done: true`), that an open tab does not
-    // pick up an edit, and that it cannot open the app to check its own work.
+    // pick up an edit, and that opening the app is not the same as seeing it.
     // Matched against whitespace-normalized text: the file is hand-wrapped at
     // 80 columns, so any phrase long enough to be worth asserting is wrapped.
     const prose = skill.replace(/\s+/g, ' ')
     expect(prose).toContain("'todo' | 'doing' | 'done'")
     expect(prose).toMatch(/reload/i)
-    expect(prose).toMatch(/no way for you to open the app yourself/i)
+    expect(prose).toMatch(/no console, no screenshot/i)
   })
 
   it('puts apps in the vault instructions, so an agent knows they exist at all', async () => {
@@ -831,5 +831,47 @@ describe('refreshManaged — what `holi seed refresh` does', () => {
     const root = await tempDir()
     await ensureSeeded(root)
     expect(await refreshManaged(root, {})).toEqual({ refreshed: [], skipped: [] })
+  })
+})
+
+describe('the vault-apps skill teaches the loop that now exists', () => {
+  const SKILL = SEED_FILES['.claude/skills/vault-apps/SKILL.md']!
+  /** The file is hand-wrapped at 80 columns, so every assertion about a
+   *  sentence has to ignore where the wrap happens to fall. */
+  const flat = SKILL.replace(/\s+/g, ' ')
+  const agents = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
+
+  it('names the manifest as required, and as the last file to write', () => {
+    expect(flat).toContain('app.yaml')
+    expect(flat).toMatch(/app\.yaml[\s\S]{0,400}?\bLAST\b/i)
+  })
+
+  it('tells the agent it can open the app itself', () => {
+    expect(flat).toContain('holi app open <id>')
+  })
+
+  it('says a check is reported back on write', () => {
+    expect(flat).toMatch(/vault-app check/i)
+  })
+
+  it('no longer claims the agent cannot open the app', () => {
+    // False as of the holi CLI, and a skill that is wrong in the direction of
+    // learned helplessness is worse than one that is merely incomplete.
+    expect(flat).not.toMatch(/no way for you to open the app yourself/i)
+    expect(flat).not.toMatch(/You cannot open it yourself/i)
+    expect(flat).not.toMatch(/Ask the user to open it/i)
+  })
+
+  it('corrects the same claim in AGENTS.md', () => {
+    expect(agents).not.toMatch(/You cannot open an app yourself/i)
+    expect(agents).toContain('holi app open')
+  })
+
+  it('still teaches the boundaries the validator enforces', () => {
+    // The hook reports these; the skill is where the reason lives. If one drifts
+    // the agent gets a rule with no argument behind it.
+    for (const rule of ['localStorage', 'holi.data', 'opaque origin']) {
+      expect(flat).toContain(rule)
+    }
   })
 })
