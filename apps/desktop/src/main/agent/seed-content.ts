@@ -27,6 +27,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { LOCAL_ONLY_IGNORE_LINES, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
+import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
@@ -276,7 +277,41 @@ const PLAIN_MANIFEST =
 const THEME_SKELETON = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} }, null, 2) + '\n'
 
 /** Written only when absent. Never updated, so a member's edit survives. */
-export const SEED_FILES: Record<string, string> = {
+/**
+ * **Holi owns these after writing them** (D75). Documentation and code Holi
+ * ships: refreshed on every open, but only when the file on disk is still
+ * byte-for-byte what Holi last wrote there (see `seed-state.ts`).
+ *
+ * Create-if-missing is what made `ensureSeeded` safe to run on every open, and
+ * it is also what made a managed file impossible to improve. Slice 1 shipped a
+ * `vault-apps` skill; reading it back the same day found four gaps, three of
+ * which an agent gets *wrong* rather than merely misses — and the fix could
+ * reach only vaults that had never been opened. A skill that cannot be
+ * corrected is a skill whose first draft is permanent on every machine that
+ * ever ran it.
+ */
+export const MANAGED_FILES: Record<string, string> = {
+  '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
+  '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
+  '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
+  '.claude/skills/theme/SKILL.md': themeSkill,
+  '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
+  '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
+}
+
+/**
+ * **The user’s the moment they exist.** Create-if-missing, forever: a hash
+ * match is not permission to rewrite one of these, because the question a hash
+ * answers ("did anyone touch it?") is not the question that matters here.
+ * `AGENTS.md` seeded with our words is still the file the user was handed to
+ * write in, and re-asserting our draft over an identical copy would be Holi
+ * arguing with them once a session.
+ *
+ * `.claude/settings.json` sits here but keeps its own third rule: it is MERGED
+ * key-wise rather than created-if-missing (see `settingsWithRequired`),
+ * because a seed that only runs at creation is a migration that never happens.
+ */
+export const ONCE_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
@@ -304,13 +339,11 @@ export const SEED_FILES: Record<string, string> = {
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,
   '.claude/settings.json': SETTINGS_JSON,
-  '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
-  '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
-  '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
-  '.claude/skills/theme/SKILL.md': themeSkill,
-  '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
-  '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
 }
+
+/** Both classes together — kept because a caller that only needs to know "is
+ *  this a file Holi seeds?" should not have to ask which class it is in. */
+export const SEED_FILES: Record<string, string> = { ...ONCE_FILES, ...MANAGED_FILES }
 
 export const GITIGNORE = '.gitignore'
 
@@ -419,47 +452,107 @@ export function settingsWithRequired(existing: string | null): string | null {
 }
 
 /**
- * Write whatever managed file is missing. Returns the paths actually written.
- * Idempotent, and safe to run on every vault activation.
+ * What one run of `ensureSeeded` did.
+ *
+ * Three lists rather than one, because "Holi wrote this file" now covers three
+ * different events and the caller can act on only some of them. `skipped` is
+ * the one that has to be visible: a managed file left alone is Holi declining
+ * to ship an improvement, and the user is entitled to know which.
  */
-export async function ensureSeeded(root: string): Promise<string[]> {
-  const written: string[] = []
+export interface SeedResult {
+  /** Created because it was absent. */
+  written: string[]
+  /** A managed file overwritten with a newer shipped version (D75). */
+  refreshed: string[]
+  /** A managed file Holi could not prove was still its own. */
+  skipped: { path: string; reason: 'edited' | 'unrecorded' }[]
+}
 
-  // First, and on its own, because everything below it is a file that would be
-  // committed — and until this exists there is nothing stopping `git add -A`
-  // from taking a machine-local file with it.
+/**
+ * Write whatever managed file is missing, and refresh the ones Holi still owns.
+ *
+ * Idempotent, and safe to run on every vault activation — which is the whole
+ * point, since a seed that only runs at creation is a migration that never
+ * happens. Three rules, one per class:
+ *
+ *   - **once** (`ONCE_FILES`) — created if absent, never touched again.
+ *   - **managed** (`MANAGED_FILES`) — created if absent, and rewritten when the
+ *     shipped content has changed *and* the file on disk is still byte-for-byte
+ *     what Holi last wrote there. Anything else is skipped and reported.
+ *   - **`.claude/settings.json`** — merged key-wise (`settingsWithRequired`).
+ *
+ * The `.gitignore` comes first and on its own: everything below it is a file
+ * that would be committed, and until it exists nothing stops `git add -A` from
+ * taking a machine-local file with it.
+ */
+export async function ensureSeeded(root: string): Promise<SeedResult> {
+  const result: SeedResult = { written: [], refreshed: [], skipped: [] }
+
   const existing = await readFile(join(root, GITIGNORE), 'utf8').catch(() => null)
   const next = gitignoreWithLocalOnly(existing)
   if (next !== null) {
     await writeAtomic(root, vaultRelPath(GITIGNORE), next)
-    written.push(GITIGNORE)
+    result.written.push(GITIGNORE)
   }
 
-  for (const [rel, content] of Object.entries(SEED_FILES)) {
-    // `settings.json` is the one managed file that is MERGED rather than
-    // skipped when present — see `settingsWithRequired`. Skipping it is how the
-    // send gate would ship as an inert file in every existing vault.
+  for (const [rel, content] of Object.entries(ONCE_FILES)) {
+    // `settings.json` is the one file that is MERGED rather than skipped when
+    // present — see `settingsWithRequired`, and the block below. Skipping it is
+    // how the send gate would ship as an inert file in every existing vault.
     if (rel === SETTINGS) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     if (onDisk !== null) continue
     await writeAtomic(root, vaultRelPath(rel), content)
-    written.push(rel)
+    result.written.push(rel)
+  }
+
+  for (const [rel, content] of Object.entries(MANAGED_FILES)) {
+    const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
+    if (onDisk === null) {
+      await writeAtomic(root, vaultRelPath(rel), content)
+      await recordSeeded(root, rel, content)
+      result.written.push(rel)
+      continue
+    }
+    if (onDisk === content) {
+      // Already exactly what we ship, however it got there — so it is ours, and
+      // recording it is what lets the NEXT version reach this vault. Without
+      // this line every vault seeded before the hashes existed stays frozen
+      // forever, which is the problem D75 was written to solve.
+      await recordSeeded(root, rel, content)
+      continue
+    }
+    const state = await readSeedState(root)
+    if (state[rel] === undefined) {
+      // Predates the hashes. Assume the user's: this is the state every vault
+      // in the world is in today, and guessing the other way rewrites their
+      // edited skills once, silently.
+      result.skipped.push({ path: rel, reason: 'unrecorded' })
+      continue
+    }
+    if (!(await mayRefresh(root, rel, onDisk))) {
+      result.skipped.push({ path: rel, reason: 'edited' })
+      continue
+    }
+    await writeAtomic(root, vaultRelPath(rel), content)
+    await recordSeeded(root, rel, content)
+    result.refreshed.push(rel)
   }
 
   const settingsOnDisk = await readFile(join(root, SETTINGS), 'utf8').catch(() => null)
   const settingsNext = settingsWithRequired(settingsOnDisk)
   if (settingsNext !== null) {
     await writeAtomic(root, vaultRelPath(SETTINGS), settingsNext)
-    written.push(SETTINGS)
+    result.written.push(SETTINGS)
   }
 
   // Brand binaries (Raleway fonts + logo), base64 in a generated module. Same
-  // if-absent rule as the text seeds, via the bytes overload of writeAtomic.
+  // if-absent rule as the once text seeds, via the bytes overload of writeAtomic.
   for (const [rel, b64] of Object.entries(BRAND_BINARIES)) {
     const onDisk = await readFile(join(root, rel)).catch(() => null)
     if (onDisk !== null) continue
     await writeAtomic(root, vaultRelPath(rel), Buffer.from(b64, 'base64'))
-    written.push(rel)
+    result.written.push(rel)
   }
-  return written
+  return result
 }

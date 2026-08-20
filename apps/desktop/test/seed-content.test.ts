@@ -7,9 +7,15 @@ import { promisify } from 'node:util'
 import { LOCAL_ONLY_IGNORE_LINES } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
-import { GITIGNORE, ensureSeeded, SEED_FILES,
+import {
+  GITIGNORE,
+  MANAGED_FILES,
+  ONCE_FILES,
+  SEED_FILES,
+  ensureSeeded,
   settingsWithRequired,
 } from '../src/main/agent/seed-content'
+import { mayRefresh, recordSeeded } from '../src/main/agent/seed-state'
 
 const exec = promisify(execFile)
 
@@ -225,7 +231,7 @@ describe('SEED_FILES', () => {
 describe('ensureSeeded', () => {
   it('seeds every managed file into a fresh working dir', async () => {
     const root = await tempDir()
-    const written = await ensureSeeded(root)
+    const { written } = await ensureSeeded(root)
     // The .gitignore is written too, but it is not in SEED_FILES: it is the one
     // managed file that is merged line-wise rather than created-if-missing. The
     // brand binaries seed alongside the text files, from BRAND_BINARIES.
@@ -267,11 +273,11 @@ describe('ensureSeeded', () => {
     await mkdir(root, { recursive: true })
     await writeFile(join(root, 'AGENTS.md'), '# my rules\n')
 
-    const first = await ensureSeeded(root)
+    const { written: first } = await ensureSeeded(root)
     expect(first).not.toContain('AGENTS.md')
     expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe('# my rules\n')
 
-    const second = await ensureSeeded(root)
+    const { written: second } = await ensureSeeded(root)
     expect(second).toEqual([]) // everything is on disk now
   })
 
@@ -300,7 +306,7 @@ describe('ensureSeeded — the .gitignore', () => {
     const root = await tempDir()
     await writeFile(join(root, '.gitignore'), 'node_modules\ndist\n')
 
-    const written = await ensureSeeded(root)
+    const { written } = await ensureSeeded(root)
 
     expect(written).toContain('.gitignore')
     expect(await lines(root)).toContain('node_modules')
@@ -322,7 +328,7 @@ describe('ensureSeeded — the .gitignore', () => {
   it('reports nothing to write when the lines are already present', async () => {
     const root = await tempDir()
     await writeFile(join(root, '.gitignore'), `${LOCAL_ONLY_IGNORE_LINES.join('\n')}\n`)
-    expect(await ensureSeeded(root)).not.toContain('.gitignore')
+    expect((await ensureSeeded(root)).written).not.toContain('.gitignore')
   })
 
   it('does not join onto a file with no trailing newline', async () => {
@@ -508,7 +514,7 @@ describe('ensureSeeded — settings.json', () => {
       'utf8',
     )
 
-    const written = await ensureSeeded(root)
+    const { written } = await ensureSeeded(root)
 
     const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
     expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
@@ -565,7 +571,7 @@ describe('ensureSeeded — the vault-apps skill', () => {
     // ensureSeeded runs on vault open (D70), and create-if-missing means a
     // brand-new seed file is the only thing it writes on that pass.
     const root = await tempDir()
-    const written = await ensureSeeded(root)
+    const { written } = await ensureSeeded(root)
     expect(written).toContain('.claude/skills/vault-apps/SKILL.md')
     const skill = await readFile(join(root, '.claude/skills/vault-apps/SKILL.md'), 'utf8')
     // The three facts an app author cannot discover by reading the app's own
@@ -604,7 +610,121 @@ describe('ensureSeeded — the vault-apps skill', () => {
     await ensureSeeded(root)
     const rel = '.claude/skills/vault-apps/SKILL.md'
     await writeFile(join(root, rel), '# mine\n', 'utf8')
-    expect(await ensureSeeded(root)).not.toContain(rel)
+    expect((await ensureSeeded(root)).written).not.toContain(rel)
     expect(await readFile(join(root, rel), 'utf8')).toBe('# mine\n')
+  })
+})
+
+describe('the managed / once split (D75)', () => {
+  it('classifies every seed file exactly once', () => {
+    const managed = Object.keys(MANAGED_FILES).sort()
+    const once = Object.keys(ONCE_FILES).sort()
+    // Disjoint, and together exactly SEED_FILES: a new seed file has to be
+    // classified deliberately rather than defaulting into a class.
+    expect(managed.filter((k) => once.includes(k))).toEqual([])
+    expect([...managed, ...once].sort()).toEqual(Object.keys(SEED_FILES).sort())
+  })
+
+  it('manages exactly the code and documentation Holi ships', () => {
+    expect(Object.keys(MANAGED_FILES).sort()).toEqual([
+      '.claude/hooks/google-send-gate.mjs',
+      '.claude/hooks/user-prompt-submit.mjs',
+      '.claude/skills/gmail-calendar/SKILL.md',
+      '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/theme/SKILL.md',
+      '.claude/skills/vault-apps/SKILL.md',
+    ])
+  })
+
+  it('leaves the files that become the user\'s in the once class', () => {
+    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'MEMORY.md', '.holi/theme.json']) {
+      expect(ONCE_FILES[rel]).toBeDefined()
+      expect(MANAGED_FILES[rel]).toBeUndefined()
+    }
+  })
+})
+
+describe('ensureSeeded — refreshing a managed file', () => {
+  const SKILL = '.claude/skills/vault-apps/SKILL.md'
+
+  it('rewrites a managed file Holi wrote and nobody edited', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+
+    // Stand in for "the shipped content changed": put something else on disk
+    // and record it as ours, so the file is untouched from Holi's point of view.
+    const stale = '# an older version of this skill\n'
+    await writeFile(join(root, SKILL), stale)
+    await recordSeeded(root, SKILL, stale)
+
+    const result = await ensureSeeded(root)
+    expect(result.refreshed).toContain(SKILL)
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(SEED_FILES[SKILL])
+    // And the new content is now the recorded one, so the next version refreshes too.
+    expect(await mayRefresh(root, SKILL, SEED_FILES[SKILL]!)).toBe(true)
+  })
+
+  it('leaves an edited managed file alone and names it as skipped', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+
+    const mine = `${SEED_FILES[SKILL]}\n## my own section\n`
+    await writeFile(join(root, SKILL), mine)
+
+    const result = await ensureSeeded(root)
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(mine)
+    expect(result.refreshed).not.toContain(SKILL)
+    expect(result.skipped.map((s) => s.path)).toContain(SKILL)
+  })
+
+  it('leaves a managed file alone in a vault that predates the hashes', async () => {
+    // The state every existing vault is in: the file is there, edited, and Holi
+    // has no record of writing it. This is the case that must not regress.
+    const root = await tempDir()
+    await mkdir(join(root, '.claude/skills/vault-apps'), { recursive: true })
+    const mine = '# my own skill, written before Holi tracked hashes\n'
+    await writeFile(join(root, SKILL), mine)
+
+    const result = await ensureSeeded(root)
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(mine)
+    expect(result.refreshed).not.toContain(SKILL)
+    expect(result.skipped.map((s) => s.path)).toContain(SKILL)
+  })
+
+  it('adopts an unrecorded managed file whose content is already ours', async () => {
+    // Byte-identical to what we ship, so it IS ours however it got there.
+    // Recording it is what lets the NEXT version reach this vault.
+    const root = await tempDir()
+    await mkdir(join(root, '.claude/skills/vault-apps'), { recursive: true })
+    await writeFile(join(root, SKILL), SEED_FILES[SKILL]!)
+
+    const result = await ensureSeeded(root)
+    expect(result.refreshed).not.toContain(SKILL)
+    expect(result.skipped.map((s) => s.path)).not.toContain(SKILL)
+    expect(await mayRefresh(root, SKILL, SEED_FILES[SKILL]!)).toBe(true)
+  })
+
+  it('never rewrites a once-file, even when the hash says it could', async () => {
+    // AGENTS.md becomes the user's the moment it exists, and no hash, no flag
+    // and no version bump changes that.
+    const root = await tempDir()
+    await ensureSeeded(root)
+
+    const mine = '# my rules\n'
+    await writeFile(join(root, 'AGENTS.md'), mine)
+    await recordSeeded(root, 'AGENTS.md', mine)
+
+    const result = await ensureSeeded(root)
+    expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(mine)
+    expect(result.refreshed).not.toContain('AGENTS.md')
+  })
+
+  it('is still idempotent: a settled vault reports no work at all', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    const second = await ensureSeeded(root)
+    expect(second.written).toEqual([])
+    expect(second.refreshed).toEqual([])
+    expect(second.skipped).toEqual([])
   })
 })
