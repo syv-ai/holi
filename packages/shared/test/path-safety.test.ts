@@ -209,9 +209,21 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('inbox.md')).toBe(false)
   })
 
-  it('leaves .holi/ alone — that is Holi config, not the agent surface', () => {
+  it('leaves the rest of .holi/ alone — that is Holi config, not the agent surface', () => {
     expect(isAgentSurfacePath('.holi/settings.json')).toBe(false)
     expect(isAgentSurfacePath('.holi/theme.json')).toBe(false)
+    expect(isAgentSurfacePath('.holi/apps/retro/index.html')).toBe(false)
+  })
+
+  it('matches .holi/git-hooks/ — a pre-commit runs as the user, like a send gate', () => {
+    expect(isAgentSurfacePath('.holi/git-hooks/pre-commit')).toBe(true)
+    expect(isAgentSurfacePath('.holi/git-hooks/anything')).toBe(true)
+    expect(isAgentSurfacePath('.holi/git-hooks/nested/deep')).toBe(true)
+  })
+
+  it('does not match a directory that merely starts with the same letters', () => {
+    expect(isAgentSurfacePath('.holi/git-hooks-notes.md')).toBe(false)
+    expect(isAgentSurfacePath('.holi/git-hooks')).toBe(false)
   })
 })
 
