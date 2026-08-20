@@ -4,9 +4,44 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**The inbox is empty** (2026-08-19). Every decision through D74 has been consolidated into the doc that owns it, and the ledger below records where each one's prose went. An empty inbox is the resting state, not an unusual one — if this file has entries in it, there is consolidation owed.
+**Two entries, drafted 2026-08-20**, both raised by building vault apps slice 1 and neither settled. Consolidation is owed once agreed.
 
-## Number allocation — **next free is D75**
+---
+
+## D75 — Holi owns its own documentation; a managed file it wrote is refreshed, not frozen
+
+**Context.** `ensureSeeded` is create-if-missing, and that is what makes it safe to run on every vault open (D70). It also means a managed file can never be improved. Slice 1 shipped a `vault-apps` skill; reading it back the same day found four gaps, three of which an agent gets *wrong* rather than merely misses. Fixing them reached only vaults that had never opened — `privat`'s copy had to be deleted by hand, and there is no way to do that for anyone else's machine. **The authoring skill is the main lever this feature has for being usable, and it is write-once per vault.**
+
+**Decision.** Split `SEED_FILES` by **who owns the file after it is written**:
+
+- **Holi-managed** — `.claude/skills/**`, `.claude/hooks/**`, and (D76) `.holi/git-hooks/**`. These are documentation and code Holi ships. They are **refreshed on open**.
+- **Seeded once** — `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `.holi/theme.json`, `.holi/document-templates/**`. These become the user's the moment they exist. Unchanged behaviour.
+- `.claude/settings.json` keeps its own third rule (merged, not replaced).
+
+**A managed file is overwritten only when Holi can prove nobody edited it.** On write, record the content hash in `.holi/seed-state.local.json` (machine-local — it is a fact about this clone). On open, refresh a managed file iff its on-disk hash equals the recorded one. A hash that differs means a human or an agent changed it: leave it, and say so. `holi seed refresh [path]` (D-slice-2) does it on demand, `--force` overrides an edit after showing the diff.
+
+**Why a hash rather than a version marker in the file.** A `<!-- holi-seed: v2 -->` comment is visible in a document people read, can be edited around, and answers "which version" rather than "was this touched". The hash answers exactly the question being asked and is invisible.
+
+**Rejected: fetch the canonical copy from `syv-ai/holi`.** It is private, so the vault's agent would need a token to the product repo — a far larger grant than it appears. And it is the wrong source even if public: seeded content is bundled into the binary (`?raw` imports), so **the running app already has the canonical bytes on disk**. Fetching adds an offline dependency, a supply-chain surface, and version skew against the build actually running.
+
+---
+
+## D76 — vault hooks are a managed capability: Holi ships the code, the vault enables it
+
+**Context.** Three vault-wide transforms want a commit boundary: rewrite `[[links]]` for a file moved outside Holi, archive done tasks, normalize markdown. Git's `pre-commit` is where that belongs, and it is not exotic — this repo runs exactly that shape today (`simple-git-hooks` + `lint-staged` → eslint, restaging what it fixes). Git rename detection (`git diff --cached -M`) also hands over the `from→to` map for free, which Holi's watcher **cannot** see: to the watcher a move is a delete plus an add.
+
+**Decision, in four parts.**
+
+1. **The script body ships in the binary.** Hooks are seeded into `.holi/git-hooks/` as D75-managed files and `core.hooksPath` is pointed there on vault open. The vault's committed config declares **which transforms are enabled** (`.holi/settings.json`) — data, never code. **A vault-tracked arbitrary script is refused.** `core.hooksPath` into the tracked tree means a teammate's push runs code on your laptop, every commit, with your filesystem — which is D74's escalation argument with a different filename, and D74 spent its whole trust section preventing exactly that for `.claude/hooks/`. A teammate enabling a transform runs *their own Holi's* copy of it.
+2. **`.holi/git-hooks/` joins the agent surface** (`isAgentSurfacePath`). Slice-1 apps cannot write at all, but writes are coming; without this, an app that could write a pre-commit hook would walk straight around the rule that stopped it writing `google-send-gate.mjs`.
+3. **Transforms are active, and they never block.** They rewrite and restage. A transform that *fails* logs, tells the agent, and **lets the commit through**: Holi's auto-commit is the user's save, and a lint opinion must not outrank it. Only a future integrity check would earn the right to stop a commit, and it would still need a UI surface rather than a silent refusal.
+4. **Every run is legible.** A capped, machine-local `.holi/hooks.local.log` the agent can read, plus a push to the running agent over the hook server. The agent is the fast path; the sync status bar (`pause(reason)`, already built) is the floor for when no session is open. A transform that fails N times in a row disables itself for the session and says so.
+
+**Scope: exactly three transforms** — `relink`, `archive-done`, `normalize-md`. Not a general hook framework. Designing the config surface before a second hook has asked for one is the argument that killed `manifest.json` in D74, and it applies here unchanged.
+
+---
+
+## Number allocation — **next free is D77**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
