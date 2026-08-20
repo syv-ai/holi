@@ -10,12 +10,13 @@ import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
-import { buildDecorations } from '../src/renderer/src/editor/livePreview'
+import { buildDecorations, notePathFacet } from '../src/renderer/src/editor/livePreview'
 import {
   formatCommitDate,
   frontmatterCommitField,
   frontmatterDecorations,
   frontmatterExpandedField,
+  frontmatterStartsRevealed,
   frontmatterSummary,
   frontmatterValid,
   regionTextFrom,
@@ -150,5 +151,54 @@ describe('frontmatterValid selector + regionTextFrom', () => {
     expect(regionTextFrom('title: x\n')).toBe('---\ntitle: x\n---\n')
     expect(regionTextFrom('title: x')).toBe('---\ntitle: x\n---\n')
     expect(regionTextFrom('')).toBe('---\n---\n')
+  })
+})
+
+describe('frontmatterStartsRevealed', () => {
+  it('is false for a note — frontmatter there is metadata about prose', () => {
+    expect(frontmatterStartsRevealed('projects/q2/roadmap.md')).toBe(false)
+    expect(frontmatterStartsRevealed('journal/20-08-2026.md')).toBe(false)
+    expect(frontmatterStartsRevealed('')).toBe(false)
+  })
+
+  it('is true under .claude/, where frontmatter is the interface', () => {
+    // A skill's `name`/`description` are what the agent matches on to decide
+    // whether to load it at all. Collapsing them hides the half of the file you
+    // opened it to edit.
+    expect(frontmatterStartsRevealed('.claude/skills/theme/SKILL.md')).toBe(true)
+    expect(frontmatterStartsRevealed('.claude/agents/reviewer.md')).toBe(true)
+  })
+
+  it('does not fire on a note that merely mentions the directory', () => {
+    expect(frontmatterStartsRevealed('notes/.claude/thoughts.md')).toBe(false)
+    expect(frontmatterStartsRevealed('claude/notes.md')).toBe(false)
+  })
+})
+
+describe('the reveal default, through the field', () => {
+  const path = (p: string) => notePathFacet.of(p)
+
+  it('collapses a note', () => {
+    expect(stateFor(DOC, [path('projects/q2.md')]).field(frontmatterExpandedField)).toBe(false)
+  })
+
+  it('reveals a skill', () => {
+    expect(
+      stateFor(DOC, [path('.claude/skills/theme/SKILL.md')]).field(frontmatterExpandedField),
+    ).toBe(true)
+  })
+
+  it('collapses when no path was provided at all', () => {
+    // The facet defaults to '', and a stack that does not carry a path (the mail
+    // composer builds no frontmatter widget, but nothing enforces that) must not
+    // spring open.
+    expect(stateFor(DOC).field(frontmatterExpandedField)).toBe(false)
+  })
+
+  it('is a default, not a lock — the chevron still collapses it', () => {
+    const state = stateFor(DOC, [path('.claude/skills/theme/SKILL.md')])
+    const collapsed = state.update({ effects: toggleFrontmatter.of(false) }).state
+
+    expect(collapsed.field(frontmatterExpandedField)).toBe(false)
   })
 })

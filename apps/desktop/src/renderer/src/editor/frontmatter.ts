@@ -40,6 +40,7 @@ import {
   frontmatterRegion,
   frontmatterYamlValid,
 } from './frontmatter-region'
+import { notePathFacet } from './livePreview'
 
 /** Flip the reveal state. The pill and the header chevron both dispatch this. */
 export const toggleFrontmatter = StateEffect.define<boolean>()
@@ -49,9 +50,33 @@ export const toggleFrontmatter = StateEffect.define<boolean>()
  *  editor mid-keystroke — the table widget's `table.edit` annotation, renamed. */
 const frontmatterEdit = Annotation.define<boolean>()
 
-/** Revealed or collapsed. Starts collapsed — FR-2 hides frontmatter by default. */
+/**
+ * Whether a file's frontmatter is the point of the file.
+ *
+ * FR-2 hides frontmatter because in a *note* it is metadata about prose someone
+ * came here to read — a title, a date, a type. Under `.claude/` it is the
+ * opposite: a skill's `name` and `description` are what the agent matches
+ * against when it decides whether to load the thing at all, an agent definition
+ * is little else, and the body is the elaboration. Collapsing that to
+ * "5051 chars · Last updated 20/08/26" hides the half of the file you opened it
+ * to edit, and offers a chevron as the way back — discoverable only if you
+ * already knew there was something behind it.
+ *
+ * So the reveal default is per-file, not global. Nothing else changes: the same
+ * widget, the same nested plain-YAML editor, the same collapse chevron. A note
+ * still opens to its prose.
+ */
+export function frontmatterStartsRevealed(path: string): boolean {
+  return path.startsWith('.claude/')
+}
+
+/** Revealed or collapsed. A note starts collapsed (FR-2); a file whose
+ *  frontmatter IS its interface starts revealed (`frontmatterStartsRevealed`).
+ *  The path comes off `notePathFacet`, which the notes stack already provides —
+ *  reading it in `create` is what makes the default per-file rather than a
+ *  constant, and there is nothing to thread through. */
 export const frontmatterExpandedField = StateField.define<boolean>({
-  create: () => false,
+  create: (state) => frontmatterStartsRevealed(state.facet(notePathFacet)),
   update(value, tr) {
     for (const e of tr.effects) if (e.is(toggleFrontmatter)) return e.value
     return value
