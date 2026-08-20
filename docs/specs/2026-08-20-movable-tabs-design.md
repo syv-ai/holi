@@ -73,6 +73,17 @@ Three rules *are* new, and each one was a live question:
   column and rebuilding an identical one one position over is a flicker, not a move. The
   narrowness matters: that same sole tab dropped on a *different* pane's edge is a perfectly
   ordinary move, and it does collapse the pane it came from.
+- **A pane never offers a drop that would do nothing.** Highlighting a target that cannot act
+  is a promise the code then breaks, so the pane a drag came *from* narrows what it shows:
+  - Its **middle** goes inert. "Into this pane" means "move to the end of my own strip", which
+    the strip already expresses — and every split gesture drags *across* the body on the way to
+    an edge, so a full-pane highlight would flash on all of them. Left and right only. The
+    overlay still exists (it has to, to notice the pointer arriving at an edge) but the middle
+    draws no band and does not `preventDefault`, so the cursor says "not here".
+  - With a **single tab** it offers nothing at all. Both edges are the sole-tab no-op above and
+    the middle is a same-pane move to where the tab already is, so every zone is inert.
+
+  Every *other* pane keeps all three: dropping into one is the ordinary "put this over there".
 
 ## 4. Shape
 
@@ -148,10 +159,15 @@ dragged"* predicate during `dragover`, where `getData` is unreadable by spec and
   window miscounts from then on.
 
 **`PaneView`** renders a drop overlay **over the content region only, never over the strip**,
-and only while a drag is in flight. It is a single childless leaf element — which is also
-what keeps `dragleave` from firing spuriously as the pointer crosses child boundaries, the
-classic HTML5-DnD papercut. `into` moves the tab to the end of that pane's strip; `before` and
-`after` split.
+and only while a drag is in flight. It is a single event target — the highlight bands inside
+it are `pointer-events-none`, so crossing one fires no `dragleave`, which is the papercut that
+makes hand-rolled HTML5 drop zones flicker. `into` moves the tab to the end of that pane's
+strip; `before` and `after` split.
+
+It learns that a drag started in *its own* strip from a `onDragBegin` callback on `TabStrip`,
+which is what the narrowing rule above needs. A callback rather than a second MIME type
+carrying the source pane's index: the pane already knows how many tabs it has, so "did this
+start here" is the only fact it is missing, and `dragend` on `window` clears it.
 
 **`Shell`** keeps closing over the pane index `i`, so `PaneView` stays as dumb as D77 left it:
 

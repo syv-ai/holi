@@ -72,30 +72,56 @@ export function PaneView({
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
 
-  /**
-   * Which third of the body a tab drag is over, or null when none is.
-   *
-   * Doubles as "is a drag in flight": the overlay that reads it only exists
-   * while it is non-null, which is what keeps a pane inert for every drag that
-   * is not a tab — a file dragged from the tree, a task card off the board.
-   */
+  /** A tab drag is currently over this pane's body. */
+  const [dragging, setDragging] = useState(false)
+  /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
+  /** The drag started in *this* pane's strip. */
+  const [fromHere, setFromHere] = useState(false)
   const takesDrops = onDropTab !== undefined || onDropEdge !== undefined
+
+  /**
+   * What this pane will actually accept, which is not always all three.
+   *
+   * **A pane never offers a drop that would do nothing.** Two cases, and both
+   * are about the pane the drag came *from*:
+   *
+   *  - Its **middle** is noise. "Into this pane" means "move to the end of my
+   *    own strip", which the strip itself already expresses — and on the way to
+   *    an edge the pointer crosses the whole body, so a full-pane highlight
+   *    flashes on every single split gesture. Left and right only.
+   *  - With a **single tab** it offers nothing at all: the edges are the
+   *    sole-tab-on-its-own-edge no-op (`moveTabToNewPane`) and the middle is a
+   *    same-pane no-op (`moveTab`), so every zone is inert and lighting any of
+   *    them up would promise something that cannot happen.
+   *
+   * Every *other* pane still offers all three — dropping into one is the
+   * ordinary "put this over there" gesture.
+   */
+  const allowed: PaneDropZone[] = !fromHere
+    ? ['before', 'into', 'after']
+    : pane.tabs.length <= 1
+      ? []
+      : ['before', 'after']
 
   // A drag can end without this pane ever hearing about it — dropped on another
   // pane, or cancelled with escape while the pointer sits right here, in which
   // case `dragend` fires on the source pill in some *other* pane. Left alone,
   // the highlight would stay lit over a drag that finished a minute ago.
   useEffect(() => {
-    if (zone === null) return
-    const clear = () => setZone(null)
+    if (!dragging && !fromHere) return
+    const clear = () => {
+      setDragging(false)
+      setZone(null)
+      setFromHere(false)
+    }
     window.addEventListener('dragend', clear)
     window.addEventListener('drop', clear)
     return () => {
       window.removeEventListener('dragend', clear)
       window.removeEventListener('drop', clear)
     }
-  }, [zone])
+  }, [dragging, fromHere])
 
   const zoneAt = (e: React.DragEvent) =>
     paneDropZone(e.currentTarget.getBoundingClientRect(), e.clientX)
@@ -117,6 +143,7 @@ export function PaneView({
         onPin={onPin}
         onClose={onCloseTab}
         onDropTab={onDropTab}
+        onDragBegin={() => setFromHere(true)}
         trailing={trailing}
       />
 
@@ -129,7 +156,7 @@ export function PaneView({
         className="relative flex min-h-0 flex-1 flex-col"
         onDragEnter={(e) => {
           if (!takesDrops || !e.dataTransfer.types.includes(TAB_MIME)) return
-          setZone(zoneAt(e))
+          setDragging(true)
         }}
       >
         {tab?.kind === 'app' ? (
@@ -173,29 +200,38 @@ export function PaneView({
         {/* One event target, always. The bands inside are `pointer-events-none`,
             so crossing them fires no `dragleave` — which is the papercut that
             makes hand-rolled HTML5 drop zones flicker. */}
-        {zone !== null && (
+        {dragging && allowed.length > 0 && (
           <div
             className="absolute inset-0 z-10"
             data-testid="pane-drop-overlay"
             onDragOver={(e) => {
               if (!e.dataTransfer.types.includes(TAB_MIME)) return
+              const side = zoneAt(e)
+              // A zone this pane does not offer stays inert: no highlight, and
+              // no `preventDefault`, so the cursor says "not here" rather than
+              // promising a drop that would be a no-op.
+              if (!allowed.includes(side)) return setZone(null)
               // Without this the drop never fires.
               e.preventDefault()
               e.dataTransfer.dropEffect = 'move'
-              setZone(zoneAt(e))
+              setZone(side)
             }}
-            onDragLeave={() => setZone(null)}
+            onDragLeave={() => {
+              setDragging(false)
+              setZone(null)
+            }}
             onDrop={(e) => {
               const side = zoneAt(e)
               const dropped = parseTabPayload(e.dataTransfer.getData(TAB_MIME))
+              setDragging(false)
               setZone(null)
-              if (dropped === null) return
+              if (dropped === null || !allowed.includes(side)) return
               e.preventDefault()
               if (side === 'into') onDropTab?.(dropped, pane.tabs.length)
               else onDropEdge?.(dropped, side)
             }}
           >
-            {zone === 'into' ? (
+            {zone === null ? null : zone === 'into' ? (
               <div className={`${DROP_BAND} inset-0 bg-primary/10`} />
             ) : (
               // `min(25%, 120px)` is `paneDropZone`'s rule drawn rather than

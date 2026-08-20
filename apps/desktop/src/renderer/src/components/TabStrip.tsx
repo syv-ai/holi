@@ -102,6 +102,9 @@ export interface TabStripProps {
    *  know, because `moveTab` finds it wherever it is. Absent means this strip
    *  takes no drops. */
   onDropTab?: (tab: Tab, index: number) => void
+  /** A drag started from *this* strip. The pane above uses it to stop offering
+   *  drops that would do nothing — see `PaneView`. */
+  onDragBegin?: () => void
   /** Controls pinned to the right-hand end, outside the clip (version history). */
   trailing?: ReactNode
 }
@@ -114,6 +117,7 @@ export function TabStrip({
   onClose,
   focused = true,
   onDropTab,
+  onDragBegin,
   trailing,
 }: TabStripProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -370,6 +374,7 @@ export function TabStrip({
               onDragStart={(e) => {
                 e.dataTransfer.setData(TAB_MIME, tabPayload(t))
                 e.dataTransfer.effectAllowed = 'move'
+                onDragBegin?.()
               }}
               onDragEnd={endDrag}
               className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${

@@ -13,7 +13,7 @@
 import { fireEvent, render, screen } from '@/test/render'
 import { expect, test, vi } from 'vitest'
 import { TAB_MIME } from '@/lib/tab-drop'
-import type { Pane } from '@/state/panes'
+import type { Pane, Tab } from '@/state/panes'
 import { PaneView } from '../PaneView'
 
 /** Empty, so the body renders the empty-editor placeholder rather than mounting
@@ -40,6 +40,21 @@ function pane(props: Partial<Parameters<typeof PaneView>[0]> = {}) {
     />,
   )
   return { onDropTab, onDropEdge }
+}
+
+/** A `.pdf` note renders `FilePlaceholder` — a pure component — so a pane can
+ *  hold real tabs here without mounting the editor stack. */
+const note = (name: string): Tab => ({ kind: 'note', path: `notes/${name}.pdf` })
+
+/** Pick a pill up from this pane's own strip, which is what tells the pane the
+ *  drag started here. */
+function dragFromOwnStrip() {
+  const pill = screen.getByTestId('tab-strip').querySelector('[draggable]')!
+  const event = new Event('dragstart', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', {
+    value: { setData: () => {}, getData: () => '', types: [TAB_MIME], effectAllowed: 'none' },
+  })
+  fireEvent(pill, event)
 }
 
 function dragEnter(types: string[]) {
@@ -86,4 +101,60 @@ test('a pane wired for no drops never offers one', () => {
   dragEnter([TAB_MIME])
 
   expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
+})
+
+test('a pane offers nothing when the tab being dragged is its only one', () => {
+  // Every zone would be a no-op: the edges are the sole-tab-on-its-own-edge
+  // case, and the middle is a same-pane move to where it already is. Lighting
+  // any of them promises something that cannot happen.
+  pane({ pane: { tabs: [note('only')], active: 0 } })
+
+  dragFromOwnStrip()
+  dragEnter([TAB_MIME])
+
+  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
+})
+
+test('the pane a drag came from keeps its edges but drops its middle', () => {
+  // Reaching either edge means crossing the body, so a full-pane highlight
+  // would flash on every split gesture — and "into my own pane" is a move to
+  // the end of my own strip, which the strip already expresses.
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
+
+  dragFromOwnStrip()
+  const body = dragEnter([TAB_MIME])
+  const overlay = screen.getByTestId('pane-drop-overlay')
+
+  // jsdom measures 0x0, so `paneDropZone` reads the middle here.
+  const over = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(over, 'dataTransfer', {
+    value: { types: [TAB_MIME], getData: () => '', dropEffect: 'none' },
+  })
+  Object.defineProperty(over, 'clientX', { value: 0 })
+  fireEvent(overlay, over)
+
+  // The overlay is still there — it has to be, to notice the pointer reaching
+  // an edge — but the middle draws no band and refuses the drop.
+  expect(overlay).toBeInTheDocument()
+  expect(over.defaultPrevented).toBe(false)
+  expect(overlay.querySelector('div')).toBeNull()
+  expect(body).toBeInstanceOf(HTMLElement)
+})
+
+test('another pane still offers all three zones', () => {
+  // The drag did not start here, so "put this over there" is exactly what the
+  // middle means, and it keeps its highlight.
+  pane({ pane: { tabs: [note('a')], active: 0 } })
+
+  dragEnter([TAB_MIME])
+  const overlay = screen.getByTestId('pane-drop-overlay')
+  const over = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(over, 'dataTransfer', {
+    value: { types: [TAB_MIME], getData: () => '', dropEffect: 'none' },
+  })
+  Object.defineProperty(over, 'clientX', { value: 0 })
+  fireEvent(overlay, over)
+
+  expect(over.defaultPrevented).toBe(true)
+  expect(overlay.querySelector('div')).not.toBeNull()
 })

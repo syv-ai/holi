@@ -76,6 +76,20 @@ Found while verifying, and worth its own entry because it is the bug Task 6 fixe
       to the active tab. That is the listener that catches escape-cancels and drops in other panes,
       where `dragend` fires on the source pill in a pane that is not this one.
 
+## 9. A pane offers only drops that would do something
+
+Added after review — the overlay was lighting up where nothing could happen.
+
+- [x] **One tab, one pane.** Dragging the only tab showed **no overlay at all** — middle, left
+      edge and right edge alike. Every zone would have been a no-op.
+- [x] **Four tabs, dragging from this pane.** The middle gave `band=NONE, accepted=false` — the
+      overlay is present (it has to be, to notice the pointer reaching an edge) but draws nothing
+      and refuses the drop, so the cursor reads "not here". Both edges gave their band and
+      `accepted=true`. No more full-pane flash on the way to a split.
+- [x] **The other pane still offers everything.** With two panes open and a drag started in pane 0,
+      pane 1's middle gave `band=inset-0, accepted=true`. "Put this over there" is exactly what a
+      middle drop means when it is not your own pane.
+
 ## Not verified, and why
 
 - [ ] **The OS drag loop.** Synthetic events exercise the handlers, not Chromium's native drag: the
@@ -101,3 +115,7 @@ Found while verifying, and worth its own entry because it is the bug Task 6 fixe
 - **`setInterval` is throttled** in the occluded window. Anything timer-driven needs generous waits.
 - The tab overflow dropdown and the file tree's context menus are both mounted, so
   `[role=menuitem]` returns all of them at once. The tab entries are the ones with no shortcut.
+- **`cdp.mjs` returns `null` if the expression dispatches `dragend` on `window` after a
+  `dragenter`/`dragover` in the same evaluation.** Every piece works alone; the combination
+  swallows the result. Not chased — the fix is to end the drag in a *separate* call, and to stash
+  the `DataTransfer` on `window` when a check needs to span calls, which it survives.
