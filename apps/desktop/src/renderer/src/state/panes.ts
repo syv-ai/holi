@@ -430,3 +430,115 @@ export function closePane(workspace: Workspace, index: number): Workspace {
 export function activePane(workspace: Workspace): Pane | null {
   return workspace.panes[workspace.active] ?? null
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Moving a tab
+ *
+ * A move is the one thing a split deliberately cannot do. `splitPane` refuses to
+ * duplicate the tab it was invoked on because two views of one path are two
+ * buffers racing each other's autosave (see `findTab`) — but *relocating* that
+ * buffer breaks nothing, because there is still exactly one of it. Remove, then
+ * insert; never copy.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A tab as it should land after a drag: pinned.
+ *
+ * Dragging is intent, the way editing is (`pinActive`). Without this the gesture
+ * eats itself — place a preview tab deliberately, then single-click anything in
+ * the tree, and `openPreview` replaces it *in place*, destroying the tab you
+ * just positioned. The `preview` key is dropped rather than set false, matching
+ * what `pinTabIn` writes.
+ */
+function dragged(tab: Tab): Tab {
+  return tab.kind === 'note' && tab.preview ? { kind: 'note', path: tab.path } : tab
+}
+
+/**
+ * Move a tab to `dest` — one function for a reorder *and* a cross-pane move.
+ *
+ * The caller passes the tab's **identity**, not its location: `findTab` already
+ * spans the workspace, so a strip never has to learn where a dropped tab came
+ * from, and a drag carries a name rather than a pair of indices that could go
+ * stale between the `dragstart` and the `drop`.
+ *
+ * `dest.index` is read against the destination pane's tabs **as they are now** —
+ * "insert before whatever currently sits there". So a rightward move within one
+ * pane must decrement after the removal, or the target slides out from under the
+ * drop and everything lands one place short.
+ *
+ * **A reorder rearranges; it does not navigate.** Within a pane, the active tab
+ * follows the *document* (`closeTab`'s rule) — tidying a full strip while
+ * reading one file must not drop you into whichever tab you happened to drag. A
+ * cross-pane move is different in kind: the destination shows what you dropped
+ * into it, and the workspace focuses that pane, because that is where you are
+ * now looking.
+ */
+export function moveTab(
+  workspace: Workspace,
+  tab: Tab,
+  dest: { pane: number; index: number },
+): Workspace {
+  const found = findTab(workspace, tab)
+  const destPane = workspace.panes[dest.pane]
+  if (found === null || destPane === undefined) return workspace
+
+  const source = workspace.panes[found.pane]!
+  const samePane = found.pane === dest.pane
+  // Both of these describe the same gap in the strip, so neither moves anything.
+  // Returned by reference so React bails instead of re-rendering every pane for
+  // a drag that went nowhere.
+  if (samePane && (dest.index === found.tab || dest.index === found.tab + 1)) return workspace
+
+  const moved = dragged(source.tabs[found.tab]!)
+  // What the source pane was looking at, held as the document rather than as a
+  // number — the only form of it that survives a removal.
+  const wasActive = source.tabs[source.active]
+  const sourceTabs = source.tabs.filter((_, i) => i !== found.tab)
+
+  const target = samePane && dest.index > found.tab ? dest.index - 1 : dest.index
+  const into = samePane ? sourceTabs : destPane.tabs
+  const at = Math.max(0, Math.min(target, into.length))
+  const insert = (tabs: Tab[]) => [...tabs.slice(0, at), moved, ...tabs.slice(at)]
+
+  if (samePane) {
+    const tabs = insert(sourceTabs)
+    const active =
+      source.active === found.tab || wasActive === undefined ? at : tabs.indexOf(wasActive)
+    return {
+      panes: workspace.panes.map((pane, p) => (p === found.pane ? { tabs, active } : pane)),
+      active: dest.pane,
+    }
+  }
+
+  const sourceActive =
+    sourceTabs.length === 0
+      ? -1
+      : source.active === found.tab
+        ? // The moved tab was the one being read; fall back to its left-hand
+          // neighbour, exactly as closing it would have done.
+          Math.max(0, found.tab - 1)
+        : wasActive === undefined
+          ? 0
+          : Math.max(0, sourceTabs.indexOf(wasActive))
+
+  const panes = workspace.panes.map((pane, p) =>
+    p === found.pane
+      ? { tabs: sourceTabs, active: sourceActive }
+      : p === dest.pane
+        ? { tabs: insert(destPane.tabs), active: at }
+        : pane,
+  )
+
+  // An emptied source pane goes — `closeTab`'s rule, and the difference between
+  // unsplitting by dragging your last tab away and a permanent empty column.
+  // It can never be the *last* pane: emptying one requires a different pane to
+  // move into, so reaching here means there were at least two.
+  if (sourceTabs.length === 0) {
+    return {
+      panes: panes.filter((_, p) => p !== found.pane),
+      active: dest.pane > found.pane ? dest.pane - 1 : dest.pane,
+    }
+  }
+  return { panes, active: dest.pane }
+}

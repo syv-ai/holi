@@ -42,8 +42,14 @@ Almost nothing here is new. The move inherits rules the pane system already enfo
   makes an *empty* pane rather than duplicating the tab it was invoked on) — the buffer is
   relocated, not cloned.
 - **The active tab follows the document, not the index** — `closeTab`'s rule, applied to
-  both panes. The moved tab is active in its destination, and the destination becomes the
-  active pane, because you are looking at where you dropped it.
+  both panes.
+- **A reorder rearranges; it does not navigate.** Within one pane the active tab is left on
+  whatever document it was on, so tidying a full strip while reading one file cannot drop you
+  into whichever tab you happened to drag. A cross-pane move is different in kind: the
+  destination shows what you dropped into it and the workspace focuses that pane, because
+  that is where you are now looking. *(Discovered while writing the tests — the first draft
+  of this spec said the moved tab is active in its destination, full stop, which for a
+  reorder is the lose-your-place bug the rule above exists to prevent.)*
 - **An emptied source pane goes, unless it is the last one** — `closeTab`'s rule again. This
   is the difference between "I unsplit by dragging my last tab away" and a permanent empty
   column that only a second, separate gesture could remove.

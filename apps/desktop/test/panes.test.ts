@@ -28,6 +28,7 @@ import {
   retargetTabs,
   splitPane,
   focusPane,
+  moveTab,
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
@@ -413,5 +414,164 @@ describe('focusPane', () => {
 
     expect(focusPane(w, 5)).toBe(w)
     expect(focusPane(w, -1)).toBe(w)
+  })
+})
+
+/* ── Moving a tab ───────────────────────────────────────────────────────── */
+
+/** Four tabs in one pane, `d.md` active. Enough width to reorder in both
+ *  directions and still have a tab either side of the move. */
+function four(): Workspace {
+  return {
+    panes: [
+      {
+        tabs: ['a.md', 'b.md', 'c.md', 'd.md'].map((path) => ({ kind: 'note', path }) as const),
+        active: 3,
+      },
+    ],
+    active: 0,
+  }
+}
+
+describe('moveTab', () => {
+  it('reorders leftward, landing before the tab that was there', () => {
+    const w = moveTab(four(), { kind: 'note', path: 'd.md' }, { pane: 0, index: 1 })
+
+    expect(layout(w)).toEqual([['a.md', 'd.md', 'b.md', 'c.md']])
+    // `d.md` was active and still is — it moved, so its number changed, and the
+    // active index follows the document to it.
+    expect(w.panes[0]!.active).toBe(1)
+  })
+
+  it('reorders rightward, still landing before the tab that was there', () => {
+    // The off-by-one this whole function turns on. `index: 3` means "before
+    // whatever is at 3 right now", which is `d.md` — so removing `b.md` first
+    // must NOT shift the target out from under the drop.
+    const w = moveTab(four(), { kind: 'note', path: 'b.md' }, { pane: 0, index: 3 })
+
+    expect(layout(w)).toEqual([['a.md', 'c.md', 'b.md', 'd.md']])
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'd.md' })
+  })
+
+  it('is a no-op onto its own position, and onto the one after it', () => {
+    // Both describe the same gap in the strip. Returned by reference so React
+    // bails rather than re-rendering every pane for a drag that went nowhere.
+    const w = four()
+
+    expect(moveTab(w, { kind: 'note', path: 'b.md' }, { pane: 0, index: 1 })).toBe(w)
+    expect(moveTab(w, { kind: 'note', path: 'b.md' }, { pane: 0, index: 2 })).toBe(w)
+  })
+
+  it('appends when the index is past the end', () => {
+    const w = moveTab(four(), { kind: 'note', path: 'a.md' }, { pane: 0, index: 99 })
+
+    expect(layout(w)).toEqual([['b.md', 'c.md', 'd.md', 'a.md']])
+  })
+
+  it('moves a tab into another pane, at the named index', () => {
+    const w = moveTab(split(), { kind: 'note', path: 'a.md' }, { pane: 1, index: 0 })
+
+    expect(layout(w)).toEqual([['b.md'], ['a.md', 'c.md']])
+  })
+
+  it('never leaves two copies of the moved tab', () => {
+    // One buffer per file, stated as an assertion rather than trusted. A move
+    // is safe where a copy is not, and this is the line between them.
+    const w = moveTab(split(), { kind: 'note', path: 'a.md' }, { pane: 1, index: 1 })
+
+    expect(layout(w).flat().filter((p) => p === 'a.md')).toHaveLength(1)
+  })
+
+  it('rearranges without navigating — a reorder is not a way to change file', () => {
+    // `closeTab`'s rule, and the reason a reorder differs from a cross-pane
+    // move: tidying a strip while reading `d.md` must not drop you into the tab
+    // you happened to drag. You did not ask to read it.
+    const w = moveTab(four(), { kind: 'note', path: 'a.md' }, { pane: 0, index: 4 })
+
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'd.md' })
+  })
+
+  it('falls back to the left-hand neighbour when the moved tab was the active one', () => {
+    const start: Workspace = {
+      panes: [
+        {
+          tabs: [
+            { kind: 'note', path: 'a.md' },
+            { kind: 'note', path: 'b.md' },
+            { kind: 'note', path: 'c.md' },
+          ],
+          active: 1,
+        },
+        { tabs: [], active: -1 },
+      ],
+      active: 0,
+    }
+
+    const w = moveTab(start, { kind: 'note', path: 'b.md' }, { pane: 1, index: 0 })
+
+    expect(layout(w)).toEqual([['a.md', 'c.md'], ['b.md']])
+    expect(w.panes[0]!.active).toBe(0)
+  })
+
+  it('focuses the moved tab in its destination, and the destination pane', () => {
+    const w = moveTab(split(), { kind: 'note', path: 'a.md' }, { pane: 1, index: 1 })
+
+    expect(w.active).toBe(1)
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'a.md' })
+  })
+
+  it('pins a preview note — dragging is intent, the way editing is', () => {
+    // Without this the gesture eats itself: the next single-click in the tree
+    // replaces the preview tab in place, destroying the one just positioned.
+    const start: Workspace = {
+      panes: [
+        {
+          tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md', preview: true }],
+          active: 1,
+        },
+      ],
+      active: 0,
+    }
+
+    const w = moveTab(start, { kind: 'note', path: 'b.md' }, { pane: 0, index: 0 })
+
+    expect(w.panes[0]!.tabs[0]).toEqual({ kind: 'note', path: 'b.md' })
+  })
+
+  it('takes the source pane with it when the move empties it', () => {
+    // The same rule `closeTab` applies, and the difference between "unsplit by
+    // dragging my last tab away" and a permanent empty column.
+    const start: Workspace = {
+      panes: [
+        { tabs: [{ kind: 'note', path: 'x.md' }], active: 0 },
+        { tabs: [{ kind: 'note', path: 'y.md' }], active: 0 },
+        { tabs: [{ kind: 'note', path: 'z.md' }], active: 0 },
+      ],
+      active: 0,
+    }
+
+    const w = moveTab(start, { kind: 'note', path: 'x.md' }, { pane: 2, index: 0 })
+
+    expect(layout(w)).toEqual([['y.md'], ['x.md', 'z.md']])
+    // The destination was pane 2 and is now pane 1 — focus has to follow the
+    // pane, not the number it had before the source collapsed.
+    expect(w.active).toBe(1)
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'x.md' })
+  })
+
+  it('cannot empty the only pane, because a move needs somewhere to go', () => {
+    // Not a guard, an impossibility: `dest.pane` must be a real pane, so a
+    // workspace with one pane can only move within it, which never empties it.
+    const w = moveTab(four(), { kind: 'note', path: 'a.md' }, { pane: 0, index: 4 })
+
+    expect(w.panes).toHaveLength(1)
+    expect(w.panes[0]!.tabs).toHaveLength(4)
+  })
+
+  it('ignores a tab that is open nowhere, and a pane that is not there', () => {
+    const w = four()
+
+    expect(moveTab(w, { kind: 'note', path: 'nope.md' }, { pane: 0, index: 0 })).toBe(w)
+    expect(moveTab(w, { kind: 'note', path: 'a.md' }, { pane: 7, index: 0 })).toBe(w)
   })
 })
