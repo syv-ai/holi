@@ -40,7 +40,10 @@ function withApps(...ids: string[]) {
     tasks: [],
     broken: [],
     dirs: [],
-    files: ids.map((id) => ({ path: `.holi/apps/${id}/index.html`, updatedAt: '' })),
+    // Both files: registration is the manifest plus the entry document.
+    files: ids
+      .flatMap((id) => [`.holi/apps/${id}/index.html`, `.holi/apps/${id}/app.yaml`])
+      .map((path) => ({ path, updatedAt: '' })),
   })
 }
 
