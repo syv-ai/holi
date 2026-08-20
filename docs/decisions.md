@@ -8,7 +8,7 @@ The living docs are the truth; this file is only the staging area.
 
 ---
 
-## Number allocation — **next free is D77**
+## Number allocation — **next free is D78**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
@@ -20,7 +20,7 @@ Living docs carry decisions as **prose, never as numbers**. D-numbers exist for 
 | D61 | spent amending D60 pt 2 (auto-push) — see D60 |
 | D62 — text-first by authorship; binaries are assets | `vision.md` §Key design choices, [`prd/notes-editor.md`](prd/notes-editor.md) §Images and other binaries, [`prd/pdf-export.md`](prd/pdf-export.md), and [`not-built.md`](not-built.md) (the surviving blob-storage question, and the import-conversion stub D62 superseded — that stub is deleted, and its reasoning is in this row plus git history) |
 | D63 — a task lane move is a note-style rename | [`prd/tasks.md`](prd/tasks.md) §Board UX |
-| D64 — a vault's theme is a whitelisted token map | [`architecture.md`](architecture.md) §9, §10 |
+| D64 — a vault's theme is a whitelisted token map | [`architecture.md`](architecture.md) §9, §10; [`specs/2026-08-02-per-vault-theming-design.md`](specs/2026-08-02-per-vault-theming-design.md) is the design-of-record. **Amended 2026-08-20, twice, both widening what a token reaches rather than what a theme may do.** (a) **`brand` joined the whitelist**: `--primary` is the brand as a *fill*, paired with `--primary-foreground` on top of it, and on a dark-first theme a fill dark enough to carry near-white text is far too dark to BE text — sky-700 on neutral-950 measures **3.38:1**, under AA. `--brand` is the same brand as *text* (**9.09:1**); all 15 `text-primary` sites moved onto it, it is in `APP_BASE_TOKENS` so vault apps get it, and the authoring skill teaches the split. A vault recolouring the brand should set both — setting only `primary` recolours the fills and leaves the text behind. (b) **`scrollbar-thumb(-hover)` now reaches every scroll container**, not the three that wore a `.holi-scroll` class; the paint rule is global, so the token finally means what this whitelist always said it meant. `color-scheme` is stamped per theme alongside it, and is deliberately NOT a vault knob: it follows `data-theme`, and it is what stops everything Holi does not paint itself from defaulting to light. Neither amendment adds an expressive power — the vocabulary still contains nothing that can move, size or re-space anything, which is the whole of D64's guarantee |
 | D65 — local-ness is legible from the name | [`architecture.md`](architecture.md) §3 + config layering, [`glossary.md`](glossary.md), [`prd/agent.md`](prd/agent.md), [`prd/auth-identity.md`](prd/auth-identity.md) |
 | D66 — document-templates lives under a name that says what it is for | [`prd/agent.md`](prd/agent.md) |
 | D67 — one main-held Google connector; the agent reaches it via a CLI, not MCP | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §The engine, §Calendar, §How a message is rendered, §Rejected; [`prd/agent.md`](prd/agent.md) §Tool surface; [`prd/auth-identity.md`](prd/auth-identity.md); [`prd/tasks.md`](prd/tasks.md) |
