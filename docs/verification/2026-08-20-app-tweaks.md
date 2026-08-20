@@ -109,8 +109,17 @@ and its own decision.
 
 ## What was not verified
 
-- [ ] **The agent has still never used any of this by itself.** Everything above was driven by
-      hand over CDP. This is the same gap slice 2 and the hooks work both left open.
+- [x] **The agent has now built an app by itself** (Nicolai, later the same day). `tasks-by-area`
+      — manifest with `name`/`icon`/`description`, `index.html`, `style.css`, `app.js` — appeared in
+      the sidebar and renders. That closes the gap slice 2 and the hooks work both left open. The
+      validator's rule held: zero hard-coded colours in its stylesheet.
+- [ ] **…but it wrote `color: var(--primary)` on two hover states**, which is the unreadable
+      dark-blue-on-black this day's theme fix exists to remove. **Not the agent's fault, and worth
+      keeping straight:** the vault's *seeded copy* of the authoring skill still had zero mentions
+      of `brand` while the source had seven. Seeding runs in main, and main does not hot-reload, so
+      the skill the agent actually read predated the fix. The guidance is therefore **unverified
+      against a real agent run** — it needs an app relaunch (so `ensureSeeded` re-seeds against the
+      new content hashes) and then a fresh app.
 - [ ] **Rename with real inbound `[[link]]`s in the running app.** The link rewrite is covered by
       a node test against real files (`test/app-ops.test.ts`), but the vault had nothing linking
       into `.holi/apps/`, so the in-app path exercised the zero-link case.
