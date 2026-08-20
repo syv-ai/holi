@@ -62,7 +62,7 @@ A git repository of markdown files. No database, no server: the file **is** the 
 
 - A note is a \`.md\` file at a path: \`projects/q2/roadmap.md\`.
 - Links are path-based wiki-links: \`[[projects/q2/roadmap.md]]\` or \`[[path|Label]]\`.
-- Renaming a note means rewriting every \`[[link]]\` to it, in the same change. Grep \`[[<path>\` first.
+- Renaming a note means rewriting every \`[[link]]\` to it. A pre-commit hook does this for renames git can see; grep \`[[<path>\` if you moved the file some other way. Doing it yourself as well is harmless.
 - Images, PDFs and anything else are ordinary committed files: \`![alt](logo.png)\`.
 
 ## Tasks

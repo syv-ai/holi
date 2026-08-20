@@ -137,3 +137,30 @@ describe('relink', () => {
     expect(await read('doc.md')).toBe('text\n\n```md\n[[b.md]]\n```\n')
   })
 })
+
+describe('a second actor doing the same job', () => {
+  it('is a no-op, not a double rewrite', async () => {
+    // The plan feared that an agent grepping and fixing links by hand, then
+    // committing, would have them rewritten twice. It cannot: the map is keyed
+    // on the OLD path, and after a hand-fix that path appears nowhere, so the
+    // rewrite matches nothing. Worth an assertion because the fear shaped the
+    // AGENTS.md wording.
+    await file('c.md', 'see [[b.md]]\n') // already fixed by hand
+    await file('b.md', '# moved\n')
+
+    const result = await relink(root, staged([{ from: 'a.md', to: 'b.md' }]))
+    expect(result.changed).toEqual([])
+    expect(await read('c.md')).toBe('see [[b.md]]\n')
+  })
+
+  it('fixes only the links the hand-pass missed', async () => {
+    await file('fixed.md', 'see [[b.md]]\n')
+    await file('missed.md', 'see [[a.md]]\n')
+    await file('b.md', '# moved\n')
+
+    const result = await relink(root, staged([{ from: 'a.md', to: 'b.md' }]))
+    expect(result.changed).toEqual(['missed.md'])
+    expect(await read('fixed.md')).toBe('see [[b.md]]\n')
+    expect(await read('missed.md')).toBe('see [[b.md]]\n')
+  })
+})

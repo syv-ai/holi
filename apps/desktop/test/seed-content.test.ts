@@ -870,3 +870,27 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
     }
   })
 })
+
+describe('AGENTS.md and the pre-commit hook', () => {
+  const agents = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
+
+  it('no longer tells the agent the link rewrite is entirely its job', () => {
+    // `relink` does it at the commit boundary now. The instruction survives for
+    // a move git cannot see, but it is no longer stated as the only mechanism.
+    expect(agents).toContain('pre-commit hook')
+    expect(agents).not.toMatch(/in the same change\. Grep/i)
+  })
+
+  it('says a hand-rewrite is harmless rather than forbidding it', () => {
+    // Because it IS harmless: the rewrite map is keyed on the OLD path, so
+    // after a hand-fix it matches nothing. Telling the agent not to do it would
+    // be inventing a hazard (see hook-relink.test.ts).
+    expect(agents).toMatch(/harmless/i)
+  })
+
+  it('stays thin — no Hooks section', () => {
+    // Three transforms nobody has asked about do not earn a heading in the file
+    // every agent always has loaded.
+    expect(SEED_FILES['AGENTS.md']!).not.toMatch(/^## Hooks/m)
+  })
+})
