@@ -74,6 +74,21 @@ the **personal** layer only, and shared-layer changes become **proposals requiri
 **Agent theme proposals.** The agent authors a vault's theme today
 ([`architecture.md`](architecture.md) §9); having it *propose* one for approval is not built.
 
+## Telling the agent something, unprompted
+
+Holi has **no way to push text into a live Claude Code session.** Ops runs the other way (the agent
+calls Holi), and the only channel into a running session is its PTY — where anything written lands
+in the user's input box as if they had typed it, which is worse than saying nothing.
+
+This bites the pre-commit transforms (D76 part 4, [`prd/vaults-sync.md`](prd/vaults-sync.md) FR-9),
+which wanted to tell the agent what they rewrote. The runner supports a `notify` callback and main
+leaves it unwired. The substitute is a pull surface: a capped, machine-local
+`.holi/hooks.local.log` the agent reads when asked — the first agent-readable log in Holi, and the
+only one.
+
+**Also not built:** D76's floor for when no agent session is open — surfacing a hook failure in the
+sync status bar via `pause(reason)`. The log is the only surface today.
+
 ## Notes & editor
 
 **Split panes.** `Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but
