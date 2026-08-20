@@ -90,6 +90,20 @@ Added after review — the overlay was lighting up where nothing could happen.
       pane 1's middle gave `band=inset-0, accepted=true`. "Put this over there" is exactly what a
       middle drop means when it is not your own pane.
 
+## 10. The landing strips are visible before they are aimed at
+
+Added after review — the edges only appeared once the pointer was already in them, so nobody would
+have discovered that a drag can split the view.
+
+- [x] **Idle:** no bands in the DOM at all.
+- [x] **The moment a tab is picked up** — `dragstart` only, no `dragenter` and no `dragover` — both
+      strips are drawn at `bg-primary/5`, 90px wide on a 360px pane (a quarter, under the
+      120px cap).
+- [x] **Hovering lights one:** the right edge took the right strip to `bg-primary/20` with
+      `accepted=true` while the left stayed dim, and the left edge did the mirror image.
+- [x] **The middle keeps no waiting state.** Over the source pane's middle both strips stayed dim
+      and the drop was refused — the full-pane wash §9 removed has not come back as a hint.
+
 ## Not verified, and why
 
 - [ ] **The OS drag loop.** Synthetic events exercise the handlers, not Chromium's native drag: the
@@ -115,6 +129,10 @@ Added after review — the overlay was lighting up where nothing could happen.
 - **`setInterval` is throttled** in the occluded window. Anything timer-driven needs generous waits.
 - The tab overflow dropdown and the file tree's context menus are both mounted, so
   `[role=menuitem]` returns all of them at once. The tab entries are the ones with no shortcut.
+- **React batches state from a native `window` listener into a microtask**, so a CDP evaluation must
+  `await` before reading the DOM. A synchronous query straight after `dispatchEvent` sees the
+  *pre-render* DOM and reports a working feature as absent — which it did twice here, and looked
+  convincingly like Fast Refresh having failed to apply the change. It had not.
 - **`cdp.mjs` returns `null` if the expression dispatches `dragend` on `window` after a
   `dragenter`/`dragover` in the same evaluation.** Every piece works alone; the combination
   swallows the result. Not chased — the fix is to end the drag in a *separate* call, and to stash

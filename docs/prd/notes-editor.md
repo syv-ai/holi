@@ -175,6 +175,10 @@ Three rules are its own:
   full-pane highlight would flash on all of them. If that pane holds a **single tab** it offers
   nothing at all: both edges are the sole-tab no-op and the middle is a move to where the tab
   already sits. Every *other* pane keeps all three zones.
+- **A drop target is visible before it is aimed at.** Both landing strips are drawn the moment a
+  tab is picked up, dim, and light only under the pointer. An edge that materialises when you
+  reach it teaches nobody that a drag can split the view — the gesture would be one you either
+  already knew or never found.
 
 **A clipped drop position is still reachable.** The strip only slides its window for the active tab,
 so "move this to position 9 of 12" would otherwise be inexpressible. Hovering a drag at either end

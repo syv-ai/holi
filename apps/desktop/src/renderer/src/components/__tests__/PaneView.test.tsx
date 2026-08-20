@@ -133,11 +133,12 @@ test('the pane a drag came from keeps its edges but drops its middle', () => {
   Object.defineProperty(over, 'clientX', { value: 0 })
   fireEvent(overlay, over)
 
-  // The overlay is still there — it has to be, to notice the pointer reaching
-  // an edge — but the middle draws no band and refuses the drop.
-  expect(overlay).toBeInTheDocument()
+  // Both landing strips are on screen, but the middle itself draws nothing and
+  // refuses the drop.
+  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
+  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
+  expect(screen.queryByTestId('pane-drop-into')).not.toBeInTheDocument()
   expect(over.defaultPrevented).toBe(false)
-  expect(overlay.querySelector('div')).toBeNull()
   expect(body).toBeInstanceOf(HTMLElement)
 })
 
@@ -156,5 +157,41 @@ test('another pane still offers all three zones', () => {
   fireEvent(overlay, over)
 
   expect(over.defaultPrevented).toBe(true)
-  expect(overlay.querySelector('div')).not.toBeNull()
+  expect(screen.getByTestId('pane-drop-into')).toBeInTheDocument()
+})
+
+test('both landing strips appear the moment a tab is picked up', () => {
+  // The discoverability rule: an edge that only exists once the pointer is
+  // already in it teaches nobody that a drag can split the view.
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
+  expect(screen.queryByTestId('pane-drop-before')).not.toBeInTheDocument()
+
+  dragFromOwnStrip()
+
+  // No dragenter, no dragover — picking the tab up was enough.
+  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
+  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
+})
+
+test('a tab picked up in ANOTHER pane arms this one too', () => {
+  // `dragstart` bubbles to the window, which is how a pane hears about a drag
+  // that began somewhere it cannot see.
+  pane({ pane: { tabs: [note('a')], active: 0 } })
+
+  const event = new Event('dragstart', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: { types: [TAB_MIME] } })
+  fireEvent(document.body, event)
+
+  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
+  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
+})
+
+test('a drag of something else arms nothing', () => {
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
+
+  const event = new Event('dragstart', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: { types: ['text/plain'] } })
+  fireEvent(document.body, event)
+
+  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
 })

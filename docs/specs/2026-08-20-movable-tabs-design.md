@@ -87,6 +87,12 @@ Three rules *are* new, and each one was a live question:
     the middle is a same-pane move to where the tab already is, so every zone is inert.
 
   Every *other* pane keeps all three: dropping into one is the ordinary "put this over there".
+- **The edges are drawn before they are aimed at.** Both landing strips appear the moment a tab
+  is picked up — on `dragstart`, anywhere, which bubbles to the window — and light up only when
+  the pointer is actually inside one. A target that materialises when you reach it teaches
+  nobody the gesture: splitting by drag would be a feature you either already knew about or
+  never found. The middle has no waiting state, because it is the whole pane and a full-pane
+  wash on every drag is what the rule above exists to stop.
 
 ## 4. Shape
 

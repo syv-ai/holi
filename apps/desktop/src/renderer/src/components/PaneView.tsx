@@ -27,9 +27,31 @@ import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import type { Pane, Tab } from '@/state/panes'
 import { TabStrip } from './TabStrip'
 
-/** How a live drop target looks. The same treatment the file tree uses for its
- *  drop highlight, so a drag reads the same wherever it lands. */
-const DROP_BAND = 'pointer-events-none absolute ring-1 ring-primary/60 ring-inset'
+/** How a drop target looks. The same treatment the file tree uses for its drop
+ *  highlight, so a drag reads the same wherever it lands. The colour is left to
+ *  the caller: an edge is drawn twice over, dim and then lit. */
+const DROP_BAND = 'pointer-events-none absolute ring-1 ring-inset'
+
+/**
+ * A landing strip for a split, down one side of the pane.
+ *
+ * **Drawn from the moment a tab is picked up**, not when the pointer arrives.
+ * A target that only exists once you have guessed where it is teaches nobody
+ * the gesture — the edges have to be visible *before* you aim at them, or
+ * splitting by drag is a feature you either already know about or never find.
+ * Dim while it waits, lit when the pointer is actually inside it.
+ */
+function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean }) {
+  return (
+    <div
+      data-testid={`pane-drop-${side}`}
+      className={`${DROP_BAND} inset-y-0 ${side === 'before' ? 'left-0' : 'right-0'} ${
+        active ? 'bg-primary/20 ring-primary/60' : 'bg-primary/5 ring-primary/25'
+      }`}
+      style={{ width: 'min(25%, 120px)' }}
+    />
+  )
+}
 
 export interface PaneViewProps {
   pane: Pane
@@ -103,6 +125,18 @@ export function PaneView({
     : pane.tabs.length <= 1
       ? []
       : ['before', 'after']
+
+  // A tab picked up anywhere arms every pane that could accept it, so both
+  // landing strips are on screen before the pointer goes looking for them.
+  // `dragstart` bubbles to the window, and `types` is readable there.
+  useEffect(() => {
+    if (!takesDrops) return
+    const begin = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes(TAB_MIME) === true) setDragging(true)
+    }
+    window.addEventListener('dragstart', begin)
+    return () => window.removeEventListener('dragstart', begin)
+  }, [takesDrops])
 
   // A drag can end without this pane ever hearing about it — dropped on another
   // pane, or cancelled with escape while the pointer sits right here, in which
@@ -231,16 +265,17 @@ export function PaneView({
               else onDropEdge?.(dropped, side)
             }}
           >
-            {zone === null ? null : zone === 'into' ? (
-              <div className={`${DROP_BAND} inset-0 bg-primary/10`} />
-            ) : (
-              // `min(25%, 120px)` is `paneDropZone`'s rule drawn rather than
-              // computed. The two have to agree, so they say the same thing.
+            {/* `min(25%, 120px)` inside `EdgeBand` is `paneDropZone`'s rule drawn
+                rather than computed. The two have to agree, so they say the
+                same thing. The middle has no waiting state — it is the whole
+                pane, and a full-pane wash that appeared on every drag is what
+                this overlay was narrowed to stop. */}
+            {allowed.includes('before') && <EdgeBand side="before" active={zone === 'before'} />}
+            {allowed.includes('after') && <EdgeBand side="after" active={zone === 'after'} />}
+            {zone === 'into' && (
               <div
-                className={`${DROP_BAND} inset-y-0 bg-primary/20 ${
-                  zone === 'before' ? 'left-0' : 'right-0'
-                }`}
-                style={{ width: 'min(25%, 120px)' }}
+                data-testid="pane-drop-into"
+                className={`${DROP_BAND} inset-0 bg-primary/10 ring-primary/60`}
               />
             )}
           </div>
