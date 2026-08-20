@@ -16,6 +16,7 @@ import { APPS_DIR, isValidAppId, themeBlockToVars, vaultRelPath, type ThemeBlock
 import { absPathFor } from '../vault/vault-files'
 import { mimeFor } from '../vault/asset-protocol'
 import { BRIDGE_JS } from './bridge-script'
+import { APP_BASE_TOKENS } from './app-tokens'
 
 /**
  * `holi-app://<appId>/<rel>` → its parts, or null when the scheme is wrong, the
@@ -107,13 +108,20 @@ function cssSafe(value: string): string {
  * The `<style>` + `<script>` an app cannot produce for itself: the vault's
  * resolved theme as CSS custom properties on `:root`, then the bridge shim.
  *
+ * The block is Holi's own dark palette with the vault's theme laid over it —
+ * see `APP_BASE_TOKENS` for why the base cannot be left out.
+ *
  * The theme arrives this way rather than through a `holi.theme()` call because
  * it is **ambient** — an app styles with `var(--primary)` and inherits a vault's
  * palette without knowing there is such a thing as a theme. A getter would be a
  * second source for the same fact.
  */
 export function appHeadHtml(block: ThemeBlock): string {
-  const vars = Object.entries(themeBlockToVars(block))
+  // Base first, the vault's overrides second — same rule, so the later
+  // declaration wins. A vault with no theme (the seeded file is empty) still
+  // gets a full palette, which is what makes `var(--primary)` advice in the
+  // authoring skill true rather than aspirational.
+  const vars = Object.entries(themeBlockToVars({ ...APP_BASE_TOKENS, ...block }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')
   return `<style>:root{${vars}}</style><script>${BRIDGE_JS}</script>`

@@ -1,6 +1,7 @@
 import { sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS } from '@holi/shared'
+import { APP_METHODS, THEME_TOKENS } from '@holi/shared'
+import { APP_BASE_TOKENS, missingBaseTokens } from '../src/main/apps/app-tokens'
 import { BRIDGE_JS } from '../src/main/apps/bridge-script'
 import {
   appFileAbsPath,
@@ -104,6 +105,27 @@ describe('injectAppHead', () => {
 })
 
 describe('appHeadHtml', () => {
+  it('gives an UNTHEMED vault a full palette', () => {
+    // The defect this exists for: with only the vault's overrides injected, a
+    // vault whose theme.json is `{}` (which is what gets seeded) hands the app
+    // `:root{}`. Every var() then resolves to nothing and the app renders black
+    // text on a transparent page — while every unit test passes. Found in the
+    // running app, not here, which is why the assertion is now here.
+    expect(missingBaseTokens()).toEqual([])
+    const out = appHeadHtml({})
+    for (const token of THEME_TOKENS) {
+      expect(out).toContain(`--${token}:`)
+    }
+  })
+
+  it('lets the vault override a base token', () => {
+    const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' })
+    // Both are present; the vault's comes second, so it is the one that applies.
+    expect(out.indexOf('--primary:oklch(0.7 0.1 250)')).toBeGreaterThan(
+      out.indexOf(`--primary:${APP_BASE_TOKENS['primary']}`),
+    )
+  })
+
   it('writes the resolved theme onto :root as custom properties', () => {
     const out = appHeadHtml({ primary: 'oklch(0.7 0.1 250)' })
     expect(out).toMatch(/<style>:root\{[^<]*--primary:oklch\(0\.7 0\.1 250\)[^<]*\}<\/style>/)
