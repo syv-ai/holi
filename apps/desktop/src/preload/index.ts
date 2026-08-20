@@ -58,6 +58,12 @@ const onAgentStatus = pushChannel<unknown>('agent:status')
  * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
 const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
 
+/** The agent ran `holi app open <id>` and Holi should show that app.
+ *  A push rather than a snapshot-derived effect on purpose: apps sync, so
+ *  opening a tab whenever one *appears* would let a teammate's finished app
+ *  decide what is on your screen. Only local authorship opens a tab. */
+const onAppOpen = pushChannel<string>('apps:open')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -70,6 +76,9 @@ contextBridge.exposeInMainWorld('holi', {
   },
   reminders: {
     onOpen: onReminderOpen,
+  },
+  apps: {
+    onOpen: onAppOpen,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),

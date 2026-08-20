@@ -8,7 +8,7 @@ import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { scaffoldNoteText } from '../lib/scaffold'
 import { trpc } from '../lib/trpc'
 import { agentPanelOpenAtom, agentSeedPromptAtom } from './agent'
-import { closeTabsForPaths, retargetTab, retargetTabs, workspaceAtom } from './panes'
+import { closeTabsForPaths, openApp, retargetTab, retargetTabs, workspaceAtom } from './panes'
 import { openTaskAtom } from './view'
 
 type JotaiStore = ReturnType<typeof createStore>
@@ -186,11 +186,18 @@ export function subscribeToVault(store: JotaiStore): () => void {
       store.set(openTaskAtom, path)
     }
   })
+  // `holi app open <id>`, typed by the agent. Local authorship only — see the
+  // channel's own comment for why an app appearing in the snapshot does not
+  // open anything.
+  const offAppOpen = window.holi.apps.onOpen((appId) => {
+    store.set(workspaceAtom, (w) => openApp(w, appId))
+  })
   return () => {
     offSnapshot()
     offSync()
     offHeldBack()
     offReminder()
+    offAppOpen()
   }
 }
 

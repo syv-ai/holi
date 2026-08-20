@@ -556,3 +556,48 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
   }
   return result
 }
+
+/**
+ * `holi seed refresh [path] [--force]` — rewrite the managed files Holi wrote.
+ *
+ * The on-demand half of D75. `ensureSeeded` refreshes on open and declines
+ * whenever it cannot prove the file is still its own; this is how the agent
+ * asks for the one it just noticed is stale, and `--force` is how a user says
+ * "I edited it, give me your copy back".
+ *
+ * **`--force` reaches managed files only.** A once-file is the user's — no
+ * flag changes that, because the flag is about overriding an *edit check*, and
+ * a once-file was never Holi's to check. Asking for one comes back as
+ * `not managed` rather than as an error: the agent asked a reasonable
+ * question and deserves the actual answer.
+ */
+export async function refreshManaged(
+  root: string,
+  opts: { path?: string; force?: boolean },
+): Promise<{ refreshed: string[]; skipped: { path: string; reason: string }[] }> {
+  const refreshed: string[] = []
+  const skipped: { path: string; reason: string }[] = []
+
+  if (opts.path !== undefined && MANAGED_FILES[opts.path] === undefined) {
+    skipped.push({ path: opts.path, reason: 'not managed' })
+    return { refreshed, skipped }
+  }
+
+  const targets =
+    opts.path === undefined ? Object.keys(MANAGED_FILES) : [opts.path]
+
+  for (const rel of targets) {
+    const content = MANAGED_FILES[rel]!
+    const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
+    if (onDisk === content) continue
+    if (onDisk !== null && opts.force !== true && !(await mayRefresh(root, rel, onDisk))) {
+      const state = await readSeedState(root)
+      skipped.push({ path: rel, reason: state[rel] === undefined ? 'unrecorded' : 'edited' })
+      continue
+    }
+    await writeAtomic(root, vaultRelPath(rel), content)
+    await recordSeeded(root, rel, content)
+    refreshed.push(rel)
+  }
+  return { refreshed, skipped }
+}

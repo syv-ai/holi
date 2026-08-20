@@ -39,6 +39,12 @@ declare global {
       reminders: {
         onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
       }
+      /** The agent ran `holi app open <id>`. Nothing else opens an app tab by
+       *  itself: apps sync, so opening on *appearance* would put a teammate in
+       *  charge of your screen. Returns its unsubscribe. */
+      apps: {
+        onOpen(cb: (appId: string) => void): () => void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */

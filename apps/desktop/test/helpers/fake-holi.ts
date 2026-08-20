@@ -41,6 +41,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
+  const appOpenSubs = new Set<(appId: string) => void>()
   let onFlushed: (() => void) | null = null
 
   const subscribe = <T>(subs: Set<(v: T) => void>) => (cb: (v: T) => void) => {
@@ -66,6 +67,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     reminders: {
       onOpen: subscribe(reminderSubs),
+    },
+    apps: {
+      onOpen: subscribe(appOpenSubs),
     },
     openExternal: async () => {},
   }

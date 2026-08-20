@@ -30,6 +30,9 @@ import { createGoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
+import { createAgentOps } from './agent/ops'
+import { initAppOp, openAppOp } from './apps/app-ops'
+import { refreshManaged } from './agent/seed-content'
 import { GoogleApi } from './google/api'
 import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
 import {
@@ -366,9 +369,38 @@ async function main(): Promise<void> {
   // Same bin directory, so one PATH prepend covers both.
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
+  /** Every ops route acts on the vault that is open right now. There is
+   *  exactly one, and the agent's cwd IS its root, so taking a remote as an
+   *  argument would only create a way for the two to disagree. */
+  const opsRoot = (): string | null => host.active()?.root ?? null
+
   const hookServer = createHookServer({
     onTurnStart: () => agent.setTurnActive(true),
     onTurnEnd: () => agent.setTurnActive(false),
+    ops: createAgentOps({
+      openApp: async (appId) => {
+        const root = opsRoot()
+        if (root === null) return { ok: false, error: 'no vault is open' }
+        const result = await openAppOp(root, appId)
+        // The tab opens only once the app is known to be openable: a refusal
+        // that still opened a tab would show the agent a blank frame and tell
+        // it the reason at the same time.
+        if (result.ok) send('apps:open', appId)
+        return result
+      },
+      initApp: async (appId) => {
+        const root = opsRoot()
+        if (root === null) return { ok: false, error: 'no vault is open' }
+        return initAppOp(root, appId)
+      },
+      refreshSeed: async (input) => {
+        const root = opsRoot()
+        if (root === null) {
+          return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
+        }
+        return refreshManaged(root, input)
+      },
+    }),
   })
   await hookServer.start()
   // D72: the vault agent runs on Holi's config directory, not the machine's

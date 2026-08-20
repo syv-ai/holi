@@ -13,6 +13,7 @@ import {
   ONCE_FILES,
   SEED_FILES,
   ensureSeeded,
+  refreshManaged,
   settingsWithRequired,
 } from '../src/main/agent/seed-content'
 import { mayRefresh, recordSeeded } from '../src/main/agent/seed-state'
@@ -726,5 +727,97 @@ describe('ensureSeeded — refreshing a managed file', () => {
     expect(second.written).toEqual([])
     expect(second.refreshed).toEqual([])
     expect(second.skipped).toEqual([])
+  })
+})
+
+describe('refreshManaged — what `holi seed refresh` does', () => {
+  const SKILL = '.claude/skills/vault-apps/SKILL.md'
+  const GATE = '.claude/hooks/google-send-gate.mjs'
+
+  /** Seed, then make `rel` look like an older shipped version Holi still owns. */
+  async function stale(root: string, rel: string): Promise<void> {
+    const old = `# an older version\n`
+    await writeFile(join(root, rel), old)
+    await recordSeeded(root, rel, old)
+  }
+
+  it('with no path, refreshes every managed file Holi still owns', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await stale(root, SKILL)
+    await stale(root, GATE)
+
+    const result = await refreshManaged(root, {})
+    expect(result.refreshed.sort()).toEqual([GATE, SKILL].sort())
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(SEED_FILES[SKILL])
+  })
+
+  it('reports each skip with its reason rather than failing', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await stale(root, SKILL)
+    await writeFile(join(root, GATE), '// mine now\n')
+
+    const result = await refreshManaged(root, {})
+    expect(result.refreshed).toEqual([SKILL])
+    expect(result.skipped).toEqual([{ path: GATE, reason: 'edited' }])
+  })
+
+  it('takes a single path', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await stale(root, SKILL)
+    await stale(root, GATE)
+
+    const result = await refreshManaged(root, { path: SKILL })
+    expect(result.refreshed).toEqual([SKILL])
+    expect(await readFile(join(root, GATE), 'utf8')).toBe('# an older version\n')
+  })
+
+  it('--force overwrites a managed file somebody edited', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, SKILL), '# mine\n')
+
+    expect((await refreshManaged(root, { path: SKILL })).skipped).toEqual([
+      { path: SKILL, reason: 'edited' },
+    ])
+    const forced = await refreshManaged(root, { path: SKILL, force: true })
+    expect(forced.refreshed).toEqual([SKILL])
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(SEED_FILES[SKILL])
+  })
+
+  it('--force does NOT reach a once-file — AGENTS.md is the user\'s', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await writeFile(join(root, 'AGENTS.md'), '# my rules\n')
+
+    const result = await refreshManaged(root, { path: 'AGENTS.md', force: true })
+    expect(result.refreshed).toEqual([])
+    expect(result.skipped).toEqual([{ path: 'AGENTS.md', reason: 'not managed' }])
+    expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe('# my rules\n')
+  })
+
+  it('refuses a path Holi does not ship at all', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    const result = await refreshManaged(root, { path: 'notes/mine.md', force: true })
+    expect(result.skipped).toEqual([{ path: 'notes/mine.md', reason: 'not managed' }])
+  })
+
+  it('recreates a managed file that was deleted', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    await rm(join(root, SKILL))
+
+    const result = await refreshManaged(root, { path: SKILL })
+    expect(result.refreshed).toEqual([SKILL])
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(SEED_FILES[SKILL])
+  })
+
+  it('says nothing at all when everything is already current', async () => {
+    const root = await tempDir()
+    await ensureSeeded(root)
+    expect(await refreshManaged(root, {})).toEqual({ refreshed: [], skipped: [] })
   })
 })
