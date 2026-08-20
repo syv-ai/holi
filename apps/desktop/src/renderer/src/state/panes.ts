@@ -441,7 +441,7 @@ export function activePane(workspace: Workspace): Pane | null {
 }
 
 /* ────────────────────────────────────────────────────────────────────────────
- * Moving a tab
+ * Moving a tab (D78)
  *
  * A move is the one thing a split deliberately cannot do. `splitPane` refuses to
  * duplicate the tab it was invoked on because two views of one path are two

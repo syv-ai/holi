@@ -106,10 +106,12 @@ VS Code's two-state model, ported:
 
 **A tab is not a note — and this is what that bought.** The union is `{ kind: 'note'; path; preview? } | { kind: 'board' } | { kind: 'agenda' } | { kind: 'mail' }`. Mail and the agenda arrived (D67) as *new kinds*, not as a rewrite — which is the entire return on modelling this as a union rather than the `Map<path, …>` that would have foreclosed it.
 
-**The non-note surfaces are singletons**, and they behave differently from notes on purpose: there is only ever one board, one agenda, one mailbox, so each opens as a **leftmost** tab with a fixed home rather than landing wherever it was invoked. If it is already open it is focused **in place** — moving it would shuffle the strip under a user who clicked the same button twice. They are pinned by construction, having no preview state to be in, and they are account-wide rather than vault-scoped.
+**The non-note surfaces are singletons**, and they behave differently from notes on purpose: there is only ever one board, one agenda, one mailbox, so each **opens leftmost** rather than landing wherever it was invoked. If it is already open it is focused **in place** — moving it would shuffle the strip under a user who clicked the same button twice. They are pinned by construction, having no preview state to be in, and they are account-wide rather than vault-scoped.
+
+Leftmost is where a singleton *opens*, not where it lives: since tabs became draggable it can be moved anywhere in the strip, and re-clicking its nav chip focuses it where it now sits rather than yanking it back. An undraggable tab in a strip of draggable ones would read as a bug, and the alternative was a rule discoverable only by the gesture failing.
 
 **Two rules that read as tidiness and are not:**
-- **One buffer per file, across every pane.** Opening a note that is already open *focuses* it instead of appending — and since 2026-08-20 that lookup spans the whole workspace, not just the active pane (`findTab`). Two tabs over one path means two buffers each with their own `base` and their own autosave debounce, each seeing the other's write as an external change to reconcile; that is a data-loss-shaped bug and it does not care which pane the second buffer is in. It is also why a split cannot duplicate the tab it was invoked on.
+- **One buffer per file, across every pane.** Opening a note that is already open *focuses* it instead of appending — and since 2026-08-20 that lookup spans the whole workspace, not just the active pane (`findTab`). Two tabs over one path means two buffers each with their own `base` and their own autosave debounce, each seeing the other's write as an external change to reconcile; that is a data-loss-shaped bug and it does not care which pane the second buffer is in. It is also why a split cannot duplicate the tab it was invoked on — and why a **drag can move that tab anywhere**: a move is safe exactly where a copy is not, because remove-then-insert leaves one buffer where there was one buffer.
 - **The active tab follows the document, not the index.** Closing a tab left of the active one shifts every later index, so keeping the number would silently move the user to a different file. In a UI that autosaves, that is a data-loss-shaped bug.
 
 **A rename retargets open tabs** rather than closing them (`retargetTab`/`retargetTabs`), and deleting a file closes its tab — so the strip cannot hold a path that no longer exists.
@@ -142,6 +144,56 @@ unfocused pane's active pill keeps its shape and loses its weight, which is the 
 keyed to a panel count, and a pane is the thing that comes and goes; restoring a two-pane split into
 a three-pane group is worse than starting even. The vault's other groups (the shell row, the
 sidebar's vertical split) still persist, because their panel count is fixed.
+
+### Moving a tab
+
+**Status: built** (2026-08-20). A tab is dragged: reordered inside its own strip, moved onto another
+pane, or dropped on a pane's left or right quarter to **split**. Native HTML5 drag, the way
+`features/tasks/BoardView.tsx` already does it — the dragged tab's identity rides `dataTransfer`, so
+there is no companion state to keep in sync and nothing to go stale if a `dragend` is missed.
+
+**The payload is identity, never location.** `findTab` already spans the workspace, so one function
+(`moveTab`) serves a reorder *and* a cross-pane move, and a strip never learns where a dropped tab
+came from. A pair of indices would have gone stale between the `dragstart` and the `drop`.
+
+Almost every rule it obeys was already written down. It is a **move, not a copy**, so one buffer per
+file survives by construction. The **active tab follows the document** in both panes. An **emptied
+source pane goes** unless it is the last one — dragging your last tab away is how you unsplit.
+
+Three rules are its own:
+
+- **A reorder rearranges; it does not navigate.** Within one pane the active tab stays on whatever
+  document it was on, so tidying a full strip while reading one file cannot drop you into whichever
+  tab you happened to drag. A cross-pane move is different in kind: the destination shows what you
+  dropped into it and the workspace focuses that pane, because that is where you are now looking.
+- **A drag pins a preview tab.** Dragging is intent, the way editing is. Without it the gesture eats
+  itself — place a preview tab deliberately, single-click anything in the tree, and `openPreview`
+  replaces it *in place*, destroying the tab you just positioned.
+- **A pane never offers a drop that would do nothing.** The pane a drag came *from* stops showing
+  its middle, because "into this pane" is a move to the end of its own strip, which the strip
+  already expresses — and every split gesture crosses the body on the way to an edge, so the
+  full-pane highlight would flash on all of them. If that pane holds a **single tab** it offers
+  nothing at all: both edges are the sole-tab no-op and the middle is a move to where the tab
+  already sits. Every *other* pane keeps all three zones.
+
+**A clipped drop position is still reachable.** The strip only slides its window for the active tab,
+so "move this to position 9 of 12" would otherwise be inexpressible. Hovering a drag at either end
+slides the window one tab per tick — no new windowing logic, because `tab-window.ts`'s third rule is
+already *"this index must stay visible"* and a drag simply substitutes its own index for the
+selection's.
+
+**Where a drop lands is arithmetic**, in `lib/tab-drop.ts`, for the same reason `tab-window.ts` is:
+jsdom computes no layout, so logic that hit-tests inside a component cannot be tested at all. It
+also owns the `DataTransfer` codec — a **custom MIME type**, because `getData` is unreadable during
+`dragover` by spec and the type name is therefore the only question a target may ask mid-drag; and a
+validator, because that string is a trust boundary.
+
+**A sole tab dropped on its own pane's edge is a no-op** — and only then. Rebuilding an identical
+column one position over is a flicker, not a move; that same tab on a *different* pane's edge is an
+ordinary move that does collapse the pane it came from.
+
+**Not built:** dragging a tab out to a new window, dragging between vaults, and any vertical split —
+the pane model has one axis and this did not add another.
 
 ### The strip clips, and says what it hid
 

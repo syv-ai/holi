@@ -1,6 +1,9 @@
 # Movable tabs — D78
 
-**Status:** designed 2026-08-20, not yet built.
+**Status:** designed and **built** 2026-08-20. Plan: `docs/plans/2026-08-20-movable-tabs.md`;
+verified by hand in `docs/verification/2026-08-20-movable-tabs.md`. Two clauses changed during the
+build and are marked inline: what a same-pane reorder does to the active tab, and how narrow the
+sole-tab no-op is. A third — a pane refusing to offer a no-op drop — was added after review.
 **Builds on:** D77 (the pane system — `splitPane`, `closePane`, `openInNewPane`, and the
 strengthening of one-buffer-per-file to span the whole workspace), and the tab strip's
 clipping window (`lib/tab-window.ts`, same day).
