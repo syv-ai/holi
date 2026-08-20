@@ -6,6 +6,7 @@ import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
+import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
@@ -55,7 +56,18 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     EditorView.lineWrapping,
     // GFM base — the codemirror-markdown-tables widget needs the Lezer GFM Table
     // grammar in the tree; plain markdown() defaults to CommonMark (no tables).
-    markdown({ base: markdownLanguage }),
+    // `codeLanguages` is what makes a ```python fence parse as python instead of
+    // as text: without it the body has no tokens to colour and the block renders
+    // as one flat grey slab (fence-languages.ts).
+    markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }),
+    // …and this is what colours those tokens. It used to be in the plain stack
+    // only, on the reasoning that the markdown editor paints itself with
+    // live-preview decorations rather than through the highlight pipeline —
+    // true of markdown's OWN syntax, and false of the code nested inside it.
+    // The one overlap is `processingInstruction`: markdown's `#`/`**` marks now
+    // take the punctuation grey, and only on the active line, since livePreview
+    // conceals them everywhere else.
+    codeHighlighting,
     docExistsFacet.of(deps.docExists),
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
@@ -120,7 +132,11 @@ export function mailComposerExtensions(): Extension[] {
     EditorView.lineWrapping,
     // Same GFM base as the notes editor: the table widget needs the Lezer GFM
     // Table grammar in the tree, which plain markdown() (CommonMark) omits.
-    markdown({ base: markdownLanguage }),
+    // Fences highlight here too — quoting code at someone is a thing people do
+    // in mail, and the composer is the same markdown editor with the vault
+    // machinery taken out, not a lesser one.
+    markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }),
+    codeHighlighting,
     markdownTables(),
     // Table completion only. No `mentionSource` — `@` is how you type an email
     // address — and no `slashCommands`, whose commands are all vault actions.

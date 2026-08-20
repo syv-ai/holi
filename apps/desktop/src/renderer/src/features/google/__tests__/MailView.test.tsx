@@ -2058,8 +2058,11 @@ test('reply opens a composer inside the thread, not a browser', async () => {
 
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   expect(composer).toBeInTheDocument()
-  // The thing being replied to is still on screen beside it.
-  expect(screen.getByText('a body')).toBeInTheDocument()
+  // The thing being replied to is still on screen beside it. Scoped to the
+  // READER's copy: the composer quotes the message, and markdown highlighting
+  // puts the `>` in its own span, so the quoted line's own text is 'a body' too
+  // and a bare text query matches both.
+  expect(screen.getByText('a body', { selector: '[data-holi-message]' })).toBeInTheDocument()
   expect(openExternal).not.toHaveBeenCalled()
 })
 
