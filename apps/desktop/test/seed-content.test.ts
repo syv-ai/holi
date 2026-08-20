@@ -161,8 +161,19 @@ describe('SEED_FILES', () => {
 
   it('AGENTS.md grants the agent git (coexistence), not the old prohibition', () => {
     const agents = SEED_FILES['AGENTS.md']!
-    expect(agents).toContain('Git is yours')
+    expect(agents).toContain('You may run git freely')
+    expect(agents).toContain('suspends its own auto-commit/pull loop')
     expect(agents).not.toContain('Do not run') // the pre-coexistence prohibition
+  })
+
+  it('AGENTS.md names the machine-local user file by its real name', () => {
+    // A plain `USER.md` is NOT gitignored — the ignore glob is `*.local.*`
+    // (D65) — so telling the agent to keep personal detail there would publish
+    // it to every collaborator on the next auto-commit. It is also absent from
+    // AGENT_SURFACE_FILES under that name, so a vault app could read it.
+    const agents = SEED_FILES['AGENTS.md']!
+    expect(agents).toContain('USER.local.md')
+    expect(agents).not.toMatch(/\`USER\.md\`/)
   })
 
   it('settings.json wires the focus + turn hooks and gates network egress', () => {
@@ -606,17 +617,6 @@ describe('ensureSeeded — the vault-apps skill', () => {
     expect(prose).toMatch(/no console, no screenshot/i)
   })
 
-  it('puts apps in the vault instructions, so an agent knows they exist at all', async () => {
-    // AGENTS.md is what an agent always has loaded; the skill only fires if its
-    // description happens to match what the user said. A capability absent from
-    // AGENTS.md is one that depends on phrasing to be discovered.
-    const root = await tempDir()
-    await ensureSeeded(root)
-    const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
-    expect(agents).toContain('.holi/apps/')
-    expect(agents).toContain('vault-apps skill')
-  })
-
   it('never rewrites one the user has edited', async () => {
     const root = await tempDir()
     await ensureSeeded(root)
@@ -839,7 +839,6 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
   /** The file is hand-wrapped at 80 columns, so every assertion about a
    *  sentence has to ignore where the wrap happens to fall. */
   const flat = SKILL.replace(/\s+/g, ' ')
-  const agents = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
 
   it('names the manifest as required, and as the last file to write', () => {
     expect(flat).toContain('app.yaml')
@@ -860,11 +859,6 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
     expect(flat).not.toMatch(/no way for you to open the app yourself/i)
     expect(flat).not.toMatch(/You cannot open it yourself/i)
     expect(flat).not.toMatch(/Ask the user to open it/i)
-  })
-
-  it('corrects the same claim in AGENTS.md', () => {
-    expect(agents).not.toMatch(/You cannot open an app yourself/i)
-    expect(agents).toContain('holi app open')
   })
 
   it('still teaches the boundaries the validator enforces', () => {

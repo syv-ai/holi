@@ -56,91 +56,33 @@ const CLAUDE_MD = '<rules>\n@AGENTS.md\n</rules>\n'
 
 const AGENTS_MD = `# Agent rules
 
-Shared instructions for anyone — human or agent — working in this vault.
-Everyone here sees this file, so keep it about the vault rather than about one
-person.
+## What a vault is
 
-## What this vault is
-
-A git repository of markdown files. There is no database and no server: the
-file **is** the note, the task, and the record.
-
-## Notes
+A git repository of markdown files for knowledge management. There is no database and no server: the file **is** the note, the task, and the record.
 
 - A note is a \`.md\` file at a path, e.g. \`projects/q2/roadmap.md\`.
-- Links between notes are path-based wiki-links: \`[[projects/q2/roadmap.md]]\`,
-  or \`[[path|Label]]\`. This is the only link grammar.
-- **Renaming a note means rewriting every \`[[link]]\` that points at it**, in
-  the same change. Find them with a grep for \`[[<path>\` before moving the file.
-  A rename that skips this leaves dangling links, which render as tombstones.
+- Links are path-based wiki-links: \`[[projects/q2/roadmap.md]]\` or \`[[path|Label]]\`
+- To rename a note, you must rewrite every \`[[link]]\` that points at it, Use grep
 
-## Images
+## Files
 
-- Images live in the vault as ordinary committed files (\`.png\`, \`.jpg\`,
-  \`.svg\`, …). Put the file where it belongs — usually beside the note that
-  uses it, or in an \`assets/\` folder near it.
-- Embed one with **standard markdown, note-relative**: \`![alt](logo.png)\`
-  resolves next to the current note; \`![alt](assets/logo.png)\` into a subfolder.
-  This is what renders on GitHub too — write portable paths, **never** a
-  \`holi-vault://\` URL (that is Holi's internal render scheme, not file content).
-- \`[[logo.png]]\` also embeds an image, but as a **vault-root** path (like every
-  \`[[link]]\`). Prefer \`![]()\` for images so the note stays standard markdown.
+- Images, pdfs, whatever, live in the vault as committed files.
+- Embed images with standard markdown: \`![alt](logo.png)\`
 
 ## Tasks
 
-- A task is a file named \`task.<name>.md\`, living in the folder it is about —
-  e.g. \`projects/q2/task.fix-login.md\`. One glob, \`**/task.*.md\`, finds them
-  all.
-- YAML frontmatter carries \`status\` (todo | doing | done), \`due\`, \`priority\`,
-  \`tags\`, \`reminder\` and \`recurrence\`; the body is the description.
-- There are **no task ids**. A link to a task is an ordinary wiki-link to its
-  file, and its "area" is just the folder it sits in — moving it between areas
-  means moving the file.
-- Create, edit and complete them with ordinary file tools.
+- Task are editable .md files with a \`task.\` prefix: \`task.<name>.md\`, e.g. \`projects/q2/task.fix-login.md\`. glob \`**/task.*.md\` to find all
+- YAML frontmatter carries \`status\` (todo | doing | done), \`due\`, \`priority\`, \`tags\`, \`reminder\` and \`recurrence\`; the body is the description.
+- Link using ordinary wiki-link to its file, and its "area" is just the folder it sits in
 
-## Apps
+## Sync
 
-- A vault can hold small web apps that open as tabs in Holi — a dashboard over
-  the tasks, a viewer for a CSV, a chart. They are vault content like anything
-  else: a directory of files under \`.holi/apps/<id>/\`, synced to everyone.
-- **You write them.** There is no app builder and no template gallery; an app is
-  files you author with ordinary tools when someone asks for a screen rather than
-  a note. The full contract — the directory layout, the \`window.holi\` bridge
-  that reads notes and tasks, and what an app deliberately cannot do — is the
-  **vault-apps skill** in \`.claude/skills/\`. Read it before writing one.
-- An app becomes real when \`.holi/apps/<id>/app.yaml\` exists beside its
-  \`index.html\` — write the manifest **last**, so the tab never opens onto a
-  half-written page. \`holi app init <id>\` scaffolds one.
-- Open one with \`holi app open <id>\`. A check runs on every file you write
-  under \`.holi/apps/\` and tells you what will not work; it never blocks a
-  write, and it is quiet when there is nothing wrong.
-
-## How your edits reach other people
-
-Edits are committed automatically, a few seconds after they stop, and those
-commits push to GitHub on their own — there is no Publish step. Sync is
-automatic in both directions.
-
-## Git is yours
-
-You may run git freely — \`commit\`, \`push\`, \`pull\`, resolve a merge. While you
-are working, Holi suspends its own auto-commit/pull loop and resumes it when your
-turn goes idle, so there is only ever one git actor and you never contend on
-\`.git/index.lock\`.
-
-- **Switching branches pauses Holi's sync until you switch back.** If you check
-  out another branch or leave a rebase in progress, Holi's loop stays paused
-  until the working tree returns to the default branch — so undo it when you're
-  done, or say so.
-- \`git log\` and \`git diff\` are always safe to run.
+Edits are auto-committed every few seconds, and those commits push to GitHub on their own — there is no Publish step. Sync is automatic in both directions. You may run git freely — \`status\`, \`log\`, \`commit\`, \`push\`, \`pull\`, resolve a merge. While you are working, Holi suspends its own auto-commit/pull loop and resumes it when your turn goes idle, so there is only ever one git actor and you never contend on \`.git/index.lock\`. Switching branches pauses Holi's sync until you switch back. If you check out another branch or leave a rebase in progress, Holi's loop stays paused until the working tree returns to the default branch
 
 ## Memory
 
-- \`MEMORY.md\` — shared with everyone in the vault. Vault conventions,
-  environment quirks, approaches that did not work.
-- \`USER.local.md\` — your model of one individual. **Machine-local and
-  gitignored** (the \`.local.\` in the name is what makes it so); it never
-  reaches anyone else's clone. Keep personal detail here, not in \`MEMORY.md\`.
+- \`MEMORY.md\` — shared with everyone in the vault. Vault conventions, environment quirks, ways-of-working
+- \`USER.local.md\` — your model of one individual. **Machine-local and gitignored** (the \`.local.\` in the name is what makes it so); it never reaches anyone else's clone. Keep personal detail here, not in \`MEMORY.md\`.
 `
 
 const MEMORY_MD = `# Memory
