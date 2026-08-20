@@ -14,6 +14,20 @@ describe('languageIdForPath', () => {
     expect(languageIdForPath('run.bash')).toBe('shell')
   })
 
+  it('maps the three languages a vault app is written in', () => {
+    // An app is unbuilt HTML/CSS/JS the browser runs as-is (prd/vault-apps.md),
+    // so these are the extensions the editor actually meets under `.holi/apps/`.
+    expect(languageIdForPath('.holi/apps/dash/app.js')).toBe('javascript')
+    expect(languageIdForPath('.holi/apps/dash/index.html')).toBe('html')
+    expect(languageIdForPath('.holi/apps/dash/style.css')).toBe('css')
+  })
+
+  it('maps the module variants of javascript', () => {
+    expect(languageIdForPath('mod.mjs')).toBe('javascript')
+    expect(languageIdForPath('mod.cjs')).toBe('javascript')
+    expect(languageIdForPath('page.htm')).toBe('html')
+  })
+
   it('classifies dotfiles by name, not by a phantom extension', () => {
     // `.env` has no `name.ext` split — the leading dot is not a separator.
     expect(languageIdForPath('.env')).toBe('ini')
@@ -32,6 +46,10 @@ describe('languageIdForPath', () => {
     expect(languageIdForPath('data.csv')).toBeNull()
     expect(languageIdForPath('Makefile')).toBeNull()
     expect(languageIdForPath('.gitignore')).toBeNull()
+    // TypeScript is deliberately absent: an app ships unbuilt, so a `.ts` file
+    // under `.holi/apps/` would not run — highlighting it would advertise a
+    // language the runtime does not have.
+    expect(languageIdForPath('app.ts')).toBeNull()
   })
 
   it('ignores a dot in a directory when the file itself has no extension', () => {
@@ -56,6 +74,9 @@ describe('syntaxValid', () => {
     expect(syntaxValid('Cargo.toml', 'this is = not [valid toml')).toBe(true)
     expect(syntaxValid('.env', 'A=1\n= broken')).toBe(true)
     expect(syntaxValid('notes.txt', 'anything at all {[(')).toBe(true)
+    expect(syntaxValid('app.js', 'function ( {{{')).toBe(true)
+    expect(syntaxValid('index.html', '<div><p></div>')).toBe(true)
+    expect(syntaxValid('style.css', 'body { color:')).toBe(true)
   })
 
   it('treats an empty or whitespace buffer as valid (nothing to be invalid)', () => {

@@ -1,16 +1,27 @@
 /**
  * Syntax highlighting for the plain-text editor, chosen by file name.
  *
- * The vault is mostly markdown (its own editor) plus config: `.holi/theme.json`,
- * a `.yaml`, a `.env`, the odd `.toml`. So the set here is deliberately narrow —
- * config formats and shell — not a general code editor. JSON also gets a
- * validity linter (`theme.json` is agent-written, and a red squiggle beats a
- * silent parse failure the resolver quietly falls back from).
+ * The vault is mostly markdown (its own editor) plus two narrow sets that are
+ * *not* a general code editor:
+ *
+ * - **config** — `.holi/theme.json`, a `.yaml`, a `.env`, the odd `.toml`.
+ * - **the web three** — an app under `.holi/apps/` is unbuilt HTML, CSS and JS
+ *   the browser runs as-is, so those are the only source files the editor
+ *   actually meets. TypeScript is left out on purpose: nothing compiles it, so
+ *   highlighting `.ts` would advertise a language the runtime does not have.
+ *
+ * JSON also gets a validity linter (`theme.json` is agent-written, and a red
+ * squiggle beats a silent parse failure the resolver quietly falls back from).
+ * The web three get none — there is no cheap, correct parse for a half-typed
+ * document, and a squiggle that cries wolf mid-keystroke is worse than silence.
  *
  * The decision — which language a path is — is `languageIdForPath`, a pure
  * string classifier that is the only part worth testing. `languageForPath` is
  * the thin glue from that id to CodeMirror extensions.
  */
+import { css } from '@codemirror/lang-css'
+import { html } from '@codemirror/lang-html'
+import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
 import { yaml } from '@codemirror/lang-yaml'
 import { StreamLanguage } from '@codemirror/language'
@@ -23,7 +34,15 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 /** `ini` covers the whole properties/env family (`.env`, `.ini`, `.conf`). */
-export type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell'
+export type LangId =
+  | 'json'
+  | 'yaml'
+  | 'toml'
+  | 'ini'
+  | 'shell'
+  | 'javascript'
+  | 'html'
+  | 'css'
 
 const BY_EXT: Record<string, LangId> = {
   json: 'json',
@@ -39,6 +58,12 @@ const BY_EXT: Record<string, LangId> = {
   sh: 'shell',
   bash: 'shell',
   zsh: 'shell',
+  js: 'javascript',
+  mjs: 'javascript',
+  cjs: 'javascript',
+  html: 'html',
+  htm: 'html',
+  css: 'css',
 }
 
 /**
@@ -105,6 +130,11 @@ export function languageForPath(path: string): Extension[] {
   if (id === null) return []
   if (id === 'json') return [json(), linter(jsonParseLinter())]
   if (id === 'yaml') return [yaml(), yamlLinter()]
+  if (id === 'javascript') return [javascript()]
+  // `html()` already nests JS and CSS for `<script>`/`<style>` blocks, which is
+  // most of what an app's `index.html` contains.
+  if (id === 'html') return [html()]
+  if (id === 'css') return [css()]
   return [LEGACY[id]]
 }
 
@@ -113,9 +143,10 @@ export function languageForPath(path: string): Extension[] {
  * reads this to hold off autosave and ⌘S while it is false — the plain-text
  * analogue of `frontmatterValid` for notes.
  *
- * Only the formats we can cheaply parse are gated (JSON, YAML); toml/ini/shell
- * and unknown text have no gate (always valid), and an empty buffer is valid —
- * there is nothing yet to be invalid, matching the frontmatter gate.
+ * Only the formats we can cheaply parse are gated (JSON, YAML); everything else
+ * — toml/ini/shell, the web three, unknown text — has no gate (always valid),
+ * and an empty buffer is valid: there is nothing yet to be invalid, matching the
+ * frontmatter gate.
  */
 export function syntaxValid(path: string, text: string): boolean {
   if (text.trim() === '') return true
