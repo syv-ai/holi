@@ -371,7 +371,13 @@ export function FileTree({
   }
 
   return (
-    <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
+    // No `flex-1`: the tree is sized by its rows, not by the sidebar. It used to
+    // grow into every spare pixel, which stranded whatever follows it (the apps
+    // list) at the far bottom of the column, reading as part of the chip rows
+    // rather than as part of the tree. `min-h-0` + the default `flex: 0 1 auto`
+    // is the pair that means "as tall as the rows, and no taller than there is
+    // room for" — past that it shrinks and the scroller below takes over.
+    <div className="group/explorer relative flex min-h-0 flex-col">
       <ExplorerHeader
         onNewFile={() => setPending({ kind: 'file', parent: '' })}
         onNewFolder={() => setPending({ kind: 'folder', parent: '' })}
@@ -384,7 +390,10 @@ export function FileTree({
       <div
         // pt-10 reserves the band the hover toolbar (ExplorerHeader, absolute
         // top-1) floats into, so it never covers the first row.
-        className="holi-scroll min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
+        // `flex-1` here would mean `flex-basis: 0` — and with the root no longer
+        // stretched, a zero basis collapses the tree to nothing. Auto basis (the
+        // default) is what makes the root measure its rows.
+        className="holi-scroll min-h-0 shrink overflow-y-auto pb-1 pt-10 text-sm"
         {...tree.getContainerProps()}
       >
         {pending && (

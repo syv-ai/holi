@@ -241,7 +241,7 @@ export function Shell() {
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
             <aside className="relative flex h-full flex-col border-r border-border">
-          <div className="flex h-11 items-center px-2">
+          <div className="flex h-11 shrink-0 items-center px-2">
             <VaultPicker
               vaults={vaults}
               activeRemote={activeRemote}
@@ -269,7 +269,10 @@ export function Shell() {
               a flex item's default `min-width: auto` refuses to shrink below its
               text. `min-w-0` on each chip is what actually forbids the overflow;
               the split is what keeps them legible rather than truncated. */}
-          <div className="flex flex-col gap-1.5 p-2">
+          {/* `mt-auto` keeps the chips on the floor of the sidebar now that the
+              tree no longer fills it — the spare height collects here, between
+              the apps list and the chips, instead of above the apps list. */}
+          <div className="mt-auto flex shrink-0 flex-col gap-1.5 p-2">
             <div className="flex items-center gap-2">
               <Tooltip content="today's daily note (⌘⇧D)">
                 <Button
