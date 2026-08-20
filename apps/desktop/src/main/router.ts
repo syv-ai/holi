@@ -30,6 +30,12 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
+import {
+  initAppOp,
+  renameAppOp,
+  type AppInitResult,
+  type AppRenameResult,
+} from './apps/app-ops'
 import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
@@ -1039,6 +1045,19 @@ export function createRouter(deps: RouterDeps) {
    * because `.claude/hooks/google-send-gate.mjs` IS the mail send gate and
    * MEMORY.md is what the user told the assistant.
    */
+  /**
+   * Two audiences, and the split matters.
+   *
+   * `read` / `docs` / `tasks` are what a **vault app** reaches, through the
+   * postMessage bridge — which is why they are read-only and why `read` refuses
+   * the agent surface. `rename` / `register` are what **Holi's own sidebar**
+   * reaches, and they mutate.
+   *
+   * They share a namespace safely only because `AppFrame` answers the bridge
+   * with an exhaustive `switch` over `APP_METHODS`, never by forwarding a
+   * method name into tRPC. **Do not turn that switch into a passthrough** — it
+   * is the only thing standing between an app and renaming its neighbours.
+   */
   const apps = t.router({
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
@@ -1064,6 +1083,29 @@ export function createRouter(deps: RouterDeps) {
     tasks: t.procedure
       .input(fields({ remote: 'string' }))
       .query(async ({ input }): Promise<Task[]> => (await snapshotFor(input.remote)).tasks),
+
+    // ---- Holi's own UI from here down. Not reachable from an app. ----
+
+    /** Rename an app's directory, which is to say rename the app: the id is the
+     *  directory name and the `holi-app://` host both. A refusal comes back as a
+     *  value, not a throw, because the caller is an inline rename field that has
+     *  somewhere to put the reason. */
+    rename: vaultMutation
+      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
+      .mutation(
+        async ({ input }): Promise<AppRenameResult> =>
+          renameAppOp(await rootFor(input.remote), input.from, input.to),
+      ),
+
+    /** Write the manifest that registers a directory as a finished app — the
+     *  sidebar's "finish this app", and the same op as `holi app init`. Never
+     *  overwrites, so it cannot clobber a manifest someone is mid-way through. */
+    register: vaultMutation
+      .input(fields({ remote: 'string', appId: 'string' }))
+      .mutation(
+        async ({ input }): Promise<AppInitResult> =>
+          initAppOp(await rootFor(input.remote), input.appId),
+      ),
   })
 
   const notes = t.router({

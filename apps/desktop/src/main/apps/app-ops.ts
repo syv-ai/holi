@@ -11,15 +11,24 @@
  * nothing; "no app.yaml — write one, or run holi app init retro" is a next
  * step.
  */
-import { stat } from 'node:fs/promises'
+import { readFile, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { APPS_DIR, APP_MANIFEST_FILE, isValidAppId, vaultRelPath } from '@holi/shared'
-import { writeAtomic } from '../vault/vault-files'
+import {
+  APPS_DIR,
+  APP_MANIFEST_FILE,
+  isValidAppId,
+  rewriteWikiLinksMulti,
+  vaultRelPath,
+} from '@holi/shared'
+import { absPathFor, listFiles, writeAtomic } from '../vault/vault-files'
 
 const ENTRY_FILE = 'index.html'
 
 export type AppOpResult = { ok: true } | { ok: false; error: string }
 export type AppInitResult = { ok: true; created: string[] } | { ok: false; error: string }
+export type AppRenameResult =
+  | { ok: true; rewritten: { path: string; count: number }[] }
+  | { ok: false; error: string }
 
 const ID_RULE = 'an app id is lowercase letters, digits and dashes: [a-z0-9-]+'
 
@@ -79,6 +88,67 @@ export async function initAppOp(root: string, appId: string): Promise<AppInitRes
     created.push(rel)
   }
   return { ok: true, created }
+}
+
+/**
+ * Rename an app — which is to say, rename its directory, because the id **is**
+ * the directory name and also the host of its `holi-app://` URL.
+ *
+ * **One `rename` of the directory, not a file-by-file move.** The app is a tree
+ * with nested directories and binary assets in it; walking it into a list of
+ * `from`→`to` pairs would drop the empty directories and cost N syscalls to do
+ * worse. It also means the move is atomic on the same filesystem: either the app
+ * is at the old id or the new one, never half at each.
+ *
+ * The link rewrite is a second pass, and it comes **after** the directory has
+ * moved: a crash between the two leaves the app renamed with stale links —
+ * dangling wiki-links that show as tombstones — rather than live links pointing
+ * at bytes that are gone. Same no-transaction contract as `moveNotes`.
+ */
+export async function renameAppOp(
+  root: string,
+  from: string,
+  to: string,
+): Promise<AppRenameResult> {
+  if (!isValidAppId(from)) return { ok: false, error: `${from}: ${ID_RULE}` }
+  if (!isValidAppId(to)) return { ok: false, error: `${to}: ${ID_RULE}` }
+  // Renaming to the same id is what pressing Enter on an untouched field does.
+  // Not an error: the caller's intent ("the app is called this") already holds.
+  if (from === to) return { ok: true, rewritten: [] }
+
+  const fromDir = join(root, APPS_DIR, from)
+  const toDir = join(root, APPS_DIR, to)
+  if (!(await isDir(fromDir))) {
+    return { ok: false, error: `no app called ${from} — ${APPS_DIR}/${from}/ does not exist` }
+  }
+  if (await isDir(toDir)) {
+    return {
+      ok: false,
+      error: `${APPS_DIR}/${to}/ already exists — pick another id, or delete that app first`,
+    }
+  }
+
+  // The link map has to be built while the files are still at the old paths.
+  const moved = new Map(
+    (await listFiles(root, `${APPS_DIR}/${from}`)).map((p) => [
+      p,
+      `${APPS_DIR}/${to}/${p.slice(`${APPS_DIR}/${from}/`.length)}`,
+    ]),
+  )
+
+  await rename(fromDir, toDir)
+
+  const rewritten: { path: string; count: number }[] = []
+  for (const path of await listFiles(root)) {
+    if (!path.endsWith('.md')) continue
+    const rel = vaultRelPath(path)
+    const text = await readFile(absPathFor(root, rel), 'utf8')
+    const { text: next, count } = rewriteWikiLinksMulti(text, moved)
+    if (count === 0) continue
+    await writeAtomic(root, rel, next)
+    rewritten.push({ path, count })
+  }
+  return { ok: true, rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)) }
 }
 
 function manifestFor(appId: string): string {
