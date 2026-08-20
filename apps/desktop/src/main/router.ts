@@ -30,6 +30,7 @@ import {
   type VaultRelPath,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
+import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
 import { moveNotes } from './vault/move'
@@ -508,6 +509,7 @@ export function createRouter(deps: RouterDeps) {
       )
     }
     await ensureSeeded(repo.root)
+    await migrateApps(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -518,6 +520,21 @@ export function createRouter(deps: RouterDeps) {
     return active.snapshot()
   }
 
+  /**
+   * Give a pre-manifest app the manifest that now registers it.
+   *
+   * Runs wherever `ensureSeeded` does and always **ahead of `host.open`**, for
+   * the seed's reason and a sharper one: the renderer keys registration on
+   * `app.yaml`, so an app written before the manifest existed is missing from
+   * the first snapshot and arrives only on the next rescan — a slice-1 app
+   * blinking out of the sidebar and back on every single open.
+   */
+  async function migrateApps(root: string): Promise<void> {
+    const migrated = await migrateAppManifests(root)
+    if (migrated.length > 0) {
+      console.log(`[apps] wrote a manifest for: ${migrated.join(", ")}`)
+    }
+  }
   /** remote -> the clone's root on this machine. Every path-taking procedure
    * goes through here, so an unknown vault fails once, in one place. */
   async function rootFor(remote: string): Promise<string> {
@@ -714,6 +731,7 @@ export function createRouter(deps: RouterDeps) {
          * `.gitignore`.
          */
         await ensureSeeded(root)
+        await migrateApps(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()

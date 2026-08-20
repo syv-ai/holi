@@ -52,7 +52,9 @@ export function parseAppManifest(yaml: string): AppManifest | null {
   }
   // An empty document parses to `null`, and so does the literal `null`. Both
   // are an empty manifest: the file existing is the assertion being made.
-  if (raw === null || raw === undefined) return yaml.trim() === '' || isCommentOnly(yaml) ? {} : null
+  if (raw === null || raw === undefined) {
+    return yaml.trim() === '' || isCommentOnly(yaml) ? {} : null
+  }
   if (typeof raw !== 'object' || Array.isArray(raw)) return null
 
   const manifest: AppManifest = {}
