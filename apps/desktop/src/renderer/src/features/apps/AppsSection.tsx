@@ -220,12 +220,13 @@ export function AppsSection(): React.JSX.Element | null {
     // floating inside an inset box — and the rows sit at the tree's indent
     // instead of 8px further in.
     <div className="flex shrink-0 flex-col pt-2">
-      {/* `text-xs`, not the 10px used in the settings panel: this sits directly
-          under 14px tree rows, and two typographic systems a few pixels apart
-          read as a mistake rather than as a hierarchy. */}
-      <p className="px-2 pb-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        apps
-      </p>
+      {/* The sidebar has ONE type size — `text-sm`, what every tree row and chip
+          uses — so the heading takes it too. It started at 10px uppercase, which
+          is the settings panel's system, and sitting a few pixels under 14px
+          rows that read as a mistake rather than as a hierarchy. `font-medium`
+          and the muted tint are what mark it as a heading; shrinking it is not.
+          Lowercase, like the chips: nothing else in this sidebar shouts. */}
+      <p className="px-2 pb-0.5 text-sm font-medium text-muted-foreground">apps</p>
       {appIds.map((appId) => row(appId, true))}
       {unregistered.map((appId) => row(appId, false))}
 
