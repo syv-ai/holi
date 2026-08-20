@@ -91,10 +91,13 @@ sync status bar via `pause(reason)`. The log is the only surface today.
 
 ## Notes & editor
 
-**Split panes.** `Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but
-only one pane is rendered (`Shell.tsx`). A split is therefore a second array element rather than a
-rewrite, which was the whole point of paying for the shape early. **Open with it:** whether the
-second pane gets its own tab strip, or the strip spans both.
+**A binary with no extension Holi knows opens as text, and looks like corruption.** `fileKind`
+defaults to `text` for an unknown extension, which is the forgiving choice and the right one for a
+`.env` or a `Makefile` — but a `.ttf` in `.holi/document-templates/_brand/fonts/` opens in the plain
+editor as several screens of replacement characters, which reads as a broken file rather than as a
+format with no viewer. Noticed 2026-08-20 while verifying the image plate; not fixed, because the
+fix is a *third* answer between "editable text" and "typed placeholder" — probably a byte-sniff
+rather than a longer extension list, since the whole point is the extensions nobody enumerated.
 
 **Viewing a binary Holi cannot render.** A PDF or `.docx` in a vault gets a typed placeholder
 naming what it is. Opening one in place — page nav for a PDF, `mammoth`-rendered HTML for a

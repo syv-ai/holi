@@ -109,19 +109,60 @@ VS Code's two-state model, ported:
 **The non-note surfaces are singletons**, and they behave differently from notes on purpose: there is only ever one board, one agenda, one mailbox, so each opens as a **leftmost** tab with a fixed home rather than landing wherever it was invoked. If it is already open it is focused **in place** — moving it would shuffle the strip under a user who clicked the same button twice. They are pinned by construction, having no preview state to be in, and they are account-wide rather than vault-scoped.
 
 **Two rules that read as tidiness and are not:**
-- **One buffer per file.** Opening a note that is already open *focuses* it instead of appending. Two tabs over one path means two buffers each with their own `base`, racing each other's saves — and the external-write reload story below assumes one.
+- **One buffer per file, across every pane.** Opening a note that is already open *focuses* it instead of appending — and since 2026-08-20 that lookup spans the whole workspace, not just the active pane (`findTab`). Two tabs over one path means two buffers each with their own `base` and their own autosave debounce, each seeing the other's write as an external change to reconcile; that is a data-loss-shaped bug and it does not care which pane the second buffer is in. It is also why a split cannot duplicate the tab it was invoked on.
 - **The active tab follows the document, not the index.** Closing a tab left of the active one shifts every later index, so keeping the number would silently move the user to a different file. In a UI that autosaves, that is a data-loss-shaped bug.
 
 **A rename retargets open tabs** rather than closing them (`retargetTab`/`retargetTabs`), and deleting a file closes its tab — so the strip cannot hold a path that no longer exists.
 
 **Not persisted.** Whether tabs survive a restart is still open; `.holi/settings.local.json` is where the answer would go. Deliberately unanswered rather than guessed at.
 
-### One pane, for now
+### Split panes
 
-`Workspace` is `panes[] → tabs[]` and every operation acts on the active pane, but **only one pane
-renders** — `Shell.tsx` reads `panes[workspace.active]` and draws a single strip. The array shape is
-what makes a split a second element rather than a rewrite, which was the whole point of paying for
-it early. The split itself is in [`../not-built.md`](../not-built.md).
+**Status: built.** `Shell.tsx` renders every element of `panes[]` in a nested resizable group;
+`components/PaneView.tsx` is one pane, and each draws **its own strip** over its own tabs. The array
+shape was paid for on the first commit precisely so this would be an addition rather than a rewrite,
+and it was.
+
+**⌘\ opens an empty pane, not a copy of the current tab.** VS Code and Obsidian both copy. They can:
+their editors tolerate two views of one buffer, and Holi's does not — see the one-buffer rule below,
+which a second pane turned from a per-pane rule into a hole. So a split makes room and the next
+thing you open fills it, and the gesture people actually reach for is **Open in a New Pane**, on a
+file-tree row and on an app row.
+
+**Closing the last tab of a split takes the pane with it.** That is how you unsplit; anything else
+leaves a permanent empty column that only a second, separate gesture could remove. **The last pane
+never goes** — an empty pane is the empty-editor state, and a workspace with no panes has nothing to
+render into. A pane holding ten tabs closes in one gesture, from a control in its own strip.
+
+**The focused pane is the one "open" means**, and it follows both the pointer and the keyboard
+(`onPointerDownCapture` + `onFocusCapture`, so putting a caret in an editor moves it too). The
+unfocused pane's active pill keeps its shape and loses its weight, which is the whole of the cue.
+
+**The pane group's layout is deliberately not persisted.** A stored layout is an array of weights
+keyed to a panel count, and a pane is the thing that comes and goes; restoring a two-pane split into
+a three-pane group is worse than starting even. The vault's other groups (the shell row, the
+sidebar's vertical split) still persist, because their panel count is fixed.
+
+### The strip clips, and says what it hid
+
+The strip was a bare flex row until 2026-08-20, and flex items do not shrink below their content —
+so opening more tabs than fit between the sidebars grew the row, and the row grew the editor pane
+past the window, indefinitely, with nothing on screen to say a tab had gone anywhere.
+
+The clip is CSS (`min-w-0` **and** `overflow-hidden`: on a flex child that cannot shrink,
+`overflow-hidden` clips nothing). **Which** tabs survive it is a decision, and it lives in
+`lib/tab-window.ts` — pure, so it is tested against numbers rather than against a rendered strip
+whose widths depend on a font that may not have loaded. Three rules, in order:
+
+1. **Everything fits → everything shows**, with nothing reserved for a control that will not be
+   drawn.
+2. **Fill from the left.** The order is the user's own history of opening them.
+3. **The active tab always survives.** Only when it falls outside the left-anchored run does the
+   window slide right — what a scrolling strip does, without the scrolling. A pane rendering a
+   document whose tab is nowhere on screen reads as a broken editor, not as a full strip.
+
+What is hidden is **counted and reachable**: `+2` opens a menu of the tabs on both sides of the
+window, and picking one slides the window onto it.
 
 ### Frontmatter reveal control
 
@@ -129,6 +170,16 @@ FR-2 hides frontmatter by default. Hiding it with no way back is not shippable, 
 explicit control, and the reveal-on-caret rule is **not** enough on its own — frontmatter is a
 structured header, not prose, and a caret wandering into it is as likely to be an accident as an
 intent.
+
+**"By default" is per-file, not global** (`frontmatterStartsRevealed`). FR-2's reason is about
+*notes*: there, frontmatter is metadata over prose someone came to read. Under `.claude/` it is the
+opposite — a skill's `name` and `description` are what the agent matches on when it decides whether
+to load the thing at all, an agent definition is little else, and the body is the elaboration.
+Opening `.claude/skills/theme/SKILL.md` used to show `▸ 5051 chars · Last updated 20/08/26` and then
+the prose: the half of the file you came to edit was behind a chevron, and the pill summarised the
+*body*, so nothing on screen even said there was frontmatter to find. Those files now open revealed.
+Nothing else moves — same widget, same nested plain-YAML editor, same chevron, and the chevron still
+collapses a revealed file.
 
 **What it is: one in-editor widget with two states** (`editor/frontmatter.ts`). The region is
 *always* replaced by an atomic block decoration — collapsed, it is a **pill** carrying a summary and
@@ -205,6 +256,7 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 
 - **Images render inline in the editor**, as a live-preview decoration like every other rendered element.
 - **A standalone image viewer** opens an image as its own tab; other binaries get a typed placeholder naming what they are, because a file the tree shows and the editor cannot open is a dead end.
+- **The viewer paints the image on a checkerboard plate**, not on the app background. An alpha channel is otherwise invisible: a black-ink logo on transparency, painted onto a near-black dark-first surface, is a pane showing a filename with nothing above it — and every visible symptom of that says "the image did not open". The plate is light in **both** themes on purpose (it is paper, not chrome; a dark plate would hide exactly the dark ink it exists to reveal), and it is applied to the `<img>` itself, so it covers precisely the image's own footprint and an opaque photo hides it completely.
 - **Non-markdown files stay out of the link graph.** They are not in `docs`, so the link-aware operations — rename, backrefs, move — remain markdown-only. An image is an asset referenced by path, not a wiki-linkable note.
 - **Assets are committed straight to git.** Vault-size management via blob storage or reference files (Git LFS, or a reference that renders a blob from object storage) is the deferred answer to "where binaries live at scale", revisited when vault bloat is a **measured** problem rather than an anticipated one. There is no object storage, so it is a decision as much as a build.
 

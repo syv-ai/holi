@@ -109,7 +109,7 @@ This closes the gap slice 2 left open. `unregisteredAppIdsAtom` was computed and
 
 **Delete removes the app's files and closes its tab** — it does not leave the tombstone. `AppFrame`'s tombstone is for an app that vanished *from under* you, a teammate's pull; answering "it was deleted" to the person who just chose to delete it is noise. The now-empty directory is left behind, matching what deleting a folder in the tree does, and an empty directory is an app by no definition — it has no entry document, so it appears in neither list.
 
-**Not built: Open in a new pane.** `Workspace` is `panes[] → tabs[]` and has been since the first commit, but `Shell` renders `panes[workspace.active]` and nothing else. A split-pane menu item is a pane system, not a menu item.
+**Open in a New Pane — built 2026-08-20.** This section carried it as *not built* on the grounds that "a split-pane menu item is a pane system, not a menu item", which was true and is now spent: `Shell` renders every pane ([`notes-editor.md`](notes-editor.md) §Split panes), so the item is one call to `openInNewPane`. It dedupes across panes like every other opener — an app already open elsewhere is focused there, never run twice, which is the same rule `openApp` has always applied within a pane.
 
 ## The `holi.*` bridge
 
