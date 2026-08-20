@@ -110,7 +110,7 @@ export function HistoryPanel() {
         <Button
           variant="ghost"
           onClick={() => openCommit(v.sha)}
-          className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
+          className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-brand"
         >
           {v.sha.slice(0, 7)}
         </Button>

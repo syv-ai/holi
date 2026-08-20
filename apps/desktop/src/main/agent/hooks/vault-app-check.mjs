@@ -179,7 +179,7 @@ function boundaries(source, ext) {
     found.push([
       NOTE,
       `hard-coded colour ${colour[0]} — use the theme tokens (var(--foreground), ` +
-        `var(--background), var(--primary), …) so the app follows whatever ` +
+        `var(--background), var(--brand) for text, var(--primary) for fills, …) so the app follows whatever ` +
         `palette this vault has chosen.`,
     ])
   }

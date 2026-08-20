@@ -50,7 +50,7 @@ export function FilterBar(): React.JSX.Element {
               data-filter-tag={tag}
               className={cn(
                 'text-[10px]',
-                on && 'border-primary bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary',
+                on && 'border-primary bg-primary/10 text-brand hover:bg-primary/15 hover:text-brand',
               )}
             >
               {tag}

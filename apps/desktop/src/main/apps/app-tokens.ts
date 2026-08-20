@@ -28,6 +28,10 @@ export const APP_BASE_TOKENS: ThemeBlock = {
   'popover-foreground': 'oklch(97% 0 0)',
   primary: 'oklch(50% 0.134 242.749)',
   'primary-foreground': 'oklch(98.5% 0 0)',
+  // sky-400, not sky-700: an app's links and figures are text on the dark
+  // surface above, and `primary` is a fill colour. This is the one an app
+  // should reach for when it wants the brand in a colour you can read.
+  brand: 'oklch(74.6% 0.16 232.661)',
   secondary: 'oklch(26.9% 0 0)',
   'secondary-foreground': 'oklch(97% 0 0)',
   muted: 'oklch(26.9% 0 0)',

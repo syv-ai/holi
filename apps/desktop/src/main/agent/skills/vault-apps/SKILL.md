@@ -165,8 +165,14 @@ tokens and the app looks like the rest of Holi, in whatever palette this vault h
 chosen:
 
 `--background` `--foreground` `--card` `--card-foreground` `--muted`
-`--muted-foreground` `--primary` `--primary-foreground` `--secondary` `--accent`
-`--destructive` `--border` `--input` `--ring` `--radius`
+`--muted-foreground` `--primary` `--primary-foreground` `--brand` `--secondary`
+`--accent` `--destructive` `--border` `--input` `--ring` `--radius`
+
+**`--primary` is a fill, `--brand` is text.** `--primary` is the colour you put
+*behind* something, paired with `--primary-foreground` on top of it; on a dark
+theme it is dark enough to carry near-white text, which makes it far too dark to
+*be* text on a dark background. When you want the brand colour on a number, a
+link or a label, reach for `--brand`.
 
 ```css
 body { background: var(--background); color: var(--foreground);
@@ -177,6 +183,11 @@ body { background: var(--background); color: var(--foreground);
 
 Never hard-code a colour: a literal `#1e1e1e` is the one thing that will look
 wrong in a vault themed differently from yours.
+
+A filled button is `background: var(--primary); color: var(--primary-foreground)`.
+A text button is `color: var(--brand)` with no background. Mixing the two —
+`color: var(--primary)` on the page background — is the one combination that
+reliably comes out unreadable.
 
 ## A whole app
 
@@ -190,9 +201,9 @@ wrong in a vault themed differently from yours.
     <style>
       body { background: var(--background); color: var(--foreground);
              font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; }
-      .n { color: var(--primary); font-size: 2.5rem; font-weight: 600; }
+      .n { color: var(--brand); font-size: 2.5rem; font-weight: 600; }
       .err { color: var(--destructive); white-space: pre-wrap; }
-      button { all: unset; cursor: pointer; color: var(--primary); }
+      button { all: unset; cursor: pointer; color: var(--brand); }
     </style>
   </head>
   <body>

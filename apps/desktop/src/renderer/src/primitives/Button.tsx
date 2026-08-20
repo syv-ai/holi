@@ -32,7 +32,7 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost:
           "hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50",
-        link: "text-primary underline-offset-4 hover:underline",
+        link: "text-brand underline-offset-4 hover:underline",
         // The ceremony pill (onboarding ritual CTAs): rounded-full, its own
         // height/padding, inverse text on --primary. A first-class variant so
         // the look lives in the primitive, not scattered across the feature.

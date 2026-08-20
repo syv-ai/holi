@@ -103,7 +103,7 @@ export function SignIn() {
                 aria-label="Copy code"
                 onClick={() => void copyCode(phase.userCode)}
               >
-                {copied ? <Check className="text-primary" /> : <Copy />}
+                {copied ? <Check className="text-brand" /> : <Copy />}
               </Button>
             </Tooltip>
           </div>

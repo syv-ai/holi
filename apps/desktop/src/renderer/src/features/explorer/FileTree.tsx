@@ -449,7 +449,7 @@ export function FileTree({
                       item.isSelected()
                         ? 'bg-accent text-accent-foreground'
                         : 'text-muted-foreground hover:bg-accent/60',
-                      isOpen ? 'text-primary' : '',
+                      isOpen ? 'text-brand' : '',
                       item.isDragTarget() ? 'bg-primary/20 ring-1 ring-inset ring-primary/60' : '',
                       isCut ? 'opacity-40' : '',
                     ].join(' ')}
@@ -458,7 +458,7 @@ export function FileTree({
                       {isFolder ? <ChevronIcon open={item.isExpanded()} /> : null}
                     </span>
                     <span
-                      className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-primary' : 'text-muted-foreground'}`}
+                      className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'}`}
                     >
                       {isFolder ? (
                         <FolderIcon />

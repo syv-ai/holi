@@ -20,14 +20,8 @@
  * glyph — which read as a fourth chip row stuck under the tree. They are the
  * same kind of thing as a file: something the vault holds, that you click to
  * open. So they take the tree row's metrics verbatim (22px, `text-sm`,
- * `font-normal`, a 14px glyph in the same `w-4` column, `text-primary` when
+ * `font-normal`, a 14px glyph in the same `w-4` column, `text-brand` when
  * open), and the icons line up with the tree's root-level file icons.
- *
- * The open row takes the tree's **selected** treatment (`bg-accent`), not its
- * open-file one (`text-primary`). In dark mode `--primary` is sky-700 on a
- * neutral-950 background — a good fill colour and a poor text colour, dark blue
- * on black at roughly 3:1. A filled row says "this is the one" at least as
- * clearly and stays legible.
  *
  * The menu deliberately does NOT mirror the file tree's. Most of that menu —
  * New File, Cut, Copy, Paste, Duplicate — is about paths, and an app is not a
@@ -202,7 +196,7 @@ export function AppsSection(): React.JSX.Element | null {
                 // 12px glyph would otherwise make this a chip under the tree.
                 "h-[22px] w-full justify-start gap-1 rounded px-2 text-sm font-normal [&_svg:not([class*='size-'])]:size-3.5",
                 appId === openAppId
-                  ? 'bg-accent text-accent-foreground'
+                  ? 'text-brand'
                   : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 registered ? '' : 'italic opacity-60',
               ].join(' ')}

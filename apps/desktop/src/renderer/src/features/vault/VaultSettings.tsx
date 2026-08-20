@@ -88,7 +88,7 @@ function ExternalLink({
         variant="link"
         onClick={onOpen}
         className={cn(
-          'h-auto max-w-full justify-start truncate p-0 font-normal text-muted-foreground hover:text-primary',
+          'h-auto max-w-full justify-start truncate p-0 font-normal text-muted-foreground hover:text-brand',
           block && 'block',
         )}
       >

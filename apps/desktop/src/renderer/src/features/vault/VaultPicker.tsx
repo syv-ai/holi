@@ -61,7 +61,7 @@ export function VaultPicker({
               if (v.remote !== activeRemote) onSelect(v.remote)
             }}
           >
-            <span className="flex w-3 shrink-0 justify-center text-primary">
+            <span className="flex w-3 shrink-0 justify-center text-brand">
               {v.remote === activeRemote && <Check size={14} strokeWidth={3} />}
             </span>
             <Tooltip content={v.remote} side="right">

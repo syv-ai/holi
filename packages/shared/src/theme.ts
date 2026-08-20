@@ -56,6 +56,10 @@ export const THEME_COLOR_TOKENS = [
   'popover-foreground',
   'primary',
   'primary-foreground',
+  // The brand as TEXT. Separate from `primary`, which is the brand as a FILL:
+  // a fill dark enough to carry near-white text is too dark to be text itself
+  // on a dark background. A vault recolouring the brand should set both.
+  'brand',
   'secondary',
   'secondary-foreground',
   'muted',

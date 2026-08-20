@@ -100,7 +100,7 @@ export function VaultHistory({ onClose }: { onClose: () => void }) {
                   <Button
                     variant="ghost"
                     onClick={() => openCommit(c.sha)}
-                    className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-primary"
+                    className="h-auto shrink-0 px-1.5 py-1 font-mono text-[10px] font-normal text-muted-foreground hover:bg-transparent hover:text-brand"
                   >
                     {c.sha.slice(0, 7)}
                   </Button>

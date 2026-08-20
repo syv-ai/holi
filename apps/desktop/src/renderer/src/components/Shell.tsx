@@ -71,7 +71,7 @@ import {
 // quiet/busy map to semantic tokens; warn stays a named amber utility — there is
 // no warning token yet, and named palette utilities are gate-legal (only arbitrary
 // colour literals are banned).
-const TONE = { quiet: 'text-muted-foreground', busy: 'text-primary', warn: 'text-amber-400' } as const
+const TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' } as const
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
  *  apps use their id instead — both are keyed by something the tab carries
