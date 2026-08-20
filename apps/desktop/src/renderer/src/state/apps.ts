@@ -21,6 +21,7 @@
  * refresh.
  */
 import { atom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import { APPS_DIR, APP_MANIFEST_FILE, appIdFromPath } from '@holi/shared'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
@@ -113,6 +114,30 @@ export const appFilesAtom = atom((get) => {
   }
   return byId
 })
+
+/**
+ * Is there an apps section at all?
+ *
+ * Shell asks before it builds the sidebar's panel group, because a collapsible
+ * panel cannot be conditional on its own contents: an empty panel still takes a
+ * slice of the column and still draws a handle above it. The section is hidden
+ * when the vault has no apps — the rule the agenda and mail chips follow — so
+ * the panel and its handle have to be absent too, not merely empty.
+ */
+export const hasAppsAtom = atom(
+  (get) => get(appIdsAtom).length > 0 || get(unregisteredAppIdsAtom).length > 0,
+)
+
+/**
+ * Is the apps panel expanded? Persisted, and global rather than per vault: it is
+ * a statement about how you like the sidebar, not about this vault's contents.
+ *
+ * The panel's collapsed state is driven FROM this atom, never the reverse — the
+ * same arrangement `AgentPanel` uses, and for the same reason: a panel-level
+ * callback cannot tell a real drag from the reflow that mounting a sibling
+ * causes, so only the group-level `isUserInteraction` drag writes back here.
+ */
+export const appsSectionOpenAtom = atomWithStorage<boolean>('holi:appsSectionOpen', true)
 
 /** A refusal is a value, not a throw: the caller is an inline rename field with
  *  somewhere to put the reason. */

@@ -10,7 +10,13 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@/test/render'
 import { AppsSection } from '../AppsSection'
-import { appDirIdsAtom, appIdsAtom, unregisteredAppIdsAtom } from '../../../state/apps'
+import {
+  appDirIdsAtom,
+  appIdsAtom,
+  appsSectionOpenAtom,
+  hasAppsAtom,
+  unregisteredAppIdsAtom,
+} from '../../../state/apps'
 import { snapshotAtom } from '../../../state/vaults'
 import { emptyWorkspace, workspaceAtom } from '../../../state/panes'
 
@@ -34,6 +40,7 @@ function withFiles(...relPaths: string[]) {
 
 beforeEach(() => {
   store.set(workspaceAtom, emptyWorkspace())
+  store.set(appsSectionOpenAtom, true)
 })
 
 test('renders nothing at all when the vault has no apps', () => {
@@ -116,9 +123,14 @@ test('the unregistered list is sorted and excludes the registered', () => {
   expect(store.get(unregisteredAppIdsAtom)).toEqual(['alpha', 'zeta'])
 })
 
-/** The row labels, in render order — finished first, then unfinished. */
+/** The row labels, in render order — finished first, then unfinished. The
+ *  section heading is a button too (it toggles the panel), so it is excluded by
+ *  the `aria-expanded` it carries and the rows do not. */
 function rowNames(): string[] {
-  return screen.getAllByRole('button').map((b) => b.textContent ?? '')
+  return screen
+    .getAllByRole('button')
+    .filter((b) => !b.hasAttribute('aria-expanded'))
+    .map((b) => b.textContent ?? '')
 }
 
 test('a directory with neither file still counts as a taken id', () => {
@@ -220,3 +232,36 @@ async function openMenuOn(appId: string): Promise<void> {
   })
   await screen.findByRole('menu')
 }
+
+test('hasApps is what Shell asks before it builds the panel at all', () => {
+  // A collapsible panel cannot be conditional on its own contents: an empty one
+  // still claims a slice of the column and still draws a handle above it.
+  withApps()
+  expect(store.get(hasAppsAtom)).toBe(false)
+
+  withFiles('half-done/index.html')
+  expect(store.get(hasAppsAtom)).toBe(true)
+})
+
+test('the heading toggles the section, and says which way it is', async () => {
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  const heading = screen.getByRole('button', { name: 'apps' })
+  expect(heading.getAttribute('aria-expanded')).toBe('true')
+
+  await userEvent.click(heading)
+
+  expect(store.get(appsSectionOpenAtom)).toBe(false)
+  expect(screen.getByRole('button', { name: 'apps' }).getAttribute('aria-expanded')).toBe('false')
+})
+
+test('a collapsed section still renders its heading — that is what reopens it', () => {
+  // The panel collapses to the header row rather than to zero, so the control
+  // that expands it again does not vanish with the thing it controls.
+  store.set(appsSectionOpenAtom, false)
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  expect(screen.getByRole('button', { name: 'apps' })).toBeTruthy()
+})

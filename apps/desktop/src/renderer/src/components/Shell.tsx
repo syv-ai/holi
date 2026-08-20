@@ -16,7 +16,14 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { CalendarDays, History, LayoutGrid, Mail, Settings, SquareKanban } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
-import { Button, ResizableHandle, ResizablePanel, ResizablePanelGroup, Tooltip } from '@/primitives'
+import {
+  Button,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+  Tooltip,
+  type PanelImperativeHandle,
+} from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
@@ -58,6 +65,7 @@ import { openTaskCountAtom, todayLinkCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import { agentPanelOpenAtom } from '@/state/agent'
 import { usePanelLayout } from '../state/preferences'
+import { appsSectionOpenAtom, hasAppsAtom } from '../state/apps'
 import { useVaultTheme } from '../state/theme'
 import {
   activeRemoteAtom,
@@ -71,6 +79,10 @@ import {
 // quiet/busy map to semantic tokens; warn stays a named amber utility — there is
 // no warning token yet, and named palette utilities are gate-legal (only arbitrary
 // colour literals are banned).
+/** The apps section's header row, in px — what the panel collapses TO, so the
+ *  control that reopens the section does not vanish along with it. */
+const APPS_HEADER_HEIGHT = 22
+
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' } as const
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
@@ -120,6 +132,28 @@ export function Shell() {
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
+  // The sidebar's own vertical split: the tree above, the apps section below.
+  const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
+  const hasApps = useAtomValue(hasAppsAtom)
+  const [appsOpen, setAppsOpen] = useAtom(appsSectionOpenAtom)
+  /** Imperative handle on the apps panel, so `appsOpen` drives collapse/expand
+   *  rather than the panel owning a second copy of that state. */
+  const appsPanelRef = useRef<PanelImperativeHandle | null>(null)
+
+  // Drive the panel from `appsOpen`, one frame late. The wait is not politeness:
+  // the ref is attached before effects run, but the GROUP has not registered the
+  // panel's constraints yet, and `isCollapsed()` throws `Panel constraints not
+  // found` if you ask before it has — taking the whole Shell down with it. This
+  // is the same `requestAnimationFrame` AgentPanel uses, for the same reason.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const panel = appsPanelRef.current
+      if (!panel) return
+      if (appsOpen && panel.isCollapsed()) panel.expand()
+      else if (!appsOpen && !panel.isCollapsed()) panel.collapse()
+    })
+    return () => cancelAnimationFrame(id)
+  }, [appsOpen, hasApps])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
   const [showSettings, setShowSettings] = useState(false)
@@ -253,16 +287,59 @@ export function Shell() {
             <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />
           )}
 
-          <FileTree
-            activePath={tab?.kind === 'note' ? tab.path : null}
-            onOpenPreview={open}
-            onOpenPinned={openPin}
-          />
-
-          {/* Below the tree and above the chips: an app is opened from a list of
-              things the vault holds, like a file, not from the nav rail. Renders
-              nothing at all until the vault has one. */}
-          <AppsSection />
+          {/* The tree and the apps list are two sections of one column with a
+              draggable boundary between them — the sidebar's own vertical
+              group, nested inside the workspace's horizontal one. The apps
+              panel is absent rather than empty when the vault has no apps: a
+              zero-content panel would still claim a slice and still draw a
+              handle above it. */}
+          <ResizablePanelGroup
+            orientation="vertical"
+            className="min-h-0 flex-1"
+            defaultLayout={sidebarLayout.defaultLayout}
+            onLayoutChanged={(layout, meta) => {
+              sidebarLayout.onLayoutChanged(layout, meta)
+              // Reconcile a real drag back into `appsOpen` — dragging the handle
+              // to the floor is the other way to collapse the section. Only
+              // `isUserInteraction`: mounting the panel, or the tree reflowing,
+              // reports every size with the flag false, and acting on that would
+              // collapse the section behind the user's back.
+              //
+              // Ask the PANEL whether it is collapsed rather than measuring
+              // `layout.apps`: a layout value is a flexGrow weight, not a pixel
+              // height, so comparing it against the collapsed height was a
+              // category error that read every expanded panel as collapsed.
+              if (!meta.isUserInteraction) return
+              setAppsOpen(appsPanelRef.current?.isCollapsed() === false)
+            }}
+          >
+            <ResizablePanel id="tree" minSize={80}>
+              <FileTree
+                activePath={tab?.kind === 'note' ? tab.path : null}
+                onOpenPreview={open}
+                onOpenPinned={openPin}
+              />
+            </ResizablePanel>
+            {hasApps && (
+              <>
+                <ResizableHandle />
+                <ResizablePanel
+                  id="apps"
+                  collapsible
+                  // Collapsed leaves exactly the header row, which is the
+                  // control that expands it again. Collapsing to 0 would take
+                  // the section's own affordance away with it.
+                  collapsedSize={APPS_HEADER_HEIGHT}
+                  defaultSize={160}
+                  minSize={66}
+                  maxSize="60"
+                  panelRef={appsPanelRef}
+                >
+                  <AppsSection />
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
 
           {/* Two rows, not one. Five chips across a sidebar this narrow made it
               scroll horizontally — and `flex-1` alone could not fix that, since

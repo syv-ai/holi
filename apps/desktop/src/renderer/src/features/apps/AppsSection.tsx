@@ -32,7 +32,7 @@
  * it, find it on disk.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { LayoutGrid } from 'lucide-react'
+import { ChevronRight, LayoutGrid } from 'lucide-react'
 import { useState } from 'react'
 import {
   Button,
@@ -48,6 +48,7 @@ import { DeleteConfirm } from '@/composites'
 import { APPS_DIR, isValidAppId } from '@holi/shared'
 import {
   appDirIdsAtom,
+  appsSectionOpenAtom,
   appFilesAtom,
   appIdsAtom,
   deleteAppAtom,
@@ -98,6 +99,7 @@ export function AppsSection(): React.JSX.Element | null {
     appId: string
     refs: { path: string; count: number }[]
   } | null>(null)
+  const [open, setOpen] = useAtom(appsSectionOpenAtom)
 
   if (appIds.length === 0 && unregistered.length === 0) return null
 
@@ -215,20 +217,39 @@ export function AppsSection(): React.JSX.Element | null {
   }
 
   return (
-    // No horizontal padding on the list: each row carries its own `px-2`, the
-    // way a tree row does, so a hover highlight spans the sidebar rather than
-    // floating inside an inset box — and the rows sit at the tree's indent
-    // instead of 8px further in.
-    <div className="flex shrink-0 flex-col pt-2">
-      {/* The sidebar has ONE type size — `text-sm`, what every tree row and chip
-          uses — so the heading takes it too. It started at 10px uppercase, which
-          is the settings panel's system, and sitting a few pixels under 14px
-          rows that read as a mistake rather than as a hierarchy. `font-medium`
-          and the muted tint are what mark it as a heading; shrinking it is not.
+    // Fills its panel: a header that never scrolls, and a list that does. The
+    // header is also what stays visible when the panel is collapsed to it, so
+    // `shrink-0` here is load-bearing rather than tidiness.
+    <div className="flex h-full flex-col overflow-hidden">
+      {/* The whole header is the toggle, not a chevron you have to hit — the
+          same target VS Code gives a sidebar section. The sidebar has ONE type
+          size, `text-sm`, so the heading takes it: it started at 10px uppercase,
+          which is the settings panel's system, and a heading a few pixels under
+          the rows it labels reads as a mistake rather than as a hierarchy.
+          `font-medium` and the muted tint are what mark it as a heading.
           Lowercase, like the chips: nothing else in this sidebar shouts. */}
-      <p className="px-2 pb-0.5 text-sm font-medium text-muted-foreground">apps</p>
-      {appIds.map((appId) => row(appId, true))}
-      {unregistered.map((appId) => row(appId, false))}
+      <Button
+        variant="ghost"
+        size="xs"
+        aria-expanded={open}
+        className="h-[22px] w-full shrink-0 justify-start gap-1 rounded-none px-2 text-sm font-medium text-muted-foreground hover:bg-accent/60"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronRight
+          className="size-3.5 transition-transform"
+          style={{ transform: open ? 'rotate(90deg)' : 'none' }}
+          aria-hidden="true"
+        />
+        apps
+      </Button>
+      {/* No horizontal padding on the list: each row carries its own `px-2`, the
+          way a tree row does, so a hover highlight spans the sidebar rather than
+          floating inside an inset box — and the rows sit at the tree's indent
+          instead of 8px further in. */}
+      <div className="holi-scroll min-h-0 flex-1 overflow-y-auto pb-1">
+        {appIds.map((appId) => row(appId, true))}
+        {unregistered.map((appId) => row(appId, false))}
+      </div>
 
       {confirming && (
         <DeleteConfirm
