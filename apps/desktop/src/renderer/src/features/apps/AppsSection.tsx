@@ -56,7 +56,7 @@ import {
   renameAppAtom,
   unregisteredAppIdsAtom,
 } from '../../state/apps'
-import { activeTab, openApp, openPinned, workspaceAtom } from '../../state/panes'
+import { activeTab, openApp, openInNewPane, openPinned, workspaceAtom } from '../../state/panes'
 import { activeRemoteAtom, backrefsForMany, vaultsAtom } from '../../state/vaults'
 
 const ID_RULE = 'lowercase letters, digits and dashes only'
@@ -133,9 +133,18 @@ export function AppsSection(): React.JSX.Element | null {
       onCloseAutoFocus={(e) => e.preventDefault()}
     >
       {registered ? (
-        <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, appId))}>
-          Open
-        </ContextMenuItem>
+        <>
+          <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, appId))}>
+            Open
+          </ContextMenuItem>
+          {/* Recorded in vault-apps.md as "not built: a pane system, not a menu
+              item". The pane system exists now, so it is a menu item. */}
+          <ContextMenuItem
+            onSelect={() => setWorkspace((w) => openInNewPane(w, { kind: 'app', appId }))}
+          >
+            Open in a New Pane
+          </ContextMenuItem>
+        </>
       ) : (
         // The one action that changes what this row *is*. It writes the manifest
         // and nothing else, so a half-written app becomes a finished one without

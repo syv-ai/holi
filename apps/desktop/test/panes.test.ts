@@ -8,11 +8,15 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  activePane,
   activeTab,
+  closePane,
   closeTab,
   closeTabsForPaths,
   emptyWorkspace,
   openApp,
+  openBoard,
+  openInNewPane,
   openPinned,
   openPreview,
   openSingleton,
@@ -22,6 +26,8 @@ import {
   retargetAppTab,
   retargetTab,
   retargetTabs,
+  splitPane,
+  focusPane,
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
@@ -259,5 +265,153 @@ describe('retargetAppTab', () => {
     w = openApp(w, 'burndown')
 
     expect(retargetAppTab(w, 'retro', 'standup')).toEqual(w)
+  })
+})
+
+/* ── Panes ──────────────────────────────────────────────────────────────── */
+
+/** A workspace of two panes: `a.md`+`b.md` on the left, `c.md` on the right. */
+function split(): Workspace {
+  return {
+    panes: [
+      { tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md' }], active: 1 },
+      { tabs: [{ kind: 'note', path: 'c.md' }], active: 0 },
+    ],
+    active: 0,
+  }
+}
+
+const layout = (w: Workspace) =>
+  w.panes.map((p) => p.tabs.map((t) => (t.kind === 'note' ? t.path : t.kind)))
+
+describe('splitPane', () => {
+  it('adds an empty pane beside the active one and focuses it', () => {
+    const w = splitPane(openPreview(emptyWorkspace(), 'a.md'))
+
+    expect(layout(w)).toEqual([['a.md'], []])
+    expect(w.active).toBe(1)
+    expect(activeTab(w)).toBeNull()
+  })
+
+  it('does NOT duplicate the active tab', () => {
+    // The one-buffer rule: two views of one path are two EditorPanes each
+    // autosaving over it. VS Code can copy; this cannot.
+    const w = splitPane(openPreview(emptyWorkspace(), 'a.md'))
+
+    expect(layout(w).flat().filter((p) => p === 'a.md')).toHaveLength(1)
+  })
+
+  it('inserts beside the active pane, not at the end', () => {
+    const w = splitPane(split())
+
+    expect(w.panes).toHaveLength(3)
+    expect(layout(w)).toEqual([['a.md', 'b.md'], [], ['c.md']])
+    expect(w.active).toBe(1)
+  })
+})
+
+describe('openInNewPane', () => {
+  it('opens the tab in a fresh pane beside the active one', () => {
+    const w = openInNewPane(openPreview(emptyWorkspace(), 'a.md'), { kind: 'note', path: 'b.md' })
+
+    expect(layout(w)).toEqual([['a.md'], ['b.md']])
+    expect(w.active).toBe(1)
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'b.md' })
+  })
+
+  it('focuses the existing tab rather than opening a second copy', () => {
+    // Safe to hit twice, and safe to hit on something already open elsewhere.
+    const w = openInNewPane(split(), { kind: 'note', path: 'c.md' })
+
+    expect(layout(w)).toEqual([['a.md', 'b.md'], ['c.md']])
+    expect(w.active).toBe(1)
+  })
+})
+
+describe('one buffer per file, across panes', () => {
+  it('openPreview focuses a note already open in another pane', () => {
+    const w = openPreview(split(), 'c.md')
+
+    expect(layout(w)).toEqual([['a.md', 'b.md'], ['c.md']])
+    expect(w.active).toBe(1)
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'c.md' })
+  })
+
+  it('openPinned pins it where it already is', () => {
+    const w = openPinned(
+      { panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'note', path: 'c.md', preview: true }], active: 0 }], active: 0 },
+      'c.md',
+    )
+
+    expect(w.active).toBe(1)
+    expect(w.panes[1]!.tabs[0]).toEqual({ kind: 'note', path: 'c.md' })
+  })
+
+  it('openApp focuses an app already open in another pane', () => {
+    const w = openApp(
+      { panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'app', appId: 'dash' }], active: 0 }], active: 0 },
+      'dash',
+    )
+
+    expect(w.panes.flatMap((p) => p.tabs)).toHaveLength(1)
+    expect(w.active).toBe(1)
+  })
+
+  it('a singleton surface is one for the whole workspace', () => {
+    const w = openBoard({ panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'board' }], active: 0 }], active: 0 })
+
+    expect(w.panes.flatMap((p) => p.tabs)).toEqual([{ kind: 'board' }])
+    expect(w.active).toBe(1)
+  })
+})
+
+describe('closePane', () => {
+  it('removes the pane and lands on its neighbour', () => {
+    const w = closePane(split(), 1)
+
+    expect(layout(w)).toEqual([['a.md', 'b.md']])
+    expect(w.active).toBe(0)
+  })
+
+  it('keeps focus on the same pane when an earlier one goes', () => {
+    const w = closePane({ ...split(), active: 1 }, 0)
+
+    expect(layout(w)).toEqual([['c.md']])
+    expect(w.active).toBe(0)
+  })
+
+  it('never removes the last pane — an empty pane is a state, no panes is not', () => {
+    const one = emptyWorkspace()
+
+    expect(closePane(one, 0)).toEqual(one)
+  })
+})
+
+describe('closing the last tab of a split', () => {
+  it('takes the pane with it — that is how you unsplit', () => {
+    const w = closeTab({ ...split(), active: 1 }, 0)
+
+    expect(layout(w)).toEqual([['a.md', 'b.md']])
+    expect(w.active).toBe(0)
+  })
+
+  it('but the only pane stays, empty', () => {
+    const w = closeTab(openPreview(emptyWorkspace(), 'a.md'), 0)
+
+    expect(w.panes).toHaveLength(1)
+    expect(activePane(w)).toEqual({ tabs: [], active: -1 })
+  })
+})
+
+describe('focusPane', () => {
+  it('moves the focus', () => {
+    expect(focusPane(split(), 1).active).toBe(1)
+  })
+
+  it('ignores an index that is not a pane', () => {
+    const w = split()
+
+    expect(focusPane(w, 5)).toBe(w)
+    expect(focusPane(w, -1)).toBe(w)
   })
 })

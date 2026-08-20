@@ -86,10 +86,13 @@ export function FileTree({
   activePath,
   onOpenPreview,
   onOpenPinned,
+  onOpenInNewPane,
 }: {
   activePath: string | null
   onOpenPreview: (path: string) => void
   onOpenPinned: (path: string) => void
+  /** Open the file beside the current pane rather than in it. */
+  onOpenInNewPane: (path: string) => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
@@ -303,6 +306,19 @@ export function FileTree({
         // instead of Radix pulling it back to the row when the menu closes.
         onCloseAutoFocus={(e) => e.preventDefault()}
       >
+        {!multi && !isFolder && (
+          <>
+            {/* A pane is per-document, so this is a file's action and not a
+                folder's. It opens beside what you are reading rather than over
+                it — and if the file is already open in some other pane, it just
+                goes there (`openInNewPane`), because one buffer per file holds
+                across panes. */}
+            <ContextMenuItem onSelect={() => onOpenInNewPane(path)}>
+              Open in a New Pane
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        )}
         {!multi && (
           <>
             <ContextMenuItem onSelect={() => setPending({ kind: 'file', parent: folderDest })}>

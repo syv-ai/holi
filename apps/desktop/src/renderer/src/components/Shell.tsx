@@ -13,8 +13,8 @@
  * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, Settings } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { History, PanelRight, Settings } from 'lucide-react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
   Button,
@@ -32,7 +32,7 @@ import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
 import { GoogleConnection } from '@/features/google/GoogleConnection'
 import { DialogHost } from './DialogHost'
-import { TabStrip } from './TabStrip'
+import { PaneView } from './PaneView'
 import { EditorPane } from '@/composites'
 import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
@@ -47,13 +47,17 @@ import { trpc } from '../lib/trpc'
 import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import {
   activeTab,
+  closePane,
   closeTab,
+  focusPane,
   openAgenda,
   openBoard,
   openMail,
   openPinned,
+  openInNewPane,
   openPreview,
   pinActive,
+  splitPane,
   pinTab,
   workspaceAtom,
 } from '../state/panes'
@@ -183,6 +187,22 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [openDaily])
 
+  // ⌘\ splits: a new empty pane beside this one, focused. Empty rather than a
+  // copy of the current tab — see `splitPane`; one buffer per file is not a
+  // preference, it is what the autosave/reload story rests on. The gesture that
+  // opens something INTO a new pane is "open in a new pane", on the tree row and
+  // the app row, which is the one people actually reach for.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '\\') {
+        e.preventDefault()
+        setWorkspace((w) => splitPane(w))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setWorkspace])
+
   // ⌘J (toggle the agent drawer) now lives on the drawer's own PanelHeader close
   // action — it owns its shortcut, and the panel stays mounted so it binds even
   // while collapsed. See features/agent/AgentPanel.tsx.
@@ -308,6 +328,9 @@ export function Shell() {
                 activePath={tab?.kind === 'note' ? tab.path : null}
                 onOpenPreview={open}
                 onOpenPinned={openPin}
+                onOpenInNewPane={(path) =>
+                  setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
+                }
               />
             </ResizablePanel>
             {hasApps && (
@@ -424,84 +447,89 @@ export function Shell() {
           <ResizableHandle />
 
           <ResizablePanel id="editor" minSize={360}>
-            <main className="flex h-full min-w-0 flex-col">
-          <TabStrip
-            tabs={pane.tabs}
-            active={pane.active}
-            onSelect={(i) =>
-              setWorkspace((w) => ({
-                ...w,
-                panes: w.panes.map((p, pi) => (pi === w.active ? { ...p, active: i } : p)),
-              }))
-            }
-            onPin={(i) => setWorkspace((w) => pinTab(w, i))}
-            onClose={(i) => setWorkspace((w) => closeTab(w, i))}
-            trailing={
-              /* Version history for the focused note — a header button toggling the
-                 right-hand drawer. `historyTargetPathAtom` is the one predicate the
-                 drawer also uses (a markdown note, not a task/image/pdf), so button
-                 and drawer never disagree. Mirrors how the agent panel opens. It is
-                 OUTSIDE the strip's clip, so a full strip cannot push it off. */
-              historyTarget !== null ? (
-                <Tooltip content="version history">
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="ml-1 shrink-0 text-muted-foreground"
-                    onClick={() => setHistoryOpen((v) => !v)}
-                  >
-                    <History size={16} />
-                  </Button>
-                </Tooltip>
-              ) : null
-            }
-          />
+            {/* The panes. One `ResizablePanelGroup` nested inside the editor
+                slot, so the split resizes against itself and the sidebars, the
+                history drawer and the agent panel are untouched by it.
 
-          {tab?.kind === 'app' ? (
-            <AppFrame appId={tab.appId} />
-          ) : tab?.kind === 'board' ? (
-            <BoardView />
-          ) : tab?.kind === 'agenda' ? (
-            <AgendaView />
-          ) : tab?.kind === 'mail' ? (
-            <MailView />
-          ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
-            <ImageViewer path={tab.path} />
-          ) : tab?.kind === 'note' &&
-            (fileKind(tab.path) === 'pdf' || fileKind(tab.path) === 'doc') ? (
-            // Rich formats we can't yet render open a typed placeholder — a real
-            // per-type viewer replaces it later (spec §Arbitrary files). Text
-            // files (json/yaml/…) fall through to the plain editor below.
-            <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
-          ) : tab?.kind === 'note' && isTaskFilePath(tab.path) ? (
-            // A task file renders as a task — a structured header over the body —
-            // instead of raw frontmatter (prd/tasks.md; the file is still the truth).
-            <TaskFileEditor
-              path={tab.path}
-              onOpenNote={open}
-              onEdit={() => setWorkspace((w) => pinActive(w))}
-              onConflict={(path) =>
-                setBanner(`${path} changed underneath your edit and could not be merged`)
-              }
-            />
-          ) : (
-            <EditorPane
-              path={tab?.kind === 'note' ? tab.path : null}
-              // A non-markdown text file (.json/.yaml/.env/…) edits in the plain
-              // stack — no wiki-links, no frontmatter, syntax highlighting by
-              // extension. Markdown notes keep the full editor.
-              plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
-              onOpenNote={open}
-              onEdit={() => setWorkspace((w) => pinActive(w))}
-              onConflict={(path) =>
-                // The ordinary reconcile affordance is the agent drawer
-                // (FR-18), which is plan 6. Until it exists, say so plainly
-                // rather than silently holding a buffer that cannot be merged.
-                setBanner(`${path} changed underneath your edit and could not be merged`)
-              }
-            />
-          )}
-            </main>
+                Its layout is deliberately NOT persisted (`usePanelLayout`): a
+                stored layout is an array of weights keyed to a panel count, and
+                the whole point of a pane is that it comes and goes. Restoring a
+                two-pane split into a three-pane group is worse than starting
+                even. */}
+            <ResizablePanelGroup orientation="horizontal" className="min-h-0">
+              {workspace.panes.map((p, i) => (
+                <Fragment key={i}>
+                  {i > 0 && <ResizableHandle />}
+                  <ResizablePanel id={`pane-${i}`} minSize={240}>
+                    <PaneView
+                      pane={p}
+                      focused={i === workspace.active}
+                      onFocus={() => setWorkspace((w) => focusPane(w, i))}
+                      // Every action focuses this pane first, and then acts on
+                      // "the active pane" — so the existing single-pane
+                      // operations keep working unchanged, and clicking a tab in
+                      // an unfocused pane moves you there, which is what
+                      // clicking a tab means.
+                      onSelect={(t) =>
+                        setWorkspace((w) => {
+                          const focusedW = focusPane(w, i)
+                          return {
+                            ...focusedW,
+                            panes: focusedW.panes.map((q, pi) =>
+                              pi === i ? { ...q, active: t } : q,
+                            ),
+                          }
+                        })
+                      }
+                      onPin={(t) => setWorkspace((w) => pinTab(focusPane(w, i), t))}
+                      onCloseTab={(t) => setWorkspace((w) => closeTab(focusPane(w, i), t))}
+                      onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
+                      onOpenNote={open}
+                      onConflict={(path) =>
+                        setBanner(`${path} changed underneath your edit and could not be merged`)
+                      }
+                      trailing={
+                        <>
+                          {/* Version history for the focused note — a header
+                              button toggling the right-hand drawer.
+                              `historyTargetPathAtom` reads the ACTIVE pane's tab
+                              and is the same predicate the drawer uses, so the
+                              button belongs to that pane and nowhere else. */}
+                          {i === workspace.active && historyTarget !== null && (
+                            <Tooltip content="version history">
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="ml-1 shrink-0 text-muted-foreground"
+                                onClick={() => setHistoryOpen((v) => !v)}
+                              >
+                                <History size={16} />
+                              </Button>
+                            </Tooltip>
+                          )}
+                          {/* Closing tabs one by one already unsplits (the last
+                              one takes the pane with it); this is the same thing
+                              in one gesture, for a pane holding ten of them. */}
+                          {workspace.panes.length > 1 && (
+                            <Tooltip content="close this pane">
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="ml-1 shrink-0 text-muted-foreground"
+                                aria-label="close this pane"
+                                onClick={() => setWorkspace((w) => closePane(w, i))}
+                              >
+                                <PanelRight size={16} />
+                              </Button>
+                            </Tooltip>
+                          )}
+                        </>
+                      }
+                    />
+                  </ResizablePanel>
+                </Fragment>
+              ))}
+            </ResizablePanelGroup>
           </ResizablePanel>
 
           {historyOpen && historyTarget !== null && (

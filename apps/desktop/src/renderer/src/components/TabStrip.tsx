@@ -82,11 +82,24 @@ export interface TabStripProps {
   /** Double-click promotes a preview tab (the VS Code rule). */
   onPin: (index: number) => void
   onClose: (index: number) => void
+  /** Whether this pane is the focused one. An unfocused pane's active tab keeps
+   *  its shape but loses its weight, so two strips side by side say which one
+   *  the next opened file will land in. Defaults to true — with a single pane
+   *  there is nothing to distinguish it from. */
+  focused?: boolean
   /** Controls pinned to the right-hand end, outside the clip (version history). */
   trailing?: ReactNode
 }
 
-export function TabStrip({ tabs, active, onSelect, onPin, onClose, trailing }: TabStripProps) {
+export function TabStrip({
+  tabs,
+  active,
+  onSelect,
+  onPin,
+  onClose,
+  focused = true,
+  trailing,
+}: TabStripProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   const [available, setAvailable] = useState(0)
@@ -176,7 +189,9 @@ export function TabStrip({ tabs, active, onSelect, onPin, onClose, trailing }: T
               }}
               className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                 i === active
-                  ? 'bg-secondary text-foreground'
+                  ? focused
+                    ? 'bg-secondary text-foreground'
+                    : 'bg-secondary/40 text-muted-foreground'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >

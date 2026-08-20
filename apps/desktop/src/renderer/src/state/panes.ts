@@ -11,6 +11,11 @@
  *
  * Preview-vs-pinned (VS Code's two-state model) is **plan 7**. Adding a
  * `pinned` flag later is additive; guessing its promotion rules now is not.
+ *
+ * **The second pane is real now.** The shape was paid for early precisely so
+ * that this would be an addition rather than a rewrite, and it was: `splitPane`,
+ * `closePane`, `focusPane` and `openInNewPane` below, plus one strengthening of
+ * a rule that was already there — see `findTab`.
  */
 
 import { atom } from 'jotai'
@@ -80,6 +85,36 @@ function sameTab(a: Tab, b: Tab): boolean {
 }
 
 /**
+ * Where a tab already is, across **every** pane — or null.
+ *
+ * One buffer per file was a per-pane rule while there was one pane, and a second
+ * pane turns it into a hole: the same note open in two panes is two `EditorPane`
+ * instances over one path, each holding its own `base` and each autosaving on
+ * its own debounce, with the other one's write arriving as an "external" change
+ * to reconcile. That is the data-loss-shaped bug the rule exists to prevent, and
+ * it does not care which pane the second buffer is in.
+ *
+ * So the rule is now global, and it is the reason a split cannot simply
+ * duplicate the tab it was invoked on.
+ */
+function findTab(workspace: Workspace, tab: Tab): { pane: number; tab: number } | null {
+  for (let p = 0; p < workspace.panes.length; p++) {
+    const i = workspace.panes[p]!.tabs.findIndex((t) => sameTab(t, tab))
+    if (i !== -1) return { pane: p, tab: i }
+  }
+  return null
+}
+
+/** Focus a pane, and a tab within it. The workhorse behind "it is already open
+ *  over there" — every opener routes through this rather than adding a copy. */
+function focusExisting(workspace: Workspace, at: { pane: number; tab: number }): Workspace {
+  return {
+    panes: workspace.panes.map((pane, i) => (i === at.pane ? { ...pane, active: at.tab } : pane)),
+    active: at.pane,
+  }
+}
+
+/**
  * Open a tab in the active pane, or focus it if it is already there.
  *
  * Focusing rather than appending is not tidiness: two tabs over one file means
@@ -87,11 +122,9 @@ function sameTab(a: Tab, b: Tab): boolean {
  * saves. The editor's whole reload story assumes one buffer per file.
  */
 export function openTab(workspace: Workspace, tab: Tab): Workspace {
-  return updatePane(workspace, (pane) => {
-    const existing = pane.tabs.findIndex((t) => sameTab(t, tab))
-    if (existing !== -1) return { ...pane, active: existing }
-    return { tabs: [...pane.tabs, tab], active: pane.tabs.length }
-  })
+  const existing = findTab(workspace, tab)
+  if (existing !== null) return focusExisting(workspace, existing)
+  return updatePane(workspace, (pane) => ({ tabs: [...pane.tabs, tab], active: pane.tabs.length }))
 }
 
 /**
@@ -103,11 +136,9 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
  * otherwise insert it at the front and the notes slide right.
  */
 export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspace {
-  return updatePane(workspace, (pane) => {
-    const existing = pane.tabs.findIndex((t) => t.kind === kind)
-    if (existing !== -1) return { ...pane, active: existing }
-    return { tabs: [{ kind }, ...pane.tabs], active: 0 }
-  })
+  const existing = findTab(workspace, { kind })
+  if (existing !== null) return focusExisting(workspace, existing)
+  return updatePane(workspace, (pane) => ({ tabs: [{ kind }, ...pane.tabs], active: 0 }))
 }
 
 export function openBoard(workspace: Workspace): Workspace {
@@ -139,12 +170,14 @@ export function openApp(workspace: Workspace, appId: string): Workspace {
  * would silently move the user to a different file — a data-loss-shaped bug in
  * a UI that autosaves.
  *
- * An emptied pane stays. Plan 5 renders `panes[0]`, so a pane that deleted
- * itself with its last tab would leave nothing to render into; an empty pane is
- * the empty-editor state.
+ * **An emptied pane goes, unless it is the last one.** Closing the final tab of
+ * a split is how you unsplit — anything else would leave a permanent empty
+ * column that only a second, separate gesture could remove. The last pane always
+ * stays: an empty pane is the empty-editor state, and a workspace with no panes
+ * has nothing to render into.
  */
 export function closeTab(workspace: Workspace, index: number): Workspace {
-  return updatePane(workspace, (pane) => {
+  const closed = updatePane(workspace, (pane) => {
     if (index < 0 || index >= pane.tabs.length) return pane
     const tabs = pane.tabs.filter((_, i) => i !== index)
     if (tabs.length === 0) return { tabs, active: -1 }
@@ -158,6 +191,11 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
           : pane.active
     return { tabs, active }
   })
+  const pane = closed.panes[closed.active]
+  if (pane !== undefined && pane.tabs.length === 0 && closed.panes.length > 1) {
+    return closePane(closed, closed.active)
+  }
+  return closed
 }
 
 /**
@@ -168,11 +206,9 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
  * (browsing costs one tab); if none does, add one. The new tab is a *preview*.
  */
 export function openPreview(workspace: Workspace, path: string): Workspace {
+  const existing = findTab(workspace, { kind: 'note', path })
+  if (existing !== null) return focusExisting(workspace, existing)
   return updatePane(workspace, (pane) => {
-    const existing = pane.tabs.findIndex(
-      (t) => t.kind === 'note' && t.path === path,
-    )
-    if (existing !== -1) return { ...pane, active: existing }
     const previewIdx = pane.tabs.findIndex((t) => t.kind === 'note' && t.preview)
     const tab: Tab = { kind: 'note', path, preview: true }
     if (previewIdx !== -1) {
@@ -185,27 +221,39 @@ export function openPreview(workspace: Workspace, path: string): Workspace {
 /** Double-click open (or open-and-pin): a pinned tab, focused. Pins the tab in
  *  place if it was already open as a preview. */
 export function openPinned(workspace: Workspace, path: string): Workspace {
-  return updatePane(workspace, (pane) => {
-    const existing = pane.tabs.findIndex((t) => t.kind === 'note' && t.path === path)
-    if (existing !== -1) {
-      return {
-        ...pane,
-        tabs: pane.tabs.map((t, i) => (i === existing ? { kind: 'note', path } : t)),
-        active: existing,
-      }
-    }
-    return { tabs: [...pane.tabs, { kind: 'note', path }], active: pane.tabs.length }
-  })
+  const existing = findTab(workspace, { kind: 'note', path })
+  if (existing !== null) {
+    const focused = focusExisting(workspace, existing)
+    return pinTabIn(focused, existing.pane, existing.tab)
+  }
+  return updatePane(workspace, (pane) => ({
+    tabs: [...pane.tabs, { kind: 'note', path }],
+    active: pane.tabs.length,
+  }))
 }
 
 /** Promote a tab to pinned — the double-click-a-tab and edit-a-preview rules.
  *  No-op if the index is out of range or the tab is not a preview note. */
 export function pinTab(workspace: Workspace, index: number): Workspace {
-  return updatePane(workspace, (pane) => {
-    const tab = pane.tabs[index]
-    if (tab === undefined || tab.kind !== 'note' || !tab.preview) return pane
-    return { ...pane, tabs: pane.tabs.map((t, i) => (i === index ? { kind: 'note', path: tab.path } : t)) }
-  })
+  return pinTabIn(workspace, workspace.active, index)
+}
+
+/** `pinTab` against a named pane. `openPinned` needs it: the note it is asked to
+ *  pin may already be open in a pane that is not the active one, and focusing it
+ *  there is the whole point of the cross-pane lookup. */
+function pinTabIn(workspace: Workspace, paneIndex: number, index: number): Workspace {
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane, p) => {
+      if (p !== paneIndex) return pane
+      const tab = pane.tabs[index]
+      if (tab === undefined || tab.kind !== 'note' || !tab.preview) return pane
+      return {
+        ...pane,
+        tabs: pane.tabs.map((t, i) => (i === index ? { kind: 'note', path: tab.path } : t)),
+      }
+    }),
+  }
 }
 
 /** Pin whatever is active — the "editing promotes a preview tab" rule, so you
@@ -307,4 +355,78 @@ function updatePane(workspace: Workspace, fn: (pane: Pane) => Pane): Workspace {
     ...workspace,
     panes: workspace.panes.map((pane, i) => (i === workspace.active ? fn(pane) : pane)),
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Panes
+ *
+ * The array has held more than one element since the first commit; these are the
+ * operations that finally put something in it.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Focus a pane. Clicking anywhere in a pane makes it the one that "open" means,
+ *  so the tree, the nav chips and every keyboard action land where you are
+ *  looking rather than where you last were. */
+export function focusPane(workspace: Workspace, index: number): Workspace {
+  if (index < 0 || index >= workspace.panes.length || index === workspace.active) return workspace
+  return { ...workspace, active: index }
+}
+
+/**
+ * Split: a new, **empty** pane beside the active one, focused.
+ *
+ * Empty, and not a copy of the active tab, which is what VS Code and Obsidian
+ * both do. They can: their editors tolerate two views of one buffer. Holi's does
+ * not — one buffer per file is the rule the whole external-reload story rests on
+ * (`findTab` above), so duplicating the tab would be handing the user two
+ * autosaves racing over one path, which is worse than an empty pane.
+ *
+ * So a split makes room, and the next thing you open fills it. The richer
+ * gesture is `openInNewPane` — "open THIS beside what I am reading" — which is
+ * what the tree and the apps list offer, and what people actually reach for.
+ */
+export function splitPane(workspace: Workspace): Workspace {
+  const at = workspace.active + 1
+  return {
+    panes: [...workspace.panes.slice(0, at), { tabs: [], active: -1 }, ...workspace.panes.slice(at)],
+    active: at,
+  }
+}
+
+/**
+ * Open a tab in a new pane beside the active one.
+ *
+ * Already open somewhere? Focus it there. That is not a shortcut — it is the
+ * one-buffer rule again, and it means the menu item is safe to hit twice.
+ */
+export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
+  const existing = findTab(workspace, tab)
+  if (existing !== null) return focusExisting(workspace, existing)
+  const at = workspace.active + 1
+  return {
+    panes: [...workspace.panes.slice(0, at), { tabs: [tab], active: 0 }, ...workspace.panes.slice(at)],
+    active: at,
+  }
+}
+
+/**
+ * Close a whole pane. **The last one never goes** — an empty pane is the
+ * empty-editor state, and a workspace with no panes has nothing to render into.
+ *
+ * Focus lands on the neighbour, chosen the same way `closeTab` chooses one: the
+ * left-hand pane, unless the closed one was leftmost.
+ */
+export function closePane(workspace: Workspace, index: number): Workspace {
+  if (workspace.panes.length <= 1 || index < 0 || index >= workspace.panes.length) return workspace
+  const panes = workspace.panes.filter((_, i) => i !== index)
+  const active =
+    workspace.active > index
+      ? workspace.active - 1
+      : Math.min(workspace.active, panes.length - 1)
+  return { panes, active }
+}
+
+/** The pane the editor is showing, or null when the workspace is somehow empty. */
+export function activePane(workspace: Workspace): Pane | null {
+  return workspace.panes[workspace.active] ?? null
 }
