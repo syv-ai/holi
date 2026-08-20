@@ -22,8 +22,16 @@
  */
 import { atom } from 'jotai'
 import { APPS_DIR, APP_MANIFEST_FILE, appIdFromPath } from '@holi/shared'
-import { closeTab, workspaceAtom } from './panes'
-import { snapshotAtom } from './vaults'
+import { flushAllBuffers } from '../lib/buffer-registry'
+import { trpc } from '../lib/trpc'
+import { closeTab, retargetAppTab, retargetTabs, workspaceAtom } from './panes'
+import {
+  activeDocAtom,
+  activeRemoteAtom,
+  deleteManyAtom,
+  loadSnapshotAtom,
+  snapshotAtom,
+} from './vaults'
 
 const ENTRY_FILE = 'index.html'
 
@@ -70,4 +78,123 @@ export const closeAppAtom = atom(null, (_get, set, appId: string) => {
     const index = pane.tabs.findIndex((t) => t.kind === 'app' && t.appId === appId)
     return index === -1 ? w : closeTab(w, index)
   })
+})
+
+/**
+ * Every id that has a directory under `.holi/apps/`, whether or not anything
+ * inside it makes it an app.
+ *
+ * This — not `appIdsAtom` — is the set a new id must not collide with. An id
+ * whose directory holds only a stylesheet is not an app and is not offered
+ * anywhere, but renaming onto it would still be a rename onto occupied ground.
+ * Main refuses that too (it stats the directory, which is the authority); this
+ * exists so the field can say so before the round-trip.
+ */
+export const appDirIdsAtom = atom((get) => {
+  const snapshot = get(snapshotAtom)
+  const ids = new Set<string>()
+  for (const path of [...snapshot.files.map((f) => f.path), ...snapshot.dirs]) {
+    const id = appIdFromPath(path)
+    if (id !== null) ids.add(id)
+  }
+  return ids
+})
+
+/** Every file inside each app, by id — what a delete has to remove and what a
+ *  rename has to retarget open tabs for. */
+export const appFilesAtom = atom((get) => {
+  const byId = new Map<string, string[]>()
+  for (const file of get(snapshotAtom).files) {
+    const id = appIdFromPath(file.path)
+    if (id === null) continue
+    const list = byId.get(id)
+    if (list) list.push(file.path)
+    else byId.set(id, [file.path])
+  }
+  return byId
+})
+
+/** A refusal is a value, not a throw: the caller is an inline rename field with
+ *  somewhere to put the reason. */
+export type AppActionResult = { ok: true } | { ok: false; error: string }
+
+/**
+ * Rename an app, and take everything pointing at the old id with it.
+ *
+ * Main does the directory rename and the `[[link]]` rewrite; this is the
+ * renderer's half — the commit-pair ordering `moveNotesAtom` established (flush
+ * the live buffers, commit a clean restore point, mutate, retarget, reload,
+ * commit), plus the one thing no path-keyed helper can do: move the **app** tab,
+ * whose identity is an id rather than a path.
+ *
+ * The flush is not decoration. An app file open in the editor has an unsaved
+ * buffer keyed by its old path; without the flush that buffer would later save
+ * itself back to a path the rename has already emptied, recreating the old
+ * directory with one stale file in it.
+ */
+export const renameAppAtom = atom(
+  null,
+  async (get, set, { from, to }: { from: string; to: string }): Promise<AppActionResult> => {
+    const remote = get(activeRemoteAtom)
+    if (remote === null) return { ok: false, error: 'no vault is open' }
+    if (from === to) return { ok: true }
+
+    const prefix = `${APPS_DIR}/${from}/`
+    const moves = (get(appFilesAtom).get(from) ?? []).map((path) => ({
+      from: path,
+      to: `${APPS_DIR}/${to}/${path.slice(prefix.length)}`,
+    }))
+
+    await flushAllBuffers()
+    await trpc.sync.commitNow.mutate()
+    const result = await trpc.apps.rename.mutate({ remote, from, to })
+    if (!result.ok) return result
+
+    set(workspaceAtom, retargetAppTab(retargetTabs(get(workspaceAtom), moves), from, to))
+    const active = get(activeDocAtom)
+    const moved = active ? moves.find((m) => m.from === active.path) : undefined
+    await set(loadSnapshotAtom)
+    if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
+    await trpc.sync.commitNow.mutate()
+    return { ok: true }
+  },
+)
+
+/**
+ * Write the manifest that turns a half-finished directory into an app.
+ *
+ * The same op as `holi app init`, which never overwrites — so this cannot
+ * clobber a manifest a teammate is mid-way through writing, and running it on an
+ * app that is already finished is a success with nothing created.
+ */
+export const registerAppAtom = atom(
+  null,
+  async (get, set, appId: string): Promise<AppActionResult> => {
+    const remote = get(activeRemoteAtom)
+    if (remote === null) return { ok: false, error: 'no vault is open' }
+    const result = await trpc.apps.register.mutate({ remote, appId })
+    if (!result.ok) return result
+    await set(loadSnapshotAtom)
+    return { ok: true }
+  },
+)
+
+/**
+ * Delete an app: every file inside it, then its tab.
+ *
+ * The tab is closed rather than left to discover the app is gone. `AppFrame`'s
+ * tombstone exists for the case where the app vanished *from under* you — a
+ * teammate's pull — and answering "it was deleted" to the person who just chose
+ * to delete it is noise, not information.
+ *
+ * What is left behind is the now-empty directory: `deleteMany` removes files,
+ * and nothing here prunes a directory. That matches what deleting a folder in
+ * the tree does, and an empty directory is not an app — it has no entry
+ * document, so it appears in neither list.
+ */
+export const deleteAppAtom = atom(null, async (get, set, appId: string) => {
+  const paths = get(appFilesAtom).get(appId) ?? []
+  if (paths.length === 0) return
+  await set(deleteManyAtom, { paths })
+  set(closeAppAtom, appId)
 })

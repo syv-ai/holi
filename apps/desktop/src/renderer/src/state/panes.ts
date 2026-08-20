@@ -251,6 +251,28 @@ export function retargetTabs(workspace: Workspace, moves: { from: string; to: st
 }
 
 /**
+ * Follow a renamed app to its new id, in every pane.
+ *
+ * `retargetTabs` cannot do this: it keys on `path`, and an app tab has no path —
+ * its identity is `appId`, which is the directory name under `.holi/apps/` and
+ * the `holi-app://` host both. So a rename that only ran `retargetTabs` would
+ * leave the open tab pointing at an id with nothing behind it, and the frame
+ * would render the "was deleted" tombstone for an app that is very much alive.
+ */
+export function retargetAppTab(workspace: Workspace, from: string, to: string): Workspace {
+  if (from === to) return workspace
+  return {
+    ...workspace,
+    panes: workspace.panes.map((pane) => ({
+      ...pane,
+      tabs: pane.tabs.map((tab) =>
+        tab.kind === 'app' && tab.appId === from ? { ...tab, appId: to } : tab,
+      ),
+    })),
+  }
+}
+
+/**
  * Close every tab pointing at a deleted path, in every pane.
  *
  * The active selection follows the *document*: if what was active survives, the

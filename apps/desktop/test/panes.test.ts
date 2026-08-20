@@ -19,6 +19,7 @@ import {
   openTab,
   pinActive,
   pinTab,
+  retargetAppTab,
   retargetTab,
   retargetTabs,
   type Workspace,
@@ -225,5 +226,38 @@ describe('openApp', () => {
     // opened a tab with no appId at all.
     // @ts-expect-error 'app' is not a singleton surface
     openSingleton(emptyWorkspace(), 'app')
+  })
+})
+
+describe('retargetAppTab', () => {
+  const kinds = (w: Workspace) =>
+    w.panes[0]!.tabs.map((t) => (t.kind === 'app' ? `app:${t.appId}` : t.kind))
+
+  it('follows a renamed app to its new id, in place', () => {
+    let w = emptyWorkspace()
+    w = openApp(w, 'retro')
+    w = openApp(w, 'burndown')
+
+    const next = retargetAppTab(w, 'retro', 'standup')
+
+    expect(kinds(next)).toEqual(['app:standup', 'app:burndown'])
+    // The active selection is untouched — the user stays on what they were on.
+    expect(next.panes[0]!.active).toBe(w.panes[0]!.active)
+  })
+
+  it('leaves a note tab whose path merely mentions the id alone', () => {
+    // The app id is a directory name, not a path: a note called `retro.md` is
+    // not the app, and a rename must not touch it.
+    let w = emptyWorkspace()
+    w = openTab(w, { kind: 'note', path: 'retro.md' })
+
+    expect(retargetAppTab(w, 'retro', 'standup')).toEqual(w)
+  })
+
+  it('is a no-op when the renamed app has no tab open', () => {
+    let w = emptyWorkspace()
+    w = openApp(w, 'burndown')
+
+    expect(retargetAppTab(w, 'retro', 'standup')).toEqual(w)
   })
 })

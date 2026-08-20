@@ -6,11 +6,11 @@
  * end wearing the clothes of a feature.
  */
 import { getDefaultStore } from 'jotai'
-import { beforeEach, expect, test } from 'vitest'
+import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
 import { render, screen } from '@/test/render'
 import { AppsSection } from '../AppsSection'
-import { appIdsAtom, unregisteredAppIdsAtom } from '../../../state/apps'
+import { appDirIdsAtom, appIdsAtom, unregisteredAppIdsAtom } from '../../../state/apps'
 import { snapshotAtom } from '../../../state/vaults'
 import { emptyWorkspace, workspaceAtom } from '../../../state/panes'
 
@@ -45,8 +45,33 @@ test('renders nothing at all when the vault has no apps', () => {
 test('lists the apps in sorted order', () => {
   withApps('retro-board', 'burndown')
   render(<AppsSection />)
-  const names = screen.getAllByRole('button').map((b) => b.textContent)
-  expect(names).toEqual(['burndown', 'retro-board'])
+  expect(rowNames()).toEqual(['burndown', 'retro-board'])
+})
+
+test('shows an unfinished app after the finished ones, and says what it needs', async () => {
+  // It was computed and rendered nowhere, which is the exact failure this list
+  // exists to remove: the app does not appear and there is nowhere to look.
+  withFiles('burndown/index.html', 'burndown/app.yaml', 'half-done/index.html')
+  render(<AppsSection />)
+
+  expect(rowNames()).toEqual(['burndown', 'half-done'])
+  await userEvent.hover(screen.getByRole('button', { name: 'half-done' }))
+  expect(await screen.findByText(/has no app.yaml yet/)).toBeTruthy()
+})
+
+test('clicking an unfinished app opens nothing — there is no manifest to open it by', async () => {
+  withFiles('half-done/index.html')
+  render(<AppsSection />)
+
+  await userEvent.click(screen.getByRole('button', { name: 'half-done' }))
+
+  expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([])
+})
+
+test('the section appears for an unfinished app alone, with no finished one', () => {
+  withFiles('half-done/index.html')
+  const { container } = render(<AppsSection />)
+  expect(container.innerHTML).not.toBe('')
 })
 
 test('clicking one opens its tab', async () => {
@@ -90,3 +115,108 @@ test('the unregistered list is sorted and excludes the registered', () => {
   expect(store.get(appIdsAtom)).toEqual(['done'])
   expect(store.get(unregisteredAppIdsAtom)).toEqual(['alpha', 'zeta'])
 })
+
+/** The row labels, in render order — finished first, then unfinished. */
+function rowNames(): string[] {
+  return screen.getAllByRole('button').map((b) => b.textContent ?? '')
+}
+
+test('a directory with neither file still counts as a taken id', () => {
+  // Renaming onto it would be a rename onto occupied ground even though it is
+  // an app by no definition and appears in neither list.
+  withFiles('half-done/index.html', 'squatter/style.css')
+
+  expect(store.get(appIdsAtom)).toEqual([])
+  expect(store.get(unregisteredAppIdsAtom)).toEqual(['half-done'])
+  expect([...store.get(appDirIdsAtom)].sort()).toEqual(['half-done', 'squatter'])
+})
+
+test('renaming opens a field seeded with the current id, and Escape puts the row back', async () => {
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  await openMenuOn('retro-board')
+  await userEvent.click(screen.getByText('Rename…'))
+
+  const field = screen.getByLabelText<HTMLInputElement>('rename retro-board')
+  expect(field.value).toBe('retro-board')
+
+  await userEvent.keyboard('{Escape}')
+  expect(screen.getByRole('button', { name: 'retro-board' })).toBeTruthy()
+})
+
+test('an id the rule refuses is reported under the field, and nothing is sent', async () => {
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  await openMenuOn('retro-board')
+  await userEvent.click(screen.getByText('Rename…'))
+  await userEvent.clear(screen.getByLabelText('rename retro-board'))
+  await userEvent.type(screen.getByLabelText('rename retro-board'), 'Retro Board{Enter}')
+
+  expect(screen.getByText(/lowercase letters, digits and dashes/)).toBeTruthy()
+  // Still a field, not a row: the refusal is something to fix, not to dismiss.
+  expect(screen.queryByRole('button', { name: 'retro-board' })).toBeNull()
+})
+
+test('an id another app already holds is refused by name', async () => {
+  withApps('retro-board', 'burndown')
+  render(<AppsSection />)
+
+  await openMenuOn('retro-board')
+  await userEvent.click(screen.getByText('Rename…'))
+  await userEvent.clear(screen.getByLabelText('rename retro-board'))
+  await userEvent.type(screen.getByLabelText('rename retro-board'), 'burndown{Enter}')
+
+  expect(screen.getByText('burndown already exists')).toBeTruthy()
+})
+
+test('the menu offers to finish an unfinished app, and to open a finished one', async () => {
+  withFiles('burndown/index.html', 'burndown/app.yaml', 'half-done/index.html')
+  render(<AppsSection />)
+
+  await openMenuOn('half-done')
+  expect(screen.getByText('Finish this app')).toBeTruthy()
+  expect(screen.queryByText('Open')).toBeNull()
+  await userEvent.keyboard('{Escape}')
+
+  await openMenuOn('burndown')
+  expect(screen.getByText('Open')).toBeTruthy()
+  expect(screen.queryByText('Finish this app')).toBeNull()
+})
+
+test('Edit Source opens the entry document as a pinned note tab', async () => {
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  await openMenuOn('retro-board')
+  await userEvent.click(screen.getByText('Edit Source'))
+
+  // Pinned, not preview: opening an app's source is a deliberate act, and a
+  // preview tab would be replaced by the next thing clicked in the tree.
+  expect(store.get(workspaceAtom).panes[0]!.tabs).toEqual([
+    { kind: 'note', path: '.holi/apps/retro-board/index.html' },
+  ])
+})
+
+test('Copy Path copies the app directory, not a file inside it', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+  withApps('retro-board')
+  render(<AppsSection />)
+
+  await openMenuOn('retro-board')
+  await userEvent.click(screen.getByText('Copy Path'))
+
+  expect(writeText).toHaveBeenCalledWith('.holi/apps/retro-board')
+  vi.unstubAllGlobals()
+})
+
+/** Right-click a row and wait for its menu. */
+async function openMenuOn(appId: string): Promise<void> {
+  await userEvent.pointer({
+    target: screen.getByRole('button', { name: appId }),
+    keys: '[MouseRight]',
+  })
+  await screen.findByRole('menu')
+}

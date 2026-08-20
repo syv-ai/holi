@@ -1,37 +1,253 @@
 /**
- * The sidebar's list of vault apps — the only way to open one in slice 1.
+ * The sidebar's list of vault apps, and the whole of what you can do to one
+ * without asking the agent.
  *
  * **Hidden entirely when the vault has no apps**, heading included. That is the
  * rule the agenda and mail chips already follow: a launcher whose only
  * destination is "go make one" is a dead end wearing the clothes of a feature,
  * and an app is made by asking the agent, not by clicking here.
+ *
+ * Two kinds of row, and the second is the point of the first being a list at
+ * all. A **registered** app has a manifest and opens. An **unregistered** one is
+ * a directory with an entry document and no manifest — half-written, or written
+ * by hand by someone who did not know the manifest was the marker. It used to be
+ * computed (`unregisteredAppIdsAtom`) and shown nowhere, which is the failure
+ * mode slice 1 proved worst: the app does not appear and there is nowhere to
+ * look. It now appears, dimmed, with a menu item that finishes it.
+ *
+ * The menu deliberately does NOT mirror the file tree's. Most of that menu —
+ * New File, Cut, Copy, Paste, Duplicate — is about paths, and an app is not a
+ * path: it is a directory whose name is also a `holi-app://` host. Duplicating
+ * one would need a second id nobody chose; pasting into one is just editing a
+ * file, which the tree already does better. What is left is what actually has a
+ * meaning at the level of "an app": open it, edit its source, rename it, delete
+ * it, find it on disk.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { LayoutGrid } from 'lucide-react'
-import { Button } from '@/primitives'
-import { appIdsAtom } from '../../state/apps'
-import { openApp, workspaceAtom } from '../../state/panes'
+import { useState } from 'react'
+import {
+  Button,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  Input,
+  Tooltip,
+} from '@/primitives'
+import { DeleteConfirm } from '@/composites'
+import { APPS_DIR, isValidAppId } from '@holi/shared'
+import {
+  appDirIdsAtom,
+  appFilesAtom,
+  appIdsAtom,
+  deleteAppAtom,
+  registerAppAtom,
+  renameAppAtom,
+  unregisteredAppIdsAtom,
+} from '../../state/apps'
+import { openApp, openPinned, workspaceAtom } from '../../state/panes'
+import { activeRemoteAtom, backrefsForMany, vaultsAtom } from '../../state/vaults'
+
+const ID_RULE = 'lowercase letters, digits and dashes only'
+
+/** The app's own root on disk, relative to the vault. */
+const dirOf = (appId: string): string => `${APPS_DIR}/${appId}`
+const entryOf = (appId: string): string => `${dirOf(appId)}/index.html`
+
+/**
+ * Why this id cannot be used, or null when it can.
+ *
+ * Main checks the same things against the filesystem and is the authority — it
+ * has to be, since a teammate's pull can create a directory between the keypress
+ * and the mutation. This exists so the common refusals land under the field
+ * instead of after a round-trip.
+ */
+function rejectId(next: string, current: string, taken: Set<string>): string | null {
+  if (next === current) return null
+  if (!isValidAppId(next)) return `an app id is ${ID_RULE}`
+  if (taken.has(next)) return `${next} already exists`
+  return null
+}
 
 export function AppsSection(): React.JSX.Element | null {
   const appIds = useAtomValue(appIdsAtom)
+  const unregistered = useAtomValue(unregisteredAppIdsAtom)
+  const takenIds = useAtomValue(appDirIdsAtom)
+  const appFiles = useAtomValue(appFilesAtom)
+  const activeRemote = useAtomValue(activeRemoteAtom)
+  const vaults = useAtomValue(vaultsAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
-  if (appIds.length === 0) return null
+  const renameApp = useSetAtom(renameAppAtom)
+  const registerApp = useSetAtom(registerAppAtom)
+  const deleteApp = useSetAtom(deleteAppAtom)
+  const getBackrefs = useSetAtom(backrefsForMany)
+
+  /** The app whose row is currently an input, plus the last refusal to show. */
+  const [renaming, setRenaming] = useState<{ appId: string; error: string | null } | null>(null)
+  const [confirming, setConfirming] = useState<{
+    appId: string
+    refs: { path: string; count: number }[]
+  } | null>(null)
+
+  if (appIds.length === 0 && unregistered.length === 0) return null
+
+  const vaultPath = vaults.find((v) => v.remote === activeRemote)?.path ?? null
+  const absOf = (rel: string) => (vaultPath === null ? rel : `${vaultPath}/${rel}`)
+
+  const commitRename = (from: string, raw: string) => {
+    const to = raw.trim()
+    const reason = rejectId(to, from, takenIds)
+    if (reason !== null) {
+      setRenaming({ appId: from, error: reason })
+      return
+    }
+    setRenaming(null)
+    void renameApp({ from, to }).then((result) => {
+      // A refusal from main — the id was taken between keypress and mutation, or
+      // the directory moved under us. Put the field back with the reason.
+      if (!result.ok) setRenaming({ appId: from, error: result.error })
+    })
+  }
+
+  const startDelete = (appId: string) => {
+    const files = appFiles.get(appId) ?? []
+    void getBackrefs(files).then((refs) => setConfirming({ appId, refs }))
+  }
+
+  const menuFor = (appId: string, registered: boolean) => (
+    <ContextMenuContent
+      // Keep focus in the rename field this can open, instead of Radix pulling
+      // it back to the row when the menu closes.
+      onCloseAutoFocus={(e) => e.preventDefault()}
+    >
+      {registered ? (
+        <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, appId))}>
+          Open
+        </ContextMenuItem>
+      ) : (
+        // The one action that changes what this row *is*. It writes the manifest
+        // and nothing else, so a half-written app becomes a finished one without
+        // a round-trip through the agent.
+        <ContextMenuItem onSelect={() => void registerApp(appId)}>Finish this app</ContextMenuItem>
+      )}
+      <ContextMenuItem onSelect={() => setWorkspace((w) => openPinned(w, entryOf(appId)))}>
+        Edit Source
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onSelect={() => setRenaming({ appId, error: null })}>Rename…</ContextMenuItem>
+      <ContextMenuItem variant="destructive" onSelect={() => startDelete(appId)}>
+        Delete
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(absOf(dirOf(appId)))}>
+        Copy Path
+      </ContextMenuItem>
+      <ContextMenuItem onSelect={() => void window.holi.openPath(absOf(dirOf(appId)))}>
+        Reveal in Finder
+      </ContextMenuItem>
+    </ContextMenuContent>
+  )
+
+  const row = (appId: string, registered: boolean) => {
+    if (renaming?.appId === appId) {
+      return (
+        <RenameRow
+          key={appId}
+          appId={appId}
+          error={renaming.error}
+          onCommit={(value) => commitRename(appId, value)}
+          onCancel={() => setRenaming(null)}
+        />
+      )
+    }
+    return (
+      <ContextMenu key={appId}>
+        {/* Tooltip OUTSIDE the trigger, not inside it: both are `asChild` and
+            clone their single child, so the outer one must be the one holding a
+            Radix element. Inverted, `ContextMenuTrigger` would try to pass a ref
+            to `Tooltip`, which is a plain function component. Empty content
+            passes straight through, so a registered row gets no tooltip. */}
+        <Tooltip
+          content={registered ? '' : `${appId} has no app.yaml yet — right-click to finish it`}
+        >
+          <ContextMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="xs"
+              className={`h-auto justify-start gap-1.5 px-1 py-1 hover:text-foreground ${
+                registered ? 'text-muted-foreground' : 'italic text-muted-foreground/60'
+              }`}
+              // An unregistered app has no manifest, so `openAppOp` refuses it —
+              // a row that opens a refusal is worse than a row that does not open.
+              onClick={registered ? () => setWorkspace((w) => openApp(w, appId)) : undefined}
+            >
+              <LayoutGrid size={13} />
+              {appId}
+            </Button>
+          </ContextMenuTrigger>
+        </Tooltip>
+        {menuFor(appId, registered)}
+      </ContextMenu>
+    )
+  }
 
   return (
-    <div className="flex flex-col gap-0.5 px-2 pt-2">
+    <div className="flex shrink-0 flex-col gap-0.5 px-2 pt-2">
       <p className="px-1 text-[10px] uppercase tracking-wide text-muted-foreground">apps</p>
-      {appIds.map((appId) => (
-        <Button
-          key={appId}
-          variant="ghost"
-          size="xs"
-          className="h-auto justify-start gap-1.5 px-1 py-1 text-muted-foreground hover:text-foreground"
-          onClick={() => setWorkspace((w) => openApp(w, appId))}
-        >
-          <LayoutGrid size={13} />
-          {appId}
-        </Button>
-      ))}
+      {appIds.map((appId) => row(appId, true))}
+      {unregistered.map((appId) => row(appId, false))}
+
+      {confirming && (
+        <DeleteConfirm
+          label={dirOf(confirming.appId)}
+          refs={confirming.refs}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            const appId = confirming.appId
+            setConfirming(null)
+            void deleteApp(appId)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** The row as an editable field. Seeded with the current id rather than empty:
+ *  a rename is usually a small edit to a name that already exists, and clearing
+ *  it would make the common case the expensive one. */
+function RenameRow({
+  appId,
+  error,
+  onCommit,
+  onCancel,
+}: {
+  appId: string
+  error: string | null
+  onCommit: (value: string) => void
+  onCancel: () => void
+}): React.JSX.Element {
+  const [value, setValue] = useState(appId)
+  return (
+    <div className="flex flex-col gap-0.5 py-0.5">
+      <Input
+        autoFocus
+        aria-label={`rename ${appId}`}
+        className="h-[22px] rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel()
+          if (e.key === 'Enter' && value.trim()) onCommit(value)
+        }}
+        // No blur-to-cancel while a refusal is showing: the click that dismissed
+        // it would also throw away the reason it was refused.
+        onBlur={error === null ? onCancel : undefined}
+      />
+      {error !== null && <p className="px-1 text-[10px] text-destructive">{error}</p>}
     </div>
   )
 }
