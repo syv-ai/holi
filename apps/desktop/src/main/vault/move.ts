@@ -12,6 +12,21 @@
  * on-disk originals first; only then are sources removed and destinations
  * written. There is no transaction — a mid-apply crash leaves a partial move
  * visible in `git status`, same contract as rename (prd §Rename).
+ *
+ * **A non-markdown file is carried across as bytes.** Only `.md` is read for the
+ * link rewrite, and for a long time that was also the only thing written back —
+ * while the removal pass below deleted every `from` unconditionally. Moving an
+ * image or a stylesheet therefore DELETED it and put nothing at the
+ * destination. Nothing in the product could reach that (every caller expands its
+ * target through `filesUnder(docPaths, …)`, which is markdown only), but it was
+ * a loaded gun aimed at the first caller that could — which is why an app rename
+ * moves its directory instead of coming through here.
+ *
+ * Bytes, not text: a `Buffer` round-trip through utf8 would corrupt every byte
+ * above 0x7f, so a PNG would arrive at its destination ruined rather than
+ * missing. Non-markdown files are also only READ when they are actually moving —
+ * the rewrite pass has no use for them, and a vault's binaries should not be
+ * loaded into memory to move one note.
  */
 import { readFile } from 'node:fs/promises'
 import { rewriteWikiLinksMulti, vaultRelPath } from '@holi/shared'
@@ -23,21 +38,28 @@ export async function moveNotes(
 ): Promise<{ rewritten: { path: string; count: number }[] }> {
   const map = new Map(moves.map((m) => [m.from, m.to]))
   const rewritten: { path: string; count: number }[] = []
-  const planned: { dest: string; text: string }[] = []
+  const planned: { dest: string; data: string | Uint8Array }[] = []
 
   for (const path of await listFiles(root)) {
-    if (!path.endsWith('.md')) continue
+    const dest = map.get(path)
+    if (!path.endsWith('.md')) {
+      // Not markdown: nothing to rewrite, and nothing to do unless it is moving.
+      if (dest !== undefined) {
+        planned.push({ dest, data: await readFile(absPathFor(root, vaultRelPath(path))) })
+      }
+      continue
+    }
     const text = await readFile(absPathFor(root, vaultRelPath(path)), 'utf8')
     const { text: next, count } = rewriteWikiLinksMulti(text, map)
-    const dest = map.get(path) ?? path
-    if (count > 0) rewritten.push({ path: dest, count })
+    const to = dest ?? path
+    if (count > 0) rewritten.push({ path: to, count })
     // A file needs writing if it moved OR its links changed; an untouched,
     // unmoved file is left exactly as it is.
-    if (dest !== path || count > 0) planned.push({ dest, text: next })
+    if (to !== path || count > 0) planned.push({ dest: to, data: next })
   }
 
   for (const from of map.keys()) await removeDocFile(root, vaultRelPath(from))
-  for (const p of planned) await writeAtomic(root, vaultRelPath(p.dest), p.text)
+  for (const p of planned) await writeAtomic(root, vaultRelPath(p.dest), p.data)
 
   return { rewritten: rewritten.sort((a, b) => a.path.localeCompare(b.path)) }
 }

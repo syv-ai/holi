@@ -96,16 +96,21 @@ nothing but a level of nesting.
 
 ## Found along the way, not fixed
 
-**`moveNotes` deletes every `from` but only writes back `.md`.** `main/vault/move.ts:29` skips any
-path that is not markdown, so a non-markdown file never reaches `planned`; line 39 then removes
-every `from` unconditionally. A batch move of, say, a `.png` would delete it and write nothing.
+**`moveNotes` deleted every `from` but only wrote back `.md` — now fixed.** The link-rewrite pass
+skipped any path that is not markdown, so a non-markdown file never reached the write list, while
+the removal pass deleted every `from` unconditionally. A batch move of a `.png` deleted it and put
+nothing at the destination.
 
-It is **latent, not live**: every caller expands its target through `filesUnder(docPaths, …)`, and
-`docPaths` is markdown only, so nothing in the product can currently reach it. It is recorded here
-because it is exactly the trap an app rename would have fallen into — routing an app directory
-through `notes.move` would have destroyed the app — which is why `renameAppOp` renames the
-directory itself instead. Fixing `moveNotes` to carry non-markdown files verbatim is a small change
-and its own decision.
+It was **latent, not live**: every caller expands its target through `filesUnder(docPaths, …)`, and
+`docPaths` is markdown only, so nothing in the product could reach it. It is recorded here because
+it is exactly the trap an app rename would have fallen into — routing an app directory through
+`notes.move` would have destroyed the app — which is why `renameAppOp` renames the directory
+itself instead.
+
+Non-markdown files are now carried across as **bytes** (a utf8 round-trip would corrupt everything
+above 0x7f, so a PNG would arrive ruined rather than missing) and are only read when they are
+actually moving. Three tests pin it: the move itself, byte-for-byte fidelity on a binary, and the
+inbound `[[link]]` rewrite still firing for a moved non-markdown file.
 
 ## What was not verified
 
@@ -113,16 +118,27 @@ and its own decision.
       — manifest with `name`/`icon`/`description`, `index.html`, `style.css`, `app.js` — appeared in
       the sidebar and renders. That closes the gap slice 2 and the hooks work both left open. The
       validator's rule held: zero hard-coded colours in its stylesheet.
-- [ ] **…but it wrote `color: var(--primary)` on two hover states**, which is the unreadable
-      dark-blue-on-black this day's theme fix exists to remove. **Not the agent's fault, and worth
-      keeping straight:** the vault's *seeded copy* of the authoring skill still had zero mentions
-      of `brand` while the source had seven. Seeding runs in main, and main does not hot-reload, so
-      the skill the agent actually read predated the fix. The guidance is therefore **unverified
-      against a real agent run** — it needs an app relaunch (so `ensureSeeded` re-seeds against the
-      new content hashes) and then a fresh app.
+- [x] **…but it wrote `color: var(--primary)` on two hover states**, which is the unreadable
+      dark-blue-on-black this day's theme fix exists to remove. **Not the agent's fault:** the
+      vault's *seeded copy* of the authoring skill still had zero mentions of `brand` while the
+      source had seven. Seeding runs in main, and main does not hot-reload, so the skill the agent
+      actually read predated the fix.
+- [x] **The re-seed closes it.** On relaunch, `ensureSeeded` brought the vault's skill from **0 to
+      7** mentions of `brand`, fill-vs-text paragraph included. Both apps' text uses moved to
+      `var(--brand)` (5 rules across the two); their `background: var(--primary)` bars are fills and
+      were left alone. `tasks-by-area` re-opened and renders.
+- [ ] **The skill's new wording is still unverified against a fresh agent run.** The two apps were
+      corrected by hand, which proves the token, not the guidance. Only an app the agent writes
+      *after* the re-seed can show whether the wording lands.
 - [ ] **Rename with real inbound `[[link]]`s in the running app.** The link rewrite is covered by
       a node test against real files (`test/app-ops.test.ts`), but the vault had nothing linking
       into `.holi/apps/`, so the in-app path exercised the zero-link case.
+- [x] **The vault hooks' endpoint file, in the real Electron app.** Relaunching rewrote
+      `.holi/hook-endpoint.local.txt` with a fresh port at mode 0600 — `openActiveVault`'s
+      write-on-open path, which the hooks verification could only exercise through a hand rig.
+      **Clear-on-close is still unproven**: the relaunch went through `pkill -9`, and SIGKILL gives
+      the app no chance to clean up, so the stale file simply survived. A graceful quit would show
+      it; a hard kill never will.
 - [ ] **A rename or delete on a vault with a collaborator mid-pull.** Main stats the directory and
       refuses a collision, which is the guard; the race itself was not staged.
 

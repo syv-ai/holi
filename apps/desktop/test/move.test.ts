@@ -80,4 +80,52 @@ describe('moveNotes', () => {
     expect(await read(root, 'c.md')).toBe('B')
     expect(await read(root, 'keep.md')).toBe('to a: [[b.md]]  to b: [[c.md]]')
   })
+
+  it('carries a non-markdown file across instead of deleting it', async () => {
+    // The trap this exists to prevent: the link-rewrite pass only reads `.md`,
+    // so a non-markdown file never reached the write list — while the removal
+    // pass deleted every `from` unconditionally. A moved image was a deleted
+    // image, with nothing at the destination.
+    const root = await vault({
+      'notes/logo.svg': '<svg/>',
+      'notes/app.js': 'export const x = 1\n',
+    })
+
+    await moveNotes(root, [
+      { from: 'notes/logo.svg', to: 'assets/logo.svg' },
+      { from: 'notes/app.js', to: 'assets/app.js' },
+    ])
+
+    expect(await read(root, 'assets/logo.svg')).toBe('<svg/>')
+    expect(await read(root, 'assets/app.js')).toBe('export const x = 1\n')
+    await expect(read(root, 'notes/logo.svg')).rejects.toThrow()
+  })
+
+  it('copies non-markdown bytes verbatim — no text decoding on the way', async () => {
+    // Read and written as a Buffer, so a PNG survives the trip. Decoding as
+    // utf8 and writing the string back would corrupt every byte above 0x7f.
+    const root = await mkdtemp(join(tmpdir(), 'holi-mv-'))
+    dirs.push(root)
+    const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x01])
+    await mkdir(join(root, 'notes'), { recursive: true })
+    await writeFile(join(root, 'notes/pic.png'), bytes)
+
+    await moveNotes(root, [{ from: 'notes/pic.png', to: 'assets/pic.png' }])
+
+    expect(Buffer.compare(await readFile(join(root, 'assets/pic.png')), bytes)).toBe(0)
+  })
+
+  it('still rewrites links pointing at a moved non-markdown file', async () => {
+    const root = await vault({
+      'notes/logo.svg': '<svg/>',
+      'ref.md': 'see [[notes/logo.svg]]',
+    })
+
+    const { rewritten } = await moveNotes(root, [
+      { from: 'notes/logo.svg', to: 'assets/logo.svg' },
+    ])
+
+    expect(await read(root, 'ref.md')).toBe('see [[assets/logo.svg]]')
+    expect(rewritten).toEqual([{ path: 'ref.md', count: 1 }])
+  })
 })
