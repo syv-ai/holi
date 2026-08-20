@@ -7,17 +7,25 @@
  * guarded so they no-op for a bare `claude` opened outside Holi. A per-instance
  * token (query `?t=`) rejects any other local process — the port is ephemeral,
  * but this closes the "some other localhost thing toggles our sync pause" gap.
- * Responses are always empty (a body would be injected into Claude's context).
+ * A turn-signal response is always empty (a body would be injected into
+ * Claude's context). The same server also carries the **agent ops** routes the
+ * `holi` CLI calls (`ops.ts`), and those DO answer: they are replies to a
+ * command the agent typed, not to a hook it never sees. The two classes are
+ * routed apart here so that distinction cannot blur.
  *
  * NOTE: no runtime `electron` import — this loads under vitest.
  */
 import { createServer, type RequestListener, type Server } from 'node:http'
 import { randomBytes } from 'node:crypto'
+import type { AgentOps } from './ops'
 
 export interface HookServerDeps {
   onTurnStart(): void
   onTurnEnd(): void
   log?: (msg: string) => void
+  /** The agent-ops routes, if this instance has them. Absent — in tests, and
+   *  before main wires them — leaves every ops path a 404 rather than a crash. */
+  ops?: AgentOps
 }
 
 export interface HookServer {
@@ -41,34 +49,65 @@ export function createHookServer(deps: HookServerDeps): HookServer {
   let boundPort: number | null = null
 
   const handle: RequestListener = (req, res) => {
-    // Drain (and discard) the body so the socket frees; cap it defensively.
+    if (req.method !== 'POST') {
+      req.resume()
+      res.writeHead(405).end()
+      return
+    }
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+
+    // **The token is checked on the headers, before a byte of body is read.**
+    // Draining first would mean an unauthenticated local process could make us
+    // buffer up to the cap on every request just by being wrong about the token.
+    if (url.searchParams.get('t') !== token) {
+      req.resume()
+      res.writeHead(403).end()
+      return
+    }
+
+    const isTurn = url.pathname === '/turn/start' || url.pathname === '/turn/end'
+
+    // A turn signal sends nothing we read, so its body is drained and discarded;
+    // an ops route's arguments ride in the body so `curl --data-urlencode`
+    // encodes them for us, the way the Google CLI already does.
+    let body = ''
     let received = 0
     req.on('data', (chunk: Buffer) => {
       received += chunk.length
-      if (received > MAX_BODY_BYTES) req.destroy()
+      if (received > MAX_BODY_BYTES) {
+        req.destroy()
+        return
+      }
+      if (!isTurn) body += chunk.toString('utf8')
     })
+
     req.on('end', () => {
-      if (req.method !== 'POST') {
-        res.writeHead(405).end()
+      if (isTurn) {
+        if (url.pathname === '/turn/start') deps.onTurnStart()
+        else deps.onTurnEnd()
+        res.writeHead(204).end() // empty body — never inject text into Claude's context
         return
       }
-      const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-      if (url.searchParams.get('t') !== token) {
-        res.writeHead(403).end()
-        return
-      }
-      switch (url.pathname) {
-        case '/turn/start':
-          deps.onTurnStart()
-          break
-        case '/turn/end':
-          deps.onTurnEnd()
-          break
-        default:
-          res.writeHead(404).end()
-          return
-      }
-      res.writeHead(204).end() // empty body — never inject text into Claude's context
+
+      // Body params win over query params: both are accepted so the CLI can use
+      // whichever curl form fits, and the body is the one curl encoded.
+      const params = new URLSearchParams(url.search)
+      for (const [key, value] of new URLSearchParams(body)) params.set(key, value)
+
+      void Promise.resolve(deps.ops?.(url.pathname, params) ?? null)
+        .then((reply) => {
+          if (reply === null) {
+            res.writeHead(404).end()
+            return
+          }
+          res.writeHead(reply.status, { 'content-type': 'application/json' }).end(reply.body)
+        })
+        .catch((error: unknown) => {
+          // Only reached if an ops route itself throws outside its own try —
+          // a bug in Holi, not an answer to the agent.
+          log(`ops ${url.pathname} failed: ${String(error)}`)
+          res.writeHead(500).end()
+        })
     })
   }
 
