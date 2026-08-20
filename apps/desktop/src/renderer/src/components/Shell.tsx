@@ -50,6 +50,8 @@ import {
   closePane,
   closeTab,
   focusPane,
+  moveTab,
+  moveTabToNewPane,
   openAgenda,
   openBoard,
   openMail,
@@ -487,6 +489,15 @@ export function Shell() {
                       onOpenNote={open}
                       onConflict={(path) =>
                         setBanner(`${path} changed underneath your edit and could not be merged`)
+                      }
+                      // A dropped tab carries only its identity, so neither of
+                      // these needs to know where it came from — `moveTab`
+                      // finds it, in whichever pane it currently sits.
+                      onDropTab={(t, index) =>
+                        setWorkspace((w) => moveTab(w, t, { pane: i, index }))
+                      }
+                      onDropEdge={(t, side) =>
+                        setWorkspace((w) => moveTabToNewPane(w, t, side === 'before' ? i : i + 1))
                       }
                       trailing={
                         <>

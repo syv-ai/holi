@@ -160,12 +160,23 @@ export function TabStrip({
     slideRef.current = null
   }
 
-  // A drag that ends anywhere but here — dropped on another pane, cancelled with
-  // escape, or the component unmounting mid-drag — must not leave a timer
-  // sliding a strip nobody is dragging over.
+  // A drag can end without this strip hearing about it: dropped on another pane,
+  // or cancelled with escape while the pointer sits right here — in which case
+  // `dragend` fires on the source pill, which may be in a different pane
+  // entirely. Left alone, this strip would keep a caret drawn and a window slid
+  // for a drag that finished a minute ago. Listening on the window catches every
+  // ending; the cleanup covers unmounting mid-drag.
   useEffect(() => {
-    return () => {
+    const clear = () => {
       if (slideRef.current !== null) clearInterval(slideRef.current.timer)
+      slideRef.current = null
+      setCaret(null)
+      setDragFocus(null)
+    }
+    window.addEventListener('dragend', clear)
+    return () => {
+      window.removeEventListener('dragend', clear)
+      clear()
     }
   }, [])
 
