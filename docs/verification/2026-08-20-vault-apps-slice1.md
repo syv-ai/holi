@@ -67,6 +67,11 @@ cross-origin from an opaque origin, which is the same wall `holi-vault://` hit a
       ask the drawer for a dashboard and confirm it discovers the contract from
       `.claude/skills/vault-apps/SKILL.md` without being told the API. Everything the agent depends
       on is verified above — the skill is on disk, and a hand-written app matching its contract runs.
+      **The skill was revised later the same day** for the gaps a reader-who-knows-nothing pass
+      found in it: it had told the agent to open the app itself (there is no such action), left the
+      `status` union and the reload rule unstated, and said nothing about the agent having no way to
+      see the app run. `privat`'s copy was deleted and re-seeded so it carries the revision —
+      `ensureSeeded` never overwrites, so an existing vault keeps whatever it was first given.
 - [ ] **A second app open at the same time.** Dedupe-by-`appId` and two-apps-are-two-tabs are unit
       tested; nothing exercised two live frames at once.
 - [ ] **Anything on Windows or Linux.** macOS only.

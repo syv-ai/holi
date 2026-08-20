@@ -1,6 +1,6 @@
 ---
 name: vault-apps
-description: Build a small web app that opens as a tab inside Holi and reads this vault's notes and tasks. Use when asked for a dashboard, a viewer, a chart, a board, a calculator, or any custom screen over the vault's own content.
+description: Build a small web app that opens as a tab inside Holi, over this vault's own notes and tasks. Use when asked for a dashboard, a chart or graph, a table or overview, a report, a viewer or explorer, a board, a tracker, a calculator, a widget, or any custom screen or small tool — including "visualise this", "show me", and "build me something to track X" phrasings.
 ---
 
 # Build an app for this vault
@@ -37,13 +37,44 @@ files and it appears in their sidebar.
 not define it, do not check whether it loaded. Every call returns a promise.
 
 ```js
-const docs  = await holi.docs.list()      // [{ path, kind: 'note'|'daily', updatedAt }]
-const text  = await holi.docs.read(path)  // the note's markdown, as a string
-const tasks = await holi.tasks.list()     // [{ title, status, due, path, ... }]
+const docs  = await holi.docs.list()      // every markdown note
+const text  = await holi.docs.read(path)  // that note's markdown, as a string
+const tasks = await holi.tasks.list()     // every task.*.md
 await holi.open('projects/q2.md')         // opens that note in a Holi tab
 ```
 
 That is the whole API. There is nothing else on `holi`.
+
+### Exactly what comes back
+
+`holi.docs.list()` — one entry per markdown note. Task files are **not** in this
+list (they are `holi.tasks.list()`), and neither are the agent's own files.
+
+```js
+{ path: 'projects/q2/roadmap.md', kind: 'note' | 'daily', updatedAt: '2026-08-20T…' }
+```
+
+`holi.tasks.list()` — one entry per `task.*.md` file:
+
+```js
+{
+  path: 'projects/q2/task.fix-login.md',
+  title: 'Fix login',                       // never empty
+  status: 'todo' | 'doing' | 'done',        // exactly these three
+  due?: '2026-08-24',                       // YYYY-MM-DD
+  priority?: 'low' | 'medium' | 'high',
+  tags: ['auth'],                           // always an array, may be empty
+  reminder?: '2d',
+  description: 'the markdown body',
+}
+```
+
+**An open task is `status !== 'done'`** — not `!t.done`, not `'complete'`, not
+`'open'`. A task's "area" is just the folder its path sits in.
+
+`holi.docs.read(path)` takes a vault-relative path exactly as `docs.list` gave it,
+and **rejects** for a missing file or a refused one (below). `holi.open(path)`
+takes the same kind of path.
 
 ## What an app cannot do
 
@@ -64,6 +95,31 @@ These are not oversights — build within them rather than around them.
 
 It *can* use the network — a CDN, an API — but a vault is often used offline, so
 prefer writing the code inline over depending on something remote.
+
+## You cannot see the app run
+
+There is no console you can read, no screenshot, and **no way for you to open the
+app yourself**. If it throws, the tab is blank and nothing tells either of you
+what happened. So build for that:
+
+- **Wrap the startup in a try/catch and render the error into the page.** A
+  visible message is the only diagnostic that exists here.
+- **Put something on screen before the first `await`**, so a failing call leaves
+  a page with a heading on it rather than a blank one.
+- Prefer plain DOM over anything clever: no build step, no bundler, no source map.
+- Re-read the files you wrote before saying it is done. That is the only check
+  available to you.
+
+## Editing an app that is already open
+
+**Your edit does not appear until the tab is reloaded**, and there is no
+auto-reload — deliberately, because writing `index.html` and then `app.js` would
+otherwise reload on the half-written state and show a broken app.
+
+So whenever you change an app the user may already have open, tell them: *reload
+it with the ⟳ button at the top right of the tab*. Otherwise they are looking at
+the old version while you describe the new one, and you will both conclude the
+fix did not work.
 
 ## Styling
 
@@ -98,26 +154,35 @@ wrong in a vault themed differently from yours.
       body { background: var(--background); color: var(--foreground);
              font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 2rem; }
       .n { color: var(--primary); font-size: 2.5rem; font-weight: 600; }
+      .err { color: var(--destructive); white-space: pre-wrap; }
       button { all: unset; cursor: pointer; color: var(--primary); }
     </style>
   </head>
   <body>
+    <!-- Rendered before anything awaits, so a failure still leaves a page. -->
+    <h1>vault dashboard</h1>
     <p><span class="n" id="docs">…</span> notes</p>
     <p><span class="n" id="open">…</span> open tasks</p>
     <ul id="recent"></ul>
+    <p class="err" id="err"></p>
     <script>
       ;(async () => {
-        const [docs, tasks] = await Promise.all([holi.docs.list(), holi.tasks.list()])
-        document.getElementById('docs').textContent = docs.length
-        document.getElementById('open').textContent =
-          tasks.filter((t) => t.status !== 'done').length
-        for (const doc of docs.slice(0, 5)) {
-          const li = document.createElement('li')
-          const b = document.createElement('button')
-          b.textContent = doc.path
-          b.onclick = () => holi.open(doc.path)
-          li.append(b)
-          document.getElementById('recent').append(li)
+        try {
+          const [docs, tasks] = await Promise.all([holi.docs.list(), holi.tasks.list()])
+          document.getElementById('docs').textContent = docs.length
+          document.getElementById('open').textContent =
+            tasks.filter((t) => t.status !== 'done').length
+          for (const doc of docs.slice(0, 5)) {
+            const li = document.createElement('li')
+            const b = document.createElement('button')
+            b.textContent = doc.path
+            b.onclick = () => holi.open(doc.path)
+            li.append(b)
+            document.getElementById('recent').append(li)
+          }
+        } catch (err) {
+          // The only diagnostic there is — do not leave this out.
+          document.getElementById('err').textContent = `failed: ${err.message ?? err}`
         }
       })()
     </script>
@@ -127,8 +192,9 @@ wrong in a vault themed differently from yours.
 
 ## Before you say it is done
 
-- Open it yourself: it is in the sidebar under **apps**.
-- A call that rejects should render as a message in the page, not as a blank
-  screen — the user cannot see your console.
+- **Ask the user to open it** — it is in the sidebar, under **apps**. You cannot
+  open it yourself, so do not claim to have looked at it.
+- Say what it should show, so they can tell you when it does not.
+- If they already had it open, tell them to reload the tab (see above).
 - Ask what the user wants it to answer before adding a second screen to it. A
   small app that answers one question beats a dashboard nobody reads.

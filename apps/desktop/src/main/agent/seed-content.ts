@@ -96,6 +96,18 @@ file **is** the note, the task, and the record.
   means moving the file.
 - Create, edit and complete them with ordinary file tools.
 
+## Apps
+
+- A vault can hold small web apps that open as tabs in Holi — a dashboard over
+  the tasks, a viewer for a CSV, a chart. They are vault content like anything
+  else: a directory of files under \`.holi/apps/<id>/\`, synced to everyone.
+- **You write them.** There is no app builder and no template gallery; an app is
+  files you author with ordinary tools when someone asks for a screen rather than
+  a note. The full contract — the directory layout, the \`window.holi\` bridge
+  that reads notes and tasks, and what an app deliberately cannot do — is the
+  **vault-apps skill** in \`.claude/skills/\`. Read it before writing one.
+- You cannot open an app yourself. Ask the user to; it is in their sidebar.
+
 ## How your edits reach other people
 
 Edits are committed automatically, a few seconds after they stop, and those

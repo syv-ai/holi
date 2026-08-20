@@ -576,6 +576,27 @@ describe('ensureSeeded — the vault-apps skill', () => {
     expect(skill).toContain('holi.tasks.list()')
     expect(skill).toContain('holi.open(')
     expect(skill).toMatch(/localStorage/)
+    // The three facts an agent gets WRONG rather than misses, each learned by
+    // reading the skill back as a reader who knows nothing about Holi:
+    // the status union (it guesses `done: true`), that an open tab does not
+    // pick up an edit, and that it cannot open the app to check its own work.
+    // Matched against whitespace-normalized text: the file is hand-wrapped at
+    // 80 columns, so any phrase long enough to be worth asserting is wrapped.
+    const prose = skill.replace(/\s+/g, ' ')
+    expect(prose).toContain("'todo' | 'doing' | 'done'")
+    expect(prose).toMatch(/reload/i)
+    expect(prose).toMatch(/no way for you to open the app yourself/i)
+  })
+
+  it('puts apps in the vault instructions, so an agent knows they exist at all', async () => {
+    // AGENTS.md is what an agent always has loaded; the skill only fires if its
+    // description happens to match what the user said. A capability absent from
+    // AGENTS.md is one that depends on phrasing to be discovered.
+    const root = await tempDir()
+    await ensureSeeded(root)
+    const agents = await readFile(join(root, 'AGENTS.md'), 'utf8')
+    expect(agents).toContain('.holi/apps/')
+    expect(agents).toContain('vault-apps skill')
   })
 
   it('never rewrites one the user has edited', async () => {
