@@ -163,6 +163,26 @@ export function openApp(workspace: Workspace, appId: string): Workspace {
 }
 
 /**
+ * A pane with one tab removed, its active index following the **document**.
+ *
+ * Closing the active tab falls back to its left-hand neighbour; removing any
+ * other one keeps whatever was active where it now sits. Shared, because a move
+ * performs exactly the same removal — and two copies of this rule would be two
+ * chances to silently put the user on a different file.
+ */
+function withoutTabAt(pane: Pane, index: number): Pane {
+  const tabs = pane.tabs.filter((_, i) => i !== index)
+  if (tabs.length === 0) return { tabs, active: -1 }
+  const active =
+    index === pane.active
+      ? Math.max(0, index - 1)
+      : pane.active > index
+        ? pane.active - 1
+        : pane.active
+  return { tabs, active }
+}
+
+/**
  * Close a tab in the active pane.
  *
  * The active tab follows the *document*, not the index. Closing a tab to the
@@ -177,20 +197,9 @@ export function openApp(workspace: Workspace, appId: string): Workspace {
  * has nothing to render into.
  */
 export function closeTab(workspace: Workspace, index: number): Workspace {
-  const closed = updatePane(workspace, (pane) => {
-    if (index < 0 || index >= pane.tabs.length) return pane
-    const tabs = pane.tabs.filter((_, i) => i !== index)
-    if (tabs.length === 0) return { tabs, active: -1 }
-    // Closing the active tab falls back to its left-hand neighbour; closing any
-    // other one keeps whatever was active where it now sits.
-    const active =
-      index === pane.active
-        ? Math.max(0, index - 1)
-        : pane.active > index
-          ? pane.active - 1
-          : pane.active
-    return { tabs, active }
-  })
+  const closed = updatePane(workspace, (pane) =>
+    index < 0 || index >= pane.tabs.length ? pane : withoutTabAt(pane, index),
+  )
   const pane = closed.panes[closed.active]
   if (pane !== undefined && pane.tabs.length === 0 && closed.panes.length > 1) {
     return closePane(closed, closed.active)
@@ -494,15 +503,15 @@ export function moveTab(
   // What the source pane was looking at, held as the document rather than as a
   // number — the only form of it that survives a removal.
   const wasActive = source.tabs[source.active]
-  const sourceTabs = source.tabs.filter((_, i) => i !== found.tab)
+  const removed = withoutTabAt(source, found.tab)
 
   const target = samePane && dest.index > found.tab ? dest.index - 1 : dest.index
-  const into = samePane ? sourceTabs : destPane.tabs
+  const into = samePane ? removed.tabs : destPane.tabs
   const at = Math.max(0, Math.min(target, into.length))
   const insert = (tabs: Tab[]) => [...tabs.slice(0, at), moved, ...tabs.slice(at)]
 
   if (samePane) {
-    const tabs = insert(sourceTabs)
+    const tabs = insert(removed.tabs)
     const active =
       source.active === found.tab || wasActive === undefined ? at : tabs.indexOf(wasActive)
     return {
@@ -511,20 +520,9 @@ export function moveTab(
     }
   }
 
-  const sourceActive =
-    sourceTabs.length === 0
-      ? -1
-      : source.active === found.tab
-        ? // The moved tab was the one being read; fall back to its left-hand
-          // neighbour, exactly as closing it would have done.
-          Math.max(0, found.tab - 1)
-        : wasActive === undefined
-          ? 0
-          : Math.max(0, sourceTabs.indexOf(wasActive))
-
   const panes = workspace.panes.map((pane, p) =>
     p === found.pane
-      ? { tabs: sourceTabs, active: sourceActive }
+      ? removed
       : p === dest.pane
         ? { tabs: insert(destPane.tabs), active: at }
         : pane,
@@ -534,11 +532,51 @@ export function moveTab(
   // unsplitting by dragging your last tab away and a permanent empty column.
   // It can never be the *last* pane: emptying one requires a different pane to
   // move into, so reaching here means there were at least two.
-  if (sourceTabs.length === 0) {
+  if (removed.tabs.length === 0) {
     return {
       panes: panes.filter((_, p) => p !== found.pane),
       active: dest.pane > found.pane ? dest.pane - 1 : dest.pane,
     }
   }
   return { panes, active: dest.pane }
+}
+
+/**
+ * Move a tab into a brand-new pane, inserted at `at` — the edge-drop.
+ *
+ * `at` is an index into `panes` (`0..panes.length`), read against the array as
+ * it is now: dropping on pane `i`'s left edge is `i`, its right edge `i + 1`.
+ *
+ * **One drop is a no-op, and only one.** A pane's *only* tab dropped on that
+ * pane's *own* edge would remove the column and rebuild an identical one in the
+ * same place — a flicker, not a move. The guard has to be exactly this narrow:
+ * that same sole tab dropped on a *different* pane's edge is an ordinary move,
+ * and it does collapse the pane it came from.
+ */
+export function moveTabToNewPane(workspace: Workspace, tab: Tab, at: number): Workspace {
+  const found = findTab(workspace, tab)
+  if (found === null) return workspace
+
+  const source = workspace.panes[found.pane]!
+  const sole = source.tabs.length === 1
+  if (sole && (at === found.pane || at === found.pane + 1)) return workspace
+
+  const moved = dragged(source.tabs[found.tab]!)
+  const removed = withoutTabAt(source, found.tab)
+  let panes: Pane[] = workspace.panes.map((pane, p) => (p === found.pane ? removed : pane))
+  let index = at
+
+  if (removed.tabs.length === 0) {
+    // Removed unconditionally, unlike `closeTab`: a pane is being *added* in the
+    // same operation, so the "last pane never goes" rule would leave an empty
+    // column beside the new one rather than protect anything.
+    panes = panes.filter((_, p) => p !== found.pane)
+    if (index > found.pane) index -= 1
+  }
+
+  index = Math.max(0, Math.min(index, panes.length))
+  return {
+    panes: [...panes.slice(0, index), { tabs: [moved], active: 0 }, ...panes.slice(index)],
+    active: index,
+  }
 }

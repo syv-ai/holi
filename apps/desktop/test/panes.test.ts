@@ -29,6 +29,7 @@ import {
   splitPane,
   focusPane,
   moveTab,
+  moveTabToNewPane,
   type Workspace,
 } from '../src/renderer/src/state/panes'
 
@@ -573,5 +574,91 @@ describe('moveTab', () => {
 
     expect(moveTab(w, { kind: 'note', path: 'nope.md' }, { pane: 0, index: 0 })).toBe(w)
     expect(moveTab(w, { kind: 'note', path: 'a.md' }, { pane: 7, index: 0 })).toBe(w)
+  })
+})
+
+describe('moveTabToNewPane', () => {
+  it('puts the tab in a fresh pane before the one it was dropped on', () => {
+    const w = moveTabToNewPane(split(), { kind: 'note', path: 'b.md' }, 0)
+
+    expect(layout(w)).toEqual([['b.md'], ['a.md'], ['c.md']])
+    expect(w.active).toBe(0)
+    expect(activeTab(w)).toEqual({ kind: 'note', path: 'b.md' })
+  })
+
+  it('and after it, when the drop was on the other edge', () => {
+    const w = moveTabToNewPane(split(), { kind: 'note', path: 'b.md' }, 1)
+
+    expect(layout(w)).toEqual([['a.md'], ['b.md'], ['c.md']])
+    expect(w.active).toBe(1)
+  })
+
+  it('leaves the source pane holding the rest', () => {
+    // `a.md` onto its own pane's right edge — legal, because pane 0 has another
+    // tab to keep the column alive.
+    const w = moveTabToNewPane(split(), { kind: 'note', path: 'a.md' }, 1)
+
+    expect(layout(w)).toEqual([['b.md'], ['a.md'], ['c.md']])
+    expect(w.panes).toHaveLength(3)
+  })
+
+  it('does nothing when a pane’s only tab is dropped on that pane’s own edge', () => {
+    // Removing the column and rebuilding an identical one in the same place is
+    // a flicker, not a move. `c.md` is alone in pane 1, so both of its own
+    // edges describe the workspace it is already in.
+    const w = split()
+
+    expect(moveTabToNewPane(w, { kind: 'note', path: 'c.md' }, 1)).toBe(w)
+    expect(moveTabToNewPane(w, { kind: 'note', path: 'c.md' }, 2)).toBe(w)
+  })
+
+  it('but the same sole tab on ANOTHER pane’s edge is an ordinary move', () => {
+    // The narrowness of that guard is the whole point: this collapses the pane
+    // `c.md` came from and builds a new one elsewhere, which is a real change.
+    const w = moveTabToNewPane(split(), { kind: 'note', path: 'c.md' }, 0)
+
+    expect(layout(w)).toEqual([['c.md'], ['a.md', 'b.md']])
+    expect(w.panes).toHaveLength(2)
+    expect(w.active).toBe(0)
+  })
+
+  it('shifts the insertion point down when the collapsing source sat before it', () => {
+    const start: Workspace = {
+      panes: [
+        { tabs: [{ kind: 'note', path: 'x.md' }], active: 0 },
+        { tabs: [{ kind: 'note', path: 'y.md' }], active: 0 },
+        { tabs: [{ kind: 'note', path: 'z.md' }], active: 0 },
+      ],
+      active: 0,
+    }
+
+    // "After pane 1" is index 2 while pane 0 still exists; once pane 0 goes it
+    // is index 1, and the tab must land between y.md and z.md either way.
+    const w = moveTabToNewPane(start, { kind: 'note', path: 'x.md' }, 2)
+
+    expect(layout(w)).toEqual([['y.md'], ['x.md'], ['z.md']])
+    expect(w.active).toBe(1)
+  })
+
+  it('pins a preview note, the same way a move within the strip does', () => {
+    const start: Workspace = {
+      panes: [
+        {
+          tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md', preview: true }],
+          active: 1,
+        },
+      ],
+      active: 0,
+    }
+
+    const w = moveTabToNewPane(start, { kind: 'note', path: 'b.md' }, 1)
+
+    expect(w.panes[1]!.tabs).toEqual([{ kind: 'note', path: 'b.md' }])
+  })
+
+  it('ignores a tab that is open nowhere', () => {
+    const w = split()
+
+    expect(moveTabToNewPane(w, { kind: 'note', path: 'nope.md' }, 0)).toBe(w)
   })
 })
