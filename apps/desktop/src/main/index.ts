@@ -29,6 +29,7 @@ import { openGoogleCache } from './google/cache'
 import { createGoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
+import { installHoliCli } from './agent/cli'
 import { GoogleApi } from './google/api'
 import { createEvent, deleteEvent, listAgenda, updateEvent } from './google/calendar'
 import {
@@ -362,6 +363,8 @@ async function main(): Promise<void> {
   })
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))
+  // Same bin directory, so one PATH prepend covers both.
+  const holiCliPath = await installHoliCli(app.getPath('userData'))
 
   const hookServer = createHookServer({
     onTurnStart: () => agent.setTurnActive(true),
@@ -387,7 +390,8 @@ async function main(): Promise<void> {
     googlePort: () => googleOps.port(),
     googleToken: () => googleOps.token(),
     googleBin: () => googleCliPath,
-    googleBinDir: () => dirname(googleCliPath),
+    holiBin: () => holiCliPath,
+    binDir: () => dirname(googleCliPath),
   })
   registerAgentIpc({ agent })
 

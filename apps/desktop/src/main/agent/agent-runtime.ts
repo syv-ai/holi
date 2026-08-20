@@ -68,16 +68,22 @@ export interface AgentEnvOpts {
   /** Absolute path to the generated `holi-google` command, as `$HOLI_GOOGLE_BIN`
    *  — the same shape as `$TYPST_BIN`, and what the seeded skill invokes. */
   googleBin?: string | null
+  /** Absolute path to the generated `holi` command, as `$HOLI_BIN`. The agent
+   *  types the bare name; this is for a hook or a script that needs the path. */
+  holiBin?: string | null
   /**
-   * The directory holding that command, **prepended to `PATH`** (D70).
+   * The directory holding Holi's generated commands, **prepended to `PATH`**.
    *
-   * This exists for the send gate, not for convenience. The gate is a
-   * `PreToolUse` hook matching the command text, so the command text has to be
+   * It exists for the send gate rather than for convenience (D70). The gate is
+   * a `PreToolUse` hook matching the command *text*, so the text has to be
    * something a rule can match — and `"$HOLI_GOOGLE_BIN" send` contains no
    * `holi-google` at all. That is precisely why D67 §5's planned
    * `Bash(holi-google send:*)` rule would never have fired.
+   *
+   * `holi` is generated into the same directory, so it is on `PATH` for the
+   * same reason without a second mechanism.
    */
-  googleBinDir?: string | null
+  binDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR` (D72).
    *
@@ -106,6 +112,7 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   delete env.HOLI_GOOGLE_PORT
   delete env.HOLI_GOOGLE_TOKEN
   delete env.HOLI_GOOGLE_BIN
+  delete env.HOLI_BIN
   // Reserved for the same reason and more strongly (D72): an inherited value
   // would put the agent straight back on the machine's `~/.claude`, which is the
   // one thing this variable exists to prevent.
@@ -117,11 +124,12 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   if (opts.googlePort != null) env.HOLI_GOOGLE_PORT = String(opts.googlePort)
   if (opts.googleToken) env.HOLI_GOOGLE_TOKEN = opts.googleToken
   if (opts.googleBin) env.HOLI_GOOGLE_BIN = opts.googleBin
-  // Prepended, never appended: an earlier `holi-google` on the inherited PATH
-  // would otherwise win, and the agent would be talking to something else
-  // entirely under a name the gate trusts.
-  if (opts.googleBinDir) {
-    env.PATH = env.PATH ? `${opts.googleBinDir}:${env.PATH}` : opts.googleBinDir
+  if (opts.holiBin) env.HOLI_BIN = opts.holiBin
+  // Prepended, never appended: an earlier `holi-google` or `holi` on the
+  // inherited PATH would otherwise win, and the agent would be talking to
+  // something else entirely under a name the gate trusts.
+  if (opts.binDir) {
+    env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
   }
   return env
 }

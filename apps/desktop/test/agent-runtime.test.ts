@@ -146,10 +146,10 @@ describe('buildAgentEnv', () => {
    * matches nothing — which is exactly the hole D67 §5's planned
    * `Bash(holi-google send:*)` had.
    */
-  it('prepends the google bin dir to PATH so the bare name resolves', () => {
+  it('prepends the Holi bin dir to PATH so the bare names resolve', () => {
     const env = buildAgentEnv(
       { PATH: '/usr/bin:/bin' },
-      { googleBin: '/data/bin/holi-google', googleBinDir: '/data/bin' },
+      { googleBin: '/data/bin/holi-google', binDir: '/data/bin' },
     )
 
     expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
@@ -162,13 +162,13 @@ describe('buildAgentEnv', () => {
 
   it('leaves PATH alone when there is no google bin dir', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
-    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { googleBinDir: null }).PATH).toBe(
+    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe(
       '/usr/bin:/bin',
     )
   })
 
   it('still sets a usable PATH when the parent had none', () => {
-    expect(buildAgentEnv({}, { googleBinDir: '/data/bin' }).PATH).toBe('/data/bin')
+    expect(buildAgentEnv({}, { binDir: '/data/bin' }).PATH).toBe('/data/bin')
   })
 
   it('omits the Google keys when the channel is not running', () => {
@@ -217,7 +217,7 @@ describe('buildAgentEnv', () => {
   it('carries the config dir alongside the PATH prepend', () => {
     const env = buildAgentEnv(
       { PATH: '/usr/bin:/bin' },
-      { configDir: '/data/agent-config', googleBinDir: '/data/bin' },
+      { configDir: '/data/agent-config', binDir: '/data/bin' },
     )
     expect(env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
     expect(env.PATH).toBe('/data/bin:/usr/bin:/bin')
