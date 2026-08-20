@@ -738,6 +738,10 @@
   margin-top: 14px;
   max-height: 46vh;
   overflow-y: auto;
+  /* The app-wide gutter rule keys on the Tailwind overflow utilities; this list
+     declares its own overflow, so it reserves its own gutter. The rule is "the
+     gutter goes wherever the overflow is declared", not "on every scroller". */
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 1px;

@@ -246,7 +246,7 @@ export function AppsSection(): React.JSX.Element | null {
           way a tree row does, so a hover highlight spans the sidebar rather than
           floating inside an inset box — and the rows sit at the tree's indent
           instead of 8px further in. */}
-      <div className="holi-scroll min-h-0 flex-1 overflow-y-auto pb-1">
+      <div className="min-h-0 flex-1 overflow-y-auto pb-1">
         {appIds.map((appId) => row(appId, true))}
         {unregistered.map((appId) => row(appId, false))}
       </div>

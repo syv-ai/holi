@@ -380,7 +380,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  <div className="obrit-join-list holi-scroll">
+                  <div className="obrit-join-list">
                     {repos === null && reposError === null && (
                       <p className="obrit-field-caption">loading repos…</p>
                     )}

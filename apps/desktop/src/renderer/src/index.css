@@ -16,6 +16,12 @@
    surface (neutral) — do not confuse it with the old brand `accent`. */
 :root,
 [data-theme='dark'] {
+  /* Tell the engine which way round this page is, so everything we do NOT paint
+     ourselves — a scrollbar we did not reach, a native form control, the canvas
+     behind the app — comes up dark instead of defaulting to light. It was unset,
+     which reads as `normal`, i.e. light. */
+  color-scheme: dark;
+
   --background: var(--color-neutral-950);
   --foreground: var(--color-neutral-100);
   --card: var(--color-neutral-900);
@@ -76,6 +82,8 @@
   --task-done: #3fb950;
 }
 [data-theme='light'] {
+  color-scheme: light;
+
   --background: var(--color-neutral-50);
   --foreground: var(--color-neutral-900);
   --card: #ffffff;
@@ -252,32 +260,53 @@
 }
 
 /**
- * Scroll containers that don't announce themselves.
+ * Scrollbars, app-wide.
  *
- * Three things at once, and they're related:
- *  - `scrollbar-gutter: stable` reserves the track's width whether or not the pane
- *    overflows, so content never reflows sideways when a scrollbar appears or when the
- *    thumb fades in on hover.
- *  - The track stays transparent, so it takes the panel's own background instead of
- *    Chromium's default light-grey slab, which ignored the dark theme entirely.
- *  - The thumb is transparent until you hover the pane. Because the gutter is already
- *    reserved, fading it in costs no layout.
+ * Two halves, and only one of them can be global.
  *
- * Uses ::-webkit-scrollbar rather than the standard `scrollbar-color`: both work in
- * Chromium, but setting `scrollbar-color` makes it ignore these pseudo-elements, and
- * per-element hover on the thumb is what buys the fade.
+ * **The paint is global.** A bare `::-webkit-scrollbar` rule reaches every scroll
+ * container there is, including the ones no stylesheet of ours can name: the
+ * CodeMirror scroller, the terminal viewport, a Radix menu that outgrew the
+ * screen. That is the whole point. This was a `.holi-scroll` class, worn by three
+ * elements out of the twenty-eight that scroll; the other twenty-five got
+ * Chromium's default slab, and the root's `color-scheme` is `normal`, so
+ * "default" meant the LIGHT default painted into a dark-first app.
+ *
+ * **The gutter cannot be.** `scrollbar-gutter: stable` reserves the track's width
+ * whether or not the pane overflows, so content never reflows sideways when a
+ * scrollbar appears or when the thumb fades in. But styling a scrollbar makes
+ * Chromium give up overlay scrollbars, and a reserved gutter then applies to
+ * `overflow: hidden` boxes as well — measured in the running app, a 200px hidden
+ * box reports `clientWidth` 190. A blanket `* { scrollbar-gutter: stable }` would
+ * therefore inset every clipped box in the app by 10px. CSS has no selector for
+ * "computed overflow is auto", so the gutter is keyed to the utilities that
+ * actually make a vertical scroller: writing `overflow-y-auto` reserves the
+ * gutter, with nothing else to remember, which is exactly what `.holi-scroll`
+ * failed to be. `overflow-x-auto` is deliberately absent — a horizontal scroller
+ * reserving a VERTICAL gutter is an inset for a bar that never comes.
+ *
+ * `::-webkit-scrollbar` rather than the standard `scrollbar-color`: both work in
+ * Chromium, but setting `scrollbar-color` makes it ignore these pseudo-elements,
+ * and per-element hover on the thumb is what buys the fade.
  */
-.holi-scroll {
+:where(
+  .overflow-auto,
+  .overflow-y-auto,
+  .overflow-scroll,
+  .overflow-y-scroll,
+  .cm-scroller,
+  .xterm-viewport
+) {
   scrollbar-gutter: stable;
 }
-.holi-scroll::-webkit-scrollbar {
+::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-.holi-scroll::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
-.holi-scroll::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   background: transparent;
   border-radius: 9999px;
   /* Inset the thumb from the gutter edge without changing the reserved width. */
@@ -285,15 +314,15 @@
   background-clip: content-box;
   transition: background-color 150ms ease;
 }
-.holi-scroll:hover::-webkit-scrollbar-thumb {
+:hover::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   background-clip: content-box;
 }
-.holi-scroll::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover);
   background-clip: content-box;
 }
-.holi-scroll::-webkit-scrollbar-corner {
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 

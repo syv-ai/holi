@@ -388,7 +388,7 @@ export function FileTree({
       <div
         // pt-10 reserves the band the hover toolbar (ExplorerHeader, absolute
         // top-1) floats into, so it never covers the first row.
-        className="holi-scroll min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
+        className="min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
         {...tree.getContainerProps()}
       >
         {pending && (
