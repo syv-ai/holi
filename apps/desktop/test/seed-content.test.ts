@@ -60,6 +60,7 @@ describe('SEED_FILES', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
+      '.claude/hooks/vault-app-check.mjs',
       '.claude/settings.json',
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
@@ -168,10 +169,16 @@ describe('SEED_FILES', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
     expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toContain(
       '.claude/hooks/user-prompt-submit.mjs',
+      '.claude/hooks/vault-app-check.mjs',
     )
     // UserPromptSubmit + Stop bracket a turn for git coexistence (hook-server
     // signal); PreToolUse is the send gate (D70) and is unrelated to the bracket.
-    expect(Object.keys(settings.hooks)).toEqual(['UserPromptSubmit', 'Stop', 'PreToolUse'])
+    expect(Object.keys(settings.hooks)).toEqual([
+      'UserPromptSubmit',
+      'Stop',
+      'PostToolUse',
+      'PreToolUse',
+    ])
     expect(settings.permissions.ask).toEqual([
       'Bash(curl:*)',
       'Bash(wget:*)',
@@ -562,7 +569,11 @@ describe('the connector opt-out reaches vaults that already exist', () => {
       disableClaudeAiConnectors: false,
     })
 
-    expect(settingsWithRequired(before)).toBeNull()
+    // It still merges the vault-app validator in, which this fixture predates —
+    // so assert the stated choice survives rather than that nothing changed.
+    const after = JSON.parse(settingsWithRequired(before)!)
+    expect(after.disableClaudeAiConnectors).toBe(false)
+    expect(JSON.stringify(after.hooks.PostToolUse)).toContain('vault-app-check')
   })
 })
 
@@ -630,6 +641,7 @@ describe('the managed / once split (D75)', () => {
     expect(Object.keys(MANAGED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
+      '.claude/hooks/vault-app-check.mjs',
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',

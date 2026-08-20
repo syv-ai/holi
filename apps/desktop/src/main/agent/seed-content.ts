@@ -30,6 +30,7 @@ import { writeAtomic } from '../vault/vault-files'
 import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
+import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -177,6 +178,20 @@ const SETTINGS_JSON =
           },
         ],
         Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
+        // The vault-app validator. Advisory only — it reports and exits 0 —
+        // because slice 1's authoring loop had no feedback in it at all: the
+        // agent wrote an app blind and asked the user to go and look, so a
+        // syntax error surfaced as a blank tab and a puzzled user.
+        //
+        // Matched on the writing tools rather than on the path, because the
+        // matcher grammar cannot see a path; the hook returns immediately for
+        // anything outside `.holi/apps/`.
+        PostToolUse: [
+          {
+            matcher: 'Write|Edit|MultiEdit',
+            hooks: [{ type: 'command', command: hookCommand('vault-app-check') }],
+          },
+        ],
         // The send gate (D70). It matches Bash broadly and decides for itself,
         // rather than relying on an `if` condition: the agent can spell the
         // command three ways, and a condition that misses one fails OPEN while
@@ -293,6 +308,7 @@ const THEME_SKELETON = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, ligh
 export const MANAGED_FILES: Record<string, string> = {
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
   '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
+  '.claude/hooks/vault-app-check.mjs': vaultAppCheckHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -403,7 +419,7 @@ export function settingsWithRequired(existing: string | null): string | null {
   }
 
   const required = JSON.parse(SETTINGS_JSON) as {
-    hooks: { PreToolUse: unknown[] }
+    hooks: { PreToolUse: unknown[]; PostToolUse: unknown[] }
     permissions: { ask: string[] }
     disableClaudeAiConnectors: boolean
   }
@@ -434,6 +450,17 @@ export function settingsWithRequired(existing: string | null): string | null {
   const hasGate = JSON.stringify(preToolUse).includes('google-send-gate')
   if (!hasGate) {
     hooks.PreToolUse = [...preToolUse, ...required.hooks.PreToolUse]
+    settings.hooks = hooks
+    changed = true
+  }
+
+  // The vault-app validator, merged for the gate's reason: every vault that
+  // exists today already has a settings.json, so the creation path reaches none
+  // of them. Matched by the script it runs, so a user who reordered or
+  // annotated the entry does not get a duplicate.
+  const postToolUse = Array.isArray(hooks.PostToolUse) ? hooks.PostToolUse : []
+  if (!JSON.stringify(postToolUse).includes('vault-app-check')) {
+    hooks.PostToolUse = [...postToolUse, ...required.hooks.PostToolUse]
     settings.hooks = hooks
     changed = true
   }
