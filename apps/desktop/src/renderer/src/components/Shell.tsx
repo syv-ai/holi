@@ -49,6 +49,7 @@ import {
   activeTab,
   closePane,
   closeTab,
+  dropZones,
   focusPane,
   moveTab,
   moveTabToNewPane,
@@ -62,6 +63,7 @@ import {
   splitPane,
   pinTab,
   workspaceAtom,
+  type Tab,
 } from '../state/panes'
 import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
@@ -69,7 +71,12 @@ import { VaultHistory } from '@/features/history/VaultHistory'
 import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, todayLinkCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
+import type { PaneDropZone } from '@/lib/tab-drop'
 import { agentPanelOpenAtom } from '@/state/agent'
+
+/** One shared empty array, so a pane not being dragged over keeps the same
+ *  `allowed` reference between renders. */
+const NO_ZONES: PaneDropZone[] = []
 import { usePanelLayout } from '../state/preferences'
 import { appsSectionOpenAtom, hasAppsAtom } from '../state/apps'
 import { useVaultTheme } from '../state/theme'
@@ -152,6 +159,15 @@ export function Shell() {
   }, [appsOpen, hasApps])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
+  /**
+   * The tab currently being dragged, or null.
+   *
+   * It lives here because *which* drops are possible is a question about the
+   * whole workspace, not about any one pane: an edge shared by two panes is one
+   * gap, and whether landing in it changes anything depends on where the dragged
+   * tab came from. `dropZones` answers that by asking the moves themselves.
+   */
+  const [dragTab, setDragTab] = useState<Tab | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
@@ -223,6 +239,20 @@ export function Shell() {
   }, [openDialog])
 
   const tab = activeTab(workspace)
+  // Every way a drag can end, including an escape-cancel and a drop that landed
+  // somewhere with no handler at all. Without this the landing strips would stay
+  // on screen for a drag that finished.
+  useEffect(() => {
+    if (dragTab === null) return
+    const clear = () => setDragTab(null)
+    window.addEventListener('dragend', clear)
+    window.addEventListener('drop', clear)
+    return () => {
+      window.removeEventListener('dragend', clear)
+      window.removeEventListener('drop', clear)
+    }
+  }, [dragTab])
+
   const pane = workspace.panes[workspace.active]!
 
   // Feed the agent's per-turn hook the focused note — the one piece of state it
@@ -493,6 +523,12 @@ export function Shell() {
                       // A dropped tab carries only its identity, so neither of
                       // these needs to know where it came from — `moveTab`
                       // finds it, in whichever pane it currently sits.
+                      // Which zones this pane may light up is a question about
+                      // the whole workspace — pane 1's left edge and pane 0's
+                      // right edge are one gap — so it is answered here, by the
+                      // moves themselves, rather than guessed at per pane.
+                      allowed={dragTab === null ? NO_ZONES : dropZones(workspace, dragTab, i)}
+                      onDragBegin={setDragTab}
                       onDropTab={(t, index) =>
                         setWorkspace((w) => moveTab(w, t, { pane: i, index }))
                       }

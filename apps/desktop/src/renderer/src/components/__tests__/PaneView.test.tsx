@@ -12,7 +12,7 @@
  */
 import { fireEvent, render, screen } from '@/test/render'
 import { expect, test, vi } from 'vitest'
-import { TAB_MIME } from '@/lib/tab-drop'
+import { TAB_MIME, type PaneDropZone } from '@/lib/tab-drop'
 import type { Pane, Tab } from '@/state/panes'
 import { PaneView } from '../PaneView'
 
@@ -20,12 +20,15 @@ import { PaneView } from '../PaneView'
  *  the whole CodeMirror stack — the wrapper is what is under test. */
 const empty: Pane = { tabs: [], active: -1 }
 
+const ALL: PaneDropZone[] = ['before', 'into', 'after']
+
 function pane(props: Partial<Parameters<typeof PaneView>[0]> = {}) {
   const onDropTab = vi.fn()
   const onDropEdge = vi.fn()
   render(
     <PaneView
       pane={empty}
+      allowed={ALL}
       focused
       onFocus={() => {}}
       onSelect={() => {}}
@@ -57,17 +60,6 @@ function dragFromOwnStrip() {
   fireEvent(pill, event)
 }
 
-function dragEnter(types: string[]) {
-  const body = screen.getByTestId('tab-strip').parentElement!.nextElementSibling!
-  const event = new Event('dragenter', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'dataTransfer', {
-    value: { types, getData: () => '', dropEffect: 'none' },
-  })
-  Object.defineProperty(event, 'clientX', { value: 0 })
-  fireEvent(body, event)
-  return body
-}
-
 test('the pane still renders its strip and its body', () => {
   pane()
 
@@ -76,78 +68,57 @@ test('the pane still renders its strip and its body', () => {
   expect(screen.getByText('select or create a note')).toBeInTheDocument()
 })
 
-test('a tab dragged over the body lights it up as a drop target', () => {
+test('a dragover carrying something other than a tab is refused', () => {
+  // Shell only reports a drag when a tab pill starts one, so a file from the
+  // tree never reaches here — but the overlay checks anyway, because
+  // `preventDefault` is what makes an element a drop target and it must not be
+  // handed out on a guess.
   pane()
-  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
-
-  dragEnter([TAB_MIME])
-
-  expect(screen.getByTestId('pane-drop-overlay')).toBeInTheDocument()
-})
-
-test('a drag that is not a tab leaves the pane inert', () => {
-  // A file from the tree, or a task card off the board, must not make the
-  // editor body look like it will accept them.
-  pane()
-
-  dragEnter(['text/plain'])
-
-  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
-})
-
-test('a pane wired for no drops never offers one', () => {
-  pane({ onDropTab: undefined, onDropEdge: undefined })
-
-  dragEnter([TAB_MIME])
-
-  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
-})
-
-test('a pane offers nothing when the tab being dragged is its only one', () => {
-  // Every zone would be a no-op: the edges are the sole-tab-on-its-own-edge
-  // case, and the middle is a same-pane move to where it already is. Lighting
-  // any of them promises something that cannot happen.
-  pane({ pane: { tabs: [note('only')], active: 0 } })
-
-  dragFromOwnStrip()
-  dragEnter([TAB_MIME])
-
-  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
-})
-
-test('the pane a drag came from keeps its edges but drops its middle', () => {
-  // Reaching either edge means crossing the body, so a full-pane highlight
-  // would flash on every split gesture — and "into my own pane" is a move to
-  // the end of my own strip, which the strip already expresses.
-  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
-
-  dragFromOwnStrip()
-  const body = dragEnter([TAB_MIME])
   const overlay = screen.getByTestId('pane-drop-overlay')
 
-  // jsdom measures 0x0, so `paneDropZone` reads the middle here.
   const over = new Event('dragover', { bubbles: true, cancelable: true })
   Object.defineProperty(over, 'dataTransfer', {
-    value: { types: [TAB_MIME], getData: () => '', dropEffect: 'none' },
+    value: { types: ['text/plain'], getData: () => '', dropEffect: 'none' },
   })
   Object.defineProperty(over, 'clientX', { value: 0 })
   fireEvent(overlay, over)
 
-  // Both landing strips are on screen, but the middle itself draws nothing and
-  // refuses the drop.
+  expect(over.defaultPrevented).toBe(false)
+})
+
+
+test('a pane offers nothing when it is handed no zones', () => {
+  // `dropZones` decides this — a sole tab's own pane, and the facing edge of the
+  // pane next door, are all no-ops. The component's job is to believe it.
+  pane({ pane: { tabs: [note('only')], active: 0 }, allowed: [] })
+
+  dragFromOwnStrip()
+
+  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
+})
+
+test('a pane handed only edges keeps them and refuses its middle', () => {
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 }, allowed: ['before', 'after'] })
+
+  dragFromOwnStrip()
+  const overlay = screen.getByTestId('pane-drop-overlay')
+  const over = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(over, 'dataTransfer', {
+    value: { types: [TAB_MIME], getData: () => '', dropEffect: 'none' },
+  })
+  // jsdom measures 0x0, so `paneDropZone` reads the middle here.
+  Object.defineProperty(over, 'clientX', { value: 0 })
+  fireEvent(overlay, over)
+
   expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
   expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
   expect(screen.queryByTestId('pane-drop-into')).not.toBeInTheDocument()
   expect(over.defaultPrevented).toBe(false)
-  expect(body).toBeInstanceOf(HTMLElement)
 })
 
-test('another pane still offers all three zones', () => {
-  // The drag did not start here, so "put this over there" is exactly what the
-  // middle means, and it keeps its highlight.
+test('a pane handed all three accepts its middle', () => {
   pane({ pane: { tabs: [note('a')], active: 0 } })
 
-  dragEnter([TAB_MIME])
   const overlay = screen.getByTestId('pane-drop-overlay')
   const over = new Event('dragover', { bubbles: true, cancelable: true })
   Object.defineProperty(over, 'dataTransfer', {
@@ -160,38 +131,21 @@ test('another pane still offers all three zones', () => {
   expect(screen.getByTestId('pane-drop-into')).toBeInTheDocument()
 })
 
-test('both landing strips appear the moment a tab is picked up', () => {
-  // The discoverability rule: an edge that only exists once the pointer is
-  // already in it teaches nobody that a drag can split the view.
-  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
-  expect(screen.queryByTestId('pane-drop-before')).not.toBeInTheDocument()
+test('the landing strips are on screen before the pointer arrives', () => {
+  // No dragenter and no dragover: being handed zones is enough. The
+  // discoverability rule — an edge that only exists once you are in it teaches
+  // nobody that a drag can split the view.
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 }, allowed: ['before', 'after'] })
+
+  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
+  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
+})
+
+test('a drag starting in this strip reports the tab it picked up', () => {
+  const onDragBegin = vi.fn()
+  pane({ pane: { tabs: [note('a'), note('b')], active: 0 }, onDragBegin })
 
   dragFromOwnStrip()
 
-  // No dragenter, no dragover — picking the tab up was enough.
-  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
-  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
-})
-
-test('a tab picked up in ANOTHER pane arms this one too', () => {
-  // `dragstart` bubbles to the window, which is how a pane hears about a drag
-  // that began somewhere it cannot see.
-  pane({ pane: { tabs: [note('a')], active: 0 } })
-
-  const event = new Event('dragstart', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'dataTransfer', { value: { types: [TAB_MIME] } })
-  fireEvent(document.body, event)
-
-  expect(screen.getByTestId('pane-drop-before')).toBeInTheDocument()
-  expect(screen.getByTestId('pane-drop-after')).toBeInTheDocument()
-})
-
-test('a drag of something else arms nothing', () => {
-  pane({ pane: { tabs: [note('a'), note('b')], active: 0 } })
-
-  const event = new Event('dragstart', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'dataTransfer', { value: { types: ['text/plain'] } })
-  fireEvent(document.body, event)
-
-  expect(screen.queryByTestId('pane-drop-overlay')).not.toBeInTheDocument()
+  expect(onDragBegin).toHaveBeenCalledWith({ kind: 'note', path: 'notes/a.pdf' })
 })

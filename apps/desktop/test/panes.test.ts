@@ -28,6 +28,7 @@ import {
   retargetTabs,
   splitPane,
   focusPane,
+  dropZones,
   moveTab,
   moveTabToNewPane,
   type Workspace,
@@ -660,5 +661,55 @@ describe('moveTabToNewPane', () => {
     const w = split()
 
     expect(moveTabToNewPane(w, { kind: 'note', path: 'nope.md' }, 0)).toBe(w)
+  })
+})
+
+describe('dropZones', () => {
+  /** Two panes: `a.md`+`b.md` on the left, `c.md` alone on the right. */
+  const two = split
+  const sole = (): Workspace => ({
+    panes: [
+      { tabs: [{ kind: 'note', path: 'x.md' }], active: 0 },
+      { tabs: [{ kind: 'note', path: 'y.md' }], active: 0 },
+    ],
+    active: 0,
+  })
+
+  it('offers everything on a pane the drag did not come from', () => {
+    expect(dropZones(two(), { kind: 'note', path: 'a.md' }, 1).sort()).toEqual([
+      'after',
+      'before',
+      'into',
+    ])
+  })
+
+  it('never offers the middle of the pane the drag came from', () => {
+    // Not a no-op — it would move `a.md` to the end of its own strip — but every
+    // split gesture crosses the body on the way to an edge, and the strip
+    // already expresses that move.
+    expect(dropZones(two(), { kind: 'note', path: 'a.md' }, 0)).not.toContain('into')
+    expect(dropZones(two(), { kind: 'note', path: 'a.md' }, 0).sort()).toEqual(['after', 'before'])
+  })
+
+  it('offers nothing at all around a sole tab’s own pane', () => {
+    expect(dropZones(sole(), { kind: 'note', path: 'x.md' }, 0)).toEqual([])
+  })
+
+  it('and drops the NEIGHBOUR’s facing edge too, because it is the same gap', () => {
+    // The bug this function exists to prevent. Pane 1's left edge and pane 0's
+    // right edge describe one gap; `x.md` is alone in pane 0, so landing it
+    // there rebuilds the column it just left. It lit up and did nothing.
+    const zones = dropZones(sole(), { kind: 'note', path: 'x.md' }, 1)
+
+    expect(zones).not.toContain('before')
+    // The far side is a real move: pane 0 collapses and a new column appears
+    // beyond pane 1.
+    expect(zones).toContain('after')
+    expect(zones).toContain('into')
+  })
+
+  it('is empty for a tab that is open nowhere, and for a pane that is not there', () => {
+    expect(dropZones(two(), { kind: 'note', path: 'nope.md' }, 0)).toEqual([])
+    expect(dropZones(two(), { kind: 'note', path: 'a.md' }, 9)).toEqual([])
   })
 })

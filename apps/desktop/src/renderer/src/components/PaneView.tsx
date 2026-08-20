@@ -79,6 +79,14 @@ export interface PaneViewProps {
   /** A tab was dropped on this pane's left or right quarter: it wants a pane of
    *  its own, on that side. */
   onDropEdge?: (tab: Tab, side: 'before' | 'after') => void
+  /** Which of this pane's zones the drag in flight could actually use, from
+   *  `dropZones` — empty when nothing is being dragged, which is also what
+   *  keeps the overlay off screen. A pane does not work this out for itself:
+   *  whether an edge would do anything depends on where the dragged tab lives
+   *  and on the pane *next door*, and only the workspace knows both. */
+  allowed?: PaneDropZone[]
+  /** A drag started in this pane's strip, carrying that tab. */
+  onDragBegin?: (tab: Tab) => void
   /** Controls at the right-hand end of this pane's strip. */
   trailing?: ReactNode
 }
@@ -95,72 +103,21 @@ export function PaneView({
   onConflict,
   onDropTab,
   onDropEdge,
+  allowed = [],
+  onDragBegin,
   trailing,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
 
-  /** A tab drag is currently over this pane's body. */
-  const [dragging, setDragging] = useState(false)
   /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
-  /** The drag started in *this* pane's strip. */
-  const [fromHere, setFromHere] = useState(false)
-  const takesDrops = onDropTab !== undefined || onDropEdge !== undefined
 
-  /**
-   * What this pane will actually accept, which is not always all three.
-   *
-   * **A pane never offers a drop that would do nothing.** Two cases, and both
-   * are about the pane the drag came *from*:
-   *
-   *  - Its **middle** is noise. "Into this pane" means "move to the end of my
-   *    own strip", which the strip itself already expresses — and on the way to
-   *    an edge the pointer crosses the whole body, so a full-pane highlight
-   *    flashes on every single split gesture. Left and right only.
-   *  - With a **single tab** it offers nothing at all: the edges are the
-   *    sole-tab-on-its-own-edge no-op (`moveTabToNewPane`) and the middle is a
-   *    same-pane no-op (`moveTab`), so every zone is inert and lighting any of
-   *    them up would promise something that cannot happen.
-   *
-   * Every *other* pane still offers all three — dropping into one is the
-   * ordinary "put this over there" gesture.
-   */
-  const allowed: PaneDropZone[] = !fromHere
-    ? ['before', 'into', 'after']
-    : pane.tabs.length <= 1
-      ? []
-      : ['before', 'after']
-
-  // A tab picked up anywhere arms every pane that could accept it, so both
-  // landing strips are on screen before the pointer goes looking for them.
-  // `dragstart` bubbles to the window, and `types` is readable there.
+  // A drag that ended elsewhere leaves no highlight behind: `allowed` empties
+  // the moment the workspace stops reporting a drag, and the overlay goes with
+  // it — but the hovered zone is local, so it is cleared here.
   useEffect(() => {
-    if (!takesDrops) return
-    const begin = (e: DragEvent) => {
-      if (e.dataTransfer?.types.includes(TAB_MIME) === true) setDragging(true)
-    }
-    window.addEventListener('dragstart', begin)
-    return () => window.removeEventListener('dragstart', begin)
-  }, [takesDrops])
-
-  // A drag can end without this pane ever hearing about it — dropped on another
-  // pane, or cancelled with escape while the pointer sits right here, in which
-  // case `dragend` fires on the source pill in some *other* pane. Left alone,
-  // the highlight would stay lit over a drag that finished a minute ago.
-  useEffect(() => {
-    if (!dragging && !fromHere) return
-    const clear = () => {
-      setDragging(false)
-      setZone(null)
-      setFromHere(false)
-    }
-    window.addEventListener('dragend', clear)
-    window.addEventListener('drop', clear)
-    return () => {
-      window.removeEventListener('dragend', clear)
-      window.removeEventListener('drop', clear)
-    }
-  }, [dragging, fromHere])
+    if (allowed.length === 0) setZone(null)
+  }, [allowed.length])
 
   const zoneAt = (e: React.DragEvent) =>
     paneDropZone(e.currentTarget.getBoundingClientRect(), e.clientX)
@@ -182,7 +139,7 @@ export function PaneView({
         onPin={onPin}
         onClose={onCloseTab}
         onDropTab={onDropTab}
-        onDragBegin={() => setFromHere(true)}
+        onDragBegin={onDragBegin}
         trailing={trailing}
       />
 
@@ -191,13 +148,7 @@ export function PaneView({
           Wrapped rather than handled in place because the overlay needs
           somewhere to be absolutely positioned, and it must cover the content
           WITHOUT covering the strip, which has drop handling of its own. */}
-      <div
-        className="relative flex min-h-0 flex-1 flex-col"
-        onDragEnter={(e) => {
-          if (!takesDrops || !e.dataTransfer.types.includes(TAB_MIME)) return
-          setDragging(true)
-        }}
-      >
+      <div className="relative flex min-h-0 flex-1 flex-col">
         {tab?.kind === 'app' ? (
           <AppFrame appId={tab.appId} />
         ) : tab?.kind === 'board' ? (
@@ -239,7 +190,7 @@ export function PaneView({
         {/* One event target, always. The bands inside are `pointer-events-none`,
             so crossing them fires no `dragleave` — which is the papercut that
             makes hand-rolled HTML5 drop zones flicker. */}
-        {dragging && allowed.length > 0 && (
+        {allowed.length > 0 && (
           <div
             className="absolute inset-0 z-10"
             data-testid="pane-drop-overlay"
@@ -255,14 +206,10 @@ export function PaneView({
               e.dataTransfer.dropEffect = 'move'
               setZone(side)
             }}
-            onDragLeave={() => {
-              setDragging(false)
-              setZone(null)
-            }}
+            onDragLeave={() => setZone(null)}
             onDrop={(e) => {
               const side = zoneAt(e)
               const dropped = parseTabPayload(e.dataTransfer.getData(TAB_MIME))
-              setDragging(false)
               setZone(null)
               if (dropped === null || !allowed.includes(side)) return
               e.preventDefault()

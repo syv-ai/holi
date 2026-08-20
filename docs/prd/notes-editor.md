@@ -169,12 +169,16 @@ Three rules are its own:
 - **A drag pins a preview tab.** Dragging is intent, the way editing is. Without it the gesture eats
   itself — place a preview tab deliberately, single-click anything in the tree, and `openPreview`
   replaces it *in place*, destroying the tab you just positioned.
-- **A pane never offers a drop that would do nothing.** The pane a drag came *from* stops showing
-  its middle, because "into this pane" is a move to the end of its own strip, which the strip
-  already expresses — and every split gesture crosses the body on the way to an edge, so the
-  full-pane highlight would flash on all of them. If that pane holds a **single tab** it offers
-  nothing at all: both edges are the sole-tab no-op and the middle is a move to where the tab
-  already sits. Every *other* pane keeps all three zones.
+- **A pane never offers a drop that would do nothing** — and an **edge shared by two panes is one
+  gap**, so that is a question about the whole workspace rather than about any one pane. A sole tab
+  dragged out of its column has *three* inert edges around it: its own two, and the facing edge of
+  the pane next door, which describes the very place it came from. `dropZones` works this out by
+  asking `moveTab` and `moveTabToNewPane` whether they would change anything, so the highlight
+  cannot promise what the move will not do.
+- **The pane a drag came from never offers its middle**, even where a drop there would move
+  something. "Into this pane" is a move to the end of its own strip, which the strip already
+  expresses, and every split gesture crosses the body on the way to an edge — so a full-pane
+  highlight would flash on all of them. Every *other* pane keeps all three zones.
 - **A drop target is visible before it is aimed at.** Both landing strips are drawn the moment a
   tab is picked up, dim, and light only under the pointer. An edge that materialises when you
   reach it teaches nobody that a drag can split the view — the gesture would be one you either

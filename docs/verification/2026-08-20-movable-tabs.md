@@ -108,6 +108,22 @@ have discovered that a drag can split the view.
       `bg-primary/10` and lit at `bg-primary/25` — a heavier rest than the outlined version needed,
       since the border had been doing most of the work of making a waiting strip findable.
 
+## 11. A shared edge is one gap
+
+Reported after release: dragging a tab into another pane showed drop targets, and dropping did
+nothing. Reproduced, and it was not the middle — it was the **neighbour's facing edge**.
+
+- [x] **The bug, as it was.** Pane 0 held a sole tab; pane 1's **left** edge lit up and reported
+      `accepted=true`; the drop left the layout byte-identical. That edge and pane 0's right edge
+      describe the same place, so landing there rebuilds the column the tab just left —
+      `moveTabToNewPane` was correctly refusing, and only the highlight was lying.
+- [x] **Fixed.** In the same layout the panes now report `pane0 strips=before` and
+      `pane1 strips=none`: pane 0's right edge is gone along with both of pane 1's, because all
+      three name that one gap.
+- [x] **And the drop the report actually wanted works.** Dropping that sole tab into pane 0's
+      middle: `[["AGENTS.md","CLAUDE.md"],["20-08-2026.md"]]` → `[["CLAUDE.md","20-08-2026.md"]]`,
+      one pane. The tab joined the other pane's tabs and its column collapsed.
+
 ## Not verified, and why
 
 - [ ] **The OS drag loop.** Synthetic events exercise the handlers, not Chromium's native drag: the

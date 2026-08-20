@@ -76,15 +76,21 @@ Three rules *are* new, and each one was a live question:
   column and rebuilding an identical one one position over is a flicker, not a move. The
   narrowness matters: that same sole tab dropped on a *different* pane's edge is a perfectly
   ordinary move, and it does collapse the pane it came from.
-- **A pane never offers a drop that would do nothing.** Highlighting a target that cannot act
-  is a promise the code then breaks, so the pane a drag came *from* narrows what it shows:
-  - Its **middle** goes inert. "Into this pane" means "move to the end of my own strip", which
-    the strip already expresses — and every split gesture drags *across* the body on the way to
-    an edge, so a full-pane highlight would flash on all of them. Left and right only. The
-    overlay still exists (it has to, to notice the pointer arriving at an edge) but the middle
-    draws no band and does not `preventDefault`, so the cursor says "not here".
-  - With a **single tab** it offers nothing at all. Both edges are the sole-tab no-op above and
-    the middle is a same-pane move to where the tab already is, so every zone is inert.
+- **A pane never offers a drop that would do nothing**, and *which* drops those are is a
+  question about the whole workspace rather than about any one pane. **An edge shared by two
+  panes is one gap**: pane 1's left edge and pane 0's right edge are the same place, so a sole
+  tab dragged out of pane 0 has **three** inert edges around it, not two. So the UI does not
+  restate the rules — `dropZones` asks `moveTab` and `moveTabToNewPane` themselves, both of
+  which return the workspace *by reference* when they would change nothing, and it therefore
+  cannot drift from what a drop actually does.
+
+  On top of that, one zone is decided rather than derived:
+  - The pane a drag came *from* never offers its **middle**, even where a drop there would move
+    something (to the end of its own strip). "Into this pane" is what the strip already
+    expresses, and every split gesture drags *across* the body on the way to an edge, so a
+    full-pane highlight would flash on all of them. The overlay still exists — it has to, to
+    notice the pointer arriving at an edge — but the middle draws no band and does not
+    `preventDefault`, so the cursor says "not here".
 
   Every *other* pane keeps all three: dropping into one is the ordinary "put this over there".
 - **The edges are drawn before they are aimed at.** Both landing strips appear the moment a tab

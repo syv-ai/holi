@@ -19,6 +19,7 @@
  */
 
 import { atom } from 'jotai'
+import type { PaneDropZone } from '@/lib/tab-drop'
 
 /** Open a note as a preview tab in the active pane — the action behind a
  *  wiki-link click from a surface that is not the editor (e.g. a task
@@ -579,4 +580,41 @@ export function moveTabToNewPane(workspace: Workspace, tab: Tab, at: number): Wo
     panes: [...panes.slice(0, index), { tabs: [moved], active: 0 }, ...panes.slice(index)],
     active: index,
   }
+}
+
+/** Where a tab currently lives, by pane, or -1. */
+function paneOfTab(workspace: Workspace, tab: Tab): number {
+  return findTab(workspace, tab)?.pane ?? -1
+}
+
+/**
+ * Which zones of pane `index` would actually *do* something with `tab`.
+ *
+ * **It asks the moves rather than restating their rules.** Both return the
+ * workspace **by reference** when they would change nothing, so this cannot
+ * drift from what a drop actually does — and it drifted the moment there were
+ * two panes. Pane 1's left edge and pane 0's right edge are *the same gap*, so a
+ * sole tab dragged out of pane 0 has **three** inert edges around it, not two;
+ * a rule written out by hand had only ever counted its own pane's. That edge lit
+ * up, accepted the drop, and did nothing.
+ *
+ * The middle is the one zone decided here rather than derived: the pane a drag
+ * came **from** never offers it, even when a drop there would move something
+ * (to the end of its own strip). Every split gesture crosses the body on the way
+ * to an edge, and a full-pane wash on all of them is noise — the strip already
+ * expresses that move anyway.
+ */
+export function dropZones(workspace: Workspace, tab: Tab, index: number): PaneDropZone[] {
+  const pane = workspace.panes[index]
+  if (pane === undefined) return []
+  const zones: PaneDropZone[] = []
+  if (moveTabToNewPane(workspace, tab, index) !== workspace) zones.push('before')
+  if (
+    paneOfTab(workspace, tab) !== index &&
+    moveTab(workspace, tab, { pane: index, index: pane.tabs.length }) !== workspace
+  ) {
+    zones.push('into')
+  }
+  if (moveTabToNewPane(workspace, tab, index + 1) !== workspace) zones.push('after')
+  return zones
 }
