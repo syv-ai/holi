@@ -13,7 +13,7 @@
  * history panel and daily notes are plan 7.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { CalendarDays, History, LayoutGrid, Mail, Settings, SquareKanban } from 'lucide-react'
+import { History, Settings } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
@@ -32,13 +32,13 @@ import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
 import { GoogleConnection } from '@/features/google/GoogleConnection'
 import { DialogHost } from './DialogHost'
+import { TabStrip } from './TabStrip'
 import { EditorPane } from '@/composites'
 import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { AppFrame } from '@/features/apps/AppFrame'
 import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
-import { fileIconFor } from '@/features/explorer/file-icons'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { VaultSettings } from '@/features/vault/VaultSettings'
@@ -84,16 +84,6 @@ import {
 const APPS_HEADER_HEIGHT = 22
 
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' } as const
-
-/** The singleton tabs' pill text and tooltip. Notes use their filename/path and
- *  apps use their id instead — both are keyed by something the tab carries
- *  rather than by its kind, so neither can live in a lookup like this. */
-const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail' } as const
-const TAB_LABEL: Partial<Record<string, string>> = {
-  board: 'task board',
-  agenda: 'your Google agenda',
-  mail: 'your Gmail',
-}
 
 /** Bytes as a short human size for the held-back callout (984 KB, 12.3 MB). */
 function formatBytes(bytes: number): string {
@@ -435,94 +425,37 @@ export function Shell() {
 
           <ResizablePanel id="editor" minSize={360}>
             <main className="flex h-full min-w-0 flex-col">
-          {/* One pane, one strip. The state is panes[] → tabs[] so a split is a
-              second pane later rather than a rewrite. */}
-          <div className="flex h-11 items-center gap-1 px-2">
-            {pane.tabs.map((t, i) => (
-              <span
-                key={t.kind === 'note' ? t.path : t.kind === 'app' ? `app:${t.appId}` : t.kind}
-                className={`flex items-center gap-1 rounded-full px-3 py-1 text-xs ${
-                  i === pane.active
-                    ? 'bg-secondary text-foreground'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                <Tooltip
-                  content={
-                    TAB_LABEL[t.kind] ??
-                    (t.kind === 'note' ? t.path : t.kind === 'app' ? `the ${t.appId} app` : t.kind)
-                  }
-                >
+          <TabStrip
+            tabs={pane.tabs}
+            active={pane.active}
+            onSelect={(i) =>
+              setWorkspace((w) => ({
+                ...w,
+                panes: w.panes.map((p, pi) => (pi === w.active ? { ...p, active: i } : p)),
+              }))
+            }
+            onPin={(i) => setWorkspace((w) => pinTab(w, i))}
+            onClose={(i) => setWorkspace((w) => closeTab(w, i))}
+            trailing={
+              /* Version history for the focused note — a header button toggling the
+                 right-hand drawer. `historyTargetPathAtom` is the one predicate the
+                 drawer also uses (a markdown note, not a task/image/pdf), so button
+                 and drawer never disagree. Mirrors how the agent panel opens. It is
+                 OUTSIDE the strip's clip, so a full strip cannot push it off. */
+              historyTarget !== null ? (
+                <Tooltip content="version history">
                   <Button
                     variant="ghost"
-                    // Bare clickable on the pill — neutralise the ghost bg/padding so
-                    // the pill owns the surface. A preview tab reads italic (VS Code);
-                    // double-clicking it pins it, the same promotion editing performs.
-                    className={`h-auto gap-1.5 p-0 hover:bg-transparent ${
-                      t.kind === 'note' && t.preview ? 'italic' : ''
-                    }`}
-                    onClick={() =>
-                      setWorkspace((w) => ({
-                        ...w,
-                        panes: w.panes.map((p, pi) => (pi === w.active ? { ...p, active: i } : p)),
-                      }))
-                    }
-                    onDoubleClick={() => setWorkspace((w) => pinTab(w, i))}
+                    size="icon-xs"
+                    className="ml-1 shrink-0 text-muted-foreground"
+                    onClick={() => setHistoryOpen((v) => !v)}
                   >
-                    {/* The two kinds that carry data come first: `Tab`'s
-                        singletons are ONE member (`{kind: SingletonTab}`), and a
-                        member whose discriminant is a union of literals does not
-                        reduce in the negative branch — so `t.path` is only
-                        reachable by narrowing TO note, never by excluding the
-                        rest. */}
-                    {t.kind === 'note' ? (
-                      fileIconFor(t.path)
-                    ) : t.kind === 'app' ? (
-                      <LayoutGrid size={14} />
-                    ) : t.kind === 'agenda' ? (
-                      <CalendarDays size={14} />
-                    ) : t.kind === 'mail' ? (
-                      <Mail size={14} />
-                    ) : (
-                      <SquareKanban size={14} />
-                    )}
-                    <span>
-                      {t.kind === 'note'
-                        ? t.path.split('/').at(-1)
-                        : t.kind === 'app'
-                          ? t.appId
-                          : TAB_NAME[t.kind]}
-                    </span>
+                    <History size={16} />
                   </Button>
                 </Tooltip>
-                <Tooltip content="close tab">
-                  <Button
-                    variant="ghost"
-                    className="h-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
-                    onClick={() => setWorkspace((w) => closeTab(w, i))}
-                  >
-                    ✕
-                  </Button>
-                </Tooltip>
-              </span>
-            ))}
-            {/* Version history for the focused note — a header button toggling the
-                right-hand drawer. `historyTargetPathAtom` is the one predicate the
-                drawer also uses (a markdown note, not a task/image/pdf), so button
-                and drawer never disagree. Mirrors how the agent panel opens. */}
-            {historyTarget !== null && (
-              <Tooltip content="version history">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="ml-auto text-muted-foreground"
-                  onClick={() => setHistoryOpen((v) => !v)}
-                >
-                  <History size={16} />
-                </Button>
-              </Tooltip>
-            )}
-          </div>
+              ) : null
+            }
+          />
 
           {tab?.kind === 'app' ? (
             <AppFrame appId={tab.appId} />
