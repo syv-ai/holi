@@ -31,7 +31,7 @@ import {
   ContextMenuTrigger,
   Input,
 } from '@/primitives'
-import { DeleteConfirm } from './DeleteConfirm'
+import { DeleteConfirm } from '@/composites'
 import { ExplorerHeader } from './ExplorerHeader'
 import { ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
 import { fileIconFor } from './file-icons'

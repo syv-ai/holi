@@ -4,6 +4,10 @@
  * cascade), so deleting a file, a folder, or a multi-selection is a decision made
  * with the fallout in view. The caller passes a human `label` and the external
  * `refs` (folder-internal links are already excluded by `backrefsMany`).
+ *
+ * A composite rather than part of the explorer, because it has two callers now:
+ * the file tree deletes paths, the Apps section deletes an app directory, and a
+ * feature may only import from its own feature.
  */
 import { Button, Dialog } from '@/primitives'
 

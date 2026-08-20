@@ -1,3 +1,4 @@
+export { DeleteConfirm } from './DeleteConfirm'
 export { DiffView } from './DiffView'
 export { EditorPane } from './EditorPane'
 export { FormField } from './FormField'
