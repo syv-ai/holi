@@ -63,9 +63,10 @@ Three rules *are* new, and each one was a live question:
   yanking it back. What changes is a sentence: *leftmost* becomes where a singleton **opens**,
   not where it lives. An undraggable tab in a strip of draggable ones reads as a bug, and
   the alternative was a rule discoverable only by the gesture failing.
-- **Moving the only tab of a pane to a new pane is a no-op.** Otherwise an edge-drop deletes
-  a column and immediately builds an identical one beside it, which is a flicker rather than
-  a move.
+- **A sole tab dropped on its own pane's edge is a no-op** — and only then. Removing the
+  column and rebuilding an identical one one position over is a flicker, not a move. The
+  narrowness matters: that same sole tab dropped on a *different* pane's edge is a perfectly
+  ordinary move, and it does collapse the pane it came from.
 
 ## 4. Shape
 
@@ -178,8 +179,9 @@ source pane emptied → removed, with a destination index above it shifting down
 never removed even when emptied; a preview note landing pinned; an unknown tab leaving the
 workspace identical; and one test asserting the moved tab appears **exactly once** across all
 panes — one-buffer-per-file stated as an assertion rather than trusted. `moveTabToNewPane`:
-inserting before and after the named pane, the only-tab-in-its-pane no-op, the `at` shift when
-the source pane collapses, and focus landing on the new pane.
+inserting before and after the named pane; the sole-tab-on-its-own-edge no-op; a sole tab
+dropped on *another* pane's edge, which collapses the source and therefore shifts `at` down
+by one; and focus landing on the new pane.
 
 **`test/tab-drop.test.ts`** (node project — the `test/tab-window.test.ts` pattern; pure
 renderer libs are tested there, not co-located). Caret index at each pill's midpoint and
