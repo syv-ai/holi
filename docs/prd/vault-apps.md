@@ -4,7 +4,9 @@ Just-in-time interactive apps the vault assistant creates on demand: small, reus
 
 > **Slice 1 is built** (D74; §Slice 1 lists exactly what shipped) and **verified by hand on 2026-08-20** against a real vault — an app written into `.holi/apps/<id>/` opens as a themed tab, reads the vault's notes and tasks, refuses the agent surface, and holds nothing across a reload. The record, including what was *not* checked, is in [`../verification/2026-08-20-vault-apps-slice1.md`](../verification/2026-08-20-vault-apps-slice1.md).
 >
-> **What is still absent** is additive against that surface rather than a change to it: `holi.data` and every write (§State, deferred), the `utilityProcess` backend, `manifest.json`, personal apps in `userData`, the command-palette entry, auto-reload, and an agent action that opens an app.
+> **Slice 2 is built** and verified by hand on 2026-08-20 ([record](../verification/2026-08-20-vault-apps-slice2.md)): registration now waits for an `app.yaml` manifest, a `holi` CLI gives the agent `app open` / `app init` / `seed refresh`, and a `PostToolUse` validator tells the agent on every write what will not work. Together they close the loop slice 1 left open, where the agent wrote an app blind and could only ask the user to go and look.
+>
+> **What is still absent** is additive against that surface rather than a change to it: `holi.data` and every write (§State, deferred), the `utilityProcess` backend, personal apps in `userData`, the command-palette entry, and auto-reload.
 >
 > **What D74 killed:** this PRD's differentiator was a per-app **shared Yjs doc on the relay**, which gave every app live multiplayer for free. There is no relay ([`../vision.md`](../vision.md)). The replacement is *not* decided, and deliberately so — it is a per-app question rather than a platform one (a retro board's state is shared by nature; a CSV explorer's is nobody else's business), so it is worth deciding against real apps. **Slice 1 therefore ships no state API at all** and the apps it can host are genuinely ephemeral. See §State, deferred.
 
@@ -44,10 +46,15 @@ A user asks the assistant for a retro board, a poll, a CSV explorer, a burndown 
   index.html           ← required: the entry document
   app.js / styles.css  ← optional, any files, served byte-for-byte
   server.mjs           ← optional backend (utilityProcess) — post-slice-1
+  app.yaml             ← required: the registration marker, written LAST
 ```
 
-- **The whole contract is "a directory containing `index.html`".** `appId`, the display label and the tab title are all the directory name; the icon is a default.
-- **No `manifest.json` in slice 1**, reversing this PRD's original "directory + manifest" call. The reason the manifest was specified — a uniform contract with room to grow — is real, but every field it was going to carry is derivable (`name` from the directory), defaulted (`icon`), or explicitly non-functional: the PRD's own words are that `capabilities` are "transparency, not gates", and `backend` is post-slice-1. A file whose every field is derivable or unused is one more thing the agent can write wrong for no benefit, plus a second name that can drift from its directory. It comes back when a backend entry or a real icon needs declaring, as its own decision.
+- **The contract is "a directory containing `index.html` **and** `app.yaml`".** `appId` is still the directory name, and so are the tab title and the default label; the manifest only makes the label and icon overridable.
+- **`app.yaml` is the registration marker, and slice 2 added it for a reason D74 did not have.** D74 rejected `manifest.json` and was right to: every field it was going to carry was derivable (`name` from the directory), defaulted (`icon`), or explicitly non-functional, and a file whose every field is derivable is one more thing the agent can write wrong for no benefit. **This file has a different job.** An agent writes an app one file at a time, so keying registration on `index.html` means the app appears in the sidebar the moment its first byte lands and opens onto half a page. The manifest is written **last**, and it is what says *finished* — which is why it is not sufficient on its own either: an app with no entry document is a promise with nothing behind it.
+
+  Every key is optional (`name`, `icon`, `description`) and **an empty file registers the app**, because registering is the file's whole job. It is YAML rather than JSON so it takes comments and survives a trailing comma, and the parser is forgiving in exactly one direction: a typo inside the mapping costs the label, never the app. Silent non-appearance is the failure mode slice 1 proved worst, so the parser must never be the thing that causes it.
+
+  Apps written before it get one automatically on vault open (`migrate-manifests.ts`), ahead of the first snapshot the renderer sees. A directory whose name cannot be an app id is skipped rather than renamed — renaming someone's directory is an edit to their vault made on their behalf, not a migration.
 - **Personal apps live outside the vault**, in `userData/apps/<name>/`, and never touch the repo; vault apps live in `.holi/apps/<name>/` and sync like any content. The two are told apart by **location, not by naming** — D65's `.local.` marker is a *basename* rule (`isLocalOnlyPath` tests the file's own name, and the ignore glob is `*.local.*`), so it cannot mark a directory, and extending it to directories would amend a settled convention for one caller. The precedent is the Google cache, which sits in `userData` because "mail is account data and a vault is a shared git repo" — a personal app is the same claim. **Slice 1 resolves the vault location only**; adding the personal one is a second branch in the resolver and needs no URL change.
 - The authoring contract (this section + bridge API) is documented by a **skill in the vault's `.claude/`** so the agent scaffolds correctly without prompt-bolting.
 
@@ -118,9 +125,23 @@ The risky part of this feature was not any single capability; it was whether **a
 - The sidebar Apps section, hidden when there are no apps.
 - The authoring skill in `.claude/` documenting the directory contract and the bridge.
 
-**Deliberately absent:** `holi.data` (§State), the `utilityProcess` backend, `manifest.json`, personal apps in `userData`, the command palette entry, and any write call. Each is additive against the surface above rather than a change to it.
+**Deliberately absent from slice 1:** `holi.data` (§State), the `utilityProcess` backend, the manifest, personal apps in `userData`, the command palette entry, and any write call.
 
 **What slice 1 can host:** a task burndown, a CSV explorer over a committed file, a vault dashboard — apps that read and draw. **What it cannot:** the retro board and the poll, which are the two examples in this document that need shared state, and which therefore wait for §State to resolve.
+
+## Slice 2 — closing the authoring loop
+
+Slice 1 proved an agent can write an app that opens and reads real vault data. What it could not do was **find out whether the app worked**: no console, no screenshot, no way to open it. Its only move was to ask the user to go and look, and a syntax error surfaced as a blank tab and a puzzled user. Slice 2 is three pieces that only make sense together:
+
+- **`app.yaml`** (§Anatomy) makes registration explicit, so an app becomes real when the agent says it is finished rather than when its first file lands.
+- **A `holi` CLI** — the `holi-google` shape (D67), a generated `sh` script over the hook server's loopback port with its per-instance token — gives the agent `app open <id>`, `app init <id>` and `seed refresh [path] [--force]`. All three are reversible, which is why none is gated: that is D70's rule reaching the opposite conclusion, not a different rule.
+- **A `PostToolUse` validator** reports, on every write under `.holi/apps/`, what will not work — a syntax error and its line, a `.ts` file no bundler will build, a `localStorage` call that throws, a missing manifest. It is **advisory and never blocks**: the one hook here that says no is the send gate, and it says no about mail reaching a person who cannot un-receive it. It is also **silent when there is nothing wrong**, because a hook that talks every time is one the agent learns to skim.
+
+The validator is what makes the manifest safe. A forgotten manifest would otherwise be silent non-appearance, and silence is the failure mode slice 1 proved is worst.
+
+**`app open` is the only thing that opens a tab.** Nothing opens when an app merely *appears* in the snapshot: apps sync, so a tab arriving because a teammate finished writing one is a pull deciding what is on your screen. Local authorship, and only local authorship, opens a tab.
+
+**Deliberately still absent:** everything in the slice-1 list above except the manifest.
 
 ## Reuse
 

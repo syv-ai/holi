@@ -53,9 +53,14 @@ missed. Nothing here is blocked on design; each is additive against the surface 
 
 - `holi.data` and **every write call** — the trust model already permits writes, so this is the
   state question and nothing else.
-- The `utilityProcess` **backend** (`server.mjs`), `manifest.json`, and **personal apps** in
-  `userData/apps/` — each waits for an app that needs it.
-- **Auto-reload** and a **command-palette** entry — deliberately not slice-1 second surfaces.
+- The `utilityProcess` **backend** (`server.mjs`) and **personal apps** in `userData/apps/` —
+  each waits for an app that needs it.
+- **Auto-reload** and a **command-palette** entry — deliberately not second surfaces.
+
+No longer absent, as of slice 2 (2026-08-20): the app **manifest** (`app.yaml`, now the
+registration marker), a `holi` CLI the agent can type (`app open`, `app init`, `seed refresh`),
+and **an agent action that opens an app** — which was the gap that made slice 1's authoring loop
+end in "ask the user to go and look".
 
 **The two apps this document keeps using as examples — the retro board and the poll — still cannot
 be built**, because both need shared state. That, rather than any missing API, is the measure of the

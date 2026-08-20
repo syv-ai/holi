@@ -4,25 +4,7 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**Two entries, drafted 2026-08-20**, both raised by building vault apps slice 1 and neither settled. Consolidation is owed once agreed.
-
----
-
-## D75 — Holi owns its own documentation; a managed file it wrote is refreshed, not frozen
-
-**Context.** `ensureSeeded` is create-if-missing, and that is what makes it safe to run on every vault open (D70). It also means a managed file can never be improved. Slice 1 shipped a `vault-apps` skill; reading it back the same day found four gaps, three of which an agent gets *wrong* rather than merely misses. Fixing them reached only vaults that had never opened — `privat`'s copy had to be deleted by hand, and there is no way to do that for anyone else's machine. **The authoring skill is the main lever this feature has for being usable, and it is write-once per vault.**
-
-**Decision.** Split `SEED_FILES` by **who owns the file after it is written**:
-
-- **Holi-managed** — `.claude/skills/**`, `.claude/hooks/**`, and (D76) `.holi/git-hooks/**`. These are documentation and code Holi ships. They are **refreshed on open**.
-- **Seeded once** — `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `.holi/theme.json`, `.holi/document-templates/**`. These become the user's the moment they exist. Unchanged behaviour.
-- `.claude/settings.json` keeps its own third rule (merged, not replaced).
-
-**A managed file is overwritten only when Holi can prove nobody edited it.** On write, record the content hash in `.holi/seed-state.local.json` (machine-local — it is a fact about this clone). On open, refresh a managed file iff its on-disk hash equals the recorded one. A hash that differs means a human or an agent changed it: leave it, and say so. `holi seed refresh [path]` (D-slice-2) does it on demand, `--force` overrides an edit after showing the diff.
-
-**Why a hash rather than a version marker in the file.** A `<!-- holi-seed: v2 -->` comment is visible in a document people read, can be edited around, and answers "which version" rather than "was this touched". The hash answers exactly the question being asked and is invisible.
-
-**Rejected: fetch the canonical copy from `syv-ai/holi`.** It is private, so the vault's agent would need a token to the product repo — a far larger grant than it appears. And it is the wrong source even if public: seeded content is bundled into the binary (`?raw` imports), so **the running app already has the canonical bytes on disk**. Fetching adds an offline dependency, a supply-chain surface, and version skew against the build actually running.
+**One entry, drafted 2026-08-20**, raised by building vault apps slice 1. D75 was agreed and consolidated the same day; D76 is agreed and implemented by the vault-hooks plan, and is consolidated when that lands.
 
 ---
 
@@ -64,6 +46,7 @@ Living docs carry decisions as **prose, never as numbers**. D-numbers exist for 
 | D72 — a vault agent inherits the vault, not the machine | [`prd/agent.md`](prd/agent.md) §Config layering, §Runtime, §Auth, §Permissions |
 | D73 — a mail thread and a calendar event are joined by the invite's UID | [`prd/google-mail-calendar.md`](prd/google-mail-calendar.md) §Goals — as built, §How a message is rendered |
 | D74 — a vault app is a web app the user wrote, bounded by its own origin and barred from the agent surface | [`prd/vault-apps.md`](prd/vault-apps.md) §Trust & isolation, §Anatomy, §Runtime & surfaces, §The `holi.*` bridge, §State deferred, §Slice 1; [`glossary.md`](glossary.md) §Agent surface. Settles the isolation model (a per-app `holi-app://` origin, `allow-scripts` never with `allow-same-origin`), the reach (all vault content except `AGENTS.md`/`CLAUDE.md`/`MEMORY.md`/`USER.local.md`/`.claude/`, read *and* write, because a writable send-gate hook is an app escalating to the assistant), network allowed with its exfiltration cost stated, bridge + theme injected on serve, the tab union's singleton-by-subtraction bug, no manifest in slice 1, and personal apps split by location rather than by the `.local.` marker. **Deliberately does not decide where app state lives** — that is per-app rather than per-platform, so slice 1 ships no state API and the question waits for real apps |
+| D75 — Holi owns its own documentation; a managed file it wrote is refreshed, not frozen | [`prd/agent.md`](prd/agent.md) §Permissions (the managed-file bullets, beside D70's "a migration that never happens"). Settles the managed/once split of `SEED_FILES`, the sha256 in a machine-local `.holi/seed-state.local.json`, that an absent record means never overwrite, that a byte-identical file is adopted, and that `--force` reaches managed files only. Its `holi seed refresh` surface is in [`prd/vault-apps.md`](prd/vault-apps.md) §Slice 2 |
 
 **D1–D59 are spent, and D60 supersedes all of them.** They are not listed here any more, and that is deliberate: their subjects — the CRDT doc store, the file↔CRDT bridge, the task record and its file projection, the SSE event stream, server-side membership, snapshot history, the git mirror — do not exist. A ledger of decisions about a deleted system is archaeology pretending to be law, and the docs are law.
 
