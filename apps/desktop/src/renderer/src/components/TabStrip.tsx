@@ -28,6 +28,7 @@ import {
 import { CalendarDays, LayoutGrid, Mail, SquareKanban } from 'lucide-react'
 import { fileIconFor } from '@/features/explorer/file-icons'
 import { tabWindow } from '@/lib/tab-window'
+import { TAB_MIME, dropIndex, parseTabPayload, tabPayload, type PillBox } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
@@ -87,6 +88,12 @@ export interface TabStripProps {
    *  the next opened file will land in. Defaults to true — with a single pane
    *  there is nothing to distinguish it from. */
   focused?: boolean
+  /** A tab was dropped on this strip, to sit before `index` — which is absolute,
+   *  not an offset into the visible window. The tab may have come from this
+   *  strip (a reorder) or from another pane's; the handler does not need to
+   *  know, because `moveTab` finds it wherever it is. Absent means this strip
+   *  takes no drops. */
+  onDropTab?: (tab: Tab, index: number) => void
   /** Controls pinned to the right-hand end, outside the clip (version history). */
   trailing?: ReactNode
 }
@@ -98,6 +105,7 @@ export function TabStrip({
   onPin,
   onClose,
   focused = true,
+  onDropTab,
   trailing,
 }: TabStripProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
@@ -113,6 +121,15 @@ export function TabStrip({
    * slides to include it and it is measured on the next frame.
    */
   const [widths, setWidths] = useState<Record<string, number>>({})
+  /**
+   * Where the dragged tab would land, and where to draw the line saying so.
+   *
+   * `x` is carried alongside the index rather than derived at render time,
+   * because deriving it means reading pill rects — and the drag handler has
+   * already read them. It is an offset inside the host, so it survives the
+   * strip being scrolled by anything else on screen.
+   */
+  const [caret, setCaret] = useState<{ index: number; x: number } | null>(null)
 
   // The strip's own width, which is the pane's width minus the trailing
   // controls. A ResizeObserver rather than a window listener: the pane resizes
@@ -165,6 +182,60 @@ export function TabStrip({
     gap: GAP,
   })
   const shown = tabs.slice(window_.start, window_.end)
+
+  /**
+   * The visible pills, measured now, carrying **absolute** indices.
+   *
+   * Read live rather than from the `widths` cache: the cache exists so a hidden
+   * tab keeps a width, and it holds no `left`. A drop needs where a pill *is*,
+   * which only the DOM knows.
+   */
+  const pillBoxes = (): PillBox[] => {
+    const boxes: PillBox[] = []
+    shown.forEach((t, offset) => {
+      const el = pillRefs.current.get(tabKey(t))
+      if (el === undefined) return
+      const rect = el.getBoundingClientRect()
+      boxes.push({ index: window_.start + offset, left: rect.left, width: rect.width })
+    })
+    return boxes
+  }
+
+  /** Whether this drag is one of ours. `getData` is empty during `dragover` by
+   *  spec, so the MIME type is the only question a target may ask mid-drag. */
+  const carriesTab = (e: React.DragEvent) => e.dataTransfer.types.includes(TAB_MIME)
+
+  const dragOver = (e: React.DragEvent) => {
+    if (onDropTab === undefined || !carriesTab(e)) return
+    // Without this the drop event never fires — the commonest way HTML5
+    // drag-and-drop silently does nothing at all.
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+
+    const boxes = pillBoxes()
+    const index = dropIndex(boxes, e.clientX)
+    const host = hostRef.current?.getBoundingClientRect()
+    if (host === undefined) return
+    const at = boxes.find((b) => b.index === index)
+    const last = boxes.at(-1)
+    const x =
+      at !== undefined
+        ? at.left - host.left
+        : last !== undefined
+          ? last.left + last.width - host.left
+          : 0
+    setCaret({ index, x })
+  }
+
+  const drop = (e: React.DragEvent) => {
+    setCaret(null)
+    const tab = parseTabPayload(e.dataTransfer.getData(TAB_MIME))
+    if (tab === null) return
+    e.preventDefault()
+    // Recomputed rather than read off `caret`: the drop must land where the
+    // pointer is, even if no `dragover` was recorded for this exact position.
+    onDropTab?.(tab, dropIndex(pillBoxes(), e.clientX))
+  }
   const hiddenTabs = [
     ...tabs.slice(0, window_.start).map((tab, i) => ({ tab, index: i })),
     ...tabs.slice(window_.end).map((tab, i) => ({ tab, index: window_.end + i })),
@@ -174,9 +245,28 @@ export function TabStrip({
     <div className="flex h-11 min-w-0 items-center px-2">
       <div
         ref={hostRef}
-        className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
+        className="relative flex min-w-0 flex-1 items-center gap-1 overflow-hidden"
         data-testid="tab-strip"
+        onDragOver={dragOver}
+        onDragLeave={(e) => {
+          // `dragleave` also fires when the pointer crosses into a child, so
+          // clear only when the host itself was actually left.
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+          setCaret(null)
+        }}
+        onDrop={drop}
       >
+        {/* Where it would land. Absolutely positioned on purpose: a real spacer
+            would change a measured pill width, and the measure effect calls
+            `setWidths` from inside itself — it converges only because it writes
+            on a change, so a width that moved with the pointer would oscillate. */}
+        {caret !== null && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary"
+            style={{ left: Math.max(0, caret.x - 1) }}
+          />
+        )}
         {shown.map((t, offset) => {
           const i = window_.start + offset
           const key = tabKey(t)
@@ -187,6 +277,14 @@ export function TabStrip({
                 if (el === null) pillRefs.current.delete(key)
                 else pillRefs.current.set(key, el)
               }}
+              // On the pill, not on the Radix trigger and not on the Button —
+              // `BoardView` puts it on the card `div` for the same reason.
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TAB_MIME, tabPayload(t))
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              onDragEnd={() => setCaret(null)}
               className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                 i === active
                   ? focused
