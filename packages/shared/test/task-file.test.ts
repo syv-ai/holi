@@ -289,3 +289,45 @@ describe('taskFileName', () => {
     expect(taskFileName('Fix login')).toBe('task.fix-login.md')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────
+// D79: `due` is a stamp — the time is optional on it.
+describe('a due date that names an hour', () => {
+  it('parses and round-trips a timed due unchanged', () => {
+    const task = parse('---\ndue: 2026-08-25T14:00\n---\nbody\n')
+    expect(task.due).toBe('2026-08-25T14:00')
+    expect(serializeTaskFile(task)).toContain('due: 2026-08-25T14:00')
+  })
+
+  it('leaves a timeless due timeless through the same round trip', () => {
+    const task = parse('---\ndue: 2026-08-25\n---\nbody\n')
+    expect(task.due).toBe('2026-08-25')
+    expect(serializeTaskFile(task)).toContain('due: 2026-08-25')
+    expect(serializeTaskFile(task)).not.toContain('T00:00')
+  })
+
+  it('still rejects a due that is neither shape, naming both in the error', () => {
+    expect(() => parse('---\ndue: 20th July\n---\n')).toThrow(/YYYY-MM-DD/)
+    expect(() => parse('---\ndue: 20th July\n---\n')).toThrow(/YYYY-MM-DDTHH:MM/)
+    // The old reminder grammar is not a date, wherever it turns up.
+    expect(() => parse('---\ndue: 1d\n---\n')).toThrow(/due must be/)
+    expect(() => parse('---\ndue: 2026-02-30\n---\n')).toThrow(/due must be/)
+  })
+
+  it('accepts a timed due through parseTaskPatch, and still clears with null', () => {
+    expect(parseTaskPatch({ due: '2026-08-25T14:00' }).due).toBe('2026-08-25T14:00')
+    const cleared = parseTaskPatch({ due: null })
+    expect('due' in cleared).toBe(true)
+    expect(cleared.due).toBeUndefined()
+  })
+
+  // The reminder reader stays lenient, and that is load-bearing rather than an
+  // oversight: PATCH_READERS is shared with the file parser on purpose, so a
+  // strict reader would make a legacy `reminder: 1d` in a hand-written file
+  // break the whole task into the broken strip. An unparseable reminder is
+  // inert — it costs a notification, not a task.
+  it('carries a legacy relative reminder through verbatim, without throwing', () => {
+    expect(parse('---\nreminder: 1d\n---\n').reminder).toBe('1d')
+    expect(parseTaskPatch({ reminder: '1d' }).reminder).toBe('1d')
+  })
+})

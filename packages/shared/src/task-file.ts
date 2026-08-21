@@ -27,6 +27,7 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
+import { parseStamp } from './dates'
 import type {
   Priority,
   Recurrence,
@@ -199,9 +200,15 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     return v.trim()
   },
   status: (v) => enumOf(v, STATUSES, 'status'),
+  // A stamp (D79): the time is optional, and its absence is meaningful — a task
+  // due `2026-08-25` is due that day, not at midnight on it. `parseStamp` rather
+  // than a fourth regex here: the validity rules (real calendar dates, hour and
+  // minute bounds) live in `dates.ts` and must not be restated.
   due: (v) => {
-    if (typeof v !== 'string' || !DATE_RE.test(v)) {
-      throw new TaskFileError(`due must be YYYY-MM-DD, got: ${JSON.stringify(v)}`)
+    if (typeof v !== 'string' || parseStamp(v) === null) {
+      throw new TaskFileError(
+        `due must be YYYY-MM-DD or YYYY-MM-DDTHH:MM, got: ${JSON.stringify(v)}`,
+      )
     }
     return v
   },
@@ -213,9 +220,12 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     return v
   },
   reminder: (v) => {
-    // The grammar is deliberately NOT checked: an unparseable reminder is inert
-    // (prd/tasks.md §Recurrence & reminders), never an error. The board shows it;
-    // nothing fires.
+    // NOT checked against the stamp shape, and deliberately so — even though the
+    // picker is now the only thing that writes one. These readers are shared
+    // with `parseTaskFile` on purpose, so a strict reader here would make a
+    // hand-written `reminder: 1d` break the whole task into the broken strip.
+    // An unparseable reminder is inert (prd/tasks.md §Recurrence & reminders),
+    // never an error: it costs a notification, not a task.
     if (typeof v !== 'string') throw new TaskFileError('reminder must be a string')
     return v
   },

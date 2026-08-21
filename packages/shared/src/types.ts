@@ -89,11 +89,16 @@ export interface Task {
   /** From frontmatter, falling back to the filename. Never empty. */
   title: string
   status: TaskStatus
-  /** YYYY-MM-DD */
+  /** A stamp: `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when the task is due at a
+   *  time. The absence of a time is meaningful — due that day, not at midnight
+   *  on it. */
   due?: string
   priority?: Priority
   tags: string[]
-  /** Nd | Nw | YYYY-MM-DDTHH:MM */
+  /** When to be notified, as a stamp — an absolute moment, never an offset
+   *  from `due` (D79). A stamp with no time fires at `ANCHOR_HOUR`. Anything
+   *  that is not a stamp is inert: it is carried through the file untouched and
+   *  never fires. */
   reminder?: string
   recurrence?: Recurrence
   /** The markdown body. */
