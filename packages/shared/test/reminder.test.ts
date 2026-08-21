@@ -1,87 +1,54 @@
 import { describe, expect, it } from 'vitest'
-import { parseReminder, pendingFireTime, resolveReminder, shiftForRollover } from '../src/reminder'
-
-describe('parseReminder', () => {
-  it('parses absolute local datetimes, minutes and seconds precision', () => {
-    expect(parseReminder('2026-06-14T18:00')).toEqual({ kind: 'absolute', at: '2026-06-14T18:00' })
-    expect(parseReminder('2026-06-14T18:00:30')).toEqual({
-      kind: 'absolute',
-      at: '2026-06-14T18:00:30',
-    })
-  })
-
-  it('parses relative days and weeks (bare digits only)', () => {
-    expect(parseReminder('0d')).toEqual({ kind: 'relative', days: 0 })
-    expect(parseReminder('1d')).toEqual({ kind: 'relative', days: 1 })
-    expect(parseReminder('2w')).toEqual({ kind: 'relative', days: 14 })
-  })
-
-  it('trims surrounding whitespace', () => {
-    expect(parseReminder(' 1d ')).toEqual({ kind: 'relative', days: 1 })
-  })
-
-  it('throws on every invalid form, with an error documenting the accepted ones', () => {
-    for (const bad of ['', '  ', 'nope', '+1d', '-1d', '1h', '18:00', '2026-06-14', 'd', '1']) {
-      expect(() => parseReminder(bad), `expected throw for ${JSON.stringify(bad)}`).toThrow()
-    }
-    expect(() => parseReminder('nope')).toThrow(/1d/)
-    expect(() => parseReminder('nope')).toThrow(/YYYY-MM-DDTHH:MM/)
-  })
-
-  it('rejects impossible calendar datetimes', () => {
-    expect(() => parseReminder('2026-02-30T09:00')).toThrow()
-    expect(() => parseReminder('2026-06-14T24:00')).toThrow()
-  })
-})
-
-describe('resolveReminder', () => {
-  it('absolute resolves to itself, ignoring due', () => {
-    const spec = parseReminder('2026-06-14T18:00')
-    expect(resolveReminder(spec, undefined)).toBe('2026-06-14T18:00')
-    expect(resolveReminder(spec, '2026-07-01')).toBe('2026-06-14T18:00')
-  })
-
-  it('relative resolves against due at the 09:00 anchor', () => {
-    expect(resolveReminder(parseReminder('1d'), '2026-06-15')).toBe('2026-06-14T09:00')
-    expect(resolveReminder(parseReminder('0d'), '2026-06-15')).toBe('2026-06-15T09:00')
-    expect(resolveReminder(parseReminder('1w'), '2026-06-15')).toBe('2026-06-08T09:00')
-  })
-
-  it('relative without a (parseable) due is inert', () => {
-    expect(resolveReminder(parseReminder('1d'), undefined)).toBeNull()
-    expect(resolveReminder(parseReminder('1d'), 'not-a-date')).toBeNull()
-  })
-})
+import { ANCHOR_HOUR, pendingFireTime, shiftForRollover } from '../src/reminder'
 
 describe('pendingFireTime', () => {
-  it('pends when the task is open and never fired', () => {
-    expect(pendingFireTime('todo', '1d', '2026-06-15', undefined)).toBe('2026-06-14T09:00')
-    expect(pendingFireTime('doing', '1d', '2026-06-15', undefined)).toBe('2026-06-14T09:00')
+  it('pends at the reminder itself when it names a time', () => {
+    expect(pendingFireTime('todo', '2026-06-14T18:00', undefined)).toBe('2026-06-14T18:00')
+    expect(pendingFireTime('doing', '2026-06-14T18:00', undefined)).toBe('2026-06-14T18:00')
+  })
+
+  it('pends at the anchor hour when the reminder is only a day', () => {
+    expect(pendingFireTime('todo', '2026-06-14', undefined)).toBe('2026-06-14T09:00')
+    expect(ANCHOR_HOUR).toBe(9)
+  })
+
+  it('does not depend on the task at all beyond its status', () => {
+    // The old signature took `due`, because a relative reminder resolved against
+    // it. A reminder is a moment now (D79) — nothing about when it fires can
+    // change when the due date does.
+    expect(pendingFireTime.length).toBe(3)
   })
 
   it('done tasks never pend', () => {
-    expect(pendingFireTime('done', '1d', '2026-06-15', undefined)).toBeNull()
+    expect(pendingFireTime('done', '2026-06-14T18:00', undefined)).toBeNull()
+    expect(pendingFireTime('done', '2026-06-14', undefined)).toBeNull()
   })
 
   it('does not re-fire once reminded at or after the fire time', () => {
-    expect(pendingFireTime('todo', '1d', '2026-06-15', '2026-06-14T09:00')).toBeNull()
-    expect(pendingFireTime('todo', '1d', '2026-06-15', '2026-06-14T09:00:30')).toBeNull()
+    expect(pendingFireTime('todo', '2026-06-14T09:00', '2026-06-14T09:00')).toBeNull()
+    expect(pendingFireTime('todo', '2026-06-14T09:00', '2026-06-14T09:00:30')).toBeNull()
+    expect(pendingFireTime('todo', '2026-06-14T09:00', '2026-06-14T10:00')).toBeNull()
   })
 
-  it('re-arms when the fire time moves past the last fire (due rolled forward)', () => {
-    expect(pendingFireTime('todo', '1d', '2026-06-22', '2026-06-14T09:00')).toBe(
+  it('still pends when the last fire was before the fire time', () => {
+    expect(pendingFireTime('todo', '2026-06-21T09:00', '2026-06-14T09:00')).toBe(
       '2026-06-21T09:00',
     )
   })
 
-  it('invalid or missing reminders are inert, never errors', () => {
-    expect(pendingFireTime('todo', 'garbage', '2026-06-15', undefined)).toBeNull()
-    expect(pendingFireTime('todo', undefined, '2026-06-15', undefined)).toBeNull()
+  // The rule that survives the grammar's deletion, and the reason `parseStamp`
+  // returns null rather than throwing: a legacy `1d` in a hand-written file
+  // shows as raw text and quietly never fires. It does not break the task.
+  it('a legacy relative reminder is inert, never an error', () => {
+    expect(pendingFireTime('todo', '1d', undefined)).toBeNull()
+    expect(pendingFireTime('todo', '2w', undefined)).toBeNull()
+    expect(pendingFireTime('todo', 'garbage', undefined)).toBeNull()
+    expect(pendingFireTime('todo', undefined, undefined)).toBeNull()
   })
 })
 
 describe('shiftForRollover', () => {
-  it('shifts an absolute reminder by the due-date delta, preserving time of day', () => {
+  it('shifts a timed reminder by the due delta, keeping its clock time', () => {
     expect(shiftForRollover('2026-06-14T18:30', '2026-06-15', '2026-06-22')).toBe(
       '2026-06-21T18:30',
     )
@@ -90,9 +57,22 @@ describe('shiftForRollover', () => {
     )
   })
 
-  it('leaves relative, invalid, or unparseable-due reminders unchanged (null)', () => {
+  it('shifts a timeless reminder and leaves it timeless', () => {
+    expect(shiftForRollover('2026-06-14', '2026-06-15', '2026-06-22')).toBe('2026-06-21')
+  })
+
+  it('does not drift by hours when the due dates carry times of their own', () => {
+    // The delta between the dues is a whole number of days plus four hours; the
+    // reminder must move by the days and keep 18:30.
+    expect(shiftForRollover('2026-06-14T18:30', '2026-06-15T09:00', '2026-06-22T13:00')).toBe(
+      '2026-06-21T18:30',
+    )
+  })
+
+  it('leaves an unparseable reminder or due unchanged (null)', () => {
     expect(shiftForRollover('1d', '2026-06-15', '2026-06-22')).toBeNull()
     expect(shiftForRollover('garbage', '2026-06-15', '2026-06-22')).toBeNull()
     expect(shiftForRollover('2026-06-14T18:30', 'not-a-date', '2026-06-22')).toBeNull()
+    expect(shiftForRollover('2026-06-14T18:30', '2026-06-15', 'not-a-date')).toBeNull()
   })
 })

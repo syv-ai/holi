@@ -30,7 +30,7 @@ const firingVault = (): VaultTasks => ({
       tags: [],
       description: '',
       due: '2026-07-29',
-      reminder: '1d',
+      reminder: '2026-07-28T09:00',
     },
   ],
 })

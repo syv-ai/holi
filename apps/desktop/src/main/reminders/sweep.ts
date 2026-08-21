@@ -49,7 +49,7 @@ export function sweep(
   for (const { remote, tasks } of vaults) {
     const read = delivered(remote)
     for (const t of tasks) {
-      const fire = pendingFireTime(t.status, t.reminder, t.due, read[t.path])
+      const fire = pendingFireTime(t.status, t.reminder, read[t.path])
       // Both `fire` and `now` are local `YYYY-MM-DDTHH:MM`, so lexicographic
       // compare is chronological — a fire whose time has arrived (or passed,
       // for launch catch-up) is selected.
