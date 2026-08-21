@@ -318,7 +318,7 @@ export function AgentPanel() {
           display:none host, and no stray content shows while the panel is a
           0-width sliver. The panel stays mounted either way. */}
       <aside
-        className={cn('flex h-full min-w-0 flex-col border-l border-border', !open && 'hidden')}
+        className={cn('flex h-full min-w-0 flex-col border-l border-divider', !open && 'hidden')}
       >
       {/* The shared panel bar. The agent's leading region is richer than a title —
           a status dot + state + config/auth notices — so it composes PanelHeader

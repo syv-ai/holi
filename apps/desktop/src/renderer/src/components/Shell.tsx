@@ -316,7 +316,7 @@ export function Shell() {
           }}
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
-            <aside className="relative flex h-full flex-col border-r border-border">
+            <aside className="relative flex h-full flex-col border-r border-divider">
           <div className="flex h-11 shrink-0 items-center px-2">
             <VaultPicker
               vaults={vaults}
@@ -695,7 +695,7 @@ export function Shell() {
       {/* Sync state lives bottom-left: "where am I and is it saved elsewhere" is
           one glance. There is no Push button — push is automatic (D61) — so the
           footer only reports; sign out lives in settings. */}
-      <footer className="flex items-center justify-between gap-3 border-t border-border px-3 py-1 text-xs text-muted-foreground">
+      <footer className="flex items-center justify-between gap-3 border-t border-divider px-3 py-1 text-xs text-muted-foreground">
         <div className="flex min-w-0 items-center gap-2">
           {/* The sync state doubles as the entry to the whole-vault commit history
               (comment: "clickable — up to date opens version control"). */}

@@ -27,7 +27,7 @@ export function FilterBar(): React.JSX.Element {
     }))
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
+    <div className="flex flex-wrap items-center gap-2 border-b border-divider px-3 py-1.5">
       <Input
         value={filter.search}
         onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}

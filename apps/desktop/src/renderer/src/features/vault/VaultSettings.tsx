@@ -296,7 +296,7 @@ export function VaultSettings({
 
         {/* Account actions live here, not in the footer: the footer reports state,
           * it does not act — and sign out is the one destructive control here. */}
-        <section className="mt-auto space-y-2 border-t border-border pt-4">
+        <section className="mt-auto space-y-2 border-t border-divider pt-4">
           <h3 className="font-medium">Account</h3>
           <div className="flex items-center justify-between">
             {/* The signed-in user, linked to their GitHub profile. */}

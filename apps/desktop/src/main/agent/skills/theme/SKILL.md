@@ -60,7 +60,8 @@ or a named colour like `transparent`):
 | `muted` / `muted-foreground` | muted surfaces + de-emphasised text |
 | `accent` / `accent-foreground` | subtle hover surface + text |
 | `destructive` / `destructive-foreground` | danger actions + text |
-| `border` | hairlines and dividers |
+| `border` | the edge of an object — cards, chips, popovers, menu separators |
+| `divider` | the seam between two pieces of chrome — pane splits, the sidebar's edge, panel-header rules, the footer. Defaults to `border` faded toward `background`, so recolouring those two carries it along; set it only to override that outright, and with a flat colour (`color-mix` is not accepted here) |
 | `input` | form field borders |
 | `ring` | focus rings |
 | `scrollbar-thumb` / `scrollbar-thumb-hover` | the scrollbar handle |

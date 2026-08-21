@@ -178,7 +178,7 @@ export function CreateTask({
             </Select>
           </FormField>
         ) : (
-          <div className="flex flex-col gap-3 border-t border-border pt-3">
+          <div className="flex flex-col gap-3 border-t border-divider pt-3">
             <FormField label="Status">
               <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
                 <SelectTrigger className="w-full" data-create-task-status>

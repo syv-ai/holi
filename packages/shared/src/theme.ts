@@ -69,6 +69,11 @@ export const THEME_COLOR_TOKENS = [
   'destructive',
   'destructive-foreground',
   'border',
+  // The chrome hairline — pane splits, the sidebar's edge, panel-header rules —
+  // as opposed to `border`, which is the edge of an object (card, chip,
+  // popover). Defaults to `border` faded toward `background`, so a vault that
+  // recolours either gets a matching divider without setting this at all.
+  'divider',
   'input',
   'ring',
   // Chrome colours that live on their own tokens (see index.css).

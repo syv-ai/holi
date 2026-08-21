@@ -399,7 +399,7 @@ export function MailComposer({
 
   return (
     <section
-      className="flex min-h-0 flex-col gap-2 border-t border-border p-3"
+      className="flex min-h-0 flex-col gap-2 border-t border-divider p-3"
       aria-label="Compose mail"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {

@@ -120,7 +120,7 @@ export function HistoryPanel() {
 
   return (
     <SidePanel title="History" subtitle={targetPath}>
-      <div className="max-h-56 shrink-0 overflow-y-auto border-b border-border p-2">
+      <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
         {versions.length === 0 && (
           <p className="px-2 py-1 text-xs text-muted-foreground">
             No commits yet — edits become commits automatically as you work, and each shows here.
@@ -142,7 +142,7 @@ export function HistoryPanel() {
       </div>
 
       {error && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
-      <div className="border-t border-border p-2">
+      <div className="border-t border-divider p-2">
         <Button
           variant="secondary"
           size="sm"

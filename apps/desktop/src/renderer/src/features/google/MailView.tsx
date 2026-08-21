@@ -1663,7 +1663,7 @@ function ListFooter({
   shown: number
 }): React.JSX.Element {
   return (
-    <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-border px-2 text-[10px] text-muted-foreground">
+    <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-divider px-2 text-[10px] text-muted-foreground">
       <span className="flex min-w-0 items-center gap-1 truncate">
         <RefreshCw size={10} className={`shrink-0 ${syncing ? 'animate-spin' : ''}`} />
         {syncing ? 'Syncing…' : syncedAt === null ? 'Not synced' : `Synced ${ago(syncedAt)}`}
@@ -1728,7 +1728,7 @@ function ThreadRow({
 
   return (
     <div
-      className={`group/row flex items-stretch border-b border-border/50 ${
+      className={`group/row flex items-stretch border-b border-divider ${
         active
           ? 'bg-secondary'
           : selected
@@ -1922,7 +1922,7 @@ function MessageBlock({
   const shown = expanded || forceExpanded
 
   return (
-    <article className="border-b border-border/50 py-2 last:border-0">
+    <article className="border-b border-divider py-2 last:border-0">
       {/* The header is the toggle. A separate chevron button would put two
           targets on a row whose whole area already means one thing. */}
       <Button

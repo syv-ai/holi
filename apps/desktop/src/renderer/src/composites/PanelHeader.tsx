@@ -68,7 +68,7 @@ export function PanelHeader({
     <header
       data-slot="panel-header"
       className={cn(
-        'flex h-11 shrink-0 items-center gap-2 border-b border-border px-3 text-xs',
+        'flex h-11 shrink-0 items-center gap-2 border-b border-divider px-3 text-xs',
         className,
       )}
     >

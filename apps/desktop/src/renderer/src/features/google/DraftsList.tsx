@@ -91,7 +91,7 @@ export function DraftsList({
               this list are built the same way. */}
           <Button
             variant="ghost"
-            className="block h-auto w-full rounded-none border-b border-border/50 px-3 py-2 text-left"
+            className="block h-auto w-full rounded-none border-b border-divider px-3 py-2 text-left"
             onClick={() => onOpen(draft)}
           >
             <span className="flex items-baseline gap-1">

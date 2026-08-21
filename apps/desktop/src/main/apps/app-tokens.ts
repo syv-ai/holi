@@ -41,6 +41,9 @@ export const APP_BASE_TOKENS: ThemeBlock = {
   destructive: 'oklch(39.6% 0.141 25.723)',
   'destructive-foreground': 'oklch(93.6% 0.032 17.717)',
   border: 'oklch(26.9% 0 0)',
+  // Derived, like `selection` below: a vault that recolours `border` or
+  // `background` gets a divider that matches, without setting this.
+  divider: 'color-mix(in srgb, var(--border) 55%, var(--background))',
   input: 'oklch(26.9% 0 0)',
   ring: 'oklch(50% 0.134 242.749)',
   'scrollbar-thumb': 'oklch(37.1% 0 0)',

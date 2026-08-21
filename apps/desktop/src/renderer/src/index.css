@@ -51,6 +51,22 @@
    * `--radius` lives in the `@theme` block further down. */
   --scrollbar-thumb: var(--color-neutral-700);
   --scrollbar-thumb-hover: var(--color-neutral-600);
+  /* The hairline between two pieces of CHROME — the split between panes, the
+     sidebar's edge, a panel header's underline, the footer's top rule. Split
+     off from `--border`, which stays the edge of an OBJECT: a card, a chip, a
+     popover. The two want opposite things. An object's border has to be seen,
+     because it is what says where the object ends; a chrome rule only has to be
+     *noticed*, and at `--border`'s weight a window full of panes reads as a
+     grid of drawn boxes rather than one surface with seams in it.
+
+     Derived rather than stated, so it survives re-theming: fade the border
+     toward the page it sits on. A vault that recolours `--border` or
+     `--background` gets a divider that still belongs to them, and one that
+     wants an outright colour sets `--divider` itself (a flat colour — the
+     theme validator does not accept `color-mix`). One definition covers both
+     modes: the light block re-states `--border`/`--background` on this same
+     element, so the substitution resolves per theme. */
+  --divider: color-mix(in srgb, var(--border) 55%, var(--background));
   /* Selection follows the brand by default, so recolouring --primary alone
      recolours the selection; a theme can still set --selection outright. */
   --selection: color-mix(in srgb, var(--primary) 30%, transparent);
@@ -140,6 +156,7 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
 

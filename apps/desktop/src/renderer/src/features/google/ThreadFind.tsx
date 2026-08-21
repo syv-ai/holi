@@ -134,7 +134,7 @@ export function ThreadFind({
   }
 
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
+    <div className="flex h-11 shrink-0 items-center gap-1 border-b border-divider px-3">
       <Search size={14} className="shrink-0 text-muted-foreground" />
       <Input
         ref={inputRef}

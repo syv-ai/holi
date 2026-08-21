@@ -585,7 +585,7 @@ function EventDetail({
         </dl>
 
         {event.description !== null && event.description.trim() !== '' && (
-          <div className="mt-4 border-t border-border/50 pt-3">
+          <div className="mt-4 border-t border-divider pt-3">
             {/* Whoever sent the invitation wrote this, so it goes down the same
                 sandboxed path a mail body does — all of it, not just the part
                 that already looks like markup. `descriptionHtml` normalises
