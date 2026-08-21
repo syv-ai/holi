@@ -27,7 +27,7 @@ Employees connect their **@syv.ai Gmail and Google Calendar** to Holi — read a
   - **What it costs:** an invite that never reached the calendar — declined, or sent to an address that does not sync — gets a badge and no Join, where an `.ics` parser would have offered one. Accepted deliberately: the drift argument outweighs it, and the case is rare beside "a meeting you were invited to and is on your calendar".
   - **Google's structured fields are not the only source of a join link.** `conferenceData` is populated only for conferences Google itself created; a Teams meeting organised in Outlook and synced over Exchange has neither `conferenceData` nor `hangoutLink`, and its link is an anchor in the invite body. The resolver falls back to the body and then the location, matching the *shape* of a join link rather than the first `https://` it finds — a real Teams invite also carries `aka.ms/JoinTeamsMeeting` and a "Learn More" page, either of which wins a first-URL race and opens a help page instead of the meeting. Structured fields still win: a rescheduled meeting gets `conferenceData` rewritten and a link left in prose does not.
 - **Act on the calendar**: create, move and delete the user's *own* solo blocks (time-blocking). Events carrying attendees are refused, because changing or deleting one emails people.
-- **Link**: an email or event attaches to a **task** or **note** as a plain markdown link in the body — never frontmatter, never a `[[wiki-link]]`. `related[]` does not exist ([`tasks.md`](tasks.md)).
+- **Link**: an email or event attaches to a **task** or **note** as a plain markdown link in the body — never frontmatter, never a `[[wiki-link]]`. `related[]` does not exist ([`tasks.md`](tasks.md)). Both ends ship the same gesture: the agenda's event detail and the mail thread's row menu each create a task titled after the thing, seeded with its permalink, and open it. The event carries the **invitation body under the link** as well — a task made from a board call is worth opening because the dial-in and the agenda came with it, not because it repeats the title. Nothing is stored on either side of the join, so *"which tasks reference this event"* stays a grep for the URL.
 - **The agent gets the same surface**, through a `holi-google` command rather than an MCP server, bounded by reversibility and gated on send ([`agent.md`](agent.md)).
 
 ## The engine: one cache, and deltas over it
@@ -161,7 +161,7 @@ Also settled: the agent reaches Google via a **`holi-google` CLI + skill (no MCP
 
 **Linking.** *A frontmatter link field* — the `related[]` ghost [`tasks.md`](tasks.md) killed. A link is a plain markdown link in the file body; the chip is render-time URL detection, computed rather than stored.
 
-**What is not built** — creating a task from an event, and a task that tracks a recurring series — is in [`../not-built.md`](../not-built.md).
+**What is not built** — a task that tracks a recurring series — is in [`../not-built.md`](../not-built.md).
 
 ## Dependencies
 [`auth-identity.md`](auth-identity.md) (a second OAuth provider alongside GitHub, keychain token storage, and the scope-widening trap), [`agent.md`](agent.md) (the `holi-google` command surface and the send gate — *not* an MCP surface), [`tasks.md`](tasks.md) (linking an email/event to a task; create-from-event).

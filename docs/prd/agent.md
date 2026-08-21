@@ -215,11 +215,11 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Ordinary editing needs no protocol.** The agent writes files; the editor's watcher reloads or 3-way merges ([`notes-editor.md`](notes-editor.md)); the sync engine commits. There is no soft lock, no frozen base, no positioned-ops translation, and no "Claude is editing…" presence state — the last of which existed to tell *co-authors* something, and there are no live co-authors in v1. **Staleness is Claude Code's own guard:** `Edit`/`Write` require a prior `Read` and fail if the file changed since.
 
-**Conflict resolution is where the agent earns its place.** When an auto-pull hits a textual conflict, Holi aborts the merge and offers **Ask Claude to reconcile** — a banner in the editor and a quiet affordance in the footer. **Accepting it is the part that is specified and not built** ([`../not-built.md`](../not-built.md)); the sequence below is the design, and it is kept here because this pillar owns the reasoning for it:
+**Conflict resolution is where the agent earns its place.** When an auto-pull hits a textual conflict, Holi aborts the merge and offers **Ask Claude to reconcile** — a banner in the editor and a quiet affordance in the footer. Accepting it runs the sequence below (built 2026-07-27), and the reasoning is kept here because this pillar owns it:
 
-1. **Pauses autosave and auto-pull** for that vault (the same suspend as Git coexistence, held for the whole reconcile rather than just a turn), so nothing writes underneath the resolution.
+1. **Autosave and auto-pull stop** for that vault, so nothing writes underneath the resolution. This needed no explicit call in the end: a merge in progress is already a `blockedReason`, so step 2 is what suspends the loops and the agent's merge commit is what releases them. The vault reads as paused throughout, for the reason it actually is.
 2. **Re-runs the merge for real**, leaving the conflict in the working tree.
-3. **Opens the drawer** and starts the session with a **seeded first message** (the `prompt` field on `agent-pty:start`) naming the conflicted paths and the two branches — the user does not type it.
+3. **Opens the drawer** and starts the session with a **seeded first message** (the `prompt` field on `agent-pty:start`) naming the conflicted paths — the user does not type it. It names the paths and not the branches: the marked-up files are the whole of what has to be resolved, and the branch names would be decoration in a prompt whose next instruction is to read them.
 4. The agent resolves the `<<<<<`/`=====`/`>>>>>` markers with native tools and **finishes the merge itself** (`git add` + commit), **in front of the user**, who can watch and answer if it asks.
 5. On a clean tree, Holi resumes normal operation.
 
@@ -227,7 +227,9 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Why this is safe to hand to an agent at all:** it operates inside git, mid-merge, on a repo whose pre-merge state is a commit. The worst outcome is recoverable with `git merge --abort`.
 
-**What exists is both ends and not the wire.** `EditorPane.onConflict` raises the banner; `sync.pause` on the active vault is real; the drawer takes a seeded `prompt`. What no code does is join them — pause, re-run the merge, seed the drawer. It is the last remaining code gap from D60, the decision that produced this pillar, and it is tracked in [`../not-built.md`](../not-built.md) rather than here, because a PRD saying "designed, not built" about its own centrepiece is how a reader comes to believe a design is a description.
+**Where the wire runs.** `reconcileAtom` (`state/vaults.ts`) is the whole of it: `sync.reconcile` re-runs the merge in main (`activeVault.reconcile()` over `repo.remerge()`, which unlike the auto-pull path deliberately does **not** abort), and the conflicted paths it returns become the drawer's seeded first turn via `lib/reconcile-prompt.ts`. **An empty path list is a real outcome, not an error**: the merge now applies cleanly, so the banner clears and no agent is handed anything.
+
+**What is still missing is around the edges rather than in the middle** — the conflicted files are not read-only while a reconcile runs, and there is no in-app way to abandon one ([`../not-built.md`](../not-built.md)).
 
 ## Rendering PDFs
 
@@ -237,11 +239,11 @@ The agent can turn a note into a PDF with the **same Typst engine** the UI's "Co
 - **The seeded `md-to-pdf` skill** (`.claude/skills/md-to-pdf/`) documents the template model (`.holi/document-templates/<slug>/`), the six-type field schema, the `doc(notePath, meta, assets)` contract, and the render recipe: compose a wrapper that imports the template's `doc` and calls it, then `"$TYPST_BIN" compile wrapper.typ <out>.pdf --root /`. The agent writes typed `meta` literals directly.
 - **PDFs are outputs, never committed** — the skill writes them to a non-tracked path and reports it.
 
-This lands as a late slice, once the agent is live. The typed-template mechanism it builds on already exists (see `../specs/2026-07-26-typed-template-fields-design.md`).
+This landed as a late slice, once the agent was live, on the typed-template mechanism that already existed (`../specs/2026-07-26-typed-template-fields-design.md`).
 
-## What ports from the old codebase
+## What came from the old codebase
 
-Port to TypeScript, adapted as noted above:
+Ported to TypeScript, adapted as noted above:
 
 - The **PTY/xterm template** — `services/agents/login_pty.rs` (spawn, env hygiene, reader loop, child-wait, resize; process-group cancellation from `runtime.rs`).
 - The auth probe (`claude_config::is_authenticated`) and the login-PTY fallback flow.
@@ -254,28 +256,9 @@ Port to TypeScript, adapted as noted above:
 - **Prompt injection via shared content** — accepted residual risk. Native permission prompts + seeded egress gating + git history bound the blast radius.
 - **Hook latency** — the `UserPromptSubmit` hook runs on *every* prompt; a slow grep stalls the user's turn. Budget it (target < ~50 ms) and degrade to "context unavailable" rather than block. A vault-wide grep per turn is the thing to measure first.
 - **`claude` missing or unauthenticated** — clear error + the fallback login PTY flow.
-- **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session, and some CC config is read at launch only; may need a "restart session to pick up config changes" nudge (open question).
+- **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session and CC reads it at launch only. Resolved: the drawer nudges (*"shared config changed; restart to pick it up"*), over the `AGENT_CONFIG_FILES` set described in §Config layering — hooks and skills are out of it, being re-read per invocation.
 - **Terminal resize / reflow** — xterm + node-pty resize wiring must stay in sync; test drawer resize under active output.
-- **The agent editing during a reconcile** — the reconcile flow pauses autosave, but the *user* can still type. Decide whether the editor goes read-only while a reconcile is in progress (leaning: yes, for the conflicted files only).
-
-## Wiring state & build order
-
-The agent is **fully built but orphaned** — `createAgentManager` is never called, there is no `agent` IPC/preload surface, and `AgentPanel` is mounted nowhere. `main/index.ts` keeps it off the startup path because `agent-manager.ts` still imports the deleted `server-client` (an unresolvable import there stops the window opening).
-
-Three modules are **pre-D60 stale**, and this revision decides their fate:
-- **`system-prompt.ts`** (the 191-line `build_system_prompt`) — **deleted**. No prompt is built.
-- **`context-snapshot.ts`** — **shrunk to a focus-writer**: it writes only the focused note path to `.holi/context.local.json`. The task-record / `docId` / `RelatedRef` / backref logic is deleted; the agent discovers those natively.
-- **The `server-client` dependency** — **deleted, not reimplemented.** Under focus-only context the manager no longer needs `listTasks`/`backrefs`, so the two calls that blocked startup simply go away.
-
-The renderer also imports a non-existent `activeVaultIdAtom`; replace with `activeRemoteAtom` (a vault's identity is its remote under D60).
-
-**Build order (tracer-first):**
-1. **Spine + strip stale machinery** — delete the `server-client` dep and the stale prompt/context code; add the `agent` IPC/preload bridge (`agent-pty:{data,exit,start,write,resize,kill}` + `agent:status`) and the typed `window.holi.agent`; mount `AgentPanel` + ⌘J; instantiate `createAgentManager` in `index.ts`; `activeVaultIdAtom`→`activeRemoteAtom`. Empty `--append-system-prompt`; focus-only hook. Result: a live session in the drawer that edits the vault.
-2. **Git coexistence** — Holi pauses its sync loop while the agent works; update `AGENTS.md`.
-3. **Merge resolver** — conflict detection → "Ask Claude to reconcile" → seeded `prompt` on `start`.
-4. **PDF capability** — `$TYPST_BIN` + the seeded `md-to-pdf` skill.
-
-Each slice gets its own plan.
+- **The agent editing during a reconcile** — the reconcile pauses autosave, but the *user* can still type. The answer is settled and not built: the conflicted files go read-only, everything else stays editable ([`vaults-sync.md`](vaults-sync.md) FR-19, [`../not-built.md`](../not-built.md)).
 
 ## Dependencies
 

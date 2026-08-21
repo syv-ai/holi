@@ -10,7 +10,7 @@ Daily notes are **personal-vault-only**: auto-created only in a vault you are th
 
 Every day, in your **personal** vault, you get a **daily note** — `DD-MM-YYYY.md` at the vault root, seeded with `type: daily-note` frontmatter and a `# DD-MM-YYYY` title heading. On vault open, Holi creates it if it isn't there and navigates you to it. A sweep archives prior-day notes into `journal/` and deletes **untouched stubs** so empty dailies don't accumulate.
 
-Porting notes: port the well-tested **untouched-stub heuristic** (old `is_untouched_daily_note`), the seed-content shape (`buildDailyNoteContent`), and the root→`journal/` **archive move**. Do **not** port the orphan-rescue machinery the old move fed — it existed to serve `source_file`, which does not exist.
+What came across from the old repo: the well-tested **untouched-stub heuristic** (`is_untouched_daily_note`), the seed-content shape (`buildDailyNoteContent`), and the root→`journal/` **archive move**, all now in `packages/shared/src/daily-note.ts` and `main/vault/daily.ts`. What did not: the orphan-rescue machinery the old move fed, which existed to serve a `source_file` that does not exist here.
 
 ---
 
@@ -45,8 +45,8 @@ Porting notes: port the well-tested **untouched-stub heuristic** (old `is_untouc
 ## Functional requirements
 
 1. **Path shape.** `DD-MM-YYYY.md` at the personal-vault **root**, where the date is the device's local date. Deterministic per date, so the path is the identity.
-2. **Filename format** ports old `dailyNoteFilename`: zero-padded `DD-MM-YYYY.md`. `isDailyNoteFilename` (`^\d{2}-\d{2}-\d{4}\.md$`) and `isDailyNote` (frontmatter `type: daily-note`) port to `packages/shared` as pure predicates.
-3. **Seed content** ports `buildDailyNoteContent`: frontmatter `type: daily-note`, `date: YYYY-MM-DD`, then a `# DD-MM-YYYY` title heading matching the stem. **The seed must be byte-for-byte deterministic** for a given date — see [Idempotency](#idempotency).
+2. **Filename format** is old `dailyNoteFilename`'s: zero-padded `DD-MM-YYYY.md`. `isDailyNoteFilename` (`^\d{2}-\d{2}-\d{4}\.md$`) and `isDailyNote` (frontmatter `type: daily-note`) live in `packages/shared` as pure predicates.
+3. **Seed content** is `buildDailyNoteContent`'s: frontmatter `type: daily-note`, `date: YYYY-MM-DD`, then a `# DD-MM-YYYY` title heading matching the stem. **The seed must be byte-for-byte deterministic** for a given date — see [Idempotency](#idempotency).
 4. **Auto-create on open.** On personal-vault open, create the file if absent and navigate to it. Shared-vault open does **not** create a daily note.
 5. **Stub GC + archive** run on open (§ Archiving).
 6. **Navigation** surfaces (§ UX): sidebar "Today", shortcut, task-count badge.

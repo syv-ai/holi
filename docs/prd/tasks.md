@@ -151,7 +151,7 @@ Default and only board layout in v1.
 
 > **Runtime design:** the local evaluator / tray / notification shell that fires these is specified in [`../specs/2026-07-28-reminder-runtime-design.md`](../specs/2026-07-28-reminder-runtime-design.md) (realises D60 pt8). Settled there: all-vaults scope, a first-run launch-at-login prompt, a 60s tick with launch catch-up, a `>3` coalesce threshold, tray keep-alive, and a path-keyed delivery watermark behind a `DeliveredLog` seam.
 
-The **pure rule functions port verbatim** from the old repo's Rust into `packages/shared` (TS), with their existing test suites — the math is well-tested; do not rewrite it.
+The **pure rule functions were ported verbatim** from the old repo's Rust into `packages/shared` (TS), with their existing test suites — the math was well-tested and was not rewritten.
 
 **Recurrence:**
 

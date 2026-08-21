@@ -9,7 +9,7 @@ The living documentation for Holi. The PRDs, architecture, and vision are the **
 |---|---|
 | [vision.md](vision.md) | What Holi is, product principles, the shape of v1 |
 | [architecture.md](architecture.md) | The whole system: the vault as a git repo, sync, the agent, security |
-| [not-built.md](not-built.md) | **What is designed and not built** — one entry per gap, each pointing back at the pillar that owns its reasoning. Names what is being built next; below that, no ordering, no sizing, no dates. **Purges an entry when it ships** |
+| [not-built.md](not-built.md) | **What is designed and not built** — one entry per gap, each pointing back at the pillar that owns its reasoning. **No ordering, no sizing, no dates** — naming a next would make it the roadmap this split exists to kill. **Purges an entry when it ships** |
 | [decisions.md](decisions.md) | **Decision inbox** — new load-bearing decisions land here first, then get consolidated natively into the docs above and the inbox is purged (cycle repeats) |
 | [glossary.md](glossary.md) | Canonical terms (vault, task, push, reconcile, autosave commit…) |
 
@@ -25,7 +25,7 @@ The living documentation for Holi. The PRDs, architecture, and vision are the **
 | [prd/onboarding.md](prd/onboarding.md) | First-run three-act ritual, create-or-join a vault, the add-vault mode that retired `AddVault` |
 | [prd/google-mail-calendar.md](prd/google-mail-calendar.md) | @syv.ai Gmail + Calendar: triage, the sandboxed reader, the composer, meetings |
 | [prd/pdf-export.md](prd/pdf-export.md) | Markdown → branded syv.ai PDFs via Typst, as a vault skill |
-| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: the per-app `holi-app://` origin, app tabs, the `holi.*` bridge, the authoring skill. Slice 1 only — app **state** is still undecided, see [not-built.md](not-built.md) |
+| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: the per-app `holi-app://` origin, app tabs, the `holi.*` bridge, the authoring skill. Slices 1–2 shipped; app **state** is still undecided, see [not-built.md](not-built.md) |
 
 ## Designed, not built
 Not PRDs, because they describe nothing that exists — *yet*. [not-built.md](not-built.md) owns their status, and a doc graduates into the table above when it ships.
@@ -52,7 +52,7 @@ Not PRDs, because they describe nothing that exists — *yet*. [not-built.md](no
 - **Implementation plans are kept, and they are not the truth.** The old rule said they were deleted after execution, on the consolidate-then-purge cycle `decisions.md` runs. That rule died the way the never-commit-docs rule died — quietly, by not being followed: there are dozens of plans on disk, and pretending otherwise made the index describe a repo that does not exist. What survives from it is the part that mattered: **a plan holding something the living docs do not is a docs bug.** The fix is to fold it up into the PRD, not to delete the plan.
 - **`decisions.md` still purges**, and that difference is deliberate: a decision is a *claim about how things are*, so two copies can contradict each other. A plan is a record of *what was done on a date*, which cannot go stale — only be superseded.
 - **A PRD may carry verification status, and it must be dated.** "Proven in real use as of *date*", "still unproven — treat as broken". It is the one kind of claim in a PRD that is about a *moment* rather than a design, so the date is part of the claim. Status kept away from the thing it qualifies is how *"nothing in this repo has ever talked to Google"* survived into four documents after it stopped being true. [verification/](verification/) is history, not where this lives.
-- **A gap purges when it ships.** [not-built.md](not-built.md) runs the same consolidate-then-purge cycle [decisions.md](decisions.md) does, and for the reason given below: "X does not exist" is a claim about how things are, so two copies of it can contradict. When the thing is built, its reasoning — including any sub-question the entry carried — folds into the owning PRD as a description of what now exists, and the entry is deleted.
+- **A gap purges when it ships.** [not-built.md](not-built.md) runs the same consolidate-then-purge cycle [decisions.md](decisions.md) does, and for the reason given below: "X does not exist" is a claim about how things are, so two copies of it can contradict. When the thing is built, its reasoning — including any sub-question the entry carried — folds into the owning PRD as a description of what now exists, and the entry is deleted. **An entry is also checked against the code when it is written**, not only when it is purged: the first version of that file was assembled out of PRD prose and three of its sixteen entries described things that had shipped weeks earlier, which is the same failure as a stale PRD wearing the clothes of its own cure.
 - **A boundary with a trigger stays in the PRD, and only there.** "No OS network listener; add one only if the retry latency proves annoying" is product shape plus the observation that would change it — not a gap. Filing it in [not-built.md](not-built.md) as well would be the second copy the rule above forbids.
 - A term is ambiguous? [glossary.md](glossary.md) wins.
 - **There is no server**, and no doc should imply otherwise. If you find one that does, it is stale.

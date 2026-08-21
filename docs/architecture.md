@@ -86,7 +86,7 @@ The walk excludes only true non-content (`.git`, `node_modules`, tmp write-files
 ### External writes
 A file can change under an open editor because the agent wrote it, a pull landed it, or another window touched it. All three are one event: a **clean buffer reloads**, a **dirty buffer takes a plain 3-way text merge** (base = last loaded text), and an **unmergeable overlap** falls into the same reconcile path as a git conflict.
 
-**The 3-way merge is new work, not a survivor.** `packages/shared/agent-merge` looked like the merge and is not: it forks a shadow `Y.Doc` from the frozen base, replays the diff onto it, and lets **Yjs** do the positional reconciliation. Take away the CRDT and there is no merger left — only a 2-way diff (`fast-diff`, which does survive). A real diff3 has to be written or vendored, and it must report an unmergeable overlap rather than guessing, because that report is what routes the case to reconcile.
+**The 3-way merge was written, not salvaged.** `packages/shared/agent-merge` looked like the merge and was not: it forked a shadow `Y.Doc` from the frozen base, replayed the diff onto it, and let **Yjs** do the positional reconciliation. Take away the CRDT and there was no merger left — only a 2-way diff (`fast-diff`, which does survive). What stands in its place is `packages/shared/src/merge3.ts`, and the property that matters is that it **reports an unmergeable overlap rather than guessing**, because that report is what routes the case to reconcile.
 
 This is what remains of the **file↔CRDT bridge**: the soft lock, the frozen base, the turn protocol and the diff-to-positioned-ops translation are gone with the CRDT they translated into, and the merge core is replaced rather than reused.
 
@@ -167,7 +167,7 @@ type Task = {
 
 - **What this deletes.** The record/projection split and everything it required: `ProjectionStore`, the version token, per-field patching, rewrite-from-truth, `RelatedRef`, `[[task:<id>]]` chips, task ids, `area` as a stored field, presence heartbeats, and the SSE `tasks` channel. All of it existed to reconcile a file with a record; there is no record.
 - **Board:** default **Todo/Doing/Done** with **swim lanes by folder**; a three-control filter bar. Virtual labels (`overdue`, `p1`–`p3`) are computed at render, never stored — storing them would mean a write at midnight, which is now a commit.
-- **Recurrence & reminders:** the **rules** stay pure functions in `packages/shared` (port the old, well-tested math). **A tray-resident Holi evaluates reminders locally**, catching up missed fires on launch. The delivered-watermark is machine-local and never committed — a fire that produced a commit is the same failure the old design kept the version token out of frontmatter to avoid.
+- **Recurrence & reminders:** the **rules** are pure functions in `packages/shared`, ported verbatim from the old repo's well-tested math. **A tray-resident Holi evaluates reminders locally**, catching up missed fires on launch. The delivered-watermark is machine-local and never committed — a fire that produced a commit is the same failure the old design kept the version token out of frontmatter to avoid.
 - **Concurrency** is the vault's ordinary git semantics: different files merge, different frontmatter lines merge, the same line conflicts and goes to reconcile. The old design refused to merge task YAML because a CRDT can converge on invalid syntax *with no writer able to reject it*; git is not a CRDT — it refuses rather than guesses, and the refusal is what makes agent-assisted resolution possible.
 
 ---
@@ -180,7 +180,7 @@ Full design: [`prd/notes-editor.md`](prd/notes-editor.md).
 - **Wiki-links:** path-based `[[folder/note.md]]` — readable in raw markdown, so Claude can follow *and* author them naturally. One parser in `packages/shared`. This is now the **only** link grammar: `[[task:<id>]]` died with task ids, so a link to a task is a link to a file.
 - **Rename:** move the file and rewrite inbound links in one local pass, rejecting an existing destination *before* moving anything. There is no transaction and there cannot be one — but every step is a file write inside a git repo, so the commit before the rename is a complete restore point and a half-finished rename shows up in `git status` rather than hiding in a database.
 - **Backrefs:** a grep. The `link_index` existed to avoid a full-disk scan on a server holding many vaults; a local vault greps in milliseconds, and an index would be a second copy of the truth that can go stale.
-- **Daily notes:** keep the untouched-stub heuristic and the `journal/` archive. Creation is now `if (!exists) write(seed)` — and because the path *and the seed bytes* are deterministic, two of your devices creating it offline produce an identical blob that git merges silently. Details: [`prd/daily-notes.md`](prd/daily-notes.md).
+- **Daily notes:** the untouched-stub heuristic and the `journal/` archive both survive the pivot. Creation is now `if (!exists) write(seed)` — and because the path *and the seed bytes* are deterministic, two of your devices creating it offline produce an identical blob that git merges silently. Details: [`prd/daily-notes.md`](prd/daily-notes.md).
 
 ---
 

@@ -9,6 +9,13 @@ believed.
 Below this line there is **no ordering, no sizing, and no dates**. It is a list of what is missing,
 which is the only claim it can make honestly.
 
+**Audited entry-by-entry against the code on 2026-08-21.** Three entries were describing work that
+had shipped — the reconcile → drawer handoff (2026-07-27), creating a task from a calendar event
+and the document-template set (both 2026-08-04) — and are gone, folded into their pillars. They
+predated this file, which was written from PRD prose rather than from the code; the entries that
+came after it were all accurate. The rule that follows is in the [README](README.md): an entry gets
+checked against the code when it is *written*, not only when it is purged.
+
 ## What belongs here, and what does not
 
 An entry answers **"what could we build next"**. If a thing is absent and the honest statement is
@@ -36,12 +43,6 @@ contradict each other. A plan, by contrast, records what was done on a date and 
 ---
 
 ## Agent
-
-**The reconcile → drawer handoff.** [`prd/agent.md`](prd/agent.md) §The agent as merge resolver
-specifies it: pause the vault, re-run the merge for real, open the drawer with a seeded prompt
-naming the conflicted paths. `EditorPane.onConflict` raises a banner and stops there. **Both ends
-exist** — `sync.pause` on the active vault, and the drawer's seeded `prompt` — and the wire between
-them does not. This is the last remaining code gap from D60, the decision that produced the pillar.
 
 **Vault apps — state, writes, and a backend.** The feature itself is **built**: slice 1 shipped
 (2026-08-20), so an agent-authored app in `.holi/apps/<id>/` opens as a themed tab and reads the
@@ -89,6 +90,22 @@ only one.
 **Also not built:** D76's floor for when no agent session is open — surfacing a hook failure in the
 sync status bar via `pause(reason)`. The log is the only surface today.
 
+## Vaults & sync
+
+**A reconcile leaves the conflicted files editable, and offers no way out of itself.** The handoff
+is built — [`prd/vaults-sync.md`](prd/vaults-sync.md) FR-18 works end to end — but two of the
+requirements standing around it do not. **FR-19**: the conflicted files are supposed to go
+read-only for the duration, and nothing compartmentalises them; the renderer's only `readOnly`
+compartment is the diff viewer. **FR-20**: `main/git.ts` has `abortMerge` and only the auto-pull's
+own conflict path calls it — no button, no procedure — so *"the user can always abandon a
+reconcile"* is true in a terminal and nowhere else. The two belong together, and in that order:
+read-only with no escape hatch is a worse state than either of them alone.
+
+**A leftover of the same feature:** `sync.pause` and `sync.resume` are live tRPC procedures with no
+caller. FR-18 was designed around an explicit pause and the build did not need one — a merge in
+progress is already a `blockedReason`, so the loops stop on their own. Deleting the pair is the
+likely answer; whoever builds FR-19 will be standing next to it.
+
 ## Notes & editor
 
 **A binary with no extension Holi knows opens as text, and looks like corruption.** `fileKind`
@@ -116,14 +133,16 @@ hangs on "Loading PDF…".
 an *option*, never a mode to configure: a second view earns its place only by not multiplying the
 config space that [`prd/tasks.md`](prd/tasks.md) §What the design deliberately excludes closes off.
 
+**No keyboard navigation in the date picker's month grid.** The cells are `Button`s, so they tab
+and activate, but there is no arrow-key handling — crossing a month is thirty-odd tab stops.
+Noticed while building D79 and left there: the grid is hand-rolled
+(`composites/DateTimePicker.tsx`) on purpose, so a roving tabindex is real work rather than a prop.
+
 **Assignees**, and with them per-person reminders on shared tasks. This is the answer if
 vault-wide reminders prove noisy — **not** a private reminder channel, which would make a shared
 task mean different things to different members.
 
 ## Google mail & calendar
-
-**Create a task from an event**, seeded with the link in its body. `tasks.create` takes an optional
-`description` for exactly this, so the plumbing exists and the affordance does not.
 
 **A task that lights up for a recurring event series** — the reminders and agenda tie-in across
 [`prd/tasks.md`](prd/tasks.md) and [`prd/daily-notes.md`](prd/daily-notes.md). Untouched by
@@ -134,11 +153,6 @@ D67–D70.
 **Template distribution across vaults.** Templates are per-vault committed content, which is what
 makes a team consistent *within* a vault and does nothing across five of them. A shared brand repo
 cloned as a vault is the obvious answer and has not been designed.
-
-**A template set beyond `plain`.** Letter, report, memo and proposal were the original ask; one
-template ships. This is content work rather than engineering — but the field schema in
-`template.json` has only ever been exercised by one consumer, so the second template is also the
-first real test of it.
 
 ## Daily notes
 

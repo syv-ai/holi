@@ -11,7 +11,7 @@ Turn any Holi markdown doc into a **branded syv.ai document** by rendering it th
 
 ## Goals — as built
 - **Markdown is the source and stays the source.** Author in Holi, emit a branded PDF; nothing round-trips back. This is D62 restated: the vault is text-first *by authorship*, and a PDF is an output the vault emits rather than a document it holds.
-- **Templates are committed vault content**, under `.holi/document-templates/<slug>/` — a `template.json` plus `template.typ` plus `assets/`. The path is named for its *purpose*, not its mechanism (D66): in a notes app, a bare `templates/` invites "templates for *notes*?". `main/pdf/templates.ts` holds the single source for that path, and the seed content lives internally at `main/agent/templates/plain/`, which is build content rather than the vault convention and is deliberately not renamed to match.
+- **Templates are committed vault content**, under `.holi/document-templates/<slug>/` — a `template.json` plus `template.typ` plus `assets/`. The path is named for its *purpose*, not its mechanism (D66): in a notes app, a bare `templates/` invites "templates for *notes*?". `main/pdf/templates.ts` holds the single source for that path, and the seed content lives internally under `main/agent/templates/`, which is build content rather than the vault convention and is deliberately not renamed to match.
 - **A team exports consistently because the template is in the repo.** Nobody installs a brand.
 - **Typed template fields.** `template.json` declares the metadata a template consumes, and the export UI renders a widget per field rather than a free-text blob — so a template can require a recipient and get one. Frontmatter prefills them, because the document usually already knows its own title.
 - **Two front doors, one pipeline.** The Convert-to-PDF UI and the agent's `md-to-pdf` skill both shell out to the same renderer. The skill is what makes *"export this as a proposal"* work in a sentence; the UI is what makes it work without one.
@@ -23,7 +23,9 @@ Turn any Holi markdown doc into a **branded syv.ai document** by rendering it th
 - **Round-tripping Typst back into markdown.** The PDF is an artifact; the markdown is the document.
 - **Any output target other than PDF** — the `.typ` source, or a Google Docs export. Asked once during design and **nobody has asked since**; it should not be built until someone does.
 
-**What is not built** — templates beyond `plain`, and distributing a template set across vaults — is in [`../not-built.md`](../not-built.md).
+**Six templates ship** (2026-08-04): `plain`, plus `letter`, `memo`, `report`, `proposal` and `contract` — the original ask, and then some — over a shared `_brand/` foundation (`brand.typ`, `figures.typ`, the logo and the fonts) that carries the house look so a template file is about *its* document and nothing else. Design of record: [`../specs/2026-08-04-document-template-set-design.md`](../specs/2026-08-04-document-template-set-design.md). **This was also the first real test of the field schema**, which until then had exactly one consumer; five `template.json` manifests now exercise it, and it needed no widening to take them.
+
+**What is not built** — distributing a template set across vaults — is in [`../not-built.md`](../not-built.md).
 
 ## Resolved, and worth not re-litigating
 - **Where rendering runs** → locally, against a resolved-and-pinned Typst binary. The original recommendation was a server-side Typst service for font and asset consistency; there is no server (D60), and pinning the version plus committing the assets into the vault buys the same consistency without one.
