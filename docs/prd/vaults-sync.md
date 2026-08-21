@@ -62,7 +62,7 @@ Sync is **automatic in both directions**:
 3. **FR-3** The vault registry (which repos, cloned where) is **machine-local**.
 
 ### Committing
-4. **FR-4** An edit produces a **local commit** after an **idle debounce** — **3 seconds** (`commitQuietMs`) — and immediately on **⌘S**. Commit messages are generated and unremarkable (`Update projects/q2/roadmap.md`, or a count for multi-file changes).
+4. **FR-4** An edit produces a **local commit** after an **idle debounce** — **3 seconds** (`commitQuietMs`) — and immediately on **⌘S**, which is bound **window-wide** rather than per editor: the board, a task's detail and the agenda are all places you have just changed something and would press it. It saves **every open buffer**, not the focused one, and a buffer whose syntax is mid-edit holds off on its own (`notes-editor.md` FR-16) while the commit still lands for everything else. Commit messages are generated and unremarkable (`Update projects/q2/roadmap.md`, or a count for multi-file changes).
     - **The number is tuned, not derived**: short enough that a crash loses nothing, long enough that a sentence is not three commits. A **30-second heal interval** commits and rescans as a backstop, whatever the watcher did or did not report.
 5. **FR-5** Commits are debounced so a burst — a board drag across lanes, an agent turn touching ten files — is **one commit**, not ten.
 6. **FR-6** A dirty buffer is flushed to disk and committed on: tab close, vault switch, window blur, and **app quit**. The unflushed buffer is the one way this design can lose data, so the flush points are a requirement, not an optimization.

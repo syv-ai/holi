@@ -203,34 +203,19 @@ export function EditorPane({
       }
     })
 
-    // ⌘S is a real commit point, not a placebo (FR-4): it writes, then asks
-    // main to commit rather than waiting out the idle timer. Invalid frontmatter
-    // holds off both — no write, no commit — until the YAML parses again.
-    //
-    // It also pushes: ⌘S is an explicit "save this", so getting it off-machine
-    // matches the intent (D61). The commit must resolve before the push, or the
-    // push races ahead of the very edit ⌘S just committed.
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault()
-        void save().then((ok) => {
-          if (ok) void trpc.sync.commitNow.mutate().then(() => trpc.sync.pushNow.mutate())
-        })
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-
     // FR-6: window blur is a flush point. So is the unmount below, which covers
     // tab close and vault switch. Both use the unconditional flush — a blur or a
     // tab-close must not drop keystrokes just because the YAML is mid-edit.
     const onBlur = () => void flush()
     window.addEventListener('blur', onBlur)
 
-    const unregister = registerBuffer(flush)
+    // Both writers: the unconditional one for FR-6's flush points, and the
+    // gated one for ⌘S, which the Shell fires for every open buffer at once
+    // (FR-4). The gate is what keeps a half-typed `tags: [` out of a commit.
+    const unregister = registerBuffer(flush, async () => void (await save()))
 
     return () => {
       disposed = true
-      window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)

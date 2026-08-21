@@ -43,6 +43,7 @@ import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { VaultSettings } from '@/features/vault/VaultSettings'
 import { syncLabel } from '../lib/sync-label'
+import { saveAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import {
@@ -224,6 +225,34 @@ export function Shell() {
   // preference, it is what the autosave/reload story rests on. The gesture that
   // opens something INTO a new pane is "open in a new pane", on the tree row and
   // the app row, which is the one people actually reach for.
+  /**
+   * ⌘S / Ctrl-S: save everything and commit, from anywhere in the window.
+   *
+   * It is a real commit point rather than a placebo (`prd/vaults-sync.md`
+   * FR-4): write the buffers, then ask main to commit instead of waiting out
+   * the idle timer, then push — ⌘S is an explicit "save this", so getting it
+   * off-machine matches the intent (D61). The commit has to resolve before the
+   * push, or the push races ahead of the edit ⌘S just committed.
+   *
+   * It lives here rather than in the editor because the board, a task's detail
+   * and the agenda are all places where you have just changed something and
+   * would press it. Every open buffer saves, not the focused one — a window
+   * with two panes has two lots of work in it — and a buffer whose syntax is
+   * mid-edit holds off on its own (FR-16), which is why this asks the registry
+   * for the *gated* writer.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return
+      e.preventDefault()
+      void saveAllBuffers()
+        .then(() => trpc.sync.commitNow.mutate())
+        .then(() => trpc.sync.pushNow.mutate())
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '\\') {
