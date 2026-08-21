@@ -101,3 +101,52 @@ describe('nextDueCatchup (completing a stale recurring task)', () => {
     expect(next! >= '2026-04-27').toBe(true)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────
+// D79: a due date may carry a time. The arithmetic still runs on whole days;
+// the hour is preserved across every step, and its ABSENCE is preserved too.
+describe('nextDue — a due date that names an hour', () => {
+  it('keeps the hour across a weekly step', () => {
+    expect(nextDue('2026-08-25T14:00', rule('weekly', 1))).toBe('2026-09-01T14:00')
+  })
+
+  it('keeps a timeless due timeless', () => {
+    expect(nextDue('2026-08-25', rule('weekly', 1))).toBe('2026-09-01')
+  })
+
+  it('keeps the hour through monthly day-clamping', () => {
+    expect(nextDue('2026-01-31T07:30', rule('monthly', 1))).toBe('2026-02-28T07:30')
+  })
+
+  it('keeps the hour through a weekday-set step', () => {
+    const mwf: Recurrence = { frequency: 'weekly', interval: 1, weekdays: ['mon', 'wed', 'fri'] }
+    expect(nextDue('2026-04-13T18:45', mwf)).toBe('2026-04-15T18:45')
+  })
+
+  it('compares endDate on the date half, so a timed due on the end date is allowed', () => {
+    expect(nextDue('2026-04-13T23:00', { ...rule('daily', 1), endDate: '2026-04-14' })).toBe(
+      '2026-04-14T23:00',
+    )
+  })
+})
+
+describe('nextDueCatchup — a due date that names an hour', () => {
+  it('preserves the hour across several steps', () => {
+    expect(nextDueCatchup('2026-04-10T14:00', rule('daily', 3), '2026-04-14')).toBe(
+      '2026-04-16T14:00',
+    )
+  })
+
+  it('treats a timed due later today as already caught up', () => {
+    // '2026-04-14T14:00' >= '2026-04-14' lexicographically, which is the answer
+    // we want: a task due later today has caught up. See the comment in the
+    // implementation before "fixing" the compare.
+    expect(nextDueCatchup('2026-04-13T14:00', rule('daily', 1), '2026-04-14')).toBe(
+      '2026-04-14T14:00',
+    )
+  })
+
+  it('keeps a timeless due timeless across catch-up', () => {
+    expect(nextDueCatchup('2026-04-10', rule('daily', 3), '2026-04-14')).toBe('2026-04-16')
+  })
+})

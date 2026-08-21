@@ -1,18 +1,35 @@
 /**
- * Recurrence roll-forward math — pure functions over `YYYY-MM-DD` strings,
+ * Recurrence roll-forward math — pure functions over stamps (`YYYY-MM-DD`, or
+ * `YYYY-MM-DDTHH:MM`; the hour rides along and the arithmetic is on days),
  * ported from the old Rust `services/recurrence.rs` (D19). The server runs
  * this on `tasks.complete`; clients only display the results.
  */
-import { DAY_MS, formatDate, lastDayOfMonth, parseDate } from './dates'
+import {
+  DAY_MS,
+  formatDate,
+  lastDayOfMonth,
+  parseDate,
+  stampDate,
+  stampTime,
+  withTime,
+} from './dates'
 import type { Recurrence, RecurrenceWeekday } from './types'
 
 /**
  * Given a task's current due date and recurrence rule, return the next due
- * date as `YYYY-MM-DD`, or null if the date can't be parsed or the next
- * occurrence would be past `endDate`.
+ * date, or null if the date can't be parsed or the next occurrence would be
+ * past `endDate`.
+ *
+ * `currentDue` is a **stamp** (D79) — it may name an hour, and if it does, the
+ * result names the same one. The arithmetic below runs on whole calendar days
+ * and is untouched by that: the month and year helpers clamp on days (Jan 31 +
+ * 1 month → Feb 28), so a time component would only be along for the ride and
+ * would round-trip through the clamp badly. Split it off, step, put it back.
  */
 export function nextDue(currentDue: string, rule: Recurrence): string | null {
-  const current = parseDate(currentDue)
+  const time = stampTime(currentDue)
+  const date = stampDate(currentDue)
+  const current = date === null ? null : parseDate(date)
   if (current === null) return null
   const interval = Math.max(1, rule.interval)
 
@@ -36,10 +53,12 @@ export function nextDue(currentDue: string, rule: Recurrence): string | null {
   if (next === null) return null
 
   if (rule.endDate !== undefined) {
+    // On the DATE half: `endDate` is a boundary on the rule, not an appointment,
+    // so a due at 23:00 on the end date is still inside it.
     const end = parseDate(rule.endDate)
     if (end !== null && next > end) return null
   }
-  return formatDate(next)
+  return withTime(formatDate(next), time)
 }
 
 /**
@@ -48,14 +67,16 @@ export function nextDue(currentDue: string, rule: Recurrence): string | null {
  * single `nextDue` step would still leave the task in the past.
  */
 export function nextDueCatchup(currentDue: string, rule: Recurrence, today: string): string | null {
-  const current = parseDate(currentDue)
+  const time = stampTime(currentDue)
+  const date = stampDate(currentDue)
+  const current = date === null ? null : parseDate(date)
   const todayEpoch = parseDate(today)
   if (current === null || todayEpoch === null) return null
 
   // Closed-form leap to a cursor close to (but strictly before) today, so we
   // then iterate at most a handful of times. Without this, decades-stale
   // tasks would silently return null once they exceeded the iteration cap.
-  let cursor = formatDate(leapCloseToToday(current, rule, todayEpoch))
+  let cursor = withTime(formatDate(leapCloseToToday(current, rule, todayEpoch)), time)!
 
   // After the leap we're within a couple of intervals of today. 60 covers
   // weekly+weekday rules where a single step may only advance within one
@@ -63,6 +84,10 @@ export function nextDueCatchup(currentDue: string, rule: Recurrence, today: stri
   for (let i = 0; i < 60; i++) {
     const next = nextDue(cursor, rule)
     if (next === null) return null
+    // A timed `next` compared against a date-only `today` is lexicographically
+    // correct and looks like a bug: '2026-04-14T14:00' >= '2026-04-14' is true,
+    // which is the answer we want — a task due later today has caught up. Do
+    // not "fix" this into a stamp comparison.
     if (next >= today) return next
     cursor = next
   }
