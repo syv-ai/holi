@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest'
 import { allLabels, virtualLabels } from '../src/labels'
 import type { Task } from '../src/types'
 
-const TODAY = '2026-07-14'
+// `now` is a TIMED stamp (D79) — the overdue rule reads the clock, not just
+// the calendar. Mid-afternoon, so both sides of the day boundary are reachable.
+const NOW = '2026-07-14T14:00'
+const TODAY = NOW
 
 const task = (over: Partial<Task> = {}): Task => ({
   path: 'task.t.md',
@@ -60,5 +63,45 @@ describe('allLabels', () => {
 
   it('a task with only real tags renders only those', () => {
     expect(allLabels(task({ tags: ['finance'] }), TODAY)).toEqual(['finance'])
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// D79: `due` may name an hour, and when it does, overdue means past that
+// minute. When it does not, overdue still means the DAY has passed — an
+// all-day task due today is not late at 00:01, which is the boundary the
+// day-granular rule got right and must keep getting right.
+describe('virtualLabels — a due date that names an hour', () => {
+  it('is not overdue one minute before its time', () => {
+    expect(virtualLabels(task({ due: '2026-07-14T14:01' }), NOW)).not.toContain('overdue')
+  })
+
+  it('is overdue one minute after its time', () => {
+    expect(virtualLabels(task({ due: '2026-07-14T13:59' }), NOW)).toContain('overdue')
+  })
+
+  it('is not overdue at exactly its own minute', () => {
+    expect(virtualLabels(task({ due: '2026-07-14T14:00' }), NOW)).not.toContain('overdue')
+  })
+
+  it('a DONE task with a timed due is never overdue', () => {
+    expect(virtualLabels(task({ due: '2020-01-01T09:00', status: 'done' }), NOW)).toEqual([])
+  })
+})
+
+describe('virtualLabels — a timeless due stays day-granular', () => {
+  it('is not overdue late on its own day', () => {
+    expect(virtualLabels(task({ due: '2026-07-14' }), '2026-07-14T23:59')).not.toContain('overdue')
+  })
+
+  it('is overdue in the first minute of the next day', () => {
+    expect(virtualLabels(task({ due: '2026-07-14' }), '2026-07-15T00:01')).toContain('overdue')
+  })
+})
+
+describe('virtualLabels — unparseable input', () => {
+  it('an unparseable due yields no overdue label, and does not throw', () => {
+    expect(virtualLabels(task({ due: 'not-a-date' }), NOW)).toEqual([])
+    expect(virtualLabels(task({ due: '1d', priority: 'high' }), NOW)).toEqual(['p1'])
   })
 })

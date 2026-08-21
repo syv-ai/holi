@@ -14,22 +14,52 @@
  *
  * `priority` and `due` stay real fields. This is a *rendering* of them.
  */
+import { stampDate, stampEpoch, stampTime } from './dates'
 import type { Task } from './types'
 
 export type VirtualLabel = 'overdue' | 'p1' | 'p2' | 'p3'
 
 const PRIORITY_LABEL = { high: 'p1', medium: 'p2', low: 'p3' } as const
 
-/** `today` is passed in, never read from the clock: the rules stay pure, and the
- * caller owns the timezone question (the reminder anchor has the same shape). */
+/**
+ * Whether a task is late, given the moment `now`.
+ *
+ * Two rules, because `due` is a stamp and the time on it is optional (D79):
+ *
+ * - **Due names an hour** → late once that minute has passed. A task due at
+ *   14:00 is late at 14:01 and not at 14:00.
+ * - **Due names only a day** → late once the DAY has passed. An all-day task
+ *   due today is not late at 00:01; you have the day. That is the boundary the
+ *   old day-granular rule got right, and the reason this is two rules rather
+ *   than one epoch comparison with a midnight default.
+ *
+ * An unparseable `due` is never overdue — inert, like an unparseable reminder,
+ * so a legacy `1d` or a typo costs a chip rather than throwing mid-render.
+ */
+function isOverdue(due: string, now: string): boolean {
+  const at = stampEpoch(due, 0)
+  if (at === null) return false
+  if (stampTime(due) !== null) {
+    const nowEpoch = stampEpoch(now, 0)
+    return nowEpoch !== null && at < nowEpoch
+  }
+  const today = stampDate(now)
+  return today !== null && due < today
+}
+
+/** `now` is passed in, never read from the clock: the rules stay pure, and the
+ * caller owns the timezone question (the reminder anchor has the same shape).
+ * It is a TIMED stamp — `YYYY-MM-DDTHH:MM` — because a due date may name an
+ * hour and a date alone could not answer that. */
 export function virtualLabels(
   task: Pick<Task, 'due' | 'priority' | 'status'>,
-  today: string,
+  now: string,
 ): VirtualLabel[] {
   const labels: VirtualLabel[] = []
-  // A done task is never overdue — it is done. And `due === today` is due, not late:
-  // you have the day. Both boundaries are the ones people notice when they are wrong.
-  if (task.status !== 'done' && task.due !== undefined && task.due < today) labels.push('overdue')
+  // A done task is never overdue — it is done.
+  if (task.status !== 'done' && task.due !== undefined && isOverdue(task.due, now)) {
+    labels.push('overdue')
+  }
   if (task.priority !== undefined) labels.push(PRIORITY_LABEL[task.priority])
   return labels
 }
@@ -38,7 +68,7 @@ export function virtualLabels(
  * tags. One list, so the card renders (and slice 2 filters) them uniformly. */
 export function allLabels(
   task: Pick<Task, 'due' | 'priority' | 'status' | 'tags'>,
-  today: string,
+  now: string,
 ): string[] {
-  return [...virtualLabels(task, today), ...task.tags]
+  return [...virtualLabels(task, now), ...task.tags]
 }

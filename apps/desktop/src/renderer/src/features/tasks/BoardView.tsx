@@ -33,10 +33,10 @@ import {
   laneOrder,
   matchesFilter,
   moveTaskAtom,
+  nowAtom,
   selectedTaskPathAtom,
   setTaskStatusAtom,
   tasksAtom,
-  todayAtom,
 } from '@/state/tasks'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
@@ -56,11 +56,11 @@ const CHIP: Record<string, string> = {
 }
 
 function Card({ task }: { task: Task }): React.JSX.Element {
-  const today = useAtomValue(todayAtom)
+  const now = useAtomValue(nowAtom)
   const complete = useSetAtom(completeTaskAtom)
   const select = useSetAtom(selectedTaskPathAtom)
 
-  const labels = virtualLabels(task, today)
+  const labels = virtualLabels(task, now)
 
   return (
     <div
@@ -220,7 +220,7 @@ function Grid(): React.JSX.Element {
   const setStatus = useSetAtom(setTaskStatusAtom)
   const move = useSetAtom(moveTaskAtom)
   const filter = useAtomValue(filterAtom)
-  const today = useAtomValue(todayAtom)
+  const now = useAtomValue(nowAtom)
   /** Which column is currently showing its quick-add row, if any. */
   const [adding, setAdding] = useState<TaskStatus | null>(null)
   /** The cell under a drag, `status:lane`. With the cells' own borders and fill
@@ -228,7 +228,7 @@ function Grid(): React.JSX.Element {
   const [over, setOver] = useState<string | null>(null)
 
   const everything = [...tasks.values()]
-  const all = everything.filter((t) => matchesFilter(t, filter, today))
+  const all = everything.filter((t) => matchesFilter(t, filter, now))
   const lanes = laneOrder(all.map(laneOf))
 
   // "hide done" drops the whole Done column, not just its cards — an empty

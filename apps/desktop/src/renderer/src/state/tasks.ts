@@ -13,7 +13,7 @@
  * writing wiki-links in its body — backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea } from '@holi/shared'
+import { allLabels, dailyNoteFilename, parseWikiLinks, stampDate, taskArea } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
@@ -56,12 +56,40 @@ export const todayLinkCountAtom = atom((get) =>
   countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
 )
 
-/** Today, as YYYY-MM-DD. Held in state so virtual labels stay pure and testable
- * and the board re-renders when the day turns rather than reading the clock
- * inline. Local, not UTC — the same frame the roll-forward uses. */
-export const todayAtom = atom<string>(
-  `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`,
-)
+/** The current local minute, as `YYYY-MM-DDTHH:MM`. */
+function localNow(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  )
+}
+
+/**
+ * Now, to the minute, as `YYYY-MM-DDTHH:MM`.
+ *
+ * Held in state rather than read inline so the label rules stay pure and
+ * testable, and so the board re-renders when the clock moves rather than
+ * whenever React happens to run. Local, not UTC — the same frame the
+ * roll-forward uses.
+ *
+ * **Minute-valued on purpose.** A due date may name an hour now, so `overdue`
+ * turns over on a minute rather than on a day (D79) — but the atom's identity
+ * changes only when the minute string does, so a timer that fires twice a
+ * minute costs nothing and a task board does not re-render on a tick.
+ */
+export const nowAtom = atom<string>(localNow())
+
+/** Today, as `YYYY-MM-DD` — derived, so the daily note and the labels can never
+ *  disagree about what day it is. */
+export const todayAtom = atom((get) => stampDate(get(nowAtom)) ?? get(nowAtom).slice(0, 10))
+
+/** Advance `nowAtom` to the current minute. Mounted once, from the Shell. */
+export const tickNowAtom = atom(null, (get, set) => {
+  const next = localNow()
+  if (next !== get(nowAtom)) set(nowAtom, next)
+})
 
 /** The task open in the detail view, by path. */
 export const selectedTaskPathAtom = atom<string | null>(null)
@@ -110,7 +138,7 @@ export const filterAtom = atom<Filter>(EMPTY_FILTER)
  * the labels is what makes "show me the overdue p1s" a tag query rather than two
  * bespoke controls. Selected tags are ANDed, as an issue tracker does.
  */
-export function matchesFilter(task: Task, filter: Filter, today: string): boolean {
+export function matchesFilter(task: Task, filter: Filter, now: string): boolean {
   if (filter.hideDone && task.status === 'done') return false
 
   const needle = filter.search.trim().toLowerCase()
@@ -120,7 +148,7 @@ export function matchesFilter(task: Task, filter: Filter, today: string): boolea
   }
 
   if (filter.tags.length > 0) {
-    const labels = new Set(allLabels(task, today))
+    const labels = new Set(allLabels(task, now))
     if (!filter.tags.every((t) => labels.has(t))) return false
   }
   return true
@@ -128,9 +156,9 @@ export function matchesFilter(task: Task, filter: Filter, today: string): boolea
 
 /** Every label in play, for the bar's tag picker — virtual ones included, so they are
  * selectable exactly like tags. */
-export function availableLabels(tasks: Iterable<Task>, today: string): string[] {
+export function availableLabels(tasks: Iterable<Task>, now: string): string[] {
   const all = new Set<string>()
-  for (const t of tasks) for (const l of allLabels(t, today)) all.add(l)
+  for (const t of tasks) for (const l of allLabels(t, now)) all.add(l)
   return [...all].sort((a, b) => a.localeCompare(b))
 }
 

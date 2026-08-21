@@ -11,14 +11,14 @@
 import { useAtom, useAtomValue } from 'jotai'
 import { Button, Checkbox, Input } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { availableLabels, filterAtom, tasksAtom, todayAtom } from '@/state/tasks'
+import { availableLabels, filterAtom, nowAtom, tasksAtom } from '@/state/tasks'
 
 export function FilterBar(): React.JSX.Element {
   const [filter, setFilter] = useAtom(filterAtom)
   const tasks = useAtomValue(tasksAtom)
-  const today = useAtomValue(todayAtom)
+  const now = useAtomValue(nowAtom)
 
-  const labels = availableLabels(tasks.values(), today)
+  const labels = availableLabels(tasks.values(), now)
 
   const toggleTag = (tag: string) =>
     setFilter((f) => ({

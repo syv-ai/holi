@@ -69,7 +69,7 @@ import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
 import { useGoogleAccount } from '../state/google'
-import { openTaskCountAtom, todayLinkCountAtom } from '../state/tasks'
+import { openTaskCountAtom, tickNowAtom, todayLinkCountAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import { agentPanelOpenAtom } from '@/state/agent'
@@ -159,6 +159,18 @@ export function Shell() {
   }, [appsOpen, hasApps])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
+
+  // Keep `nowAtom` on the current minute, so `overdue` turns over on the clock
+  // rather than whenever something else happens to re-render. Every 30s and not
+  // every 60: a minute-boundary crossing should show up within half a minute,
+  // and the atom only changes identity when the minute string does, so the
+  // extra tick costs nothing. Mounted here rather than at module scope, where
+  // an interval would survive HMR and multiply.
+  const tickNow = useSetAtom(tickNowAtom)
+  useEffect(() => {
+    const id = setInterval(() => tickNow(), 30_000)
+    return () => clearInterval(id)
+  }, [tickNow])
   /**
    * The tab currently being dragged, or null.
    *
