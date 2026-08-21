@@ -377,7 +377,7 @@ export function TabStrip({
                 onDragBegin?.(t)
               }}
               onDragEnd={endDrag}
-              className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
+              className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                 i === active
                   ? focused
                     ? 'bg-secondary text-foreground'
@@ -391,7 +391,18 @@ export function TabStrip({
                   // Bare clickable on the pill — neutralise the ghost bg/padding so
                   // the pill owns the surface. A preview tab reads italic (VS Code);
                   // double-clicking it pins it, the same promotion editing performs.
-                  className={`h-auto gap-1.5 p-0 hover:bg-transparent ${
+                  //
+                  // The nudge is what keeps an unhovered tab looking centred. The
+                  // close control holds its width while invisible, which leaves
+                  // 4 + 10.7 + 12 = 26.7px of air to the label's right against
+                  // 12px to its left; half that excess, given back as a
+                  // transform, splits it evenly. A transform and not padding,
+                  // because the strip measures every pill and caches the width —
+                  // anything that changed the LAYOUT on hover would re-measure
+                  // and could slide a tab out of the window under the pointer.
+                  // Hovering hands the space back, so the ✕ arrives into a gap
+                  // rather than up against the pill's edge.
+                  className={`h-auto translate-x-[7px] gap-1.5 p-0 transition-transform duration-(--duration-micro) ease-settle group-hover:translate-x-0 hover:bg-transparent ${
                     t.kind === 'note' && t.preview ? 'italic' : ''
                   }`}
                   onClick={() => onSelect(i)}
@@ -401,10 +412,16 @@ export function TabStrip({
                   <span>{tabName(t)}</span>
                 </Button>
               </Tooltip>
+              {/* Shown on hover of its own pill, and whenever it is focused so
+                  the keyboard can still reach it. Hidden with `opacity`, never
+                  `hidden` — the strip measures each pill and caches the width,
+                  so a control that came and went with the pointer would change
+                  the measurement under a `useLayoutEffect` that writes back on
+                  a change, and the pill would re-measure on every hover. */}
               <Tooltip content="close tab">
                 <Button
                   variant="ghost"
-                  className="h-auto p-0 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                  className="h-auto p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:opacity-100"
                   onClick={() => onClose(i)}
                 >
                   ✕
