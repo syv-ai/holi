@@ -39,6 +39,7 @@ import {
 import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
+import { importFiles } from './vault/import-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { openRepo, remoteUrl, type Commit } from './git'
@@ -388,6 +389,16 @@ function movesInput(raw: unknown): { remote: string; moves: { from: string; to: 
 
 function copiesInput(raw: unknown): { remote: string; copies: { from: string; to: string }[] } {
   return { ...fields({ remote: 'string' })(raw), copies: pairsOf(raw, 'copies') }
+}
+
+/** A list of strings from an untrusted input. Shared by the drop-import, whose
+ *  sources are absolute OS paths rather than vault paths and so cannot ride
+ *  `pathsInput`'s vault-relative contract. */
+function stringsOrThrow(value: unknown): string[] {
+  if (!Array.isArray(value) || value.some((v) => typeof v !== 'string')) {
+    throw new Error('sources must be an array of strings')
+  }
+  return value as string[]
 }
 
 function pathsInput(raw: unknown): { remote: string; paths: string[] } {
@@ -1233,6 +1244,22 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         for (const p of input.paths) await removeDocFile(root, safe(p))
         return { ok: true as const }
+      }),
+
+    /**
+     * A drop from Finder (FR-13). `sources` are absolute paths OUTSIDE the
+     * vault — that is the point of the operation — so only the destination is
+     * checked; the copy itself refuses a clobber per file and reports it.
+     */
+    importFiles: vaultMutation
+      .input((raw: unknown) => ({
+        ...fields({ remote: 'string', folder: 'string' })(raw),
+        sources: stringsOrThrow((raw as { sources?: unknown }).sources),
+      }))
+      .mutation(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        const folder = input.folder === '' ? '' : safe(input.folder)
+        return importFiles(root, input.sources, folder)
       }),
 
     // FR-12 generalized: the delete preview for a folder or multi-selection.

@@ -21,11 +21,13 @@ import {
 import { useTree } from '@headless-tree/react'
 import { fileKind, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { cn } from '@/lib/cn'
 import { pendingSlot } from '@/lib/pending-slot'
 import { todayDailyPathAtom } from '@/state/daily'
 import { todayLinkCountAtom } from '@/state/tasks'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Button,
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -45,6 +47,7 @@ import {
   activeRemoteAtom,
   createFolderAtom,
   createNoteAtom,
+  importFilesAtom,
   renameNoteAtom,
   showHiddenByVaultAtom,
   showTasksByVaultAtom,
@@ -123,11 +126,20 @@ export function FileTree({
     setShowTasksByVault({ ...showTasksByVault, [activeRemote]: !showTasks })
   }
   const renameNote = useSetAtom(renameNoteAtom)
+  const importDropped = useSetAtom(importFilesAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
   const openDialog = useSetAtom(openDialogAtom)
 
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
+  /** A drag from outside the app is over the tree. */
+  const [importing, setImporting] = useState(false)
+  /** Files the last drop refused, held until the next one. A file that silently
+   *  did not arrive is the worst outcome of an import, so this is not a toast:
+   *  it stays until it is dismissed or superseded. */
+  const [skipped, setSkipped] = useState<{ name: string; reason: string }[]>([])
+  /** Folder ids, for deciding where a dropped file lands. */
+  const dirSet = useMemo(() => new Set(snapshot.dirs), [snapshot.dirs])
 
   // The tree projects notes AND non-markdown files (spec §Arbitrary files); the
   // scanner keeps them in separate lists so link-aware ops stay markdown-only.
@@ -451,9 +463,47 @@ export function FileTree({
       <div
         // pt-10 reserves the band the hover toolbar (ExplorerHeader, absolute
         // top-1) floats into, so it never covers the first row.
-        className="min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm',
+          importing && 'bg-primary/5 ring-1 ring-inset ring-primary/40',
+        )}
         {...tree.getContainerProps()}
+        // A drop from Finder (FR-13). Guarded on the `Files` type so it never
+        // competes with the tree's own drag, which carries no files — without
+        // that, the in-vault move and the import would both claim every drop.
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          setImporting(true)
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+          setImporting(false)
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return
+          e.preventDefault()
+          setImporting(false)
+          const row = (e.target as HTMLElement).closest?.('[data-path]')
+          const id = row?.getAttribute('data-path') ?? null
+          // Dropped on a folder, that folder; on a file, the folder it is in;
+          // on empty space, the vault root.
+          const dest = id === null ? '' : dirSet.has(id) ? id : parentOf(id)
+          const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
+          if (sources.length > 0) void importDropped(sources, dest).then(setSkipped)
+        }}
       >
+        {skipped.length > 0 && (
+          <Button
+            variant="link"
+            onClick={() => setSkipped([])}
+            // amber = the warning role (no token yet); named utilities are gate-legal.
+            className="mb-1 h-auto w-full justify-start whitespace-normal p-0 px-2 text-left text-[11px] text-amber-300/90 hover:text-amber-200"
+          >
+            {skipped.map((s) => s.name).join(', ')} — {skipped[0]!.reason}. Click to dismiss.
+          </Button>
+        )}
         {slot?.afterId === null && pendingRow(slot.level)}
         {tree
           .getItems()
@@ -472,6 +522,7 @@ export function FileTree({
                 <ContextMenuTrigger asChild>
                   <div
                     {...rowProps}
+                    data-path={id}
                     onClick={(e) => {
                       origClick?.(e)
                       // A plain click opens a preview; a modified click is a

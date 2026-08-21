@@ -333,6 +333,25 @@ export const copyNotesAtom = atom(
  * note is among them and closes every deleted tab, so the pane never holds a doc
  * that no longer exists. One commit-pair, like the others.
  */
+/**
+ * A drop from Finder (`prd/notes-editor.md` FR-13).
+ *
+ * Copies each file in and reloads the tree. A name the vault already uses is
+ * refused rather than overwritten, per file rather than per drop — so a
+ * six-file drop with one clash lands five. The skipped ones come back named,
+ * because a file that silently did not arrive is the worst outcome here.
+ */
+export const importFilesAtom = atom(
+  null,
+  async (get, set, sources: string[], folder: string): Promise<{ name: string; reason: string }[]> => {
+    const remote = get(activeRemoteAtom)
+    if (!remote) return []
+    const { skipped } = await trpc.notes.importFiles.mutate({ remote, sources, folder })
+    await set(loadSnapshotAtom)
+    return skipped
+  },
+)
+
 export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: string[] }) => {
   const remote = get(activeRemoteAtom)
   if (!remote || paths.length === 0) return

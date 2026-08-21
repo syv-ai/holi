@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 
 /** Push channels fan out from ONE ipcRenderer listener each: a component
  * subscribes and unsubscribes across remounts, and per-subscriber listeners
@@ -82,6 +82,16 @@ contextBridge.exposeInMainWorld('holi', {
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
+  /**
+   * The absolute path of a file dropped onto the window.
+   *
+   * `File.path` used to carry it and no longer exists — Electron moved it here
+   * precisely so the renderer cannot invent one: `webUtils` answers only for a
+   * `File` the user actually dropped or picked. It is synchronous, which
+   * matters, because a `drop` handler cannot await before reading
+   * `dataTransfer`.
+   */
+  pathForFile: (file: File): string => webUtils.getPathForFile(file),
   showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
   agent: {
     onData: onAgentData,
