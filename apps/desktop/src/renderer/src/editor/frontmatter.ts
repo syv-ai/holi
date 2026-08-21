@@ -40,7 +40,9 @@ import {
   frontmatterRegion,
   frontmatterYamlValid,
 } from './frontmatter-region'
+import { yaml } from '@codemirror/lang-yaml'
 import { notePathFacet } from './livePreview'
+import { codeHighlighting } from './theme'
 
 /** Flip the reveal state. The pill and the header chevron both dispatch this. */
 export const toggleFrontmatter = StateEffect.define<boolean>()
@@ -259,10 +261,19 @@ class FrontmatterWidget extends WidgetType {
     // A PLAIN editor over the YAML body: basic editing + history only. No
     // markdown, no live-preview, no formatting keymap — that is the whole point
     // of a separate surface (notes-editor.md §Frontmatter reveal control).
+    //
+    // **Plain does not mean colourless.** The one thing this surface knows for
+    // certain is that its content is YAML — it is the only editor in the app
+    // whose language is settled before the document is read — so it gets the
+    // grammar and the same `codeHighlighting` a `.yaml` file opens with. A key
+    // and its value looking alike is what made a task's whole record read as
+    // one grey block.
     this.nested = new EditorView({
       parent: host,
       doc: this.body.replace(/\n$/, ''),
       extensions: [
+        yaml(),
+        codeHighlighting,
         history(),
         drawSelection(),
         EditorView.lineWrapping,

@@ -243,7 +243,10 @@ collapses a revealed file.
 
 **What it is: one in-editor widget with two states** (`editor/frontmatter.ts`). The region is
 *always* replaced by an atomic block decoration — collapsed, it is a **pill** carrying a summary and
-a validity dot; revealed, it hosts a **nested plain `EditorView`**, no markdown stack. Both the pill
+a validity dot; revealed, it hosts a **nested `EditorView`** — no markdown stack, no live preview, no formatting
+keymap, but the **YAML grammar and the same highlighting a `.yaml` file opens with**. Plain does not
+mean colourless: this is the only editor in the app whose language is settled before the document is
+read, and a key that looks like its value is what made a task's whole record read as one grey block. Both the pill
 and a header chevron dispatch the same `toggleFrontmatter` effect. The nested editor's writes are
 dispatched back to the root over the region's range under a marker annotation, so the widget does
 not rebuild — and lose its caret — on its own write. Because the write-back reconstructs the `---`
