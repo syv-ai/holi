@@ -664,6 +664,129 @@ describe('ActiveVault — sync', () => {
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toContain('<<<<<<<')
   })
 
+  it('reports a live reconcile as `reconciling`, naming the files being resolved', async () => {
+    // FR-21's seventh state, and FR-19's input: while the agent works, the vault
+    // is not merely "paused" — it is reconciling, and the editor needs the paths
+    // to lock. A merge in progress is a `blockedReason`, so without this the
+    // paths are lost behind a generic pause.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+
+    await active.reconcile()
+    expect(active.syncState()).toEqual({ kind: 'reconciling', paths: ['README.md'] })
+  })
+
+  it('calls a merge nobody asked Holi for `paused`, not `reconciling`', async () => {
+    // The distinction the state rests on. Someone merging in a terminal is a
+    // vault Holi must not touch (FR-2), not a reconcile in progress — and the
+    // editor must not lock their files on the strength of it.
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 80,
+      healIntervalMs: 120,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+
+    // Their own merge, by hand, outside anything Holi initiated.
+    await userGit(dir, ['fetch', 'origin']).catch(() => {})
+    await userGit(dir, ['merge', 'origin/main']).catch(() => {})
+    await waitFor('the merge to be in the tree', async () => (await active.repo.status()).merging)
+
+    await waitFor('the pause', () => active.syncState().kind === 'paused')
+    expect(active.syncState().kind).toBe('paused')
+  })
+
+  it('ends the reconcile by itself when the agent finishes the merge', async () => {
+    // FR-18(d): "resumes normal operation once the tree is clean". Nobody tells
+    // Holi the agent is done — the merge commit is the signal, and until it is
+    // read the vault stays latched with autosave and auto-pull off.
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 80,
+      healIntervalMs: 120,
+      rescanDebounceMs: 30,
+      commitQuietMs: 60,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+    await active.reconcile()
+    expect(active.syncState().kind).toBe('reconciling')
+
+    // What the agent does: resolve the markers, stage, finish the merge.
+    await writeFile(join(dir, 'README.md'), '# Ours and Theirs\n', 'utf8')
+    await userGit(dir, ['add', '-A'])
+    await userGit(dir, ['commit', '--no-edit'])
+
+    await waitFor('the reconcile to end', () => active.syncState().kind !== 'reconciling')
+    expect(active.syncState().kind).not.toBe('conflict')
+  })
+
+  it('commits again once the reconcile is over', async () => {
+    // The other half of "resumes normal operation": the state going quiet is
+    // worth nothing if autosave stays off. FR-8 pauses it for the reconcile;
+    // this is the resume.
+    const { active, dir, teammate } = await withTeammate({
+      pullIntervalMs: 80,
+      healIntervalMs: 120,
+      rescanDebounceMs: 30,
+      commitQuietMs: 60,
+    })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+    await active.reconcile()
+
+    await writeFile(join(dir, 'README.md'), '# Ours and Theirs\n', 'utf8')
+    await userGit(dir, ['add', '-A'])
+    await userGit(dir, ['commit', '--no-edit'])
+    await waitFor('the reconcile to end', () => active.syncState().kind !== 'reconciling')
+
+    // An ordinary edit afterwards, which only autosave can land.
+    await writeFile(join(dir, 'notes.md'), '# After\n', 'utf8')
+    await waitFor('the autosave commit', async () => !(await active.repo.status()).dirty)
+  })
+
+  it('abandon() takes the merge back out of the tree and restores the banner', async () => {
+    // FR-20. The pre-reconcile state is a clean tree with a conflict still
+    // waiting, so that is what abandoning returns to — not "nothing is wrong",
+    // which would lose the teammate's change, and not a second reconcile.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+    await active.reconcile()
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).toContain('<<<<<<<')
+
+    await active.abandon()
+
+    expect((await active.repo.status()).merging).toBe(false)
+    expect(await readFile(join(dir, 'README.md'), 'utf8')).not.toContain('<<<<<<<')
+    expect(active.syncState()).toEqual({ kind: 'conflict', paths: ['README.md'] })
+  })
+
+  it('survives the agent turn ending — a turn is not the reconcile', async () => {
+    // Git coexistence pauses the vault for the assistant's turn and `resume()`
+    // lifts it, clearing the sticky conflict pause on the way out (FR-12's
+    // escape). A reconcile runs *through* the agent, so its first turn ending
+    // must not be read as the merge being done — the markers are still there.
+    const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
+    await theyPublish(teammate, 'README.md', '# Theirs\n')
+    await writeFile(join(dir, 'README.md'), '# Ours\n', 'utf8')
+    await waitFor('the conflict banner', () => active.syncState().kind === 'conflict')
+    await active.reconcile()
+
+    active.pause('the assistant is working')
+    active.resume()
+    // `resume()` kicks the commit and pull loops, both of which recompute the
+    // state — SETTLE is long enough that a wrong answer has landed by now.
+    await sleep(SETTLE)
+
+    expect(active.syncState()).toEqual({ kind: 'reconciling', paths: ['README.md'] })
+  })
+
   it('reconcile() clears the banner when the merge now applies cleanly', async () => {
     // The conflict resolved itself before the user clicked (both sides ended up
     // making the same edit). reconcile() must not strand a stale banner.

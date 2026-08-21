@@ -31,6 +31,11 @@ export interface EditorDeps {
   nav: () => LinkNav
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
+  /** The document is locked — a reconcile is resolving this file
+   *  (`prd/vaults-sync.md` FR-19). Both halves are needed: `readOnly` stops the
+   *  commands, `editable` stops the caret, and a caret in a document that
+   *  silently swallows input reads as a broken editor rather than a locked one. */
+  readOnly?: boolean
 }
 
 /**
@@ -47,6 +52,8 @@ export interface EditorDeps {
  */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
   return [
+    EditorState.readOnly.of(deps.readOnly === true),
+    EditorView.editable.of(deps.readOnly !== true),
     history(),
     drawSelection(),
     dropCursor(),
@@ -165,8 +172,12 @@ export function mailComposerExtensions(): Extension[] {
  * when the extension is a known config/shell format; otherwise it is empty and
  * the file renders as undecorated text.
  */
-export function plainTextExtensions(path: string): Extension[] {
+export function plainTextExtensions(path: string, readOnly = false): Extension[] {
   return [
+    // FR-19 reaches the plain stack too: a conflicted `.holi/settings.json` or
+    // `.gitignore` is at least as common as conflicted prose.
+    EditorState.readOnly.of(readOnly),
+    EditorView.editable.of(!readOnly),
     ...languageForPath(path),
     validityStatus(path),
     codeHighlighting,

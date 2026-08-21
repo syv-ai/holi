@@ -14,7 +14,9 @@ had shipped — the reconcile → drawer handoff (2026-07-27), creating a task f
 and the document-template set (both 2026-08-04) — and are gone, folded into their pillars. They
 predated this file, which was written from PRD prose rather than from the code; the entries that
 came after it were all accurate. The rule that follows is in the [README](README.md): an entry gets
-checked against the code when it is *written*, not only when it is purged.
+checked against the code when it is *written*, not only when it is purged. The audit's own two
+findings — the reconcile's read-only files and its abandon affordance — were built the same day
+and purged with everything else.
 
 ## What belongs here, and what does not
 
@@ -89,22 +91,6 @@ only one.
 
 **Also not built:** D76's floor for when no agent session is open — surfacing a hook failure in the
 sync status bar via `pause(reason)`. The log is the only surface today.
-
-## Vaults & sync
-
-**A reconcile leaves the conflicted files editable, and offers no way out of itself.** The handoff
-is built — [`prd/vaults-sync.md`](prd/vaults-sync.md) FR-18 works end to end — but two of the
-requirements standing around it do not. **FR-19**: the conflicted files are supposed to go
-read-only for the duration, and nothing compartmentalises them; the renderer's only `readOnly`
-compartment is the diff viewer. **FR-20**: `main/git.ts` has `abortMerge` and only the auto-pull's
-own conflict path calls it — no button, no procedure — so *"the user can always abandon a
-reconcile"* is true in a terminal and nowhere else. The two belong together, and in that order:
-read-only with no escape hatch is a worse state than either of them alone.
-
-**A leftover of the same feature:** `sync.pause` and `sync.resume` are live tRPC procedures with no
-caller. FR-18 was designed around an explicit pause and the build did not need one — a merge in
-progress is already a `blockedReason`, so the loops stop on their own. Deleting the pair is the
-likely answer; whoever builds FR-19 will be standing next to it.
 
 ## Notes & editor
 

@@ -62,7 +62,7 @@ export type SyncState =
   | { kind: 'offline'; count: number }
   | { kind: 'no-access' }
   | { kind: 'conflict'; paths: string[] }
-  | { kind: 'reconciling' }
+  | { kind: 'reconciling'; paths: string[] }
   | { kind: 'paused'; reason: string }
 
 export interface SyncTimings {
@@ -128,6 +128,9 @@ export interface ActiveVault {
    * (`blockedReason`), and the agent's merge commit lets them resume on their own.
    */
   reconcile(): Promise<{ paths: string[] }>
+  /** FR-20: take the merge back out of the tree, returning to the state the
+   *  reconcile started from — a clean tree with the conflict still waiting. */
+  abandon(): Promise<void>
   /** Files the autosave held out of the last commit for being over the size cap
    *  (the large-file gate). Derived each commit tick, never stored on disk. */
   heldBack(): HeldBackFile[]
@@ -230,6 +233,11 @@ export async function openActiveVault(args: {
    * loop retries and re-aborts the same merge every interval, forever.
    */
   let conflictPaths: string[] | null = null
+  /** A reconcile the user asked for is running: `reconcile()` put the conflict
+   *  back in the tree and it has not been finished or abandoned yet. Distinct
+   *  from `conflictPaths` alone, which is also the sticky banner over a clean
+   *  tree, and from a merge someone started in a terminal, which is neither. */
+  let reconciling = false
 
   function setState(next: SyncState): void {
     // Only on a real change: the panel would otherwise re-render on every tick.
@@ -254,6 +262,30 @@ export async function openActiveVault(args: {
   }
 
   /**
+   * FR-18(d), "resumes normal operation once the tree is clean".
+   *
+   * Nothing tells Holi the agent has finished — **the merge commit is the
+   * signal**, and this is the only place a fresh `status` is read on every
+   * tick, so it is where the end of a reconcile gets noticed. Without it the
+   * vault stays latched on `conflictPaths` after the merge lands: autosave off,
+   * auto-pull off, and a banner over a repo with nothing wrong with it, until
+   * the user clicks reconcile a second time to clear a conflict that is gone.
+   *
+   * Only a reconcile clears this way. A sticky banner over a clean tree
+   * (FR-17, the aborted auto-pull) has no merge to finish, and clearing it on
+   * the same rule would drop the one thing telling the user a teammate's change
+   * is still waiting.
+   */
+  function settleReconcile(status: RepoStatus): void {
+    if (!reconciling || status.merging) return
+    reconciling = false
+    conflictPaths = null
+    // The merge commit is work the remote does not have. Coalesced, not
+    // immediate: the reconcile's last write may still be settling.
+    schedulePush()
+  }
+
+  /**
    * The one place a sync state is decided, so the loops cannot overwrite each
    * other's answers. Order is priority order, and it is load-bearing:
    *
@@ -265,6 +297,10 @@ export async function openActiveVault(args: {
    *     going to happen, so an `offline` count would be a promise we do not keep.
    */
   function computeState(status: RepoStatus): SyncState {
+    settleReconcile(status)
+    if (reconciling && conflictPaths !== null) {
+      return { kind: 'reconciling', paths: conflictPaths }
+    }
     if (manualPause !== null) return { kind: 'paused', reason: manualPause }
     // Being blocked outranks the conflict banner, which is not the order it was
     // written in — running the app showed a vault on a feature branch still
@@ -659,8 +695,12 @@ export async function openActiveVault(args: {
       // re-runs the same doomed merge every interval — but sticky with no way
       // out strands the vault: the banner stays up forever and no pull is ever
       // attempted again, even once the conflict has actually been resolved.
-      // FR-18's "resumes normal operation" is this line.
-      conflictPaths = null
+      //
+      // **Except during a reconcile**, which runs *through* the agent: the turn
+      // ending is not the merge being finished, and dropping the paths here
+      // would take the editor's locks off files that still hold markers. The
+      // reconcile ends on its own signal — see `settleReconcile`.
+      if (!reconciling) conflictPaths = null
       // Sequenced, not fired together: run concurrently, one simply loses to the
       // other's guard and silently does nothing.
       void (async () => {
@@ -673,8 +713,8 @@ export async function openActiveVault(args: {
       const result = await args.repo.remerge()
       if (result.kind === 'conflict') {
         // Markers + MERGE_HEAD are now in the tree; refresh the (fresh) paths.
-        // computeState reports `merging`-paused on its own — nothing else to hold.
         conflictPaths = result.paths
+        reconciling = true
         await refreshState()
         return { paths: result.paths }
       }
@@ -686,6 +726,21 @@ export async function openActiveVault(args: {
       await refreshState()
       return { paths: [] }
     },
+    /**
+     * FR-20's escape hatch.
+     *
+     * `git merge --abort` returns the tree to the commit the reconcile started
+     * from, so nothing is at risk — and the conflict it was called on is still
+     * a conflict, which is why this restores the banner rather than clearing
+     * it. Clearing would report a teammate's waiting change as dealt with.
+     */
+    async abandon() {
+      if (closed || !reconciling) return
+      await args.repo.abortMerge()
+      reconciling = false
+      await refreshState()
+    },
+
     async close() {
       closed = true
       clearInterval(heal)

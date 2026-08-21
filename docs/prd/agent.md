@@ -229,7 +229,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Where the wire runs.** `reconcileAtom` (`state/vaults.ts`) is the whole of it: `sync.reconcile` re-runs the merge in main (`activeVault.reconcile()` over `repo.remerge()`, which unlike the auto-pull path deliberately does **not** abort), and the conflicted paths it returns become the drawer's seeded first turn via `lib/reconcile-prompt.ts`. **An empty path list is a real outcome, not an error**: the merge now applies cleanly, so the banner clears and no agent is handed anything.
 
-**What is still missing is around the edges rather than in the middle** — the conflicted files are not read-only while a reconcile runs, and there is no in-app way to abandon one ([`../not-built.md`](../not-built.md)).
+**What surrounds it** is in [`vaults-sync.md`](vaults-sync.md): the conflicted files are read-only while the reconcile runs (FR-19), **Abandon** in the footer is the way out of it (FR-20), and the reconcile ends on the agent's merge commit rather than on anything the drawer reports — which is what lets the agent take as many turns over it as the merge needs.
 
 ## Rendering PDFs
 
@@ -258,7 +258,7 @@ Ported to TypeScript, adapted as noted above:
 - **`claude` missing or unauthenticated** — clear error + the fallback login PTY flow.
 - **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session and CC reads it at launch only. Resolved: the drawer nudges (*"shared config changed; restart to pick it up"*), over the `AGENT_CONFIG_FILES` set described in §Config layering — hooks and skills are out of it, being re-read per invocation.
 - **Terminal resize / reflow** — xterm + node-pty resize wiring must stay in sync; test drawer resize under active output.
-- **The agent editing during a reconcile** — the reconcile pauses autosave, but the *user* can still type. The answer is settled and not built: the conflicted files go read-only, everything else stays editable ([`vaults-sync.md`](vaults-sync.md) FR-19, [`../not-built.md`](../not-built.md)).
+- **The agent editing during a reconcile** — the reconcile pauses autosave, but the *user* could still type into the file the agent was resolving. Settled and built: the conflicted files go read-only, everything else stays editable ([`vaults-sync.md`](vaults-sync.md) FR-19). A keystroke landing between the agent's read and its write is a resolution built on a file that moved, and Claude Code's own read-before-edit guard would have failed the write rather than caught the problem.
 
 ## Dependencies
 

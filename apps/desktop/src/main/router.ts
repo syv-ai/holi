@@ -1278,22 +1278,16 @@ export function createRouter(deps: RouterDeps) {
       return { ok: true as const }
     }),
 
-    /** FR-18's first step. The reconcile itself needs the agent drawer. */
-    pause: t.procedure
-      .input(fields({ reason: 'string' }))
-      .mutation(({ input }) => {
-        activeOrThrow().pause(input.reason)
-        return { ok: true as const }
-      }),
-
-    resume: t.procedure.mutation(() => {
-      activeOrThrow().resume()
-      return { ok: true as const }
-    }),
-
     /** FR-18: re-materialise the conflict for the agent and return the conflicted
      *  paths for its seed prompt. `{paths:[]}` when the merge now applies cleanly. */
     reconcile: t.procedure.mutation(() => activeOrThrow().reconcile()),
+
+    /** FR-20: take the merge back out of the tree. The conflict is still a
+     *  conflict afterwards, so the banner comes back with it. */
+    abandon: t.procedure.mutation(async () => {
+      await activeOrThrow().abandon()
+      return { ok: true as const }
+    }),
   })
 
   // The vault's history IS git history (`prd/vaults-sync.md` §History): no snapshot

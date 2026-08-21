@@ -260,6 +260,17 @@ export const reconcileAtom = atom(null, async (_get, set) => {
   set(agentPanelOpenAtom, true)
 })
 
+/**
+ * "Abandon" (FR-20). Takes the merge back out of the tree; the conflict it was
+ * called on is still a conflict, so the banner comes back with it. Nothing is
+ * closed and nothing is discarded — the agent's session stays where it is, and
+ * whatever it wrote into the working tree goes with the merge it was writing
+ * into.
+ */
+export const abandonReconcileAtom = atom(null, async () => {
+  await trpc.sync.abandon.mutate()
+})
+
 export const renameNoteAtom = atom(
   null,
   async (get, set, { from, to }: { from: string; to: string }) => {

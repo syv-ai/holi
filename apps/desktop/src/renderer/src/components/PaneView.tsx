@@ -9,6 +9,9 @@
  * am I" from global state, which is the question the props already answer.
  */
 import { fileKind, isTaskFilePath } from '@holi/shared'
+import { useAtomValue } from 'jotai'
+import { isLockedForReconcile } from '@/lib/reconcile-lock'
+import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import {
   TAB_MIME,
@@ -108,6 +111,7 @@ export function PaneView({
   trailing,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
+  const syncState = useAtomValue(syncStateAtom)
 
   /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
@@ -181,6 +185,8 @@ export function PaneView({
             // stack — no wiki-links, no frontmatter, syntax highlighting by
             // extension. Markdown notes keep the full editor.
             plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
+            // FR-19: a file the running reconcile is resolving opens locked.
+            readOnly={tab?.kind === 'note' && isLockedForReconcile(syncState, tab.path)}
             onOpenNote={onOpenNote}
             onEdit={onEdit}
             onConflict={onConflict}

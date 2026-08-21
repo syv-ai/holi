@@ -84,6 +84,7 @@ import {
   activeRemoteAtom,
   heldBackAtom,
   openVaultAtom,
+  abandonReconcileAtom,
   reconcileAtom,
   syncStateAtom,
   vaultsAtom,
@@ -132,6 +133,7 @@ export function Shell() {
   // settings panel shares this atom rather than holding its own answer.
   const { account: googleAccount } = useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
+  const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
@@ -723,6 +725,21 @@ export function Shell() {
           {/* The quiet footer affordance is for ordinary content conflicts; when a
               config file is among them the loud banner above owns the action, so
               this would be a redundant second reconcile button. */}
+          {/* FR-20: while a reconcile runs, the one thing to offer is the way
+              out of it. The files it is resolving are read-only (FR-19), so
+              without this the only escape is a terminal. */}
+          {syncState.kind === 'reconciling' && (
+            <Tooltip content="Take the merge back out of the tree — the conflict stays, nothing is lost">
+              <Button
+                variant="outline"
+                size="xs"
+                className="shrink-0 border-amber-700/60 text-[11px] text-amber-300 hover:bg-amber-950/40 hover:text-amber-300"
+                onClick={() => void abandonReconcile()}
+              >
+                Abandon
+              </Button>
+            </Tooltip>
+          )}
           {syncState.kind === 'conflict' && configConflicts.length === 0 && (
             <Tooltip content="Re-run the merge and hand the conflict to the vault assistant to resolve">
               <Button

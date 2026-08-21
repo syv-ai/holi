@@ -43,6 +43,7 @@ export function EditorPane({
   onConflict,
   onEdit,
   plain = false,
+  readOnly = false,
 }: {
   path: string | null
   onOpenNote: (path: string) => void
@@ -54,6 +55,11 @@ export function EditorPane({
    *  the top, and never hold off the save on frontmatter (it has none). The
    *  save/flush/reload machinery is otherwise identical. */
   plain?: boolean
+  /** A reconcile is resolving this file (`../../../main/vault/active-vault`
+   *  FR-19). The document opens locked — the markers in it belong to the merge,
+   *  and a keystroke landing between the agent's read and its write is a
+   *  resolution built on a file that moved. */
+  readOnly?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -150,7 +156,7 @@ export function EditorPane({
           selection: EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
           extensions: [
             ...(plain
-              ? plainTextExtensions(path)
+              ? plainTextExtensions(path, readOnly)
               : baseEditorExtensions({
                   docExists: (p) => docPaths.current.has(p),
                   taskByPath: (p) => {
@@ -165,6 +171,7 @@ export function EditorPane({
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
                   notePath: path,
+                  readOnly,
                 })),
             EditorView.updateListener.of((update) => {
               if (!update.docChanged) return
@@ -237,7 +244,11 @@ export function EditorPane({
       }
       viewRef.current = null
     }
-  }, [path, remote, plain])
+    // `readOnly` rebuilds the view, which is the honest behaviour: entering a
+    // reconcile re-reads the file, so the markers the agent is working on are
+    // what you see. The teardown flushes first, so a dirty buffer is written
+    // before the lock rather than lost to it.
+  }, [path, remote, plain, readOnly])
 
   /**
    * The vault changed somewhere. Re-read our own file and decide.
