@@ -28,10 +28,12 @@ import { cn } from '@/lib/cn'
 const SELECTED_DAY =
   'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground'
 
-/** A rail entry: what it says, and the finished stamp it writes. */
+/** A rail entry: what it says, the finished stamp it writes, and — because a
+ *  shortcut should never be a guess — where that lands, shown beside it. */
 export interface DatePreset {
   label: string
   value: string
+  hint?: string
 }
 
 const WEEKDAY_HEADS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
@@ -174,10 +176,13 @@ export function DateTimePicker({
                 key={p.label}
                 variant="ghost"
                 size="sm"
-                className="h-7 justify-start px-2 text-xs font-normal"
+                className="h-7 justify-between gap-3 px-2 text-xs font-normal"
                 onClick={() => onChange(p.value)}
               >
                 {p.label}
+                {p.hint !== undefined && (
+                  <span className="text-[10px] text-muted-foreground">{p.hint}</span>
+                )}
               </Button>
             ))}
           </div>

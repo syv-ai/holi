@@ -1,7 +1,8 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
-import { FormField } from '@/composites/FormField'
+import { DateTimePicker, FormField } from '@/composites'
+import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { RecurrenceRows, TaskDescriptionEditor } from '@/features/tasks/TaskDetail'
 import {
   Button,
@@ -19,6 +20,7 @@ import {
   ROOT_LANE,
   createTaskAtom,
   laneLabel,
+  nowAtom,
   patchTaskAtom,
   taskCreateFolders,
 } from '@/state/tasks'
@@ -68,6 +70,7 @@ export function CreateTask({
   const [status, setStatus] = useState<TaskStatus>('todo')
   const [draft, setDraft] = useState<Draft>({ tags: [] })
   const [busy, setBusy] = useState(false)
+  const now = useAtomValue(nowAtom)
   // The body rides a ref, not state: the editor is mount-once, and re-rendering
   // the block on every keystroke would churn a value only read at submit.
   const bodyRef = useRef('')
@@ -195,11 +198,12 @@ export function CreateTask({
             </FormField>
 
             <FormField label="Due">
-              <Input
-                type="date"
-                data-create-task-due
-                value={draft.due ?? ''}
-                onChange={(e) => draftSave({ due: e.target.value === '' ? null : e.target.value })}
+              <DateTimePicker
+                value={draft.due ?? null}
+                placeholder="no due date"
+                data-testid="create-task-due"
+                presets={duePresets(now)}
+                onChange={(next) => draftSave({ due: next })}
               />
             </FormField>
 
@@ -240,14 +244,14 @@ export function CreateTask({
             </FormField>
 
             <FormField label="Reminder">
-              <Input
-                data-create-task-reminder
-                placeholder="1d | 2w | 2026-07-20T09:00"
-                defaultValue={draft.reminder ?? ''}
-                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                onBlur={(e) =>
-                  draftSave({ reminder: e.target.value.trim() === '' ? null : e.target.value.trim() })
-                }
+              {/* The shortcuts follow the draft's own due date, so setting Due
+                  above changes what "1 day before" means down here. */}
+              <DateTimePicker
+                value={draft.reminder ?? null}
+                placeholder="no reminder"
+                data-testid="create-task-reminder"
+                presets={reminderPresets(draft.due, now)}
+                onChange={(next) => draftSave({ reminder: next })}
               />
             </FormField>
 

@@ -37,6 +37,8 @@ import {
   Textarea,
   Tooltip,
 } from '@/primitives'
+import { DateTimePicker } from '@/composites'
+import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
 import { trpc } from '@/lib/trpc'
 import { baseEditorExtensions } from '@/editor/extensions'
@@ -48,6 +50,7 @@ import {
   deleteTaskAtom,
   laneLabel,
   laneOf,
+  nowAtom,
   patchTaskAtom,
   selectedTaskPathAtom,
   tasksAtom,
@@ -62,20 +65,6 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 // text used to start wherever its control's padding happened to put it, which
 // gave a stack of five rows five different left edges and no right one at all;
 // aligning them to the panel's edge gives the column a spine to read down.
-/**
- * A right-aligned date field.
- *
- * `text-align` does nothing to `input[type=date]`, on the host or on either
- * shadow part: Chromium lays a date input out as its own flex row — the
- * segments in `::-webkit-datetime-edit`, then the calendar button — and the
- * segment box is what stretches, so `dd/mm/yyyy` stayed pinned left while every
- * other value in the column sat right. Making the host a real flex row and
- * telling the segment box to stop growing puts the two next to each other at
- * the right end. Measured in the app; the three obvious `text-right` spellings
- * all render unchanged.
- */
-const DATE_FIELD = 'flex items-center justify-end [&::-webkit-datetime-edit]:flex-none'
-
 function Row({
   label,
   children,
@@ -111,6 +100,10 @@ export function TaskScalarFields({
   save: (p: Record<string, unknown>) => void
   complete: (path: string) => void
 }): React.JSX.Element {
+  // The shortcuts are resolved against the clock, so they come from the same
+  // atom the overdue rule reads — a preset can never disagree with a chip about
+  // what "tomorrow" is.
+  const now = useAtomValue(nowAtom)
   return (
     <>
       <Row label="status">
@@ -136,12 +129,12 @@ export function TaskScalarFields({
       </Row>
 
       <Row label="due">
-        <Input
-          type="date"
-          className={DATE_FIELD}
-          value={task.due ?? ''}
-          data-detail-due
-          onChange={(e) => save({ due: e.target.value === '' ? null : e.target.value })}
+        <DateTimePicker
+          value={task.due ?? null}
+          placeholder="due"
+          data-testid="detail-due"
+          presets={duePresets(now)}
+          onChange={(next) => save({ due: next })}
         />
       </Row>
 
@@ -164,18 +157,16 @@ export function TaskScalarFields({
         </Select>
       </Row>
 
-      {/* The grammar goes in verbatim — the shared parser rejects bad input and its error
-          string doubles as the format doc. No rule-builder UI. */}
+      {/* A moment, picked — not an offset, typed. The shortcuts speak "before"
+          when there is a due date to be before, and "in" when there is not; both
+          write the same thing, a stamp (D79). */}
       <Row label="reminder">
-        <Input
-          defaultValue={task.reminder ?? ''}
-          key={`${task.path}:reminder`}
-          className="text-right"
-          placeholder="1d | 2w | 2026-07-20T09:00"
-          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-          onBlur={(e) =>
-            save({ reminder: e.target.value.trim() === '' ? null : e.target.value.trim() })
-          }
+        <DateTimePicker
+          value={task.reminder ?? null}
+          placeholder="reminder"
+          data-testid="detail-reminder"
+          presets={reminderPresets(task.due, now)}
+          onChange={(next) => save({ reminder: next })}
         />
       </Row>
     </>
@@ -529,15 +520,15 @@ export function RecurrenceRows({
             </Row>
           )}
 
+          {/* No time row and no shortcuts: `until` is a boundary on the rule,
+              not an appointment, and "in a week" is not a thing a repeat ends. */}
           <Row label="until">
-            <Input
-              type="date"
-              className={DATE_FIELD}
-              value={rule.endDate ?? ''}
-              data-detail-recurrence-end
-              onChange={(e) =>
-                setRule({ endDate: e.target.value === '' ? undefined : e.target.value })
-              }
+            <DateTimePicker
+              value={rule.endDate ?? null}
+              placeholder="never ends"
+              dateOnly
+              data-testid="detail-recurrence-end"
+              onChange={(next) => setRule({ endDate: next ?? undefined })}
             />
           </Row>
 
