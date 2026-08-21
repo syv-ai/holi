@@ -1,5 +1,6 @@
 export * from './types'
 export * from './dates'
+export * from './calendar'
 export * from './file-kind'
 export * from './path-safety'
 export * from './wiki-links'
