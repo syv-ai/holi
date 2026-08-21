@@ -34,6 +34,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Textarea,
   Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
@@ -56,6 +57,25 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 // A horizontal labelled field (label left, control right) — the compact shape the
 // narrow detail sidebar wants, distinct from the vertical FormField composite. It
 // is a plain <label>, so it stays module-local; only the control inside is a primitive.
+//
+// Every value in the column is right-aligned, placeholders included. A field's
+// text used to start wherever its control's padding happened to put it, which
+// gave a stack of five rows five different left edges and no right one at all;
+// aligning them to the panel's edge gives the column a spine to read down.
+/**
+ * A right-aligned date field.
+ *
+ * `text-align` does nothing to `input[type=date]`, on the host or on either
+ * shadow part: Chromium lays a date input out as its own flex row — the
+ * segments in `::-webkit-datetime-edit`, then the calendar button — and the
+ * segment box is what stretches, so `dd/mm/yyyy` stayed pinned left while every
+ * other value in the column sat right. Making the host a real flex row and
+ * telling the segment box to stop growing puts the two next to each other at
+ * the right end. Measured in the app; the three obvious `text-right` spellings
+ * all render unchanged.
+ */
+const DATE_FIELD = 'flex items-center justify-end [&::-webkit-datetime-edit]:flex-none'
+
 function Row({
   label,
   children,
@@ -72,10 +92,15 @@ function Row({
 }
 
 /**
- * The scalar task fields — status, due, priority, tags, reminder — as `Row`s.
+ * The scalar task fields — status, due, priority, reminder — as `Row`s.
  * Shared by the board's detail sidebar and the in-pane task-file editor so both
- * edit a task the same way; `RecurrenceRows` and the body editor sit alongside it
- * at each call site.
+ * edit a task the same way; `RecurrenceRows`, `TaskTagsRow` and the body editor
+ * sit alongside it at each call site.
+ *
+ * **`tags` is not here**, though it is as scalar as the rest. It reads as a free
+ * list rather than a setting, and a free list among four fixed ones interrupts
+ * them; it renders last, after the recurrence rule, which is why it is its own
+ * export rather than the fifth row of this one.
  */
 export function TaskScalarFields({
   task,
@@ -99,7 +124,7 @@ export function TaskScalarFields({
             else save({ status: next })
           }}
         >
-          <SelectTrigger className="w-full" size="sm" data-detail-status>
+          <SelectTrigger className="w-full justify-end" size="sm" data-detail-status>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -113,6 +138,7 @@ export function TaskScalarFields({
       <Row label="due">
         <Input
           type="date"
+          className={DATE_FIELD}
           value={task.due ?? ''}
           data-detail-due
           onChange={(e) => save({ due: e.target.value === '' ? null : e.target.value })}
@@ -126,7 +152,7 @@ export function TaskScalarFields({
           value={task.priority ?? 'none'}
           onValueChange={(v) => save({ priority: v === 'none' ? null : (v as Priority) })}
         >
-          <SelectTrigger className="w-full" size="sm" data-detail-priority>
+          <SelectTrigger className="w-full justify-end" size="sm" data-detail-priority>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -138,32 +164,13 @@ export function TaskScalarFields({
         </Select>
       </Row>
 
-      <Row label="tags">
-        <Input
-          defaultValue={task.tags.join(', ')}
-          key={`${task.path}:tags`}
-          placeholder="comma, separated — Enter to save"
-          // Commit on Enter as well as blur: an input that only saves when you
-          // click away reads as broken, because typing then looking at the card
-          // shows nothing. Enter blurs, which runs the same save.
-          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-          onBlur={(e) =>
-            save({
-              tags: e.target.value
-                .split(',')
-                .map((t) => t.trim())
-                .filter(Boolean),
-            })
-          }
-        />
-      </Row>
-
       {/* The grammar goes in verbatim — the shared parser rejects bad input and its error
           string doubles as the format doc. No rule-builder UI. */}
       <Row label="reminder">
         <Input
           defaultValue={task.reminder ?? ''}
           key={`${task.path}:reminder`}
+          className="text-right"
           placeholder="1d | 2w | 2026-07-20T09:00"
           onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
           onBlur={(e) =>
@@ -172,6 +179,43 @@ export function TaskScalarFields({
         />
       </Row>
     </>
+  )
+}
+
+/**
+ * The task's own tags — the one metadata field that is a list you write rather
+ * than a value you pick, and the reason it sits last and wears no border. A box
+ * around a comma-separated line implies a shape the field does not have; the
+ * label to its left is what says the line is a field at all.
+ */
+export function TaskTagsRow({
+  task,
+  save,
+}: {
+  task: Task
+  save: (p: Record<string, unknown>) => void
+}): React.JSX.Element {
+  return (
+    <Row label="tags">
+      <Input
+        defaultValue={task.tags.join(', ')}
+        key={`${task.path}:tags`}
+        placeholder="comma, separated"
+        className="h-auto border-transparent bg-transparent px-1 py-0.5 text-right text-xs shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+        // Commit on Enter as well as blur: an input that only saves when you
+        // click away reads as broken, because typing then looking at the card
+        // shows nothing. Enter blurs, which runs the same save.
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        onBlur={(e) =>
+          save({
+            tags: e.target.value
+              .split(',')
+              .map((t) => t.trim())
+              .filter(Boolean),
+          })
+        }
+      />
+    </Row>
   )
 }
 
@@ -208,17 +252,30 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
   return (
     <aside
       data-task-detail={task.path}
-      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-border bg-background p-3"
+      className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto border-l border-divider bg-background p-3"
     >
       <div className="flex items-start gap-2">
         {/* A borderless title that shows its edge only on hover/focus — kept via
-            overrides on the Input primitive (transparent border → input/ring on interaction). */}
-        <Input
+            overrides on the primitive (transparent border → input/ring on interaction).
+
+            A textarea rather than an input, because a task title is a sentence
+            and this panel is 20rem wide: an input scrolls the text sideways under
+            a fixed window, so the half you are not typing is simply not there.
+            `field-sizing-content` grows it by the line, `rows={1}` is the floor,
+            and Enter is bound to commit rather than to insert a newline — a title
+            is one line's worth of text however many lines it takes to show. */}
+        <Textarea
           value={title}
           data-detail-title
+          rows={1}
           onChange={(e) => setTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            e.currentTarget.blur()
+          }}
           onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-          className="h-auto min-w-0 flex-1 border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+          className="min-h-0 min-w-0 flex-1 resize-none border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
         />
         <Tooltip content="close">
           <Button variant="ghost" size="icon-xs" onClick={() => close(null)} aria-label="close">
@@ -240,11 +297,19 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
 
       <RecurrenceRows task={task} save={save} />
 
+      <TaskTagsRow task={task} save={save} />
+
+      {/* The body takes every row the fields above did not: `flex-1` against the
+          panel's column, with `min-h-0` so it may shrink below its content and
+          let CodeMirror's own scroller take over instead of stretching the
+          panel. No box and no focus ring — the fields above are what a border
+          means here, and the description is the panel's page, not a field on it. */}
       <TaskDescriptionEditor
         key={task.path}
         notePath={task.path}
         initial={task.description}
         onChange={onDescription}
+        hostClassName="mt-1 min-h-40 min-w-0 flex-1 overflow-hidden text-xs"
       />
 
       <Button
@@ -399,7 +464,7 @@ export function RecurrenceRows({
             v === 'never' ? setRule(null) : setRule({ frequency: v as RecurrenceFrequency })
           }
         >
-          <SelectTrigger className="w-full" size="sm" data-detail-recurrence>
+          <SelectTrigger className="w-full justify-end" size="sm" data-detail-recurrence>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -418,6 +483,7 @@ export function RecurrenceRows({
             <Input
               type="number"
               min={1}
+              className="text-right"
               value={rule.interval}
               data-detail-interval
               onChange={(e) => setRule({ interval: Math.max(1, Number(e.target.value) || 1) })}
@@ -466,6 +532,7 @@ export function RecurrenceRows({
           <Row label="until">
             <Input
               type="date"
+              className={DATE_FIELD}
               value={rule.endDate ?? ''}
               data-detail-recurrence-end
               onChange={(e) =>

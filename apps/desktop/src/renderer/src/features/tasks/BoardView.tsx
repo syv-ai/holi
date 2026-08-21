@@ -15,8 +15,9 @@
 import type { Task, TaskStatus } from '@holi/shared'
 import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { Checkbox, Input, Tooltip } from '@/primitives'
+import { Button, Checkbox, Input, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
@@ -72,7 +73,11 @@ function Card({ task }: { task: Task }): React.JSX.Element {
         e.dataTransfer.setData('text/plain', task.path)
       }}
       onClick={() => select(task.path)}
-      className="cursor-grab rounded-md border border-border bg-card p-2 text-xs text-card-foreground shadow-sm hover:border-ring active:cursor-grabbing"
+      // No border, no fill. A board of forty tasks was forty drawn boxes inside
+      // twelve more; the text and its checkbox are enough to say where one task
+      // ends. The hover tint stays — it is the only thing left that says this
+      // row is a target you can pick up.
+      className="cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing"
     >
       <div className="flex items-start gap-2">
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
@@ -111,12 +116,29 @@ function Card({ task }: { task: Task }): React.JSX.Element {
   )
 }
 
+/**
+ * Add a task to one cell — so it carries both axes, the column's status and the
+ * lane's folder.
+ *
+ * **Summoned by the column header's `+`, not resident in the cell.** It used to
+ * sit in all of them at once: one input per (column, lane), so a board with five
+ * folders drew fifteen empty fields whose only job was to be available. The
+ * control moved to the header; what it reveals is still one input per cell,
+ * because the cell is what says which folder the task lands in — a single field
+ * under the header would have to pick a folder silently, and the board's whole
+ * claim is that the lane IS the folder.
+ */
 function QuickAdd({
   status,
   folder,
+  autoFocus,
+  onCancel,
 }: {
   status: TaskStatus
   folder: string
+  /** The column's first lane takes the caret when the header opens the row. */
+  autoFocus?: boolean
+  onCancel: () => void
 }): React.JSX.Element {
   const create = useSetAtom(createTaskAtom)
   const [title, setTitle] = useState('')
@@ -133,14 +155,21 @@ function QuickAdd({
   return (
     <Input
       value={title}
+      autoFocus={autoFocus}
       onChange={(e) => setTitle(e.target.value)}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
           e.preventDefault()
           submit()
         }
+        // Escape puts the row away again — the same key that closes the detail
+        // panel, and the only way out that does not need the mouse.
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          onCancel()
+        }
       }}
-      placeholder="+ add"
+      placeholder="task title"
       className="h-auto border-transparent bg-transparent px-1 py-0.5 text-xs shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
     />
   )
@@ -192,6 +221,11 @@ function Grid(): React.JSX.Element {
   const move = useSetAtom(moveTaskAtom)
   const filter = useAtomValue(filterAtom)
   const today = useAtomValue(todayAtom)
+  /** Which column is currently showing its quick-add row, if any. */
+  const [adding, setAdding] = useState<TaskStatus | null>(null)
+  /** The cell under a drag, `status:lane`. With the cells' own borders and fill
+   *  gone, this is the only thing that says where a card would land. */
+  const [over, setOver] = useState<string | null>(null)
 
   const everything = [...tasks.values()]
   const all = everything.filter((t) => matchesFilter(t, filter, today))
@@ -200,7 +234,10 @@ function Grid(): React.JSX.Element {
   // "hide done" drops the whole Done column, not just its cards — an empty
   // column that can never fill reads as a layout bug, not a filter.
   const columns = filter.hideDone ? COLUMNS.filter((c) => c.status !== 'done') : COLUMNS
-  const gridTemplateColumns = `8rem repeat(${columns.length}, minmax(0, 1fr))`
+  // The lane column is sized to be read, not to hold a path: the label wraps
+  // rather than truncating, so a long folder name costs a second line instead of
+  // an ellipsis and a tooltip.
+  const gridTemplateColumns = `5rem repeat(${columns.length}, minmax(0, 1fr))`
 
   const cell = (lane: string, status: TaskStatus) =>
     all.filter((t) => t.status === status && laneOf(t) === lane)
@@ -209,6 +246,7 @@ function Grid(): React.JSX.Element {
   // moves the file (+ link rewrite), and a diagonal does both in one call. The
   // dragged task is looked up by path, so the drop knows its current lane/status.
   const drop = (e: React.DragEvent, lane: string, status: TaskStatus) => {
+    setOver(null)
     const path = e.dataTransfer.getData('text/plain')
     const task = tasks.get(path)
     if (!task) return
@@ -222,31 +260,64 @@ function Grid(): React.JSX.Element {
       <div className="grid gap-2" style={{ gridTemplateColumns }}>
         <div />
         {columns.map((c) => (
-          <div key={c.status} className="px-1 pb-1 text-xs font-semibold text-foreground">
+          // The column's add control lives here, at the head of what it adds to,
+          // instead of once per cell down the whole column.
+          <div
+            key={c.status}
+            className="flex items-center gap-1 px-1 pb-1 text-xs font-semibold text-foreground"
+          >
             {c.label}
+            <Tooltip content={`add to ${c.label}`}>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                data-add-column={c.status}
+                aria-label={`Add to ${c.label}`}
+                className="ml-auto text-muted-foreground hover:text-foreground"
+                onClick={() => setAdding((s) => (s === c.status ? null : c.status))}
+              >
+                <Plus />
+              </Button>
+            </Tooltip>
           </div>
         ))}
 
-        {lanes.map((lane) => (
+        {lanes.map((lane, laneIndex) => (
           <div key={lane || ROOT_LANE} className="contents">
-            <Tooltip content={laneLabel(lane)}>
-              <div className="truncate pt-2 text-xs font-medium text-muted-foreground">
-                {laneLabel(lane)}
-              </div>
-            </Tooltip>
+            <div className="pt-2 text-xs font-medium break-words text-muted-foreground">
+              {laneLabel(lane)}
+            </div>
             {columns.map((c) => (
-              // Every cell is a drop target: both axes are real writes now.
+              // Every cell is a drop target: both axes are real writes now. The
+              // cell draws nothing at rest — only while a card is over it.
               <div
                 key={c.status}
                 data-cell={`${c.status}:${lane}`}
-                onDragOver={(e) => e.preventDefault()}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setOver(`${c.status}:${lane}`)
+                }}
+                onDragLeave={(e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+                  setOver((o) => (o === `${c.status}:${lane}` ? null : o))
+                }}
                 onDrop={(e) => drop(e, lane, c.status)}
-                className="min-h-16 space-y-1.5 rounded-md border border-border bg-muted/40 p-1.5"
+                className={cn(
+                  'min-h-16 space-y-1.5 rounded-md p-1.5',
+                  over === `${c.status}:${lane}` && 'bg-primary/10',
+                )}
               >
                 {cell(lane, c.status).map((t) => (
                   <Card key={t.path} task={t} />
                 ))}
-                <QuickAdd status={c.status} folder={lane} />
+                {adding === c.status && (
+                  <QuickAdd
+                    status={c.status}
+                    folder={lane}
+                    autoFocus={laneIndex === 0}
+                    onCancel={() => setAdding(null)}
+                  />
+                )}
               </div>
             ))}
           </div>

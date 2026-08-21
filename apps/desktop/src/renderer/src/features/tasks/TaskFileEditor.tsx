@@ -27,7 +27,12 @@ import {
   tasksAtom,
 } from '@/state/tasks'
 import { EditorPane, GoogleLinkChips } from '@/composites'
-import { RecurrenceRows, TaskDescriptionEditor, TaskScalarFields } from './TaskDetail'
+import {
+  RecurrenceRows,
+  TaskDescriptionEditor,
+  TaskScalarFields,
+  TaskTagsRow,
+} from './TaskDetail'
 
 export function TaskFileEditor({
   path,
@@ -125,6 +130,7 @@ function TaskFileBody({ task, onEdit }: { task: Task; onEdit?: () => void }): Re
       <div className="flex max-w-md flex-col gap-2 rounded-md border border-border bg-muted/40 p-3">
         <TaskScalarFields task={task} save={save} complete={doComplete} />
         <RecurrenceRows task={task} save={save} />
+        <TaskTagsRow task={task} save={save} />
       </div>
 
       <Button
