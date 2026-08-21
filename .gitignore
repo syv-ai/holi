@@ -7,3 +7,4 @@ out/
 *.local
 .tmp/
 .dash/
+.brainstorm/

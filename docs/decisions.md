@@ -4,11 +4,11 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**The inbox is empty.** D75, D76, D77 and D78 were drafted, agreed, built and consolidated on 2026-08-20; their rows are below.
+**D79 is designed, not built** — a task's `due` and `reminder` both become an optional-time local stamp, and the reminder grammar is replaced by a picker. Design of record: [`specs/2026-08-21-task-datetime-design.md`](specs/2026-08-21-task-datetime-design.md). It gets its inbox row when it lands. D75, D76, D77 and D78 were drafted, agreed, built and consolidated on 2026-08-20; their rows are below.
 
 ---
 
-## Number allocation — **next free is D79**
+## Number allocation — **next free is D80** (D79 is allocated to the task-stamp design, designed 2026-08-21, not yet built)
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
