@@ -52,7 +52,7 @@ Each of these is a feature of the design, not an omission:
 - I create a task from a note; it lands in that note's folder, and I wiki-link the note in its body.
 - I quick-add "Call the vendor" from the board; it lands in Todo, in the vault root.
 - I set a recurring task (weekly, Mon/Wed/Fri); completing it rewrites `due` to the next occurrence and returns it to Todo.
-- I set a reminder "1d" on a due-dated task; Holi raises a native notification the day before at 09:00.
+- I pick "1 day before" on a due-dated task; the file gets `reminder: 2026-07-19T09:00` and Holi raises a native notification then. I drag the time to 18:00 and it fires in the evening instead — which the old `1d` grammar could not say at all.
 - I ask the agent "make me a task to review the Q2 doc, due Friday, high priority"; it writes a file and it appears on my board.
 - I add a task; it pushes on its own; my teammates' boards show it after their next pull.
 
@@ -69,10 +69,10 @@ type Task = {
   path: string           // vault-relative, e.g. projects/q2/task.fix-login.md — the identity
   title: string          // frontmatter, falling back to the filename
   status: TaskStatus
-  due?: string           // YYYY-MM-DD
+  due?: string           // a stamp: YYYY-MM-DD, or YYYY-MM-DDTHH:MM
   priority?: Priority
   tags: string[]
-  reminder?: string      // Nd | Nw | YYYY-MM-DDTHH:MM
+  reminder?: string      // a stamp — an absolute moment, never an offset
   recurrence?: Recurrence
   description: string    // the markdown body
 }
@@ -99,7 +99,7 @@ status: todo            # todo | doing | done
 due: 2026-07-20
 priority: high
 tags: [finance]
-reminder: 1d
+reminder: 2026-07-19T09:00
 recurrence: { frequency: weekly, interval: 1, weekdays: [mon] }
 ---
 
@@ -119,7 +119,7 @@ Default and only board layout in v1.
 - **Swim lanes by folder:** one horizontal lane per folder containing tasks. The vault-root lane sorts first, then alphabetical by path.
 - **The lane-depth control stays deferred** — and the original reason survives the pivot intact. It would collapse `projects/a` and `projects/b` into one `projects` lane. Grouping is trivial; **dropping is not**: a collapsed lane has no unambiguous folder to move the file *into*, so the horizontal drag axis becomes undefined exactly when the control is on. Deferred until there is an answer.
 - **Filter bar:** exactly three controls — **text search**, **tag filter**, **done/hide toggle**. Nothing else. The bar is a search-and-narrow aid, not a second configuration surface.
-- **Virtual labels.** `overdue` and `p1`/`p2`/`p3` render as chips beside a task's real tags, and the filter's tag control matches them identically — so "show me the overdue p1s" is a tag query, not a bespoke control. They are **computed at render, never stored** (`packages/shared/src/labels.ts`): `overdue` from `due` + `status`, `pN` from `priority`. **Why not store them:** something would have to write `overdue` onto a task the moment it tipped over at midnight — and now every such write is a file rewrite and an autosave commit. A hundred tasks going overdue at midnight is a hundred commits on an idle vault. It would also make `tags` half machine-owned, so an agent deleting `overdue` would have it silently re-added.
+- **Virtual labels.** `overdue` and `p1`/`p2`/`p3` render as chips beside a task's real tags, and the filter's tag control matches them identically — so "show me the overdue p1s" is a tag query, not a bespoke control. They are **computed at render, never stored** (`packages/shared/src/labels.ts`): `overdue` from `due` + `status` + the current minute, `pN` from `priority`. Overdue is **two rules**, because the time on `due` is optional: a timed due is late past its minute, a timeless one is late once the day has passed — so an all-day task due today is not late at 00:01. **Why not store them:** something would have to write `overdue` onto a task the moment it tipped over at midnight — and now every such write is a file rewrite and an autosave commit. A hundred tasks going overdue at midnight is a hundred commits on an idle vault. It would also make `tags` half machine-owned, so an agent deleting `overdue` would have it silently re-added.
 - **A link to an email or a calendar event is an ordinary markdown link in the body** — `[Q2 review](https://calendar.google.com/…)` — and the board renders a chip for it by **detecting the link at render time**, computed and never stored, exactly like `overdue` and `pN`. Not a frontmatter field (that is the `related[]` this design deleted on purpose) and not a `[[wiki-link]]`: those resolve to vault files, and a URL target would render as a permanent tombstone. Backrefs stay a grep for the URL. `tasks.create` takes an optional `description` so a task can be seeded with the link at creation ([`google-mail-calendar.md`](google-mail-calendar.md)).
 - **The card carries exactly one affordance:** the **complete checkbox**. Title, `due`, labels and tags are display; every other edit opens the detail view. The checkbox goes through the **complete** path, never a bare `status: done` write, so a recurring task rolls forward instead of persisting `done`.
 - **Drag semantics (both axes are real writes):**
@@ -155,14 +155,15 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 
 **Recurrence:**
 
-- `nextDue(currentDue, rule)` → next `YYYY-MM-DD` or `null` (bad date / past `endDate`). Handles daily/weekly/monthly/yearly with `interval`, weekly-with-weekdays (same-week scan for interval 1; jump-to-target-week for interval > 1), month/year day-clamping (Jan 31 + 1mo → Feb 28; Feb 29 → Feb 28), and `endDate` cutoff.
+- `nextDue(currentDue, rule)` → the next stamp, keeping the hour `currentDue` named (or its absence), or `null` (bad date / past `endDate`; `endDate` is compared on the date half, being a boundary on the rule rather than an appointment). Handles daily/weekly/monthly/yearly with `interval`, weekly-with-weekdays (same-week scan for interval 1; jump-to-target-week for interval > 1), month/year day-clamping (Jan 31 + 1mo → Feb 28; Feb 29 → Feb 28), and `endDate` cutoff.
 - `nextDueCatchup(currentDue, rule, today)` → advances until on-or-after `today` for a stale completion, using the closed-form leap + bounded iteration (so a decade-stale daily task doesn't silently vanish). Port both, and the leap/clamp edge cases the old tests pin.
-- **Roll-forward** runs **locally on completion**: advance `due` via `nextDueCatchup`, shift an **absolute** reminder by the same day-delta (relative reminders re-resolve against the new `due` on their own), set status back to `todo`, rewrite the file. This is the *single* roll-forward path.
+- **Roll-forward** runs **locally on completion**: advance `due` via `nextDueCatchup`, shift the reminder by the same day-delta (keeping its own time of day, and its timelessness), set status back to `todo`, rewrite the file. This is the *single* roll-forward path. The date arithmetic runs on whole days and re-attaches the time, because the month/year helpers clamp on calendar days.
 - **A recurring task with no `due` says so** in the detail view: `nextDue` has nothing to advance from, so the rule would look set and simply never fire.
 
 **Reminders:**
 
-- **Grammar (ported):** relative `Nd` / `Nw` = *N* days/weeks before `due`, resolving to the **09:00 anchor** on the resolved date; or absolute local `YYYY-MM-DDTHH:MM`. Parsing rejects `+1d`/`-1d`/`1h`/bare dates — the parse error string doubles as the agent-facing format doc. A relative reminder with no parseable `due` is **inert**, never an error.
+- **A reminder is a moment** (D79, 2026-08-21). It is a stamp — `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM` — and nothing else; a timeless one fires at the **09:00 anchor**. The relative grammar (`1d`, `2w` = *N* days/weeks before `due`) is **gone**: it could not express "the evening before", it hid an anchor hour nobody chose, it was silently inert on a task with no due date, and it made the fire time depend on a field you could edit elsewhere. The offsets survive as **presets in the picker**, resolved to a real datetime the moment you choose one, so the file says when the notification happens rather than how to work it out. A value that is not a stamp is **inert, never an error** — that rule predates the change and outlives it, and it is what lets a legacy `1d` sit in a hand-written file costing a notification rather than a whole task.
+- **`due` may name an hour too**, and the absence of one is meaningful: a task due `2026-08-25` is due that day and goes overdue when the day has passed; one due `2026-08-25T14:00` goes overdue at 14:01. Both fields are edited with the same picker (`composites/DateTimePicker`), which is what makes them read as one system. Design of record: [`../specs/2026-08-21-task-datetime-design.md`](../specs/2026-08-21-task-datetime-design.md).
 - **Local evaluation.** Holi is **tray-resident and launches at login**, and evaluates pending reminders on a timer over the parsed task set. "Fires while the app is closed" becomes "fires while Holi runs", which for a tray app is nearly the same promise — and it is the honest one, stated plainly rather than implied by a sync indicator.
 - **Missed fires catch up on launch**, so quitting for the weekend loses nothing.
 - **The delivered-watermark is machine-local** — `.holi/settings.local.json`, gitignored, never committed. This is not a filing preference: a watermark in the repo would make **every reminder fire produce a commit**, and on a shared vault, a push. The old design reached the same conclusion for the same reason when it kept the version token out of the frontmatter.
@@ -201,7 +202,7 @@ The **pure rule functions port verbatim** from the old repo's Rust into `package
 - **Deleting a note a task links to:** the wiki-link dangles and renders as a tombstone. No cascade, no orphan rescue.
 - **Renaming a folder** moves its tasks with it, and their lane label changes because the lane *is* the folder. Nothing to update.
 - **A stale recurring task completed years late:** `nextDueCatchup` must land on-or-after today (closed-form leap, month-clamp back-off, iteration cap). Carry the old regression tests.
-- **Midnight rollover:** `overdue` is computed at render, so a board left open overnight must re-render on a date change rather than waiting for an edit.
+- **Clock rollover:** `overdue` is computed at render, so a board left open must re-render as the clock moves rather than waiting for an edit. Since D79 that is a *minute*, not a date — a task due at 14:00 is late at 14:01. `nowAtom` holds the current minute as a string and is ticked every 30s from the Shell; being minute-valued is what keeps that cheap, since the atom's identity changes at most once a minute however often the timer fires.
 - **A conflicted task file** is not a valid task file — it contains conflict markers. Because a merge conflict aborts, this state never reaches the board unless a reconcile is in progress, and during a reconcile the board should show the vault as reconciling rather than rendering half-merged cards.
 - **Autosave granularity on drag:** a drag is a burst of writes. Debounce so a drag across three lanes is one commit, not three.
 

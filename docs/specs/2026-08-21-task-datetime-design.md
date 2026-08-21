@@ -1,6 +1,10 @@
 # A task's dates are stamps, and you pick them — D79
 
-**Status:** designed 2026-08-21, not built. Agreed with Nicolai in brainstorming.
+**Status:** designed and **built** 2026-08-21. Plan: `docs/plans/2026-08-21-task-datetime.md`;
+verified by hand in [`../verification/2026-08-21-task-datetime.md`](../verification/2026-08-21-task-datetime.md).
+Two clauses changed during the build and are marked inline (§2.2 and §6); a third — the preset
+rail's width — is recorded in the verification doc, not here, because it changed a number rather
+than a decision.
 **Replaces:** the reminder grammar ported from the old Rust `services/reminder.rs`
 (`prd/tasks.md` §Recurrence & reminders; the `Nd | Nw | YYYY-MM-DDTHH:MM` rule).
 **Touches:** `packages/shared` (`dates`, `reminder`, `recurrence`, `labels`, `task-file`,
@@ -69,7 +73,10 @@ absolute reminder by the same delta the due date moved on roll-forward, and that
 **None in code.** `grep '^reminder:'` across the `privat` vault returns nothing, so there is no
 relative value in the wild to preserve; three task files carry `due:`, and those stay valid
 because the time is optional. Any that turn up later are migrated by hand. `parseReminder` gets
-no legacy branch, and `1d` is rejected with a message naming the new format.
+no legacy branch.
+
+**Amended during the build:** `1d` is **not rejected** — it is *inert*, which is stronger. See §6;
+the two clauses are the same decision seen from either end.
 
 ## 3. Overdue honours the time
 
@@ -141,9 +148,19 @@ notification with no moment.
 
 ## 6. The agent
 
-`parseTaskPatch` accepts both stamp shapes for `due` and `reminder` and rejects anything else
-with a message that names the format — the same "the error is the doc" rule the old grammar
-followed, applied to a smaller grammar.
+`parseTaskPatch` accepts both stamp shapes for `due` and rejects anything else with a message
+naming both — the same "the error is the doc" rule the old grammar followed, applied to a
+smaller grammar.
+
+**Amended during the build: `reminder` is not validated at all.** This clause originally said it
+would be, and it cannot be. `PATCH_READERS` is deliberately shared between `parseTaskPatch` and
+`parseTaskFile` — *"an edit and a hand-written file are held to the same vocabulary, so the board
+cannot write a file it would then refuse"* — so a strict reader would make a legacy
+`reminder: 1d` in a hand-written file break the **whole task** into the broken strip. That
+contradicts the older and better rule this repo already holds: an unparseable reminder is inert,
+never an error. It costs a notification, not a task. So the reader stays `typeof v === 'string'`,
+the **picker** is what stops a bad value being written, and §2.2's "no migration" is true because
+of this rather than merely alongside it. `due` stays strict, as it already was.
 
 A new seeded skill, `.claude/skills/using-tasks/SKILL.md`, **managed** under D75 so it reaches
 existing vaults: the task frontmatter vocabulary, the two stamp shapes, that a reminder is an

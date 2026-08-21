@@ -88,12 +88,17 @@ does with any edit.
 - **A Radix `PopoverTrigger` does not open on a bare `.click()` over CDP.** It needs the pointer
   sequence — `pointerdown` and `pointerup` dispatched on the trigger first, then `click()`.
   Without them the evaluation returns "no popover" and looks like the component failing to mount.
-- **The popover stays open after you pick a day**, deliberately, so you can add a time to what
-  you just chose. A probe that "opens" it again therefore *closes* it, and the next query
-  throws on a null. Only presets are a complete choice; they close it.
+- **The popover stays open after you pick a day**, deliberately, so you can put a time on what
+  you just chose. A probe that "opens" it again therefore *closes* it, and the next query throws
+  on a null. A **preset** does close it, being a complete answer — but only since this session:
+  writing that sentence here as a description of existing behaviour is what revealed it was not
+  true, and the control was changed to match. Both halves now have a test.
 - **`cdp.mjs` resolves only from `apps/desktop`.** The shell's cwd drifts between tool calls and
   the failure is a `MODULE_NOT_FOUND` that reads like a missing file.
-- **One flake, not ours:** `editor/__tests__/fence-languages.test.tsx > highlights the language
-  the bug was reported against` failed once in a full `--project dom` run, then passed in
-  isolation and in two consecutive full runs. Unrelated to this work; noted so the next person
-  does not go looking for it in the date code.
+- **An intermittent dom failure, and it is not ours.** A full `--project dom` run failed twice
+  across roughly eight runs of this session. The one occurrence captured by name was
+  `editor/__tests__/fence-languages.test.tsx > highlights the language the bug was reported
+  against`; the second was not captured before the re-run. It passes in isolation and passed
+  three consecutive full runs immediately afterwards. Nothing in the date work touches the
+  editor's fence highlighting — noted here so the next person does not go looking for it in the
+  date code, and so that a third sighting is recognised as a pattern rather than a surprise.

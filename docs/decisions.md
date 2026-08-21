@@ -4,11 +4,27 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**D79 is designed, not built** — a task's `due` and `reminder` both become an optional-time local stamp, and the reminder grammar is replaced by a picker. Design of record: [`specs/2026-08-21-task-datetime-design.md`](specs/2026-08-21-task-datetime-design.md). It gets its inbox row when it lands. D75, D76, D77 and D78 were drafted, agreed, built and consolidated on 2026-08-20; their rows are below.
+**D79 is built** (2026-08-21) and its row is below, awaiting consolidation. D75, D76, D77 and D78 were drafted, agreed, built and consolidated on 2026-08-20; their rows are below.
 
 ---
 
-## Number allocation — **next free is D80** (D79 is allocated to the task-stamp design, designed 2026-08-21, not yet built)
+## D79 — a task's dates are stamps you pick, not a grammar you type
+
+**Context.** `reminder` was a free-text field with a grammar behind it (`1d`, `2w`, or an absolute `YYYY-MM-DDTHH:MM`), ported from the old Rust. Nicolai: *"Reminder is a text input with rules. Not a good user experience."* The grammar was not only a typing problem — `1d` meant *N days before `due`, at 09:00*, where 09:00 was `ANCHOR_HOUR`, a constant invisible in the UI and unstateable in the file. The field could not say "the evening before", which is the thing people actually want, and its commonest value meant something the user never agreed to. `due` had the mirror problem: a date and only a date, so a task that happens *at* a time could not say so.
+
+**Decision.** `due` and `reminder` are one type — a **local stamp**, `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, the time optional on both and its absence meaningful. **A reminder is an absolute moment**; the relative forms become **presets in a picker** that resolve to a real datetime when you choose one, so the file says when the notification happens rather than how to compute it. `overdue` **honours the time** — two rules, since a timeless due is still late only once the day has passed, which is the boundary the old day-granular compare got right. Recurrence carries the hour across a roll-forward; `until` stays a date, being a boundary on a rule rather than an appointment. One `DateTimePicker` composite serves all three fields, its month grid hand-rolled on `packages/shared/src/calendar.ts` (no date library enters the repo). A seeded, D75-managed `using-tasks` skill documents the format for the agent — the counterweight to deleting a grammar it could write from memory.
+
+**Why the relative form could go.** It was never the *stored* thing anyone wanted, only the sole way to say it. As a preset it keeps the convenience and drops the cost: the offset gains a time it could never express, the fire time stops depending on a field you can edit elsewhere, and a reminder becomes meaningful on a task with **no due date** — a case the old grammar left silently dead. What was lost is that a relative reminder used to re-resolve against each new due date for free; `shiftForRollover` already does that for absolute ones, so the behaviour survives by a different mechanism.
+
+**No migration.** `grep '^reminder:'` across the vault returned nothing, so no relative value existed in the wild. `parseReminder` got no legacy branch — and it needed none, because **a value that is not a stamp is inert, never an error**, a rule that predates this change. A legacy `1d` in a hand-written file shows as raw text and quietly never fires. That leniency is load-bearing rather than incidental: `PATCH_READERS` is deliberately shared between `parseTaskPatch` and `parseTaskFile` ("so the board cannot write a file it would then refuse"), so validating `reminder` on write would validate it on read too and break the whole task into the broken strip. `due` stays strict, widened from a date to a stamp.
+
+**Rejected.** *A structured map* (`{kind: relative, days: 1}`) like `recurrence` — self-describing, but nested YAML for the agent to write and a migration for every existing file. *Two fields* (`reminder` + `reminder-time`) — no parser change, but two keys that only mean anything together and nothing stopping one without the other. *Keeping overdue day-granular* — would have left the time on `due` decorative, visible in the UI and ignored by the one label that reads it. *`react-day-picker`* — what shadcn's Calendar is built on, but the repo carries no date library at all and the grid is a short walk over epochs the date math already produces.
+
+**Design of record:** [`specs/2026-08-21-task-datetime-design.md`](specs/2026-08-21-task-datetime-design.md) · **Plan:** `plans/2026-08-21-task-datetime.md` · **Verified by hand:** [`verification/2026-08-21-task-datetime.md`](verification/2026-08-21-task-datetime.md).
+
+---
+
+## Number allocation — **next free is D80**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 

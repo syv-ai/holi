@@ -26,6 +26,22 @@ test('a preset writes its own value, verbatim', async () => {
   expect(onChange).toHaveBeenCalledWith('2026-08-24T09:00')
 })
 
+test('a preset closes the popover, a day does not', async () => {
+  // A preset is a complete answer. Picking a day is not — the time row is right
+  // there, and closing would make adding an hour a second trip.
+  const { rerender } = render(
+    <DateTimePicker value={null} onChange={() => {}} presets={PRESETS} placeholder="reminder" />,
+  )
+  const user = await open()
+  await user.click(screen.getByRole('button', { name: '1 day before' }))
+  expect(screen.queryByRole('button', { name: 'next month' })).not.toBeInTheDocument()
+
+  rerender(<DateTimePicker value="2026-08-25" onChange={() => {}} placeholder="due" />)
+  await user.click(screen.getByRole('button', { name: /due/i }))
+  await user.click(screen.getByRole('button', { name: 'Wednesday, 26 August 2026' }))
+  expect(screen.getByRole('button', { name: 'next month' })).toBeInTheDocument()
+})
+
 test('picking a day keeps the time the value already had', async () => {
   const onChange = vi.fn()
   render(<DateTimePicker value="2026-08-25T14:00" onChange={onChange} placeholder="due" />)

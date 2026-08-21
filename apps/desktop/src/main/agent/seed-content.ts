@@ -35,6 +35,7 @@ import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
 import vaultAppsSkill from './skills/vault-apps/SKILL.md?raw'
+import usingTasksSkill from './skills/using-tasks/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -276,6 +277,7 @@ export const MANAGED_FILES: Record<string, string> = {
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
   '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
+  '.claude/skills/using-tasks/SKILL.md': usingTasksSkill,
 }
 
 /**

@@ -142,8 +142,13 @@ export function DateTimePicker({
 
   const rail = presets ?? []
 
+  // Controlled, for one reason: a preset is a COMPLETE answer, so choosing one
+  // closes the popover. Picking a day is not — you may want to put a time on
+  // what you just chose — so the calendar and the time row leave it open.
+  const [open, setOpen] = useState(false)
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <Tooltip content={placeholder ?? 'pick a date'}>
         <PopoverTrigger asChild>
           <Button
@@ -177,7 +182,10 @@ export function DateTimePicker({
                 variant="ghost"
                 size="sm"
                 className="h-7 justify-between gap-3 px-2 text-xs font-normal whitespace-nowrap"
-                onClick={() => onChange(p.value)}
+                onClick={() => {
+                  onChange(p.value)
+                  setOpen(false)
+                }}
               >
                 {p.label}
                 {p.hint !== undefined && (

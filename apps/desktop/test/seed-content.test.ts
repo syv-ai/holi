@@ -65,6 +65,7 @@ describe('SEED_FILES', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
+      '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
       '.holi/document-templates/_brand/brand.typ',
       '.holi/document-templates/_brand/figures.typ',
@@ -150,6 +151,20 @@ describe('SEED_FILES', () => {
     expect(skill).toContain('name: theme')
     expect(skill).toContain('.holi/theme.json') // the file it authors
     expect(skill).toContain('primary') // a token from the whitelist
+  })
+
+  it('seeds the using-tasks skill documenting the task file format', () => {
+    const skill = SEED_FILES['.claude/skills/using-tasks/SKILL.md']!
+    expect(skill).toContain('name: using-tasks')
+    // The two facts an agent gets WRONG rather than merely misses (D79): a
+    // reminder is a moment, and a value that is not a stamp fires nothing.
+    expect(skill).toContain('absolute moment')
+    expect(skill).toContain('inert')
+    expect(skill).toContain('YYYY-MM-DD'.replace('YYYY-MM-DD', '2026-08-25T18:00'))
+  })
+
+  it('the using-tasks skill is MANAGED, so a correction reaches existing vaults', () => {
+    expect(MANAGED_FILES['.claude/skills/using-tasks/SKILL.md']).toBeDefined()
   })
 
   it('.holi/vault.json is the durable vault marker', () => {
@@ -646,6 +661,7 @@ describe('the managed / once split (D75)', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/theme/SKILL.md',
+      '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
     ])
   })
