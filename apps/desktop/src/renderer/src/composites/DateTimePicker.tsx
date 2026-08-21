@@ -170,18 +170,18 @@ export function DateTimePicker({
 
       <PopoverContent align="end" className={cn('w-auto p-0', rail.length > 0 && 'flex')}>
         {rail.length > 0 && (
-          <div className="flex w-38 shrink-0 flex-col gap-0.5 border-r border-divider p-2">
+          <div className="flex w-51 shrink-0 flex-col gap-0.5 border-r border-divider p-2">
             {rail.map((p) => (
               <Button
                 key={p.label}
                 variant="ghost"
                 size="sm"
-                className="h-7 justify-between gap-3 px-2 text-xs font-normal"
+                className="h-7 justify-between gap-3 px-2 text-xs font-normal whitespace-nowrap"
                 onClick={() => onChange(p.value)}
               >
                 {p.label}
                 {p.hint !== undefined && (
-                  <span className="text-[10px] text-muted-foreground">{p.hint}</span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">{p.hint}</span>
                 )}
               </Button>
             ))}

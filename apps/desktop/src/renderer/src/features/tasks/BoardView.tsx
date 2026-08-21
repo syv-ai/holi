@@ -18,6 +18,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { Button, Checkbox, Input, Tooltip } from '@/primitives'
+import { shortStamp } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
@@ -96,7 +97,11 @@ function Card({ task }: { task: Task }): React.JSX.Element {
 
       {(labels.length > 0 || task.tags.length > 0 || task.due) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-6">
-          {task.due && <span className="text-[10px] text-muted-foreground">due {task.due}</span>}
+          {/* Humanised, not raw: a due date may carry a time now, and
+              `due 2026-08-03T09:00` on a card is a stamp, not a date. */}
+          {task.due && (
+            <span className="text-[10px] text-muted-foreground">due {shortStamp(task.due)}</span>
+          )}
           {labels.map((l) => (
             <span key={l} className={cn('rounded border px-1 text-[10px]', CHIP[l])}>
               {l}
