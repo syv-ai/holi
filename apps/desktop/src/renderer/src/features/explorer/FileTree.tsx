@@ -21,9 +21,10 @@ import {
 import { useTree } from '@headless-tree/react'
 import { fileKind, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { pendingSlot } from '@/lib/pending-slot'
 import { todayDailyPathAtom } from '@/state/daily'
 import { todayLinkCountAtom } from '@/state/tasks'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ContextMenu,
   ContextMenuContent,
@@ -55,16 +56,22 @@ import { openDialogAtom } from '@/state/dialogs'
 /** The inline editable row shown when creating a file or folder. */
 function PendingRow({
   kind,
+  level,
   onCommit,
   onCancel,
 }: {
   kind: 'file' | 'folder'
+  /** Tree depth, so the input lines up with the children it is about to join. */
+  level: number
   onCommit: (name: string) => void
   onCancel: () => void
 }) {
   const [value, setValue] = useState('')
   return (
-    <div className="flex h-[22px] items-center gap-1 pr-2" style={{ paddingLeft: '8px' }}>
+    <div
+      className="flex h-[22px] items-center gap-1 pr-2"
+      style={{ paddingLeft: `${level * 12 + 8}px` }}
+    >
       <span className="flex w-4 shrink-0 justify-center text-muted-foreground">
         {kind === 'folder' ? <FolderIcon /> : <MarkdownIcon />}
       </span>
@@ -390,6 +397,42 @@ export function FileTree({
     )
   }
 
+  /**
+   * Where the "new file" / "new folder" input opens, and how deep it sits.
+   *
+   * It used to render at the top of the tree whatever you had clicked, while
+   * the file was still created inside the folder you picked — so the tree
+   * disagreed with what the command was about to do. Now it opens as a child of
+   * that folder, at the indent its contents will have.
+   */
+  const rows = tree
+    .getItems()
+    .filter((item) => item.getId() !== ROOT_ID)
+    .map((item) => ({ id: item.getId(), level: item.getItemMeta().level }))
+  const slot = pending === null ? null : pendingSlot(rows, pending.parent)
+  const pendingRow = (level: number) => (
+    <PendingRow
+      kind={pending!.kind}
+      level={level}
+      onCancel={() => setPending(null)}
+      onCommit={(name) => {
+        if (pending!.kind === 'folder') {
+          const folder = joinPath(pending!.parent, name)
+          // Show it at once (optimistic), and make it real on disk: a
+          // `.gitkeep` so the empty folder persists and returns in `dirs`.
+          actions.addPendingFolder(folder)
+          void createFolder(folder)
+        } else {
+          // Open the created file once it lands — a non-md file is not in
+          // `docs`, so opening a tab explicitly is what surfaces it.
+          const path = joinPath(pending!.parent, withMdExtension(name))
+          void createNote(path).then(() => onOpenPreview(path))
+        }
+        setPending(null)
+      }}
+    />
+  )
+
   return (
     // Fills its panel. The tree briefly sized itself to its rows instead, so the
     // apps list would hug it rather than sink to the bottom of the sidebar —
@@ -411,27 +454,7 @@ export function FileTree({
         className="min-h-0 flex-1 overflow-y-auto pb-1 pt-10 text-sm"
         {...tree.getContainerProps()}
       >
-        {pending && (
-          <PendingRow
-            kind={pending.kind}
-            onCancel={() => setPending(null)}
-            onCommit={(name) => {
-              if (pending.kind === 'folder') {
-                const folder = joinPath(pending.parent, name)
-                // Show it at once (optimistic), and make it real on disk: a
-                // `.gitkeep` so the empty folder persists and returns in `dirs`.
-                actions.addPendingFolder(folder)
-                void createFolder(folder)
-              } else {
-                // Open the created file once it lands — a non-md file is not in
-                // `docs`, so opening a tab explicitly is what surfaces it.
-                const path = joinPath(pending.parent, withMdExtension(name))
-                void createNote(path).then(() => onOpenPreview(path))
-              }
-              setPending(null)
-            }}
-          />
-        )}
+        {slot?.afterId === null && pendingRow(slot.level)}
         {tree
           .getItems()
           .filter((item) => item.getId() !== ROOT_ID)
@@ -444,7 +467,7 @@ export function FileTree({
             const task = taskByPath.get(id)
             const rowProps = item.getProps()
             const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
-            return (
+            const row = (
               <ContextMenu key={id}>
                 <ContextMenuTrigger asChild>
                   <div
@@ -519,6 +542,16 @@ export function FileTree({
                 </ContextMenuTrigger>
                 {rowMenu(id, isFolder, rowTargets(id))}
               </ContextMenu>
+            )
+            // The input opens where the file will land, so the tree agrees with
+            // what the command is about to do (§New file / new folder).
+            return slot?.afterId === id ? (
+              <Fragment key={id}>
+                {row}
+                {pendingRow(slot.level)}
+              </Fragment>
+            ) : (
+              row
             )
           })}
         {tree.getItems().filter((item) => item.getId() !== ROOT_ID).length === 0 && (
