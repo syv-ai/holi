@@ -162,12 +162,23 @@ export function DateTimePicker({
             className={cn(
               // The field treatment the rows beside it wear, so a picker and a
               // Select read as the same kind of control.
-              'h-8 w-full justify-end gap-2 rounded-md border border-input px-3',
+              //
+              // `min-w-0 shrink` is load-bearing, not tidiness. The Button
+              // primitive's base is `shrink-0`, so `w-full` inside the label+
+              // control flex row resolves to 100% of the ROW and then refuses to
+              // shrink back — the field overhung the panel's right edge by the
+              // width of its own label. The Selects beside it were fine because
+              // they are not Buttons. Measured in the app: 285px wide ending
+              // 66px past the panel, against the Select's 197px.
+              'h-8 w-full min-w-0 shrink justify-end gap-2 rounded-md border border-input px-3',
               'text-xs font-normal hover:bg-transparent focus-visible:border-ring',
               value === null && 'text-muted-foreground',
             )}
           >
-            {humanise(value) ?? placeholder ?? ''}
+            {/* The value truncates rather than pushing the icon out: a long
+                stamp in a narrow panel is a layout problem, not a reason to
+                lose the affordance that says this opens a calendar. */}
+            <span className="truncate">{humanise(value) ?? placeholder ?? ''}</span>
             <CalendarDays className="size-3.5 shrink-0 opacity-60" />
           </Button>
         </PopoverTrigger>

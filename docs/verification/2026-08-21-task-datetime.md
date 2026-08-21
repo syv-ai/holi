@@ -60,6 +60,15 @@ Fixed during verification (`shortStamp` on the card) → `due 3 Aug, 09:00`. Thi
 regression introduced by the change and invisible to the test suite, which asserts on values
 rather than on rendering.
 
+**8 — The trigger overhung the panel, and was fixed (reported by Nicolai).** `w-full` on the
+trigger resolved to 100% of the label+control flex row and then refused to shrink back, because
+the `Button` primitive's base is `shrink-0`: the field measured 285px ending at x=1265, 66px past
+the panel's right edge at 1199. The `Select` triggers beside it were unaffected — they are not
+Buttons. With `min-w-0 shrink` all three pickers measure **197px**, exactly matching the Selects,
+one right edge down the whole column. **jsdom cannot see this**: it computes no layout, so no
+test in the suite could have caught it and none can guard it — the class carries a comment
+instead, which is what stops it being tidied away.
+
 ---
 
 ## What was NOT checked
