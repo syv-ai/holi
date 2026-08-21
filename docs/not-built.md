@@ -119,11 +119,6 @@ hangs on "Loading PDF…".
 an *option*, never a mode to configure: a second view earns its place only by not multiplying the
 config space that [`prd/tasks.md`](prd/tasks.md) §What the design deliberately excludes closes off.
 
-**No keyboard navigation in the date picker's month grid.** The cells are `Button`s, so they tab
-and activate, but there is no arrow-key handling — crossing a month is thirty-odd tab stops.
-Noticed while building D79 and left there: the grid is hand-rolled
-(`composites/DateTimePicker.tsx`) on purpose, so a roving tabindex is real work rather than a prop.
-
 **Assignees**, and with them per-person reminders on shared tasks. This is the answer if
 vault-wide reminders prove noisy — **not** a private reminder channel, which would make a shared
 task mean different things to different members.

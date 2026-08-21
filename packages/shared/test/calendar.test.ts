@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { monthGrid } from '../src/calendar'
+import { gridFocusMove, monthGrid } from '../src/calendar'
 
 const flat = (year: number, month: number) => monthGrid(year, month).flat()
 
@@ -62,5 +62,30 @@ describe('monthGrid', () => {
     // what lets the caller stay arithmetic.
     expect(monthGrid(2026, 13)).toEqual(monthGrid(2027, 1))
     expect(monthGrid(2026, 0)).toEqual(monthGrid(2025, 12))
+  })
+})
+
+describe('gridFocusMove', () => {
+  it('walks a week down, out of the month it started in', () => {
+    // The move that makes arrow keys worth having: the grid draws six weeks and
+    // the focus has to be able to leave the month, which is what forces the
+    // caller to re-page the view.
+    expect(gridFocusMove('2026-08-27', 'ArrowDown')).toBe('2026-09-03')
+  })
+
+  it('pages a month at a time, clamping to a day that month has', () => {
+    // The keyboard's version of the header's chevrons. 31 March has no 31
+    // February to land on, and the same clamp the recurrence math uses is the
+    // one that keeps this from skipping into the month after.
+    expect(gridFocusMove('2026-03-31', 'PageUp')).toBe('2026-02-28')
+    expect(gridFocusMove('2026-01-31', 'PageDown')).toBe('2026-02-28')
+  })
+
+  it('claims nothing else', () => {
+    // A grid that swallowed Tab or Escape would trap the focus inside a popover
+    // — the two keys a user needs most when they want out of one.
+    for (const key of ['Tab', 'Escape', 'Enter', ' ', 'a']) {
+      expect(gridFocusMove('2026-08-27', key)).toBeNull()
+    }
   })
 })

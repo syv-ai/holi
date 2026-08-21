@@ -17,9 +17,17 @@
  * a DOM. If this file ever needs `new Date(...)` for anything but "what is
  * today", the helper it wants is missing from `dates.ts`.
  */
-import { ANCHOR_HOUR, monthGrid, parseStamp, stampDate, stampTime, withTime } from '@holi/shared'
+import {
+  ANCHOR_HOUR,
+  gridFocusMove,
+  monthGrid,
+  parseStamp,
+  stampDate,
+  stampTime,
+  withTime,
+} from '@holi/shared'
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 
@@ -128,6 +136,42 @@ export function DateTimePicker({
   const [view, setView] = useState(() => partsOf(selected ?? today))
   const grid = monthGrid(view.year, view.month)
 
+  /**
+   * The grid's roving focus: one cell is tabbable, the arrows move which.
+   *
+   * The date is the state rather than an index, because a move is allowed to
+   * leave the month — `gridFocusMove` answers in dates, and the view pages onto
+   * whatever comes back. `moved` gates the focus call so that only a *key* pulls
+   * focus into the grid: without it, opening the popover or typing in the time
+   * row would yank the caret onto a day cell.
+   */
+  const [focusDate, setFocusDate] = useState(selected ?? today)
+  const moved = useRef(false)
+  const gridRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!moved.current) return
+    moved.current = false
+    gridRef.current?.querySelector<HTMLElement>(`[data-date="${focusDate}"]`)?.focus()
+  }, [focusDate])
+
+  const onGridKeyDown = (e: React.KeyboardEvent) => {
+    const from = (e.target as HTMLElement).dataset.date
+    if (from === undefined) return
+    const next = gridFocusMove(from, e.key)
+    if (next === null) return
+    // Only for keys the grid claims — Tab and Escape have to leave the popover.
+    e.preventDefault()
+    moved.current = true
+    setFocusDate(next)
+    const at = partsOf(next)
+    if (at.year !== view.year || at.month !== view.month) setView(at)
+  }
+
+  // The tabbable cell has to exist, or the grid drops out of the tab order
+  // entirely: paging with the chevrons can leave `focusDate` in another month.
+  const inGrid = grid.flat().some((c) => c.date === focusDate)
+  const tabDate = inGrid ? focusDate : (grid.flat().find((c) => c.inMonth)?.date ?? null)
+
   const page = (delta: number) => {
     const month = view.month + delta
     // `monthGrid` normalises 0 and 13 itself; mirror that here so the header
@@ -225,7 +269,7 @@ export function DateTimePicker({
             </Button>
           </div>
 
-          <div className="grid grid-cols-7 gap-px p-2">
+          <div className="grid grid-cols-7 gap-px p-2" ref={gridRef} onKeyDown={onGridKeyDown}>
             {WEEKDAY_HEADS.map((d, i) => (
               <span
                 key={i}
@@ -240,6 +284,8 @@ export function DateTimePicker({
                 key={cell.date}
                 variant="ghost"
                 size="xs"
+                data-date={cell.date}
+                tabIndex={cell.date === tabDate ? 0 : -1}
                 aria-label={dayLabel(cell.date)}
                 aria-current={cell.date === today ? 'date' : undefined}
                 onClick={() => pickDay(cell.date)}

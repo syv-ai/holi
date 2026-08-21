@@ -127,3 +127,35 @@ test('paging from December lands in January of the next year', async () => {
   await user.click(screen.getByRole('button', { name: /next month/i }))
   expect(screen.getByText('January 2027')).toBeInTheDocument()
 })
+
+test('arrow keys walk the grid, and the walk can leave the month', async () => {
+  // Thirty tab stops to cross a month is not navigation. The grid is one tab
+  // stop with a roving focus inside it, the way a date grid is supposed to
+  // behave — and stepping past the last row pages the view rather than stopping.
+  render(<DateTimePicker value="2026-08-27" onChange={() => {}} placeholder="due" />)
+  const user = await open('due')
+
+  const start = screen.getByRole('button', { name: 'Thursday, 27 August 2026' })
+  start.focus()
+  await user.keyboard('{ArrowDown}')
+
+  expect(screen.getByRole('button', { name: 'Thursday, 3 September 2026' })).toHaveFocus()
+})
+
+test('the whole grid is one tab stop, and paging away never removes it', async () => {
+  // A roving tabindex is the other half of arrow navigation: without it the
+  // grid is 42 tab stops between the presets and the time row. The fallback
+  // matters as much as the rule — paging with the chevrons leaves the focused
+  // date in another month, and a grid with no tabbable cell drops out of the
+  // tab order entirely.
+  render(<DateTimePicker value="2026-08-27" onChange={() => {}} placeholder="due" />)
+  const user = await open('due')
+
+  const stops = () =>
+    screen.getAllByRole('button').filter((b) => b.dataset.date && b.tabIndex === 0)
+  expect(stops()).toHaveLength(1)
+  expect(stops()[0]).toHaveAttribute('data-date', '2026-08-27')
+
+  await user.click(screen.getByRole('button', { name: 'next month' }))
+  expect(stops()).toHaveLength(1)
+})

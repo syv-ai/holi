@@ -9,7 +9,7 @@
  * Keeping it here rather than in the renderer is what lets the hard part be
  * tested without a DOM.
  */
-import { DAY_MS, formatDate } from './dates'
+import { DAY_MS, formatDate, lastDayOfMonth, parseDate } from './dates'
 
 /** One cell. */
 export interface GridDay {
@@ -64,4 +64,49 @@ export function monthGrid(year: number, month: number): GridDay[][] {
     grid.push(week)
   }
   return grid
+}
+
+/**
+ * Where the arrow keys move the focus in a month grid, or null for a key this
+ * grid does not claim.
+ *
+ * Returns a date rather than a cell, because the focus is allowed to leave the
+ * month it started in — the caller re-pages the view onto whatever comes back,
+ * which is what makes a grid navigable at all rather than a box you tab across.
+ */
+export function gridFocusMove(date: string, key: string): string | null {
+  const epoch = parseDate(date)
+  if (epoch === null) return null
+  switch (key) {
+    case 'ArrowLeft':
+      return formatDate(epoch - DAY_MS)
+    case 'ArrowRight':
+      return formatDate(epoch + DAY_MS)
+    case 'ArrowUp':
+      return formatDate(epoch - WEEK * DAY_MS)
+    case 'ArrowDown':
+      return formatDate(epoch + WEEK * DAY_MS)
+    case 'PageUp':
+      return shiftMonth(date, -1)
+    case 'PageDown':
+      return shiftMonth(date, 1)
+    default:
+      return null
+  }
+}
+
+/**
+ * The same day, `delta` months away, clamped to a day that month has — 31 March
+ * back a month is 28 February, not 3 March. The clamp is `nextDue`'s rule, and
+ * it is here for the same reason: a paging step that skipped a month whenever
+ * the day was too high would be wrong in exactly the months people notice.
+ */
+function shiftMonth(date: string, delta: number): string {
+  const year = Number(date.slice(0, 4))
+  const month = Number(date.slice(5, 7))
+  const day = Number(date.slice(8, 10))
+  const target = month - 1 + delta
+  const y = year + Math.floor(target / 12)
+  const m = ((target % 12) + 12) % 12
+  return formatDate(Date.UTC(y, m, Math.min(day, lastDayOfMonth(y, m + 1))))
 }
