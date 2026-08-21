@@ -237,16 +237,6 @@ export const backrefsFor = atom(
   },
 )
 
-/** Clears the editor when it is the open note being deleted — otherwise the pane
- * holds a doc that no longer exists. */
-export const deleteNoteAtom = atom(null, async (get, set, path: string) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote) return
-  await trpc.notes.delete.mutate({ remote, path })
-  if (get(activeDocAtom)?.path === path) set(activeDocAtom, null)
-  await set(loadSnapshotAtom)
-})
-
 /**
  * Rename a note: move the file, rewrite inbound links, follow the open tab (FR-11).
  *
