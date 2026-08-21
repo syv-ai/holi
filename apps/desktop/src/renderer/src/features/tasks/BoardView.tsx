@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { Button, Checkbox, Input, Tooltip } from '@/primitives'
 import { shortStamp } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
+import { reorderRank, sortCell } from '@/lib/board-order'
 import { FilterBar } from './FilterBar'
 import { TaskDetailPanel } from './TaskDetail'
 import {
@@ -35,6 +36,7 @@ import {
   matchesFilter,
   moveTaskAtom,
   nowAtom,
+  patchTaskAtom,
   selectedTaskPathAtom,
   setTaskStatusAtom,
   tasksAtom,
@@ -56,7 +58,14 @@ const CHIP: Record<string, string> = {
   p3: 'bg-neutral-800 text-neutral-400 border-neutral-700',
 }
 
-function Card({ task }: { task: Task }): React.JSX.Element {
+function Card({
+  task,
+  cue,
+}: {
+  task: Task
+  /** A same-cell drag is aimed here: draw the rule it would land on. */
+  cue?: 'before' | 'after' | null
+}): React.JSX.Element {
   const now = useAtomValue(nowAtom)
   const complete = useSetAtom(completeTaskAtom)
   const select = useSetAtom(selectedTaskPathAtom)
@@ -78,7 +87,11 @@ function Card({ task }: { task: Task }): React.JSX.Element {
       // twelve more; the text and its checkbox are enough to say where one task
       // ends. The hover tint stays — it is the only thing left that says this
       // row is a target you can pick up.
-      className="cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing"
+      className={cn(
+        'cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing',
+        cue === 'before' && 'border-t-2 border-t-primary',
+        cue === 'after' && 'border-b-2 border-b-primary',
+      )}
     >
       <div className="flex items-start gap-2">
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
@@ -223,6 +236,7 @@ export function BoardView(): React.JSX.Element {
 function Grid(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
   const setStatus = useSetAtom(setTaskStatusAtom)
+  const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
   const filter = useAtomValue(filterAtom)
   const now = useAtomValue(nowAtom)
@@ -231,6 +245,10 @@ function Grid(): React.JSX.Element {
   /** The cell under a drag, `status:lane`. With the cells' own borders and fill
    *  gone, this is the only thing that says where a card would land. */
   const [over, setOver] = useState<string | null>(null)
+  /** `path:before` / `path:after` — where a same-cell drop would insert. Drawn
+   *  as a rule on the card being aimed at, because a card cannot show a gap
+   *  that is not there yet. */
+  const [overCard, setOverCard] = useState<string | null>(null)
 
   const everything = [...tasks.values()]
   const all = everything.filter((t) => matchesFilter(t, filter, now))
@@ -245,16 +263,37 @@ function Grid(): React.JSX.Element {
   const gridTemplateColumns = `5rem repeat(${columns.length}, minmax(0, 1fr))`
 
   const cell = (lane: string, status: TaskStatus) =>
-    all.filter((t) => t.status === status && laneOf(t) === lane)
+    sortCell(all.filter((t) => t.status === status && laneOf(t) === lane))
 
   // Both axes are live now: a same-lane drop rewrites status, a cross-lane drop
   // moves the file (+ link rewrite), and a diagonal does both in one call. The
   // dragged task is looked up by path, so the drop knows its current lane/status.
   const drop = (e: React.DragEvent, lane: string, status: TaskStatus) => {
     setOver(null)
+    setOverCard(null)
     const path = e.dataTransfer.getData('text/plain')
     const task = tasks.get(path)
     if (!task) return
+
+    // Dropped ON a card, in the cell it already lives in: this is a reorder, and
+    // the axes are unchanged. A drop that crosses a cell falls through to the
+    // status/move intent below and keeps whatever rank it had — the card lands
+    // where its rank puts it in the new column, which is the honest answer
+    // without asking the user to aim twice.
+    const onCard = (e.target as HTMLElement).closest?.('[data-task]')
+    const targetPath = onCard?.getAttribute('data-task') ?? null
+    if (targetPath !== null && task.status === status && laneOf(task) === lane) {
+      const box = onCard!.getBoundingClientRect()
+      const rank = reorderRank(
+        cell(lane, status),
+        path,
+        targetPath,
+        e.clientY < box.top + box.height / 2,
+      )
+      if (rank !== null) void patch(path, { order: rank })
+      return
+    }
+
     const intent = dropIntent(task, lane, status)
     if (intent.kind === 'status') void setStatus(path, intent.status)
     else if (intent.kind === 'move') void move(path, intent.folder, intent.status)
@@ -301,10 +340,16 @@ function Grid(): React.JSX.Element {
                 onDragOver={(e) => {
                   e.preventDefault()
                   setOver(`${c.status}:${lane}`)
+                  const el = (e.target as HTMLElement).closest?.('[data-task]')
+                  if (!el) return setOverCard(null)
+                  const box = el.getBoundingClientRect()
+                  const half = e.clientY < box.top + box.height / 2 ? 'before' : 'after'
+                  setOverCard(`${el.getAttribute('data-task')}:${half}`)
                 }}
                 onDragLeave={(e) => {
                   if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
                   setOver((o) => (o === `${c.status}:${lane}` ? null : o))
+                  setOverCard(null)
                 }}
                 onDrop={(e) => drop(e, lane, c.status)}
                 className={cn(
@@ -313,7 +358,17 @@ function Grid(): React.JSX.Element {
                 )}
               >
                 {cell(lane, c.status).map((t) => (
-                  <Card key={t.path} task={t} />
+                  <Card
+                    key={t.path}
+                    task={t}
+                    cue={
+                      overCard === `${t.path}:before`
+                        ? 'before'
+                        : overCard === `${t.path}:after`
+                          ? 'after'
+                          : null
+                    }
+                  />
                 ))}
                 {adding === c.status && (
                   <QuickAdd

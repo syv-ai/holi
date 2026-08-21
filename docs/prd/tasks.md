@@ -74,6 +74,7 @@ type Task = {
   tags: string[]
   reminder?: string      // a stamp — an absolute moment, never an offset
   recurrence?: Recurrence
+  order?: number         // rank within the board cell; absent sorts last
   description: string    // the markdown body
 }
 
@@ -116,6 +117,12 @@ including [[meetings/2026-07-13.md]], which is how a task links to a note.
 Default and only board layout in v1.
 
 - **Columns:** **Todo / Doing / Done**, fixed. No time-bucket view mode; no per-user column customization.
+- **Cards are dragged into an order within a cell, and the order is a number in the task's own file.** `order` is a **sparse rank**, not a position: a drop takes a value strictly between the two cards it landed between, so **one drag writes exactly one file** and nothing else moves. Dense positions would renumber every card below the drop — N writes for one drag, and on a shared vault N conflicts when two people tidy the same column. It lives in the frontmatter rather than in a list under `.holi/` because order is a fact about a task and **the file is the whole task**: a side list cannot tell a task the agent just created from one deliberately placed last, and it goes stale on every rename the agent does.
+  - **Absent sorts last**, which is where a task written by the agent belongs — the bottom, not a random height. Ties break by title, because a comparator returning 0 leaves the order to a filesystem scan and the board would reshuffle itself on an unrelated rescan.
+  - **It is the one key in a task file that means nothing to a human**, and that is the admitted cost of keeping the file the whole task.
+  - **The bounded cost of sparse ranks** is that dropping into the *same* gap halves it each time, so a rank eventually runs out of precision. Dropping at either end of a column moves by a whole step and never narrows anything, which is the common case; `needsRenumber` names the rest, at a threshold orders of magnitude above where a midpoint stops being distinct.
+  - **A drop that crosses a cell does not set a rank.** Dragging to another column or lane is a status write or a file move, and the card lands where its existing rank puts it — asking the user to aim at a gap *and* a column in one gesture is two decisions in one drag.
+  - **A drop that changes nothing writes nothing.** The test is positional rather than numeric: re-inserting a card at its own index reproduces the sequence, while the rank a no-op would compute is often a different number than the one the card holds.
 - **Swim lanes by folder:** one horizontal lane per folder containing tasks. The vault-root lane sorts first, then alphabetical by path.
 - **The lane-depth control stays deferred** — and the original reason survives the pivot intact. It would collapse `projects/a` and `projects/b` into one `projects` lane. Grouping is trivial; **dropping is not**: a collapsed lane has no unambiguous folder to move the file *into*, so the horizontal drag axis becomes undefined exactly when the control is on. Deferred until there is an answer.
 - **Filter bar:** exactly three controls — **text search**, **tag filter**, **done/hide toggle**. Nothing else. The bar is a search-and-narrow aid, not a second configuration surface.

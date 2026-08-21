@@ -101,6 +101,16 @@ export interface Task {
    *  never fires. */
   reminder?: string
   recurrence?: Recurrence
+  /**
+   * The card's rank within its board cell — a sparse number, not a position
+   * (`prd/tasks.md` §Board UX). Absent sorts last, which is where a task the
+   * agent just wrote belongs: at the bottom, not at a random height.
+   *
+   * It is the one key in a task file that means nothing to a human reading it,
+   * and it is here rather than in a side file because order is a fact about a
+   * task and the file is the whole task.
+   */
+  order?: number
   /** The markdown body. */
   description: string
   /**

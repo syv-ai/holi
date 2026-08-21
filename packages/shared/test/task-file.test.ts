@@ -331,3 +331,24 @@ describe('a due date that names an hour', () => {
     expect(parseTaskPatch({ reminder: '1d' }).reminder).toBe('1d')
   })
 })
+
+describe('order', () => {
+  it('reads a rank off the file and writes it back unchanged', () => {
+    // The board's manual ordering (`prd/tasks.md` §Board UX). A rank is the one
+    // key in a task file that means nothing to a human, so it earns its place
+    // by round-tripping exactly — a rewrite that rounded it would reshuffle a
+    // column nobody touched.
+    const task = parseTaskFile('---\ntitle: T\nstatus: todo\norder: 1.5\n---\n', 'task.t.md')
+    expect(task.order).toBe(1.5)
+    expect(serializeTaskFile(task)).toContain('order: 1.5')
+  })
+
+  it('treats a rank that is not a number as no rank at all', () => {
+    // Same rule `reminder` follows, for the same reason: these readers are
+    // shared with the patch path, so a strict one would take a hand-written
+    // `order: first` and break the whole task into the broken strip over a
+    // sort key. An absent rank sorts last; that is a fine answer for junk.
+    const task = parseTaskFile('---\ntitle: T\nstatus: todo\norder: first\n---\n', 'task.t.md')
+    expect(task.order).toBeUndefined()
+  })
+})

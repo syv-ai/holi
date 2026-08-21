@@ -58,7 +58,16 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** The keys this version understands. Everything else in the frontmatter lands in
  * `Task.extra` and is written back verbatim — see the field's own comment. */
-const KNOWN_KEYS = new Set(['title', 'status', 'due', 'priority', 'tags', 'reminder', 'recurrence'])
+const KNOWN_KEYS = new Set([
+  'title',
+  'status',
+  'due',
+  'priority',
+  'tags',
+  'reminder',
+  'recurrence',
+  'order',
+])
 
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
@@ -121,6 +130,7 @@ export function serializeTaskFile(task: Omit<Task, 'path'> & { path?: string }):
   if (task.tags.length) front.tags = task.tags
   if (task.reminder !== undefined) front.reminder = task.reminder
   if (task.recurrence !== undefined) front.recurrence = compactRecurrence(task.recurrence)
+  if (task.order !== undefined) front.order = task.order
   // Last, always: the known keys keep their fixed order so an unknown one cannot
   // reorder the file out from under the byte-stability rule above.
   for (const [key, value] of Object.entries(task.extra ?? {})) front[key] = value
@@ -165,7 +175,7 @@ export function parseTaskFile(text: string, path: string): Task {
   // are held to one vocabulary. Absent *and* null both mean "not set" — a key
   // written as `due:` with nothing after it is an empty field, not a malformed
   // one, and only a value that is present and wrong is worth interrupting for.
-  for (const key of ['due', 'priority', 'tags', 'reminder', 'recurrence'] as const) {
+  for (const key of ['due', 'priority', 'tags', 'reminder', 'recurrence', 'order'] as const) {
     const value = front[key]
     if (value === undefined || value === null) continue
     Object.assign(task, { [key]: PATCH_READERS[key]!(value) })
@@ -185,7 +195,15 @@ export function parseTaskFile(text: string, path: string): Task {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    'title' | 'status' | 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence' | 'description'
+    | 'title'
+    | 'status'
+    | 'due'
+    | 'priority'
+    | 'tags'
+    | 'reminder'
+    | 'recurrence'
+    | 'order'
+    | 'description'
   >
 >
 
@@ -230,6 +248,11 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     return v
   },
   recurrence: parseRecurrence,
+  // Lenient, like `reminder` and for the same reason: these readers are shared
+  // with `parseTaskFile`, so throwing here would take a hand-written
+  // `order: first` and break the whole task into the broken strip over a sort
+  // key. Junk reads as no rank, and no rank sorts last.
+  order: (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined),
   description: (v) => {
     if (typeof v !== 'string') throw new TaskFileError('description must be a string')
     return v
