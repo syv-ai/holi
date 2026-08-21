@@ -70,7 +70,7 @@ import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
 import { useGoogleAccount } from '../state/google'
-import { openTaskCountAtom, tickNowAtom, todayLinkCountAtom } from '../state/tasks'
+import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import { agentPanelOpenAtom } from '@/state/agent'
@@ -129,7 +129,6 @@ export function Shell() {
   const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
-  const todayLinkCount = useAtomValue(todayLinkCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
   // settings panel shares this atom rather than holding its own answer.
   const { account: googleAccount } = useGoogleAccount()
@@ -429,35 +428,18 @@ export function Shell() {
             )}
           </ResizablePanelGroup>
 
-          {/* Two rows, not one. Five chips across a sidebar this narrow made it
-              scroll horizontally — and `flex-1` alone could not fix that, since
-              a flex item's default `min-width: auto` refuses to shrink below its
-              text. `min-w-0` on each chip is what actually forbids the overflow;
-              the split is what keeps them legible rather than truncated. */}
+          {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
+              horizontally — and `flex-1` alone could not fix that, since a flex
+              item's default `min-width: auto` refuses to shrink below its text.
+              `min-w-0` on each chip is what actually forbids the overflow; the
+              split is what keeps them legible rather than truncated. There is
+              one fewer now: today's note is marked in the tree, where the file
+              is, rather than behind a chip naming something you could not see. */}
           {/* `mt-auto` keeps the chips on the floor of the sidebar now that the
               tree no longer fills it — the spare height collects here, between
               the apps list and the chips, instead of above the apps list. */}
           <div className="mt-auto flex shrink-0 flex-col gap-1.5 p-2">
             <div className="flex items-center gap-2">
-              <Tooltip content="today's daily note (⌘⇧D)">
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  className="min-w-0 flex-1 gap-1.5"
-                  // FR-6: opens today's daily (personal vaults only; the atom no-ops
-                  // otherwise). Also the empty-state recovery path — always here.
-                  onClick={() => void openDaily()}
-                >
-                  today
-                  {/* Open tasks linking to today's note (daily-notes §UX). Zero → no badge;
-                      in a shared vault nothing links to the daily path, so it stays hidden. */}
-                  {todayLinkCount > 0 && (
-                    <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
-                      {todayLinkCount}
-                    </span>
-                  )}
-                </Button>
-              </Tooltip>
               <Tooltip content={`task board — ${openTaskCount} open`}>
                 <Button
                   variant="secondary"

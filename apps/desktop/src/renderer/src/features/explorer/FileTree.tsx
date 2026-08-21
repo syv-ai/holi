@@ -21,6 +21,8 @@ import {
 import { useTree } from '@headless-tree/react'
 import { fileKind, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { todayDailyPathAtom } from '@/state/daily'
+import { todayLinkCountAtom } from '@/state/tasks'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ContextMenu,
@@ -95,6 +97,8 @@ export function FileTree({
   onOpenInNewPane: (path: string) => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
+  const todayDailyPath = useAtomValue(todayDailyPathAtom)
+  const todayLinkCount = useAtomValue(todayLinkCountAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
   const [showHiddenByVault, setShowHiddenByVault] = useAtom(showHiddenByVaultAtom)
@@ -491,13 +495,25 @@ export function FileTree({
                         }}
                       />
                     ) : (
-                      <span
-                        className={`min-w-0 flex-1 truncate ${
-                          task?.status === 'done' ? 'text-muted-foreground line-through' : ''
-                        }`}
-                      >
-                        {item.getItemName()}
-                      </span>
+                      <>
+                        <span
+                          className={`min-w-0 flex-1 truncate ${
+                            task?.status === 'done' ? 'text-muted-foreground line-through' : ''
+                          }`}
+                        >
+                          {item.getItemName()}
+                        </span>
+                        {/* Today's daily, marked where it lives rather than behind a
+                            chip that named a file you could not see (daily-notes §UX).
+                            Absent in a shared vault, because there is no daily there —
+                            the chip claimed otherwise and no-oped when pressed. */}
+                        {id === todayDailyPath && (
+                          <span className="shrink-0 rounded-full bg-brand/15 px-1.5 text-[10px] leading-4 text-brand">
+                            today
+                            {todayLinkCount > 0 && ` · ${todayLinkCount}`}
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </ContextMenuTrigger>

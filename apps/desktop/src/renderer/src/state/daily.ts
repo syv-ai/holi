@@ -8,8 +8,10 @@
  * on the result.
  */
 import { atom } from 'jotai'
+import { dailyNoteFilename } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { openPinned, workspaceAtom } from './panes'
+import { todayAtom } from './tasks'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /**
@@ -28,6 +30,17 @@ export async function isPersonalVault(remote: string): Promise<boolean> {
     return true
   }
 }
+
+/**
+ * The path today's daily note *would* have, whether or not it exists.
+ *
+ * A path rather than a lookup: the file tree marks the row that matches, so an
+ * absent daily simply marks nothing — which is the honest rendering in a shared
+ * vault, where there is never one (§Daily notes are personal-vault-only).
+ * `todayAtom` is the client's own local date, because nothing else computes
+ * "today" (`prd/daily-notes.md`).
+ */
+export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)))
 
 /**
  * Get-or-create today's daily for the active vault and land on it (FR-4).

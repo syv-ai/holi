@@ -21,7 +21,7 @@ What came across from the old repo: the well-tested **untouched-stub heuristic**
 - Exactly one daily note per day, including across your own devices.
 - Seed with `type: daily-note` frontmatter + title; treat an untouched stub as disposable.
 - Archive prior-day notes into `journal/` to keep the vault root uncluttered, rewriting `[[links]]` on the move.
-- Fast navigation: sidebar "Today", a keyboard shortcut, and a task-count badge.
+- Fast navigation: today's note **marked in the file tree**, a keyboard shortcut, and a task-count badge.
 - **Work offline, completely.** This is a change from the previous design and it is a straight improvement.
 
 **Non-goals**
@@ -37,7 +37,7 @@ What came across from the old repo: the well-tested **untouched-stub heuristic**
 - As a user, when I open my personal vault I land on today's daily note, ready to jot; if it already exists I get the **same** note, not a second copy.
 - As a user, an empty daily note I never wrote in doesn't pile up as clutter.
 - As a user, yesterday's note moves into `journal/` so my vault root stays clean, and links to it still resolve.
-- As a user, I can jump to today's note from the sidebar or a shortcut, and see how many open tasks reference it.
+- As a user, I can see which file is today's note in the tree and jump to it from there or by shortcut, and see how many open tasks reference it.
 - As a user on a plane, today's note is created anyway — because it's a file.
 
 ---
@@ -49,7 +49,7 @@ What came across from the old repo: the well-tested **untouched-stub heuristic**
 3. **Seed content** is `buildDailyNoteContent`'s: frontmatter `type: daily-note`, `date: YYYY-MM-DD`, then a `# DD-MM-YYYY` title heading matching the stem. **The seed must be byte-for-byte deterministic** for a given date — see [Idempotency](#idempotency).
 4. **Auto-create on open.** On personal-vault open, create the file if absent and navigate to it. Shared-vault open does **not** create a daily note.
 5. **Stub GC + archive** run on open (§ Archiving).
-6. **Navigation** surfaces (§ UX): sidebar "Today", shortcut, task-count badge.
+6. **Navigation** surfaces (§ UX): a `today` marker on the note's row in the tree, shortcut, task-count badge.
 
 ---
 
@@ -104,7 +104,7 @@ Port the old sweep's ergonomics: (a) **move** the prior-day root note into `jour
 ## UX / flows
 
 - **On personal-vault open:** create-if-absent → open the note → navigate to the editor. (Shared-vault open lands on the last-viewed surface, no daily note.)
-- **Sidebar "Today":** a dedicated entry (personal vault only) that opens today's daily note, creating it if needed.
+- **The tree marks today's note**, on the row the file actually occupies, with the open-task count beside it. It replaced a sidebar chip, and the reason is worth keeping: the chip named a file you could not see, sat a long way from it, and in a **shared vault** it was a control that did nothing at all — there is no daily note there to open. A marker on a row is absent in exactly that case, for free. **⌘⇧D still creates**, which matters because a marker cannot: it marks a file, and a file that does not exist has no row. In a personal vault that gap closes itself, since opening the vault creates the note (FR-4).
 - **Keyboard shortcut:** a global shortcut opens today's daily note.
 - **Task-count badge:** the "Today" entry shows a count of **open tasks that link to today's note** — a grep over task files for a wiki-link to the daily's path. Zero → no badge. **Linking-to, not due-today**, deliberately: the daily note is where you gather the day, so what belongs on it is what you have pointed at it. Due-today is a board question, and answering it here would put two different counts on two surfaces with no way to tell them apart. In a shared vault nothing links to the daily path, so the badge stays hidden.
 - **Empty-state recovery:** if the panes reach zero tabs, "Open today's daily note" remains the recovery CTA.
