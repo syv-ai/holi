@@ -11,6 +11,7 @@
  * split is the whole reason `lib/tab-drop.ts` exists.
  */
 import { act, fireEvent, render, screen } from '@/test/render'
+import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { TAB_MIME, parseTabPayload } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
@@ -47,10 +48,9 @@ const tabs: Tab[] = [
   { kind: 'note', path: 'notes/b.md' },
 ]
 
-/** `active={0}` is load-bearing: with nothing measurable, `tabWindow` reserves
- *  room for the "+N" control, finds that nothing fits, and falls back to a
- *  window of exactly one tab — the active one. So only the active pill is ever
- *  in the DOM here, which is another thing jsdom cannot show us. */
+/** Both pills are in the DOM: the strip lays every tab out and scrolls, so
+ *  nothing is conditionally rendered any more. They all measure 0×0, which is
+ *  what keeps the drop *index* out of these assertions. */
 function strip(onDropTab = vi.fn()) {
   render(
     <TabStrip
@@ -136,18 +136,22 @@ test('a drop carrying junk is ignored rather than guessed at', () => {
   expect(onDropTab).not.toHaveBeenCalled()
 })
 
-/* ── Auto-slide ──────────────────────────────────────────────────────────
+/* ── Auto-scroll, and the per-side counts ────────────────────────────────
  *
- * jsdom cannot *compute* layout, but a test can *supply* it. Stubbing the two
- * measurements the strip actually takes — `clientWidth` for the space it has and
- * `getBoundingClientRect` for each pill — is enough to make the window clip for
- * real, and what is under test here is the state machine, not the arithmetic:
- * does a hover at the edge advance, does the continuous `dragover` stream reset
- * the timer, does the window follow. The geometry itself is checked on numbers
- * in `test/tab-drop.test.ts`.
+ * jsdom cannot *compute* layout, but a test can *supply* it. Stubbing the four
+ * measurements the strip actually takes — `clientWidth` for the viewport,
+ * `getBoundingClientRect` for hit-testing, and `offsetLeft`/`offsetWidth` for
+ * where each pill sits in the scroll content — is enough to make the strip
+ * overflow for real. What is under test here is the wiring and the state
+ * machine, not the arithmetic: `test/tab-overflow.test.ts` owns which tabs are
+ * off which edge, and `test/tab-drop.test.ts` owns where a drop lands.
+ *
+ * `scrollLeft` needs supplying too. jsdom has no layout box, so scrolling an
+ * element is specified to do nothing at all and the property is permanently 0 —
+ * an own accessor on the host shadows it and records what the strip asks for.
  * ───────────────────────────────────────────────────────────────────── */
 
-/** Five tabs, 60px each, in a 200px strip — so only two fit and three are hidden. */
+/** Five tabs, 60px each, in a 200px strip: three fit, two hang off the right. */
 const manyTabs: Tab[] = ['a.md', 'b.md', 'c.md', 'd.md', 'e.md'].map((name) => ({
   kind: 'note',
   path: `notes/${name}`,
@@ -159,6 +163,8 @@ const STRIP_WIDTH = 200
 function withFakeLayout(): () => void {
   const rect = HTMLElement.prototype.getBoundingClientRect
   const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')
+  const offsetLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetLeft')
+  const offsetWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth')
 
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
     const box = {
@@ -177,105 +183,211 @@ function withFakeLayout(): () => void {
     configurable: true,
     get: () => STRIP_WIDTH,
   })
+  // Only the pills have a place in the scroll content; `draggable` is what marks
+  // one, and their order in the host is their order in the strip.
+  const pillIndex = (el: HTMLElement): number =>
+    el.parentElement === null
+      ? -1
+      : [...el.parentElement.querySelectorAll('[draggable]')].indexOf(el)
+  Object.defineProperty(HTMLElement.prototype, 'offsetLeft', {
+    configurable: true,
+    get(this: HTMLElement) {
+      const i = this.hasAttribute('draggable') ? pillIndex(this) : -1
+      return i < 0 ? 0 : i * PILL_WIDTH
+    },
+  })
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.hasAttribute('draggable') ? PILL_WIDTH : 0
+    },
+  })
 
   return () => {
     HTMLElement.prototype.getBoundingClientRect = rect
-    if (clientWidth !== undefined) {
-      Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
-    }
+    if (clientWidth !== undefined) Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
+    if (offsetLeft !== undefined) Object.defineProperty(HTMLElement.prototype, 'offsetLeft', offsetLeft)
+    if (offsetWidth !== undefined)
+      Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidth)
   }
 }
 
-/** With every pill 60px wide the host's stubbed rect is 60 too, so anything past
- *  its midpoint is inside the 28px right-hand band. */
+/** Give the host a `scrollLeft` that remembers, and read it back. */
+function trackScroll(host: HTMLElement): () => number {
+  let value = 0
+  Object.defineProperty(host, 'scrollLeft', {
+    configurable: true,
+    get: () => value,
+    set: (next: number) => {
+      value = next
+    },
+  })
+  return () => value
+}
+
+/** With every stubbed rect 60px wide, anything past its midpoint is inside the
+ *  28px right-hand band. */
 const AT_RIGHT_EDGE = 50
 
-test('hovering the clipped edge slides the window to reach a hidden position', () => {
+function manyStrip(onSelect = vi.fn()) {
+  render(
+    <TabStrip
+      tabs={manyTabs}
+      active={0}
+      onSelect={onSelect}
+      onPin={() => {}}
+      onClose={() => {}}
+      onDropTab={vi.fn()}
+    />,
+  )
+  return { onSelect, host: screen.getByTestId('tab-strip') }
+}
+
+/** A `dragover` at the strip's right-hand edge, carrying a tab. */
+function hoverRightEdge(host: HTMLElement, dataTransfer: FakeDataTransfer): void {
+  const event = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+  Object.defineProperty(event, 'clientX', { value: AT_RIGHT_EDGE })
+  fireEvent(host, event)
+}
+
+const tabDrag = () => {
+  const dataTransfer = new FakeDataTransfer()
+  dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
+  return dataTransfer
+}
+
+test('hovering an end scrolls the strip, and the first step lands immediately', () => {
   const restore = withFakeLayout()
   vi.useFakeTimers()
   try {
-    render(
-      <TabStrip
-        tabs={manyTabs}
-        active={0}
-        onSelect={() => {}}
-        onPin={() => {}}
-        onClose={() => {}}
-        onDropTab={vi.fn()}
-      />,
-    )
-    // Two of five fit, and the active tab anchors the window to the left.
-    expect(screen.getByText('a.md')).toBeInTheDocument()
-    expect(screen.queryByText('c.md')).not.toBeInTheDocument()
+    const { host } = manyStrip()
+    const scrollLeft = trackScroll(host)
+    const dataTransfer = tabDrag()
 
-    const host = screen.getByTestId('tab-strip')
-    const dataTransfer = new FakeDataTransfer()
-    dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
-
-    const hover = () => {
-      const event = new Event('dragover', { bubbles: true, cancelable: true })
-      Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
-      Object.defineProperty(event, 'clientX', { value: AT_RIGHT_EDGE })
-      fireEvent(host, event)
-    }
-
-    // Arriving at the edge steps once immediately, rather than doing nothing for
-    // a full interval first.
-    act(() => hover())
-    expect(screen.getByText('c.md')).toBeInTheDocument()
-    expect(screen.queryByText('a.md')).not.toBeInTheDocument()
+    // Arriving at the edge steps once, rather than doing nothing for a whole
+    // interval first.
+    act(() => hoverRightEdge(host, dataTransfer))
+    const afterFirst = scrollLeft()
+    expect(afterFirst).toBeGreaterThan(0)
 
     // `dragover` fires continuously. A second one at the same edge must NOT
-    // re-arm: restarting the timer on every event would reset it forever and the
-    // strip would freeze one step from where it started.
-    act(() => hover())
-    // Still showing b+c. If the second hover had re-armed, it would have stepped
-    // again and the window would be c+d — which is why this asserts the tab that
-    // would have been dropped, not the one that survives either way.
-    expect(screen.getByText('b.md')).toBeInTheDocument()
+    // re-arm: restarting the interval on each event would reset it forever and
+    // the strip would freeze one step from where it started.
+    act(() => hoverRightEdge(host, dataTransfer))
+    expect(scrollLeft()).toBe(afterFirst)
 
-    act(() => void vi.advanceTimersByTime(400))
-    expect(screen.getByText('d.md')).toBeInTheDocument()
-    expect(screen.queryByText('b.md')).not.toBeInTheDocument()
+    act(() => void vi.advanceTimersByTime(200))
+    expect(scrollLeft()).toBeGreaterThan(afterFirst)
   } finally {
     vi.useRealTimers()
     restore()
   }
 })
 
-test('the slide stops when the drag leaves, and takes its timer with it', () => {
+test('the scroll stops when the drag leaves, and takes its timer with it', () => {
   const restore = withFakeLayout()
   vi.useFakeTimers()
   try {
-    render(
-      <TabStrip
-        tabs={manyTabs}
-        active={0}
-        onSelect={() => {}}
-        onPin={() => {}}
-        onClose={() => {}}
-        onDropTab={vi.fn()}
-      />,
-    )
-    const host = screen.getByTestId('tab-strip')
-    const dataTransfer = new FakeDataTransfer()
-    dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
+    const { host } = manyStrip()
+    const scrollLeft = trackScroll(host)
 
-    const event = new Event('dragover', { bubbles: true, cancelable: true })
-    Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
-    Object.defineProperty(event, 'clientX', { value: AT_RIGHT_EDGE })
-    act(() => void fireEvent(host, event))
-    expect(screen.getByText('c.md')).toBeInTheDocument()
+    act(() => hoverRightEdge(host, tabDrag()))
+    const moved = scrollLeft()
+    expect(moved).toBeGreaterThan(0)
 
     // `relatedTarget` outside the host is a real leave, not a child crossing.
     act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
 
-    // The window is back on the active tab, and no timer is still running.
-    expect(screen.getByText('a.md')).toBeInTheDocument()
     act(() => void vi.advanceTimersByTime(2000))
-    expect(screen.getByText('a.md')).toBeInTheDocument()
+    expect(scrollLeft()).toBe(moved)
   } finally {
     vi.useRealTimers()
+    restore()
+  }
+})
+
+test('a vertical wheel scrolls the strip sideways', () => {
+  // A mouse without a horizontal wheel would otherwise have no gesture at all,
+  // and there is nothing to scroll vertically in a one-line row.
+  const restore = withFakeLayout()
+  try {
+    const { host } = manyStrip()
+    const scrollLeft = trackScroll(host)
+
+    fireEvent.wheel(host, { deltaY: 120, deltaX: 0 })
+
+    expect(scrollLeft()).toBe(120)
+  } finally {
+    restore()
+  }
+})
+
+test('tabs past an edge are counted on the side they went', () => {
+  const restore = withFakeLayout()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+
+    // 200px of viewport holds three 60px pills; d.md and e.md hang off the
+    // right, and nothing has scrolled off the left yet.
+    // By ROLE, not by label: both controls are always in the DOM so that they
+    // can fade rather than blink, and the empty one is `aria-hidden`. A role
+    // query respects that, which is the same question a user's eyes ask.
+    expect(screen.getByRole('button', { name: '2 tabs off the right' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /off the left/ })).toBeNull()
+
+    // Scroll two pills' worth: a.md and b.md are now behind you, and everything
+    // else fits ahead.
+    host.scrollLeft = 2 * PILL_WIDTH
+    act(() => void fireEvent.scroll(host))
+
+    expect(screen.getByRole('button', { name: '2 tabs off the left' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /off the right/ })).toBeNull()
+  } finally {
+    restore()
+  }
+})
+
+test('a count that empties fades out instead of being ripped out of the row', () => {
+  // The bug this pins: reaching the end of a scroll used to unmount the count
+  // on a single frame, and because it sat in the flex row, removing it handed
+  // ~24px back to the viewport and re-laid every pill out mid-scroll. It is now
+  // out of the layout and always mounted, so what happens is a fade.
+  const restore = withFakeLayout()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+    expect(screen.getByRole('button', { name: '2 tabs off the right' })).toBeInTheDocument()
+
+    // Scroll to the far end: nothing is off the right any more.
+    host.scrollLeft = 100
+    act(() => void fireEvent.scroll(host))
+
+    // Gone to the eye and to the accessibility tree...
+    expect(screen.queryByRole('button', { name: /off the right/ })).toBeNull()
+    // ...but still in the DOM, still saying what it said, so it has something to
+    // fade *out*. A blank pill fading away reads as the same glitch.
+    expect(document.querySelector('[aria-label="2 tabs off the right"]')).not.toBeNull()
+  } finally {
+    restore()
+  }
+})
+
+test('picking a tab from an overflow menu selects it', async () => {
+  const restore = withFakeLayout()
+  try {
+    const user = userEvent.setup()
+    const { host, onSelect } = manyStrip()
+    trackScroll(host)
+
+    await user.click(screen.getByRole('button', { name: '2 tabs off the right' }))
+    await user.click(await screen.findByRole('menuitem', { name: /e\.md/ }))
+
+    // The last of five, by absolute index — the menu lists what is off the edge,
+    // and its entries have to point at the tab they name.
+    expect(onSelect).toHaveBeenCalledWith(4)
+  } finally {
     restore()
   }
 })

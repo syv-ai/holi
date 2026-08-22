@@ -192,13 +192,12 @@ Three rules are its own:
   reach it teaches nobody that a drag can split the view — the gesture would be one you either
   already knew or never found.
 
-**A clipped drop position is still reachable.** The strip only slides its window for the active tab,
-so "move this to position 9 of 12" would otherwise be inexpressible. Hovering a drag at either end
-slides the window one tab per tick — no new windowing logic, because `tab-window.ts`'s third rule is
-already *"this index must stay visible"* and a drag simply substitutes its own index for the
-selection's.
+**An off-screen drop position is still reachable.** The wheel is not available while a drag is in
+flight, so "move this to position 9 of 12" would otherwise be inexpressible. Hovering a drag within
+28px of either end auto-scrolls the strip that way — 12px every 16ms, about a second to cross a full
+strip, and it stops the moment the pointer leaves the band or the drag ends.
 
-**Where a drop lands is arithmetic**, in `lib/tab-drop.ts`, for the same reason `tab-window.ts` is:
+**Where a drop lands is arithmetic**, in `lib/tab-drop.ts`, for the same reason `lib/tab-overflow.ts` is:
 jsdom computes no layout, so logic that hit-tests inside a component cannot be tested at all. It
 also owns the `DataTransfer` codec — a **custom MIME type**, because `getData` is unreadable during
 `dragover` by spec and the type name is therefore the only question a target may ask mid-drag; and a
@@ -211,26 +210,46 @@ ordinary move that does collapse the pane it came from.
 **Not built:** dragging a tab out to a new window, dragging between vaults, and any vertical split —
 the pane model has one axis and this did not add another.
 
-### The strip clips, and says what it hid
+### The strip scrolls, and says what is off each edge
 
 The strip was a bare flex row until 2026-08-20, and flex items do not shrink below their content —
 so opening more tabs than fit between the sidebars grew the row, and the row grew the editor pane
 past the window, indefinitely, with nothing on screen to say a tab had gone anywhere.
 
-The clip is CSS (`min-w-0` **and** `overflow-hidden`: on a flex child that cannot shrink,
-`overflow-hidden` clips nothing). **Which** tabs survive it is a decision, and it lives in
-`lib/tab-window.ts` — pure, so it is tested against numbers rather than against a rendered strip
-whose widths depend on a font that may not have loaded. Three rules, in order:
+The first fix was a **window**: render only the pills that fit, hide the rest behind one `+N`
+(`lib/tab-window.ts`). It clipped correctly and read wrongly. A single count cannot say *which way*
+your tab went, no gesture scrolled the strip, and "the window slides for the active tab" is a rule
+you have to know before the strip makes sense. It was replaced on 2026-08-22 and the module deleted.
 
-1. **Everything fits → everything shows**, with nothing reserved for a control that will not be
-   drawn.
-2. **Fill from the left.** The order is the user's own history of opening them.
-3. **The active tab always survives.** Only when it falls outside the left-anchored run does the
-   window slide right — what a scrolling strip does, without the scrolling. A pane rendering a
-   document whose tab is nowhere on screen reads as a broken editor, not as a full strip.
+**The strip is now a scroll container.** Every pill is laid out inside an `overflow-x-auto` viewport
+(`min-w-0` is still load-bearing: without it the flex child refuses to shrink and grows the pane
+instead of scrolling). A **vertical wheel scrolls it sideways**, because a mouse without a
+horizontal wheel would otherwise have no gesture at all and there is nothing to scroll vertically in
+a one-line row; a trackpad's horizontal delta is left to the browser. The scrollbar is hidden — the
+strip is 44px tall and a permanent bar would eat a third of a pill.
 
-What is hidden is **counted and reachable**: `+2` opens a menu of the tabs on both sides of the
-window, and picking one slides the window onto it.
+**What is out of reach is counted per side.** `lib/tab-overflow.ts` — pure, tested on numbers, since
+jsdom computes no layout — answers *which tabs are off which edge* at the current scroll position,
+and each side draws its own control: a chevron pointing that way and a count. Clicking one opens a
+menu of exactly that side's tabs, and picking one selects it **and** scrolls it into view (selecting
+alone moves nothing when the tab you scrolled away from is already the active one). Three rules
+worth stating:
+
+1. **Partly visible counts as offscreen.** The count answers "is there more that way, and how
+   much"; half a filename answers neither.
+2. **An unmeasured strip announces nothing.** Before the first `ResizeObserver` callback the
+   viewport is 0 and every pill would score as missing — a count that flashes on mount.
+3. **The active tab is scrolled into view when it changes**, keyed on the tab's identity rather
+   than its index, so a reorder does not yank the scroll back just as you dropped something
+   somewhere else.
+
+**The counts float over the strip's edges, and both are always mounted.** Two halves of one fix:
+in the flex row, a count that emptied at the end of a scroll gave ~24px back to the viewport and
+re-laid every pill out mid-gesture; and unmounting it made it blink out on a single frame. Out of
+the layout it can shift nothing, and always mounted it can fade (160ms, `--ease-settle`) — showing
+its **last non-empty number** while it goes, because a blank pill fading away reads as the same
+glitch. While invisible it is `aria-hidden` and out of the tab order. A gradient in `--background`
+sits under each one so a pill scrolling beneath stays legible instead of colliding with the number.
 
 ### Frontmatter reveal control
 

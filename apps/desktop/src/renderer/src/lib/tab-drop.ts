@@ -6,8 +6,8 @@
  * every `getBoundingClientRect` is `0×0` — `test/setup.dom.ts` says so at length
  * and parks the resizable handles at (10000, 10000) to keep clicks working
  * around it. So the arithmetic lives here, takes numbers, and is checked on
- * numbers. It is the same split `tab-window.ts` made one file over: clipping is
- * a stylesheet's job, deciding *what* survives the clip is not.
+ * numbers. It is the same split `tab-overflow.ts` makes: scrolling is a
+ * stylesheet's job, deciding what has scrolled out of reach is not.
  *
  * The components read rectangles and dispatch. That is all they do.
  */
@@ -33,9 +33,11 @@ const EDGE_MAX_PX = 120
 /** The band at each end of a strip that arms auto-slide. */
 const SLIDE_BAND_PX = 28
 
-/** How long the strip waits between sliding one tab further under a drag. Fast
- *  enough to cross a full strip, slow enough to stop on the one you want. */
-export const SLIDE_MS = 350
+/** Auto-scroll while a drag hovers an end of the strip: how far each tick moves
+ *  it, and how often. 12px every 16ms is ~750px/s — fast enough to cross a full
+ *  strip in about a second, slow enough to stop on the position you want. */
+export const AUTOSCROLL_PX = 12
+export const AUTOSCROLL_MS = 16
 
 /** A rendered pill: where it is, and which tab it actually is. */
 export interface PillBox {
@@ -48,16 +50,14 @@ export interface PillBox {
 /**
  * The absolute index a drop at `x` should insert before.
  *
- * `pills` are the **visible** pills, in order, carrying their absolute indices.
- * That distinction is the whole reason this takes `PillBox` rather than a plain
- * width array: the strip renders a *window* (`tab-window.ts`), so the leftmost
- * pill is very often not tab 0, and a caret computed against the rendered offset
- * reorders a different tab than the one under the pointer.
+ * `pills` are the laid-out pills, in order, carrying their absolute indices —
+ * `PillBox` rather than a plain width array because a scrolled strip's leftmost
+ * pill is very often not tab 0, and an index computed from the rendered offset
+ * would reorder a different tab than the one under the pointer.
  *
- * Past the last pill this returns `lastVisible + 1` — *after that pill*, which
- * is not the same as "the end of the strip" when tabs are hidden beyond it. The
- * caret is where the caret is, and this function is deliberately never told how
- * many tabs exist.
+ * Past the last pill this returns `last.index + 1`. This function is
+ * deliberately never told how many tabs exist: the answer is where the pointer
+ * is, and the caller owns the clamping.
  */
 export function dropIndex(pills: PillBox[], x: number): number {
   for (const pill of pills) {
@@ -88,10 +88,10 @@ export function paneDropZone(rect: { left: number; width: number }, x: number): 
 /**
  * Which end of the strip a drag is hovering, or null in the middle.
  *
- * This is what makes a clipped drop position reachable at all: the strip only
- * slides its window for the *active* tab, so without it "move this to position 9
- * of 12" is not expressible. On a strip narrower than two bands the left one
- * wins, which is harmless — sliding left from the left end is already a no-op.
+ * This is what makes an off-screen drop position reachable at all: the wheel is
+ * not available while a drag is in flight, so without it "move this to position
+ * 9 of 12" is not expressible. On a strip narrower than two bands the left one
+ * wins, which is harmless — scrolling left from the left end is already a no-op.
  */
 export function stripEdge(
   rect: { left: number; width: number },
