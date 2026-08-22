@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('holi', {
    *  for a round trip. */
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
   showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
+  /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
+  chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('holi:chooseFolder'),
   agent: {
     onData: onAgentData,
     onExit: onAgentExit,

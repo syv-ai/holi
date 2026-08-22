@@ -57,6 +57,8 @@ declare global {
        *  defaulting to `defaultName` under Downloads; resolves to the chosen
        *  absolute path, or null if the user cancelled. */
       showSaveDialog(defaultName: string): Promise<string | null>
+      /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
+      chooseFolder(): Promise<string | null>
       /**
        * The vault agent — a live Claude Code session in the drawer. A byte
        * stream, not tRPC: PTY output and status are pushed (`onData`/`onExit`/

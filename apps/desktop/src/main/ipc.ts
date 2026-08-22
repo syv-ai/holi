@@ -86,4 +86,20 @@ export function registerIpc(deps: { router: AnyRouter }): void {
       return result.canceled || result.filePath === undefined ? null : result.filePath
     },
   )
+
+  /**
+   * Pick a folder on disk — where Copy to Folder… / Move to Folder… land
+   * (FR-13). A folder rather than a save sheet because the same action serves a
+   * single file, a multi-selection and a folder target, and the last two have
+   * no single name to type. `createDirectory` so a destination can be made in
+   * the sheet; tied to the calling window so it is a sheet, not a floating
+   * dialog — the same shape as the save sheet above.
+   */
+  ipcMain.handle('holi:chooseFolder', async (event): Promise<string | null> => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const opts = { properties: ['openDirectory' as const, 'createDirectory' as const] }
+    const result = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    // `filePaths[0]` is `string | undefined` under noUncheckedIndexedAccess.
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
 }
