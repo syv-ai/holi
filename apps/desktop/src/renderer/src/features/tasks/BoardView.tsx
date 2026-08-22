@@ -188,7 +188,7 @@ function QuickAdd({
         }
       }}
       placeholder="task title"
-      className="h-auto border-transparent bg-transparent px-1 py-0.5 text-xs shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+      className="h-auto border-transparent bg-transparent px-1 py-0.5 text-xs shadow-none hover:border-input focus-visible:border-ring"
     />
   )
 }

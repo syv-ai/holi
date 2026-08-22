@@ -108,7 +108,7 @@ function TaskFileBody({ task, onEdit }: { task: Task; onEdit?: () => void }): Re
         data-task-file-title
         onChange={(e) => setTitle(e.target.value)}
         onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-        className="mb-1 h-auto border-transparent bg-transparent px-1 py-0.5 text-lg font-semibold shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+        className="mb-1 h-auto border-transparent bg-transparent px-1 py-0.5 text-lg font-semibold shadow-none hover:border-input focus-visible:border-ring"
       />
 
       {/* Path/lane, read-only — moving the file rewrites inbound links, which is the

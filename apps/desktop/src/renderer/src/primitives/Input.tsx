@@ -12,7 +12,7 @@ const inputVariants = cva(
       variant: {
         // The stock shadcn field.
         default:
-          "h-9 rounded-md border border-input px-3 py-1 text-base shadow-xs file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground md:text-sm dark:bg-input/30 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
+          "h-9 rounded-md border border-input px-3 py-1 text-base shadow-xs file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground md:text-sm dark:bg-input/30 focus-visible:border-ring aria-invalid:border-destructive",
         // Onboarding ritual: the giant serif vault-name display input.
         display:
           "border-0 p-0 text-center text-[80px] font-medium leading-[1.05] tracking-[-0.028em] [font-family:'Fraunces',serif] [font-variation-settings:'opsz'_144,'SOFT'_50]",

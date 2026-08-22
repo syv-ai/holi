@@ -192,7 +192,7 @@ export function TaskTagsRow({
         defaultValue={task.tags.join(', ')}
         key={`${task.path}:tags`}
         placeholder="comma, separated"
-        className="h-auto border-transparent bg-transparent px-1 py-0.5 text-right text-xs shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+        className="h-auto border-transparent bg-transparent px-1 py-0.5 text-right text-xs shadow-none hover:border-input focus-visible:border-ring"
         // Commit on Enter as well as blur: an input that only saves when you
         // click away reads as broken, because typing then looking at the card
         // shows nothing. Enter blurs, which runs the same save.
@@ -266,7 +266,7 @@ export function TaskDetail({ task }: { task: Task }): React.JSX.Element {
             e.currentTarget.blur()
           }}
           onBlur={() => title.trim() && title !== task.title && save({ title: title.trim() })}
-          className="min-h-0 min-w-0 flex-1 resize-none border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring focus-visible:ring-0"
+          className="min-h-0 min-w-0 flex-1 resize-none border-transparent bg-transparent px-1 py-0.5 text-sm font-medium shadow-none hover:border-input focus-visible:border-ring"
         />
         <Tooltip content="close">
           <Button variant="ghost" size="icon-xs" onClick={() => close(null)} aria-label="close">
