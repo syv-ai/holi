@@ -46,18 +46,7 @@ export const pathTaken = (paths: Iterable<string>, path: string): boolean => {
 }
 
 /** The first non-colliding `… copy` / `… copy N` name for `path` (VS Code's
- *  Duplicate). Collision is asked of `taken`, so it works for a file (suffix
- *  before the extension) and a folder (suffix on the bare name) alike. */
-export const freeCopyPath = (taken: (p: string) => boolean, path: string): string => {
-  if (!taken(path)) return path
-  const base = basename(path)
-  const dir = parentOf(path)
-  const dot = base.lastIndexOf('.')
-  const stem = dot > 0 ? base.slice(0, dot) : base
-  const ext = dot > 0 ? base.slice(dot) : ''
-  for (let n = 1; n < 1000; n++) {
-    const candidate = joinPath(dir, `${stem}${n === 1 ? ' copy' : ` copy ${n}`}${ext}`)
-    if (!taken(candidate)) return candidate
-  }
-  return path
-}
+ *  Duplicate). Re-exported so the tree's own imports stay local; the rule now
+ *  lives in `@holi/shared` because main applies it too, to a real directory on
+ *  disk (`export-files.ts`), and the two must pick the same names. */
+export { freeCopyPath } from '@holi/shared'
