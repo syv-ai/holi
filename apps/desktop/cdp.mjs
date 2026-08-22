@@ -1,4 +1,10 @@
 // Drive the running Holi window over CDP.
+//
+// Needs the app started with the debugging port open, which `pnpm dev:debug`
+// does (from the root or from apps/desktop) — plain `pnpm dev` does not, and
+// then everything here answers ECONNREFUSED. Port 9333 is hardcoded below and
+// in that script; the two have to agree.
+//
 //   node cdp.mjs '<js expression>'   evaluate in the renderer
 //   node cdp.mjs --focus             bring the window to front (fires BrowserWindow 'focus')
 //   node cdp.mjs --type '<text>'     insert text as real input at the caret

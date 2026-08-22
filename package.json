@@ -6,6 +6,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @holi/desktop dev",
+    "dev:debug": "pnpm --filter @holi/desktop dev:debug",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm --filter @holi/desktop exec eslint \"src/renderer/src/**/*.{ts,tsx}\"",
