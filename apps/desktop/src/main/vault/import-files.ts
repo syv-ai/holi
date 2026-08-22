@@ -36,6 +36,27 @@ const REASONS: Record<string, string> = {
   EISDIR: 'folders are not imported yet',
   EPERM: 'folders are not imported yet',
   EACCES: 'no permission to read it',
+  // A local copy cannot time out. `ETIMEDOUT` means the bytes are not on this
+  // Mac and the filesystem went to fetch them — a Google Drive or iCloud mirror
+  // holding a placeholder, or a network share. Measured from a real drop: a PDF
+  // in a Google Drive mirror, 2026-08-22. Shown as a code it reads like a fault
+  // in Holi; it is a fact about the file, and the person can fix it in Finder.
+  ETIMEDOUT: 'not downloaded to this Mac yet',
+}
+
+/**
+ * The sentence shown for a failed copy.
+ *
+ * Split out from the loop because a timeout cannot be manufactured on disk —
+ * the mapping is the part worth testing, and it is a pure decision about a
+ * code. Anything unmapped CARRIES its code rather than being paraphrased away:
+ * "could not be copied" tells the person only that the thing they watched not
+ * happen did not happen, which is nothing to act on and nothing to report.
+ */
+export function reasonFor(code: string | undefined): string {
+  const known = REASONS[code ?? '']
+  if (known !== undefined) return known
+  return code ? `could not be copied (${code})` : 'could not be copied'
 }
 
 export async function importFiles(
@@ -57,18 +78,7 @@ export async function importFiles(
       await copyFile(source, abs, 1 /* fs.constants.COPYFILE_EXCL */)
       imported.push(rel)
     } catch (err) {
-      // An unmapped code is CARRIED, not paraphrased away. "could not be
-      // copied" on its own tells the person only that the thing they watched
-      // not happen did not happen — nothing to act on, and nothing to report
-      // to whoever could fix it. The map covers the failures a person causes;
-      // the code covers the ones nobody predicted, which is the whole reason
-      // for having a fallback at all.
-      const code = (err as NodeJS.ErrnoException).code
-      const known = REASONS[code ?? '']
-      skipped.push({
-        name,
-        reason: known ?? (code ? `could not be copied (${code})` : 'could not be copied'),
-      })
+      skipped.push({ name, reason: reasonFor((err as NodeJS.ErrnoException).code) })
     }
   }
   return { imported, skipped }

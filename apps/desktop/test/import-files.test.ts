@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
-import { importFiles } from '../src/main/vault/import-files'
+import { importFiles, reasonFor } from '../src/main/vault/import-files'
 
 const dirs: string[] = []
 afterAll(async () => {
@@ -83,6 +83,20 @@ describe('importFiles', () => {
     expect(result.skipped).toEqual([
       { name: 'a-folder', reason: 'folders are not imported yet' },
     ])
+  })
+
+  it('says so when the source has not been downloaded to this Mac', () => {
+    // Measured, from a real drop: a PDF in a Google Drive mirror answers
+    // ETIMEDOUT. A local copy cannot time out — the errno is the giveaway that
+    // the bytes are not here and the filesystem went to fetch them. Left as a
+    // bare code it reads like a fault in Holi; it is a fact about the file.
+    expect(reasonFor('ETIMEDOUT')).toBe('not downloaded to this Mac yet')
+  })
+
+  it('carries an unmapped code rather than paraphrasing it away', () => {
+    expect(reasonFor('EIO')).toBe('could not be copied (EIO)')
+    // An error with no `code` at all is the one case with nothing to add.
+    expect(reasonFor(undefined)).toBe('could not be copied')
   })
 
   it('names the errno for a failure nobody predicted', async () => {
