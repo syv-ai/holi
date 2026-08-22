@@ -30,8 +30,7 @@ export interface VaultEntry {
  *
  * `kind` is derived from the file's own frontmatter (`type: daily-note`), never
  * from its filename: a hand-authored note that merely looks like a date must not
- * be swept as a system-created daily. `icon` follows the same rule for the same
- * reason — it belongs to the note, so it survives any move, by Holi or not.
+ * be swept as a system-created daily.
  */
 export interface DocMeta {
   /** Vault-relative, '/'-separated. */
@@ -39,10 +38,6 @@ export interface DocMeta {
   kind: DocKind
   /** File mtime, ISO. There is no createdAt — git history is the record of that. */
   updatedAt: string
-  /** A single emoji the note names in its own frontmatter (`icon: 🎯`), shown in
-   *  the tree in place of the type glyph. Absent unless the note declares one
-   *  and it is valid — see `noteIcon`. */
-  icon?: string
 }
 
 /** A non-markdown file the vault carries (spec §Arbitrary files). Not a note —
@@ -155,10 +150,9 @@ export interface VaultSnapshot {
    *  files are tasks, or hidden) or it is empty but for a `.gitkeep`. Git tracks
    *  no empty directory; the keep-file is what makes an empty one survive a clone. */
   dirs: string[]
-  /** `.holi/icons.json` resolved: vault-relative path → a single emoji, for the
-   *  things that cannot carry an icon in frontmatter — folders, non-markdown
-   *  files, and the agent-surface files where frontmatter would be prompt text.
-   *  A note's own `DocMeta.icon` outranks an entry here. */
+  /** `.holi/icons.json` resolved: vault-relative path → a single emoji, and the
+   *  only place an icon lives. Covers notes, folders and binaries alike, which
+   *  is why a note's frontmatter is NOT a second source (see `icon-map.ts`). */
   icons: Record<string, string>
 }
 

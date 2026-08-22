@@ -35,7 +35,7 @@ describe('resolveIconMap', () => {
     expect(warnings).toHaveLength(3)
   })
 
-  it('accepts the emoji spellings a picker produces, exactly as noteIcon does', () => {
+  it('accepts the emoji spellings a picker produces', () => {
     const { icons } = resolveIconMap(json({ a: '⭐️', b: '❤️', c: '⚙', d: '👩‍💻' }), null)
     expect(Object.keys(icons)).toEqual(['a', 'b', 'c', 'd'])
   })
@@ -68,6 +68,61 @@ describe('resolveIconMap', () => {
   it('says what it dropped, so a typo is findable', () => {
     const { warnings } = resolveIconMap(json({ 'a.md': 'nope' }), null)
     expect(warnings[0]).toContain('a.md')
+  })
+})
+
+describe('what counts as an emoji', () => {
+  const v = (emoji: string) => resolveIconMap(json({ 'a.md': emoji }), null).icons['a.md']
+
+  it('accepts the plain single-codepoint emoji', () => {
+    expect(v('🎯')).toBe('🎯')
+    expect(v('🫶')).toBe('🫶')
+  })
+
+  it('accepts the composed forms a picker or keyboard produces', () => {
+    // One grapheme each, several codepoints: skin tone, ZWJ, flag, keycap.
+    expect(v('👍🏽')).toBe('👍🏽')
+    expect(v('👩‍💻')).toBe('👩‍💻')
+    expect(v('🇩🇰')).toBe('🇩🇰')
+    expect(v('#️⃣')).toBe('#️⃣')
+  })
+
+  /**
+   * The macOS picker appends U+FE0F to emoji that already default to emoji
+   * presentation, and `RGI_Emoji` does not contain those sequences — it lists
+   * `\u2b50`, never `\u2b50\ufe0f`. Picking a star from the palette produced a
+   * value that was silently refused, and the row kept its plain glyph.
+   */
+  it('accepts the redundant variation selector a picker adds', () => {
+    expect(v('\u2b50\ufe0f')).toBe('\u2b50\ufe0f')
+    expect(v('\u2705\ufe0f')).toBe('\u2705\ufe0f')
+  })
+
+  it('still accepts the forms where the selector is required, not redundant', () => {
+    // Text-presentation by default: RGI has the VS16 form only, and stripping
+    // it would leave a dingbat that is not an emoji at all.
+    expect(v('\u2764\ufe0f')).toBe('\u2764\ufe0f')
+    expect(v('\u25b6\ufe0f')).toBe('\u25b6\ufe0f')
+  })
+
+  it('accepts a pictograph written without its selector', () => {
+    // RGI is strictly right that a bare text-presentation character is not an
+    // emoji — but it looks like one to whoever typed it, and copying a symbol
+    // out of a web page is enough to land here.
+    expect(v('\u2764')).toBe('\u2764')
+    expect(v('\u2699')).toBe('\u2699')
+    expect(v('\u{1f5d3}')).toBe('\u{1f5d3}')
+  })
+
+  it('stores the emoji exactly as written, never re-normalized', () => {
+    expect(v('\u2b50')).toBe('\u2b50')
+    expect(v('\u2b50\ufe0f')).toBe('\u2b50\ufe0f')
+  })
+
+  it('refuses anything that is not one emoji', () => {
+    for (const bad of ['A', '7', 'rocket', '🎯🎯', '', '🎯 Roadmap', '→', '①', '日', 'A\ufe0f', '\ufe0f']) {
+      expect(v(bad)).toBeUndefined()
+    }
   })
 })
 

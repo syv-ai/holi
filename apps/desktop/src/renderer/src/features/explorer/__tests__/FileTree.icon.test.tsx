@@ -1,8 +1,9 @@
 /**
- * A note's own frontmatter emoji replaces its type glyph in the tree (FR-12b).
+ * `.holi/icons.json` decorates a tree row (D82).
  *
- * The snapshot carries the icon (`noteIcon` derives it during the scan), so the
- * tree stays a pure projection — there is no icon state here to get out of sync.
+ * The snapshot carries the resolved map, so the tree stays a pure projection —
+ * there is no icon state here to get out of sync, and one source means no
+ * precedence to test.
  */
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -19,14 +20,14 @@ vi.mock('../../../lib/trpc', () => ({
 }))
 
 function tree(
-  docs: { path: string; icon?: string }[],
+  docs: string[],
   extra: { icons?: Record<string, string>; dirs?: string[]; files?: string[] } = {},
 ) {
   store.set(activeRemoteAtom, REMOTE)
   store.set(vaultsAtom, [{ remote: REMOTE, path: '/vault' } as never])
   store.set(snapshotAtom, {
     ...EMPTY,
-    docs: docs.map((d) => ({ ...d, kind: 'note' as const, updatedAt: '' })),
+    docs: docs.map((path) => ({ path, kind: 'note' as const, updatedAt: '' })),
     dirs: extra.dirs ?? [],
     files: (extra.files ?? []).map((path) => ({ path, updatedAt: '' })),
     icons: extra.icons ?? {},
@@ -52,8 +53,8 @@ beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
 })
 
-test('a note with an icon shows the emoji instead of its type glyph', () => {
-  tree([{ path: 'roadmap.md', icon: '🎯' }])
+test('a note with an entry shows the emoji instead of its type glyph', () => {
+  tree(['roadmap.md'], { icons: { 'roadmap.md': '🎯' } })
 
   const slot = iconSlotOf('roadmap.md')
   expect(slot.textContent).toContain('🎯')
@@ -63,7 +64,7 @@ test('a note with an icon shows the emoji instead of its type glyph', () => {
 })
 
 test('a note without one keeps the markdown glyph', () => {
-  tree([{ path: 'plain.md' }])
+  tree(['plain.md'])
 
   const slot = iconSlotOf('plain.md')
   expect(slot.textContent).not.toContain('🎯')
@@ -71,42 +72,34 @@ test('a note without one keeps the markdown glyph', () => {
 })
 
 test('the emoji does not leak into the row label', () => {
-  tree([{ path: 'roadmap.md', icon: '🎯' }])
-
-  // The name is still the filename — the icon lives in frontmatter, so nothing
-  // has to be stripped out of it.
+  tree(['roadmap.md'], { icons: { 'roadmap.md': '🎯' } })
+  // The name is still the filename: the icon lives in a map keyed BY that name,
+  // so there is nothing to strip out of it.
   expect(screen.getByText('roadmap.md')).toBeTruthy()
 })
 
-// `.holi/icons.json` is the home for everything frontmatter cannot reach.
-test('an icons.json entry decorates a folder', () => {
-  tree([{ path: 'Clients/acme.md' }], { dirs: ['Clients'], icons: { Clients: '👥' } })
+// The half frontmatter could never have served.
+test('an entry decorates a folder', () => {
+  tree(['Clients/acme.md'], { dirs: ['Clients'], icons: { Clients: '👥' } })
 
   const slot = iconSlotOf('Clients')
   expect(slot.textContent).toContain('👥')
-  // The emoji REPLACES the folder glyph rather than sitting beside it.
   expect(slot.innerHTML).not.toContain('<svg')
 })
 
-test('an icons.json entry decorates a file that cannot carry frontmatter', () => {
-  // A PDF is not markdown, so the scan puts it in `files`, never `docs` — there
-  // is no DocMeta to hold an icon and the map is its only route to one.
+test('an entry decorates a file that has no frontmatter at all', () => {
+  // A PDF is not markdown, so the scan files it under `files` and it was never
+  // reachable by a frontmatter rule.
   tree([], { files: ['spec.pdf'], icons: { 'spec.pdf': '📘' } })
 
   expect(iconSlotOf('spec.pdf').textContent).toContain('📘')
 })
 
-test('a map entry does not conjure a row for a path that is not there', () => {
-  tree([{ path: 'roadmap.md' }], { icons: { 'ghost.md': '👻' } })
+// A stale entry — the file it names was moved outside Holi — must be inert,
+// which is the whole cost the map was accepted with.
+test('an entry does not conjure a row for a path that is not there', () => {
+  tree(['roadmap.md'], { icons: { 'ghost.md': '👻' } })
 
   expect(rowFor('roadmap.md')).not.toBeNull()
   expect(document.querySelector('[data-path="ghost.md"]')).toBeNull()
-})
-
-test("a note's own frontmatter outranks the map", () => {
-  tree([{ path: 'roadmap.md', icon: '🎯' }], { icons: { 'roadmap.md': '👥' } })
-
-  const slot = iconSlotOf('roadmap.md')
-  expect(slot.textContent).toContain('🎯')
-  expect(slot.textContent).not.toContain('👥')
 })

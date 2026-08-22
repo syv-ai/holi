@@ -20,7 +20,6 @@ const open = (over: Partial<Parameters<typeof EditIcon>[0]> = {}) => {
         remote="o/r"
         path="Clients"
         current={null}
-        frontmatter={null}
         onClose={onClose}
         {...over}
       />
@@ -65,13 +64,6 @@ test('refuses to save something that is not one emoji', async () => {
   expect(screen.getByText(/not a single emoji/)).toBeTruthy()
   expect(screen.getByText('Save')).toBeDisabled()
   expect(setIcon).not.toHaveBeenCalled()
-})
-
-// The one outcome that would make the dialog look broken: writing an entry the
-// note's own frontmatter then outranks, with nothing said about it.
-test("says so when the note's frontmatter already wins", () => {
-  open({ path: 'roadmap.md', frontmatter: '🎯' })
-  expect(screen.getByText(/takes precedence/)).toBeTruthy()
 })
 
 test('stays open when the write fails, rather than looking like it worked', async () => {

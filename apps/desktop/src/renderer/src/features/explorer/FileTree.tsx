@@ -159,15 +159,9 @@ export function FileTree({
     [snapshot],
   )
 
-  // Two sources, and the note wins. `.holi/icons.json` is the fallback home for
-  // everything that cannot carry an icon in frontmatter — folders, non-markdown
-  // files, and the agent-surface files where frontmatter would be prompt text —
-  // so it is seeded first and a note's own `icon:` overwrites it.
-  const iconByPath = useMemo(() => {
-    const map = new Map(Object.entries(snapshot.icons))
-    for (const doc of snapshot.docs) if (doc.icon) map.set(doc.path, doc.icon)
-    return map
-  }, [snapshot])
+  // One source: `.holi/icons.json`, which covers a note, a folder and a binary
+  // alike. A note's frontmatter is deliberately not a second one (D82).
+  const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
 
   // The mutation layer: clipboard, delete preview, transient folders, and every
   // move/paste/duplicate/rename/delete, planned by pure functions and dispatched
@@ -428,9 +422,9 @@ export function FileTree({
               Rename…
               <ContextMenuShortcut>F2</ContextMenuShortcut>
             </ContextMenuItem>
-            {/* Every row, not just notes: the map is the only home a folder or a
-                PDF has, and offering the gesture on some rows and not others
-                would make the rule the user has to learn. */}
+            {/* Every row, not just notes: the map is where every icon lives, so
+                offering the gesture on some rows and not others would invent a
+                rule the user would have to learn. */}
             <ContextMenuItem
               onSelect={() =>
                 activeRemote !== null &&
@@ -440,7 +434,6 @@ export function FileTree({
                   remote: activeRemote,
                   path,
                   current: snapshot.icons[path] ?? null,
-                  frontmatter: snapshot.docs.find((d) => d.path === path)?.icon ?? null,
                 })
               }
             >

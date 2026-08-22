@@ -27,7 +27,6 @@ export function DialogHost(): React.JSX.Element | null {
           remote={active.remote}
           path={active.path}
           current={active.current}
-          frontmatter={active.frontmatter}
           onClose={() => close()}
         />
       )}

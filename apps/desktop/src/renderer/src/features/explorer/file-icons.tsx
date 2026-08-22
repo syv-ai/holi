@@ -115,10 +115,10 @@ const BY_EXT: Record<string, [IconCmp, string]> = {
 /**
  * The leaf icon for a vault file path.
  *
- * A note that names its own emoji in frontmatter wins outright: the whole point
- * of the feature is to override the type glyph, so the two never appear
- * together. `icon` is already validated to be exactly one emoji by `noteIcon`
- * during the scan — nothing longer can reach here and stretch the row.
+ * An icon from `.holi/icons.json` wins outright: the whole point of the feature
+ * is to override the type glyph, so the two never appear together. `icon` is
+ * already validated to be exactly one emoji when the map is resolved — nothing
+ * longer can reach here and stretch the row.
  */
 export function fileIconFor(path: string, icon?: string): JSX.Element {
   // `text-sm` is 14px — the same size the glyphs are rendered at. Measured
