@@ -60,6 +60,7 @@ import {
   Reply,
   ReplyAll,
   Search,
+  Sparkles,
   SquarePen,
   Star,
   Trash2,
@@ -67,6 +68,8 @@ import {
   X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
+import { buildSummarizePrompt } from '@/lib/summarize-prompt'
 import {
   Button,
   Checkbox,
@@ -263,6 +266,8 @@ export function MailView() {
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const openDialog = useSetAtom(openDialogAtom)
+  const setSeedPrompt = useSetAtom(agentSeedPromptAtom)
+  const setDrawerOpen = useSetAtom(agentPanelOpenAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -985,6 +990,29 @@ export function MailView() {
                     </Button>
                   </Tooltip>
                 )}
+                {/* Seeds a real session rather than printing a paragraph: the
+                    answer to "what is this about" is usually followed by another
+                    question, and the drawer is where that conversation lives. */}
+                <Tooltip content="ask the vault assistant to summarise this thread">
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    className="shrink-0 gap-1"
+                    onClick={() => {
+                      setSeedPrompt(
+                        buildSummarizePrompt({
+                          subject: open.subject,
+                          threadId: open.id,
+                          webUrl: open.webUrl,
+                        }),
+                      )
+                      setDrawerOpen(true)
+                    }}
+                  >
+                    <Sparkles size={13} />
+                    Summarize
+                  </Button>
+                </Tooltip>
                 <Tooltip content="make a task linking this thread">
                   <Button
                     variant="secondary"
