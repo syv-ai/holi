@@ -4,11 +4,46 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**The inbox is empty.** D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
+**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
 
 ---
 
-## Number allocation — **next free is D80**
+## D80 — an app's state is a file it owns, and sensitivity is a location rather than a cipher
+
+**Context.** [`prd/vault-apps.md`](prd/vault-apps.md) §State has been open on purpose since D74: slice 1 shipped no state API at all, and the PRD refused to guess because "every framing that picks one for all apps is wrong for half the examples in this document". Real apps have now named the two shapes. A retro board and a poll are **shared by nature** — the state is the point of the app. A CSV explorer's filters, and a personal-finance app holding months of real transactions, are **nobody else's business**, and the second one is the case that settles the design: it is not merely private, it is data a user would be alarmed to find in a repo.
+
+**Decision.** State is **per app and declared in `app.yaml`**, which is already the registration marker and already the place a manifest carries what Holi cannot derive. Two kinds:
+
+- **`state: local`** — a real **SQLite** database (`node:sqlite`, already in the tree for the Google cache), under `userData`, with its **path and a size cap declared in the manifest**. It never enters the repo. This is the default and the one a finance app uses.
+- **`state: shared`** — a **text** document (JSON/NDJSON) in the app's own folder, committed like any vault content.
+
+**Why sensitivity is a location, not encryption.** Encrypting shared state was considered and rejected: with no server there is no key distribution, so a shared vault's key would be a password in a file that every member already has — which protects against nobody who matters. Ciphertext also inherits every problem the binary database had: git cannot merge it and a human cannot read it in a diff. **The vault already has the right mechanism**, and it is D65's: `.local.` means machine-local, and it is what keeps `USER.local.md` and every token out of git today. Sensitive state is *local* state; that is the whole answer, and it needs no new machinery.
+
+**Why shared state is text and not SQLite.** A committed `.db` is a binary that changes wholesale on every write. Autosave commits every three seconds ([`prd/vaults-sync.md`](prd/vaults-sync.md) FR-4), so an app writing state would produce a stream of multi-kilobyte blobs, and two people editing at once is a conflict **git cannot 3-way merge** — one person's afternoon gets chosen wholesale, silently. Text merges, diffs, and fails visibly.
+
+**Rejected.** *SQLite for both with the `.db` gitignored* — one API and one engine, but `state: shared` would then be a promise nothing keeps, and the retro board still could not be built. *SQLite for both, committed, size-capped* — simplest to build and exactly the shape first proposed; the commit stream and the unmergeable conflict are what rule it out. *Local only* — no conflicts and no sync design, but it leaves the two apps this feature exists for still unbuildable.
+
+**Still open:** whether `state: shared` needs a write-through API shaped like a document or like a log, which is the difference between last-writer-wins and a merge that keeps both. That is a question for the first shared app.
+
+---
+
+## D81 — a slash command is a small program in the apps sandbox, not a shell
+
+**Context.** [`prd/notes-editor.md`](prd/notes-editor.md) FR-9 has slash commands as a fixed pair — `/todo` and a table insert — "extensible via the provider registry", which is a seam nobody outside the app can reach. Nicolai: *"a user can literally assign virtually any command to a slash command… think of them as small programs."* The named uses are text transforms (insert a date, a calculator, expand a template), **vault actions** (create a task from the selection, link a note), **network** (fetch a ticket title), **asking the vault agent** for a paragraph in place, **starting a mail reply**, and **embedding an app inline**. Shell access was considered and is deliberately not in that list.
+
+**Decision.** A command is a **small JS module the vault commits**, run in the **same isolated origin vault apps use** (D74: a per-app `holi-app://` origin, `allow-scripts` never with `allow-same-origin`), handed the buffer and the selection and returning text or an action. It is a real program — loops, dates, arithmetic, `fetch` — with **no filesystem, no shell and no node**. The bridge it gets is the apps bridge plus what an editor command needs: the selection, the vault actions apps already have, an **agent query**, and a **compose** call for the mail case.
+
+**Why the sandbox rather than real scripts.** A vault is shared, and a committed command is code that arrives on your laptop when you pull. Running it for real is precisely the escalation **D76** refused for hooks — the reason `core.hooksPath` is not used and the hook is written to `.git/hooks/` instead, because "a synced `.holi/git-hooks/` lets a teammate push a hook onto your laptop". The sandbox keeps the power that was actually asked for (every named use case fits inside it) and drops the one that cannot be accepted from someone else.
+
+**The network is in, and its cost is stated rather than hidden.** A command that reads your buffer and posts it somewhere is the shape to guard against, and it is the same exfiltration cost D74 accepted for apps, for the same reason: refusing the network makes half the useful commands impossible, and a vault's content is already readable by anyone who can read the vault.
+
+**Rejected.** *Real programs, machine-local only* (`.holi/commands.local/`) — full power and safe because nothing another person wrote can arrive there, but then a command is not vault content: the agent cannot write one for the team and it does not travel with the vault, which is most of the point. *Real programs, committed, enabled per vault like hooks* — the most powerful and the closest reading of "literally any command", and it puts executable code one commit away from running on a teammate's machine. *Reusing `.claude/commands/`* — already in every vault and already known to the agent, but those are prompts for an agent, not editor insertions, and a single list mixing the two would mean two different things by one gesture.
+
+**Still open:** whether an inline agent query is a command's own call or the drawer's seeded prompt, and whether an embedded app is a widget in the note or a link that opens a tab. The second one touches [`prd/vault-apps.md`](prd/vault-apps.md) §Note-embedded widgets, which is currently deferred.
+
+---
+
+## Number allocation — **next free is D82**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
