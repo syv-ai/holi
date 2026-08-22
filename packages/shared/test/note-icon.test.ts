@@ -32,6 +32,43 @@ describe('noteIcon', () => {
     expect(noteIcon(fm('icon: ▶️'))).toBe('▶️')
   })
 
+  /**
+   * The macOS emoji picker appends U+FE0F to emoji that already default to
+   * emoji presentation, and `RGI_Emoji` does not contain those sequences — it
+   * lists `\u2b50`, never `\u2b50\ufe0f`. Picking a star from the palette
+   * therefore produced a value the validator refused, and the note silently
+   * kept its markdown glyph. Emoji split into two classes here and the rule has
+   * to cover both, which is why the check is not a single regex test.
+   */
+  it("accepts the redundant variation selector a picker adds", () => {
+    // Emoji-presentation by default: RGI has the bare form only.
+    expect(noteIcon(fm('icon: \u2b50\ufe0f'))).toBe('\u2b50\ufe0f')
+    expect(noteIcon(fm('icon: \u2705\ufe0f'))).toBe('\u2705\ufe0f')
+    expect(noteIcon(fm('icon: \u26a1\ufe0f'))).toBe('\u26a1\ufe0f')
+  })
+
+  it('still accepts the forms where the selector is required, not redundant', () => {
+    // Text-presentation by default: RGI has the VS16 form only, and stripping
+    // it would leave a dingbat that is not an emoji at all.
+    expect(noteIcon(fm('icon: \u2764\ufe0f'))).toBe('\u2764\ufe0f')
+    expect(noteIcon(fm('icon: \u25b6\ufe0f'))).toBe('\u25b6\ufe0f')
+    expect(noteIcon(fm('icon: \u2611\ufe0f'))).toBe('\u2611\ufe0f')
+  })
+
+  it('returns the emoji exactly as the file spells it', () => {
+    // Both spellings of a star are accepted and neither is rewritten: the file
+    // is the truth, and the two render identically anyway.
+    expect(noteIcon(fm('icon: \u2b50'))).toBe('\u2b50')
+    expect(noteIcon(fm('icon: \u2b50\ufe0f'))).toBe('\u2b50\ufe0f')
+  })
+
+  it('does not let the selector smuggle a non-emoji through', () => {
+    // Stripping VS16 must not turn "not an emoji" into "an emoji".
+    expect(noteIcon(fm('icon: A\ufe0f'))).toBeUndefined()
+    expect(noteIcon(fm('icon: \ufe0f'))).toBeUndefined()
+    expect(noteIcon(fm('icon: \u2b50\ufe0f\u2b50\ufe0f'))).toBeUndefined()
+  })
+
   it('is undefined when the note has no icon to offer', () => {
     expect(noteIcon(fm('type: note'))).toBeUndefined()
     expect(noteIcon('Just a body, no frontmatter.\n')).toBeUndefined()

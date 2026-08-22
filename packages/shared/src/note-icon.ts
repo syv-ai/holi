@@ -30,6 +30,27 @@
  */
 const ONE_EMOJI = new RegExp('^\\p{RGI_Emoji}$', 'v')
 
+/**
+ * Whether a value is a single emoji, in either spelling a keyboard produces.
+ *
+ * Emoji split in two here, and RGI holds exactly one spelling of each:
+ *
+ *   - **emoji-presentation by default** (⭐ ✅ ⚡ and every pictograph): RGI has
+ *     the bare form, and `U+2B50 U+FE0F` is NOT in the set, the selector being
+ *     redundant. The macOS picker emits it anyway.
+ *   - **text-presentation by default** (❤️ ▶️ ☑️): RGI has the `…U+FE0F` form,
+ *     and the bare character is a dingbat rather than an emoji.
+ *
+ * So one test cannot cover both, and testing only the literal value is what
+ * made picking a star from the palette leave the note on its markdown glyph.
+ * Trying the value with its selectors stripped catches the first class without
+ * loosening anything: stripping cannot turn a non-emoji into an emoji, since
+ * what is left still has to match RGI on its own.
+ */
+function isOneEmoji(value: string): boolean {
+  return ONE_EMOJI.test(value) || ONE_EMOJI.test(value.replace(/\ufe0f/g, ''))
+}
+
 /** The note's icon, or undefined if it declares none or declares a bad one. */
 export function noteIcon(text: string): string | undefined {
   const normalized = text.replace(/\r\n/g, '\n')
@@ -46,5 +67,8 @@ export function noteIcon(text: string): string | undefined {
   // either. Anything left that is not one emoji is refused rather than
   // truncated — the value lands in a fixed-size tree row.
   const value = match[1].trim().replace(/^(['"])(.*)\1$/, '$2')
-  return ONE_EMOJI.test(value) ? value : undefined
+  // Returned exactly as the file spells it, never re-normalized: both spellings
+  // of a star render identically, and rewriting the user's frontmatter to say
+  // something it does not say is not this function's job.
+  return isOneEmoji(value) ? value : undefined
 }
