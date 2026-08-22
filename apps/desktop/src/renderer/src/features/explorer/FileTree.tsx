@@ -19,7 +19,7 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
+import { fileKind, ICONS_FILE, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/cn'
 import { pendingSlot } from '@/lib/pending-slot'
@@ -431,9 +431,12 @@ export function FileTree({
                 openDialog({
                   id: 'edit-icon',
                   size: 'sm',
+                  // Its footer has Cancel; the corner ✕ would be a second one.
+                  closable: false,
                   remote: activeRemote,
                   path,
                   current: snapshot.icons[path] ?? null,
+                  onOpenMap: () => onOpenPinned(ICONS_FILE),
                 })
               }
             >

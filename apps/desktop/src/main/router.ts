@@ -25,6 +25,7 @@ import {
   taskSlug,
   vaultRelPath,
   withIcon,
+  ICONS_FILE,
   type Task,
   type TaskPatch,
   type VaultEntry,
@@ -86,7 +87,7 @@ import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
-import { ICONS_FILE, scanVault, type VaultSnapshot } from './vault/vault-store'
+import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme } from './vault/theme'
 import type { ResolvedTheme } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'

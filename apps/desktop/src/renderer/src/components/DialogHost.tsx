@@ -16,7 +16,7 @@ export function DialogHost(): React.JSX.Element | null {
   const close = useSetAtom(closeDialogAtom)
   if (active === null) return null
   return (
-    <Dialog open size={active.size} onClose={() => close()}>
+    <Dialog open size={active.size} closable={active.closable} onClose={() => close()}>
       {active.id === 'create-task' && <CreateTask mode={active.mode} onClose={() => close()} />}
       {active.id === 'convert-to-pdf' && (
         <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
@@ -27,6 +27,7 @@ export function DialogHost(): React.JSX.Element | null {
           remote={active.remote}
           path={active.path}
           current={active.current}
+          onOpenMap={active.onOpenMap}
           onClose={() => close()}
         />
       )}

@@ -64,3 +64,25 @@ test('renders through a portal (into document.body, not the mount node)', () => 
   expect(container).not.toHaveTextContent('Portaled')
   expect(screen.getByRole('dialog')).toHaveTextContent('Portaled')
 })
+
+test('offers a corner close by default', () => {
+  render(
+    <Dialog open onClose={() => {}}>
+      <Dialog.Header>Closable</Dialog.Header>
+    </Dialog>,
+  )
+  expect(screen.getByText('Close')).toBeTruthy()
+})
+
+// A Cancel button beside a corner ✕ is two controls for one intent, and the ✕
+// is the one with no label — so a dialog whose footer already offers a way out
+// opts the ✕ off. It stays the DEFAULT because a `full` workspace modal
+// (VaultHistory) carries no footer, and there it is the only visible way out.
+test('closable={false} removes it, for a dialog whose footer already has Cancel', () => {
+  render(
+    <Dialog open closable={false} onClose={() => {}}>
+      <Dialog.Header>Not closable</Dialog.Header>
+    </Dialog>,
+  )
+  expect(screen.queryByText('Close')).toBeNull()
+})

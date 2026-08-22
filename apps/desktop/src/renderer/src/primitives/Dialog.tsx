@@ -37,10 +37,26 @@ type DialogProps = {
   open: boolean
   onClose: () => void
   size?: DialogSize
+  /**
+   * Show the corner ✕. Default true.
+   *
+   * Off when the dialog's own footer already offers a way out — a Cancel button
+   * beside a corner ✕ is two controls for one intent, and the ✕ is the one with
+   * no label. It stays the default because `full`-size workspace modals
+   * (VaultHistory) carry no footer at all, and there the ✕ is the only visible
+   * way out; Esc and click-outside work either way, but neither is visible.
+   */
+  closable?: boolean
   children: React.ReactNode
 }
 
-export function Dialog({ open, onClose, size = 'md', children }: DialogProps): React.JSX.Element {
+export function Dialog({
+  open,
+  onClose,
+  size = 'md',
+  closable = true,
+  children,
+}: DialogProps): React.JSX.Element {
   return (
     <DialogPrimitive.Root
       open={open}
@@ -78,16 +94,18 @@ export function Dialog({ open, onClose, size = 'md', children }: DialogProps): R
           )}
         >
           {children}
-          <DialogPrimitive.Close
-            className={cn(
-              'absolute right-4 top-4 rounded-xs opacity-70 transition-opacity',
-              'hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-              'disabled:pointer-events-none',
-            )}
-          >
-            <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
-          </DialogPrimitive.Close>
+          {closable && (
+            <DialogPrimitive.Close
+              className={cn(
+                'absolute right-4 top-4 rounded-xs opacity-70 transition-opacity',
+                'hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                'disabled:pointer-events-none',
+              )}
+            >
+              <XIcon className="size-4" />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>

@@ -21,6 +21,8 @@ import {
   isKeepFile,
   isLocalOnlyPath,
   isTaskFilePath,
+  ICONS_FILE,
+  ICONS_LOCAL_FILE,
   resolveIconMap,
   parseTaskFile,
   TaskFileError,
@@ -33,10 +35,6 @@ import { isNonContentPath, listFiles } from './vault-files'
 // lie. Re-exported so the scan and its result still read as one module.
 export type { BrokenTask, VaultSnapshot } from '@holi/shared'
 
-/** The committed icon map — rides the normal watcher/snapshot path. */
-export const ICONS_FILE = '.holi/icons.json'
-/** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
-export const ICONS_LOCAL_FILE = '.holi/icons.local.json'
 
 /**
  * `type: daily-note` in the file's **leading** frontmatter block, and nowhere

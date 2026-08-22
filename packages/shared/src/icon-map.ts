@@ -23,6 +23,11 @@
  */
 import { vaultRelPath } from './path-safety'
 
+/** The committed icon map — rides the normal watcher/snapshot path. */
+export const ICONS_FILE = '.holi/icons.json'
+/** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
+export const ICONS_LOCAL_FILE = '.holi/icons.local.json'
+
 /**
  * Exactly one emoji, in the forms a keyboard or picker actually produces:
  * `RGI_Emoji` covers ZWJ sequences (👩‍💻), skin-tone modifiers (👍🏽), regional
