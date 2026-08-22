@@ -102,6 +102,37 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
   return { caller, root, registry, host, session, base, trashItem }
 }
 
+describe('settings', () => {
+  // Reachability, not resolution: the resolver is tested on strings in
+  // `@holi/shared` and on disk in `vault-settings.test.ts`. What only this rig
+  // can prove is that the procedure is wired into the root router and answers
+  // over a real vault — a missing registration typechecks fine on the main side
+  // and fails at the first call.
+  it('answers with the seeded vault’s settings', async () => {
+    const { caller } = await rig()
+    const settings = await caller.settings.read({ remote: REMOTE })
+    expect(settings.landing).toEqual({ kind: 'daily' })
+    expect(settings.dailyNotes).toBe(true)
+    // The seed writes a hooks block; `archive-done` is opt-in (D76).
+    expect(settings.hooks).toEqual({
+      relink: true,
+      'archive-done': false,
+      'normalize-md': true,
+    })
+    expect(settings.warnings).toEqual([])
+  })
+
+  it('reads a landing target the vault actually committed', async () => {
+    const { caller, root } = await rig()
+    await writeFile(
+      join(root, '.holi', 'settings.json'),
+      JSON.stringify({ landing: { kind: 'board' } }),
+      'utf8',
+    )
+    expect((await caller.settings.read({ remote: REMOTE })).landing).toEqual({ kind: 'board' })
+  })
+})
+
 describe('vaults', () => {
   it('lists the registry', async () => {
     const { caller } = await rig()

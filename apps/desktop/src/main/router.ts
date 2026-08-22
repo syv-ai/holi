@@ -89,7 +89,8 @@ import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme } from './vault/theme'
-import type { ResolvedTheme } from '@holi/shared'
+import { readVaultSettings } from './vault/settings'
+import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 import { listTemplates } from './pdf/templates'
 import type { TemplateField } from '@holi/shared'
@@ -1429,6 +1430,20 @@ export function createRouter(deps: RouterDeps) {
       }),
   })
 
+  // The vault's own settings: what it opens on, whether it keeps a daily note,
+  // which pre-commit transforms run, and how it should look — resolved from
+  // `.holi/settings.json` under its per-key `.holi/settings.local.json`
+  // override. A read, like `theme.read`: the files are authored by the user or
+  // the agent with ordinary file tools. The one write is the onboarding step,
+  // which arrives with it.
+  const settings = t.router({
+    read: t.procedure
+      .input(fields({ remote: 'string' }))
+      .query(
+        ({ input }): Promise<ResolvedVaultSettings> => rootFor(input.remote).then(readVaultSettings),
+      ),
+  })
+
   const pdf = t.router({
     // The vault's templates, for the Convert picker + its metadata inputs.
     // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
@@ -1935,7 +1950,20 @@ export function createRouter(deps: RouterDeps) {
     return new GoogleApi({ accessToken: () => session.getAccessToken() })
   }
 
-  return t.router({ auth, github, vaults, notes, tasks, sync, history, pdf, theme, google, apps })
+  return t.router({
+    auth,
+    github,
+    vaults,
+    notes,
+    tasks,
+    sync,
+    history,
+    pdf,
+    theme,
+    settings,
+    google,
+    apps,
+  })
 }
 
 /**
