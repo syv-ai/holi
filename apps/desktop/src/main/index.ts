@@ -17,8 +17,10 @@
  */
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
+import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { appFileAbsPath, appHeadHtml, appMimeFor, injectAppHead, parseAppUrl } from './apps/app-protocol'
 import { createSession } from './github/electron'
@@ -123,11 +125,16 @@ function createWindow(): BrowserWindow {
     if (mainWindow === win) mainWindow = null
   })
 
-  if (process.env['ELECTRON_RENDERER_URL']) {
-    void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl) {
+    void win.loadURL(devUrl)
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'))
   }
+  // After the load, so the guard knows what "the app" is. A drop the renderer
+  // does not claim is a navigation, and Electron answers a navigation with a
+  // window — see window-guard.ts.
+  guardNavigation(win, devUrl ?? pathToFileURL(join(__dirname, '../renderer/index.html')).href)
   return win
 }
 
