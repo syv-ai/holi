@@ -34,6 +34,21 @@ describe('scanVault', () => {
     expect(snap.tasks[0]!.status).toBe('doing')
   })
 
+  it('carries a note\'s own frontmatter icon into the snapshot', async () => {
+    const root = await vault({
+      'roadmap.md': '---\nicon: \u{1F3AF}\n---\n\n# Roadmap\n',
+      'plain.md': '# Plain\n',
+      // Not one emoji, so the note gets no icon rather than a broken one.
+      'bad.md': '---\nicon: rocket\n---\n',
+    })
+    const snap = await scanVault(root)
+    const icons = Object.fromEntries(snap.docs.map((d) => [d.path, d.icon]))
+
+    expect(icons['roadmap.md']).toBe('\u{1F3AF}')
+    expect(icons['plain.md']).toBeUndefined()
+    expect(icons['bad.md']).toBeUndefined()
+  })
+
   it('takes a task lane from its folder, not from a field', async () => {
     const root = await vault({
       'projects/q2/task.a.md': '---\ntitle: A\n---\n',

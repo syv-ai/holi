@@ -112,8 +112,21 @@ const BY_EXT: Record<string, [IconCmp, string]> = {
   gz: [FileArchive, '#cfa06a'],
 }
 
-/** The tinted, type-appropriate leaf icon for a vault file path. */
-export function fileIconFor(path: string): JSX.Element {
+/**
+ * The leaf icon for a vault file path.
+ *
+ * A note that names its own emoji in frontmatter wins outright: the whole point
+ * of the feature is to override the type glyph, so the two never appear
+ * together. `icon` is already validated to be exactly one emoji by `noteIcon`
+ * during the scan — nothing longer can reach here and stretch the row.
+ */
+export function fileIconFor(path: string, icon?: string): JSX.Element {
+  // `text-sm` is 14px — the same size the glyphs are rendered at. Measured
+  // against them in the running app: 13px reads thin next to the filled `.md`
+  // badge, and 15px+ crowds the row. `leading-none` is what centres it, since
+  // the default line box is taller than the slot.
+  if (icon) return <span className="text-sm leading-none">{icon}</span>
+
   const base = path.slice(path.lastIndexOf('/') + 1)
   const dot = base.lastIndexOf('.')
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''

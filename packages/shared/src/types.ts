@@ -30,7 +30,8 @@ export interface VaultEntry {
  *
  * `kind` is derived from the file's own frontmatter (`type: daily-note`), never
  * from its filename: a hand-authored note that merely looks like a date must not
- * be swept as a system-created daily.
+ * be swept as a system-created daily. `icon` follows the same rule for the same
+ * reason — it belongs to the note, so it survives any move, by Holi or not.
  */
 export interface DocMeta {
   /** Vault-relative, '/'-separated. */
@@ -38,6 +39,10 @@ export interface DocMeta {
   kind: DocKind
   /** File mtime, ISO. There is no createdAt — git history is the record of that. */
   updatedAt: string
+  /** A single emoji the note names in its own frontmatter (`icon: 🎯`), shown in
+   *  the tree in place of the type glyph. Absent unless the note declares one
+   *  and it is valid — see `noteIcon`. */
+  icon?: string
 }
 
 /** A non-markdown file the vault carries (spec §Arbitrary files). Not a note —

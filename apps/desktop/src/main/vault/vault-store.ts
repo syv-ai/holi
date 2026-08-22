@@ -21,6 +21,7 @@ import {
   isKeepFile,
   isLocalOnlyPath,
   isTaskFilePath,
+  noteIcon,
   parseTaskFile,
   TaskFileError,
   type VaultSnapshot,
@@ -108,7 +109,12 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
       continue
     }
 
-    snapshot.docs.push({ path, kind: isDaily(text) ? 'daily' : 'note', updatedAt: await mtime() })
+    snapshot.docs.push({
+      path,
+      kind: isDaily(text) ? 'daily' : 'note',
+      updatedAt: await mtime(),
+      icon: noteIcon(text),
+    })
   }
 
   return snapshot

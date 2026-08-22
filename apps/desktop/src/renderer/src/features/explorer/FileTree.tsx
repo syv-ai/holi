@@ -159,6 +159,13 @@ export function FileTree({
     [snapshot],
   )
 
+  // Only notes that actually declare one, so the common case is a miss on an
+  // empty map rather than a walk of every doc in the vault.
+  const iconByPath = useMemo(
+    () => new Map(snapshot.docs.flatMap((d) => (d.icon ? [[d.path, d.icon] as const] : []))),
+    [snapshot],
+  )
+
   // The mutation layer: clipboard, delete preview, transient folders, and every
   // move/paste/duplicate/rename/delete, planned by pure functions and dispatched
   // to the batch atoms. FileTree only reads its state and calls its methods.
@@ -646,7 +653,7 @@ export function FileTree({
                       ) : task ? (
                         <TaskIcon status={task.status} />
                       ) : (
-                        fileIconFor(id)
+                        fileIconFor(id, iconByPath.get(id))
                       )}
                     </span>
                     {item.isRenaming() ? (
