@@ -36,9 +36,14 @@ export function DeleteConfirm({
   const total = refs.reduce((n, r) => n + r.count, 0)
   return (
     <Dialog open onClose={onCancel} size="sm">
-      <div data-delete-dialog={label} className="grid gap-4">
+      <div data-delete-dialog={label} className="grid min-w-0 gap-4 [&>*]:min-w-0">
         <Dialog.Header>
-          {verb} <span className="font-mono">{label}</span>?
+          {/* `break-all`, not `break-words`: this is a path, and every character
+              is a place it may legitimately break. `break-words` keeps a long
+              unbroken run intact until it has to give, which for
+              `AI_&_ML_Anbefalingsbrev_udkast_William_Hvid_Larsen.pdf` means
+              one enormous line. */}
+          {verb} <span className="break-all font-mono">{label}</span>?
         </Dialog.Header>
         <Dialog.Body>
           {refs.length === 0 ? (

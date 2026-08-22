@@ -17,11 +17,20 @@ export type DialogSize = 'sm' | 'md' | 'lg' | 'full'
 // sm/md/lg are content-height form dialogs that scroll as one column; `full` is
 // a fixed-height workspace modal (VaultHistory's 3-pane git browser) whose body
 // scrolls internally, so the modal itself must not become a scroll box.
+//
+// `[&>*]:min-w-0` is load-bearing, not tidying. A grid child defaults to
+// `min-width: auto`, which refuses to shrink below its content — so one long
+// unbreakable string (a filename with no spaces) made the whole column wider
+// than the panel, and everything laid out against that column went with it. The
+// footer is `justify-end`, so its buttons aligned to the right edge of a box
+// wider than the visible panel and left the screen entirely: a confirmation
+// dialog you could read but not answer. Measured at 544px of content in a 372px
+// panel before this.
 const panel: Record<DialogSize, string> = {
-  sm: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-sm',
-  md: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-md',
-  lg: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-2xl',
-  full: 'flex h-[85vh] flex-col overflow-hidden max-w-6xl',
+  sm: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-sm [&>*]:min-w-0',
+  md: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-md [&>*]:min-w-0',
+  lg: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-2xl [&>*]:min-w-0',
+  full: 'flex h-[85vh] flex-col overflow-hidden max-w-6xl [&>*]:min-w-0',
 }
 
 type DialogProps = {
@@ -52,8 +61,17 @@ export function Dialog({ open, onClose, size = 'md', children }: DialogProps): R
           aria-describedby={undefined}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
-            'rounded-lg border bg-background',
-            'text-sm text-foreground shadow-dialog outline-none',
+            // `bg-popover`, like every other floating surface in the app (the
+            // context menu, the dropdown). It used to be `bg-background` — the
+            // PAGE's own colour — separated from the page by a hairline border
+            // and a shadow at 0.1 alpha, which on a near-black background left
+            // it reading flat rather than raised. The overlay was carrying that
+            // job alone, and `bg-black/50` over an already-black app dims very
+            // little. The border goes with it: a raised surface with its own
+            // shadow does not need a second edge, which is the reasoning the
+            // popover shadow's own comment in index.css already records.
+            'rounded-lg bg-popover',
+            'text-sm text-popover-foreground shadow-popover outline-none',
             // Motion from the shared tier (index.css): fade + slight zoom on the token easing.
             'data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out',
             panel[size],
@@ -82,14 +100,21 @@ Dialog.Header = function DialogHeader({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <DialogPrimitive.Title className="text-sm font-medium text-foreground">
+    // `break-words` because a header names things the user chose the name of —
+    // a note, a file, a vault — and those arrive with no spaces to wrap at.
+    //
+    // `pr-6` reserves the close button's corner. It is absolutely positioned, so
+    // it takes no space in flow and a long title ran straight underneath it —
+    // invisible until a title was long enough to reach, which is exactly when
+    // the title matters most.
+    <DialogPrimitive.Title className="min-w-0 break-words pr-6 text-sm font-medium text-foreground">
       {children}
     </DialogPrimitive.Title>
   )
 }
 
 Dialog.Body = function DialogBody({ children }: { children: React.ReactNode }): React.JSX.Element {
-  return <div className="flex flex-col gap-3">{children}</div>
+  return <div className="flex min-w-0 flex-col gap-3">{children}</div>
 }
 
 Dialog.Footer = function DialogFooter({
