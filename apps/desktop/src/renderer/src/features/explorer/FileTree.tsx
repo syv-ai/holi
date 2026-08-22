@@ -370,6 +370,9 @@ export function FileTree({
   }
   dropFilesRef.current = dropFiles
 
+  /** Everything the last import or export refused, in one list — see the banner. */
+  const refused = [...skipped, ...actions.exportFailures]
+
   // The row's context-menu target set: the whole multi-selection when the clicked
   // row is part of it, else just that row (parity with a right-click in VS Code).
   const rowTargets = (id: string): string[] => {
@@ -437,6 +440,17 @@ export function FileTree({
         <ContextMenuItem onSelect={() => actions.duplicate(targets)}>
           Duplicate
           <ContextMenuShortcut>⌘D</ContextMenuShortcut>
+        </ContextMenuItem>
+        {/* Out of the vault. Outside the `!multi` guard because both act on a
+            whole selection and on folders, exactly as Cut/Copy/Delete do — and
+            because this is now the ONLY way out: dropping a row into Finder
+            does not work (see not-built.md). */}
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => actions.copyOut(targets)}>
+          Copy to Folder…
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => actions.startMoveOut(targets, isFolder)}>
+          Move to Folder…
         </ContextMenuItem>
         {!multi && (
           <>
@@ -554,14 +568,21 @@ export function FileTree({
           dropFiles(e.dataTransfer, id === null ? '' : dirSet.has(id) ? id : parentOf(id))
         }}
       >
-        {skipped.length > 0 && (
+        {/* One banner, both directions. A file that did not arrive and a file
+            that did not leave are the same class of outcome — something the
+            user asked for silently did not happen — so they share a place to
+            say so rather than competing for the top of the tree. */}
+        {refused.length > 0 && (
           <Button
             variant="link"
-            onClick={() => setSkipped([])}
+            onClick={() => {
+              setSkipped([])
+              actions.dismissExportFailures()
+            }}
             // amber = the warning role (no token yet); named utilities are gate-legal.
             className="mb-1 h-auto w-full justify-start whitespace-normal p-0 px-2 text-left text-[11px] text-amber-300/90 hover:text-amber-200"
           >
-            {skipped.map((s) => s.name).join(', ')} — {skipped[0]!.reason}. Click to dismiss.
+            {refused.map((s) => s.name).join(', ')} — {refused[0]!.reason}. Click to dismiss.
           </Button>
         )}
         {slot?.afterId === null && pendingRow(slot.level)}
@@ -683,6 +704,7 @@ export function FileTree({
 
       {actions.confirming && (
         <DeleteConfirm
+          verb={actions.confirmVerb}
           label={actions.confirming.label}
           refs={actions.confirming.refs}
           onCancel={actions.cancelDelete}

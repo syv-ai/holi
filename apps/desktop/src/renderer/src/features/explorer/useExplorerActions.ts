@@ -25,13 +25,24 @@ import {
   backrefsForMany,
   copyNotesAtom,
   deleteManyAtom,
+  exportFilesAtom,
   moveNotesAtom,
 } from '@/state/vaults'
 
 type DeletePreview = {
   label: string
+  /** The vault FILES this affects — what the backrefs were computed over, and
+   *  what a delete removes. */
   paths: string[]
   refs: { path: string; count: number }[]
+  /**
+   * Set when this is a move OUT of the vault: the targets as picked (a folder
+   * stays a folder, so it keeps its shape on disk) and where they go.
+   *
+   * The same dialog serves both because the fallout is the same — links left
+   * dangling either way — and only the verb and what happens on confirm differ.
+   */
+  move?: { targets: string[]; dest: string }
 }
 
 export interface ExplorerActions {
@@ -51,6 +62,15 @@ export interface ExplorerActions {
   cancelDelete(): void
   confirmDelete(): void
   addPendingFolder(path: string): void
+  /** Copy targets to a folder on disk. The vault is unchanged. */
+  copyOut(targets: string[]): void
+  /** Move targets out: confirm first (backrefs), then copy, then delete. */
+  startMoveOut(targets: string[], isFolder: boolean): void
+  /** The verb the open confirmation is about to apply. */
+  confirmVerb: 'Delete' | 'Move'
+  /** Files the last export refused, held until dismissed or superseded. */
+  exportFailures: { name: string; reason: string }[]
+  dismissExportFailures(): void
 }
 
 export function useExplorerActions(docPaths: string[]): ExplorerActions {
@@ -59,9 +79,15 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
   const deleteMany = useSetAtom(deleteManyAtom)
   const getBackrefs = useSetAtom(backrefsForMany)
 
+  const exportFiles = useSetAtom(exportFilesAtom)
+
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null)
   const [confirming, setConfirming] = useState<DeletePreview | null>(null)
   const [pendingFolders, setPendingFolders] = useState<string[]>([])
+  /** Files the last export refused. Held until dismissed or superseded, for the
+   *  same reason the import's are: a file that silently did not arrive is the
+   *  worst outcome either direction has. */
+  const [exportFailures, setExportFailures] = useState<{ name: string; reason: string }[]>([])
 
   // headless-tree captures handler closures once; refs keep the stable methods
   // below reading the latest values.
@@ -137,12 +163,60 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
   )
 
   const cancelDelete = useCallback(() => setConfirming(null), [])
+
+  const copyOut = useCallback(
+    (targets: string[]) => {
+      void (async () => {
+        const dest = await window.holi.chooseFolder()
+        if (dest === null) return
+        const { failed } = await exportFiles(targets, dest)
+        setExportFailures(failed)
+      })()
+    },
+    [exportFiles],
+  )
+
+  const startMoveOut = useCallback(
+    (targets: string[], isFolder: boolean) => {
+      void (async () => {
+        // The destination is chosen BEFORE the confirmation, so cancelling the
+        // confirmation leaves nothing behind — no copy has happened yet.
+        const dest = await window.holi.chooseFolder()
+        if (dest === null) return
+        const files = filesUnder(docPathsRef.current, targets)
+        if (files.length === 0) return
+        const label = deleteLabel(targets, files.length, isFolder)
+        const refs = await getBackrefs(files)
+        setConfirming({ label, paths: files, refs, move: { targets, dest } })
+      })()
+    },
+    // No `exportFiles` here on purpose: this only STAGES the move. The copy
+    // happens in `confirmDelete`, after the confirmation.
+    [getBackrefs],
+  )
+
   const confirmDelete = useCallback(() => {
     const preview = confirmingRef.current
     if (!preview) return
     setConfirming(null)
-    void deleteMany({ paths: preview.paths })
-  }, [deleteMany])
+    if (!preview.move) {
+      void deleteMany({ paths: preview.paths })
+      return
+    }
+    const { targets, dest } = preview.move
+    void (async () => {
+      const { landed, failed } = await exportFiles(targets, dest)
+      setExportFailures(failed)
+      // ONLY what landed. A target that could not be written is still the only
+      // copy there is, and deleting it here would destroy it.
+      const survived = new Set(landed.map((l) => l.from))
+      const toDelete = filesUnder(
+        docPathsRef.current,
+        targets.filter((t) => survived.has(t)),
+      )
+      if (toDelete.length > 0) await deleteMany({ paths: toDelete })
+    })()
+  }, [deleteMany, exportFiles])
 
   const addPendingFolder = useCallback(
     (path: string) => setPendingFolders((f) => [...f, path]),
@@ -163,5 +237,10 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
     cancelDelete,
     confirmDelete,
     addPendingFolder,
+    copyOut,
+    startMoveOut,
+    confirmVerb: confirming?.move ? ('Move' as const) : ('Delete' as const),
+    exportFailures,
+    dismissExportFailures: () => setExportFailures([]),
   }
 }
