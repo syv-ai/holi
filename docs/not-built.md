@@ -117,6 +117,15 @@ hangs on "Loading PDF…".
 per file, and recursing means deciding what to do about the files inside it that collide, which is
 the same question the flat case answers one at a time and a folder answers all at once.
 
+**Dragging a row out to Finder.** `webContents.startDrag` starts a drag the app's own window
+accepts — that round trip is what the in-tree move rides on — but Finder refuses the drop, so
+nothing lands. Verified by hand on macOS 2026-08-22; it cannot be covered by a test, because
+neither Vitest nor CDP can drive an OS-level drag. The handler matches Electron's documented shape
+(`files` + `file` + a non-empty `icon`), so the fault is not obviously in the call; the 1×1
+transparent drag icon is the first thing to suspect. **Copy to Folder… / Move to Folder… exist
+because of this** and cover the same need without a gesture, so the drag would be a convenience on
+top rather than a missing capability.
+
 ## Tasks
 
 **A time-grouped secondary board view** — "Today / This week / Later". Post-v1, and it returns as
