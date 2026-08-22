@@ -159,12 +159,15 @@ export function FileTree({
     [snapshot],
   )
 
-  // Only notes that actually declare one, so the common case is a miss on an
-  // empty map rather than a walk of every doc in the vault.
-  const iconByPath = useMemo(
-    () => new Map(snapshot.docs.flatMap((d) => (d.icon ? [[d.path, d.icon] as const] : []))),
-    [snapshot],
-  )
+  // Two sources, and the note wins. `.holi/icons.json` is the fallback home for
+  // everything that cannot carry an icon in frontmatter — folders, non-markdown
+  // files, and the agent-surface files where frontmatter would be prompt text —
+  // so it is seeded first and a note's own `icon:` overwrites it.
+  const iconByPath = useMemo(() => {
+    const map = new Map(Object.entries(snapshot.icons))
+    for (const doc of snapshot.docs) if (doc.icon) map.set(doc.path, doc.icon)
+    return map
+  }, [snapshot])
 
   // The mutation layer: clipboard, delete preview, transient folders, and every
   // move/paste/duplicate/rename/delete, planned by pure functions and dispatched
@@ -425,6 +428,24 @@ export function FileTree({
               Rename…
               <ContextMenuShortcut>F2</ContextMenuShortcut>
             </ContextMenuItem>
+            {/* Every row, not just notes: the map is the only home a folder or a
+                PDF has, and offering the gesture on some rows and not others
+                would make the rule the user has to learn. */}
+            <ContextMenuItem
+              onSelect={() =>
+                activeRemote !== null &&
+                openDialog({
+                  id: 'edit-icon',
+                  size: 'sm',
+                  remote: activeRemote,
+                  path,
+                  current: snapshot.icons[path] ?? null,
+                  frontmatter: snapshot.docs.find((d) => d.path === path)?.icon ?? null,
+                })
+              }
+            >
+              Edit Icon…
+            </ContextMenuItem>
           </>
         )}
         <ContextMenuItem variant="destructive" onSelect={() => actions.startDelete(targets, isFolder)}>
@@ -648,12 +669,14 @@ export function FileTree({
                     <span
                       className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'}`}
                     >
-                      {isFolder ? (
+                      {iconByPath.has(id) ? (
+                        fileIconFor(id, iconByPath.get(id))
+                      ) : isFolder ? (
                         <FolderIcon />
                       ) : task ? (
                         <TaskIcon status={task.status} />
                       ) : (
-                        fileIconFor(id, iconByPath.get(id))
+                        fileIconFor(id)
                       )}
                     </span>
                     {item.isRenaming() ? (

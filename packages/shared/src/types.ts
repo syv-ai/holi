@@ -155,6 +155,11 @@ export interface VaultSnapshot {
    *  files are tasks, or hidden) or it is empty but for a `.gitkeep`. Git tracks
    *  no empty directory; the keep-file is what makes an empty one survive a clone. */
   dirs: string[]
+  /** `.holi/icons.json` resolved: vault-relative path → a single emoji, for the
+   *  things that cannot carry an icon in frontmatter — folders, non-markdown
+   *  files, and the agent-surface files where frontmatter would be prompt text.
+   *  A note's own `DocMeta.icon` outranks an entry here. */
+  icons: Record<string, string>
 }
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */

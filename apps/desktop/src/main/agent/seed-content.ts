@@ -292,6 +292,15 @@ export const MANAGED_FILES: Record<string, string> = {
  * key-wise rather than created-if-missing (see `settingsWithRequired`),
  * because a seed that only runs at creation is a migration that never happens.
  */
+/**
+ * `.holi/icons.json` — path → emoji, for the things that cannot carry an icon
+ * in their own frontmatter: folders, non-markdown files, and the agent-surface
+ * files where frontmatter would become prompt text. Seeded empty so the file is
+ * discoverable (and so the agent has somewhere obvious to write) rather than
+ * being a convention you have to be told about.
+ */
+const ICONS_SKELETON = `{}\n`
+
 export const ONCE_FILES: Record<string, string> = {
   '.holi/vault.json': VAULT_MARKER,
   '.holi/settings.json': HOLI_SETTINGS,
@@ -313,6 +322,7 @@ export const ONCE_FILES: Record<string, string> = {
   '.holi/document-templates/contract/template.json': contractManifest,
   '.holi/document-templates/contract/template.typ': contractTyp,
   '.holi/theme.json': THEME_SKELETON,
+  '.holi/icons.json': ICONS_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
   // the personal-override slot exists by default. The `.gitignore` is written
   // first in `ensureSeeded`, so this is ignored before it lands.

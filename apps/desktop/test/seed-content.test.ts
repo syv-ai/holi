@@ -81,6 +81,7 @@ describe('SEED_FILES', () => {
       '.holi/document-templates/proposal/template.typ',
       '.holi/document-templates/report/template.json',
       '.holi/document-templates/report/template.typ',
+      '.holi/icons.json',
       '.holi/settings.json',
       '.holi/theme.json',
       '.holi/theme.local.json',

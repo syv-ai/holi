@@ -17,6 +17,20 @@ export type ActiveDialog =
    * not.
    */
   | { id: 'compose-mail'; size: 'lg' }
+  /**
+   * Set or clear a path's icon in `.holi/icons.json` (D82). Carries what the
+   * tree already knows so the dialog opens filled rather than fetching: the
+   * map's current entry, and the icon the note's own frontmatter names, which
+   * outranks the map and therefore has to be shown.
+   */
+  | {
+      id: 'edit-icon'
+      size: 'sm'
+      remote: string
+      path: string
+      current: string | null
+      frontmatter: string | null
+    }
 
 /** Null when nothing is open. Lives in the Jotai store, mounted once by the app
  *  shell — state passed through the store, not a global mutable singleton. */

@@ -37,7 +37,7 @@ export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('h
  * whether they also render as leaves in the file tree (with a task glyph). */
 export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
-const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
+const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
 
 /**
  * The whole vault, as last read off disk.

@@ -33,7 +33,7 @@ function withFiles(...relPaths: string[]) {
     docs: [],
     tasks: [],
     broken: [],
-    dirs: [],
+    dirs: [], icons: {},
     files: relPaths.map((p) => ({ path: `.holi/apps/${p}`, updatedAt: '' })),
   })
 }

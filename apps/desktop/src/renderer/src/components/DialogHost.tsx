@@ -1,5 +1,6 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ComposeMailDialog } from '@/features/google/ComposeMailDialog'
+import { EditIcon } from '@/features/explorer/EditIcon'
 import { ConvertToPdf } from '@/features/pdf/ConvertToPdf'
 import { CreateTask } from '@/features/tasks/CreateTask'
 import { Dialog } from '@/primitives'
@@ -21,6 +22,15 @@ export function DialogHost(): React.JSX.Element | null {
         <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
       )}
       {active.id === 'compose-mail' && <ComposeMailDialog onClose={() => close()} />}
+      {active.id === 'edit-icon' && (
+        <EditIcon
+          remote={active.remote}
+          path={active.path}
+          current={active.current}
+          frontmatter={active.frontmatter}
+          onClose={() => close()}
+        />
+      )}
     </Dialog>
   )
 }

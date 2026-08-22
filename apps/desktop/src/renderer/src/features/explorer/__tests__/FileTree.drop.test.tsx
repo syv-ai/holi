@@ -38,7 +38,7 @@ vi.mock('../../../lib/trpc', () => ({
 
 const REMOTE = 'syv-ai/holi'
 const VAULT_PATH = '/Users/ada/vaults/holi'
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
+const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
 const store = getDefaultStore()
 
 /** jsdom implements no `DataTransfer`; this is the subset the tree reads. The

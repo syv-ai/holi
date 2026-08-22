@@ -22,6 +22,7 @@ import {
   isLocalOnlyPath,
   isTaskFilePath,
   noteIcon,
+  resolveIconMap,
   parseTaskFile,
   TaskFileError,
   type VaultSnapshot,
@@ -32,6 +33,11 @@ import { isNonContentPath, listFiles } from './vault-files'
 // crossed the IPC seam by being imported out of `main/` would make the seam a
 // lie. Re-exported so the scan and its result still read as one module.
 export type { BrokenTask, VaultSnapshot } from '@holi/shared'
+
+/** The committed icon map — rides the normal watcher/snapshot path. */
+export const ICONS_FILE = '.holi/icons.json'
+/** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
+export const ICONS_LOCAL_FILE = '.holi/icons.local.json'
 
 /**
  * `type: daily-note` in the file's **leading** frontmatter block, and nowhere
@@ -50,7 +56,16 @@ function isDaily(text: string): boolean {
 
 /** Everything the vault holds, read fresh off disk. */
 export async function scanVault(root: string): Promise<VaultSnapshot> {
-  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
+  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+
+  // `.holi/icons.json` (committed) under `.holi/icons.local.json` (personal),
+  // the theme's layering. Read here rather than over its own IPC so the tree
+  // gets the map in the same push as the paths it decorates — a second channel
+  // would mean a render where a folder's icon had not arrived yet.
+  const iconJson = await Promise.all(
+    [ICONS_FILE, ICONS_LOCAL_FILE].map((rel) => readFile(`${root}/${rel}`, 'utf8').catch(() => null)),
+  )
+  snapshot.icons = resolveIconMap(iconJson[0] ?? null, iconJson[1] ?? null).icons
 
   // Exclude only true non-content (dirs/tmp/junk). Local-only files (`*.local.*`)
   // DO reach the snapshot so the tree can show them under show-hidden; git keeps

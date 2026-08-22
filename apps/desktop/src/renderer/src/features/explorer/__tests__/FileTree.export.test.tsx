@@ -42,7 +42,7 @@ vi.mock('../../../lib/trpc', () => ({
 }))
 
 const REMOTE = 'syv-ai/holi'
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [] }
+const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
 const store = getDefaultStore()
 
 function tree() {

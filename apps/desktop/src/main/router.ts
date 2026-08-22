@@ -24,6 +24,7 @@ import {
   taskFilePath,
   taskSlug,
   vaultRelPath,
+  withIcon,
   type Task,
   type TaskPatch,
   type VaultEntry,
@@ -85,7 +86,7 @@ import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
-import { scanVault, type VaultSnapshot } from './vault/vault-store'
+import { ICONS_FILE, scanVault, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme } from './vault/theme'
 import type { ResolvedTheme } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
@@ -1139,6 +1140,27 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }): Promise<{ date: string; author: string } | null> => {
         const [commit] = await activeOrThrow().repo.log({ path: safe(input.path), limit: 1 })
         return commit === undefined ? null : { date: commit.date, author: commit.author }
+      }),
+
+    /**
+     * Set or clear a path's icon in `.holi/icons.json` (D82).
+     *
+     * The map rather than the note's frontmatter, whatever the path is: one
+     * gesture with one destination is what makes the menu item explicable, and
+     * the map is the only home that can serve a folder or a PDF. A note whose
+     * own frontmatter names an icon still outranks whatever lands here — the
+     * dialog says so rather than letting the write look like it did nothing.
+     */
+    setIcon: vaultMutation
+      .input(fields({ remote: 'string', path: 'string', emoji: 'string?' }))
+      .mutation(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        const rel = safe(ICONS_FILE)
+        const existing = await readFile(join(root, ICONS_FILE), 'utf8').catch(() => null)
+        // `?? null` and not `|| null`: an empty string is a cleared icon, and
+        // the two must not collapse into the same argument.
+        await writeAtomic(root, rel, withIcon(existing, input.path, input.emoji ?? null))
+        return { ok: true as const }
       }),
 
     write: vaultMutation

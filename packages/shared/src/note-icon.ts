@@ -48,6 +48,10 @@ const ONE_PICTOGRAPH = /^\p{Extended_Pictographic}\ufe0f?$/u
 /**
  * Whether a value is a single emoji, in either spelling a keyboard produces.
  *
+ * Exported because `.holi/icons.json` validates against the very same rule: two
+ * places that disagreed about what an emoji is would accept a star in one file
+ * and refuse it in the other.
+ *
  * Emoji split in two here, and RGI holds exactly one spelling of each:
  *
  *   - **emoji-presentation by default** (⭐ ✅ ⚡ and every pictograph): RGI has
@@ -62,7 +66,7 @@ const ONE_PICTOGRAPH = /^\p{Extended_Pictographic}\ufe0f?$/u
  * loosening anything: stripping cannot turn a non-emoji into an emoji, since
  * what is left still has to match RGI on its own.
  */
-function isOneEmoji(value: string): boolean {
+export function isOneEmoji(value: string): boolean {
   return (
     ONE_EMOJI.test(value) ||
     ONE_EMOJI.test(value.replace(/\ufe0f/g, '')) ||
