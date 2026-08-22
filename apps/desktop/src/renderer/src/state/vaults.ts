@@ -352,6 +352,33 @@ export const importFilesAtom = atom(
   },
 )
 
+/**
+ * Vault content out to a folder on disk (FR-13).
+ *
+ * Returns what LANDED as well as what failed, and the difference is
+ * load-bearing: a move deletes only the targets whose copy actually succeeded,
+ * so a file that could not be written is still in the vault afterwards.
+ *
+ * No snapshot reload, unlike the import beside it — nothing in the vault
+ * changed. A move reloads when its delete runs, which is the step that did.
+ */
+export const exportFilesAtom = atom(
+  null,
+  async (
+    get,
+    _set,
+    paths: string[],
+    dest: string,
+  ): Promise<{
+    landed: { from: string; to: string }[]
+    failed: { name: string; reason: string }[]
+  }> => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || paths.length === 0) return { landed: [], failed: [] }
+    return trpc.notes.exportFiles.mutate({ remote, paths, dest })
+  },
+)
+
 export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: string[] }) => {
   const remote = get(activeRemoteAtom)
   if (!remote || paths.length === 0) return
