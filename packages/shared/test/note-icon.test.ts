@@ -69,6 +69,17 @@ describe('noteIcon', () => {
     expect(noteIcon(fm('icon: \u2b50\ufe0f\u2b50\ufe0f'))).toBeUndefined()
   })
 
+  it('accepts a pictograph written without its selector', () => {
+    // RGI is strictly right that a bare text-presentation character is not an
+    // emoji — but it looks like one to whoever typed it, and refusing it in
+    // silence is the same failure as refusing the picker's star. Copying a
+    // symbol out of a web page is enough to land here.
+    expect(noteIcon(fm('icon: \u2764'))).toBe('\u2764')
+    expect(noteIcon(fm('icon: \u2699'))).toBe('\u2699')
+    expect(noteIcon(fm('icon: \u25b6'))).toBe('\u25b6')
+    expect(noteIcon(fm('icon: \u{1f5d3}'))).toBe('\u{1f5d3}')
+  })
+
   it('is undefined when the note has no icon to offer', () => {
     expect(noteIcon(fm('type: note'))).toBeUndefined()
     expect(noteIcon('Just a body, no frontmatter.\n')).toBeUndefined()

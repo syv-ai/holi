@@ -31,6 +31,21 @@
 const ONE_EMOJI = new RegExp('^\\p{RGI_Emoji}$', 'v')
 
 /**
+ * A lone pictograph, with or without a selector after it.
+ *
+ * RGI is strictly correct that a bare text-presentation character (❤, ⚙)
+ * is not an emoji — but it is one to whoever typed it, and copying a symbol
+ * out of a web page is enough to produce the bare form. Refusing it in
+ * silence is the same failure as refusing the picker's star, so the bar here
+ * is what the person meant rather than what the registry ratified.
+ *
+ * `Extended_Pictographic` is the safe way to say that: it holds no letter,
+ * digit or punctuation, so this widens the rule without letting a word in.
+ * The single-character anchor is what keeps a sentence out.
+ */
+const ONE_PICTOGRAPH = /^\p{Extended_Pictographic}\ufe0f?$/u
+
+/**
  * Whether a value is a single emoji, in either spelling a keyboard produces.
  *
  * Emoji split in two here, and RGI holds exactly one spelling of each:
@@ -48,7 +63,11 @@ const ONE_EMOJI = new RegExp('^\\p{RGI_Emoji}$', 'v')
  * what is left still has to match RGI on its own.
  */
 function isOneEmoji(value: string): boolean {
-  return ONE_EMOJI.test(value) || ONE_EMOJI.test(value.replace(/\ufe0f/g, ''))
+  return (
+    ONE_EMOJI.test(value) ||
+    ONE_EMOJI.test(value.replace(/\ufe0f/g, '')) ||
+    ONE_PICTOGRAPH.test(value)
+  )
 }
 
 /** The note's icon, or undefined if it declares none or declares a bad one. */
