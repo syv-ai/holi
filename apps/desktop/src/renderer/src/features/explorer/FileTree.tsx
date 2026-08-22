@@ -204,6 +204,11 @@ export function FileTree({
     return f.isFolder() ? (f.getId() === ROOT_ID ? '' : f.getId()) : parentOf(f.getId())
   }
 
+  // A drop carrying OS files, wherever it lands. Behind a ref for the same
+  // reason `dataRef` is: headless-tree captures the config closures once, and
+  // this one reads `entry` and the action hook, both of which change per render.
+  const dropFilesRef = useRef<(dataTransfer: DataTransfer, dest: string) => void>(() => {})
+
   const tree = useTree<TreeItemData>({
     rootItemId: ROOT_ID,
     initialState: { expandedItems: [ROOT_ID] },
@@ -291,6 +296,36 @@ export function FileTree({
         destPath,
       )
     },
+    // A drag carrying OS files, dropped on a ROW. Without these three the
+    // library refuses the drop (`canDropForeignDragObject` defaults to
+    // `() => false`) — and refuses it by returning from its `onDrop` *without*
+    // `preventDefault()`, having already called `stopPropagation()` on the way
+    // in. The container handler below therefore never saw it and nothing
+    // cancelled the browser's default, so Chromium treated the drop as a
+    // navigation and Electron opened the file in a new window. That swallowed
+    // the in-tree move too: a row's drag is a native `startDrag`, so a note
+    // dropped on a folder comes back as a file drop like any other.
+    //
+    // Scoped to `Files` so the tree's own web drag — which carries no files —
+    // stays on the `canDrop`/`onDrop` pair above and never reaches this one.
+    canDropForeignDragObject: (dataTransfer) => dataTransfer.types.includes('Files'),
+    // Also `Files`-only: the default derived from the line above accepts any
+    // foreign drag whose `effectAllowed` is not 'none', which would light a
+    // folder up for a dragged text selection it cannot accept.
+    canDragForeignDragObjectOver: (dataTransfer) => dataTransfer.types.includes('Files'),
+    onDropForeignDragObject: (dataTransfer, target) => {
+      const id = target.item.getId()
+      // Focus the row that received the drop, as the library does for its own
+      // (`draggedItems[0].setFocused()`). Not cosmetic: headless-tree ends a
+      // valid drop with `updateDomFocus()`, which reads `getFocusedItem()`
+      // WITHOUT a null check — with nothing focused it throws from inside a
+      // `setTimeout`, so a drag from Finder into a freshly-launched window
+      // imported the file and then raised an unhandled rejection.
+      target.item.setFocused()
+      // On a folder, that folder; on a file, the folder it is in; on the root
+      // item, the vault root — the same rule the container drop follows.
+      dropFilesRef.current(dataTransfer, id === ROOT_ID ? '' : dirSet.has(id) ? id : parentOf(id))
+    },
     features: [
       syncDataLoaderFeature,
       selectionFeature,
@@ -309,6 +344,31 @@ export function FileTree({
 
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
+
+  /**
+   * Files from outside the renderer, landing in `dest`.
+   *
+   * Reached two ways — the container's own handler for a drop on empty space,
+   * and headless-tree's `onDropForeignDragObject` for a drop on a row — so it
+   * lives here rather than inline in either. Both paths must agree; a row that
+   * imported differently from the gap beneath it would be its own bug.
+   */
+  const dropFiles = (dataTransfer: DataTransfer, dest: string): void => {
+    setImporting(false)
+    const sources = [...dataTransfer.files].map((f) => window.holi.pathForFile(f))
+    if (sources.length === 0) return
+    // A file dragged out of this very vault and dropped back into it is a
+    // MOVE, and it goes through the move path so links are rewritten and
+    // open tabs follow — copying it would leave a duplicate and a pile of
+    // links pointing at the original.
+    const prefix = entry === undefined ? null : `${entry.path}/`
+    const mine = prefix === null ? [] : sources.filter((p) => p.startsWith(prefix))
+    const theirs = prefix === null ? sources : sources.filter((p) => !p.startsWith(prefix))
+    const moving = mine.map((p) => p.slice(prefix!.length)).filter((rel) => parentOf(rel) !== dest)
+    if (moving.length > 0) actions.moveInto(moving, dest)
+    if (theirs.length > 0) void importDropped(theirs, dest).then(setSkipped)
+  }
+  dropFilesRef.current = dropFiles
 
   // The row's context-menu target set: the whole multi-selection when the clicked
   // row is part of it, else just that row (parity with a right-click in VS Code).
@@ -481,29 +541,17 @@ export function FileTree({
           if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
           setImporting(false)
         }}
+        // Only a drop that missed every row reaches this: headless-tree stops
+        // propagation on a row, and `onDropForeignDragObject` above is what
+        // serves that case.
         onDrop={(e) => {
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
-          setImporting(false)
           const row = (e.target as HTMLElement).closest?.('[data-path]')
           const id = row?.getAttribute('data-path') ?? null
           // Dropped on a folder, that folder; on a file, the folder it is in;
           // on empty space, the vault root.
-          const dest = id === null ? '' : dirSet.has(id) ? id : parentOf(id)
-          const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
-          if (sources.length === 0) return
-          // A file dragged out of this very vault and dropped back into it is a
-          // MOVE, and it goes through the move path so links are rewritten and
-          // open tabs follow — copying it would leave a duplicate and a pile of
-          // links pointing at the original.
-          const prefix = entry === undefined ? null : `${entry.path}/`
-          const mine = prefix === null ? [] : sources.filter((p) => p.startsWith(prefix))
-          const theirs = prefix === null ? sources : sources.filter((p) => !p.startsWith(prefix))
-          const moving = mine
-            .map((p) => p.slice(prefix!.length))
-            .filter((rel) => parentOf(rel) !== dest)
-          if (moving.length > 0) actions.moveInto(moving, dest)
-          if (theirs.length > 0) void importDropped(theirs, dest).then(setSkipped)
+          dropFiles(e.dataTransfer, id === null ? '' : dirSet.has(id) ? id : parentOf(id))
         }}
       >
         {skipped.length > 0 && (
