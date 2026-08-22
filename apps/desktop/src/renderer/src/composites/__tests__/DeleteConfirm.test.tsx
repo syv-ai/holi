@@ -37,3 +37,21 @@ test('says nothing links to it when there are no refs', () => {
   render(<DeleteConfirm label="a.md" refs={[]} onCancel={() => {}} onConfirm={() => {}} />)
   expect(screen.getByText('Nothing links to it.')).toBeInTheDocument()
 })
+
+test('says what it is about to do, so a move does not read as a delete', () => {
+  // Moving a file out of the vault removes it from the vault, so it earns the
+  // same backrefs warning as a delete — but calling it "Delete" would describe
+  // the wrong outcome to someone who asked for a move.
+  render(
+    <DeleteConfirm
+      verb="Move"
+      label="note.md"
+      refs={[]}
+      onCancel={() => {}}
+      onConfirm={() => {}}
+    />,
+  )
+
+  expect(screen.getByRole('button', { name: 'Move' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+})

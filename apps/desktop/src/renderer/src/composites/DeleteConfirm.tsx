@@ -16,18 +16,29 @@ export function DeleteConfirm({
   refs,
   onCancel,
   onConfirm,
+  verb = 'Delete',
 }: {
   label: string
   refs: { path: string; count: number }[]
   onCancel: () => void
   onConfirm: () => void
+  /**
+   * What the confirm button is about to do.
+   *
+   * Moving a file OUT of the vault removes it from the vault, so it earns this
+   * same warning — the links left dangling are identical either way. But it is
+   * not a delete, and a dialog that says so would describe the wrong outcome to
+   * someone who asked for a move. Defaulted, so every existing caller is
+   * unchanged.
+   */
+  verb?: 'Delete' | 'Move'
 }) {
   const total = refs.reduce((n, r) => n + r.count, 0)
   return (
     <Dialog open onClose={onCancel} size="sm">
       <div data-delete-dialog={label} className="grid gap-4">
         <Dialog.Header>
-          Delete <span className="font-mono">{label}</span>?
+          {verb} <span className="font-mono">{label}</span>?
         </Dialog.Header>
         <Dialog.Body>
           {refs.length === 0 ? (
@@ -55,7 +66,7 @@ export function DeleteConfirm({
             Cancel
           </Button>
           <Button variant="destructive" size="sm" data-delete-confirm={label} onClick={onConfirm}>
-            Delete
+            {verb}
           </Button>
         </Dialog.Footer>
       </div>
