@@ -6,8 +6,8 @@
  * `manifest.json` in D74, and it applies here unchanged. A fourth transform
  * gets added to this array; it does not get a plugin system.
  */
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
+import { readVaultSettings } from '../settings'
 import { archiveDone } from './archive-done'
 import { normalizeMd } from './normalize-md'
 import { relink } from './relink'
@@ -23,20 +23,21 @@ export const VAULT_TRANSFORMS: Transform[] = [
 ]
 
 /**
- * Holi's defaults, merged under whatever `.holi/settings.json` says.
+ * Holi's defaults, merged under whatever the vault's settings files say.
+ *
+ * Restated from `@holi/shared`'s `VAULT_SETTING_DEFAULTS` rather than written
+ * out again: the seed, the onboarding step and this const all have to agree on
+ * what a vault does by default, and three literals agreeing is a coincidence
+ * that expires.
  *
  * `archive-done` is **off**: it moves task files, which changes what the board
  * shows, and a transform that rearranges someone's work is opt-in. The other
  * two only ever make a change the author would not have noticed making.
  */
-export const DEFAULT_HOOKS: HookSettings = {
-  relink: true,
-  'archive-done': false,
-  'normalize-md': true,
-}
+export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 
 /**
- * Read the enable list from the vault's committed settings.
+ * Read the enable list from the vault's settings.
  *
  * **Data, never code** (D76). This file says *which* transforms run; it can
  * never say what one is. A vault-tracked script pointed at by `core.hooksPath`
@@ -46,31 +47,15 @@ export const DEFAULT_HOOKS: HookSettings = {
  *
  * Unreadable or malformed settings fall back to the defaults rather than to
  * "everything off": a typo in an unrelated key should not silently disable
- * link rewriting.
+ * link rewriting. That contract now lives in `resolveVaultSettings` and is
+ * tested there.
+ *
+ * **Reads the local override too**, unlike the hand-rolled reader this replaced.
+ * `.holi/settings.local.json` can turn a transform off on *this machine* — which
+ * is not a D76 concern, because a local file is written by you and can still only
+ * say *whether* one of Holi's own transforms runs, never what one is. It is what
+ * lets you keep `archive-done` off while the vault you share says on.
  */
 export async function readHookSettings(root: string): Promise<HookSettings> {
-  const text = await readFile(join(root, '.holi/settings.json'), 'utf8').catch(() => null)
-  if (text === null) return { ...DEFAULT_HOOKS }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(text)
-  } catch {
-    return { ...DEFAULT_HOOKS }
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { ...DEFAULT_HOOKS }
-  }
-
-  const hooks = (parsed as Record<string, unknown>).hooks
-  if (typeof hooks !== 'object' || hooks === null || Array.isArray(hooks)) {
-    return { ...DEFAULT_HOOKS }
-  }
-
-  const settings: HookSettings = { ...DEFAULT_HOOKS }
-  for (const transform of VAULT_TRANSFORMS) {
-    const value = (hooks as Record<string, unknown>)[transform.name]
-    if (typeof value === 'boolean') settings[transform.name] = value
-  }
-  return settings
+  return (await readVaultSettings(root)).hooks
 }

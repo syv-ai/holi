@@ -10,11 +10,12 @@
 
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 
 /** The default cap when `.holi/settings.json` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
  *  datasets, exported binaries. (GitHub warns at 50 / blocks at 100 MB.) */
-export const DEFAULT_MAX_COMMITTED_FILE_BYTES = 10 * 1024 * 1024
+export const DEFAULT_MAX_COMMITTED_FILE_BYTES = VAULT_SETTING_DEFAULTS.maxCommittedFileBytes
 
 export interface HeldBackFile {
   path: string
