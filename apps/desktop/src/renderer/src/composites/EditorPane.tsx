@@ -29,7 +29,7 @@ import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
-import { decideReload } from '@/lib/editor-reload'
+import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -47,7 +47,7 @@ export function EditorPane({
 }: {
   path: string | null
   onOpenNote: (path: string) => void
-  onConflict: (path: string) => void
+  onConflict: (path: string, resolve: ConflictResolvers) => void
   /** Fired the first time the buffer changes for this open note — the rule that
    *  promotes a preview tab to pinned (FR-15), so editing never loses your place. */
   onEdit?: () => void
@@ -249,9 +249,31 @@ export function EditorPane({
     void trpc.notes.read.query({ remote, path }).then((disk) => {
       const view = viewRef.current
       if (cancelled || view === null) return
-      const decision = decideReload(baseRef.current, view.state.doc.toString(), disk)
+      const decision = decideReload(baseRef.current, view.state.doc.toString(), disk, path)
       if (decision.kind === 'none') return
-      if (decision.kind === 'conflict') return onConflict(path)
+      if (decision.kind === 'conflict') {
+        // Both ways out are closed over the two texts that actually disagreed,
+        // so neither has to re-read anything that may have moved on since.
+        return onConflict(path, {
+          keepMine: async () => {
+            const mine = view.state.doc.toString()
+            baseRef.current = mine
+            await trpc.notes.write.mutate({ remote, path, text: mine })
+          },
+          takeDisk: () => {
+            baseRef.current = disk
+            applyReload(view, disk)
+          },
+        })
+      }
+      // Our own commit-time tidy. `base` catches up to disk so the invariant
+      // holds again, and the buffer is deliberately NOT touched: the keystrokes
+      // that arrived while the hook ran are the whole thing worth protecting
+      // here. The pending save writes them, and the next commit re-tidies.
+      if (decision.kind === 'rebase') {
+        baseRef.current = decision.text
+        return
+      }
       // A clean reload and a successful merge both replace the buffer and both
       // advance `base` — the merged text is now what this editor last saw, even
       // though it is not yet what is on disk. The pending save writes it.

@@ -13,6 +13,7 @@
  * what closed it.
  */
 import { describe, expect, it } from 'vitest'
+import { normalizeText } from '@holi/shared'
 import { decideReload, minimalChange } from '../src/renderer/src/lib/editor-reload'
 
 describe('decideReload', () => {
@@ -20,7 +21,7 @@ describe('decideReload', () => {
     // The editor's own autosave lands here, and so does an agent write that
     // happened to produce identical bytes, and so does a pull that changed a
     // different file. All three are the same non-event.
-    expect(decideReload('hello\n', 'hello\n', 'hello\n')).toEqual({ kind: 'none' })
+    expect(decideReload('hello\n', 'hello\n', 'hello\n', 'note.md')).toEqual({ kind: 'none' })
   })
 
   it('still does nothing when the buffer has moved on but disk has not', () => {
@@ -28,13 +29,13 @@ describe('decideReload', () => {
     // if this reloaded, it would throw away every keystroke since the last save
     // on any unrelated snapshot push, and the snapshot push carries no path so
     // there are a great many unrelated ones.
-    expect(decideReload('hello\n', 'hello world\n', 'hello\n')).toEqual({ kind: 'none' })
+    expect(decideReload('hello\n', 'hello world\n', 'hello\n', 'note.md')).toEqual({ kind: 'none' })
   })
 
   it('reloads silently when the buffer is clean', () => {
     // FR-11: a clean merge is silent. This is the overwhelmingly common
     // external-write case, because autosave fires on idle.
-    expect(decideReload('hello\n', 'hello\n', 'from a teammate\n')).toEqual({
+    expect(decideReload('hello\n', 'hello\n', 'from a teammate\n', 'note.md')).toEqual({
       kind: 'reload',
       text: 'from a teammate\n',
     })
@@ -45,17 +46,68 @@ describe('decideReload', () => {
     const mine = 'ONE\ntwo\nthree\n'
     const theirs = 'one\ntwo\nTHREE\n'
 
-    expect(decideReload(base, mine, theirs)).toEqual({ kind: 'merged', text: 'ONE\ntwo\nTHREE\n' })
+    expect(decideReload(base, mine, theirs, 'note.md')).toEqual({ kind: 'merged', text: 'ONE\ntwo\nTHREE\n' })
   })
 
   it('reports a conflict rather than picking a side', () => {
     // A merger that silently chose would remove the feature: the report is what
     // routes this to the vault's ordinary reconcile affordance.
-    const result = decideReload('one\n', 'mine\n', 'theirs\n')
+    const result = decideReload('one\n', 'mine\n', 'theirs\n', 'note.md')
 
     expect(result.kind).toBe('conflict')
     if (result.kind !== 'conflict') throw new Error('expected a conflict')
     expect(result.regions.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * The commit hook rewrites the file AFTER the editor's save, which is the one
+   * thing `base` bookkeeping cannot see coming. Typing `icon: ` and pausing to
+   * open the emoji picker is enough: autosave writes the trailing space,
+   * `normalize-md` strips it on commit, and the change lands on the very line
+   * still being typed on — so the merge had both sides touching one line and
+   * reported a conflict over a space nobody typed on purpose.
+   */
+  describe("Holi's own commit-time tidy is not a foreign edit", () => {
+    const withSpace = '---\ntype: daily-note\nicon: \n---\n\n# 22-08-2026\n'
+    const tidied = '---\ntype: daily-note\nicon:\n---\n\n# 22-08-2026\n'
+    const withEmoji = '---\ntype: daily-note\nicon: \u2b50\ufe0f\n---\n\n# 22-08-2026\n'
+
+    it('rebases onto the tidied file and keeps what is being typed', () => {
+      // The buffer is NOT touched: the emoji survives, and the next save writes
+      // it. `base` becomes the tidied text so the invariant holds again.
+      expect(decideReload(withSpace, withEmoji, tidied, '22-08-2026.md')).toEqual({
+        kind: 'rebase',
+        text: tidied,
+      })
+    })
+
+    it('recognises the tidy on a task file, where the rule also reorders keys', () => {
+      const messy = '---\nstatus: doing\ntitle: Fix login\n---\n'
+      expect(decideReload(messy, `${messy}\nmine\n`, normalizeText(messy, 'task.a.md'), 'task.a.md')).toEqual({
+        kind: 'rebase',
+        text: normalizeText(messy, 'task.a.md'),
+      })
+    })
+
+    it('still reloads rather than rebasing when the buffer is clean', () => {
+      // Nothing to protect, so take the tidied bytes outright. Rebasing here
+      // would leave `base` and the buffer agreeing on text disk does not have.
+      expect(decideReload(withSpace, withSpace, tidied, '22-08-2026.md')).toEqual({
+        kind: 'reload',
+        text: tidied,
+      })
+    })
+
+    // The narrowness is the point. `relink` rewrites carry real content — a link
+    // target that changed because a file was renamed — so treating them as ours
+    // and dropping them in favour of the buffer would silently undo the rename.
+    it('does NOT treat a content rewrite as its own, even on one line', () => {
+      const base = 'see [[old.md]]\n'
+      const relinked = 'see [[new.md]]\n'
+      const mine = 'see [[old.md]] and more\n'
+
+      expect(decideReload(base, mine, relinked, 'note.md').kind).not.toBe('rebase')
+    })
   })
 })
 

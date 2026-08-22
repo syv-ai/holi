@@ -20,7 +20,7 @@
  *
  * This is `notes-editor.md` §External writes, first bullet.
  */
-import { merge3, type ConflictRegion } from '@holi/shared'
+import { merge3, normalizeText, type ConflictRegion } from '@holi/shared'
 
 export type Reload =
   /** Nothing happened that concerns this editor. */
@@ -29,11 +29,33 @@ export type Reload =
   | { kind: 'reload'; text: string }
   /** Dirty buffer, and the two edits did not overlap. */
   | { kind: 'merged'; text: string }
+  /** Not a foreign edit at all: Holi's own commit-time tidy. `base` moves to
+   *  what is on disk and the buffer is left exactly as it is. */
+  | { kind: 'rebase'; text: string }
   /** Dirty buffer, and they did. Routed to the vault's reconcile affordance —
    *  a merger that silently picked a side would remove the feature. */
   | { kind: 'conflict'; regions: ConflictRegion[] }
 
-export function decideReload(base: string, buffer: string, disk: string): Reload {
+/**
+ * The two ways out of a conflict, handed up with it.
+ *
+ * They are closures rather than a path, because only the editor still holds
+ * both texts that disagreed: the buffer lives in its `EditorView` and the
+ * buffer registry is anonymous, so nothing above can reconstruct either side.
+ */
+export interface ConflictResolvers {
+  /** Write the buffer over what is on disk. */
+  keepMine: () => Promise<void>
+  /** Drop the buffer and take the file as it stands. */
+  takeDisk: () => void
+}
+
+export function decideReload(
+  base: string,
+  buffer: string,
+  disk: string,
+  path: string,
+): Reload {
   // Whoever wrote it, the bytes now on disk are the bytes this editor last saw.
   // Includes the editor's own autosave, an agent write that produced identical
   // content, and every push about some *other* file.
@@ -42,6 +64,21 @@ export function decideReload(base: string, buffer: string, disk: string): Reload
   // Clean buffer: there is nothing to lose. The common case by a wide margin,
   // because autosave fires on idle.
   if (buffer === base) return { kind: 'reload', text: disk }
+
+  // Holi's own commit-time tidy, arriving after the save that triggered it.
+  // `normalize-md` runs in the pre-commit hook, so it rewrites the file AFTER
+  // `base` was advanced — the one write this module's invariant cannot see
+  // coming, and the reason it is recognised here rather than attributed.
+  //
+  // Keeping the buffer is safe precisely because the tidy is idempotent and
+  // re-derivable: the next commit applies it again to whatever is written next,
+  // so nothing is lost by preferring what is being typed. That is also why this
+  // is scoped to normalization alone — `relink` rewrites carry real content, and
+  // dropping one in favour of the buffer would silently undo a rename.
+  //
+  // Ordered after the clean-buffer check on purpose: with nothing to protect,
+  // taking the tidied bytes outright is simpler and leaves base === disk.
+  if (disk === normalizeText(base, path)) return { kind: 'rebase', text: disk }
 
   const merged = merge3(base, buffer, disk)
   return merged.kind === 'merged'
