@@ -11,6 +11,7 @@
 import { fileKind, isTaskFilePath } from '@holi/shared'
 import { useAtomValue } from 'jotai'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
+import type { ConflictResolvers } from '@/lib/editor-reload'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import {
@@ -75,7 +76,7 @@ export interface PaneViewProps {
   /** Promote a preview tab because the user typed in it. */
   onEdit: () => void
   onOpenNote: (path: string) => void
-  onConflict: (path: string) => void
+  onConflict: (path: string, resolve: ConflictResolvers) => void
   /** A tab was dropped on this pane — on its strip, or into the middle of its
    *  body. `index` is absolute within this pane's tabs. */
   onDropTab?: (tab: Tab, index: number) => void

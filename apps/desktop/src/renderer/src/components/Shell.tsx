@@ -73,6 +73,8 @@ import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
+import type { ConflictResolvers } from '@/lib/editor-reload'
+import { ConflictBanner } from '@/composites/ConflictBanner'
 import { agentPanelOpenAtom } from '@/state/agent'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
@@ -184,7 +186,12 @@ export function Shell() {
   const [dragTab, setDragTab] = useState<Tab | null>(null)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  const [banner, setBanner] = useState<string | null>(null)
+  /** An unmergeable external write, with the two ways out the editor handed up.
+   *  Held as one object so the message can never outlive its resolvers. */
+  const [banner, setBanner] = useState<{
+    path: string
+    resolve: ConflictResolvers
+  } | null>(null)
   /** The vault already opened in main, so a re-render — or `openVault` itself
    *  re-setting `activeRemoteAtom` to the same value — does not re-open it. */
   const openedRemote = useRef<string | null>(null)
@@ -542,9 +549,7 @@ export function Shell() {
                       onCloseTab={(t) => setWorkspace((w) => closeTab(focusPane(w, i), t))}
                       onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
                       onOpenNote={open}
-                      onConflict={(path) =>
-                        setBanner(`${path} changed underneath your edit and could not be merged`)
-                      }
+                      onConflict={(path, resolve) => setBanner({ path, resolve })}
                       // A dropped tab carries only its identity, so neither of
                       // these needs to know where it came from — `moveTab`
                       // finds it, in whichever pane it currently sits.
@@ -712,9 +717,11 @@ export function Shell() {
           qualifies — an unmergeable external write to the open note raises it
           (EditorPane's onConflict), the one thing left that a user must answer. */}
       {banner !== null && (
-        <p className="border-t border-amber-900/60 bg-amber-950/40 px-3 py-1.5 text-[11px] text-amber-100">
-          {banner}
-        </p>
+        <ConflictBanner
+          path={banner.path}
+          resolve={banner.resolve}
+          onDismiss={() => setBanner(null)}
+        />
       )}
 
       {/* Sync state lives bottom-left: "where am I and is it saved elsewhere" is

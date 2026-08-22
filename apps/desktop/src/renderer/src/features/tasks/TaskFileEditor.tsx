@@ -15,6 +15,7 @@
  * falls back to the raw editor — the honest place to fix bad YAML by hand.
  */
 import type { Task } from '@holi/shared'
+import type { ConflictResolvers } from '@/lib/editor-reload'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Tooltip } from '@/primitives'
@@ -43,7 +44,7 @@ export function TaskFileEditor({
   path: string
   onOpenNote: (path: string) => void
   onEdit?: () => void
-  onConflict: (path: string) => void
+  onConflict: (path: string, resolve: ConflictResolvers) => void
 }): React.JSX.Element {
   const task = useAtomValue(tasksAtom).get(path)
 
