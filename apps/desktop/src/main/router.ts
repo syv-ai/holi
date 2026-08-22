@@ -40,6 +40,7 @@ import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
+import { exportFiles } from './vault/export-files'
 import { moveNotes } from './vault/move'
 import { getOrCreateDaily, sweepDaily } from './vault/daily'
 import { openRepo, remoteUrl, type Commit } from './git'
@@ -1260,6 +1261,24 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         const folder = input.folder === '' ? '' : safe(input.folder)
         return importFiles(root, input.sources, folder)
+      }),
+
+    /**
+     * Vault content out to a folder on disk (FR-13) — the exact inverse of the
+     * import above, and the checks invert with it. `dest` is absolute, outside
+     * the vault, and deliberately unvalidated: it comes from the native folder
+     * chooser, so it is the user's own choice, and second-guessing it here
+     * would only refuse places they can already write to from Finder. The
+     * SOURCES are what need `safe()`, because those name vault content.
+     */
+    exportFiles: vaultMutation
+      .input((raw: unknown) => ({
+        ...fields({ remote: 'string', dest: 'string' })(raw),
+        paths: stringsOrThrow((raw as { paths?: unknown }).paths),
+      }))
+      .mutation(async ({ input }) => {
+        const root = await rootFor(input.remote)
+        return exportFiles(root, input.paths.map(safe), input.dest)
       }),
 
     // FR-12 generalized: the delete preview for a folder or multi-selection.
