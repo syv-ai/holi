@@ -57,8 +57,18 @@ export async function importFiles(
       await copyFile(source, abs, 1 /* fs.constants.COPYFILE_EXCL */)
       imported.push(rel)
     } catch (err) {
+      // An unmapped code is CARRIED, not paraphrased away. "could not be
+      // copied" on its own tells the person only that the thing they watched
+      // not happen did not happen — nothing to act on, and nothing to report
+      // to whoever could fix it. The map covers the failures a person causes;
+      // the code covers the ones nobody predicted, which is the whole reason
+      // for having a fallback at all.
       const code = (err as NodeJS.ErrnoException).code
-      skipped.push({ name, reason: REASONS[code ?? ''] ?? 'could not be copied' })
+      const known = REASONS[code ?? '']
+      skipped.push({
+        name,
+        reason: known ?? (code ? `could not be copied (${code})` : 'could not be copied'),
+      })
     }
   }
   return { imported, skipped }

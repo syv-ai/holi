@@ -85,6 +85,21 @@ describe('importFiles', () => {
     ])
   })
 
+  it('names the errno for a failure nobody predicted', async () => {
+    // The map above is a short list of failures a person causes. Everything
+    // else used to collapse into "could not be copied", which says only that
+    // the thing you just watched not happen did not happen — there is nothing
+    // to act on and nothing to report. A source that is not there is the plain
+    // case: `ENOENT`, and the file itself already promised to keep the code.
+    const root = await scratch('holi-vault-')
+    const outside = await scratch('holi-outside-')
+
+    const result = await importFiles(root, [join(outside, 'ghost.pdf')], '')
+
+    expect(result.imported).toEqual([])
+    expect(result.skipped).toEqual([{ name: 'ghost.pdf', reason: 'could not be copied (ENOENT)' }])
+  })
+
   it('copies bytes, not text — an image survives the trip', async () => {
     // The one import that a text copy silently corrupts. `copyNotes` reads utf8
     // because everything it moves is already in the vault and already text;
