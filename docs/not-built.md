@@ -113,15 +113,9 @@ Finder and let the OS open it" may be the whole feature. The old viewer is the r
 careful — the previous app's EmbedPDF integration was ~1550 LOC with worker-engine and StrictMode
 hangs on "Loading PDF…".
 
-**Dragging a file out of the vault.** Dropping one *in* is built
-([`prd/notes-editor.md`](prd/notes-editor.md) FR-13); the other direction is blocked on a gesture,
-not on plumbing. Electron drags a file out with `webContents.startDrag`, which begins its own
-native drag and therefore has to be called **instead of** the HTML5 drag the tree already uses to
-move files between folders — and nothing at `dragstart` can tell which of the two the user meant,
-because the answer is "wherever they let go", which is known too late. So it needs a decision
-rather than a build: a modifier key (undiscoverable), a context-menu *Export…* with a save dialog
-(discoverable, not a drag), or dropping the in-tree move in favour of it. **Reveal in Finder**
-exists today and covers most of what this is wanted for.
+**Importing a folder.** Dropping a folder in from Finder is refused with a sentence — the copy is
+per file, and recursing means deciding what to do about the files inside it that collide, which is
+the same question the flat case answers one at a time and a folder answers all at once.
 
 ## Tasks
 

@@ -92,6 +92,9 @@ contextBridge.exposeInMainWorld('holi', {
    * `dataTransfer`.
    */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
+  /** Hand these files to the OS as a drag. Fire-and-forget: a drag cannot wait
+   *  for a round trip. */
+  startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
   showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
   agent: {
     onData: onAgentData,

@@ -12,9 +12,18 @@
  * exists, and `holi:auth:*` moved into the router when GitHub became identity.
  */
 import type { AnyRouter } from '@trpc/server'
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
 import { join } from 'node:path'
 import { callProcedure, toEnvelope, type TrpcEnvelope, type TrpcOp } from './trpc-call'
+
+/**
+ * The drag image. macOS refuses `startDrag` with an empty icon, and the file's
+ * own icon is only available asynchronously — so this is a 1×1 transparent PNG
+ * and the OS draws its own preview over it.
+ */
+const DRAG_ICON = nativeImage.createFromDataURL(
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+)
 
 export function registerIpc(deps: { router: AnyRouter }): void {
   ipcMain.handle(
@@ -36,6 +45,28 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   // rather than opening the folder itself, so the user sees the vault in place.
   ipcMain.handle('holi:openPath', (_event, path: string) => {
     shell.showItemInFolder(path)
+  })
+
+  /**
+   * Hand a vault file to the OS as a drag (`prd/notes-editor.md` FR-13).
+   *
+   * A web drag never tells the operating system a file is involved — it carries
+   * MIME data, not a pasteboard file promise — so dropping a tree row into
+   * Finder did nothing at all. `startDrag` is the only thing that can, and it
+   * **replaces** the HTML drag rather than joining it: once this is called the
+   * renderer stops receiving drag events, and the OS owns the gesture until the
+   * user lets go. That is why the tree's own move now rides the same drag,
+   * arriving back at the window as an ordinary file drop.
+   *
+   * `on`, not `handle`: this has to run while the mouse is still down, and a
+   * round trip through a promise the renderer awaits is a round trip the drag
+   * may not survive. The icon is prebuilt for the same reason — `getFileIcon`
+   * is async, and a drag that has to wait for an icon is a drag that starts
+   * late or not at all.
+   */
+  ipcMain.on('holi:startDrag', (event, paths: string[]) => {
+    if (paths.length === 0) return
+    event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })
   })
 
   // The native SAVE sheet for Convert-to-PDF (slice 2). Only main can present a

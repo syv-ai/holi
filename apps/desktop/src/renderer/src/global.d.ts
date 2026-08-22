@@ -51,6 +51,8 @@ declare global {
       openPath(path: string): Promise<void>
       /** The absolute path of a `File` the user dropped on the window. */
       pathForFile(file: File): string
+      /** Hand these absolute paths to the OS as a native file drag. */
+      startDrag(paths: string[]): void
       /** Native "save as" for the Convert-to-PDF output. Presents a save sheet
        *  defaulting to `defaultName` under Downloads; resolves to the chosen
        *  absolute path, or null if the user cancelled. */

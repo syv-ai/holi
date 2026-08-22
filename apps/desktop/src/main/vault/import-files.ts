@@ -25,6 +25,19 @@ export interface ImportResult {
   skipped: { name: string; reason: string }[]
 }
 
+/** A failure a person caused, in words. Anything else keeps its code, because a
+ *  reason nobody predicted is better shown than paraphrased. */
+const REASONS: Record<string, string> = {
+  EEXIST: 'a file of that name is here',
+  // Dragging a folder in is an ordinary thing to try. Recursing is a feature;
+  // saying what happened is the minimum. macOS answers `ENOTSUP` rather than
+  // the `EISDIR` you would guess — measured, not assumed.
+  ENOTSUP: 'folders are not imported yet',
+  EISDIR: 'folders are not imported yet',
+  EPERM: 'folders are not imported yet',
+  EACCES: 'no permission to read it',
+}
+
 export async function importFiles(
   root: string,
   sources: string[],
@@ -45,10 +58,7 @@ export async function importFiles(
       imported.push(rel)
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code
-      skipped.push({
-        name,
-        reason: code === 'EEXIST' ? 'a file of that name is here' : (code ?? 'could not be copied'),
-      })
+      skipped.push({ name, reason: REASONS[code ?? ''] ?? 'could not be copied' })
     }
   }
   return { imported, skipped }

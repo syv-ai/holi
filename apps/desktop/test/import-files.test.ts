@@ -5,7 +5,7 @@
  * *source* is not the vault, which makes it the one place a name can arrive
  * that the vault already uses, and the one place a binary arrives by accident.
  */
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -67,6 +67,22 @@ describe('importFiles', () => {
 
     expect(result.imported).toEqual(['fresh.md'])
     expect(result.skipped.map((s) => s.name)).toEqual(['clash.md'])
+  })
+
+  it('says what happened when a folder is dropped in', async () => {
+    // Dragging a folder from Finder is an ordinary thing to try, and the raw
+    // failure is `EISDIR` — a code, shown to a person, for something they did
+    // on purpose. Recursing is a feature; saying so is the minimum.
+    const root = await scratch('holi-vault-')
+    const outside = await scratch('holi-outside-')
+    await mkdir(join(outside, 'a-folder'))
+
+    const result = await importFiles(root, [join(outside, 'a-folder')], '')
+
+    expect(result.imported).toEqual([])
+    expect(result.skipped).toEqual([
+      { name: 'a-folder', reason: 'folders are not imported yet' },
+    ])
   })
 
   it('copies bytes, not text — an image survives the trip', async () => {

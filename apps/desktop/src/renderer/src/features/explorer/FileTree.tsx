@@ -491,7 +491,19 @@ export function FileTree({
           // on empty space, the vault root.
           const dest = id === null ? '' : dirSet.has(id) ? id : parentOf(id)
           const sources = [...e.dataTransfer.files].map((f) => window.holi.pathForFile(f))
-          if (sources.length > 0) void importDropped(sources, dest).then(setSkipped)
+          if (sources.length === 0) return
+          // A file dragged out of this very vault and dropped back into it is a
+          // MOVE, and it goes through the move path so links are rewritten and
+          // open tabs follow — copying it would leave a duplicate and a pile of
+          // links pointing at the original.
+          const prefix = entry === undefined ? null : `${entry.path}/`
+          const mine = prefix === null ? [] : sources.filter((p) => p.startsWith(prefix))
+          const theirs = prefix === null ? sources : sources.filter((p) => !p.startsWith(prefix))
+          const moving = mine
+            .map((p) => p.slice(prefix!.length))
+            .filter((rel) => parentOf(rel) !== dest)
+          if (moving.length > 0) actions.moveInto(moving, dest)
+          if (theirs.length > 0) void importDropped(theirs, dest).then(setSkipped)
         }}
       >
         {skipped.length > 0 && (
@@ -523,6 +535,17 @@ export function FileTree({
                   <div
                     {...rowProps}
                     data-path={id}
+                    // One drag, both directions (FR-13). A web drag cannot tell
+                    // the OS a file is involved, so the row hands the gesture to
+                    // `startDrag` — dropped in Finder the file lands there, and
+                    // dropped back on this window it arrives as a file drop,
+                    // which is where the in-tree move now happens. A folder has
+                    // no single file to hand over, so it keeps the web drag.
+                    onDragStart={(e) => {
+                      if (isFolder) return
+                      e.preventDefault()
+                      window.holi.startDrag(rowTargets(id).map(absPathFor))
+                    }}
                     onClick={(e) => {
                       origClick?.(e)
                       // A plain click opens a preview; a modified click is a
