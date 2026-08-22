@@ -16,6 +16,7 @@
  * `overflow-hidden` on a flex child that cannot shrink clips nothing). Which
  * tabs survive it is `lib/tab-window.ts`, which is pure and tested on numbers.
  */
+import { useAtomValue } from 'jotai'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
@@ -38,6 +39,7 @@ import {
   type PillBox,
 } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
+import { snapshotAtom } from '@/state/vaults'
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
  *  apps use their id instead — both are keyed by something the tab carries
@@ -62,8 +64,13 @@ export function tabKey(tab: Tab): string {
   return tab.kind === 'note' ? `note:${tab.path}` : tab.kind === 'app' ? `app:${tab.appId}` : tab.kind
 }
 
-function tabIcon(tab: Tab): ReactNode {
-  if (tab.kind === 'note') return fileIconFor(tab.path)
+/** `icons` is `.holi/icons.json` as the snapshot resolved it (D82), keyed by
+ *  vault-relative path. It has to be passed in rather than read here: this is a
+ *  module-level function, and the tree already proves the map belongs to the
+ *  snapshot and not to a store of its own. Only a note tab can carry one — the
+ *  singleton tabs are not files and have no path to key by. */
+function tabIcon(tab: Tab, icons: Record<string, string>): ReactNode {
+  if (tab.kind === 'note') return fileIconFor(tab.path, icons[tab.path])
   if (tab.kind === 'app') return <LayoutGrid size={14} />
   if (tab.kind === 'agenda') return <CalendarDays size={14} />
   if (tab.kind === 'mail') return <Mail size={14} />
@@ -120,6 +127,10 @@ export function TabStrip({
   onDragBegin,
   trailing,
 }: TabStripProps) {
+  // Read here rather than taken as a prop: every pane's strip wants the same
+  // map, and threading it through `PaneView` would make each caller repeat a
+  // lookup that has exactly one answer.
+  const icons = useAtomValue(snapshotAtom).icons
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   const [available, setAvailable] = useState(0)
@@ -408,7 +419,7 @@ export function TabStrip({
                   onClick={() => onSelect(i)}
                   onDoubleClick={() => onPin(i)}
                 >
-                  {tabIcon(t)}
+                  {tabIcon(t, icons)}
                   <span>{tabName(t)}</span>
                 </Button>
               </Tooltip>
@@ -455,7 +466,7 @@ export function TabStrip({
                   className="gap-2 text-xs"
                   onSelect={() => onSelect(index)}
                 >
-                  {tabIcon(tab)}
+                  {tabIcon(tab, icons)}
                   <span className={tab.kind === 'note' && tab.preview ? 'italic' : ''}>
                     {tabName(tab)}
                   </span>
