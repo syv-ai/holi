@@ -184,6 +184,18 @@ export function Shell() {
    * tab came from. `dropZones` answers that by asking the moves themselves.
    */
   const [dragTab, setDragTab] = useState<Tab | null>(null)
+  /**
+   * Whether the drag is currently over a tab strip.
+   *
+   * The landing strips stay out of sight while it is. Drawing them from the
+   * moment a tab is picked up was deliberate (D78 — a target that materialises
+   * once you reach it teaches nobody the gesture), but that reasoning predates
+   * the strip previewing a reorder: the commonest drag by far never leaves the
+   * strip at all, and lighting two bands under it for every nudge is noise. They
+   * still appear *before* the pointer aims at one — the moment it leaves the
+   * strip, which is the earliest a drag can be heading for a pane.
+   */
+  const [overStrip, setOverStrip] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
   /** An unmergeable external write, with the two ways out the editor handed up.
@@ -293,7 +305,10 @@ export function Shell() {
   // on screen for a drag that finished.
   useEffect(() => {
     if (dragTab === null) return
-    const clear = () => setDragTab(null)
+    const clear = () => {
+      setDragTab(null)
+      setOverStrip(false)
+    }
     window.addEventListener('dragend', clear)
     window.addEventListener('drop', clear)
     return () => {
@@ -366,145 +381,143 @@ export function Shell() {
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
             <aside className="relative flex h-full flex-col border-r border-divider">
-          <div className="flex h-11 shrink-0 items-center px-2">
-            <VaultPicker
-              vaults={vaults}
-              activeRemote={activeRemote}
-              onSelect={switchVault}
-              onAddVault={() => setShowAdd(true)}
-            />
-          </div>
-          {showAdd && (
-            <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />
-          )}
+              <div className="flex h-11 shrink-0 items-center px-2">
+                <VaultPicker
+                  vaults={vaults}
+                  activeRemote={activeRemote}
+                  onSelect={switchVault}
+                  onAddVault={() => setShowAdd(true)}
+                />
+              </div>
+              {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
 
-          {/* The tree and the apps list are two sections of one column with a
+              {/* The tree and the apps list are two sections of one column with a
               draggable boundary between them — the sidebar's own vertical
               group, nested inside the workspace's horizontal one. The apps
               panel is absent rather than empty when the vault has no apps: a
               zero-content panel would still claim a slice and still draw a
               handle above it. */}
-          <ResizablePanelGroup
-            orientation="vertical"
-            className="min-h-0 flex-1"
-            defaultLayout={sidebarLayout.defaultLayout}
-            onLayoutChanged={(layout, meta) => {
-              sidebarLayout.onLayoutChanged(layout, meta)
-              // Reconcile a real drag back into `appsOpen` — dragging the handle
-              // to the floor is the other way to collapse the section. Only
-              // `isUserInteraction`: mounting the panel, or the tree reflowing,
-              // reports every size with the flag false, and acting on that would
-              // collapse the section behind the user's back.
-              //
-              // Ask the PANEL whether it is collapsed rather than measuring
-              // `layout.apps`: a layout value is a flexGrow weight, not a pixel
-              // height, so comparing it against the collapsed height was a
-              // category error that read every expanded panel as collapsed.
-              if (!meta.isUserInteraction) return
-              setAppsOpen(appsPanelRef.current?.isCollapsed() === false)
-            }}
-          >
-            <ResizablePanel id="tree" minSize={80}>
-              <FileTree
-                activePath={tab?.kind === 'note' ? tab.path : null}
-                onOpenPreview={open}
-                onOpenPinned={openPin}
-                onOpenInNewPane={(path) =>
-                  setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
-                }
-              />
-            </ResizablePanel>
-            {hasApps && (
-              <>
-                <ResizableHandle />
-                <ResizablePanel
-                  id="apps"
-                  collapsible
-                  // Collapsed leaves exactly the header row, which is the
-                  // control that expands it again. Collapsing to 0 would take
-                  // the section's own affordance away with it.
-                  collapsedSize={APPS_HEADER_HEIGHT}
-                  defaultSize={160}
-                  minSize={66}
-                  maxSize="60"
-                  panelRef={appsPanelRef}
-                >
-                  <AppsSection />
+              <ResizablePanelGroup
+                orientation="vertical"
+                className="min-h-0 flex-1"
+                defaultLayout={sidebarLayout.defaultLayout}
+                onLayoutChanged={(layout, meta) => {
+                  sidebarLayout.onLayoutChanged(layout, meta)
+                  // Reconcile a real drag back into `appsOpen` — dragging the handle
+                  // to the floor is the other way to collapse the section. Only
+                  // `isUserInteraction`: mounting the panel, or the tree reflowing,
+                  // reports every size with the flag false, and acting on that would
+                  // collapse the section behind the user's back.
+                  //
+                  // Ask the PANEL whether it is collapsed rather than measuring
+                  // `layout.apps`: a layout value is a flexGrow weight, not a pixel
+                  // height, so comparing it against the collapsed height was a
+                  // category error that read every expanded panel as collapsed.
+                  if (!meta.isUserInteraction) return
+                  setAppsOpen(appsPanelRef.current?.isCollapsed() === false)
+                }}
+              >
+                <ResizablePanel id="tree" minSize={80}>
+                  <FileTree
+                    activePath={tab?.kind === 'note' ? tab.path : null}
+                    onOpenPreview={open}
+                    onOpenPinned={openPin}
+                    onOpenInNewPane={(path) =>
+                      setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
+                    }
+                  />
                 </ResizablePanel>
-              </>
-            )}
-          </ResizablePanelGroup>
+                {hasApps && (
+                  <>
+                    <ResizableHandle />
+                    <ResizablePanel
+                      id="apps"
+                      collapsible
+                      // Collapsed leaves exactly the header row, which is the
+                      // control that expands it again. Collapsing to 0 would take
+                      // the section's own affordance away with it.
+                      collapsedSize={APPS_HEADER_HEIGHT}
+                      defaultSize={160}
+                      minSize={66}
+                      maxSize="60"
+                      panelRef={appsPanelRef}
+                    >
+                      <AppsSection />
+                    </ResizablePanel>
+                  </>
+                )}
+              </ResizablePanelGroup>
 
-          {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
+              {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
               horizontally — and `flex-1` alone could not fix that, since a flex
               item's default `min-width: auto` refuses to shrink below its text.
               `min-w-0` on each chip is what actually forbids the overflow; the
               split is what keeps them legible rather than truncated. There is
               one fewer now: today's note is marked in the tree, where the file
               is, rather than behind a chip naming something you could not see. */}
-          {/* `mt-auto` keeps the chips on the floor of the sidebar now that the
+              {/* `mt-auto` keeps the chips on the floor of the sidebar now that the
               tree no longer fills it — the spare height collects here, between
               the apps list and the chips, instead of above the apps list. */}
-          <div className="mt-auto flex shrink-0 flex-col gap-1.5 p-2">
-            <div className="flex items-center gap-2">
-              <Tooltip content={`task board — ${openTaskCount} open`}>
-                <Button
-                  variant="secondary"
-                  size="xs"
-                  className="min-w-0 flex-1 gap-1.5"
-                  onClick={() => setWorkspace((w) => openBoard(w))}
-                >
-                  board
-                  {openTaskCount > 0 && (
-                    <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
-                      {openTaskCount}
-                    </span>
-                  )}
-                </Button>
-              </Tooltip>
-              <Tooltip content="vault settings">
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  className="shrink-0 text-muted-foreground"
-                  aria-label="vault settings"
-                  onClick={() => setShowSettings((v) => !v)}
-                >
-                  <Settings size={16} />
-                </Button>
-              </Tooltip>
-            </div>
+              <div className="mt-auto flex shrink-0 flex-col gap-1.5 p-2">
+                <div className="flex items-center gap-2">
+                  <Tooltip content={`task board — ${openTaskCount} open`}>
+                    <Button
+                      variant="secondary"
+                      size="xs"
+                      className="min-w-0 flex-1 gap-1.5"
+                      onClick={() => setWorkspace((w) => openBoard(w))}
+                    >
+                      board
+                      {openTaskCount > 0 && (
+                        <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
+                          {openTaskCount}
+                        </span>
+                      )}
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="vault settings">
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="shrink-0 text-muted-foreground"
+                      aria-label="vault settings"
+                      onClick={() => setShowSettings((v) => !v)}
+                    >
+                      <Settings size={16} />
+                    </Button>
+                  </Tooltip>
+                </div>
 
-            {/* Agenda and mail are account-wide, not vault content (D67), and
+                {/* Agenda and mail are account-wide, not vault content (D67), and
                 they appear only once Google is connected — a chip whose only
                 destination is "connect Google in settings" is a dead end
                 wearing the clothes of a feature. `undefined` (not asked yet)
                 hides them too, so a disconnected app never flashes them. */}
-            {googleAccount != null && (
-              <div className="flex items-center gap-2">
-                <Tooltip content={`${googleAccount.email} — agenda`}>
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="min-w-0 flex-1 gap-1.5"
-                    onClick={() => setWorkspace((w) => openAgenda(w))}
-                  >
-                    agenda
-                  </Button>
-                </Tooltip>
-                <Tooltip content={`${googleAccount.email} — mail`}>
-                  <Button
-                    variant="secondary"
-                    size="xs"
-                    className="min-w-0 flex-1 gap-1.5"
-                    onClick={() => setWorkspace((w) => openMail(w))}
-                  >
-                    mail
-                  </Button>
-                </Tooltip>
+                {googleAccount != null && (
+                  <div className="flex items-center gap-2">
+                    <Tooltip content={`${googleAccount.email} — agenda`}>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        className="min-w-0 flex-1 gap-1.5"
+                        onClick={() => setWorkspace((w) => openAgenda(w))}
+                      >
+                        agenda
+                      </Button>
+                    </Tooltip>
+                    <Tooltip content={`${googleAccount.email} — mail`}>
+                      <Button
+                        variant="secondary"
+                        size="xs"
+                        className="min-w-0 flex-1 gap-1.5"
+                        onClick={() => setWorkspace((w) => openMail(w))}
+                      >
+                        mail
+                      </Button>
+                    </Tooltip>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
             </aside>
           </ResizablePanel>
 
@@ -557,8 +570,18 @@ export function Shell() {
                       // the whole workspace — pane 1's left edge and pane 0's
                       // right edge are one gap — so it is answered here, by the
                       // moves themselves, rather than guessed at per pane.
-                      allowed={dragTab === null ? NO_ZONES : dropZones(workspace, dragTab, i)}
-                      onDragBegin={setDragTab}
+                      allowed={
+                        dragTab === null || overStrip ? NO_ZONES : dropZones(workspace, dragTab, i)
+                      }
+                      // The pointer is on this strip when a drag starts from it,
+                      // so say so here rather than waiting for the first
+                      // `dragover` — otherwise the bands flash for one frame at
+                      // the start of every drag.
+                      onDragBegin={(tab) => {
+                        setDragTab(tab)
+                        setOverStrip(true)
+                      }}
+                      onDragOverStrip={setOverStrip}
                       onDropTab={(t, index) =>
                         setWorkspace((w) => moveTab(w, t, { pane: i, index }))
                       }

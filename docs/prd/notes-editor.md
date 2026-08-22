@@ -187,10 +187,45 @@ Three rules are its own:
   something. "Into this pane" is a move to the end of its own strip, which the strip already
   expresses, and every split gesture crosses the body on the way to an edge — so a full-pane
   highlight would flash on all of them. Every *other* pane keeps all three zones.
-- **A drop target is visible before it is aimed at.** Both landing strips are drawn the moment a
-  tab is picked up, dim, and light only under the pointer. An edge that materialises when you
-  reach it teaches nobody that a drag can split the view — the gesture would be one you either
-  already knew or never found.
+- **A drop target is visible before it is aimed at — but not before the drag leaves the strip.**
+  Both landing strips are drawn dim as soon as the pointer is off the tab strip, and light under
+  the pointer. An edge that materialises when you reach it teaches nobody that a drag can split
+  the view. Drawing them from the moment a tab is *picked up* was the original rule and it was
+  amended on 2026-08-22: the commonest drag by far is a reorder, which never leaves the strip, and
+  two bands flashing under every nudge is noise. Leaving the strip is the earliest moment a drag
+  can be heading for a pane, so nothing is learned any later than before.
+
+**A reorder is shown, not described.** Pick up a pill and the ones between its slot and the pointer
+slide aside, opening the hole it would drop into; the pill you are holding dims to 40% — the reading
+the tree already gives a cut row — and travels with them, so the strip is a live preview of the
+order you would get. The caret line survives for exactly one case: a tab arriving from **another**
+pane, which has no slot here to move out of and no width this strip could know. Gap for a reorder,
+caret for an insert.
+
+The offsets are `lib/tab-reorder.ts` — pure, on numbers, and the same `to` index that `dropIndex`
+gives the drop, so the preview and the drop cannot disagree. Three things make it safe:
+
+- **Transforms, never layout.** A `translateX` moves nothing else, so the strip is never wider
+  mid-drag than at rest and no preview can push a pill out of the viewport.
+- **Hit-testing reads resting positions** (`offsetLeft`, not `getBoundingClientRect`, which
+  includes the transform). Otherwise the preview moves the midpoints that decided it, and the hole
+  chases the pointer that opened it.
+- **A drop takes the transform away together with its transition.** The pills' real positions
+  become exactly what the preview was showing, so there is nothing left to animate — the move has
+  already happened on screen. A drag that ends *without* a drop gets zeros instead, which keeps the
+  transition and lets the pills glide home.
+
+**Every other change of position glides too.** A tab closed, opened, or taken by another pane
+animates from where it was to where it is now (FLIP: record, invert with a transform, animate to
+zero). Layout is never animated, so the settle cannot change what a drop hit-tests against. It is
+measured in the **viewport** frame — `offsetLeft - scrollLeft` — because closing a tab while the
+strip is scrolled shrinks the content *and* the scroll with it: every remaining pill keeps its place
+on screen while its `offsetLeft` moves by a whole tab width, and a settle measured in content
+coordinates flings pills across a strip where nothing visibly happened. It runs only when the tab
+list itself changed, which is what keeps a scroll from animating anything, and it sits out the
+commit a drop lands on. Duration and easing are read from `--duration-micro` / `--ease-settle` at
+the moment of use — a keyframe cannot carry a `var()`, and the motion tier is meant to be one
+vocabulary rather than a number restated per surface.
 
 **An off-screen drop position is still reachable.** The wheel is not available while a drag is in
 flight, so "move this to position 9 of 12" would otherwise be inexpressible. Hovering a drag within

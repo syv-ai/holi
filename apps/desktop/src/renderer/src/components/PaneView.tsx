@@ -14,12 +14,7 @@ import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
-import {
-  TAB_MIME,
-  paneDropZone,
-  parseTabPayload,
-  type PaneDropZone,
-} from '@/lib/tab-drop'
+import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
 import { EditorPane } from '@/composites'
 import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
@@ -91,6 +86,10 @@ export interface PaneViewProps {
   allowed?: PaneDropZone[]
   /** A drag started in this pane's strip, carrying that tab. */
   onDragBegin?: (tab: Tab) => void
+  /** Whether a tab drag is currently over this pane's strip. The workspace uses
+   *  it to keep the landing strips out of sight while a reorder is being aimed
+   *  — see `overStrip` in Shell. */
+  onDragOverStrip?: (over: boolean) => void
   /** Controls at the right-hand end of this pane's strip. */
   trailing?: ReactNode
 }
@@ -109,6 +108,7 @@ export function PaneView({
   onDropEdge,
   allowed = [],
   onDragBegin,
+  onDragOverStrip,
   trailing,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
@@ -145,6 +145,7 @@ export function PaneView({
         onClose={onCloseTab}
         onDropTab={onDropTab}
         onDragBegin={onDragBegin}
+        onDragOverStrip={onDragOverStrip}
         trailing={trailing}
       />
 
@@ -232,10 +233,7 @@ export function PaneView({
             {allowed.includes('before') && <EdgeBand side="before" active={zone === 'before'} />}
             {allowed.includes('after') && <EdgeBand side="after" active={zone === 'after'} />}
             {zone === 'into' && (
-              <div
-                data-testid="pane-drop-into"
-                className={`${DROP_BAND} inset-0 bg-primary/10`}
-              />
+              <div data-testid="pane-drop-into" className={`${DROP_BAND} inset-0 bg-primary/10`} />
             )}
           </div>
         )}

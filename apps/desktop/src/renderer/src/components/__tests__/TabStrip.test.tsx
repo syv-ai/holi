@@ -391,3 +391,153 @@ test('picking a tab from an overflow menu selects it', async () => {
     restore()
   }
 })
+
+/* ── The reorder preview ─────────────────────────────────────────────────
+ *
+ * jsdom draws nothing, but it holds inline styles — and the preview IS an
+ * inline transform, so what the pills would do is readable here even though how
+ * it looks is not. The offsets themselves are `test/tab-reorder.test.ts`.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/** A `dragover` at a chosen x, carrying a tab. */
+function dragOverAt(host: HTMLElement, dataTransfer: FakeDataTransfer, x: number): void {
+  const event = new Event('dragover', { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
+  Object.defineProperty(event, 'clientX', { value: x })
+  fireEvent(host, event)
+}
+
+/** Past the midpoint of the third pill: a drop there inserts before c.md. */
+const OVER_THIRD_PILL = 130
+
+const styleOf = (name: string) => (pillFor(name) as HTMLElement).style
+
+test('dragging a pill inside the strip opens a hole instead of drawing a caret', () => {
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+    const dataTransfer = tabDrag()
+
+    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
+
+    // The hole says where it lands, so the line saying so is redundant.
+    expect(screen.queryByTestId('tab-caret')).toBeNull()
+    // a.md steps over b.md — one pill (60) plus the strip's gap (4) — and b.md
+    // comes back by exactly what a.md vacated. Nothing past them moves.
+    expect(styleOf('a.md').transform).toBe('translateX(64px)')
+    expect(styleOf('b.md').transform).toBe('translateX(-64px)')
+    expect(styleOf('c.md').transform).toBe('translateX(0px)')
+    // And you can see which one you picked up.
+    expect(pillFor('a.md')).toHaveClass('opacity-40')
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})
+
+test('a tab arriving from another pane still gets the caret', () => {
+  // No `dragstart` here: this strip is not the source, so it has no slot to move
+  // out of and no idea how wide the incoming pill will be. Nothing to open a
+  // hole from.
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+
+    act(() => void dragOverAt(host, tabDrag(), OVER_THIRD_PILL))
+
+    expect(screen.getByTestId('tab-caret')).toBeInTheDocument()
+    expect(styleOf('a.md').transform).toBe('')
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})
+
+test('a drop takes the preview away WITH its transition, so the move is not replayed', () => {
+  // The layout is about to become exactly what the preview was showing. A
+  // transform that vanished while a transition was still declared would animate
+  // back from it — the pill would jump a slot and glide home, which is the
+  // snap the preview exists to remove.
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+    const dataTransfer = tabDrag()
+
+    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
+    act(() => void fireEvent(host, dragEvent('drop', dataTransfer)))
+
+    expect(styleOf('a.md').transform).toBe('')
+    expect(styleOf('a.md').transition).toBe('')
+    expect(pillFor('a.md')).not.toHaveClass('opacity-40')
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})
+
+test('a drag that ends without a drop glides home instead of snapping', () => {
+  // Zeros rather than nothing: the transition has to survive the clearing, or
+  // the pills teleport back to rest.
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    const { host } = manyStrip()
+    trackScroll(host)
+    const dataTransfer = tabDrag()
+
+    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
+    act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
+
+    expect(styleOf('a.md').transform).toBe('translateX(0px)')
+    expect(styleOf('a.md').transition).toContain('transform')
+    expect(pillFor('a.md')).not.toHaveClass('opacity-40')
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})
+
+test('the strip reports crossings only, not every dragover', () => {
+  // The workspace hides the panes' landing strips while a drag is over a tab
+  // strip (a reorder has no business lighting up the pane below). `dragover`
+  // fires continuously, so "still here" must not reach it sixty times a second
+  // — every pane would re-render for an answer that had not changed.
+  const restore = withFakeLayout()
+  vi.useFakeTimers()
+  try {
+    const onDragOverStrip = vi.fn()
+    render(
+      <TabStrip
+        tabs={manyTabs}
+        active={0}
+        onSelect={() => {}}
+        onPin={() => {}}
+        onClose={() => {}}
+        onDropTab={vi.fn()}
+        onDragOverStrip={onDragOverStrip}
+      />,
+    )
+    const host = screen.getByTestId('tab-strip')
+    trackScroll(host)
+    const dataTransfer = tabDrag()
+
+    act(() => void dragOverAt(host, dataTransfer, 10))
+    act(() => void dragOverAt(host, dataTransfer, 20))
+    expect(onDragOverStrip.mock.calls).toEqual([[true]])
+
+    act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
+    expect(onDragOverStrip.mock.calls).toEqual([[true], [false]])
+  } finally {
+    vi.useRealTimers()
+    restore()
+  }
+})

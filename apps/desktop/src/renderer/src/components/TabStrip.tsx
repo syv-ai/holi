@@ -12,7 +12,15 @@
  * than the window, with nothing to say that had happened. Flex items do not
  * shrink below their content, so the pane grew forever.
  *
- * **It scrolls.** The first answer to that was a *window* — render only the
+ * **A reorder is shown, not described.** Drag a pill and the ones between its
+ * slot and the pointer slide aside, opening the hole it will drop into
+ * (`lib/tab-reorder.ts`). The caret line survives only for a tab arriving from
+ * *another* pane: that drag has no slot here to move out of, and this strip
+ * cannot know how wide the incoming pill will be, so there is nothing to open a
+ * hole from. Every other change of position — a tab closed, opened, or taken by
+ * another pane — glides to its new place instead of snapping there.
+ *
+ * **It scrolls.** The first answer to overflow was a *window* — render only the
  * pills that fit, hide the rest behind one `+N` (`lib/tab-window.ts`, deleted).
  * It clipped correctly and read wrongly: a single count cannot say which way
  * your tab went, and no amount of pointing at it scrolls. Now every pill is laid
@@ -20,8 +28,8 @@
  * **per side** by `lib/tab-overflow.ts` — pure, because jsdom computes no layout
  * and a rendered strip measures 0×0.
  */
-import { useAtomValue } from 'jotai';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useAtomValue } from 'jotai'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
   DropdownMenu,
@@ -29,7 +37,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
   Tooltip,
-} from '@/primitives';
+} from '@/primitives'
 import {
   CalendarDays,
   ChevronLeft,
@@ -37,9 +45,10 @@ import {
   LayoutGrid,
   Mail,
   SquareKanban,
-} from 'lucide-react';
-import { fileIconFor } from '@/features/explorer/file-icons';
-import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow';
+} from 'lucide-react'
+import { fileIconFor } from '@/features/explorer/file-icons'
+import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
+import { reorderOffsets } from '@/lib/tab-reorder'
 import {
   AUTOSCROLL_MS,
   AUTOSCROLL_PX,
@@ -49,32 +58,51 @@ import {
   stripEdge,
   tabPayload,
   type PillBox,
-} from '@/lib/tab-drop';
-import type { Tab } from '@/state/panes';
-import { snapshotAtom } from '@/state/vaults';
+} from '@/lib/tab-drop'
+import type { Tab } from '@/state/panes'
+import { snapshotAtom } from '@/state/vaults'
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
  *  apps use their id instead — both are keyed by something the tab carries
  *  rather than by its kind, so neither can live in a lookup like this. */
-const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail' } as const;
+const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail' } as const
 const TAB_LABEL: Partial<Record<string, string>> = {
   board: 'task board',
   agenda: 'your Google agenda',
   mail: 'your Gmail',
-};
+}
 
 /** The strip's `gap-1`, in px — the caret is drawn in the gap before a pill. */
-const GAP = 4;
+const GAP = 4
 
 /** One identity for "nothing is off either edge", so the common case does not
  *  hand React a new object on every scroll event. */
-const NOTHING_OFFSCREEN: Offscreen = { left: [], right: [] };
+const NOTHING_OFFSCREEN: Offscreen = { left: [], right: [] }
 
 const sameSides = (a: Offscreen, b: Offscreen): boolean =>
   a.left.length === b.left.length &&
   a.right.length === b.right.length &&
   a.left.every((v, i) => v === b.left[i]) &&
-  a.right.every((v, i) => v === b.right[i]);
+  a.right.every((v, i) => v === b.right[i])
+
+/**
+ * The motion tier, in the numbers the Web Animations API takes.
+ *
+ * Read off the document rather than restated: `--duration-micro` and
+ * `--ease-settle` are the app's one motion vocabulary (index.css), and a
+ * keyframe cannot carry a `var()` — WAAPI wants a number of milliseconds and a
+ * literal easing function. Read per use, not cached, so a theme that ever moves
+ * these cannot leave a stale copy behind.
+ */
+function settleMotion(): { duration: number; easing: string } {
+  const style = getComputedStyle(document.documentElement)
+  const ms = Number.parseFloat(style.getPropertyValue('--duration-micro'))
+  const easing = style.getPropertyValue('--ease-settle').trim()
+  return {
+    duration: Number.isFinite(ms) ? ms : 160,
+    easing: easing === '' ? 'ease-out' : easing,
+  }
+}
 
 /** A tab's stable identity, for React keys and for the pill-element map. */
 export function tabKey(tab: Tab): string {
@@ -82,7 +110,7 @@ export function tabKey(tab: Tab): string {
     ? `note:${tab.path}`
     : tab.kind === 'app'
       ? `app:${tab.appId}`
-      : tab.kind;
+      : tab.kind
 }
 
 /** `icons` is `.holi/icons.json` as the snapshot resolved it (D82), keyed by
@@ -91,24 +119,24 @@ export function tabKey(tab: Tab): string {
  *  snapshot and not to a store of its own. Only a note tab can carry one — the
  *  singleton tabs are not files and have no path to key by. */
 function tabIcon(tab: Tab, icons: Record<string, string>): ReactNode {
-  if (tab.kind === 'note') return fileIconFor(tab.path, icons[tab.path]);
-  if (tab.kind === 'app') return <LayoutGrid size={14} />;
-  if (tab.kind === 'agenda') return <CalendarDays size={14} />;
-  if (tab.kind === 'mail') return <Mail size={14} />;
-  return <SquareKanban size={14} />;
+  if (tab.kind === 'note') return fileIconFor(tab.path, icons[tab.path])
+  if (tab.kind === 'app') return <LayoutGrid size={14} />
+  if (tab.kind === 'agenda') return <CalendarDays size={14} />
+  if (tab.kind === 'mail') return <Mail size={14} />
+  return <SquareKanban size={14} />
 }
 
 function tabName(tab: Tab): string {
-  if (tab.kind === 'note') return tab.path.split('/').at(-1) ?? tab.path;
-  if (tab.kind === 'app') return tab.appId;
-  return TAB_NAME[tab.kind];
+  if (tab.kind === 'note') return tab.path.split('/').at(-1) ?? tab.path
+  if (tab.kind === 'app') return tab.appId
+  return TAB_NAME[tab.kind]
 }
 
 function tabTooltip(tab: Tab): string {
   return (
     TAB_LABEL[tab.kind] ??
     (tab.kind === 'note' ? tab.path : tab.kind === 'app' ? `the ${tab.appId} app` : tab.kind)
-  );
+  )
 }
 
 /**
@@ -138,13 +166,13 @@ function OverflowMenu({
   icons,
   onReveal,
 }: {
-  side: 'left' | 'right';
-  indices: number[];
-  tabs: Tab[];
-  icons: Record<string, string>;
-  onReveal: (index: number) => void;
+  side: 'left' | 'right'
+  indices: number[]
+  tabs: Tab[]
+  icons: Record<string, string>
+  onReveal: (index: number) => void
 }) {
-  const visible = indices.length > 0;
+  const visible = indices.length > 0
   /**
    * The last non-empty list, kept on screen while the control fades out.
    *
@@ -152,12 +180,12 @@ function OverflowMenu({
    * fades away is a blank pill — which reads as the same glitch the fade is
    * there to remove.
    */
-  const [shown, setShown] = useState(indices);
+  const [shown, setShown] = useState(indices)
   useEffect(() => {
-    if (indices.length > 0) setShown(indices);
-  }, [indices]);
+    if (indices.length > 0) setShown(indices)
+  }, [indices])
 
-  const label = `${shown.length} tab${shown.length === 1 ? '' : 's'} off the ${side}`;
+  const label = `${shown.length} tab${shown.length === 1 ? '' : 's'} off the ${side}`
   return (
     <div
       className={`pointer-events-none absolute inset-y-0 z-10 flex items-center ${
@@ -189,8 +217,8 @@ function OverflowMenu({
         </Tooltip>
         <DropdownMenuContent align={side === 'left' ? 'start' : 'end'}>
           {shown.map((index) => {
-            const tab = tabs[index];
-            if (tab === undefined) return null;
+            const tab = tabs[index]
+            if (tab === undefined) return null
             return (
               <DropdownMenuItem
                 key={tabKey(tab)}
@@ -202,37 +230,41 @@ function OverflowMenu({
                   {tabName(tab)}
                 </span>
               </DropdownMenuItem>
-            );
+            )
           })}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
-  );
+  )
 }
 
 export interface TabStripProps {
-  tabs: Tab[];
+  tabs: Tab[]
   /** Index into `tabs`; `-1` for an empty pane. */
-  active: number;
-  onSelect: (index: number) => void;
+  active: number
+  onSelect: (index: number) => void
   /** Double-click promotes a preview tab (the VS Code rule). */
-  onPin: (index: number) => void;
-  onClose: (index: number) => void;
+  onPin: (index: number) => void
+  onClose: (index: number) => void
   /** Whether this pane is the focused one. An unfocused pane's active tab keeps
    *  its shape but loses its weight, so two strips side by side say which one
    *  the next opened file will land in. Defaults to true — with a single pane
    *  there is nothing to distinguish it from. */
-  focused?: boolean;
+  focused?: boolean
   /** A tab was dropped on this strip, to sit before `index`. The tab may have
    *  come from this strip (a reorder) or from another pane's; the handler does
    *  not need to know, because `moveTab` finds it wherever it is. Absent means
    *  this strip takes no drops. */
-  onDropTab?: (tab: Tab, index: number) => void;
+  onDropTab?: (tab: Tab, index: number) => void
   /** A drag started from *this* strip, carrying that tab. The workspace uses it
    *  to work out which drops would do anything at all — see `dropZones`. */
-  onDragBegin?: (tab: Tab) => void;
+  onDragBegin?: (tab: Tab) => void
+  /** A tab drag arrived over this strip, or left it. The workspace keeps the
+   *  panes' landing strips out of sight while it is over one: a reorder is aimed
+   *  entirely inside the strip and has no business lighting up the pane below. */
+  onDragOverStrip?: (over: boolean) => void
   /** Controls pinned to the right-hand end, outside the scroll (version history). */
-  trailing?: ReactNode;
+  trailing?: ReactNode
 }
 
 export function TabStrip({
@@ -244,14 +276,15 @@ export function TabStrip({
   focused = true,
   onDropTab,
   onDragBegin,
+  onDragOverStrip,
   trailing,
 }: TabStripProps) {
   // Read here rather than taken as a prop: every pane's strip wants the same
   // map, and threading it through `PaneView` would make each caller repeat a
   // lookup that has exactly one answer.
-  const icons = useAtomValue(snapshotAtom).icons;
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const pillRefs = useRef(new Map<string, HTMLElement>());
+  const icons = useAtomValue(snapshotAtom).icons
+  const hostRef = useRef<HTMLDivElement | null>(null)
+  const pillRefs = useRef(new Map<string, HTMLElement>())
   /**
    * Where the dragged tab would land, and where to draw the line saying so.
    *
@@ -259,21 +292,49 @@ export function TabStrip({
    * the viewport's: the caret is absolutely positioned inside the scroller, so a
    * viewport-relative x would drift the moment the strip scrolled under it.
    */
-  const [caret, setCaret] = useState<{ index: number; x: number } | null>(null);
+  const [caret, setCaret] = useState<{ index: number; x: number } | null>(null)
   /** Which tabs are out of reach, per side. */
-  const [offscreen, setOffscreen] = useState<Offscreen>(NOTHING_OFFSCREEN);
+  const [offscreen, setOffscreen] = useState<Offscreen>(NOTHING_OFFSCREEN)
+  /**
+   * The reorder currently being previewed: one x-offset per tab, or null.
+   *
+   * Null and all-zeros are different states, and the difference is the whole
+   * seam between the two ways a drag can end. **Zeros** keep the transition
+   * alive, so a cancelled drag glides home. **Null** takes the transition away
+   * with it, which is what makes a drop invisible: the pills' real positions
+   * change to exactly what the offsets were showing, and a transform that
+   * vanished in the same commit has nothing left to animate back from.
+   */
+  const [shift, setShift] = useState<number[] | null>(null)
+  /** The pill this strip is the source of, while a drag is in flight. Null for
+   *  a tab arriving from another pane — which is what the caret is for. */
+  const [dragFromKey, setDragFromKey] = useState<string | null>(null)
+  /** Set on the commit a drop lands, where the layout catches up with what the
+   *  preview was already showing. The settle must sit that one out or it would
+   *  animate a move the eye has already watched happen. */
+  const landedRef = useRef(false)
   /** The running auto-scroll, and which way it is going — kept in a ref so that
    *  the continuous stream of `dragover` events does not restart the timer on
    *  every frame and freeze the strip where it started. */
   const scrollRef = useRef<{
-    edge: 'left' | 'right';
-    timer: ReturnType<typeof setInterval>;
-  } | null>(null);
+    edge: 'left' | 'right'
+    timer: ReturnType<typeof setInterval>
+  } | null>(null)
+
+  /** Report a crossing, and only a crossing. `dragover` fires continuously, and
+   *  telling the workspace "still here" sixty times a second would re-render
+   *  every pane for an answer that has not changed. */
+  const overRef = useRef(false)
+  const reportOver = (over: boolean) => {
+    if (overRef.current === over) return
+    overRef.current = over
+    onDragOverStrip?.(over)
+  }
 
   const stopScrolling = () => {
-    if (scrollRef.current !== null) clearInterval(scrollRef.current.timer);
-    scrollRef.current = null;
-  };
+    if (scrollRef.current !== null) clearInterval(scrollRef.current.timer)
+    scrollRef.current = null
+  }
 
   // A drag can end without this strip hearing about it: dropped on another pane,
   // or cancelled with escape while the pointer sits right here — in which case
@@ -283,21 +344,33 @@ export function TabStrip({
   // catches every ending; the cleanup covers unmounting mid-drag.
   useEffect(() => {
     const clear = () => {
-      if (scrollRef.current !== null) clearInterval(scrollRef.current.timer);
-      scrollRef.current = null;
-      setCaret(null);
-    };
-    window.addEventListener('dragend', clear);
+      if (scrollRef.current !== null) clearInterval(scrollRef.current.timer)
+      scrollRef.current = null
+      setCaret(null)
+      setDragFromKey(null)
+      setShift((prev) => (prev === null ? null : prev.map(() => 0)))
+      // Deliberately does NOT report a crossing. This listener is installed
+      // once, so calling anything that closes over a prop would either go stale
+      // or need the listener re-installed on every render — and it is not
+      // needed: the workspace clears its own drag state on `dragend`, and the
+      // next crossing is reported normally whichever way the flag was left.
+    }
+    window.addEventListener('dragend', clear)
     return () => {
-      window.removeEventListener('dragend', clear);
-      clear();
-    };
-  }, []);
+      window.removeEventListener('dragend', clear)
+      clear()
+    }
+  }, [])
 
   const endDrag = () => {
-    stopScrolling();
-    setCaret(null);
-  };
+    stopScrolling()
+    reportOver(false)
+    setCaret(null)
+    setDragFromKey(null)
+    // Zeros, not null: a drag that ended without a drop keeps its transition and
+    // glides home. See `shift`.
+    setShift((prev) => (prev === null ? null : prev.map(() => 0)))
+  }
 
   // What is off each edge, recomputed whenever the strip scrolls, the pane
   // resizes, or the tab set changes. Written back only on a change — a scroll
@@ -308,27 +381,27 @@ export function TabStrip({
   // measured against the scroll content, so they do not move as it scrolls,
   // which is exactly the frame `offscreenTabs` reasons in.
   useLayoutEffect(() => {
-    const host = hostRef.current;
-    if (host === null) return;
+    const host = hostRef.current
+    if (host === null) return
     const measure = () => {
       const pills = tabs.map((tab) => {
-        const el = pillRefs.current.get(tabKey(tab));
+        const el = pillRefs.current.get(tabKey(tab))
         return el === undefined
           ? { left: 0, width: 0 }
-          : { left: el.offsetLeft, width: el.offsetWidth };
-      });
-      const next = offscreenTabs(pills, host.scrollLeft, host.clientWidth);
-      setOffscreen((prev) => (sameSides(prev, next) ? prev : next));
-    };
-    measure();
-    host.addEventListener('scroll', measure, { passive: true });
-    const observer = new ResizeObserver(measure);
-    observer.observe(host);
+          : { left: el.offsetLeft, width: el.offsetWidth }
+      })
+      const next = offscreenTabs(pills, host.scrollLeft, host.clientWidth)
+      setOffscreen((prev) => (sameSides(prev, next) ? prev : next))
+    }
+    measure()
+    host.addEventListener('scroll', measure, { passive: true })
+    const observer = new ResizeObserver(measure)
+    observer.observe(host)
     return () => {
-      host.removeEventListener('scroll', measure);
-      observer.disconnect();
-    };
-  }, [tabs]);
+      host.removeEventListener('scroll', measure)
+      observer.disconnect()
+    }
+  }, [tabs])
 
   /**
    * Keep the active tab reachable.
@@ -338,45 +411,105 @@ export function TabStrip({
    * `tabs` it would fire after every reorder and yank the scroll back to the
    * active tab just as you dropped a different one somewhere else.
    */
-  const activeTab = active >= 0 ? tabs[active] : undefined;
-  const activeKey = activeTab === undefined ? null : tabKey(activeTab);
+  const activeTab = active >= 0 ? tabs[active] : undefined
+  const activeKey = activeTab === undefined ? null : tabKey(activeTab)
   useLayoutEffect(() => {
-    if (activeKey === null) return;
-    pillRefs.current.get(activeKey)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-  }, [activeKey]);
+    if (activeKey === null) return
+    pillRefs.current.get(activeKey)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeKey])
+
+  /**
+   * Glide, rather than snap, to a new position.
+   *
+   * FLIP: every commit records where each pill sits, and a pill that has moved
+   * is put back where it was with a transform and animated to zero. Layout is
+   * never animated — a pill's real position is its new one from the first frame,
+   * so nothing here can change what a drop hit-tests against.
+   *
+   * **The frame is the viewport, not the content** (`offsetLeft - scrollLeft`),
+   * and that is not a detail. Close a tab while the strip is scrolled and the
+   * content shrinks *and* the scroll shortens with it: every remaining pill
+   * keeps its place on screen while its `offsetLeft` changes by a whole tab
+   * width. Measured in content coordinates this looks like a move, and the
+   * settle would fling pills across a strip where nothing had visibly happened —
+   * observed in the running app, which is the only place it could have been.
+   *
+   * **It runs only when the tabs themselves changed.** Scrolling moves every
+   * pill in this frame and must never animate; a tab closed, opened, or taken by
+   * another pane must. Comparing the key list answers that exactly, and it
+   * catches a reorder too, since the order is part of the list. The commit a
+   * drop lands on is excluded on top of that: the move has already played out
+   * under the pointer (see `shift`), and a pill that has only just mounted has
+   * no previous position to come from.
+   *
+   * No dependency array on purpose — "did anything move?" is a question about
+   * the DOM after every commit, and the answer is usually no.
+   */
+  const restingRef = useRef(new Map<string, number>())
+  const keysRef = useRef('')
+  useLayoutEffect(() => {
+    const scrollLeft = hostRef.current?.scrollLeft ?? 0
+    const now = new Map<string, number>()
+    for (const [key, el] of pillRefs.current) now.set(key, el.offsetLeft - scrollLeft)
+
+    const keys = tabs.map(tabKey).join('|')
+    if (keys !== keysRef.current && !landedRef.current) {
+      const motion = settleMotion()
+      for (const [key, x] of now) {
+        const was = restingRef.current.get(key)
+        const el = pillRefs.current.get(key)
+        if (was === undefined || was === x || el === undefined) continue
+        // jsdom implements no Web Animations, so this call is optional and the
+        // motion is verified in the running app rather than here.
+        el.animate?.(
+          [{ transform: `translateX(${was - x}px)` }, { transform: 'translateX(0)' }],
+          motion,
+        )
+      }
+    }
+    landedRef.current = false
+    keysRef.current = keys
+    restingRef.current = now
+  })
 
   /** Select a tab from an overflow menu and bring it into view. `onSelect`
    *  alone is not enough: the tab may already be the active one — you scrolled
    *  away from it — and re-selecting it moves nothing. */
   const reveal = (index: number) => {
-    onSelect(index);
-    const tab = tabs[index];
-    if (tab === undefined) return;
+    onSelect(index)
+    const tab = tabs[index]
+    if (tab === undefined) return
     pillRefs.current
       .get(tabKey(tab))
-      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-  };
+      ?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+  }
 
   /**
-   * The pills, measured now, carrying their indices.
+   * The pills' **resting** positions, in `clientX` coordinates.
    *
-   * Read live rather than cached: a drop needs where a pill *is* on screen, in
-   * the same coordinates as `clientX`, and that only the DOM knows.
+   * `offsetLeft`/`offsetWidth`, not `getBoundingClientRect`, and that is the
+   * load-bearing detail once a drag previews itself: a rect includes the
+   * preview's `translateX`, so hit-testing against one would move the very
+   * midpoints that decided the preview, and the hole would chase the pointer
+   * that opened it. Layout is the honest frame; the origin puts it back into the
+   * pointer's.
    */
   const pillBoxes = (): PillBox[] => {
-    const boxes: PillBox[] = [];
+    const host = hostRef.current
+    if (host === null) return []
+    const origin = host.getBoundingClientRect().left - host.scrollLeft
+    const boxes: PillBox[] = []
     tabs.forEach((t, index) => {
-      const el = pillRefs.current.get(tabKey(t));
-      if (el === undefined) return;
-      const rect = el.getBoundingClientRect();
-      boxes.push({ index, left: rect.left, width: rect.width });
-    });
-    return boxes;
-  };
+      const el = pillRefs.current.get(tabKey(t))
+      if (el === undefined) return
+      boxes.push({ index, left: origin + el.offsetLeft, width: el.offsetWidth })
+    })
+    return boxes
+  }
 
   /** Whether this drag is one of ours. `getData` is empty during `dragover` by
    *  spec, so the MIME type is the only question a target may ask mid-drag. */
-  const carriesTab = (e: React.DragEvent) => e.dataTransfer.types.includes(TAB_MIME);
+  const carriesTab = (e: React.DragEvent) => e.dataTransfer.types.includes(TAB_MIME)
 
   /**
    * Scroll while the pointer sits at an end of the strip.
@@ -388,64 +521,85 @@ export function TabStrip({
    * would never move at all.
    */
   const autoScroll = (edge: 'left' | 'right' | null) => {
-    if (edge === null) return stopScrolling();
-    if (scrollRef.current?.edge === edge) return;
-    stopScrolling();
-    const step = edge === 'left' ? -AUTOSCROLL_PX : AUTOSCROLL_PX;
+    if (edge === null) return stopScrolling()
+    if (scrollRef.current?.edge === edge) return
+    stopScrolling()
+    const step = edge === 'left' ? -AUTOSCROLL_PX : AUTOSCROLL_PX
     const advance = () => {
-      const host = hostRef.current;
-      if (host !== null) host.scrollLeft += step;
-    };
+      const host = hostRef.current
+      if (host !== null) host.scrollLeft += step
+    }
     // One step now, then on the timer — a hover that has already arrived at the
     // edge should do something before it does nothing for a whole interval.
-    advance();
-    scrollRef.current = { edge, timer: setInterval(advance, AUTOSCROLL_MS) };
-  };
+    advance()
+    scrollRef.current = { edge, timer: setInterval(advance, AUTOSCROLL_MS) }
+  }
 
   /** Where to draw the caret for a drop before `index`, in content coordinates:
    *  in the gap ahead of that pill, or past the end of the last one. */
   const caretX = (index: number): number => {
-    const tab = tabs[index];
-    const el = tab === undefined ? undefined : pillRefs.current.get(tabKey(tab));
-    if (el !== undefined) return el.offsetLeft - GAP / 2;
-    const last = tabs.at(-1);
-    const lastEl = last === undefined ? undefined : pillRefs.current.get(tabKey(last));
-    return lastEl === undefined ? 0 : lastEl.offsetLeft + lastEl.offsetWidth + GAP / 2;
-  };
+    const tab = tabs[index]
+    const el = tab === undefined ? undefined : pillRefs.current.get(tabKey(tab))
+    if (el !== undefined) return el.offsetLeft - GAP / 2
+    const last = tabs.at(-1)
+    const lastEl = last === undefined ? undefined : pillRefs.current.get(tabKey(last))
+    return lastEl === undefined ? 0 : lastEl.offsetLeft + lastEl.offsetWidth + GAP / 2
+  }
 
   const dragOver = (e: React.DragEvent) => {
-    if (onDropTab === undefined || !carriesTab(e)) return;
+    if (onDropTab === undefined || !carriesTab(e)) return
     // Without this the drop event never fires — the commonest way HTML5
     // drag-and-drop silently does nothing at all.
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    reportOver(true)
 
-    const index = dropIndex(pillBoxes(), e.clientX);
-    setCaret({ index, x: caretX(index) });
+    const index = dropIndex(pillBoxes(), e.clientX)
+    // A tab from this strip has a slot to move out of, so the strip can show the
+    // move rather than describe it. One arriving from another pane has neither a
+    // slot nor a width this strip could know — there is nothing to open a hole
+    // from, and the caret is what says where it would land.
+    const from = dragFromKey === null ? -1 : tabs.findIndex((t) => tabKey(t) === dragFromKey)
+    if (from >= 0) {
+      const widths = tabs.map((t) => pillRefs.current.get(tabKey(t))?.offsetWidth ?? 0)
+      setShift(reorderOffsets(widths, from, index, GAP))
+      setCaret(null)
+    } else {
+      setCaret({ index, x: caretX(index) })
+    }
 
-    const host = hostRef.current?.getBoundingClientRect();
-    if (host !== undefined) autoScroll(stripEdge(host, e.clientX));
-  };
+    const host = hostRef.current?.getBoundingClientRect()
+    if (host !== undefined) autoScroll(stripEdge(host, e.clientX))
+  }
 
   const drop = (e: React.DragEvent) => {
-    endDrag();
-    const tab = parseTabPayload(e.dataTransfer.getData(TAB_MIME));
-    if (tab === null) return;
-    e.preventDefault();
+    stopScrolling()
+    reportOver(false)
+    setCaret(null)
+    setDragFromKey(null)
+    // Null rather than the zeros a cancelled drag gets, and the settle sits this
+    // commit out: the pills' real positions are about to become exactly what the
+    // preview was showing, so the move must not be animated a second time. The
+    // eye has already watched it happen.
+    landedRef.current = true
+    setShift(null)
+    const tab = parseTabPayload(e.dataTransfer.getData(TAB_MIME))
+    if (tab === null) return
+    e.preventDefault()
     // Recomputed rather than read off `caret`: the drop must land where the
     // pointer is, even if no `dragover` was recorded for this exact position.
-    onDropTab?.(tab, dropIndex(pillBoxes(), e.clientX));
-  };
+    onDropTab?.(tab, dropIndex(pillBoxes(), e.clientX))
+  }
 
   /** A vertical wheel scrolls the strip sideways — there is nothing to scroll
    *  vertically in a one-line row, and a mouse without a horizontal wheel would
    *  otherwise have no gesture at all. A trackpad's horizontal delta is left to
    *  the browser, which already does the right thing with it. */
   const wheel = (e: React.WheelEvent) => {
-    const host = hostRef.current;
-    if (host === null || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
-    host.scrollLeft += e.deltaY;
-  };
+    const host = hostRef.current
+    if (host === null || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return
+    host.scrollLeft += e.deltaY
+  }
 
   return (
     <div className="flex h-11 min-w-0 items-center gap-1 px-2">
@@ -466,8 +620,8 @@ export function TabStrip({
           onDragLeave={(e) => {
             // `dragleave` also fires when the pointer crosses into a child, so
             // clear only when the host itself was actually left.
-            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
-            endDrag();
+            if (e.currentTarget.contains(e.relatedTarget as Node | null)) return
+            endDrag()
           }}
           onDrop={drop}
           onWheel={wheel}
@@ -478,29 +632,46 @@ export function TabStrip({
           {caret !== null && (
             <div
               aria-hidden
+              data-testid="tab-caret"
               className="pointer-events-none absolute top-1.5 bottom-1.5 w-0.5 rounded-full bg-primary"
               style={{ left: Math.max(0, caret.x - 1) }}
             />
           )}
           {tabs.map((t, i) => {
-            const key = tabKey(t);
+            const key = tabKey(t)
             return (
               <span
                 key={key}
                 ref={(el) => {
-                  if (el === null) pillRefs.current.delete(key);
-                  else pillRefs.current.set(key, el);
+                  if (el === null) pillRefs.current.delete(key)
+                  else pillRefs.current.set(key, el)
                 }}
                 // On the pill, not on the Radix trigger and not on the Button —
                 // `BoardView` puts it on the card `div` for the same reason.
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData(TAB_MIME, tabPayload(t));
-                  e.dataTransfer.effectAllowed = 'move';
-                  onDragBegin?.(t);
+                  e.dataTransfer.setData(TAB_MIME, tabPayload(t))
+                  e.dataTransfer.effectAllowed = 'move'
+                  setDragFromKey(key)
+                  onDragBegin?.(t)
                 }}
                 onDragEnd={endDrag}
-                className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
+                // The preview, and the only place it touches a pill: a
+                // transform, never layout. The transition lives here rather than
+                // in a class because its *absence* is meaningful — see `shift`.
+                // A dragged pill dims to 40%, the reading the tree already gives
+                // a cut row: you can see what you are moving and where it would
+                // go, while the drag image under the cursor is the solid one.
+                style={{
+                  transform: shift === null ? undefined : `translateX(${shift[i] ?? 0}px)`,
+                  transition:
+                    shift === null
+                      ? undefined
+                      : 'transform var(--duration-micro) var(--ease-settle)',
+                }}
+                className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs transition-opacity duration-(--duration-micro) ${
+                  dragFromKey === key ? 'opacity-40' : ''
+                } ${
                   i === active
                     ? focused
                       ? 'bg-secondary text-foreground'
@@ -549,7 +720,7 @@ export function TabStrip({
                   </Button>
                 </Tooltip>
               </span>
-            );
+            )
           })}
         </div>
         <OverflowMenu
@@ -569,5 +740,5 @@ export function TabStrip({
       </div>
       {trailing}
     </div>
-  );
+  )
 }
