@@ -41,7 +41,15 @@ const SIDECARS = ['-wal', '-shm', '-journal']
 export interface GoogleCache {
   /** Wipes everything if `sub` differs from the stored account. **Call before
    *  any read** — it is what stops one account seeing another's mail. */
-  useAccount(sub: string): void
+  /**
+   * Wipe if the stored row shape is from an older release. Call before first use.
+   *
+   * This is the half of the old `useAccount(sub)` that was doing a different job.
+   * Accounts are kept apart by living in **different files** now (D87) — that
+   * wipe fired on every vault switch and cost a full re-fetch of mail and
+   * calendar, which is exactly the case per-vault accounts exist for.
+   */
+  ensureShape(): void
   readThreads(key: string): MailThreadSummary[] | null
   writeThreads(key: string, threads: MailThreadSummary[]): void
   /**
@@ -166,25 +174,22 @@ export function openGoogleCache(path: string): GoogleCache {
   }
 
   return {
-    useAccount(sub) {
+    ensureShape() {
       const read = (key: string): string | undefined =>
         (database().prepare('SELECT value FROM meta WHERE key = ?').get(key) as
           | { value?: string }
           | undefined)?.value
 
-      // Same account AND same row shape. The shape half is what stops a release
-      // that changes `MailThreadSummary` from serving yesterday's JSON into
-      // today's UI — rows are stored as whole objects, so a field that changed
-      // type arrives looking like the old one and breaks at the render, far
-      // from the change that caused it. Wiping is free: this is a cache.
-      if (read('account') === sub && read('shape') === SHAPE_VERSION) return
+      // Rows are stored as whole objects, so a release that changes
+      // `MailThreadSummary` would serve yesterday's JSON into today's UI: a field
+      // that changed type arrives looking like the old one and breaks at the
+      // render, far from the change that caused it. Wiping is free: this is a
+      // cache. The `account` row this used to check is gone — the FILE is the
+      // account now, so re-checking it here would only re-introduce the wipe.
+      if (read('shape') === SHAPE_VERSION) return
 
-      // A different account — or the first one. Everything held belongs to
-      // whoever was connected before, and none of it is theirs to see.
       database().exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
-      const write = database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)')
-      write.run('account', sub)
-      write.run('shape', SHAPE_VERSION)
+      database().prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('shape', SHAPE_VERSION)
     },
 
     readThreads(key) {

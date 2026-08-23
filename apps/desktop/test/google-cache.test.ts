@@ -78,7 +78,7 @@ function event(id: string): CalendarEvent {
 
 describe('GoogleCache', () => {
   it('returns null before anything has been cached', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
 
     // Null, not an empty list: "nothing cached" and "the inbox is empty" are
     // different answers, and only one of them means "go and ask Google".
@@ -88,7 +88,7 @@ describe('GoogleCache', () => {
   })
 
   it('round-trips a thread list', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     const threads = [thread('t1', { starred: true, labels: ['Work'] }), thread('t2')]
 
     cache.writeThreads('in:inbox|primary', threads)
@@ -97,7 +97,7 @@ describe('GoogleCache', () => {
   })
 
   it('round-trips an agenda', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     const events = [event('e1'), event('e2')]
 
     cache.writeAgenda('2026-08-04|primary', events)
@@ -106,7 +106,7 @@ describe('GoogleCache', () => {
   })
 
   it('never serves one query’s results for another', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('t1')])
 
     // A cached answer belongs to the question that produced it. Serving the
@@ -115,34 +115,35 @@ describe('GoogleCache', () => {
     expect(cache.readThreads('in:inbox|promotions')).toBeNull()
   })
 
-  it('wipes everything when a different Google account connects', () => {
-    cache.useAccount('sub-a')
+  it('keeps one account out of another by living in a different FILE (D87)', () => {
+    // The security-relevant one, and it used to be `useAccount`'s wipe. Per vault
+    // that wipe fired on every switch and cost a full re-fetch, so accounts are
+    // separated by file now and this is what guarantees it.
+    const other = openGoogleCache(join(dir, 'google-cache-sub-b.db'))
+    other.ensureShape()
+
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('secret', { subject: 'Client contract' })])
     cache.writeAgenda('2026-08-04|primary', [event('e1')])
     cache.setHistoryId('in:inbox|primary', '9001')
 
-    cache.useAccount('sub-b')
-
-    // The security-relevant one. Account B must not see A's inbox, agenda, or
-    // history cursor — and it is `useAccount` that guarantees it, before any
-    // read can happen.
-    expect(cache.readThreads('in:inbox|primary')).toBeNull()
-    expect(cache.readAgenda('2026-08-04|primary')).toBeNull()
-    expect(cache.historyId('in:inbox|primary')).toBeNull()
+    expect(other.readThreads('in:inbox|primary')).toBeNull()
+    expect(other.readAgenda('2026-08-04|primary')).toBeNull()
+    expect(other.historyId('in:inbox|primary')).toBeNull()
   })
 
-  it('keeps a reconnect of the SAME account', () => {
-    cache.useAccount('sub-a')
+  it('does NOT wipe on a second call — that was the per-switch re-fetch', () => {
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('t1')])
 
-    cache.useAccount('sub-a')
+    cache.ensureShape()
 
-    // Otherwise the cache would be empty on every launch and buy nothing.
+    // Otherwise the cache would be empty on every vault switch and buy nothing.
     expect(cache.readThreads('in:inbox|primary')).toHaveLength(1)
   })
 
   it('keeps only the newest N threads', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     const many = Array.from({ length: 620 }, (_, i) => thread(`t${i}`))
 
     cache.writeThreads('in:inbox|primary', many)
@@ -156,7 +157,7 @@ describe('GoogleCache', () => {
   })
 
   it('replaces a query’s results rather than appending to them', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('old')])
 
     cache.writeThreads('in:inbox|primary', [thread('new')])
@@ -167,18 +168,18 @@ describe('GoogleCache', () => {
   })
 
   it('remembers the Gmail history id across a close', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     cache.setHistoryId('in:inbox|primary', '9001')
     cache.close()
 
     const reopened = openGoogleCache(path)
-    reopened.useAccount('sub-a')
+    reopened.ensureShape()
     expect(reopened.historyId('in:inbox|primary')).toBe('9001')
     reopened.close()
   })
 
   it('destroy leaves no file behind', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('t1')])
     expect(existsSync(path)).toBe(true)
 
@@ -190,14 +191,14 @@ describe('GoogleCache', () => {
   })
 
   it('is usable again after a destroy, holding none of what it held', () => {
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     cache.writeThreads('in:inbox|primary', [thread('t1')])
 
     cache.destroy()
 
     // Disconnect then reconnect is an ordinary thing to do inside one run of
     // the app, and it must not need a restart to work.
-    cache.useAccount('sub-a')
+    cache.ensureShape()
     expect(cache.readThreads('in:inbox|primary')).toBeNull()
     cache.writeThreads('in:inbox|primary', [thread('t2')])
     expect(cache.readThreads('in:inbox|primary')!.map((t) => t.id)).toEqual(['t2'])
@@ -210,7 +211,7 @@ describe('GoogleCache', () => {
     // The same stance as `token-store`: a bad file costs the cache, never the
     // app. It must open, answer "nothing cached", and take writes again.
     const reopened = openGoogleCache(path)
-    expect(() => reopened.useAccount('sub-a')).not.toThrow()
+    expect(() => reopened.ensureShape()).not.toThrow()
     expect(reopened.readThreads('in:inbox|primary')).toBeNull()
     expect(() => reopened.writeThreads('in:inbox|primary', [thread('t1')])).not.toThrow()
     reopened.close()
@@ -226,14 +227,14 @@ describe('GoogleCache', () => {
  * that caused it — which is the failure this guard exists to prevent.
  */
 describe('shape version', () => {
-  it('drops rows written by an older shape, for the same account', () => {
-    cache.useAccount('sub-1')
+  it('drops rows written by an older shape', () => {
+    cache.ensureShape()
     cache.writeThreads('inbox', [thread('t1')])
     expect(cache.readThreads('inbox')).toHaveLength(1)
     cache.close()
 
-    // Stand where a user upgrading the app stands: the same account, rows still
-    // on disk, and a shape stamp from the release before. Written directly
+    // Stand where a user upgrading the app stands: rows still on disk, and a
+    // shape stamp from the release before. Written directly
     // because no public method can produce it — the old build simply wrote a
     // different value here.
     const raw = new DatabaseSync(path)
@@ -241,7 +242,7 @@ describe('shape version', () => {
     raw.close()
 
     cache = openGoogleCache(path)
-    cache.useAccount('sub-1')
+    cache.ensureShape()
 
     // Wiped, not served. The rows would have parsed perfectly and been the
     // wrong shape — `from` as a bare string where the UI now reads `.name` —
@@ -249,11 +250,11 @@ describe('shape version', () => {
     expect(cache.readThreads('inbox')).toBeNull()
   })
 
-  it('keeps the cache when the account and shape both match', () => {
-    cache.useAccount('sub-1')
+  it('keeps the cache when the shape matches', () => {
+    cache.ensureShape()
     cache.writeThreads('inbox', [thread('t1')])
 
-    cache.useAccount('sub-1')
+    cache.ensureShape()
 
     // The guard must not wipe on every launch — that would turn the cache into
     // an expensive way of doing nothing.
@@ -278,7 +279,7 @@ describe('shape version', () => {
 describe('mutating one thread', () => {
   /** The same thread in two lists, plus a bystander in each. */
   function seedTwoLists() {
-    cache.useAccount('sub-1')
+    cache.ensureShape()
     cache.writeThreads('|', [thread('t1', { unread: true }), thread('t2', { unread: true })])
     cache.writeThreads('|unread', [thread('t1', { unread: true }), thread('t3', { unread: true })])
   }
@@ -344,7 +345,7 @@ describe('mutating one thread', () => {
 
     cache.close()
     cache = openGoogleCache(path)
-    cache.useAccount('sub-1')
+    cache.ensureShape()
 
     expect(cache.readThreads('|')!.find((t) => t.id === 't1')!.unread).toBe(false)
   })

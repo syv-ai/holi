@@ -90,7 +90,7 @@ beforeEach(async () => {
   path = join(dir, 'google-cache.db')
   cache = openGoogleCache(path)
   data = createGoogleData({ api: google().api, cache })
-  data.useAccount('sub-a')
+  data.ensureShape()
 })
 
 afterEach(async () => {
@@ -136,7 +136,7 @@ describe('createGoogleData', () => {
   it('serves the second mail load from the cache, for one request', async () => {
     const g = google()
     const cached = createGoogleData({ api: g.api, cache })
-    cached.useAccount('sub-a')
+    cached.ensureShape()
     await cached.threads({})
     const before = g.seen.length
 
@@ -177,7 +177,7 @@ describe('createGoogleData', () => {
 
     it('is fetched once however many times it is asked for', async () => {
       const { data: subject, calls } = peopleApi()
-      subject.useAccount('sub-a')
+      subject.ensureShape()
 
       const first = await subject.contacts()
       const second = await subject.contacts()
@@ -192,29 +192,32 @@ describe('createGoogleData', () => {
       // A promise is held rather than a value precisely for this: two messages
       // mounting together used to be two round trips.
       const { data: subject, calls } = peopleApi()
-      subject.useAccount('sub-a')
+      subject.ensureShape()
 
       await Promise.all([subject.contacts(), subject.contacts()])
 
       expect(calls()).toBe(2)
     })
 
-    it('is dropped when the account changes', async () => {
-      // Unlike the cached mail it is not keyed by account, so nothing else
-      // would stop one account completing to another's contacts.
-      const { data: subject, calls } = peopleApi()
-      subject.useAccount('sub-a')
-      await subject.contacts()
+    it('never reaches another account, because that account is another instance', async () => {
+      // This used to be `useAccount` dropping the memoized address book. Under
+      // D87 one GoogleData serves one account (its own cache file, its own
+      // sessions), so a second account cannot see the first's contacts for the
+      // stronger reason that it was never handed the object holding them.
+      const mine = peopleApi()
+      const theirs = peopleApi()
+      await mine.data.contacts()
+      await mine.data.contacts()
 
-      subject.useAccount('sub-b')
-      await subject.contacts()
+      await theirs.data.contacts()
 
-      expect(calls()).toBe(4)
+      expect(mine.calls()).toBe(2) // fetched once, memoized after
+      expect(theirs.calls()).toBe(2) // and asked for itself, not served mine
     })
 
     it('is dropped on disconnect', async () => {
       const { data: subject, calls } = peopleApi()
-      subject.useAccount('sub-a')
+      subject.ensureShape()
       await subject.contacts()
 
       subject.forget()
@@ -297,7 +300,7 @@ describe('mutations', () => {
       api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
       cache,
     })
-    subject.useAccount('sub-a')
+    subject.ensureShape()
     return { data: subject, posts }
   }
 
@@ -442,7 +445,7 @@ describe('composer writes', () => {
       api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
       cache,
     })
-    subject.useAccount('sub-a')
+    subject.ensureShape()
     return { data: subject, calls }
   }
 
@@ -520,14 +523,18 @@ describe('composer writes', () => {
       expect(calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(1)
     })
 
-    it('refetches for a different account', async () => {
-      const { data: subject, calls } = composer()
-      await subject.sendAs()
+    it('is never another account aliases, because that account is another instance', async () => {
+      // As with contacts: the memoized aliases belong to the instance, and D87
+      // gives each account its own.
+      const mine = composer()
+      const theirs = composer()
+      await mine.data.sendAs()
+      await mine.data.sendAs()
 
-      subject.useAccount('sub-b')
-      await subject.sendAs()
+      await theirs.data.sendAs()
 
-      expect(calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(2)
+      expect(mine.calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(1)
+      expect(theirs.calls.filter((c) => c.url.endsWith('/settings/sendAs'))).toHaveLength(1)
     })
 
     it('does not latch a failure, unlike the address book', async () => {
@@ -590,7 +597,7 @@ describe('forwarded attachments', () => {
       api: () => new GoogleApi({ accessToken: async () => 'at', fetch: fetchImpl }),
       cache,
     })
-    subject.useAccount('sub-a')
+    subject.ensureShape()
     return { data: subject, urls, sent }
   }
 

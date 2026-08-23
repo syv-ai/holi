@@ -141,7 +141,7 @@ export interface RouterDeps {
    * **The agent's ops server is deliberately not given this** — it asks for
    * current data and must not be handed a stale answer (D67).
    */
-  googleData?: GoogleData
+  googleDataFor?: (remote: string) => Promise<GoogleData | null>
   /**
    * Senders whose remote images always load. Optional like the rest; absent
    * means the standing exceptions are simply empty, so every message blocks
@@ -1614,9 +1614,10 @@ export function createRouter(deps: RouterDeps) {
       .query(async ({ input }): Promise<CalendarEvent[]> => {
         const window = { timeMin: input.timeMin, timeMax: input.timeMax }
         const overrides = await calendarOverrides()
-        return deps.googleData === undefined
+        const data = await googleReads()
+        return data === null
           ? listAgenda(googleApi(), window, { overrides })
-          : deps.googleData.agenda(window, overrides)
+          : data.agenda(window, overrides)
       }),
 
     /**
@@ -1630,7 +1631,7 @@ export function createRouter(deps: RouterDeps) {
     agendaCached: t.procedure
       .input(fields({ timeMin: 'string', timeMax: 'string' }))
       .query(async ({ input }): Promise<CalendarEvent[] | null> =>
-        deps.googleData?.cachedAgenda(
+        (await googleReads())?.cachedAgenda(
           { timeMin: input.timeMin, timeMax: input.timeMax },
           await calendarOverrides(),
         ) ?? null,
@@ -1681,7 +1682,7 @@ export function createRouter(deps: RouterDeps) {
           mailbox: 'string?',
         }),
       )
-      .query(({ input }): Promise<MailPage> => {
+      .query(async ({ input }): Promise<MailPage> => {
         const options = {
           query: input.query,
           pageToken: input.pageToken,
@@ -1691,9 +1692,8 @@ export function createRouter(deps: RouterDeps) {
         }
         // Cached AND current: the delta brings the cached list up to date, so
         // this is fast without ever being stale.
-        return deps.googleData === undefined
-          ? listThreads(googleApi(), options)
-          : deps.googleData.threads(options)
+        const data = await googleReads()
+        return data === null ? listThreads(googleApi(), options) : data.threads(options)
       }),
 
     /**
@@ -1764,7 +1764,7 @@ export function createRouter(deps: RouterDeps) {
     setRead: t.procedure
       .input(fields({ id: 'string', read: 'boolean' }))
       .mutation(async ({ input }) => {
-        await googleWrites().setRead(input.id, input.read).catch(rethrowGoogle)
+        await (await googleWrites()).setRead(input.id, input.read).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1773,14 +1773,14 @@ export function createRouter(deps: RouterDeps) {
       // coerced "false" reads as true, which is how a star refuses to turn off.
       .input(fields({ id: 'string', starred: 'boolean' }))
       .mutation(async ({ input }) => {
-        await googleWrites().setStarred(input.id, input.starred).catch(rethrowGoogle)
+        await (await googleWrites()).setStarred(input.id, input.starred).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
     archive: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().archive(input.id).catch(rethrowGoogle)
+        await (await googleWrites()).archive(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1789,7 +1789,7 @@ export function createRouter(deps: RouterDeps) {
     trash: t.procedure
       .input(fields({ id: 'string' }))
       .mutation(async ({ input }) => {
-        await googleWrites().trash(input.id).catch(rethrowGoogle)
+        await (await googleWrites()).trash(input.id).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1817,17 +1817,17 @@ export function createRouter(deps: RouterDeps) {
      * reply-all into one that copies the user on their own message.
      */
     sendAs: t.procedure.query(
-      (): Promise<string[]> => deps.googleData?.sendAs() ?? listSendAs(googleApi()),
+      async (): Promise<string[]> => (await googleReads())?.sendAs() ?? listSendAs(googleApi()),
     ),
 
     saveDraft: t.procedure.input(composeInput).mutation(async ({ input }) => {
-      return await googleWrites().saveDraft(input).catch(rethrowGoogle)
+      return await (await googleWrites()).saveDraft(input).catch(rethrowGoogle)
     }),
 
     discardDraft: t.procedure
       .input(fields({ draftId: 'string', threadId: 'string?' }))
       .mutation(async ({ input }) => {
-        await googleWrites().discardDraft(input).catch(rethrowGoogle)
+        await (await googleWrites()).discardDraft(input).catch(rethrowGoogle)
         return { ok: true as const }
       }),
 
@@ -1845,7 +1845,7 @@ export function createRouter(deps: RouterDeps) {
      * assume this was forgotten.
      */
     send: t.procedure.input(composeInput).mutation(async ({ input }) => {
-      return await googleWrites().sendMail(input).catch(rethrowGoogle)
+      return await (await googleWrites()).sendMail(input).catch(rethrowGoogle)
     }),
 
     /**
@@ -1871,7 +1871,8 @@ export function createRouter(deps: RouterDeps) {
      * loaded threads instead of breaking the dropdown.
      */
     contacts: t.procedure.query(
-      (): Promise<MailAddress[]> => deps.googleData?.contacts() ?? listContacts(googleApi()),
+      async (): Promise<MailAddress[]> =>
+        (await googleReads())?.contacts() ?? listContacts(googleApi()),
     ),
 
     /**
@@ -1957,14 +1958,20 @@ export function createRouter(deps: RouterDeps) {
    * there is nothing to keep in step, and succeeding at Google while the list on
    * screen still says otherwise is worse than saying no.
    */
-  function googleWrites(): GoogleData {
-    if (deps.googleData === undefined) {
+  /** The active vault's data layer, or null — reads degrade to Google directly. */
+  async function googleReads(): Promise<GoogleData | null> {
+    return (await deps.googleDataFor?.(activeRemote())) ?? null
+  }
+
+  async function googleWrites(): Promise<GoogleData> {
+    const data = await googleReads()
+    if (data === null) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'the Google connector is not configured',
       })
     }
-    return deps.googleData
+    return data
   }
 
   function googleAccounts(): GoogleAccountsManager {

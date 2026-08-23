@@ -97,9 +97,11 @@ export interface GoogleData {
    * every alias and not merely the connected address.
    */
   sendAs(): Promise<string[]>
-  /** The account this cache belongs to. Called on connect; a different `sub`
-   *  wipes everything before anything can be read. */
-  useAccount(sub: string): void
+  /** Wipe if the cached row shape predates this release. Call before first use.
+   *  It no longer carries an account: one `GoogleData` serves one account (D87),
+   *  so the file it holds and the address book it memoizes are that account's by
+   *  construction rather than by a check. */
+  ensureShape(): void
   /** Disconnect. Leaves no file on disk. */
   forget(): void
 }
@@ -297,15 +299,8 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
       }))
     },
 
-    useAccount(sub) {
-      // The address book belongs to whoever was connected, exactly as the
-      // cached mail does — and unlike the mail it is not keyed by account, so
-      // dropping it here is what stops one account completing to another's
-      // contacts. `cache.useAccount` no-ops on an unchanged account; this does
-      // not, and the cost of being wrong that way is one extra request.
-      addressBook = null
-      aliases = null
-      cache.useAccount(sub)
+    ensureShape() {
+      cache.ensureShape()
     },
 
     forget() {

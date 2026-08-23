@@ -23,7 +23,7 @@ let cache: GoogleCache
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'holi-mail-sync-'))
   cache = openGoogleCache(join(dir, 'cache.db'))
-  cache.useAccount('sub-a')
+  cache.ensureShape()
 })
 
 afterEach(async () => {

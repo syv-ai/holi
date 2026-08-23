@@ -48,6 +48,19 @@ async function idleSession(base: string, auth?: StoredAuth): Promise<GitHubSessi
 }
 
 const hosts: VaultHost[] = []
+
+/**
+ * A host reporting one open vault.
+ *
+ * The `google.*` procedures resolve their account through the ACTIVE vault
+ * (D87), so a router with nothing open refuses before it reaches the seam
+ * these tests are about. Opening a real vault would mean a real clone and a
+ * real git repo, which is a lot of machinery to assert that `send` passes its
+ * input through.
+ */
+const withActiveVault = (host: VaultHost, root: string): VaultHost =>
+  ({ ...host, active: () => ({ remote: 'owner/repo', root }) }) as unknown as VaultHost
+
 afterAll(async () => {
   for (const h of hosts) await h.close().catch(() => {})
 })
@@ -1627,13 +1640,13 @@ describe('google composer procedures', () => {
     const caller = createRouter({
       registry,
       session: await idleSession(base),
-      host,
+      host: withActiveVault(host, root),
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
       downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
-      googleData,
+      googleDataFor: async () => googleData as never,
     }).createCaller({})
 
     return { caller, calls }
@@ -1759,18 +1772,18 @@ describe('google forwarding', () => {
     const caller = createRouter({
       registry,
       session: await idleSession(base),
-      host,
+      host: withActiveVault(host, base),
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
       downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
-      googleData: {
+      googleDataFor: async () => ({
         sendMail: async (input: unknown) => {
           calls.push(input)
           return { id: 'm-1' }
         },
-      } as never,
+      }) as never,
     }).createCaller({})
 
     await caller.google.send({
@@ -1790,13 +1803,13 @@ describe('google forwarding', () => {
     const caller = createRouter({
       registry,
       session: await idleSession(base),
-      host,
+      host: withActiveVault(host, base),
       vaultRoot: join(base, 'Holi'),
       openExternal: async () => {},
       trashItem: async () => {},
       downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
-      googleData: { sendMail: async () => ({ id: 'm-1' }) } as never,
+      googleDataFor: async () => ({ sendMail: async () => ({ id: 'm-1' }) }) as never,
     }).createCaller({})
 
     await expect(

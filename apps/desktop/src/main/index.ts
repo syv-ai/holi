@@ -15,7 +15,7 @@
  * the router because it shares the host, and before the window because its
  * `getWindow` closure reads `mainWindow` lazily.
  */
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, type Tray } from 'electron'
@@ -28,7 +28,7 @@ import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
 import { openGoogleCache } from './google/cache'
-import { createGoogleData } from './google/data'
+import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
 import { installGoogleCli } from './google/cli'
 import { installHoliCli } from './agent/cli'
@@ -156,6 +156,11 @@ async function main(): Promise<void> {
   const session = await createSession()
   // The Google connector (D67) — independent of the GitHub session on purpose:
   // it is a data connector, not identity, and neither sign-out affects the other.
+  const userDataDir = app.getPath('userData')
+  // D87: the shared machine-wide cache belongs to an account no vault is pointed
+  // at any more. Deleted rather than renamed: it holds one account's mail, and
+  // leaving it on disk is worse than the re-fetch. A no-op on a fresh install.
+  await rm(join(userDataDir, 'google-cache.db'), { force: true })
   const googleAccounts = await createGoogleAccountsManager()
   // One file, two readers: the agenda panel (via the router) and the agent (via
   // the ops server below). Plain JSON — it holds calendar ids, not a credential.
@@ -187,12 +192,47 @@ async function main(): Promise<void> {
     })
 
   /**
-   * The UI's Google cache (D67, amended). In `userData` rather than in a vault:
-   * mail is **account** data, and a vault is a shared git repo — caching a
-   * client's inbox there would push it to teammates on the next sync.
+   * The UI's Google cache (D67, amended; D87). In `userData` rather than in a
+   * vault: mail is **account** data, and a vault is a shared git repo — caching
+   * a client's inbox there would push it to teammates on the next sync.
+   *
+   * **One file per account**, memoized. Accounts used to be kept apart by a wipe
+   * inside `useAccount`, which was right for one connection that never changed;
+   * per vault it fired on every switch and charged a full re-fetch of mail and
+   * calendar — worst exactly where two vaults are used side by side, which is
+   * the case D87 exists for.
    */
-  const googleCache = openGoogleCache(join(app.getPath('userData'), 'google-cache.db'))
-  const googleData = createGoogleData({ api: googleApiFor, cache: googleCache })
+  const googleDataBySub = new Map<string, GoogleData>()
+  const googleDataForSub = (sub: string): GoogleData => {
+    let data = googleDataBySub.get(sub)
+    if (data === undefined) {
+      // `sub` becomes a filename. It is a numeric string from Google today, but
+      // build a path out of it only after saying so.
+      if (!/^[A-Za-z0-9_-]+$/.test(sub)) throw new Error(`unusable Google account id: ${sub}`)
+      const cache = openGoogleCache(join(userDataDir, `google-cache-${sub}.db`))
+      cache.ensureShape()
+      data = createGoogleData({
+        // Bound to THIS account's session, not to whatever vault is active —
+        // the cache and the client it fills from have to be the same account.
+        api: () =>
+          new GoogleApi({
+            accessToken: () => {
+              const session = googleAccounts.sessionForSub(sub)
+              if (session === null) throw new Error('that Google account is no longer connected')
+              return session.getAccessToken()
+            },
+          }),
+        cache,
+      })
+      googleDataBySub.set(sub, data)
+    }
+    return data
+  }
+  /** The active vault's data layer, or null when it has no account (D87). */
+  const googleDataFor = async (remote: string): Promise<GoogleData | null> => {
+    const sub = (await googleAccounts.sessionFor(remote))?.accountSub ?? null
+    return sub === null ? null : googleDataForSub(sub)
+  }
 
   /**
    * Keep the cache scoped to whoever is actually connected.
@@ -202,11 +242,21 @@ async function main(): Promise<void> {
    * connection is just as much "this mail is no longer yours to hold" as a
    * button press, and wiring only the button would leave it behind.
    */
-  const scopeGoogleCache = (sub: string | null) => {
-    if (sub === null) googleData.forget()
-    else googleData.useAccount(sub)
-  }
-  googleAccounts.onChange(scopeGoogleCache)
+  /**
+   * Keep a removed account's cache off the disk.
+   *
+   * Hung off `onChange` rather than off the disconnect procedure, because
+   * `onChange` also fires for a **dead grant** — a revoked or expired connection
+   * is just as much "this mail is no longer yours to hold" as a button press,
+   * and wiring only the button would leave it behind. It now forgets the cache
+   * of the account that changed rather than the only cache there was.
+   */
+  googleAccounts.onChange((sub) => {
+    if (sub === null) return // a vault unlinked; the account and its cache live on
+    if (googleAccounts.sessionForSub(sub) !== null) return // still connected
+    googleDataBySub.get(sub)?.forget()
+    googleDataBySub.delete(sub)
+  })
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) =>
@@ -305,7 +355,7 @@ async function main(): Promise<void> {
     session,
     googleAccounts,
     calendarPrefs,
-    googleData,
+    googleDataFor,
     imagePrefs,
     host,
     vaultRoot: vaultRoot(),
@@ -360,6 +410,15 @@ async function main(): Promise<void> {
    * they have no cache entry to patch: a new message reaches the list through
    * the next `history.list` delta, and the agenda always refetches.
    */
+  /** The data layer the agent's writes go through. Resolved per call, so it
+   *  follows a vault switch rather than holding whatever was open at launch. */
+  const agentGoogleData = async (): Promise<GoogleData> => {
+    const remote = host.active()?.remote
+    const data = remote === undefined ? null : await googleDataFor(remote)
+    if (data === null) throw new Error('this vault has no Google account connected')
+    return data
+  }
+
   const googleOps = createGoogleOpsServer({
     // Through the SAME overrides file the panel writes. A calendar the user
     // switched off is not fetched for the agent either — otherwise "turn Jane's
@@ -375,12 +434,12 @@ async function main(): Promise<void> {
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
     thread: async (id) => textOnly(await readThread(googleApiFor(), id)),
 
-    // Label writes — through `googleData`, so the UI's cached list learns about
-    // them at the same moment Gmail does.
-    setRead: (id, read) => googleData.setRead(id, read),
-    star: (id, on) => googleData.setStarred(id, on),
-    archive: (id) => googleData.archive(id),
-    trash: (id) => googleData.trash(id),
+    // Label writes — through the vault's `GoogleData`, so the UI's cached list
+    // learns about them at the same moment Gmail does.
+    setRead: async (id, read) => (await agentGoogleData()).setRead(id, read),
+    star: async (id, on) => (await agentGoogleData()).setStarred(id, on),
+    archive: async (id) => (await agentGoogleData()).archive(id),
+    trash: async (id) => (await agentGoogleData()).trash(id),
 
     // New messages and events — nothing cached to patch.
     draft: ({ threadId, ...mail }) => createDraft(googleApiFor(), mail, threadId),
@@ -461,7 +520,6 @@ async function main(): Promise<void> {
   // fast first spawn provisions an empty directory beside the one being moved.
   // A fresh install has neither an old directory nor a registry entry, and both
   // halves no-op.
-  const userDataDir = app.getPath('userData')
   const movedTo = await migrateSharedAgentConfig(userDataDir, await registry.list()).catch(
     (err) => {
       console.warn('[agent] config migration skipped:', err)
