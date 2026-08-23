@@ -43,9 +43,19 @@ interface Props {
   /** Only provided in `add-vault` mode. The × button + Esc-at-the-floor call
    *  this to dismiss the overlay. Absent in `first-run` — nowhere to dismiss to. */
   onDismiss?: () => void
+  /**
+   * Walk the whole ritual against nothing (Developer → Test onboarding).
+   *
+   * **Creates nothing and writes nothing**: no GitHub repo, no clone, no vault
+   * in the registry, no settings files. The naming act fakes its own success so
+   * the acts after it are reachable, which is the only reason this exists — the
+   * settings act and the threshold are unreachable until a vault is created, and
+   * that made them the one part of the ritual no test could drive.
+   */
+  dryRun?: boolean
 }
 
-export function OnboardingRitual({ mode, onDismiss }: Props) {
+export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const session = useAtomValue(sessionAtom)
   const known = useAtomValue(vaultsAtom)
   const createVault = useSetAtom(createVaultAtom)
@@ -167,6 +177,12 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
       advance()
       return
     }
+    // A dry run has no vault to write to, and inventing one would be the one
+    // thing this mode promises not to do.
+    if (dryRun) {
+      advance()
+      return
+    }
     const { committed, local } = splitAnswersByTarget(s.settings)
     try {
       const { warnings } = await trpc.settings.write.mutate({
@@ -191,6 +207,16 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   // On failure we stay on the naming form with the message shown.
   const submit = async () => {
     if (s.submitting || !canAdvance(s)) return
+    // The fake success a dry run turns on. Everything downstream — the settings
+    // act, the threshold, the copyable remote — reads `createdRemote`, so
+    // standing one up is all it takes to make the rest of the ritual real
+    // without a repo existing anywhere.
+    if (dryRun) {
+      setCreatedRemote(`${s.owner || 'you'}/${slug}`)
+      runExit(2)
+      dispatch({ type: 'created' })
+      return
+    }
     dispatch({ type: 'submitStart' })
     try {
       const remote = await createVault({ name: slug, owner: s.owner })
@@ -206,7 +232,10 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
   // just refreshes the list — which flips the first-run gate to the Shell — and
   // dismisses the add-vault popover if that is how we were opened.
   const enter = async () => {
-    await loadVaults()
+    // A dry run has nothing to refresh into — there is no new vault in the
+    // registry — so it only closes. Calling `loadVaults` would be harmless but
+    // dishonest: it would look like the ritual had done something.
+    if (!dryRun) await loadVaults()
     onDismiss?.()
   }
 

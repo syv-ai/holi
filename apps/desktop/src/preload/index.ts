@@ -64,6 +64,11 @@ const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:
  *  decide what is on your screen. Only local authorship opens a tab. */
 const onAppOpen = pushChannel<string>('apps:open')
 
+/** The Developer menu asked for the onboarding ritual, run against nothing.
+ *  Dev builds only — main does not install the menu in a packaged app, so this
+ *  channel simply never fires there. */
+const onTestOnboarding = pushChannel<void>('dev:test-onboarding')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -79,6 +84,9 @@ contextBridge.exposeInMainWorld('holi', {
   },
   apps: {
     onOpen: onAppOpen,
+  },
+  dev: {
+    onTestOnboarding,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),

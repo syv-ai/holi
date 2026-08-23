@@ -42,6 +42,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
   const appOpenSubs = new Set<(appId: string) => void>()
+  const testOnboardingSubs = new Set<() => void>()
   let onFlushed: (() => void) | null = null
 
   const subscribe = <T>(subs: Set<(v: T) => void>) => (cb: (v: T) => void) => {
@@ -70,6 +71,13 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     apps: {
       onOpen: subscribe(appOpenSubs),
+    },
+    // Dev-menu channel. Never fires here; present so anything that subscribes
+    // (App does, unconditionally) does not trip over an absent namespace —
+    // typecheck cannot catch that, because this fake is not typed to
+    // `window.holi`.
+    dev: {
+      onTestOnboarding: subscribe(testOnboardingSubs),
     },
     openExternal: async () => {},
   }

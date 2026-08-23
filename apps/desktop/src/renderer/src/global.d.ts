@@ -45,6 +45,12 @@ declare global {
       apps: {
         onOpen(cb: (appId: string) => void): () => void
       }
+      /** The Developer menu, dev builds only — main installs no such menu in a
+       *  packaged app, so nothing here ever fires there. Returns its
+       *  unsubscribe. */
+      dev: {
+        onTestOnboarding(cb: () => void): () => void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */

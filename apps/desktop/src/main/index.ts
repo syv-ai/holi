@@ -59,6 +59,7 @@ import { createDeliveredLog, createReminderRuntime } from './reminders/runtime'
 import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
+import { installAppMenu } from './menu'
 import { ensureAgentConfigDir } from './agent/agent-config-dir'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { createHookServer } from './agent/hook-server'
@@ -540,6 +541,9 @@ async function main(): Promise<void> {
   // Tray-resident: the sweep keeps running with the window closed, and the tray
   // is the way back in (Open Holi) and the way out (Quit — ⌘W no longer is one).
   tray = createTray({ openWindow })
+  // After the first window: the Developer menu sends to whatever window is
+  // current, and there has to be one for the send to land.
+  installAppMenu(() => mainWindow)
 
   /**
    * First-run only: ask once whether to launch Holi at login — reminders fire
