@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import {
   agentConfigSlug,
   ensureAgentConfigDir,
   isAgentSignedIn,
+  resolveVaultAgentConfig,
 } from '../src/main/agent/agent-config-dir'
 
 const dirs: string[] = []
@@ -199,5 +200,75 @@ describe('isAgentSignedIn', () => {
     const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
     await writeFile(join(configDir, '.claude.json'), '{ not json')
     expect(await isAgentSignedIn(configDir)).toBe(true)
+  })
+})
+
+describe('resolveVaultAgentConfig', () => {
+  /** A vault clone with a machine-local colour choice, or none at all. */
+  async function vault(colorScheme?: string): Promise<string> {
+    const root = join(await tempDir(), 'clone')
+    await mkdir(join(root, '.holi'), { recursive: true })
+    if (colorScheme !== undefined) {
+      await writeFile(
+        join(root, '.holi', 'settings.local.json'),
+        JSON.stringify({ colorScheme }),
+      )
+    }
+    return root
+  }
+
+  it("hands the agent the vault's own colour, not Claude Code's `auto`", async () => {
+    const userDataDir = await tempDir()
+    const { dir } = await resolveVaultAgentConfig({
+      userDataDir,
+      remote: 'owner/repo',
+      root: await vault('light'),
+      systemPrefersDark: true,
+    })
+    expect((await settings(dir)).theme).toBe('light')
+  })
+
+  it('resolves `system` the same way the app does', async () => {
+    // Same pure `resolveColorMode` that drives `data-theme`, so `system` cannot
+    // come to mean one thing to the app and another to the agent.
+    const userDataDir = await tempDir()
+    const root = await vault('system')
+
+    const dark = await resolveVaultAgentConfig({
+      userDataDir,
+      remote: 'owner/dark',
+      root,
+      systemPrefersDark: true,
+    })
+    const light = await resolveVaultAgentConfig({
+      userDataDir,
+      remote: 'owner/light',
+      root,
+      systemPrefersDark: false,
+    })
+
+    expect((await settings(dark.dir)).theme).toBe('dark')
+    expect((await settings(light.dir)).theme).toBe('light')
+  })
+
+  it('resolves a vault that has never been asked, rather than throwing', async () => {
+    const { dir } = await resolveVaultAgentConfig({
+      userDataDir: await tempDir(),
+      remote: 'owner/repo',
+      root: await vault(),
+      systemPrefersDark: false,
+    })
+    expect((await settings(dir)).theme).toBe('light') // the default is `system`
+  })
+
+  it('reports a fresh directory as needing a sign-in', async () => {
+    const res = await resolveVaultAgentConfig({
+      userDataDir: await tempDir(),
+      remote: 'owner/repo',
+      root: await vault('dark'),
+      systemPrefersDark: true,
+    })
+    expect(res.dir).toContain(agentConfigSlug('owner/repo'))
+    expect(res.signedIn).toBe(false)
   })
 })

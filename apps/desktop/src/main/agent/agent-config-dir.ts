@@ -28,6 +28,8 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { resolveColorMode } from '@holi/shared'
+import { readVaultSettings } from '../vault/settings'
 
 /** Under `userData/`, beside `vaults.json`, `google-cache.db` and the rest. */
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
@@ -167,4 +169,39 @@ export async function isAgentSignedIn(configDir: string): Promise<boolean> {
   } catch {
     return true
   }
+}
+
+/** Everything a spawn needs to know about the vault's config directory. */
+export interface AgentConfigResolution {
+  /** Absolute path, handed to the child as `$CLAUDE_CONFIG_DIR`. */
+  dir: string
+  /** False → the panel owes the user the `/login` instruction before Claude
+   *  prints its own bare `Not logged in`. */
+  signedIn: boolean
+}
+
+/**
+ * Everything the spawn path needs, in one call: provision the vault's config
+ * directory, stamp the theme it should open in, and say whether it is signed in.
+ *
+ * The mode comes from the same pair D85 uses for `data-theme` — the vault's
+ * `colorScheme` setting and what the OS currently reports, through the same pure
+ * `resolveColorMode`. Resolving it twice, two ways, is how `system` ends up
+ * meaning one thing to the app and another to the agent.
+ *
+ * `systemPrefersDark` is **injected** rather than read here: this module sits on
+ * `agent-manager`'s path, which must load under vitest, so no runtime `electron`
+ * import may appear in it. The caller owns `nativeTheme`.
+ */
+export async function resolveVaultAgentConfig(args: {
+  userDataDir: string
+  remote: string
+  /** The vault's clone dir — where `colorScheme` is read from. */
+  root: string
+  systemPrefersDark: boolean
+}): Promise<AgentConfigResolution> {
+  const { colorScheme } = await readVaultSettings(args.root)
+  const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
+  const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, { theme })
+  return { dir, signedIn: await isAgentSignedIn(dir) }
 }
