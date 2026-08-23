@@ -51,6 +51,23 @@
    * `--radius` lives in the `@theme` block further down. */
   --scrollbar-thumb: var(--color-neutral-700);
   --scrollbar-thumb-hover: var(--color-neutral-600);
+
+  /* Code + data token colours for the plain/code editor. These lived as
+     hardcoded hexes in `editor/theme.ts`, which is why a .json or .mjs file was
+     unreadable the moment light mode shipped: 300-tint colours chosen to glow on
+     near-black wash out completely on white. As tokens they follow the theme,
+     and a vault theme could eventually reach them. Values here are the originals
+     verbatim, so the dark editor is unchanged. */
+  --syntax-keyword: var(--color-fuchsia-300);
+  --syntax-property: var(--color-sky-300);
+  --syntax-string: var(--color-green-300);
+  --syntax-number: var(--color-amber-400);
+  --syntax-type: var(--color-blue-300);
+  --syntax-variable: var(--color-neutral-200);
+  --syntax-function: var(--color-sky-300);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-400);
+  --syntax-invalid: var(--color-red-400);
   /* The hairline between two pieces of CHROME — the split between panes, the
      sidebar's edge, a panel header's underline, the footer's top rule. Split
      off from `--border`, which stays the edge of an OBJECT: a card, a chip, a
@@ -111,20 +128,39 @@
   /* Light inverts the problem: text must be DARKER than the surface, so the
      text arm goes down a step where the dark arm went up. */
   --brand: var(--color-sky-700);
-  --secondary: var(--color-neutral-100);
+  /* One step deeper than the first pass at this block, all for the same reason:
+     perceptual distance at the light end of a neutral ramp is much smaller than
+     at the dark end. `neutral-800` on `neutral-950` is an obvious edge; the
+     mirror-image `neutral-200` on `neutral-50` is very nearly nothing, and the
+     app read as a white page with invisible furniture. */
+  --secondary: var(--color-neutral-200);
   --secondary-foreground: var(--color-neutral-900);
-  --muted: var(--color-neutral-100);
-  --muted-foreground: var(--color-neutral-500);
-  --accent: var(--color-neutral-100);
+  --muted: var(--color-neutral-200);
+  --muted-foreground: var(--color-neutral-600);
+  --accent: var(--color-neutral-200);
   --accent-foreground: var(--color-neutral-900);
   --destructive: var(--color-red-600);
   --destructive-foreground: #ffffff;
-  --border: var(--color-neutral-200);
-  --input: var(--color-neutral-200);
+  --border: var(--color-neutral-300);
+  --input: var(--color-neutral-300);
   --ring: var(--color-sky-600);
 
-  --scrollbar-thumb: var(--color-neutral-300);
-  --scrollbar-thumb-hover: var(--color-neutral-400);
+  --scrollbar-thumb: var(--color-neutral-400);
+  --scrollbar-thumb-hover: var(--color-neutral-500);
+
+  /* The light arm of the syntax ramp. Same hues, taken down to the 600/700 end
+     so they are dark ENOUGH rather than bright enough: on white the job is
+     contrast against the paper, not glow against the ink. */
+  --syntax-keyword: var(--color-fuchsia-700);
+  --syntax-property: var(--color-sky-700);
+  --syntax-string: var(--color-green-700);
+  --syntax-number: var(--color-amber-700);
+  --syntax-type: var(--color-blue-700);
+  --syntax-variable: var(--color-neutral-800);
+  --syntax-function: var(--color-sky-700);
+  --syntax-comment: var(--color-neutral-500);
+  --syntax-punctuation: var(--color-neutral-600);
+  --syntax-invalid: var(--color-red-600);
 
   /* The popover shadow is softened here, and it did not use to be overridden at
      all — the old note said black-alpha "reads fine on a light surface", which

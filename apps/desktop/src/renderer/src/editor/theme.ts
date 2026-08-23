@@ -170,23 +170,35 @@ export const editorTheme = EditorView.baseTheme({
  * The markdown editor never needed this — it paints itself with the live-preview
  * decorations (`.cm-heading`, `.cm-strong`, …), not the highlight-tag pipeline —
  * so a language's parse tree produced tags that nothing coloured. This is the
- * missing `HighlightStyle`: it maps Lezer tags to the editor's existing dark
- * palette (sky for keys, green for strings, amber for literals). Legacy
- * StreamLanguage modes (toml/ini/shell) route through the same standard tags.
+ * missing `HighlightStyle`: it maps Lezer tags to the app's syntax tokens (sky
+ * for keys, green for strings, amber for literals). Legacy StreamLanguage modes
+ * (toml/ini/shell) route through the same standard tags.
+ *
+ * **Tokens, not hexes.** These were hardcoded 300-tint colours picked to glow on
+ * near-black, which meant a .json or .mjs file became unreadable the moment
+ * light mode shipped. `var()` resolves per element against whichever
+ * `data-theme` is stamped, so one definition serves both.
  */
 const codeHighlightStyle = HighlightStyle.define([
-  { tag: [t.keyword, t.moduleKeyword, t.operatorKeyword], color: '#f0abfc' },
-  { tag: [t.propertyName, t.attributeName], color: '#7dd3fc' },
-  { tag: [t.string, t.special(t.string)], color: '#86efac' },
-  { tag: [t.number, t.bool, t.null, t.atom, t.literal], color: '#fbbf24' },
-  { tag: [t.typeName, t.className, t.tagName], color: '#93c5fd' },
-  { tag: [t.variableName, t.definition(t.variableName)], color: '#e5e5e5' },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], color: '#7dd3fc' },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: '#737373', fontStyle: 'italic' },
-  { tag: [t.escape, t.special(t.brace)], color: '#fbbf24' },
-  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: '#a3a3a3' },
-  { tag: [t.meta, t.processingInstruction], color: '#a3a3a3' },
-  { tag: t.invalid, color: '#f87171' },
+  { tag: [t.keyword, t.moduleKeyword, t.operatorKeyword], color: 'var(--syntax-keyword)' },
+  { tag: [t.propertyName, t.attributeName], color: 'var(--syntax-property)' },
+  { tag: [t.string, t.special(t.string)], color: 'var(--syntax-string)' },
+  { tag: [t.number, t.bool, t.null, t.atom, t.literal], color: 'var(--syntax-number)' },
+  { tag: [t.typeName, t.className, t.tagName], color: 'var(--syntax-type)' },
+  { tag: [t.variableName, t.definition(t.variableName)], color: 'var(--syntax-variable)' },
+  {
+    tag: [t.function(t.variableName), t.function(t.propertyName)],
+    color: 'var(--syntax-function)',
+  },
+  {
+    tag: [t.comment, t.lineComment, t.blockComment],
+    color: 'var(--syntax-comment)',
+    fontStyle: 'italic',
+  },
+  { tag: [t.escape, t.special(t.brace)], color: 'var(--syntax-number)' },
+  { tag: [t.operator, t.punctuation, t.separator, t.bracket], color: 'var(--syntax-punctuation)' },
+  { tag: [t.meta, t.processingInstruction], color: 'var(--syntax-punctuation)' },
+  { tag: t.invalid, color: 'var(--syntax-invalid)' },
 ])
 
 /** The highlight extension to add to the plain/code stack. */
