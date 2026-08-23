@@ -155,12 +155,12 @@ export async function ensureAgentConfigDir(
  * This is §6 — telling the user a vault needs its own `/login` — and it is
  * deliberately **Holi's own marker rather than a reading of Claude Code's
  * state**. The first version read `oauthAccount` out of `<dir>/.claude.json`, and
- * a real install proved that wrong: the key **outlives the credential**. macOS
- * keychain entries are suffixed by a hash of the config directory path
- * (`Claude Code-credentials-<hash>`), so the migration below — which renames the
- * directory — orphans the credential while leaving `oauthAccount` sitting in the
- * JSON. The check reported "signed in" for the one vault that most needed to be
- * told otherwise.
+ * running it proved that unreliable: a session printed `Not logged in` in a
+ * directory whose `.claude.json` carried an `oauthAccount`. The key records **an
+ * account**, not whether the credential behind it is reachable right now — the
+ * credential lives in the macOS keychain, which can be locked, re-keyed or
+ * cleared without that file changing. So the check said "signed in" at the one
+ * moment the notice was wanted.
  *
  * The marker is a **proxy, not a heuristic**: credentials are keyed to the config
  * directory, so a directory Holi has never spawned in cannot be signed in. It is
@@ -260,11 +260,12 @@ function usedByVault(
  * set. Leaving it stranded would cost the vault someone actually uses both, on
  * upgrade, for nothing. So it is **renamed** into that vault's slot.
  *
- * **It does not carry the login, and cannot.** Measured on a real install: the
- * macOS keychain entry is `Claude Code-credentials-<hash of the config dir path>`,
- * so renaming the directory orphans the credential and that vault signs in again
- * like any other. Transcripts and plugins are files and do survive, which is the
- * whole of what this buys.
+ * **What it carries is files.** Transcripts and the plugin set are on disk and
+ * move with the directory. The **credential is not in the directory** — it is a
+ * macOS keychain entry (`Claude Code-credentials[-<suffix>]`) that Claude Code
+ * owns, so whether a login survives a rename is not Holi's to promise. Observed
+ * surviving on the install this was built against; treat a re-login as possible
+ * rather than as a bug.
  *
  * The 2026-08-14 spec refused to *copy* transcripts between directories, on the
  * grounds that rewriting another program's state store is a bad bet. This is a
