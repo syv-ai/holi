@@ -18,7 +18,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, ipcMain, protocol, type Tray } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, type Tray } from 'electron'
 import { requestFlush, type FlushChannel } from './flush'
 import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
@@ -60,7 +60,10 @@ import { createNotifier } from './reminders/notify'
 import type { VaultTasks } from './reminders/sweep'
 import { createTray } from './tray'
 import { installAppMenu } from './menu'
-import { ensureAgentConfigDir } from './agent/agent-config-dir'
+import {
+  migrateSharedAgentConfig,
+  resolveVaultAgentConfig,
+} from './agent/agent-config-dir'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { createHookServer } from './agent/hook-server'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
@@ -438,13 +441,35 @@ async function main(): Promise<void> {
     }),
   })
   await hookServer.start()
-  // D72: the vault agent runs on Holi's config directory, not the machine's
-  // `~/.claude`. Provisioned per app launch (not per session, and not once ever)
-  // so a later change to what Holi seeds actually reaches an existing install.
-  const agentConfigDir = await ensureAgentConfigDir(app.getPath('userData'))
+  // D86: the vault agent runs on THIS VAULT's config directory, not the machine's
+  // `~/.claude` and no longer one shared across every vault — `plugins/` and
+  // user-scope `settings.json` are keyed by nothing, so sharing a directory
+  // shared capability.
+  //
+  // The shared directory D72 left behind belonged, in practice, to whichever
+  // vault was actually being used; `list()` sorts by `lastOpenedAt` descending,
+  // so that is entry zero. Awaited before the manager exists, or a fast first
+  // spawn provisions an empty directory beside the one being moved. A fresh
+  // install has neither an old directory nor an entry, and both halves no-op.
+  const userDataDir = app.getPath('userData')
+  const mostRecentVault = (await registry.list())[0]?.remote
+  if (mostRecentVault) {
+    await migrateSharedAgentConfig(userDataDir, mostRecentVault).catch((err) =>
+      console.warn('[agent] config migration skipped:', err),
+    )
+  }
   agent = createAgentManager({
     host,
-    configDir: agentConfigDir,
+    // Per spawn, not per launch: the active vault moves under the manager, and
+    // the theme stamped into that directory tracks a setting the user can flip
+    // while the app runs. `nativeTheme` is read at spawn for the same reason.
+    resolveConfigDir: ({ remote, root }) =>
+      resolveVaultAgentConfig({
+        userDataDir,
+        remote,
+        root,
+        systemPrefersDark: nativeTheme.shouldUseDarkColors,
+      }),
     getWindow: () => mainWindow,
     hookPort: () => hookServer.port(),
     hookToken: () => hookServer.token(),
