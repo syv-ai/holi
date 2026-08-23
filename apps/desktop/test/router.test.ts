@@ -58,8 +58,8 @@ const hosts: VaultHost[] = []
  * real git repo, which is a lot of machinery to assert that `send` passes its
  * input through.
  */
-const withActiveVault = (host: VaultHost, root: string): VaultHost =>
-  ({ ...host, active: () => ({ remote: 'owner/repo', root }) }) as unknown as VaultHost
+const withActiveVault = (host: VaultHost, root: string, remote = 'owner/repo'): VaultHost =>
+  ({ ...host, active: () => ({ remote, root }) }) as unknown as VaultHost
 
 afterAll(async () => {
   for (const h of hosts) await h.close().catch(() => {})
@@ -1882,5 +1882,98 @@ describe('apps', () => {
   it('lists the vault tasks', async () => {
     const { caller } = await appsRig()
     expect((await caller.apps.tasks({ remote: REMOTE })).map((t) => t.title)).toContain('Review')
+  })
+})
+
+/**
+ * A vault's Google account is its own (D87).
+ *
+ * These are about the seam between the router and the accounts manager: which
+ * vault a procedure acts on, and — for the two disconnects — how much it takes
+ * down with it.
+ */
+describe('google accounts per vault', () => {
+  async function accountsRig(remote = 'nthomsencph/privat') {
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-ga-'))
+    dirs.push(base)
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+    hosts.push(host)
+
+    const links = new Map<string, string>([['syv/work', 'sub-2']])
+    const calls: { name: string; arg: unknown }[] = []
+    const googleAccounts = {
+      list: () => [
+        { sub: 'sub-1', email: 'ada@syv.ai' },
+        { sub: 'sub-2', email: 'work@syv.ai' },
+      ],
+      sessionFor: async (r: string) => {
+        const sub = links.get(r)
+        return sub === undefined ? null : { accountSub: sub, account: { email: 'x@syv.ai' } }
+      },
+      link: async (r: string, sub: string) => {
+        calls.push({ name: 'link', arg: { r, sub } })
+        links.set(r, sub)
+      },
+      unlinkVault: async (r: string) => {
+        calls.push({ name: 'unlinkVault', arg: r })
+        links.delete(r)
+      },
+      removeAccount: async (sub: string) => {
+        calls.push({ name: 'removeAccount', arg: sub })
+        for (const [k, v] of links) if (v === sub) links.delete(k)
+      },
+    }
+
+    const caller = createRouter({
+      registry,
+      session: await idleSession(base),
+      host: withActiveVault(host, base, remote),
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+      googleAccounts: googleAccounts as never,
+    }).createCaller({})
+
+    return { caller, calls, links }
+  }
+
+  it('lists every connected account and names the one this vault uses', async () => {
+    const { caller } = await accountsRig('syv/work')
+    expect(await caller.google.accounts()).toEqual({
+      accounts: [
+        { sub: 'sub-1', email: 'ada@syv.ai' },
+        { sub: 'sub-2', email: 'work@syv.ai' },
+      ],
+      current: 'sub-2',
+    })
+  })
+
+  it('reports no account for a vault that has never connected', async () => {
+    const { caller } = await accountsRig('nthomsencph/privat')
+    expect((await caller.google.accounts()).current).toBeNull()
+  })
+
+  it('links the ACTIVE vault to an account already in the store', async () => {
+    const { caller, calls } = await accountsRig('nthomsencph/privat')
+    await caller.google.useAccount({ sub: 'sub-1' })
+    expect(calls).toEqual([{ name: 'link', arg: { r: 'nthomsencph/privat', sub: 'sub-1' } }])
+  })
+
+  it('unlinks this vault without touching the account or any other vault', async () => {
+    const { caller, calls, links } = await accountsRig('syv/work')
+    await caller.google.disconnectVault()
+    expect(calls).toEqual([{ name: 'unlinkVault', arg: 'syv/work' }])
+    expect(calls.some((c) => c.name === 'removeAccount')).toBe(false)
+    expect(links.has('syv/work')).toBe(false)
+  })
+
+  it('removes an account by name, taking every vault using it down with it', async () => {
+    const { caller, links } = await accountsRig('syv/work')
+    await caller.google.useAccount({ sub: 'sub-1' })
+    await caller.google.removeAccount({ sub: 'sub-1' })
+    expect(links.has('syv/work')).toBe(false)
   })
 })

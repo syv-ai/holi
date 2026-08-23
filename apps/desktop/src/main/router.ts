@@ -1586,6 +1586,41 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     /**
+     * Every account connected on this machine, and the one this vault uses.
+     *
+     * The picker's whole point: a second vault reusing an account already in the
+     * store costs a mapping and no consent round trip, because the grant exists.
+     */
+    accounts: t.procedure.query(async () => {
+      const manager = googleAccounts()
+      const session = await manager.sessionFor(activeRemote())
+      return { accounts: manager.list(), current: session?.accountSub ?? null }
+    }),
+
+    /** Point this vault at an account already connected. No consent. */
+    useAccount: t.procedure
+      .input(fields({ sub: 'string' }))
+      .mutation(async ({ input }) => {
+        await googleAccounts().link(activeRemote(), input.sub)
+        return { ok: true as const }
+      }),
+
+    /**
+     * Revoke an account at Google and drop it everywhere, including from every
+     * vault pointing at it.
+     *
+     * The destructive half of what used to be one `disconnect`. It takes a `sub`
+     * rather than acting on the active vault, so removing an account is always
+     * an explicit choice of WHICH account.
+     */
+    removeAccount: t.procedure
+      .input(fields({ sub: 'string' }))
+      .mutation(async ({ input }) => {
+        await googleAccounts().removeAccount(input.sub)
+        return { ok: true as const }
+      }),
+
+    /**
      * Unlink **this vault**. The account and its tokens survive, and any other
      * vault using it keeps working.
      *
