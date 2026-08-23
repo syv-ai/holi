@@ -108,6 +108,11 @@ gate moves out, into the landing dispatch and into `sweepDailyAtom`.
 This is what makes ⌘⇧D work with daily notes off, and it leaves the atom doing one thing. `landing`
 owns the policy; `daily` owns the mechanism.
 
+The mechanism splits in two: **`ensureTodaysDailyAtom`** mints and says where the file is, and
+`openTodaysDailyAtom` is that plus the landing. Landing calls the first (whenever `dailyNotes`), and
+only *lands* on the daily when that is the target — see §The dispatch. Keeping them fused is the bug
+this spec shipped once and had to fix in the running app.
+
 ### D-f. Onboarding gains a settings act
 
 The ritual (`features/onboarding/OnboardingRitual.tsx`, driven by the pure reducer in
@@ -274,9 +279,16 @@ apps/desktop/src/renderer/src/state/onboarding-flow.ts
 
 `Shell.tsx`'s effect becomes `openVault → openLanding → sweepDaily`.
 
+**Minting is not landing.** Whenever `dailyNotes` is true the vault mints today's
+daily and sweeps prior days — *whatever* `landing` says. `landing` decides only
+what you are looking at. Folding the two together means a vault that opens on its
+board quietly stops journalling, which is a hole in the record found weeks later.
+The mint runs **before** the target is resolved, so a `landing` naming the daily
+by path is live on the morning it is created rather than reading as rotted.
+
 | resolved `landing.kind` | lands via | on rot |
 |---|---|---|
-| `daily` | `openTodaysDailyAtom`, **iff `dailyNotes`** | — |
+| `daily` | lands on the file already minted above | — |
 | `note` | `openPinned` | no doc at that path → fall back to `daily` |
 | `app` | `openApp` | no such app → fall back to `daily` |
 | `board` / `agenda` / `mail` | `openSingleton` | — |
