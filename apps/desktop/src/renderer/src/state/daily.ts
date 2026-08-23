@@ -18,7 +18,6 @@ import { todayAtom } from './tasks'
 import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
-
 /**
  * The path today's daily note *would* have, whether or not it exists.
  *
@@ -31,6 +30,25 @@ import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from 
 export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)))
 
 /**
+ * Mint today's daily if it is not there yet, and say where it is. Lands on
+ * nothing — that is the caller's business.
+ *
+ * **Split from the landing on purpose (FR-4).** A vault that keeps daily notes
+ * keeps them whether or not you open on one: minting is a property of
+ * `dailyNotes`, and `landing` only decides what you are looking at. Fold the two
+ * back together and a vault that lands on its board quietly stops journalling —
+ * which is a hole in the record that only shows up weeks later, when you go
+ * looking for a day you know you worked.
+ */
+export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
+  const remote = get(activeRemoteAtom)
+  if (!remote) return null
+  const { path, created } = await trpc.notes.getOrCreateDaily.mutate({ remote })
+  if (created) await set(loadSnapshotAtom)
+  return path
+})
+
+/**
  * Get-or-create today's daily for the active vault and land on it (FR-4).
  * Returns the path, or null when there is no active vault. Opens the note
  * **pinned** — you are here to write in it, not browse it.
@@ -41,11 +59,8 @@ export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)
  * today's note on purpose.
  */
 export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
-  const remote = get(activeRemoteAtom)
-  if (!remote) return null
-
-  const { path, created } = await trpc.notes.getOrCreateDaily.mutate({ remote })
-  if (created) await set(loadSnapshotAtom)
+  const path = await set(ensureTodaysDailyAtom)
+  if (path === null) return null
   set(workspaceAtom, openPinned(get(workspaceAtom), path))
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)
   return path

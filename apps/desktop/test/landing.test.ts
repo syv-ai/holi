@@ -88,10 +88,23 @@ describe('openLandingAtom', () => {
     expect(tabs(store)).toEqual([{ kind }])
   })
 
-  it('mints no daily when landing somewhere else', async () => {
+  it('still mints today’s daily when landing somewhere else', async () => {
+    // FR-4: `landing` picks what you LOOK at; `dailyNotes` decides whether the
+    // vault keeps a journal. A vault that opens on its board must not quietly
+    // stop journalling — that is a hole in the record you find weeks later,
+    // looking for a day you know you worked.
     const store = rig({ landing: { kind: 'board' } })
     await store.set(openLandingAtom)
+    expect(holi!.calls.map((c) => c.path)).toContain('notes.getOrCreateDaily')
+    // Minted, but not opened: the board is what you are looking at.
+    expect(tabs(store)).toEqual([{ kind: 'board' }])
+  })
+
+  it('mints nothing when the vault keeps no daily notes', async () => {
+    const store = rig({ landing: { kind: 'board' }, dailyNotes: false })
+    await store.set(openLandingAtom)
     expect(holi!.calls.map((c) => c.path)).not.toContain('notes.getOrCreateDaily')
+    expect(tabs(store)).toEqual([{ kind: 'board' }])
   })
 })
 
@@ -132,6 +145,14 @@ describe('openLandingAtom — a rotted target', () => {
     await store.set(openLandingAtom)
     expect(tabs(store)).toEqual([])
     expect(holi!.calls.map((c) => c.path)).not.toContain('notes.getOrCreateDaily')
+  })
+
+  it('resolves the target against a snapshot that already holds today’s daily', async () => {
+    // Minting runs before resolution, so a landing that names the daily BY PATH
+    // is live on the morning it is created rather than reading as rotted.
+    const store = rig({ landing: { kind: 'note', path: '22-08-2026.md' } })
+    await store.set(openLandingAtom)
+    expect(tabs(store)).toEqual([{ kind: 'note', path: '22-08-2026.md' }])
   })
 })
 
@@ -180,6 +201,7 @@ describe('switching vaults', () => {
           ? settings({ landing: { kind: 'mail' } })
           : settings({ landing: { kind: 'board' } })
       }
+      if (op.path === 'notes.getOrCreateDaily') return { path: '22-08-2026.md', created: false }
       if (op.path === 'vaults.snapshot') return snapshot
       return undefined
     })
