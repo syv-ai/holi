@@ -76,7 +76,9 @@ test('walks naming → settings → threshold without creating anything', async 
 
   // Answer something, so the write would fire if it were going to.
   await userEvent.click(within(settings).getByRole('radio', { name: 'The board' }))
-  await userEvent.click(within(settings).getByRole('button', { name: /continue/i }))
+  // The settings CTA lives in the FOOTER, beside the naming act's, so a list
+  // that scrolls cannot push it off the bottom edge.
+  await userEvent.click(screen.getByRole('button', { name: /continue/i }))
 
   // The threshold — which in a real run shows the live remote.
   await waitFor(() => expect(activeAct()).toHaveClass('obrit-threshold'))

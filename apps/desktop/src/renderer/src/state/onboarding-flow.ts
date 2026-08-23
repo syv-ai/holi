@@ -10,7 +10,7 @@
  * two are no longer the same number, and the assertion reads identically either
  * way.
  */
-import { VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
+import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers } from '@holi/shared'
 
 export type Act = 1 | 2 | 3 | 4
 export type View = 'form' | 'join'
@@ -104,7 +104,10 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, owner: a.owner }
     case 'setSetting':
       // A fresh object rather than a mutation: the view re-renders off identity.
-      return { ...s, settings: { ...s.settings, [a.key]: a.value } }
+      // Normalised, because one answer can withdraw another's options: turning
+      // daily notes off takes "today's note" off the landing row, and the value
+      // sitting there becomes one the user can neither see nor change.
+      return { ...s, settings: normaliseAnswers({ ...s.settings, [a.key]: a.value }) }
     case 'submitStart':
       return { ...s, submitting: true, error: null }
     case 'created':

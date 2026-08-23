@@ -775,16 +775,30 @@
 /* One row per `VAULT_SETTING_DESCRIPTORS` entry. Rows are laid out by the
  * stylesheet rather than counted in the component, so a fifth setting arriving
  * later needs no change here either. */
-.onboarding-ritual .obrit-settings-act .obrit-act-inner {
-  max-width: 680px;
+/* The acts are `position:absolute; inset:0` with `place-items:center`, so the
+ * inner box is content-height inside a definite one. That is what `max-height:
+ * 100%` below resolves against. The vertical padding is this act's alone: the
+ * prose acts are short enough to centre in empty space, and this one is not. */
+.onboarding-ritual .obrit-settings-act {
+  padding-top: 40px;
+  padding-bottom: 28px;
 }
-.onboarding-ritual .obrit-settings-title {
-  margin-top: 10px;
-  font-size: 40px;
+.onboarding-ritual .obrit-settings-act .obrit-act-inner {
+  /* Wider than the prose acts: these rows are label + control, and a narrow
+   * column wraps every explanation onto three lines for no reason. */
+  max-width: 780px;
+  /* The stage is a fixed height and this list is the one act that can outgrow
+   * it. Bound it here and scroll, rather than letting the last row (and, before
+   * the CTA moved to the footer, the CTA itself) fall off the bottom edge at the
+   * window size Holi opens at. */
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  min-height: 0;
 }
 .onboarding-ritual .obrit-settings-act .obrit-lede {
-  margin-top: 12px;
-  max-width: 480px;
+  margin-top: 10px;
+  max-width: 620px;
   font-size: 15px;
 }
 
@@ -792,8 +806,14 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: 34px;
+  margin-top: 22px;
   text-align: left;
+  overflow-y: auto;
+  /* `min-height: 0` is what actually lets a flex child scroll: without it the
+   * child's content floor wins and the overflow escapes the box instead. */
+  min-height: 0;
+  /* Room for the scrollbar so it never sits on top of a control. */
+  padding-right: 4px;
 }
 
 .onboarding-ritual .obrit-setting {
@@ -803,8 +823,8 @@
    * different sizes and neither should dictate the other's row. */
   grid-template-columns: 1fr auto;
   align-items: start;
-  gap: 8px 24px;
-  padding: 18px 2px;
+  gap: 6px 24px;
+  padding: 14px 2px;
   border-bottom: 1px solid hsl(var(--border));
 }
 .onboarding-ritual .obrit-setting:last-child {
@@ -818,7 +838,8 @@
 }
 .onboarding-ritual .obrit-setting-explain {
   margin-top: 4px;
-  max-width: 380px;
+  /* Wide enough that the shared-vault warning is two lines, not four. */
+  max-width: 560px;
   font-size: 12.5px;
   line-height: 1.5;
   color: hsl(var(--muted-foreground));

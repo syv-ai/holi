@@ -4,6 +4,8 @@ import {
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
   parseLandingTarget,
+  availableOptions,
+  normaliseAnswers,
   parseSettingsPatch,
   resolveVaultSettings,
   seedSettings,
@@ -476,5 +478,64 @@ describe('splitAnswersByTarget', () => {
     const { committed, local } = splitAnswersByTarget(answers)
     expect(committed).toEqual(seedSettings('committed'))
     expect(local).toEqual(seedSettings('local'))
+  })
+})
+
+describe('a row that depends on another row', () => {
+  const landing = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'landing')!
+  const labels = (answers: Record<string, unknown>) =>
+    availableOptions(landing, answers).map((o) => o.label)
+
+  it('offers today’s note while the vault keeps one', () => {
+    expect(labels({ dailyNotes: true })).toContain('Today’s note')
+  })
+
+  it('withdraws it when the vault keeps no daily note', () => {
+    // Landing on a daily a vault does not make resolves to an empty pane. That
+    // is coherent, and it reads as a broken choice.
+    expect(labels({ dailyNotes: false })).not.toContain('Today’s note')
+    expect(labels({ dailyNotes: false })).toEqual(['The board', 'Your agenda', 'Mail'])
+  })
+
+  it('falls back to the descriptor default when the answer is absent', () => {
+    expect(labels({})).toContain('Today’s note')
+  })
+
+  it('leaves rows with no dependency alone', () => {
+    const scheme = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'colorScheme')!
+    expect(availableOptions(scheme, { dailyNotes: false })).toHaveLength(3)
+  })
+
+  it('returns nothing for a control that is not a choice', () => {
+    const hooks = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'hooks')!
+    expect(availableOptions(hooks, {})).toEqual([])
+  })
+})
+
+describe('normaliseAnswers', () => {
+  it('moves a landing target that has just been withdrawn', () => {
+    const fixed = normaliseAnswers({ dailyNotes: false, landing: { kind: 'daily' } })
+    expect(fixed.landing).toEqual({ kind: 'board' })
+  })
+
+  it('leaves a still-valid answer exactly where it is', () => {
+    const answers = { dailyNotes: false, landing: { kind: 'mail' } }
+    expect(normaliseAnswers(answers).landing).toEqual({ kind: 'mail' })
+  })
+
+  it('returns the same object when nothing needed repairing', () => {
+    const answers = { dailyNotes: true, landing: { kind: 'daily' } }
+    expect(normaliseAnswers(answers)).toBe(answers)
+  })
+
+  it('does not mutate what it was given', () => {
+    const answers = { dailyNotes: false, landing: { kind: 'daily' } }
+    normaliseAnswers(answers)
+    expect(answers.landing).toEqual({ kind: 'daily' })
+  })
+
+  it('is idempotent', () => {
+    const once = normaliseAnswers({ dailyNotes: false, landing: { kind: 'daily' } })
+    expect(normaliseAnswers(once)).toBe(once)
   })
 })

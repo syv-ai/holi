@@ -190,7 +190,7 @@ function resolveLandingSetting(
   if (value === undefined) return { ...VAULT_SETTING_DEFAULTS.landing }
   const parsed = parseLandingTarget(value)
   if (parsed === null) {
-    warnings.push(`dropped "landing": not a usable target — ${JSON.stringify(value)}`)
+    warnings.push(`dropped "landing": not a usable target, ${JSON.stringify(value)}`)
     return { ...VAULT_SETTING_DEFAULTS.landing }
   }
   return parsed
@@ -278,6 +278,9 @@ export interface VaultSettingOption {
   value: unknown
   label: string
   hint?: string
+  /** Only offered while another answer holds. Data rather than a predicate, so
+   *  the rule stays readable in the list and survives being serialised. */
+  requires?: { key: VaultSettingKey; equals: unknown }
 }
 
 /**
@@ -313,7 +316,8 @@ export interface VaultSettingDescriptor {
 }
 
 const SETTINGS_FILE_HINT = 'Change it any time in .holi/settings.json'
-const LOCAL_FILE_HINT = 'Change it any time in .holi/settings.local.json — this machine only'
+const LOCAL_FILE_HINT =
+  'Change it any time in .holi/settings.local.json, which stays on this machine'
 
 /**
  * The four rows the onboarding step renders, in order — and the source the seed
@@ -332,7 +336,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // The shared-vault warning lives here, and it is the whole reason this row
     // exists: Holi used to guess the answer from the GitHub collaborator count.
     explanation:
-      'A fresh note each morning, with yesterday’s filed away automatically. In a vault you share, everyone writes the same file — which gets messy fast.',
+      'A fresh note each morning, with yesterday’s filed away automatically. In a vault you share, everyone writes the same file, which gets messy fast.',
     control: { kind: 'toggle' },
     default: VAULT_SETTING_DEFAULTS.dailyNotes,
     target: 'committed',
@@ -348,7 +352,14 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
       // yet. Pointing `landing` at either stays a file edit, which is where
       // authoring belongs.
       options: [
-        { value: { kind: 'daily' }, label: 'Today’s note' },
+        // Only on offer while the vault actually keeps one. Landing on a daily
+        // note a vault does not make would resolve to an empty pane, which is
+        // coherent but reads as a broken choice.
+        {
+          value: { kind: 'daily' },
+          label: 'Today’s note',
+          requires: { key: 'dailyNotes', equals: true },
+        },
         { value: { kind: 'board' }, label: 'The board' },
         { value: { kind: 'agenda' }, label: 'Your agenda' },
         { value: { kind: 'mail' }, label: 'Mail' },
@@ -356,7 +367,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     },
     default: VAULT_SETTING_DEFAULTS.landing,
     target: 'committed',
-    whereToChange: `${SETTINGS_FILE_HINT} — including pointing it at a note or an app`,
+    whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
   },
   {
     key: 'hooks',
@@ -378,7 +389,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
         {
           key: 'archive-done',
           label: 'File finished tasks away',
-          explanation: 'Off by default: it moves files, which changes what your board shows.',
+          explanation: 'Off by default. It moves files, which changes what your board shows.',
         },
       ],
     },
@@ -522,4 +533,55 @@ export function splitAnswersByTarget(answers: Record<string, unknown>): {
     bucket[d.key] = answers[d.key]
   }
   return { committed, local }
+}
+
+/**
+ * The options a choice can offer, given the answers so far.
+ *
+ * A row can depend on another row: landing on today's note is only on offer
+ * while the vault actually keeps one. Filtering rather than disabling, because
+ * a greyed-out choice invites the question "why not?" and the answer is already
+ * one row up.
+ *
+ * Returns `[]` for anything that is not a choice.
+ */
+export function availableOptions(
+  descriptor: VaultSettingDescriptor,
+  answers: Record<string, unknown>,
+): readonly VaultSettingOption[] {
+  if (descriptor.control.kind !== 'choice') return []
+  return descriptor.control.options.filter((option) => {
+    if (option.requires === undefined) return true
+    const current = answers[option.requires.key] ?? VAULT_SETTING_DEFAULTS[option.requires.key]
+    return current === option.requires.equals
+  })
+}
+
+/**
+ * Repair answers that another answer has just invalidated.
+ *
+ * Turning daily notes off takes "today's note" off the landing row, and the
+ * answer sitting there is now something the user cannot see or change. Move it
+ * to the first option still on offer, visibly, rather than leaving a row with
+ * nothing selected or writing a value that was silently withdrawn.
+ *
+ * Idempotent, and a no-op when every answer is still available.
+ */
+export function normaliseAnswers(answers: Record<string, unknown>): Record<string, unknown> {
+  let out = answers
+  for (const descriptor of VAULT_SETTING_DESCRIPTORS) {
+    if (descriptor.control.kind !== 'choice') continue
+    // Repair only what is there. Filling in an answer nobody gave is
+    // `initialState`'s job, and doing it here would mean this function silently
+    // invents answers whenever it is handed a partial set.
+    if (!(descriptor.key in out)) continue
+    const options = availableOptions(descriptor, out)
+    if (options.length === 0) continue
+    const current = JSON.stringify(out[descriptor.key])
+    if (options.some((o) => JSON.stringify(o.value) === current)) continue
+    // Copy on first change only, so an untouched object comes back identical.
+    if (out === answers) out = { ...answers }
+    out[descriptor.key] = options[0]!.value
+  }
+  return out
 }

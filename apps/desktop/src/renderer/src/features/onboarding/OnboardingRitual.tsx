@@ -360,7 +360,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                 <div className="obrit-eyebrow">HOLI</div>
                 <h1 className="obrit-display">Hold your thinking.</h1>
                 <p className="obrit-lede">
-                  Notes, tasks, mail, calendar — and an agent that listens. All in a vault you own,
+                  Notes, tasks, mail, calendar, and an agent that listens. All in a vault you own,
                   synced to a repo you control.
                 </p>
                 <div className="obrit-cta-row">
@@ -508,24 +508,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
           {/* ── Act 3: How this vault behaves ── */}
           <section className="obrit-act obrit-settings-act" data-state={actState(3)}>
             <div className="obrit-act-inner">
-              <div className="obrit-eyebrow">HOW THIS VAULT BEHAVES</div>
-              <h1 className="obrit-display obrit-settings-title">A few choices.</h1>
-              <p className="obrit-lede">
-                All of them have sensible answers already — change any of them now, or later, in
-                the files named beside each one.
-              </p>
+              <div className="obrit-eyebrow">A FEW CHOICES</div>
+              <p className="obrit-lede">All of them have sensible answers already.</p>
 
               <VaultSettingsAct
                 settings={s.settings}
                 onChange={(key, value) => dispatch({ type: 'setSetting', key, value })}
               />
-
-              <div className="obrit-cta-row">
-                <Button variant="ceremony" onClick={() => void saveSettings()}>
-                  Continue
-                  <span aria-hidden>→</span>
-                </Button>
-              </div>
             </div>
           </section>
 
@@ -589,6 +578,12 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
             )}
           </div>
           <div className="obrit-foot-side is-right">
+            {s.act === 3 && (
+              <Button variant="ceremony" onClick={() => void saveSettings()}>
+                Continue
+                <span aria-hidden>→</span>
+              </Button>
+            )}
             {s.act === 2 && s.view === 'form' && (
               <>
                 {!s.submitting && (

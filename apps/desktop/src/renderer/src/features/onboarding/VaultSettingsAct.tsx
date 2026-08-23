@@ -11,7 +11,11 @@
  * written it, so clicking straight through is a no-op rather than a choice
  * deferred.
  */
-import { VAULT_SETTING_DESCRIPTORS, type VaultSettingDescriptor } from '@holi/shared'
+import {
+  VAULT_SETTING_DESCRIPTORS,
+  availableOptions,
+  type VaultSettingDescriptor,
+} from '@holi/shared'
 import { Button, Checkbox } from '@/primitives'
 
 interface Props {
@@ -81,7 +85,9 @@ function Row({
 
         {control.kind === 'choice' && (
           <div role="radiogroup" aria-label={label} className="obrit-choice-row">
-            {control.options.map((option) => (
+            {/* Filtered, not disabled: a greyed-out choice invites "why not?"
+                and the answer is already one row up. */}
+            {availableOptions(descriptor, settings).map((option) => (
               <ChoicePill
                 key={option.label}
                 label={option.label}
@@ -108,7 +114,7 @@ function Row({
                     onCheckedChange={(next) =>
                       onChange(key, { ...block, [toggle.key]: next === true })
                     }
-                    aria-label={`${toggle.label} — ${toggle.explanation}`}
+                    aria-label={`${toggle.label}. ${toggle.explanation}`}
                   />
                   <span className="obrit-setting-sub-label">{toggle.label}</span>
                   <span className="obrit-setting-sub-explain">{toggle.explanation}</span>

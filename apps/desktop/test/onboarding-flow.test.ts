@@ -95,11 +95,25 @@ describe('the settings the ritual collects', () => {
     }
   })
 
-  it('records an answer without disturbing the others', () => {
-    const answered = reduce(s0, { type: 'setSetting', key: 'dailyNotes', value: false })
-    expect(answered.settings.dailyNotes).toBe(false)
+  it('records an answer without disturbing unrelated ones', () => {
+    const answered = reduce(s0, { type: 'setSetting', key: 'colorScheme', value: 'dark' })
+    expect(answered.settings.colorScheme).toBe('dark')
+    expect(answered.settings.dailyNotes).toEqual(s0.settings.dailyNotes)
     expect(answered.settings.landing).toEqual(s0.settings.landing)
-    expect(answered.settings.colorScheme).toEqual(s0.settings.colorScheme)
+  })
+
+  it('moves the landing target when its option is withdrawn', () => {
+    // Turning daily notes off takes "today's note" off the landing row. Leaving
+    // the answer there would leave a value the user can neither see nor change,
+    // and it resolves to an empty pane.
+    const off = reduce(s0, { type: 'setSetting', key: 'dailyNotes', value: false })
+    expect(off.settings.landing).toEqual({ kind: 'board' })
+  })
+
+  it('leaves a landing target that is still on offer', () => {
+    const chosen = reduce(s0, { type: 'setSetting', key: 'landing', value: { kind: 'mail' } })
+    const off = reduce(chosen, { type: 'setSetting', key: 'dailyNotes', value: false })
+    expect(off.settings.landing).toEqual({ kind: 'mail' })
   })
 
   it('takes the last answer when one is changed twice', () => {
