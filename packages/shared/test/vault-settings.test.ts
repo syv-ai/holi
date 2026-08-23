@@ -4,6 +4,7 @@ import {
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
   parseLandingTarget,
+  parseSettingsPatch,
   resolveVaultSettings,
   seedSettings,
 } from '../src/vault-settings'
@@ -354,5 +355,76 @@ describe('seedSettings', () => {
     expect(resolved.dailyNotes).toBe(VAULT_SETTING_DEFAULTS.dailyNotes)
     expect(resolved.colorScheme).toBe(VAULT_SETTING_DEFAULTS.colorScheme)
     expect(resolved.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
+  })
+})
+
+describe('parseSettingsPatch — the write-side trust boundary', () => {
+  // A read RESOLVES: every key answered, defaults filled in. A write must not
+  // do that — writing a full object would stamp defaults over keys the user
+  // never touched. So a patch carries only what was actually answered.
+
+  it('keeps the keys it was given and invents none', () => {
+    const { patch } = parseSettingsPatch(JSON.stringify({ dailyNotes: false }))
+    expect(patch).toEqual({ dailyNotes: false })
+  })
+
+  it('validates a landing target exactly as a read does', () => {
+    const { patch } = parseSettingsPatch(
+      JSON.stringify({ landing: { kind: 'note', path: 'a.md', extra: 'x' } }),
+    )
+    expect(patch.landing).toEqual({ kind: 'note', path: 'a.md' })
+  })
+
+  it.each([
+    ['an unusable landing target', { landing: { kind: 'note', path: '' } }],
+    ['a non-boolean dailyNotes', { dailyNotes: 'yes' }],
+    ['an unknown colour scheme', { colorScheme: 'sepia' }],
+    ['a non-object hooks block', { hooks: 'all' }],
+    ['a file cap of zero', { maxCommittedFileBytes: 0 }],
+  ])('drops %s rather than writing it, and says so', (_label, value) => {
+    const { patch, warnings } = parseSettingsPatch(JSON.stringify(value))
+    expect(patch).toEqual({})
+    expect(warnings.length).toBeGreaterThan(0)
+  })
+
+  it('drops keys it does not own', () => {
+    // Asymmetric with the read on purpose. A read TOLERATES siblings it does
+    // not own — `reminders` lives in the local file and must survive. A write
+    // must not be able to CREATE one: that would make this procedure a way for
+    // the renderer to put arbitrary JSON into a committed, synced file.
+    const { patch } = parseSettingsPatch(
+      JSON.stringify({ dailyNotes: true, reminders: { 'a.md': 'x' }, nonsense: 1 }),
+    )
+    expect(patch).toEqual({ dailyNotes: true })
+  })
+
+  it('keeps only the transforms it knows, and only boolean answers', () => {
+    const { patch } = parseSettingsPatch(
+      JSON.stringify({ hooks: { relink: false, 'rm-rf': true, 'normalize-md': 'yes' } }),
+    )
+    expect(patch.hooks).toEqual({ relink: false })
+  })
+
+  it('drops a hooks block that survives nothing', () => {
+    const { patch } = parseSettingsPatch(JSON.stringify({ hooks: { 'rm-rf': true } }))
+    expect(patch).toEqual({})
+  })
+
+  it.each([[null], ['{ not json'], ['[]'], ['"a string"'], ['42']])(
+    'treats unusable input (%s) as an empty patch',
+    (json) => {
+      expect(parseSettingsPatch(json).patch).toEqual({})
+    },
+  )
+
+  it('accepts everything the seed writes', () => {
+    // The step sends back what the descriptors offered, so a patch of the
+    // defaults must survive the boundary intact or the step cannot save.
+    expect(parseSettingsPatch(JSON.stringify(seedSettings('committed'))).patch).toEqual(
+      seedSettings('committed'),
+    )
+    expect(parseSettingsPatch(JSON.stringify(seedSettings('local'))).patch).toEqual(
+      seedSettings('local'),
+    )
   })
 })

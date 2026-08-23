@@ -7,13 +7,13 @@
  * that `readMaxCommittedFileBytes` still answers exactly as it did when it had
  * its own hand-rolled `JSON.parse`.
  */
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DEFAULT_HOOKS } from '../src/main/vault/hooks/transforms'
 import { DEFAULT_MAX_COMMITTED_FILE_BYTES } from '../src/main/vault/large-files'
-import { readVaultSettings } from '../src/main/vault/settings'
+import { readVaultSettings, writeVaultSettings } from '../src/main/vault/settings'
 import { readMaxCommittedFileBytes } from '../src/main/vault/vault-settings'
 
 const dirs: string[] = []
@@ -121,5 +121,98 @@ describe('a machine-local hooks override', () => {
     const root = await vault('{"hooks":{"relink":false}}', '{"hooks":{"archive-done":true}}')
     const { hooks } = await readVaultSettings(root)
     expect(hooks).toEqual({ relink: false, 'archive-done': true, 'normalize-md': true })
+  })
+})
+
+describe('writeVaultSettings', () => {
+  const settingsAt = async (root: string, file: string) =>
+    JSON.parse(await readFile(join(root, '.holi', file), 'utf8'))
+
+  it('creates the file when the vault has none', async () => {
+    const root = await vault()
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+    expect(await settingsAt(root, 'settings.json')).toEqual({ dailyNotes: false })
+  })
+
+  it('merges over what is already there, key by key', async () => {
+    const root = await vault('{"landing":{"kind":"board"},"maxCommittedFileBytes":2048}')
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+    expect(await settingsAt(root, 'settings.json')).toEqual({
+      landing: { kind: 'board' },
+      maxCommittedFileBytes: 2048,
+      dailyNotes: false,
+    })
+  })
+
+  it('leaves siblings it knows nothing about alone', async () => {
+    // The reminder delivery watermark lives in the local file. A settings write
+    // that dropped it would re-fire every reminder the vault has ever fired.
+    const root = await vault(undefined, '{"reminders":{"a.md":"2026-08-22T09:00"}}')
+    await writeVaultSettings(root, { local: { colorScheme: 'dark' } })
+    expect(await settingsAt(root, 'settings.local.json')).toEqual({
+      reminders: { 'a.md': '2026-08-22T09:00' },
+      colorScheme: 'dark',
+    })
+  })
+
+  it('merges the hooks block per transform', async () => {
+    const root = await vault('{"hooks":{"relink":true,"normalize-md":true}}')
+    await writeVaultSettings(root, { committed: { hooks: { 'archive-done': true } } })
+    expect((await settingsAt(root, 'settings.json')).hooks).toEqual({
+      relink: true,
+      'normalize-md': true,
+      'archive-done': true,
+    })
+  })
+
+  it('writes to one file without touching the other', async () => {
+    const root = await vault('{"dailyNotes":true}', '{"colorScheme":"light"}')
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+    expect(await settingsAt(root, 'settings.json')).toEqual({ dailyNotes: false })
+    expect(await settingsAt(root, 'settings.local.json')).toEqual({ colorScheme: 'light' })
+  })
+
+  it('writes both files in one call', async () => {
+    const root = await vault()
+    await writeVaultSettings(root, {
+      committed: { landing: { kind: 'board' } },
+      local: { colorScheme: 'dark' },
+    })
+    expect(await settingsAt(root, 'settings.json')).toEqual({ landing: { kind: 'board' } })
+    expect(await settingsAt(root, 'settings.local.json')).toEqual({ colorScheme: 'dark' })
+  })
+
+  it('leaves no .tmp file behind', async () => {
+    // Atomic rename, copied from reminders/delivered-log.ts. A surviving .tmp
+    // in `.holi` would be committed and synced to everyone.
+    const root = await vault('{"dailyNotes":true}')
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+    const entries = await readdir(join(root, '.holi'))
+    expect(entries.filter((e) => e.endsWith('.tmp'))).toEqual([])
+  })
+
+  it('replaces a corrupt file rather than refusing to write', async () => {
+    const root = await vault('{ not json')
+    await writeVaultSettings(root, { committed: { dailyNotes: false } })
+    expect(await settingsAt(root, 'settings.json')).toEqual({ dailyNotes: false })
+  })
+
+  it('does nothing at all when given nothing', async () => {
+    const root = await vault()
+    await writeVaultSettings(root, {})
+    await expect(readFile(join(root, '.holi', 'settings.json'), 'utf8')).rejects.toThrow()
+  })
+
+  it('round-trips through the reader', async () => {
+    const root = await vault()
+    await writeVaultSettings(root, {
+      committed: { landing: { kind: 'agenda' }, dailyNotes: false },
+      local: { colorScheme: 'dark' },
+    })
+    const s = await readVaultSettings(root)
+    expect(s.landing).toEqual({ kind: 'agenda' })
+    expect(s.dailyNotes).toBe(false)
+    expect(s.colorScheme).toBe('dark')
+    expect(s.warnings).toEqual([])
   })
 })

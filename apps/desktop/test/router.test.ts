@@ -131,6 +131,60 @@ describe('settings', () => {
     )
     expect((await caller.settings.read({ remote: REMOTE })).landing).toEqual({ kind: 'board' })
   })
+
+  it('writes the step’s answers into both files, and reads them back', async () => {
+    const { caller } = await rig()
+    const result = await caller.settings.write({
+      remote: REMOTE,
+      committedJson: JSON.stringify({ landing: { kind: 'agenda' }, dailyNotes: false }),
+      localJson: JSON.stringify({ colorScheme: 'dark' }),
+    })
+    expect(result.warnings).toEqual([])
+
+    const settings = await caller.settings.read({ remote: REMOTE })
+    expect(settings.landing).toEqual({ kind: 'agenda' })
+    expect(settings.dailyNotes).toBe(false)
+    expect(settings.colorScheme).toBe('dark')
+  })
+
+  it('keeps the seeded hooks block when the step writes something else', async () => {
+    const { caller } = await rig()
+    await caller.settings.write({
+      remote: REMOTE,
+      committedJson: JSON.stringify({ dailyNotes: false }),
+    })
+    // D76's transforms are seeded; a write about daily notes must not drop them.
+    expect((await caller.settings.read({ remote: REMOTE })).hooks).toEqual({
+      relink: true,
+      'archive-done': false,
+      'normalize-md': true,
+    })
+  })
+
+  it('refuses a value it does not own instead of writing it', async () => {
+    const { caller, root } = await rig()
+    const result = await caller.settings.write({
+      remote: REMOTE,
+      committedJson: JSON.stringify({ dailyNotes: false, evil: { rm: '-rf' } }),
+    })
+    expect(result.warnings).toEqual([])
+    const onDisk = JSON.parse(
+      await readFile(join(root, '.holi', 'settings.json'), 'utf8'),
+    ) as Record<string, unknown>
+    expect(onDisk).not.toHaveProperty('evil')
+    expect(onDisk.dailyNotes).toBe(false)
+  })
+
+  it('reports a refused value rather than throwing', async () => {
+    const { caller } = await rig()
+    const result = await caller.settings.write({
+      remote: REMOTE,
+      committedJson: JSON.stringify({ landing: { kind: 'nowhere' } }),
+    })
+    expect(result.warnings.length).toBeGreaterThan(0)
+    // The vault still opens the way it did before.
+    expect((await caller.settings.read({ remote: REMOTE })).landing).toEqual({ kind: 'daily' })
+  })
 })
 
 describe('vaults', () => {

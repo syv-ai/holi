@@ -89,7 +89,8 @@ import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { readVaultTheme, resetVaultTheme } from './vault/theme'
-import { readVaultSettings } from './vault/settings'
+import { readVaultSettings, writeVaultSettings } from './vault/settings'
+import { parseSettingsPatch } from '@holi/shared'
 import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
 import { isRemote, repoName, type VaultRegistry } from './vault/registry'
 import { listTemplates } from './pdf/templates'
@@ -1442,6 +1443,32 @@ export function createRouter(deps: RouterDeps) {
       .query(
         ({ input }): Promise<ResolvedVaultSettings> => rootFor(input.remote).then(readVaultSettings),
       ),
+
+    /**
+     * The onboarding step's answers, and the only write to these files.
+     *
+     * **Takes JSON strings, and that is a feature.** `fields` above validates
+     * `string` and `boolean` only — there is no object kind — so the patches
+     * arrive as text and are parsed HERE, through `parseSettingsPatch`: the same
+     * validator that guards a committed file a teammate wrote. A write cannot
+     * reach these files by a route that skips the check, and cannot introduce a
+     * key Holi does not own.
+     *
+     * Returns the warnings rather than throwing on a refused value. The vault
+     * exists and its seeded defaults are valid; a preference that did not stick
+     * must not strand anyone mid-ritual.
+     */
+    write: t.procedure
+      .input(fields({ remote: 'string', committedJson: 'string?', localJson: 'string?' }))
+      .mutation(async ({ input }) => {
+        const committed = parseSettingsPatch(input.committedJson ?? null)
+        const local = parseSettingsPatch(input.localJson ?? null)
+        await writeVaultSettings(await rootFor(input.remote), {
+          committed: committed.patch,
+          local: local.patch,
+        })
+        return { ok: true as const, warnings: [...committed.warnings, ...local.warnings] }
+      }),
   })
 
   const pdf = t.router({

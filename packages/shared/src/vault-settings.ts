@@ -423,3 +423,81 @@ export function seedSettings(target: SettingTarget): Record<string, unknown> {
   }
   return out
 }
+
+/**
+ * Read an untrusted object as a **patch** — only the keys it actually answered,
+ * each validated, and nothing else.
+ *
+ * **Not `resolveVaultSettings`, and the difference matters.** A read *resolves*:
+ * every key answered, defaults filled in. Writing that back would stamp defaults
+ * over keys the user never touched, so a write carries only what was answered.
+ *
+ * **Asymmetric with the read on unknown keys, on purpose.** A read *tolerates*
+ * siblings it does not own — `reminders` lives in the local file and has to
+ * survive. A write must not be able to *create* one, or this becomes a route for
+ * the renderer to put arbitrary JSON into a committed, synced file. Existing
+ * siblings survive because the caller merges the patch into the file it read,
+ * not because the patch carries them.
+ */
+export function parseSettingsPatch(json: string | null): {
+  patch: Record<string, unknown>
+  warnings: string[]
+} {
+  const raw = parseFile(json)
+  const patch: Record<string, unknown> = {}
+  const warnings: string[] = []
+
+  if ('landing' in raw) {
+    const landing = parseLandingTarget(raw.landing)
+    if (landing === null) warnings.push(`refused "landing": ${JSON.stringify(raw.landing)}`)
+    else patch.landing = landing
+  }
+
+  if ('dailyNotes' in raw) {
+    if (typeof raw.dailyNotes === 'boolean') patch.dailyNotes = raw.dailyNotes
+    else warnings.push(`refused "dailyNotes": ${JSON.stringify(raw.dailyNotes)}`)
+  }
+
+  if ('colorScheme' in raw) {
+    if (
+      typeof raw.colorScheme === 'string' &&
+      COLOR_SCHEMES.includes(raw.colorScheme as ColorScheme)
+    ) {
+      patch.colorScheme = raw.colorScheme
+    } else {
+      warnings.push(`refused "colorScheme": ${JSON.stringify(raw.colorScheme)}`)
+    }
+  }
+
+  if ('maxCommittedFileBytes' in raw) {
+    const value = raw.maxCommittedFileBytes
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      patch.maxCommittedFileBytes = value
+    } else {
+      warnings.push(`refused "maxCommittedFileBytes": ${JSON.stringify(value)}`)
+    }
+  }
+
+  if ('hooks' in raw) {
+    const block = raw.hooks
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+      warnings.push(`refused "hooks": ${JSON.stringify(block)}`)
+    } else {
+      const hooks: Partial<VaultHooks> = {}
+      for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
+        if (!TRANSFORM_NAMES.includes(name as TransformName)) {
+          warnings.push(`refused unknown transform "${name}"`)
+        } else if (typeof value !== 'boolean') {
+          warnings.push(`refused "hooks.${name}": ${JSON.stringify(value)}`)
+        } else {
+          hooks[name as TransformName] = value
+        }
+      }
+      // A block that survived nothing is not a block: writing `{}` would be a
+      // change to the file that says nothing.
+      if (Object.keys(hooks).length > 0) patch.hooks = hooks
+    }
+  }
+
+  return { patch, warnings }
+}
