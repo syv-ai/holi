@@ -33,6 +33,8 @@ import { join } from 'node:path'
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
+/** Claude Code's own state file. Holi reads it and never writes it. */
+const CLAUDE_JSON = '.claude.json'
 
 /**
  * The directory name a vault's config lives under, from its remote (D86).
@@ -140,4 +142,29 @@ export async function ensureAgentConfigDir(
   if (next !== null) await writeFile(path, next, 'utf8')
 
   return configDir
+}
+
+/**
+ * Is this config directory signed in?
+ *
+ * `<configDir>/.claude.json` is where Claude Code records the account, under an
+ * `oauthAccount` key. Reading it is the whole check — **never scrape the PTY for
+ * this** (standing decision, and unnecessary: the answer is a key in a JSON file).
+ *
+ * A **missing** file is the fresh-directory case, which is exactly the one that
+ * has to be surfaced. An **unparseable** one reads as signed in: it is not
+ * evidence of anything, and telling a logged-in user to `/login` is worse than
+ * staying quiet.
+ */
+export async function isAgentSignedIn(configDir: string): Promise<boolean> {
+  const raw = await readFile(join(configDir, CLAUDE_JSON), 'utf8').catch(() => null)
+  if (raw === null) return false
+
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return true
+    return (parsed as Record<string, unknown>).oauthAccount !== undefined
+  } catch {
+    return true
+  }
 }

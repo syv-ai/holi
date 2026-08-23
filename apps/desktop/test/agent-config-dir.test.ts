@@ -6,6 +6,7 @@ import {
   AGENT_CONFIG_DIR_NAME,
   agentConfigSlug,
   ensureAgentConfigDir,
+  isAgentSignedIn,
 } from '../src/main/agent/agent-config-dir'
 
 const dirs: string[] = []
@@ -164,5 +165,39 @@ describe('agentConfigSlug', () => {
     expect(slug).not.toBe('')
     expect(slug).not.toContain('/')
     expect(slug).toMatch(/^[a-z0-9-]+$/)
+  })
+})
+
+describe('isAgentSignedIn', () => {
+  // §6 of the 2026-08-14 spec, never built: without it an unauthenticated agent
+  // prints `Not logged in` and the user is left to infer that `/login` is the
+  // answer. Survivable once per install; not once per vault.
+  it('says no for a directory Claude Code has never written to', async () => {
+    // The fresh-vault case, and the only one that has to nag.
+    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
+    expect(await isAgentSignedIn(configDir)).toBe(false)
+  })
+
+  it('says yes when .claude.json carries an oauthAccount', async () => {
+    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
+    await writeFile(
+      join(configDir, '.claude.json'),
+      JSON.stringify({ oauthAccount: { emailAddress: 'ada@syv.ai' }, projects: {} }),
+    )
+    expect(await isAgentSignedIn(configDir)).toBe(true)
+  })
+
+  it('says no when .claude.json exists but has no oauthAccount', async () => {
+    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
+    await writeFile(join(configDir, '.claude.json'), JSON.stringify({ projects: {} }))
+    expect(await isAgentSignedIn(configDir)).toBe(false)
+  })
+
+  it('does not nag on a file it cannot read', async () => {
+    // Never scrape the PTY for this, and never guess either: an unparseable file
+    // is not evidence of anything, and a wrong nag is worse than a missing one.
+    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
+    await writeFile(join(configDir, '.claude.json'), '{ not json')
+    expect(await isAgentSignedIn(configDir)).toBe(true)
   })
 })
