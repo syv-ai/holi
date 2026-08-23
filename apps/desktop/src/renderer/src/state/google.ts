@@ -48,6 +48,16 @@ export interface ConnectedGoogleAccount {
 export const googleAccountsAtom = atom<ConnectedGoogleAccount[]>([])
 export const googleCurrentSubAtom = atom<string | null>(null)
 
+/**
+ * The vault the held answer was fetched for.
+ *
+ * Shared rather than per component, and compared rather than assumed: a vault
+ * switch has to re-ask, but a second component mounting must not. Resetting on
+ * mount instead broke "one query however many readers" — three probes, three
+ * queries — which is the property the `undefined` guard below exists to give.
+ */
+export const googleFetchedForAtom = atom<string | null | undefined>(undefined)
+
 export interface GoogleAccountState {
   /** `undefined` — not asked yet. `null` — asked, nothing connected. */
   account: GoogleAccount | null | undefined
@@ -78,6 +88,7 @@ export function useGoogleAccount(): GoogleAccountState {
   const [missingScopes, setMissingScopes] = useAtom(googleMissingScopesAtom)
   const [accounts, setAccounts] = useAtom(googleAccountsAtom)
   const [currentSub, setCurrentSub] = useAtom(googleCurrentSubAtom)
+  const [fetchedFor, setFetchedFor] = useAtom(googleFetchedForAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
 
   /**
@@ -98,6 +109,7 @@ export function useGoogleAccount(): GoogleAccountState {
       setMissingScopes(status.missingScopes)
       setAccounts(connected.accounts)
       setCurrentSub(connected.current)
+      setFetchedFor(activeRemote)
     } catch {
       // The connector refuses outright when it is not configured, and so does a
       // vault that is not open yet. Both are normal states the user cannot act
@@ -107,8 +119,9 @@ export function useGoogleAccount(): GoogleAccountState {
       setMissingScopes([])
       setAccounts([])
       setCurrentSub(null)
+      setFetchedFor(activeRemote)
     }
-  }, [setAccount, setMissingScopes, setAccounts, setCurrentSub])
+  }, [activeRemote, setAccount, setMissingScopes, setAccounts, setCurrentSub, setFetchedFor])
 
   useEffect(() => {
     if (account !== undefined) return
@@ -121,10 +134,15 @@ export function useGoogleAccount(): GoogleAccountState {
    * Dropped back to `undefined` rather than re-fetched here, so the query still
    * happens in exactly one place and the shell's chips go through "not asked"
    * rather than flashing the previous vault's answer at the new one.
+   *
+   * Guarded on the *held* vault rather than on mount: a second reader mounting
+   * is not a switch, and resetting for it would re-ask once per component.
    */
   useEffect(() => {
+    if (account === undefined) return // already asking
+    if (fetchedFor === activeRemote) return // the answer is for this vault
     setAccount(undefined)
-  }, [activeRemote, setAccount])
+  }, [account, fetchedFor, activeRemote, setAccount])
 
   return { account, setAccount, missingScopes, accounts, currentSub, refresh }
 }

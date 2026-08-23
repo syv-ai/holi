@@ -53,7 +53,7 @@ beforeEach(async () => {
   calls.length = 0
   dir = await mkdtemp(join(tmpdir(), 'holi-cli-'))
   bin = await installGoogleCli(dir)
-  server = createGoogleOpsServer({
+  const ops = {
     agenda: async (w) => {
       calls.push(['agenda', w])
       return [{ id: 'e1', title: 'Q2 review' }]
@@ -95,12 +95,15 @@ beforeEach(async () => {
         throw new Error('"Q2 review" has attendees, so changing it would email them.')
       }
     },
-  })
+  }
+  // The CLI is vault-agnostic by design (D87): it curls a port with a bearer and
+  // main resolves the vault from the bearer. One vault is all these need.
+  server = createGoogleOpsServer(() => ops)
   await server.start()
   env = {
     ...process.env,
     HOLI_GOOGLE_PORT: String(server.port()),
-    HOLI_GOOGLE_TOKEN: server.token(),
+    HOLI_GOOGLE_TOKEN: server.mintToken('nthomsencph/privat'),
   }
 })
 

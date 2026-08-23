@@ -6,10 +6,20 @@
  * the first as the second is a mapping and no consent, and unlinking a vault is
  * not the same act as removing an account.
  */
-import { render, screen, waitFor } from '@testing-library/react'
+import { render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { Provider, createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GoogleConnection } from '../GoogleConnection'
+
+/** A fresh jotai store per test: the google atoms are module level, so one
+ *  case's answer would otherwise still be held when the next one renders. */
+const render = () =>
+  rtlRender(
+    <Provider store={createStore()}>
+      <GoogleConnection />
+    </Provider>,
+  )
 
 const status = vi.fn()
 const accounts = vi.fn()
@@ -50,7 +60,7 @@ beforeEach(() => {
 
 describe('GoogleConnection', () => {
   it('offers the accounts already connected here to a vault with none', async () => {
-    render(<GoogleConnection />)
+    render()
 
     expect(await screen.findByText('ada@syv.ai')).toBeInTheDocument()
     expect(screen.getByText('work@syv.ai')).toBeInTheDocument()
@@ -58,7 +68,7 @@ describe('GoogleConnection', () => {
   })
 
   it('reuses an account with one click and no consent round trip', async () => {
-    render(<GoogleConnection />)
+    render()
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Use in this vault' })[0]!)
@@ -69,7 +79,7 @@ describe('GoogleConnection', () => {
   it('does not offer the account this vault is already using', async () => {
     accounts.mockResolvedValue({ accounts: [ADA, WORK], current: 'sub-1' })
     status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-    render(<GoogleConnection />)
+    render()
 
     expect(await screen.findByText('work@syv.ai')).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(1)
@@ -80,7 +90,7 @@ describe('GoogleConnection', () => {
     // vault may be using this account.
     accounts.mockResolvedValue({ accounts: [ADA], current: 'sub-1' })
     status.mockResolvedValue({ account: { email: 'ada@syv.ai' }, missingScopes: [] })
-    render(<GoogleConnection />)
+    render()
 
     await userEvent.click(await screen.findByRole('button', { name: 'Disconnect this vault' }))
 
@@ -89,7 +99,7 @@ describe('GoogleConnection', () => {
   })
 
   it('removes an account by name when that is what was asked for', async () => {
-    render(<GoogleConnection />)
+    render()
     await screen.findByText('ada@syv.ai')
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Remove from Holi' })[0]!)

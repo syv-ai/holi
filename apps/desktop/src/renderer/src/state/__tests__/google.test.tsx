@@ -12,8 +12,16 @@ import { render, waitFor } from '@/test/render'
 import { googleAccountAtom, useGoogleAccount } from '../google'
 
 const statusMock = vi.fn()
+const accountsMock = vi.fn()
 vi.mock('../../lib/trpc', () => ({
-  trpc: { google: { status: { query: () => statusMock() } } },
+  trpc: {
+    google: {
+      status: { query: () => statusMock() },
+      // D87: the same read now also asks which accounts exist and which one
+      // this vault uses. Mocked here so these stay about the shared atom.
+      accounts: { query: () => accountsMock() },
+    },
+  },
 }))
 
 function Probe() {
@@ -38,6 +46,7 @@ const renderProbe = (store = createStore()) => {
 }
 
 beforeEach(() => {
+  accountsMock.mockResolvedValue({ accounts: [], current: null })
   statusMock.mockReset()
 })
 
