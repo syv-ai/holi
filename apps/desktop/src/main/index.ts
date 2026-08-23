@@ -446,18 +446,20 @@ async function main(): Promise<void> {
   // user-scope `settings.json` are keyed by nothing, so sharing a directory
   // shared capability.
   //
-  // The shared directory D72 left behind belonged, in practice, to whichever
-  // vault was actually being used; `list()` sorts by `lastOpenedAt` descending,
-  // so that is entry zero. Awaited before the manager exists, or a fast first
-  // spawn provisions an empty directory beside the one being moved. A fresh
-  // install has neither an old directory nor an entry, and both halves no-op.
+  // The shared directory D72 left behind goes to the vault that actually ran the
+  // agent in it — which the directory itself records, and which is NOT the same
+  // as the most recently opened vault. Awaited before the manager exists, or a
+  // fast first spawn provisions an empty directory beside the one being moved.
+  // A fresh install has neither an old directory nor a registry entry, and both
+  // halves no-op.
   const userDataDir = app.getPath('userData')
-  const mostRecentVault = (await registry.list())[0]?.remote
-  if (mostRecentVault) {
-    await migrateSharedAgentConfig(userDataDir, mostRecentVault).catch((err) =>
-      console.warn('[agent] config migration skipped:', err),
-    )
-  }
+  const movedTo = await migrateSharedAgentConfig(userDataDir, await registry.list()).catch(
+    (err) => {
+      console.warn('[agent] config migration skipped:', err)
+      return null
+    },
+  )
+  if (movedTo) console.log(`[agent] shared config directory is now ${movedTo}'s`)
   agent = createAgentManager({
     host,
     // Per spawn, not per launch: the active vault moves under the manager, and

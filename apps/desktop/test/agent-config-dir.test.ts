@@ -277,19 +277,63 @@ describe('resolveVaultAgentConfig', () => {
 describe('migrateSharedAgentConfig', () => {
   const VAULT = 'owner/repo'
   const flat = (userData: string) => join(userData, AGENT_CONFIG_DIR_NAME)
-  const slotted = (userData: string) => join(flat(userData), agentConfigSlug(VAULT))
+  const slotted = (userData: string, remote = VAULT) =>
+    join(flat(userData), agentConfigSlug(remote))
+
+  /** The registry as `list()` hands it over: lastOpenedAt descending. The head is
+   *  NOT the vault that used the agent, which is the whole point of these tests. */
+  const REGISTRY = [
+    { remote: 'owner/looked-at-last', path: '/Holi/owner/looked-at-last' },
+    { remote: VAULT, path: '/Holi/owner/repo' },
+  ]
 
   /** The shared directory as D72 left it: logged in, with one vault's transcripts. */
-  async function shared(): Promise<string> {
+  async function shared(usedBy = '/Holi/owner/repo'): Promise<string> {
     const userData = await tempDir()
     const dir = flat(userData)
     await mkdir(join(dir, 'projects', 'a-vault'), { recursive: true })
     await mkdir(join(dir, 'plugins'), { recursive: true })
     await writeFile(join(dir, 'settings.json'), JSON.stringify({ theme: 'auto' }))
-    await writeFile(join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { id: 'a' } }))
+    await writeFile(
+      join(dir, '.claude.json'),
+      JSON.stringify({ oauthAccount: { id: 'a' }, projects: { [usedBy]: { history: [] } } }),
+    )
     await writeFile(join(dir, 'projects', 'a-vault', 'session.jsonl'), 'a turn\n')
     return userData
   }
+
+  it('gives the directory to the vault that USED it, not the one looked at last', async () => {
+    // Measured on a real install and very nearly shipped wrong: `lastOpenedAt`
+    // answers "which vault did you last look at". The directory says which vault
+    // ran the agent, in `.claude.json`'s `projects{}` keys, and that is the one
+    // whose login and transcripts are in it.
+    const userData = await shared('/Holi/owner/repo')
+
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe(VAULT)
+    expect(await readdir(flat(userData))).toEqual([agentConfigSlug(VAULT)])
+  })
+
+  it('falls back to the most recently opened vault when nothing used it', async () => {
+    // A directory with no project record has no history to strand, so the head
+    // of the registry is as good an answer as any and better than none.
+    const userData = await tempDir()
+    const dir = flat(userData)
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'settings.json'), JSON.stringify({ theme: 'auto' }))
+
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe('owner/looked-at-last')
+  })
+
+  it('ignores a project path no registered vault claims', async () => {
+    const userData = await shared('/somewhere/else/entirely')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe('owner/looked-at-last')
+  })
+
+  it('does nothing when there are no vaults to give it to', async () => {
+    const userData = await shared()
+    expect(await migrateSharedAgentConfig(userData, [])).toBeNull()
+    expect(await readdir(flat(userData))).toContain('settings.json')
+  })
 
   it('moves the whole directory into the vault that was using it', async () => {
     // A rename, never a rewrite: the 2026-08-14 spec refused to copy transcripts
@@ -297,7 +341,7 @@ describe('migrateSharedAgentConfig', () => {
     // opens a file, so the login and the history both survive intact.
     const userData = await shared()
 
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe(VAULT)
 
     const dir = slotted(userData)
     expect(JSON.parse(await readFile(join(dir, '.claude.json'), 'utf8')).oauthAccount).toEqual({
@@ -310,14 +354,14 @@ describe('migrateSharedAgentConfig', () => {
 
   it('is idempotent — a second launch moves nothing', async () => {
     const userData = await shared()
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe(VAULT)
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBeNull()
     expect(await readdir(flat(userData))).toEqual([agentConfigSlug(VAULT)])
   })
 
   it('does nothing on an install that never had one', async () => {
     const userData = await tempDir()
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBeNull()
     expect(await readdir(userData)).toEqual([])
   })
 
@@ -326,7 +370,7 @@ describe('migrateSharedAgentConfig', () => {
     await mkdir(slotted(userData), { recursive: true })
     await writeFile(join(slotted(userData), 'settings.json'), JSON.stringify({ model: 'opus' }))
 
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBeNull()
     expect(JSON.parse(await readFile(join(slotted(userData), 'settings.json'), 'utf8')).model).toBe(
       'opus',
     )
@@ -339,7 +383,7 @@ describe('migrateSharedAgentConfig', () => {
     const staging = join(userData, `${AGENT_CONFIG_DIR_NAME}.migrating`)
     await rename(flat(userData), staging)
 
-    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
+    expect(await migrateSharedAgentConfig(userData, REGISTRY)).toBe(VAULT)
     expect(await readdir(slotted(userData))).toContain('.claude.json')
   })
 })

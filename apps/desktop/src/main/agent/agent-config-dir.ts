@@ -210,6 +210,44 @@ export async function resolveVaultAgentConfig(args: {
 const MIGRATING_DIR_NAME = `${AGENT_CONFIG_DIR_NAME}.migrating`
 
 /**
+ * Which registered vault does the shared directory actually belong to?
+ *
+ * **Not the most recently opened one**, which is what the first version of this
+ * asked and what a real install proved wrong: `lastOpenedAt` answers "which vault
+ * did you last look at", and looking at a vault does not open an agent in it. On
+ * the install this was measured against, the head of the registry was a vault
+ * created minutes earlier and never worked in, while the login and every
+ * transcript in the directory belonged to one that had been used for days.
+ *
+ * The directory says so itself. Claude Code keys `.claude.json`'s `projects{}` by
+ * **absolute working directory**, so a key matching a registered clone path is
+ * that vault having run the agent. Registry order is `lastOpenedAt` descending,
+ * so scanning it in order breaks a tie towards the more recent vault.
+ *
+ * Null only when no vault matches — a directory no agent ever ran in, which has
+ * no history to strand, so the caller may fall back to anything at all.
+ */
+function usedByVault(
+  claudeJson: string | null,
+  vaults: readonly { remote: string; path: string }[],
+): string | null {
+  if (claudeJson === null) return null
+  let projects: Record<string, unknown>
+  try {
+    const parsed: unknown = JSON.parse(claudeJson)
+    if (typeof parsed !== 'object' || parsed === null) return null
+    const raw = (parsed as Record<string, unknown>).projects
+    if (typeof raw !== 'object' || raw === null) return null
+    projects = raw as Record<string, unknown>
+  } catch {
+    return null
+  }
+
+  const worked = new Set(Object.keys(projects))
+  return vaults.find((v) => worked.has(v.path))?.remote ?? null
+}
+
+/**
  * One-shot: the shared directory D72 left behind becomes a vault's own.
  *
  * `userData/agent-config/` is already logged in and already holds one vault's
@@ -225,14 +263,25 @@ const MIGRATING_DIR_NAME = `${AGENT_CONFIG_DIR_NAME}.migrating`
  * Idempotent by construction: after a move there is no top-level `settings.json`
  * left to find. Interruptible too — a crash between the renames leaves the
  * staging directory, which the next run picks up and finishes.
+ *
+ * `vaults` is the registry as `list()` hands it over, `lastOpenedAt` descending.
+ * Returns the remote it was given to, or null when nothing moved.
  */
 export async function migrateSharedAgentConfig(
   userDataDir: string,
-  remote: string,
-): Promise<'moved' | 'skipped'> {
+  vaults: readonly { remote: string; path: string }[],
+): Promise<string | null> {
   const parent = join(userDataDir, AGENT_CONFIG_DIR_NAME)
   const staging = join(userDataDir, MIGRATING_DIR_NAME)
-  const slot = join(parent, agentConfigSlug(remote))
+
+  // Read the evidence BEFORE anything moves — afterwards the paths are stale.
+  const source = (await stat(staging).then((s) => s.isDirectory(), () => false)) ? staging : parent
+  const owner =
+    usedByVault(await readFile(join(source, CLAUDE_JSON), 'utf8').catch(() => null), vaults) ??
+    vaults[0]?.remote ??
+    null
+  if (owner === null) return null // nowhere to put it
+  const slot = join(parent, agentConfigSlug(owner))
 
   const exists = (path: string) => stat(path).then(() => true, () => false)
   /** Someone has already been here (a downgrade, then an upgrade). Their
@@ -244,18 +293,18 @@ export async function migrateSharedAgentConfig(
     // Every install that ever ran `ensureAgentConfigDir` has this file, and the
     // per-vault layout has only subdirectories — so its presence IS the old shape.
     const isFlat = await stat(join(parent, SETTINGS)).then((s) => s.isFile(), () => false)
-    if (!isFlat) return 'skipped'
+    if (!isFlat) return null
     // Checked BEFORE the rename, not after: the rename carries the slot into the
     // staging directory, and a check on the far side would find nothing and bury
     // the live directory inside itself.
-    if (await taken()) return 'skipped'
+    if (await taken()) return null
     await rename(parent, staging)
   }
 
   await mkdir(parent, { recursive: true })
   // The interrupted path skipped the check above; a slot here means someone
   // rebuilt the parent while the staging directory sat orphaned. Leave both.
-  if (await taken()) return 'skipped'
+  if (await taken()) return null
   await rename(staging, slot)
-  return 'moved'
+  return owner
 }
