@@ -160,6 +160,14 @@ The vault's history **is git history**, and autosave commits are what give it re
 - **Very large vaults.** A full filesystem walk on open and a watcher over thousands of files is fine at Syv's scale and is the first thing to measure if it isn't.
 - **A conflict in `.holi/settings.json` or `.claude/settings.json`** is a conflict in config, not content, and can leave the vault misconfigured while it lasts. The reconcile path handles it like any file, but these are the ones worth showing prominently.
 
+### `.holi/settings.json` has a schema (D85)
+
+It used to be parsed by two independent hand-rolled readers with nothing shared between them: one for `maxCommittedFileBytes`, one for the `hooks` block. Both now call `resolveVaultSettings` in `packages/shared`, which parses the whole file once, validates every field, and answers the default for anything absent or malformed. Nothing on this path can throw, because a typo in an unrelated key must never break the commit path or stop a vault opening.
+
+*Data, never code* (FR-9) is unchanged and is now enforced by a whitelist rather than by convention: the resolver builds a fresh narrow object per key and never returns what it parsed, so a committed file written by a collaborator cannot carry anything else through. The same validator guards the one write there is (the onboarding step), which is why that procedure takes JSON strings rather than objects: `fields` accepts only strings and booleans, so a patch has to be parsed in main, and the check cannot be skipped.
+
+A machine-local `.holi/settings.local.json` overrides it **per key**, the layering theme (D64) and icons (D82) already use. It never syncs, and it is where `colorScheme` lives: a collaborator's committed choice flipping your app to light mode is the failure that layer exists to prevent. Unknown top-level keys are ignored **without a warning**, because the reminder delivery watermark already keeps a `reminders` block in the local file.
+
 ---
 
 ## Dependencies

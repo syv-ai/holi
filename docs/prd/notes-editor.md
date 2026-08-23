@@ -126,6 +126,10 @@ Leftmost is where a singleton *opens*, not where it lives: since tabs became dra
 
 **Not persisted.** Whether tabs survive a restart is still open; `.holi/settings.local.json` is where the answer would go. Deliberately unanswered rather than guessed at.
 
+**What fills the first pane is answered** (D85). A vault's `landing` key says what it opens on: today's daily (the default), a note, a vault app, or the board, agenda or mail. It resolves against the snapshot first, so a target naming a note that has been deleted, or an app a collaborator removed, degrades to the daily rather than to an error. The two questions stay separate on purpose: `landing` is what a vault opens on **every** time, and persistence would be about what *you* left open last time.
+
+**What fills the first pane is answered** (D85). A vault's `landing` key says what it opens on: today's daily (the default), a note, a vault app, or the board, agenda or mail. It resolves against the snapshot first, so a target naming a note that has been deleted, or an app a collaborator removed, degrades to the daily rather than to an error. The two questions stay separate on purpose: `landing` is what a vault opens on **every** time, and persistence would be about what *you* left open last time.
+
 ### Split panes
 
 **Status: built.** `Shell.tsx` renders every element of `panes[]` in a nested resizable group;
