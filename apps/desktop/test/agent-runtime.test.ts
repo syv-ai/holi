@@ -94,6 +94,40 @@ describe('buildAgentEnv', () => {
     expect(env.CLAUDE_CONFIG_DIR).toBeUndefined()
   })
 
+  it('inherits no parent session identity when Holi is launched from a Claude Code shell', () => {
+    // Found in the running app: the vault agent printed "Transcript saving is off
+    // — inherited CLAUDE_CODE_CHILD_SESSION marker" whenever the dev app was
+    // started from a Claude Code terminal, because every one of these rides in on
+    // `process.env`. The messaging pair is the sharper half: it is a live channel
+    // back into the parent session, which a vault agent must not hold.
+    const env = buildAgentEnv({
+      PATH: '/usr/bin',
+      CLAUDE_CODE_CHILD_SESSION: '1',
+      CLAUDE_CODE_SESSION_ID: 'abc-123',
+      CLAUDE_CODE_MESSAGING_SOCKET: '/tmp/parent.sock',
+      CLAUDE_CODE_MESSAGING_TOKEN: 'parent-token',
+      CLAUDE_CODE_EXECPATH: '/opt/claude',
+    })
+    expect(env.CLAUDE_CODE_CHILD_SESSION).toBeUndefined()
+    expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined()
+    expect(env.CLAUDE_CODE_MESSAGING_SOCKET).toBeUndefined()
+    expect(env.CLAUDE_CODE_MESSAGING_TOKEN).toBeUndefined()
+    expect(env.CLAUDE_CODE_EXECPATH).toBeUndefined()
+  })
+
+  it('leaves CLAUDE_CODE_* settings the user chose deliberately', () => {
+    // Not a blanket prefix strip: several CLAUDE_CODE_* variables are documented
+    // configuration, and swallowing them would break someone tuning the agent on
+    // purpose. Only the parent-session markers go.
+    const env = buildAgentEnv({
+      PATH: '/usr/bin',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
+      CLAUDE_CODE_USE_BEDROCK: '1',
+    })
+    expect(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('8192')
+    expect(env.CLAUDE_CODE_USE_BEDROCK).toBe('1')
+  })
+
   it('hands the child no endpoint or bearer — there is no MCP server (D60)', () => {
     const env = buildAgentEnv({ PATH: '/usr/bin' })
     expect(env.HOLI_AGENT_ENDPOINT).toBeUndefined()

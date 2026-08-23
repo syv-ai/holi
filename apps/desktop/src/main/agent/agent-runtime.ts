@@ -101,8 +101,23 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined) env[key] = value
   }
+  // The parent session's identity, when Holi itself was launched from a Claude
+  // Code terminal. Every one of these rides in on `process.env` and none of them
+  // is true of the vault agent: `CHILD_SESSION` makes it disable transcript
+  // saving (found in the running app, where the panel printed exactly that), and
+  // the messaging pair is a live channel back into the parent, which a vault
+  // agent must not be holding.
+  //
+  // Named individually rather than stripped by prefix: several other
+  // `CLAUDE_CODE_*` variables are documented configuration, and swallowing those
+  // would break someone tuning the agent on purpose.
   delete env.CLAUDECODE
   delete env.CLAUDE_CODE_ENTRYPOINT
+  delete env.CLAUDE_CODE_CHILD_SESSION
+  delete env.CLAUDE_CODE_SESSION_ID
+  delete env.CLAUDE_CODE_MESSAGING_SOCKET
+  delete env.CLAUDE_CODE_MESSAGING_TOKEN
+  delete env.CLAUDE_CODE_EXECPATH
   env.TERM = 'xterm-256color'
   env.CLAUDE_CODE_NO_FLICKER = '1'
   // Reserved keys: strip any inherited value so a vault/user env can't spoof the
