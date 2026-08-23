@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,6 +7,7 @@ import {
   agentConfigSlug,
   ensureAgentConfigDir,
   isAgentSignedIn,
+  migrateSharedAgentConfig,
   resolveVaultAgentConfig,
 } from '../src/main/agent/agent-config-dir'
 
@@ -270,5 +271,75 @@ describe('resolveVaultAgentConfig', () => {
     })
     expect(res.dir).toContain(agentConfigSlug('owner/repo'))
     expect(res.signedIn).toBe(false)
+  })
+})
+
+describe('migrateSharedAgentConfig', () => {
+  const VAULT = 'owner/repo'
+  const flat = (userData: string) => join(userData, AGENT_CONFIG_DIR_NAME)
+  const slotted = (userData: string) => join(flat(userData), agentConfigSlug(VAULT))
+
+  /** The shared directory as D72 left it: logged in, with one vault's transcripts. */
+  async function shared(): Promise<string> {
+    const userData = await tempDir()
+    const dir = flat(userData)
+    await mkdir(join(dir, 'projects', 'a-vault'), { recursive: true })
+    await mkdir(join(dir, 'plugins'), { recursive: true })
+    await writeFile(join(dir, 'settings.json'), JSON.stringify({ theme: 'auto' }))
+    await writeFile(join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { id: 'a' } }))
+    await writeFile(join(dir, 'projects', 'a-vault', 'session.jsonl'), 'a turn\n')
+    return userData
+  }
+
+  it('moves the whole directory into the vault that was using it', async () => {
+    // A rename, never a rewrite: the 2026-08-14 spec refused to copy transcripts
+    // because rewriting another program's state store is a bad bet. This never
+    // opens a file, so the login and the history both survive intact.
+    const userData = await shared()
+
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
+
+    const dir = slotted(userData)
+    expect(JSON.parse(await readFile(join(dir, '.claude.json'), 'utf8')).oauthAccount).toEqual({
+      id: 'a',
+    })
+    expect(await readFile(join(dir, 'projects', 'a-vault', 'session.jsonl'), 'utf8')).toBe('a turn\n')
+    expect(await readdir(dir)).toContain('plugins')
+    expect(await readdir(flat(userData))).toEqual([agentConfigSlug(VAULT)])
+  })
+
+  it('is idempotent — a second launch moves nothing', async () => {
+    const userData = await shared()
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(await readdir(flat(userData))).toEqual([agentConfigSlug(VAULT)])
+  })
+
+  it('does nothing on an install that never had one', async () => {
+    const userData = await tempDir()
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(await readdir(userData)).toEqual([])
+  })
+
+  it('refuses to clobber a slot that already exists', async () => {
+    const userData = await shared()
+    await mkdir(slotted(userData), { recursive: true })
+    await writeFile(join(slotted(userData), 'settings.json'), JSON.stringify({ model: 'opus' }))
+
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('skipped')
+    expect(JSON.parse(await readFile(join(slotted(userData), 'settings.json'), 'utf8')).model).toBe(
+      'opus',
+    )
+  })
+
+  it('finishes a run that was interrupted mid-rename', async () => {
+    // Two renames, because a directory cannot be renamed into itself. A crash
+    // between them leaves the staging directory holding everything.
+    const userData = await shared()
+    const staging = join(userData, `${AGENT_CONFIG_DIR_NAME}.migrating`)
+    await rename(flat(userData), staging)
+
+    expect(await migrateSharedAgentConfig(userData, VAULT)).toBe('moved')
+    expect(await readdir(slotted(userData))).toContain('.claude.json')
   })
 })

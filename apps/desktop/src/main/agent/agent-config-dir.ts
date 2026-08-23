@@ -26,7 +26,7 @@
  * another vault except the Claude Code binary.
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { resolveColorMode } from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
@@ -204,4 +204,58 @@ export async function resolveVaultAgentConfig(args: {
   const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
   const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, { theme })
   return { dir, signedIn: await isAgentSignedIn(dir) }
+}
+
+/** Staging for the migration below. A directory cannot be renamed into itself. */
+const MIGRATING_DIR_NAME = `${AGENT_CONFIG_DIR_NAME}.migrating`
+
+/**
+ * One-shot: the shared directory D72 left behind becomes a vault's own.
+ *
+ * `userData/agent-config/` is already logged in and already holds one vault's
+ * transcripts. Leaving it stranded would cost the vault someone actually uses
+ * both, on upgrade, for nothing. So it is **renamed** into that vault's slot.
+ *
+ * The 2026-08-14 spec refused to *copy* transcripts between directories, on the
+ * grounds that rewriting another program's state store is a bad bet. This is a
+ * different operation and a much safer one: two same-volume renames of a whole
+ * directory, which never open a file inside it. The 444-file `plugins/` tree
+ * rides along, which is right — it is where those plugins were installed.
+ *
+ * Idempotent by construction: after a move there is no top-level `settings.json`
+ * left to find. Interruptible too — a crash between the renames leaves the
+ * staging directory, which the next run picks up and finishes.
+ */
+export async function migrateSharedAgentConfig(
+  userDataDir: string,
+  remote: string,
+): Promise<'moved' | 'skipped'> {
+  const parent = join(userDataDir, AGENT_CONFIG_DIR_NAME)
+  const staging = join(userDataDir, MIGRATING_DIR_NAME)
+  const slot = join(parent, agentConfigSlug(remote))
+
+  const exists = (path: string) => stat(path).then(() => true, () => false)
+  /** Someone has already been here (a downgrade, then an upgrade). Their
+   *  directory is the live one; never bury it under an older copy. */
+  const taken = () => exists(slot)
+
+  const interrupted = await stat(staging).then((s) => s.isDirectory(), () => false)
+  if (!interrupted) {
+    // Every install that ever ran `ensureAgentConfigDir` has this file, and the
+    // per-vault layout has only subdirectories — so its presence IS the old shape.
+    const isFlat = await stat(join(parent, SETTINGS)).then((s) => s.isFile(), () => false)
+    if (!isFlat) return 'skipped'
+    // Checked BEFORE the rename, not after: the rename carries the slot into the
+    // staging directory, and a check on the far side would find nothing and bury
+    // the live directory inside itself.
+    if (await taken()) return 'skipped'
+    await rename(parent, staging)
+  }
+
+  await mkdir(parent, { recursive: true })
+  // The interrupted path skipped the check above; a slot here means someone
+  // rebuilt the parent while the staging directory sat orphaned. Leave both.
+  if (await taken()) return 'skipped'
+  await rename(staging, slot)
+  return 'moved'
 }
