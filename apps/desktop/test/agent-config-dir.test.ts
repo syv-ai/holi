@@ -25,18 +25,61 @@ async function settings(configDir: string): Promise<Record<string, unknown>> {
   >
 }
 
-describe('ensureAgentConfigDir', () => {
-  it('creates the directory under userData and returns its absolute path', async () => {
-    const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData)
+const VAULT = 'owner/repo'
+const OTHER_VAULT = 'owner/other'
 
-    expect(configDir).toBe(join(userData, AGENT_CONFIG_DIR_NAME))
+describe('ensureAgentConfigDir', () => {
+  it('creates the vault\'s own directory under userData and returns its absolute path', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
+
+    expect(configDir).toBe(join(userData, AGENT_CONFIG_DIR_NAME, agentConfigSlug(VAULT)))
     expect(await readdir(configDir)).toContain('settings.json')
   })
 
+  it('gives two vaults two directories, and what one holds the other never sees', async () => {
+    // The whole of D86: `plugins/`, marketplaces and settings are keyed by the
+    // config directory and by nothing else, so sharing one shares capability.
+    const userData = await tempDir()
+    const mine = await ensureAgentConfigDir(userData, VAULT)
+    const theirs = await ensureAgentConfigDir(userData, OTHER_VAULT)
+
+    expect(mine).not.toBe(theirs)
+    await writeFile(join(mine, 'settings.json'), JSON.stringify({ model: 'opus' }))
+    expect((await settings(theirs)).model).toBeUndefined()
+  })
+
   it('seeds the connector opt-out — a second layer under the vault own', async () => {
-    const configDir = await ensureAgentConfigDir(await tempDir())
+    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT)
     expect((await settings(configDir)).disableClaudeAiConnectors).toBe(true)
+  })
+
+  it("stamps Claude Code's theme, and re-stamps it on every spawn", async () => {
+    // `theme` is not a default: it tracks a live Holi setting (D85's resolved
+    // mode), so unlike the connector opt-out the last write has to win. What the
+    // user typed alongside it still survives.
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { theme: 'light' })
+    expect((await settings(configDir)).theme).toBe('light')
+
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ theme: 'light', model: 'opus' }),
+    )
+    await ensureAgentConfigDir(userData, VAULT, { theme: 'dark' })
+
+    const after = await settings(configDir)
+    expect(after.theme).toBe('dark')
+    expect(after.model).toBe('opus')
+  })
+
+  it('leaves an existing theme alone when Holi has no mode to offer', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { theme: 'light' })
+
+    await ensureAgentConfigDir(userData, VAULT)
+
+    expect((await settings(configDir)).theme).toBe('light')
   })
 
   it('runs on every launch and preserves what the user or the CLI added', async () => {
@@ -44,13 +87,13 @@ describe('ensureAgentConfigDir', () => {
     // that never happens. So this re-runs — and must not discard `/login`'s
     // work, or a model preference typed into the panel.
     const userData = await tempDir()
-    const first = await ensureAgentConfigDir(userData)
+    const first = await ensureAgentConfigDir(userData, VAULT)
     await writeFile(
       join(first, 'settings.json'),
       JSON.stringify({ disableClaudeAiConnectors: true, model: 'opus' }),
     )
 
-    const second = await ensureAgentConfigDir(userData)
+    const second = await ensureAgentConfigDir(userData, VAULT)
 
     expect(second).toBe(first)
     const after = await settings(second)
@@ -60,10 +103,10 @@ describe('ensureAgentConfigDir', () => {
 
   it('adds the opt-out to a settings file that predates it', async () => {
     const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData)
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
     await writeFile(join(configDir, 'settings.json'), JSON.stringify({ model: 'opus' }))
 
-    await ensureAgentConfigDir(userData)
+    await ensureAgentConfigDir(userData, VAULT)
 
     const after = await settings(configDir)
     expect(after.disableClaudeAiConnectors).toBe(true)
@@ -72,27 +115,27 @@ describe('ensureAgentConfigDir', () => {
 
   it('does not overrule a user who deliberately set it false', async () => {
     const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData)
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
     await writeFile(join(configDir, 'settings.json'), JSON.stringify({ disableClaudeAiConnectors: false }))
 
-    await ensureAgentConfigDir(userData)
+    await ensureAgentConfigDir(userData, VAULT)
 
     expect((await settings(configDir)).disableClaudeAiConnectors).toBe(false)
   })
 
   it('leaves a malformed settings file alone rather than overwriting it', async () => {
     const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData)
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
     await writeFile(join(configDir, 'settings.json'), '{ not json')
 
-    await ensureAgentConfigDir(userData)
+    await ensureAgentConfigDir(userData, VAULT, { theme: 'dark' })
 
     expect(await readFile(join(configDir, 'settings.json'), 'utf8')).toBe('{ not json')
   })
 
   it('creates nothing Claude Code owns — no projects/, no .claude.json', async () => {
     // Pre-creating another program's state store is guessing at its schema.
-    const configDir = await ensureAgentConfigDir(await tempDir())
+    const configDir = await ensureAgentConfigDir(await tempDir(), VAULT)
     expect(await readdir(configDir)).toEqual(['settings.json'])
   })
 })

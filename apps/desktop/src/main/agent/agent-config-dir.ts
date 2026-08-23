@@ -8,11 +8,22 @@
  * lever that reaches all of them at once (project settings cannot disable
  * user-scope skills or plugins), and this module provisions what it points at.
  *
- * **One directory, shared by every vault.** Per-vault directories were the first
- * instinct and are worse: credentials are keyed to the config directory, so each
- * one would cost its own `/login` — while the thing they appear to buy, separate
- * session history, comes free anyway, because Claude Code keys transcripts by
- * working directory (`projects/<cwd-slug>/`).
+ * **One directory per vault** (D86), at `userData/agent-config/<vault-slug>/`.
+ *
+ * This reverses D72's shared directory, and the reversal is narrow. D72 was right
+ * that per-vault *history* comes free — Claude Code keys transcripts, prompt
+ * history and project config by working directory (`projects/<cwd-slug>/`), so a
+ * shared directory never mixed those. What it did not weigh was **capability**:
+ * `plugins/` — marketplaces and installed plugins, 444 files on a real install —
+ * is keyed by nothing at all, so a plugin installed while working in one vault
+ * was reachable by the agent in every vault. So was user-scope `settings.json`.
+ *
+ * The price is real and unchanged: credentials are keyed to the config directory
+ * (a symlinked `.claude.json` does not carry them, and the keychain entry is
+ * suffixed per directory), so this costs a `/login` per vault. It is paid
+ * **lazily** — the panel asks the first time the agent is opened in that vault,
+ * never during onboarding — and it buys a vault agent that gets nothing from
+ * another vault except the Claude Code binary.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -47,6 +58,9 @@ export function agentConfigSlug(remote: string): string {
   return readable === '' ? hash : `${readable}-${hash}`
 }
 
+/** What Holi resolved the app's colour mode to (D85's `activeModeAtom`). */
+export type AgentTheme = 'dark' | 'light'
+
 /**
  * The settings text this directory should have, or **null** if it already
  * carries what Holi requires (or cannot be parsed).
@@ -58,15 +72,23 @@ export function agentConfigSlug(remote: string): string {
  * function: the vault's includes hook commands whose paths are relative to a
  * vault, which mean nothing at user scope.
  *
- * Only `disableClaudeAiConnectors`, and only when absent. It is a second layer
- * under the vault's own copy of the same key, so a vault whose
- * `.claude/settings.json` was deleted or never merged still gets no cloud
- * connectors — and a user who deliberately wrote `false` is not overruled once
- * a launch.
+ * **Two keys, two rules**, and the difference is what each one is:
+ *
+ * - `disableClaudeAiConnectors` is a **default**, written only when absent. It is
+ *   a second layer under the vault's own copy of the same key, so a vault whose
+ *   `.claude/settings.json` was deleted or never merged still gets no cloud
+ *   connectors — and a user who deliberately wrote `false` is not overruled.
+ * - `theme` **tracks a setting**, so it is written on every spawn and the last
+ *   write wins. Claude Code ships `"auto"`, meaning *detect the terminal
+ *   background*, and inside Holi's embedded PTY there is nothing reliable to
+ *   detect: the agent stayed dark while D85 took the app light. Holi answers the
+ *   question instead of leaving it to be guessed.
  */
-function settingsWithRequired(existing: string | null): string | null {
+function settingsWithRequired(existing: string | null, theme?: AgentTheme): string | null {
   if (existing === null || existing.trim() === '') {
-    return JSON.stringify({ disableClaudeAiConnectors: true }, null, 2) + '\n'
+    const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
+    if (theme) seed.theme = theme
+    return JSON.stringify(seed, null, 2) + '\n'
   }
 
   let settings: Record<string, unknown>
@@ -78,29 +100,43 @@ function settingsWithRequired(existing: string | null): string | null {
     return null // the user's file; unparseable JSON is not ours to "fix"
   }
 
-  if (settings.disableClaudeAiConnectors !== undefined) return null
-  settings.disableClaudeAiConnectors = true
-  return JSON.stringify(settings, null, 2) + '\n'
+  let changed = false
+  if (settings.disableClaudeAiConnectors === undefined) {
+    settings.disableClaudeAiConnectors = true
+    changed = true
+  }
+  if (theme && settings.theme !== theme) {
+    settings.theme = theme
+    changed = true
+  }
+
+  return changed ? JSON.stringify(settings, null, 2) + '\n' : null
 }
 
 /**
- * Create and top up the shared config directory, returning its absolute path.
+ * Create and top up **this vault's** config directory, returning its absolute path.
  *
- * Run on **every** launch, not on first run: a seed that only runs at creation
- * is a migration that never happens (D70's lesson, learned when the send gate
- * shipped as an inert file in every vault that already existed), and this
- * directory will grow keys later.
+ * Run on **every spawn**, not on first run and no longer once per app launch: a
+ * seed that only runs at creation is a migration that never happens (D70's
+ * lesson, learned when the send gate shipped as an inert file in every vault
+ * that already existed), and per launch is now simply wrong — the active vault
+ * changes while the app runs, and `theme` has to track a setting the user can
+ * flip without restarting.
  *
  * `projects/`, `sessions/` and `.claude.json` are deliberately NOT created —
  * Claude Code owns those and makes them itself; pre-creating them would be
  * guessing at another program's schema.
  */
-export async function ensureAgentConfigDir(userDataDir: string): Promise<string> {
-  const configDir = join(userDataDir, AGENT_CONFIG_DIR_NAME)
+export async function ensureAgentConfigDir(
+  userDataDir: string,
+  remote: string,
+  opts: { theme?: AgentTheme } = {},
+): Promise<string> {
+  const configDir = join(userDataDir, AGENT_CONFIG_DIR_NAME, agentConfigSlug(remote))
   await mkdir(configDir, { recursive: true })
 
   const path = join(configDir, SETTINGS)
-  const next = settingsWithRequired(await readFile(path, 'utf8').catch(() => null))
+  const next = settingsWithRequired(await readFile(path, 'utf8').catch(() => null), opts.theme)
   if (next !== null) await writeFile(path, next, 'utf8')
 
   return configDir
