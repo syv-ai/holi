@@ -1,12 +1,18 @@
 /**
  * Pure flow reducer for the first-run / add-vault onboarding ritual.
  *
- * The 3-act ritual (greeting → naming → threshold) is driven entirely by this
- * reducer; `OnboardingRitual.tsx` is a thin view over it. Keeping the flow pure
- * lets it be unit-tested without a DOM (Vitest runs in `node` env here).
+ * The 4-act ritual (greeting → naming → settings → threshold) is driven entirely
+ * by this reducer; `OnboardingRitual.tsx` is a thin view over it. Keeping the
+ * flow pure lets it be unit-tested without a DOM (Vitest runs in `node` env).
+ *
+ * **Act 3 is the settings step and the threshold moved to 4.** Anything that
+ * used to mean "the last act" by saying `3` now means the settings step — the
+ * two are no longer the same number, and the assertion reads identically either
+ * way.
  */
+import { VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
 
-export type Act = 1 | 2 | 3
+export type Act = 1 | 2 | 3 | 4
 export type View = 'form' | 'join'
 export type Mode = 'first-run' | 'add-vault'
 
@@ -20,6 +26,11 @@ export interface OnboardingState {
   owner: string
   error: string | null
   submitting: boolean
+  /** The settings act's answers, keyed by `VaultSettingDescriptor.key`. Seeded
+   *  from the descriptors' own defaults, so clicking straight through writes
+   *  exactly what the seed already wrote rather than a second opinion about
+   *  what a vault should default to. */
+  settings: Record<string, unknown>
 }
 
 /** lowercase, non-alnum → '-', collapse runs, trim leading/trailing '-'. */
@@ -40,12 +51,17 @@ export const initialState = (mode: Mode, owner: string): OnboardingState => ({
   name: '',
   owner,
   error: null,
-  submitting: false
+  submitting: false,
+  settings: Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default])),
 })
 
 export const canAdvance = (s: OnboardingState): boolean => {
   if (s.act === 1) return true
   if (s.act === 2) return slugify(s.name).length > 0
+  // The settings act always advances: every row carries a default, so there is
+  // nothing to fill in and nothing to block on. Act 4 is the floor of "there is
+  // nowhere further".
+  if (s.act === 3) return true
   return false
 }
 
@@ -60,6 +76,7 @@ export type Action =
   | { type: 'toForm' }
   | { type: 'setName'; name: string }
   | { type: 'setOwner'; owner: string }
+  | { type: 'setSetting'; key: string; value: unknown }
   | { type: 'submitStart' }
   | { type: 'created' }
   | { type: 'failInPlace'; error: string }
@@ -85,11 +102,17 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
       return { ...s, name: a.name }
     case 'setOwner':
       return { ...s, owner: a.owner }
+    case 'setSetting':
+      // A fresh object rather than a mutation: the view re-renders off identity.
+      return { ...s, settings: { ...s.settings, [a.key]: a.value } }
     case 'submitStart':
       return { ...s, submitting: true, error: null }
     case 'created':
-      // The repo now exists and is pushed — advance to the threshold, which can
-      // truthfully say so. Only reached from act 2 (naming), after create.
+      // The repo now exists and is pushed — advance to the SETTINGS act, which
+      // is where its settings files get the user's answers merged over the
+      // seed's defaults. The threshold is one further on (act 4) and is what
+      // can truthfully say the repo exists. Only reached from act 2 (naming),
+      // after create.
       return { ...s, act: 3, submitting: false, error: null }
     case 'failInPlace':
       // A submit failure (create, or a join adopt) stays exactly where it
