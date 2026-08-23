@@ -14,6 +14,7 @@
  * session history, comes free anyway, because Claude Code keys transcripts by
  * working directory (`projects/<cwd-slug>/`).
  */
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -21,6 +22,30 @@ import { join } from 'node:path'
 export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 
 const SETTINGS = 'settings.json'
+
+/**
+ * The directory name a vault's config lives under, from its remote (D86).
+ *
+ * Stable and filesystem-safe, because it is the address of a login and of a
+ * transcript store: a name that drifts orphans both.
+ *
+ * The readable half follows Claude Code's own convention for the same problem
+ * (`projects/-Users-nicolaibthomsen-Holi-nthomsencph-privat`) — every character
+ * outside `[A-Za-z0-9]` becomes a dash. That alone is **not injective**, though:
+ * `syv/better-holi` and `syv-better/holi` both sanitize to `syv-better-holi`,
+ * and two vaults quietly sharing one config directory is the exact plugin leak
+ * this decision exists to close. So eight hex of a hash of the *remote* rides
+ * along, and the collision stops being possible rather than merely unlikely.
+ */
+export function agentConfigSlug(remote: string): string {
+  const readable = remote
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  const hash = createHash('sha1').update(remote).digest('hex').slice(0, 8)
+  // A remote of pure punctuation leaves nothing readable; the hash is the name.
+  return readable === '' ? hash : `${readable}-${hash}`
+}
 
 /**
  * The settings text this directory should have, or **null** if it already

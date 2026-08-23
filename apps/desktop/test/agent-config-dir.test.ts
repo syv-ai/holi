@@ -2,7 +2,11 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { AGENT_CONFIG_DIR_NAME, ensureAgentConfigDir } from '../src/main/agent/agent-config-dir'
+import {
+  AGENT_CONFIG_DIR_NAME,
+  agentConfigSlug,
+  ensureAgentConfigDir,
+} from '../src/main/agent/agent-config-dir'
 
 const dirs: string[] = []
 async function tempDir(): Promise<string> {
@@ -90,5 +94,32 @@ describe('ensureAgentConfigDir', () => {
     // Pre-creating another program's state store is guessing at its schema.
     const configDir = await ensureAgentConfigDir(await tempDir())
     expect(await readdir(configDir)).toEqual(['settings.json'])
+  })
+})
+
+describe('agentConfigSlug', () => {
+  it('reads as the vault it belongs to, and is filesystem-safe', () => {
+    const slug = agentConfigSlug('nthomsencph/privat')
+    expect(slug).toMatch(/^nthomsencph-privat-/)
+    expect(slug).toMatch(/^[a-z0-9-]+$/)
+  })
+
+  it('is stable — the same remote is the same directory, forever', () => {
+    // A slug that drifts orphans a login and a transcript store.
+    expect(agentConfigSlug('owner/repo')).toBe(agentConfigSlug('owner/repo'))
+  })
+
+  it('separates two remotes that sanitize alike', () => {
+    // Claude Code's own projects/ convention (non-alphanumerics to dashes) maps
+    // both of these to `syv-better-holi`. Two vaults sharing one config dir is
+    // the plugin leak D86 exists to kill, so the name carries a hash of the remote.
+    expect(agentConfigSlug('syv/better-holi')).not.toBe(agentConfigSlug('syv-better/holi'))
+  })
+
+  it('still names a directory when nothing in the remote survives sanitizing', () => {
+    const slug = agentConfigSlug('///')
+    expect(slug).not.toBe('')
+    expect(slug).not.toContain('/')
+    expect(slug).toMatch(/^[a-z0-9-]+$/)
   })
 })
