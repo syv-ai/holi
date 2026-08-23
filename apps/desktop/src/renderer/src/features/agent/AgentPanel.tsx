@@ -8,7 +8,9 @@ import { ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitive
 import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
+import { agentThemeNote, type ColorMode } from '@/lib/agent-notices'
 import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
+import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom } from '@/state/vaults'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
@@ -36,6 +38,17 @@ export function AgentPanel() {
   // against `host.active().remote`.
   const activeRemote = useAtomValue(activeRemoteAtom)
   const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
+  /** The colour mode in force. Holi stamps it into the vault's Claude Code config
+   *  on every spawn (D86), and Claude reads settings at start — so a flip while a
+   *  session is live is a real divergence the panel has to say out loud. State,
+   *  not a ref, because the note must re-render when the mode changes. */
+  const mode = useAtomValue(activeModeAtom)
+  const [modeAtSpawn, setModeAtSpawn] = useState<ColorMode | null>(null)
+  /** …and a mirror of it for `startSession`, which must not take `mode` as a
+   *  dependency: rebuilding that callback on a theme flip re-runs the open-effect
+   *  that owns auto-start. */
+  const modeRef = useRef<ColorMode>(mode)
+  modeRef.current = mode
   /** Imperative handle on the collapsible group panel — driven by `open` (below),
    *  so ⌘J and the reconcile trigger expand/collapse the panel instead of a bespoke
    *  width. The panel stays mounted while collapsed, so the PTY + scrollback live on. */
@@ -136,7 +149,10 @@ export function AgentPanel() {
     })
 
     const offData = window.holi.agent.onData((data) => term.write(data))
-    const offExit = window.holi.agent.onExit(({ code }) => notice(term, `[session ended (code ${code})]`))
+    const offExit = window.holi.agent.onExit(({ code }) => {
+      notice(term, `[session ended (code ${code})]`)
+      setModeAtSpawn(null) // a dead session's theme is nobody's problem
+    })
     const offStatus = window.holi.agent.onStatus((next) => setStatus(next))
     const typed = term.onData((data) => void window.holi.agent.write(data))
 
@@ -200,6 +216,7 @@ export function AgentPanel() {
       }
       await window.holi.agent.attach() // open the data tap for the new PTY
       attachedRef.current = true
+      setModeAtSpawn(modeRef.current) // what Claude just read out of its settings
       // Ink's startup re-enables the cursor; hide it again once it has drawn.
       setTimeout(() => term.write(HIDE_CURSOR), 500)
       setStatus(await window.holi.agent.status())
@@ -279,6 +296,8 @@ export function AgentPanel() {
   // mounted. `open` stays the single source of truth; the effect above drives
   // the panel to match it.
 
+  const themeNote = agentThemeNote({ running: status.running, modeAtSpawn, mode })
+
   const restart = async () => {
     await window.holi.agent.kill()
     termRef.current?.reset()
@@ -346,12 +365,16 @@ export function AgentPanel() {
         {status.configStale && (
           <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
         )}
-        {/* No login notice here, deliberately (D72). Claude Code asks for the
-            login itself, in the terminal directly below this bar — a second copy
-            in the header is duplicate state, and duplicate state has to be kept
-            honest: `/login` fires none of the events that push status, so the
-            header's copy went stale the moment it mattered. Deleted rather than
-            watched. */}
+        {themeNote && <span className="truncate text-amber-400/80">{themeNote}</span>}
+        {/* No login notice here, deliberately (D72), and D86 did not change that.
+            A vault now needs its own `/login`, which is a genuinely new thing to
+            say — but it is said in the SCROLLBACK, printed by main at spawn
+            (`SIGN_IN_NOTICE`), for exactly the reason this comment already gave:
+            `/login` fires none of the events that push status, so a copy in the
+            header goes stale the moment it matters. A line printed at spawn is a
+            log entry and stays true about that spawn. The theme note above is
+            different in kind — it is derived from two values the renderer already
+            holds, so it cannot go stale. */}
       </PanelHeader>
       <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
       </aside>
