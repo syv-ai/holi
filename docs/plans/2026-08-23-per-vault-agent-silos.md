@@ -57,7 +57,7 @@ export function agentConfigSlug(remote: string): string
 
 Sanitize every character outside `[A-Za-z0-9]` to `-`, collapse runs of `-`, trim leading/trailing `-`, lowercase, then append `-` + `createHash('sha1').update(remote).digest('hex').slice(0, 8)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In a new `describe('agentConfigSlug')`:
 - `'nthomsencph/privat'` starts with `'nthomsencph-privat-'` and matches `/^[a-z0-9-]+$/`.
@@ -65,20 +65,20 @@ In a new `describe('agentConfigSlug')`:
 - `'syv/better-holi'` and `'syv-better/holi'` differ (the collision this suffix exists for).
 - A remote of only punctuation (`'///'`) still yields a non-empty, `/`-free name.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 `pnpm -C apps/desktop exec vitest run --project node test/agent-config-dir.test.ts`
 Expected: FAIL, `agentConfigSlug is not a function`.
 
-- [ ] **Step 3: Implement it**
+- [x] **Step 3: Implement it**
 
 Import `createHash` from `node:crypto`. Guard the all-punctuation case by letting the hash carry the name when the sanitized half is empty.
 
-- [ ] **Step 4: Green**
+- [x] **Step 4: Green**
 
 Same command. Expected: the four new cases PASS; the existing `ensureAgentConfigDir` cases still pass (untouched so far).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/desktop/src/main/agent/agent-config-dir.ts apps/desktop/test/agent-config-dir.test.ts
@@ -119,7 +119,7 @@ Return `null` (write nothing) when neither rule changed anything, and on unparse
 - Do not create `projects/`, `sessions/` or `.claude.json`. The existing test asserting `readdir(configDir) === ['settings.json']` is load-bearing: pre-creating another program's state store is guessing at its schema.
 - `mkdir(..., { recursive: true })` makes the parent for free. Do not `mkdir` the parent separately.
 
-- [ ] **Step 1: Update the existing suite to the new signature, and add the new cases**
+- [x] **Step 1: Update the existing suite to the new signature, and add the new cases**
 
 Every existing call becomes `ensureAgentConfigDir(userData, 'owner/repo')`. Then add:
 - returns `join(userData, 'agent-config', agentConfigSlug(remote))`.
@@ -128,17 +128,17 @@ Every existing call becomes `ensureAgentConfigDir(userData, 'owner/repo')`. Then
 - no `theme` in `opts` leaves any existing `theme` key untouched.
 - a malformed settings file is still left byte-identical even when a theme is requested.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 Expected: FAIL — first on arity/type, then on the theme assertions.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Thread `remote` into the `join`, thread `opts` into `settingsWithRequired`, and rewrite the module docblock: the paragraph beginning *"**One directory, shared by every vault.**"* now argues the opposite and must say why (capability, not history — `plugins/` is keyed by nothing).
 
-- [ ] **Step 4: Green**
+- [x] **Step 4: Green**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(agent): one config directory per vault, carrying its theme"
@@ -167,15 +167,15 @@ export async function isAgentSignedIn(configDir: string): Promise<boolean>
 | present, no `oauthAccount` key | `false` |
 | present, unparseable | `true` — do not nag on uncertainty |
 
-- [ ] **Step 1: Write the four failing cases**, one per row.
+- [x] **Step 1: Write the four failing cases**, one per row.
 
-- [ ] **Step 2: Run and watch it fail.**
+- [x] **Step 2: Run and watch it fail.**
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
-- [ ] **Step 4: Green.**
+- [x] **Step 4: Green.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(agent): read the sign-in state instead of leaving it to be inferred"
@@ -215,19 +215,19 @@ Body: `readVaultSettings(root)` → `resolveColorMode(settings.colorScheme, syst
 - `resolveColorMode` and `readVaultSettings` already exist (`packages/shared/src/vault-settings.ts:597`, `main/vault/settings.ts:40`). Do not re-derive the mode; `system` must mean the same thing to the agent as it does to `data-theme`, and one function is how that stays true.
 - **No `electron` import in this module.** `agent-manager.ts` states the same rule for the same reason (it must load under vitest), and this module is now on that path.
 
-- [ ] **Step 1: Write the failing tests.** Build a temp vault root with a `.holi/settings.local.json`.
+- [x] **Step 1: Write the failing tests.** Build a temp vault root with a `.holi/settings.local.json`.
   - `colorScheme: 'light'` → the directory's `settings.json` says `"theme": "light"`.
   - `colorScheme: 'system'` with `systemPrefersDark: true` → `"dark"`; with `false` → `"light"`.
   - a vault with no `.holi/settings.local.json` at all resolves rather than throwing (the default is `system`).
   - a fresh directory returns `signedIn: false`.
 
-- [ ] **Step 2: Run and watch it fail.**
+- [x] **Step 2: Run and watch it fail.**
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
-- [ ] **Step 4: Green.**
+- [x] **Step 4: Green.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(agent): resolve a vault's config directory, theme and sign-in together"
@@ -273,7 +273,7 @@ Written as `\x1b[33m…\x1b[0m` with `\r\n` line endings, straight to `terminal.
 - `resolveConfigDir` is `await`ed on the spawn path. It is two small file reads; do not make it fire-and-forget, because the env has to carry the path.
 - If it rejects, the spawn must not die — an unreadable settings file should not cost the user their agent. Wrap in `.catch(() => null)` and `log()` it, matching how `resolveTypstBin` is treated.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Extend `rig()` to take `resolveConfigDir` instead of `configDir` (default: omitted). New cases:
 - the resolver is called with the **active vault's** remote and root, and `spawn.opts.env.CLAUDE_CONFIG_DIR` is what it returned.
@@ -282,15 +282,15 @@ Extend `rig()` to take `resolveConfigDir` instead of `configDir` (default: omitt
 - `signedIn: true` → the replay does **not** contain `/login`.
 - a rejecting resolver still spawns, with no `CLAUDE_CONFIG_DIR` in the env.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 `pnpm -C apps/desktop exec vitest run --project node test/agent-manager.test.ts`
 
-- [ ] **Step 3: Implement.** Update the `configDir` docblock on `AgentManagerDeps` — it currently cites D72's shared directory.
+- [x] **Step 3: Implement.** Update the `configDir` docblock on `AgentManagerDeps` — it currently cites D72's shared directory.
 
-- [ ] **Step 4: Green.**
+- [x] **Step 4: Green.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(agent): the config directory is resolved per spawn, not per launch"
@@ -329,20 +329,20 @@ Algorithm, with a staging directory `userData/agent-config.migrating` because a 
 - Idempotent by construction: after a move there is no `agent-config/settings.json`, so a second run returns `'skipped'`.
 - The 444-file `plugins/` directory rides along into the chosen vault. That is correct: it is where those plugins were installed from.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
   - a flat directory holding `settings.json`, `.claude.json` and a `projects/` subtree ends up whole under `<slug>/`, with `.claude.json` byte-identical (the login survives).
   - running it twice returns `'moved'` then `'skipped'`, and nothing moves the second time.
   - a `userData` with no `agent-config` at all returns `'skipped'` and creates nothing.
   - an already-migrated layout (`agent-config/<slug>/settings.json`, no top-level `settings.json`) returns `'skipped'`.
   - an orphaned `agent-config.migrating` from an interrupted run is picked up and completed.
 
-- [ ] **Step 2: Run and watch it fail.**
+- [x] **Step 2: Run and watch it fail.**
 
-- [ ] **Step 3: Implement.**
+- [x] **Step 3: Implement.**
 
-- [ ] **Step 4: Green.**
+- [x] **Step 4: Green.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(agent): the shared config directory becomes the vault that was using it"
@@ -390,13 +390,13 @@ agent = createAgentManager({
 - The migration must be `await`ed before `createAgentManager`, or a fast first spawn could provision an empty directory beside the one being moved.
 - `registry` is constructed at `index.ts:198`, in the same scope as the agent wiring at `:444`. No new plumbing.
 
-- [ ] **Step 1: Make the edit.**
+- [x] **Step 1: Make the edit.**
 
-- [ ] **Step 2: Typecheck**
+- [x] **Step 2: Typecheck**
 
 `pnpm -C apps/desktop typecheck` → clean.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git commit -am "feat(agent): wire per-vault config, and move the shared one into its vault"
@@ -427,24 +427,24 @@ export function agentThemeNote(args: {
 
 Returns `'restart to change Claude’s theme'` only when `running && modeAtSpawn !== null && modeAtSpawn !== mode`. Null otherwise.
 
-- [ ] **Step 1: Write the failing tests** — one per branch: not running, no spawn recorded, matching modes, differing modes.
+- [x] **Step 1: Write the failing tests** — one per branch: not running, no spawn recorded, matching modes, differing modes.
 
-- [ ] **Step 2: Run and watch it fail.**
+- [x] **Step 2: Run and watch it fail.**
 
 `pnpm -C apps/desktop exec vitest run --project node test/agent-notices.test.ts`
 
-- [ ] **Step 3: Implement the helper.**
+- [x] **Step 3: Implement the helper.**
 
-- [ ] **Step 4: Green.**
+- [x] **Step 4: Green.**
 
-- [ ] **Step 5: Render it in `AgentPanel.tsx`**
+- [x] **Step 5: Render it in `AgentPanel.tsx`**
 
 - `const mode = useAtomValue(activeModeAtom)` (`@/state/color-scheme`).
 - `const modeAtSpawnRef = useRef<'light' | 'dark' | null>(null)`, set to `mode` inside `startSession` on a successful start, cleared to `null` in the `onExit` handler. A ref is not reactive, so mirror it into `useState` — the note has to re-render when the mode flips.
 - Render beside the existing `status.configStale` span, same `text-amber-400/80 truncate` treatment.
 - Leave the D72 "no login notice here" comment in place and **extend it**: the sign-in instruction now exists, and it lives in the scrollback for the reason that comment gives.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git commit -am "feat(agent): say that a theme change reaches Claude on restart"
@@ -457,7 +457,7 @@ git commit -am "feat(agent): say that a theme change reaches Claude on restart"
 **Files:**
 - Modify: `docs/decisions.md`, `docs/prd/agent.md`
 
-- [ ] **Step 1: Run the whole desktop suite**
+- [x] **Step 1: Run the whole desktop suite**
 
 ```bash
 pnpm -C apps/desktop test
@@ -465,13 +465,13 @@ pnpm -C apps/desktop test
 
 Every file, both projects. Memory's rule: `typecheck` misses fake-preload gaps, so the full suite runs before this is called done.
 
-- [ ] **Step 2: Typecheck the workspace**
+- [x] **Step 2: Typecheck the workspace**
 
 ```bash
 pnpm typecheck
 ```
 
-- [ ] **Step 3: Update `docs/prd/agent.md` §Config layering**
+- [x] **Step 3: Update `docs/prd/agent.md` §Config layering**
 
 Three things in it are now false and are the point of this change:
 - *"`CLAUDE_CONFIG_DIR` points the agent at `userData/agent-config/`"* → `userData/agent-config/<vault-slug>/`, resolved per spawn.
@@ -479,13 +479,13 @@ Three things in it are now false and are the point of this change:
 - Add that Holi now stamps `theme` in that file from the vault's `colorScheme`, on every spawn, and that a running session keeps its old theme until restarted.
 - Add a line on the migration: the shared directory was renamed into the most recently opened vault, so one vault kept its login and its transcripts and the others start fresh.
 
-- [ ] **Step 4: Update `docs/decisions.md`**
+- [x] **Step 4: Update `docs/decisions.md`**
 
 D86's row says **"Agreed 2026-08-23, not built."** Change it to built, and add what the build settled that the design did not: the hash-suffixed slug and why sanitizing alone was not enough; that the sign-in instruction lives in the scrollback rather than the header, on D72's own argument; that the migration is a whole-directory rename to the `lastOpenedAt` head; and that the mid-session theme note is renderer-side because `*.local.*` is deliberately outside `AGENT_CONFIG_FILES`.
 
 Leave D87 exactly as it is. It is agreed, not designed, and nothing here touches it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs apps
