@@ -133,12 +133,18 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
  * time this resolves the repo genuinely exists on GitHub and is clonable — which
  * is what lets the ritual's threshold say so truthfully.
  *
- * **Deliberately does NOT refresh the vault list.** The onboarding ritual shows
- * a "created — here's the remote" step *before* entering, and the first-run gate
- * flips to the Shell the moment `vaultsAtom` becomes non-empty. So loading the
- * list here would unmount the ritual mid-success; the explicit `loadVaults` on
- * "Open vault" is what enters. The active remote + snapshot are set now so that
- * entry is instant.
+ * **Deliberately does NOT refresh the vault list, and does NOT activate the
+ * vault.** The onboarding ritual shows a "created, here's the remote" step
+ * *before* entering, and the first-run gate flips to the Shell the moment
+ * `vaultsAtom` becomes non-empty. So loading the list here would unmount the
+ * ritual mid-success; the explicit `loadVaults` on "Open vault" is what enters.
+ *
+ * Activation used to happen here, "so that entry is instant". It made the vault
+ * live at the NAMING act, which meant that in `add-vault` mode (where the Shell
+ * is mounted behind the ritual) the vault was opened and landed before the
+ * settings act had asked anything: the answers were written to a vault that had
+ * already read the seeded defaults, so they took effect on the next launch and
+ * not this one. A vault is activated when the ritual says it is finished.
  *
  * **`owner` is required here even though the router makes it optional.**
  * `vaults.create` answers with a snapshot rather than the repo, so the only way
@@ -151,12 +157,8 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
 export const createVaultAtom = atom(
   null,
   async (_get, set, input: { name: string; owner: string }): Promise<string> => {
-    const snapshot = await trpc.vaults.create.mutate(input)
-    const remote = `${input.owner}/${input.name}`
-    set(activeRemoteAtom, remote)
-    set(snapshotAtom, snapshot)
-    set(activeDocAtom, null)
-    return remote
+    await trpc.vaults.create.mutate(input)
+    return `${input.owner}/${input.name}`
   },
 )
 

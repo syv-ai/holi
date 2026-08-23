@@ -13,7 +13,13 @@ import {
 } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { sessionAtom } from '@/state/session'
-import { addVaultAtom, createVaultAtom, loadVaultsAtom, vaultsAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  addVaultAtom,
+  createVaultAtom,
+  loadVaultsAtom,
+  vaultsAtom,
+} from '@/state/vaults'
 import {
   canAdvance,
   initialState,
@@ -60,6 +66,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   const known = useAtomValue(vaultsAtom)
   const createVault = useSetAtom(createVaultAtom)
   const addVault = useSetAtom(addVaultAtom)
+  const setActiveRemote = useSetAtom(activeRemoteAtom)
   const loadVaults = useSetAtom(loadVaultsAtom)
 
   const [s, dispatch] = useReducer(reduce, undefined, () =>
@@ -232,10 +239,22 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   // just refreshes the list — which flips the first-run gate to the Shell — and
   // dismisses the add-vault popover if that is how we were opened.
   const enter = async () => {
-    // A dry run has nothing to refresh into — there is no new vault in the
-    // registry — so it only closes. Calling `loadVaults` would be harmless but
+    // A dry run has nothing to refresh into (there is no new vault in the
+    // registry) so it only closes. Calling `loadVaults` would be harmless but
     // dishonest: it would look like the ritual had done something.
-    if (!dryRun) await loadVaults()
+    if (dryRun) {
+      onDismiss?.()
+      return
+    }
+    // **Activate here, not at creation.** Setting the active remote is what
+    // makes the Shell open and land the vault, and doing it at the naming act
+    // landed it before the settings step had asked anything: the answers went
+    // to a vault that had already read the seeded defaults, so a fresh vault
+    // opened on the daily in dark and only obeyed its settings after a restart.
+    // A vault created through the join path activates itself (`addVaultAtom`)
+    // and never reaches this act.
+    if (createdRemote !== null) setActiveRemote(createdRemote)
+    await loadVaults()
     onDismiss?.()
   }
 

@@ -109,20 +109,26 @@ describe('getting a vault in the first place', () => {
     expect(store.get(vaultsAtom).map((v) => v.remote)).toEqual(['syv-ai/notes'])
   })
 
-  it('creates a new vault, sets it active, and returns the remote without refreshing the list', async () => {
+  it('creates a new vault and returns the remote, activating nothing', async () => {
     holi = installFakeHoli((op) => {
       if (op.path === 'vaults.create') return snapshot('AGENTS.md', 'README.md')
       if (op.path === 'vaults.list') return [entry('syv-ai/fresh')]
       return undefined
     })
     const store = createStore()
+    store.set(activeRemoteAtom, 'syv-ai/already-open')
 
     const remote = await store.set(createVaultAtom, { name: 'fresh', owner: 'syv-ai' })
 
     expect(remote).toBe('syv-ai/fresh')
-    expect(store.get(activeRemoteAtom)).toBe('syv-ai/fresh')
-    expect(store.get(snapshotAtom).docs.map((d) => d.path)).toEqual(['AGENTS.md', 'README.md'])
-    // The list is deliberately NOT re-read here — the ritual shows a success
+    // **Activation used to happen here** and was moved out. Setting the active
+    // remote is what makes the Shell open and LAND a vault, so doing it at
+    // creation landed the vault before the ritual's settings act had asked
+    // anything: the answers were written to a vault that had already read the
+    // seeded defaults, and only took effect on the next launch. The ritual
+    // activates on "Open vault" instead.
+    expect(store.get(activeRemoteAtom)).toBe('syv-ai/already-open')
+    // The list is deliberately NOT re-read here: the ritual shows a success
     // step before entering, and refreshing would unmount it by flipping the
     // first-run gate. Entry (loadVaults) is a separate, explicit step.
     expect(store.get(vaultsAtom)).toEqual([])

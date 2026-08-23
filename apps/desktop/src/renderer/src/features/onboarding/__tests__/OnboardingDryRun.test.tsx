@@ -12,7 +12,9 @@
  * helper *creates* a `window` for the node environment, which replaces jsdom's
  * and takes `addEventListener` with it.
  */
+import { Provider, createStore } from 'jotai'
 import { render, screen, waitFor, within } from '@/test/render'
+import { activeRemoteAtom } from '../../../state/vaults'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { OnboardingRitual } from '../OnboardingRitual'
@@ -100,6 +102,25 @@ test('reaches the settings act, which no real run can do without a repo', async 
   await waitFor(() => expect(activeAct()).toHaveClass('obrit-settings-act'))
   expect(within(activeAct()).getAllByRole('group').length).toBeGreaterThan(0)
   expect(paths).not.toContain('vaults.create')
+})
+
+test('creating does not activate the vault before the settings act has asked', async () => {
+  // The ordering bug this file now guards. Activation is what makes the Shell
+  // open and LAND a vault, so doing it at the naming act meant the settings
+  // step wrote its answers to a vault that had already read the seeded
+  // defaults: a fresh vault opened on the daily in dark and only obeyed its
+  // own settings after a restart.
+  const store = createStore()
+  render(
+    <Provider store={store}>
+      <OnboardingRitual mode="add-vault" onDismiss={vi.fn()} />
+    </Provider>,
+  )
+  await nameAndCreate()
+  await waitFor(() => expect(paths).toContain('vaults.create'))
+
+  // Still on the vault we came from, whatever that was.
+  expect(store.get(activeRemoteAtom)).toBeNull()
 })
 
 test('a real run still creates — the dry run is the exception, not the rule', async () => {
