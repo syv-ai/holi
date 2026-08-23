@@ -51,6 +51,7 @@ import type { DeviceFlow } from './github/device-flow'
 import type { GitHubSession } from './github/session'
 import type { LoopbackFlow as GoogleFlow } from './google/loopback-flow'
 import type { GoogleSession } from './google/session'
+import type { GoogleAccountsManager } from './google/accounts'
 import { GoogleApi, GoogleApiError, type GoogleErrorCode } from './google/api'
 import {
   listAgenda,
@@ -126,7 +127,7 @@ export interface RouterDeps {
    * The `google.*` procedures refuse with a clear precondition failure rather
    * than pretending to be connected.
    */
-  googleSession?: GoogleSession
+  googleAccounts?: GoogleAccountsManager
   /**
    * Which calendars the user has switched on. Optional for the same reason as
    * `googleSession`; absent means every calendar follows the default rule, and
@@ -1546,16 +1547,19 @@ export function createRouter(deps: RouterDeps) {
      * 403s — so without this the only symptom is a feature that looks broken.
      * It is what lets settings offer the one action that fixes it.
      */
-    status: t.procedure.query(() => ({
-      account: deps.googleSession?.account ?? null,
-      missingScopes: deps.googleSession?.missingScopes() ?? [],
-    })),
+    status: t.procedure.query(async () => {
+      const session = await deps.googleAccounts?.sessionFor(activeRemote()).catch(() => null)
+      return {
+        account: session?.account ?? null,
+        missingScopes: session?.missingScopes() ?? [],
+      }
+    }),
 
     connect: t.procedure.mutation(async () => {
       // A second connect supersedes the first, rather than leaving an orphaned
       // listener holding a port for the life of the app.
       connectFlow?.cancel()
-      connectFlow = await googleSession().connect()
+      connectFlow = await googleAccounts().connect(activeRemote())
       // The browser is opened by the session itself (the system browser, so the
       // consent reuses the user's Google session). Hand the URL back anyway:
       // some desktop environments swallow the launch, and "open it again" is
@@ -1571,7 +1575,7 @@ export function createRouter(deps: RouterDeps) {
       connectFlow = null
       // The tokens stop here. The renderer gets an email address and nothing else.
       return result.kind === 'granted'
-        ? { kind: 'granted' as const, account: googleSession().account }
+        ? { kind: 'granted' as const, account: (await activeGoogleSession()).account }
         : { kind: result.kind }
     }),
 
@@ -1581,8 +1585,16 @@ export function createRouter(deps: RouterDeps) {
       return { ok: true as const }
     }),
 
-    disconnect: t.procedure.mutation(async () => {
-      await googleSession().disconnect()
+    /**
+     * Unlink **this vault**. The account and its tokens survive, and any other
+     * vault using it keeps working.
+     *
+     * Renamed rather than repurposed (D87): the destructive half is
+     * `removeAccount`, and a caller that still says `disconnect` should fail to
+     * typecheck rather than silently revoke someone's grant.
+     */
+    disconnectVault: t.procedure.mutation(async () => {
+      await googleAccounts().unlinkVault(activeRemote())
       return { ok: true as const }
     }),
 
@@ -1955,14 +1967,39 @@ export function createRouter(deps: RouterDeps) {
     return deps.googleData
   }
 
-  function googleSession(): GoogleSession {
-    if (deps.googleSession === undefined) {
+  function googleAccounts(): GoogleAccountsManager {
+    if (deps.googleAccounts === undefined) {
       throw new TRPCError({
         code: 'PRECONDITION_FAILED',
         message: 'the Google connector is not configured',
       })
     }
-    return deps.googleSession
+    return deps.googleAccounts
+  }
+
+  /** The vault whose Google account these procedures speak for (D87). The
+   *  renderer resolves by ACTIVE vault, which is correct here: the UI shows one
+   *  vault at a time. The agent resolves by its ops bearer instead. */
+  function activeRemote(): string {
+    const remote = deps.host.active()?.remote
+    if (remote === undefined) {
+      throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'no vault is open' })
+    }
+    return remote
+  }
+
+  /** The active vault's session, or a precondition failure — the same refusal
+   *  an unconfigured connector gives, because "this vault has no account" is
+   *  the same thing to a caller that needs one. */
+  async function activeGoogleSession(): Promise<GoogleSession> {
+    const session = await googleAccounts().sessionFor(activeRemote())
+    if (session === null) {
+      throw new TRPCError({
+        code: 'PRECONDITION_FAILED',
+        message: 'this vault has no Google account connected',
+      })
+    }
+    return session
   }
 
   /**
@@ -1973,8 +2010,10 @@ export function createRouter(deps: RouterDeps) {
    * single-flights (D67 — main is the sole token authority).
    */
   function googleApi(): GoogleApi {
-    const session = googleSession()
-    return new GoogleApi({ accessToken: () => session.getAccessToken() })
+    // Resolved inside the getter, not here: that keeps every call site
+    // synchronous AND means the object cannot outlive a vault switch any more
+    // than it could outlive a disconnect.
+    return new GoogleApi({ accessToken: () => activeGoogleSession().then((s) => s.getAccessToken()) })
   }
 
   return t.router({

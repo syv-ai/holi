@@ -24,7 +24,7 @@ import { guardNavigation } from './window-guard'
 import { assetAbsPath, mimeFor } from './vault/asset-protocol'
 import { appFileAbsPath, appHeadHtml, appMimeFor, injectAppHead, parseAppUrl } from './apps/app-protocol'
 import { createSession } from './github/electron'
-import { createGoogleSession } from './google/electron'
+import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
 import { openGoogleCache } from './google/cache'
@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   const session = await createSession()
   // The Google connector (D67) — independent of the GitHub session on purpose:
   // it is a data connector, not identity, and neither sign-out affects the other.
-  const googleSession = await createGoogleSession()
+  const googleAccounts = await createGoogleAccountsManager()
   // One file, two readers: the agenda panel (via the router) and the agent (via
   // the ops server below). Plain JSON — it holds calendar ids, not a credential.
   const calendarPrefs = createCalendarPrefs(
@@ -173,7 +173,18 @@ async function main(): Promise<void> {
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
   // Bound to the session's token *getter*, never a token: the getter refreshes
   // and single-flights, so every call goes through the one authority.
-  const googleApiFor = () => new GoogleApi({ accessToken: () => googleSession.getAccessToken() })
+  /** The active vault's Google client (D87). Resolved inside the getter so the
+   *  object cannot outlive a vault switch, and so a vault with no account fails
+   *  at the point of use with a message naming the fix. */
+  const googleApiFor = () =>
+    new GoogleApi({
+      accessToken: async () => {
+        const remote = host.active()?.remote
+        const session = remote === undefined ? null : await googleAccounts.sessionFor(remote)
+        if (session === null) throw new Error('this vault has no Google account connected')
+        return session.getAccessToken()
+      },
+    })
 
   /**
    * The UI's Google cache (D67, amended). In `userData` rather than in a vault:
@@ -191,13 +202,11 @@ async function main(): Promise<void> {
    * connection is just as much "this mail is no longer yours to hold" as a
    * button press, and wiring only the button would leave it behind.
    */
-  const scopeGoogleCache = () => {
-    const sub = googleSession.accountSub
+  const scopeGoogleCache = (sub: string | null) => {
     if (sub === null) googleData.forget()
     else googleData.useAccount(sub)
   }
-  scopeGoogleCache()
-  googleSession.onChange(scopeGoogleCache)
+  googleAccounts.onChange(scopeGoogleCache)
   const registry = new VaultRegistry(join(app.getPath('userData'), 'vaults.json'))
 
   const send = (channel: string, payload: unknown) =>
@@ -294,7 +303,7 @@ async function main(): Promise<void> {
   const router = createRouter({
     registry,
     session,
-    googleSession,
+    googleAccounts,
     calendarPrefs,
     googleData,
     imagePrefs,

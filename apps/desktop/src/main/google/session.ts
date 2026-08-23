@@ -147,10 +147,24 @@ export class GoogleReconnectRequiredError extends Error {
   }
 }
 
+/**
+ * A handle on **one** account's record (D87).
+ *
+ * A session used to hold the whole accounts map and call itself the first entry.
+ * One session per account is what makes per-vault work, and N sessions each
+ * holding a copy of that map would clobber each other on `store.write` — so the
+ * map has exactly one owner (`accounts.ts`) and a session is handed a reference
+ * to its own row. `read` is synchronous because the owner has already loaded it;
+ * a session never touches the disk itself.
+ */
+export interface AccountRef {
+  read(): StoredGoogleAuth | null
+  write(auth: StoredGoogleAuth): Promise<void>
+  remove(): Promise<void>
+}
+
 export interface GoogleSessionDeps {
-  store: GoogleTokenStore
-  listen: Listen
-  openBrowser: (url: string) => Promise<void>
+  account: AccountRef
   clientId?: string
   clientSecret?: string
   fetch?: typeof globalThis.fetch
@@ -159,29 +173,22 @@ export interface GoogleSessionDeps {
 
 export class GoogleSession {
   #deps: GoogleSessionDeps
-  #accounts: GoogleAccounts
   #listeners = new Set<(account: GoogleAccount | null) => void>()
-  /** The in-flight refresh, if any — the single-flight latch. */
+  /**
+   * The in-flight refresh, if any — the single-flight latch.
+   *
+   * **This is why sessions are per account rather than one session taking a
+   * `sub` per call.** One latch shared across accounts would serialise refreshes
+   * that have nothing to do with each other, and let one account's failure be
+   * awaited — and thrown — by another.
+   */
   #refreshing: Promise<string> | null = null
 
-  private constructor(deps: GoogleSessionDeps, accounts: GoogleAccounts) {
+  constructor(deps: GoogleSessionDeps) {
     this.#deps = deps
-    this.#accounts = accounts
   }
 
-  /** Reads the keychain and nothing else. **No network** — a vault opens fully
-   *  offline, and a stale access token is refreshed on first use, not at boot. */
-  static async load(deps: GoogleSessionDeps): Promise<GoogleSession> {
-    return new GoogleSession(deps, await deps.store.read())
-  }
-
-  /**
-   * The connected account, or `null`.
-   *
-   * v1 connects one (D67); the store is a map so a second is additive. Until
-   * then "the account" is "the only entry", and this getter is the one place
-   * that assumption lives.
-   */
+  /** This session's account, or `null` when its record is gone. */
   get account(): GoogleAccount | null {
     const auth = this.#current()
     return auth === null ? null : { email: auth.email }
@@ -234,51 +241,6 @@ export class GoogleSession {
   }
 
   /**
-   * Starts the grant. Returns as soon as the browser is open, so the UI can
-   * say "waiting for your browser" — but the returned `wait()` is **wrapped**:
-   * on a grant, the tokens are persisted before the promise settles, so a
-   * caller that re-renders on resolution cannot beat the write.
-   */
-  async connect(): Promise<LoopbackFlow> {
-    const flow = await startLoopbackFlow({
-      clientId: this.#clientId(),
-      clientSecret: this.#clientSecret(),
-      scopes: GOOGLE_SCOPES,
-      listen: this.#deps.listen,
-      openBrowser: this.#deps.openBrowser,
-      fetch: this.#deps.fetch,
-      now: this.#deps.now,
-    })
-
-    return {
-      authUrl: flow.authUrl,
-      cancel: () => flow.cancel(),
-      wait: async () => {
-        const result = await flow.wait()
-        if (result.kind !== 'granted') return result
-
-        const { tokens } = result
-        // v1 is single-account: a new connect *replaces* rather than accrues,
-        // so reconnecting as someone else does not silently leave the previous
-        // account's grant sitting in the keychain.
-        this.#accounts = {
-          [tokens.sub]: {
-            sub: tokens.sub,
-            email: tokens.email,
-            refreshToken: tokens.refreshToken,
-            accessToken: tokens.accessToken,
-            expiresAt: tokens.expiresAt,
-            scopes: tokens.scopes,
-          },
-        }
-        await this.#deps.store.write(this.#accounts)
-        this.#emit()
-        return result
-      },
-    }
-  }
-
-  /**
    * A valid access token, refreshing if needed. **The only way to get one.**
    *
    * Single-flighted: concurrent callers share one in-flight refresh. Without
@@ -314,9 +276,8 @@ export class GoogleSession {
     if (auth !== null) {
       await post(this.#fetch(), REVOKE_URL, { token: auth.refreshToken }).catch(() => undefined)
     }
-    this.#accounts = {}
     this.#refreshing = null
-    await this.#deps.store.clear()
+    await this.#deps.account.remove()
     this.#emit()
   }
 
@@ -340,8 +301,9 @@ export class GoogleSession {
       // (revoked, expired, password changed) — everything else is transient and
       // must NOT drop a working connection. Google reports it as a 400.
       if (err instanceof Error && 'status' in err && err.status === 400) {
-        this.#accounts = {}
-        await this.#deps.store.clear()
+        // This account's record goes; every other account's is untouched, which
+        // is the whole difference a per-account ref makes here.
+        await this.#deps.account.remove()
         this.#emit()
         throw new GoogleReconnectRequiredError()
       }
@@ -358,13 +320,12 @@ export class GoogleSession {
       refreshToken: typeof body.refresh_token === 'string' ? body.refresh_token : auth.refreshToken,
     }
 
-    this.#accounts = { ...this.#accounts, [updated.sub]: updated }
-    await this.#deps.store.write(this.#accounts)
+    await this.#deps.account.write(updated)
     return updated.accessToken
   }
 
   #current(): StoredGoogleAuth | null {
-    return Object.values(this.#accounts)[0] ?? null
+    return this.#deps.account.read()
   }
 
   #emit(): void {

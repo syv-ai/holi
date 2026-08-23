@@ -11,9 +11,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GOOGLE_SCOPES, GoogleSession } from '../src/main/google/session'
+import { GOOGLE_SCOPES, GoogleSession, type AccountRef } from '../src/main/google/session'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../src/main/google/token-store'
-import type { LoopbackServer } from '../src/main/google/loopback-flow'
 
 /** `safeStorage`'s shape, with encryption that is just a reversible marker. */
 const storage = {
@@ -48,21 +47,50 @@ function auth(overrides: Partial<StoredGoogleAuth> = {}): StoredGoogleAuth {
   }
 }
 
-/** A session over a pre-seeded store. */
-async function connected(seed: StoredGoogleAuth, fetchImpl?: typeof globalThis.fetch) {
-  await store.write({ [seed.sub]: seed })
-  return GoogleSession.load({
-    store,
-    listen: async (): Promise<LoopbackServer> => ({
-      port: 1,
-      waitForRedirect: () => new Promise(() => {}),
-      close: () => {},
-    }),
-    openBrowser: async () => {},
+/**
+ * An `AccountRef` over the real store (D87).
+ *
+ * A session no longer holds the accounts map — N sessions each holding a copy
+ * would clobber each other on `write` — so it is handed a reference to its own
+ * record. This mirrors what `accounts.ts` does in production, deliberately, so
+ * the assertions below can keep reading the store to check what was persisted.
+ */
+function refFor(sub: string, seeded: StoredGoogleAuth | null = null): AccountRef {
+  let current: StoredGoogleAuth | null = seeded
+  return {
+    read: () => current,
+    async write(auth) {
+      current = auth
+      const all = await store.read()
+      await store.write({ ...all, [auth.sub]: auth })
+    },
+    async remove() {
+      current = null
+      const all = await store.read()
+      delete all[sub]
+      await store.write(all)
+    },
+  }
+}
+
+function sessionOver(account: AccountRef, fetchImpl?: typeof globalThis.fetch): GoogleSession {
+  return new GoogleSession({
+    account,
     clientId: 'client-1',
     fetch: fetchImpl,
     now: () => NOW,
   })
+}
+
+/** A session over a pre-seeded store. */
+async function connected(seed: StoredGoogleAuth, fetchImpl?: typeof globalThis.fetch) {
+  await store.write({ [seed.sub]: seed })
+  return sessionOver(refFor(seed.sub, seed), fetchImpl)
+}
+
+/** A session for an account that is not there. */
+function disconnected(): GoogleSession {
+  return sessionOver(refFor('sub-1'))
 }
 
 /** A token endpoint that counts its calls and answers with `body`. */
@@ -88,12 +116,14 @@ describe('loading', () => {
     expect(JSON.stringify(session.account)).not.toContain('at-1')
   })
 
+  it('reports null on both getters when its account is not there', () => {
+    const session = disconnected()
+    expect(session.account).toBeNull()
+    expect(session.accountSub).toBeNull()
+  })
+
   it('is null when nothing is stored', async () => {
-    const session = await GoogleSession.load({
-      store,
-      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close: () => {} }),
-      openBrowser: async () => {},
-    })
+    const session = disconnected()
     expect(session.account).toBeNull()
   })
 })
@@ -217,11 +247,7 @@ describe('missingScopes', () => {
   })
 
   it('is empty with no account — "not connected" is a different state the UI already renders', async () => {
-    const session = await GoogleSession.load({
-      store,
-      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close: () => {} }),
-      openBrowser: async () => {},
-    })
+    const session = disconnected()
 
     expect(session.missingScopes()).toEqual([])
   })
@@ -286,11 +312,7 @@ describe('getAccessToken', () => {
   })
 
   it('throws reconnect-required when nothing is connected', async () => {
-    const session = await GoogleSession.load({
-      store,
-      listen: async () => ({ port: 1, waitForRedirect: () => new Promise(() => {}), close: () => {} }),
-      openBrowser: async () => {},
-    })
+    const session = disconnected()
     await expect(session.getAccessToken()).rejects.toThrow(/connect Google again/)
   })
 })

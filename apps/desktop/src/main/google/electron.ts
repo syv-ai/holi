@@ -8,21 +8,26 @@
  */
 import { app, safeStorage, shell } from 'electron'
 import { join } from 'node:path'
-import { GoogleSession } from './session'
+import { createGoogleAccounts, type GoogleAccountsManager } from './accounts'
 import { GoogleTokenStore } from './token-store'
+import { createVaultAccounts } from './vault-accounts'
 import { listenLoopback } from './loopback-server'
 
 /**
- * Build the Google session against the real OS keychain and a real loopback
- * listener.
+ * Build the Google accounts manager against the real OS keychain and a real
+ * loopback listener.
  *
  * Call this **after `app.whenReady()`** — `safeStorage.isEncryptionAvailable()`
  * is not reliable before it, and a connect that fails on the first launch of the
  * day and works on the second is a miserable bug to go looking for.
  */
-export function createGoogleSession(userDataDir = app.getPath('userData')): Promise<GoogleSession> {
-  return GoogleSession.load({
+export function createGoogleAccountsManager(
+  userDataDir = app.getPath('userData'),
+): Promise<GoogleAccountsManager> {
+  return createGoogleAccounts({
     store: new GoogleTokenStore(join(userDataDir, 'google-auth.enc'), safeStorage),
+    // D87: which vault uses which account. Plain JSON beside the tokens.
+    vaults: createVaultAccounts(join(userDataDir, 'google-vault-accounts.json')),
     listen: listenLoopback,
     // The **system** browser, so the consent reuses the user's existing Google
     // session and no credential ever enters the app's web context.

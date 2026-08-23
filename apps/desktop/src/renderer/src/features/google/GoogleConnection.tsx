@@ -75,7 +75,7 @@ export function GoogleConnection() {
   }
 
   const disconnect = async () => {
-    await trpc.google.disconnect.mutate().catch(() => undefined)
+    await trpc.google.disconnectVault.mutate().catch(() => undefined)
     setAccount(null)
     void refreshGoogle()
     setPhase({ kind: 'idle' })
