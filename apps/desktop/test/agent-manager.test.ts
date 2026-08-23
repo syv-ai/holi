@@ -335,7 +335,7 @@ describe('AgentManager', () => {
     const r = await rig({
       resolveConfigDir: (v) => {
         asked.push(v)
-        return Promise.resolve({ dir: '/data/agent-config/owner-repo-abc', signedIn: true })
+        return Promise.resolve({ dir: '/data/agent-config/owner-repo-abc', firstSpawn: false })
       },
     })
     await r.manager.start({ vaultId: VAULT })
@@ -349,7 +349,7 @@ describe('AgentManager', () => {
     // vault opened afterwards ran on the first one's config.
     const r = await rig({
       resolveConfigDir: ({ remote }) =>
-        Promise.resolve({ dir: `/data/agent-config/${remote.replace('/', '-')}`, signedIn: true }),
+        Promise.resolve({ dir: `/data/agent-config/${remote.replace('/', '-')}`, firstSpawn: false }),
     })
     await r.manager.start({ vaultId: VAULT })
     r.host.setActive('owner/second')
@@ -364,7 +364,7 @@ describe('AgentManager', () => {
     // `Not logged in` and the user was left to infer `/login`. Survivable once
     // per install, not once per vault.
     const r = await rig({
-      resolveConfigDir: () => Promise.resolve({ dir: '/data/fresh', signedIn: false }),
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/fresh', firstSpawn: true }),
     })
     await r.manager.start({ vaultId: VAULT })
 
@@ -372,9 +372,9 @@ describe('AgentManager', () => {
     expect(replayed).toContain('/login')
   })
 
-  it('says nothing when the vault is already signed in', async () => {
+  it('says nothing on a vault Holi has spawned in before', async () => {
     const r = await rig({
-      resolveConfigDir: () => Promise.resolve({ dir: '/data/known', signedIn: true }),
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/known', firstSpawn: false }),
     })
     await r.manager.start({ vaultId: VAULT })
     expect(await r.manager.attach()).not.toContain('/login')
@@ -397,7 +397,7 @@ describe('AgentManager', () => {
    */
   it('reports no login state at all — the terminal below says it', async () => {
     const r = await rig({
-      resolveConfigDir: () => Promise.resolve({ dir: '/data/agent-config', signedIn: false }),
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/agent-config', firstSpawn: true }),
     })
     await r.manager.start({ vaultId: VAULT })
     expect(r.manager.status()).not.toHaveProperty('authenticated')

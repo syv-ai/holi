@@ -4,7 +4,7 @@
 
 **Goal:** Give every vault its own Claude Code config directory, its own login, and its own agent theme, and say so in the panel when the login is missing.
 
-**Architecture:** `ensureAgentConfigDir` stops being a per-launch call returning one shared path and becomes a per-spawn resolution keyed on the active vault's remote. A new `resolveVaultAgentConfig` sits between the manager and the disk: it slugs the remote, provisions `userData/agent-config/<slug>/`, stamps Claude Code's `theme` from the same `colorScheme` setting D85 resolves for the app, and reads `<dir>/.claude.json` for `oauthAccount` so the manager can print a sign-in instruction into the terminal record before the PTY writes a byte. A one-shot migration renames the existing shared directory into the most recently opened vault's slot so the vault someone actually uses keeps its login and its transcripts.
+**Architecture:** `ensureAgentConfigDir` stops being a per-launch call returning one shared path and becomes a per-spawn resolution keyed on the active vault's remote. A new `resolveVaultAgentConfig` sits between the manager and the disk: it slugs the remote, provisions `userData/agent-config/<slug>/`, stamps Claude Code's `theme` from the same `colorScheme` setting D85 resolves for the app, and reads `<dir>/.claude.json` for `oauthAccount` so the manager can print a sign-in instruction into the terminal record before the PTY writes a byte. A one-shot migration renames the existing shared directory into the slot of the vault that actually ran the agent in it, so its transcripts and plugin set survive. (It cannot carry the login — that is keyed to the directory path.)
 
 **Tech Stack:** TypeScript, Electron main process, node:fs/promises, Vitest (the `node` project — `apps/desktop/test/*.test.ts`).
 
@@ -14,7 +14,7 @@
 
 - **The slug is `<sanitized remote>-<sha1(remote) first 8 hex>`.** The spec suggests matching Claude Code's `projects/` convention (every non-alphanumeric → `-`). That alone is not injective: `syv/better-holi` and `syv-better/holi` both sanitize to `syv-better-holi`, and two vaults silently sharing a config directory is exactly the plugin leak D86 exists to kill. The hash suffix costs eight characters of legibility and makes the collision impossible by construction.
 - **The login notice goes into the terminal scrollback, not the panel header.** D72 deliberately deleted a header login notice because `/login` fires no event that would push status, so the header's copy went stale the moment it mattered. Scrollback is a log, not state: a line printed at spawn is still true about that spawn. It is written to the mirror inside `start()`, where `attached` is always false (teardown clears it), so the renderer picks it up from `attach()`'s replay with no second send path.
-- **A malformed `.claude.json` reads as logged in.** A missing file is the fresh-directory case and must nag; unparseable JSON is vanishingly rare and nagging on uncertainty is worse than staying quiet.
+- ~~**A malformed `.claude.json` reads as logged in.**~~ **Overturned by verification in the running app (2026-08-23).** Reading `oauthAccount` at all is wrong: the key outlives the credential, because the keychain entry is `Claude Code-credentials-<hash of the config dir path>` and the migration renames the directory. It reported "signed in" for the migrated vault, the one case that most needed the notice. Replaced by `takeFirstSpawn`, a `.holi-spawned` marker Holi writes into the config directory — a proxy rather than a guess, since credentials are keyed to the directory.
 - **The theme is resolved in main, not fetched from the renderer.** `readVaultSettings(root).colorScheme` plus `nativeTheme.shouldUseDarkColors` through `resolveColorMode` is the same pure function `activeModeAtom` uses, so no IPC round trip and no new renderer→main channel.
 - **The mid-session theme note is renderer-side and reactive.** `.holi/settings.local.json` is deliberately outside `AGENT_CONFIG_FILES` (PRD: `*.local.*` never syncs, so no pull can change it), and widening that set to catch a local theme flip would contradict its stated reason. The panel compares the mode now against the mode at spawn instead.
 
@@ -504,3 +504,21 @@ git commit -m "docs: D86 is built, and the agent's config is a vault's own"
 ## Self-review notes
 
 Spec coverage checked section by section: the decision (Task 2), per-spawn resolution (Tasks 4, 5, 7), the stable filesystem-safe name (Task 1), `settingsWithRequired` keeping merge-not-overwrite while theme writes every spawn (Task 2), §6's `oauthAccount` read with no PTY scraping (Tasks 3, 5), the panel wording (Task 5), migration by whole-directory rename (Tasks 6, 7), the theme's known limit (Task 8), docs (Task 9). The lazy-login requirement is met by construction — nothing in onboarding is touched, and the notice fires on first spawn in a vault.
+
+---
+
+## Verified in the running app, 2026-08-23
+
+Driven over CDP against the real install (`~/Library/Application Support/@holi/desktop`), backed up first.
+
+**Held up:**
+- Migration logged `[agent] shared config directory is now nthomsencph/privat's` and left `.claude.json`, `projects/-Users-...-privat/` and the 444-file `plugins/` tree intact.
+- Two silos, `nthomsencph-privat-a63183a5` and `nthomsencph-a-new-vault-test-1bc7a9e5`, the second created on spawn.
+- The theme is written **and honoured**: the app was in light mode, the fresh vault's `settings.json` got `"theme": "light"`, and Claude Code's first-run picker opened with `3. Light mode ✓` pre-selected. On privat the pre-existing `"auto"` was rewritten to `"light"` while the user's own `workflowKeywordTriggerEnabled` survived the merge.
+- The notice printed in amber at the head of the scrollback.
+
+**Did not hold up, and was fixed:**
+- **The migration does not carry the login.** The keychain holds `Claude Code-credentials-<hash>` entries keyed to the config directory path, so the rename orphans the credential. The plan and the docs claimed otherwise; corrected rather than worked around, since transcripts and plugins are still worth the rename.
+- **`isAgentSignedIn` was a false positive where it mattered.** `oauthAccount` stays in `.claude.json` after the credential is orphaned, so the migrated vault was reported signed in and got no notice — while Claude Code printed a bare `Not logged in` at it. Replaced by the `.holi-spawned` first-spawn marker.
+
+**Noted, out of scope:** a session launched from a Claude Code shell inherits `CLAUDE_CODE_CHILD_SESSION` and warns that transcript saving is off. `buildAgentEnv` could strip it; a Finder launch never sets it.

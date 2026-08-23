@@ -31,8 +31,13 @@ import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { TerminalMirror } from './terminal-mirror'
 
 /**
- * Printed into the terminal record when a vault's config directory has never
- * been signed into (§6 of the isolation spec, unbuilt until D86).
+ * Printed into the terminal record the first time Holi spawns an agent in a
+ * vault's config directory (§6 of the isolation spec, unbuilt until D86).
+ *
+ * First-spawn rather than a read of Claude Code's sign-in state, because that
+ * state cannot be read honestly — see `takeFirstSpawn`. A directory Holi has
+ * never spawned in cannot hold a credential, since credentials are keyed to the
+ * directory, so the proxy is exact where it matters.
  *
  * **In the scrollback, not the panel header**, and that is D72's own argument
  * rather than a walk-back of it: a header notice is duplicate state, and `/login`
@@ -289,7 +294,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // sits above Claude's own output rather than under an Ink redraw. `teardown`
     // ran at the head of this call and cleared `attached`, so nothing is listening
     // yet; the renderer takes this line from `attach()`'s replay, once.
-    if (config && !config.signedIn) terminal.write(SIGN_IN_NOTICE)
+    if (config?.firstSpawn) terminal.write(SIGN_IN_NOTICE)
     const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {

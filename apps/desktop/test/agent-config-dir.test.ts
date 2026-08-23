@@ -6,7 +6,7 @@ import {
   AGENT_CONFIG_DIR_NAME,
   agentConfigSlug,
   ensureAgentConfigDir,
-  isAgentSignedIn,
+  takeFirstSpawn,
   migrateSharedAgentConfig,
   resolveVaultAgentConfig,
 } from '../src/main/agent/agent-config-dir'
@@ -170,37 +170,45 @@ describe('agentConfigSlug', () => {
   })
 })
 
-describe('isAgentSignedIn', () => {
+describe('takeFirstSpawn', () => {
   // §6 of the 2026-08-14 spec, never built: without it an unauthenticated agent
-  // prints `Not logged in` and the user is left to infer that `/login` is the
-  // answer. Survivable once per install; not once per vault.
-  it('says no for a directory Claude Code has never written to', async () => {
-    // The fresh-vault case, and the only one that has to nag.
+  // prints a bare `Not logged in` and the user is left to infer that `/login` is
+  // the answer. Survivable once per install; not once per vault.
+  //
+  // The first draft read `oauthAccount` out of Claude Code's `.claude.json`, and
+  // a real install proved that wrong: the key OUTLIVES the credential. Renaming a
+  // config directory re-keys the macOS keychain entry (they are suffixed by a
+  // hash of the path), so a migrated directory reports an account it can no
+  // longer use — a false "signed in" precisely where the notice was needed most.
+  //
+  // Holi's own marker instead, and it is a proxy rather than a guess: credentials
+  // are keyed to the config directory, so a directory Holi has never spawned in
+  // is a directory that cannot be signed in.
+  it('is true the first time, and never again', async () => {
     const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
-    expect(await isAgentSignedIn(configDir)).toBe(false)
+    expect(await takeFirstSpawn(configDir)).toBe(true)
+    expect(await takeFirstSpawn(configDir)).toBe(false)
+    expect(await takeFirstSpawn(configDir)).toBe(false)
   })
 
-  it('says yes when .claude.json carries an oauthAccount', async () => {
-    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
-    await writeFile(
-      join(configDir, '.claude.json'),
-      JSON.stringify({ oauthAccount: { emailAddress: 'ada@syv.ai' }, projects: {} }),
-    )
-    expect(await isAgentSignedIn(configDir)).toBe(true)
+  it('is per directory, so every vault is greeted once', async () => {
+    const userData = await tempDir()
+    const mine = await ensureAgentConfigDir(userData, 'owner/repo')
+    const theirs = await ensureAgentConfigDir(userData, 'owner/other')
+
+    expect(await takeFirstSpawn(mine)).toBe(true)
+    expect(await takeFirstSpawn(theirs)).toBe(true)
+    expect(await takeFirstSpawn(mine)).toBe(false)
   })
 
-  it('says no when .claude.json exists but has no oauthAccount', async () => {
+  it('does not count as something Claude Code owns', async () => {
+    // The marker is Holi's, so it is named as Holi's and sits beside the settings
+    // file rather than inside anything the CLI writes.
     const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
-    await writeFile(join(configDir, '.claude.json'), JSON.stringify({ projects: {} }))
-    expect(await isAgentSignedIn(configDir)).toBe(false)
-  })
-
-  it('does not nag on a file it cannot read', async () => {
-    // Never scrape the PTY for this, and never guess either: an unparseable file
-    // is not evidence of anything, and a wrong nag is worse than a missing one.
-    const configDir = await ensureAgentConfigDir(await tempDir(), 'owner/repo')
-    await writeFile(join(configDir, '.claude.json'), '{ not json')
-    expect(await isAgentSignedIn(configDir)).toBe(true)
+    await takeFirstSpawn(configDir)
+    const entries = await readdir(configDir)
+    expect(entries).toContain('settings.json')
+    expect(entries.filter((e) => e !== 'settings.json')).toEqual(['.holi-spawned'])
   })
 })
 
@@ -262,15 +270,18 @@ describe('resolveVaultAgentConfig', () => {
     expect((await settings(dir)).theme).toBe('light') // the default is `system`
   })
 
-  it('reports a fresh directory as needing a sign-in', async () => {
-    const res = await resolveVaultAgentConfig({
+  it('reports a fresh directory as a first spawn, once', async () => {
+    const args = {
       userDataDir: await tempDir(),
       remote: 'owner/repo',
       root: await vault('dark'),
       systemPrefersDark: true,
-    })
-    expect(res.dir).toContain(agentConfigSlug('owner/repo'))
-    expect(res.signedIn).toBe(false)
+    }
+    const first = await resolveVaultAgentConfig(args)
+    expect(first.dir).toContain(agentConfigSlug('owner/repo'))
+    expect(first.firstSpawn).toBe(true)
+
+    expect((await resolveVaultAgentConfig(args)).firstSpawn).toBe(false)
   })
 })
 

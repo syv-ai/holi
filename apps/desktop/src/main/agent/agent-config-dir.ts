@@ -37,6 +37,8 @@ export const AGENT_CONFIG_DIR_NAME = 'agent-config'
 const SETTINGS = 'settings.json'
 /** Claude Code's own state file. Holi reads it and never writes it. */
 const CLAUDE_JSON = '.claude.json'
+/** Holi's, and named as Holi's: this directory has had an agent in it. */
+const SPAWNED_MARKER = '.holi-spawned'
 
 /**
  * The directory name a vault's config lives under, from its remote (D86).
@@ -147,42 +149,46 @@ export async function ensureAgentConfigDir(
 }
 
 /**
- * Is this config directory signed in?
+ * Has Holi ever spawned an agent in this config directory? Consumes the answer:
+ * true once, false forever after.
  *
- * `<configDir>/.claude.json` is where Claude Code records the account, under an
- * `oauthAccount` key. Reading it is the whole check — **never scrape the PTY for
- * this** (standing decision, and unnecessary: the answer is a key in a JSON file).
+ * This is §6 — telling the user a vault needs its own `/login` — and it is
+ * deliberately **Holi's own marker rather than a reading of Claude Code's
+ * state**. The first version read `oauthAccount` out of `<dir>/.claude.json`, and
+ * a real install proved that wrong: the key **outlives the credential**. macOS
+ * keychain entries are suffixed by a hash of the config directory path
+ * (`Claude Code-credentials-<hash>`), so the migration below — which renames the
+ * directory — orphans the credential while leaving `oauthAccount` sitting in the
+ * JSON. The check reported "signed in" for the one vault that most needed to be
+ * told otherwise.
  *
- * A **missing** file is the fresh-directory case, which is exactly the one that
- * has to be surfaced. An **unparseable** one reads as signed in: it is not
- * evidence of anything, and telling a logged-in user to `/login` is worse than
- * staying quiet.
+ * The marker is a **proxy, not a heuristic**: credentials are keyed to the config
+ * directory, so a directory Holi has never spawned in cannot be signed in. It is
+ * also the honest scope of the message, which is not really "you are logged out"
+ * but "this vault is new, and that is why you are being asked again".
+ *
+ * Never scrapes the PTY for any of this. Standing decision, and still unnecessary.
  */
-export async function isAgentSignedIn(configDir: string): Promise<boolean> {
-  const raw = await readFile(join(configDir, CLAUDE_JSON), 'utf8').catch(() => null)
-  if (raw === null) return false
-
-  try {
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return true
-    return (parsed as Record<string, unknown>).oauthAccount !== undefined
-  } catch {
-    return true
-  }
+export async function takeFirstSpawn(configDir: string): Promise<boolean> {
+  const marker = join(configDir, SPAWNED_MARKER)
+  if (await stat(marker).then(() => true, () => false)) return false
+  await writeFile(marker, '', 'utf8')
+  return true
 }
 
 /** Everything a spawn needs to know about the vault's config directory. */
 export interface AgentConfigResolution {
   /** Absolute path, handed to the child as `$CLAUDE_CONFIG_DIR`. */
   dir: string
-  /** False → the panel owes the user the `/login` instruction before Claude
-   *  prints its own bare `Not logged in`. */
-  signedIn: boolean
+  /** True → Holi has never spawned here, so this vault owes the user a `/login`
+   *  and an explanation of why it is being asked again. Consumed on read. */
+  firstSpawn: boolean
 }
 
 /**
  * Everything the spawn path needs, in one call: provision the vault's config
- * directory, stamp the theme it should open in, and say whether it is signed in.
+ * directory, stamp the theme it should open in, and say whether this is the first
+ * time Holi has spawned there.
  *
  * The mode comes from the same pair D85 uses for `data-theme` — the vault's
  * `colorScheme` setting and what the OS currently reports, through the same pure
@@ -203,7 +209,7 @@ export async function resolveVaultAgentConfig(args: {
   const { colorScheme } = await readVaultSettings(args.root)
   const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
   const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, { theme })
-  return { dir, signedIn: await isAgentSignedIn(dir) }
+  return { dir, firstSpawn: await takeFirstSpawn(dir) }
 }
 
 /** Staging for the migration below. A directory cannot be renamed into itself. */
@@ -250,9 +256,15 @@ function usedByVault(
 /**
  * One-shot: the shared directory D72 left behind becomes a vault's own.
  *
- * `userData/agent-config/` is already logged in and already holds one vault's
- * transcripts. Leaving it stranded would cost the vault someone actually uses
- * both, on upgrade, for nothing. So it is **renamed** into that vault's slot.
+ * `userData/agent-config/` already holds one vault's transcripts and its plugin
+ * set. Leaving it stranded would cost the vault someone actually uses both, on
+ * upgrade, for nothing. So it is **renamed** into that vault's slot.
+ *
+ * **It does not carry the login, and cannot.** Measured on a real install: the
+ * macOS keychain entry is `Claude Code-credentials-<hash of the config dir path>`,
+ * so renaming the directory orphans the credential and that vault signs in again
+ * like any other. Transcripts and plugins are files and do survive, which is the
+ * whole of what this buys.
  *
  * The 2026-08-14 spec refused to *copy* transcripts between directories, on the
  * grounds that rewriting another program's state store is a bad bet. This is a
