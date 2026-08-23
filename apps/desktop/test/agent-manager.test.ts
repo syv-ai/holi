@@ -67,6 +67,8 @@ async function rig(
     turnSafetyMs?: number
     /** Per spawn now (D86). Returns the vault's own directory + sign-in state. */
     resolveConfigDir?: AgentManagerDeps['resolveConfigDir']
+    mintGoogleToken?: AgentManagerDeps['mintGoogleToken']
+    revokeGoogleToken?: AgentManagerDeps['revokeGoogleToken']
   } = {},
 ): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
@@ -118,6 +120,8 @@ async function rig(
     turnSafetyMs: opts.turnSafetyMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
     resolveConfigDir: opts.resolveConfigDir,
+    mintGoogleToken: opts.mintGoogleToken,
+    revokeGoogleToken: opts.revokeGoogleToken,
     warmTypst: () => {
       warmed += 1
     },
@@ -470,5 +474,73 @@ describe('AgentManager', () => {
     await writeFile(join(r.workRoot, 'CLAUDE.md'), 'original\n', 'utf8')
     await r.manager.notifyVaultChanged()
     expect(r.manager.status().configStale).toBe(true)
+  })
+})
+
+describe("the agent's Google bearer", () => {
+  /** A minter that records what it was asked for and what was handed back. */
+  function bearers() {
+    const minted: Array<{ remote: string; token: string }> = []
+    const revoked: string[] = []
+    let n = 0
+    return {
+      minted,
+      revoked,
+      mintGoogleToken: (remote: string) => {
+        const token = `tok-${++n}`
+        minted.push({ remote, token })
+        return token
+      },
+      revokeGoogleToken: (token: string) => revoked.push(token),
+    }
+  }
+
+  it('is minted for the vault the session spawned in', async () => {
+    const b = bearers()
+    const r = await rig(b)
+    await r.manager.start({ vaultId: VAULT })
+
+    expect(b.minted).toEqual([{ remote: VAULT, token: 'tok-1' }])
+    expect(r.spawns[0]!.opts.env.HOLI_GOOGLE_TOKEN).toBe('tok-1')
+  })
+
+  it('names the SECOND vault on a second spawn', async () => {
+    // Per session, not per app run: an agent session outlives a vault switch, so
+    // a bearer that meant "whatever is active" would read another vault's mail.
+    const b = bearers()
+    const r = await rig(b)
+    await r.manager.start({ vaultId: VAULT })
+    r.host.setActive('owner/second')
+    await r.manager.start({ vaultId: 'owner/second' })
+
+    expect(b.minted.map((m) => m.remote)).toEqual([VAULT, 'owner/second'])
+    expect(r.spawns[1]!.opts.env.HOLI_GOOGLE_TOKEN).toBe('tok-2')
+  })
+
+  it('revokes the bearer when the session is killed', async () => {
+    const b = bearers()
+    const r = await rig(b)
+    await r.manager.start({ vaultId: VAULT })
+    await r.manager.kill()
+
+    expect(b.revoked).toEqual(['tok-1'])
+  })
+
+  it('revokes the old bearer before a restart mints the new one', async () => {
+    const b = bearers()
+    const r = await rig(b)
+    await r.manager.start({ vaultId: VAULT })
+    await r.manager.start({ vaultId: VAULT })
+
+    expect(b.revoked).toEqual(['tok-1'])
+    expect(r.spawns[1]!.opts.env.HOLI_GOOGLE_TOKEN).toBe('tok-2')
+  })
+
+  it('spawns without one when no minter is supplied', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+
+    expect(r.spawns[0]!.opts.env.HOLI_GOOGLE_TOKEN).toBeUndefined()
+    expect(r.manager.status().running).toBe(true)
   })
 })

@@ -16,8 +16,10 @@ afterEach(async () => {
   stop = null
 })
 
-async function serve(ops: Partial<GoogleOps> = {}) {
-  const server = createGoogleOpsServer({
+const VAULT = 'nthomsencph/privat'
+
+async function serve(ops: Partial<GoogleOps> = {}, opsFor?: (remote: string) => GoogleOps) {
+  const defaults = (): GoogleOps => ({
     agenda: vi.fn(async () => [{ id: 'e1', title: 'Q2 review' }]),
     threads: vi.fn(async () => [{ id: 't1', subject: 'Budget' }]),
     thread: vi.fn(async () => ({ id: 't1', messages: [] })),
@@ -33,10 +35,12 @@ async function serve(ops: Partial<GoogleOps> = {}) {
     unschedule: vi.fn(async () => {}),
     ...ops,
   })
+  const server = createGoogleOpsServer(opsFor ?? (() => defaults()))
   await server.start()
   stop = server.stop
   const base = `http://127.0.0.1:${server.port()}`
-  return { server, base, url: (p: string) => `${base}${p}?t=${server.token()}` }
+  const token = server.mintToken(VAULT)
+  return { server, base, token, url: (p: string) => `${base}${p}?t=${token}` }
 }
 
 describe('auth', () => {
@@ -50,10 +54,69 @@ describe('auth', () => {
     expect((await fetch(`${base}/agenda?t=nope`)).status).toBe(403)
   })
 
-  it('binds a fresh token per instance', async () => {
-    const a = createGoogleOpsServer({} as GoogleOps)
-    const b = createGoogleOpsServer({} as GoogleOps)
-    expect(a.token()).not.toBe(b.token())
+  it('binds a fresh token per session, not per app run', async () => {
+    // Per session (D87), so a dead session's bearer stops working — and so two
+    // agents in two vaults cannot be confused for one another.
+    const { server } = await serve()
+    expect(server.mintToken('a/one')).not.toBe(server.mintToken('a/two'))
+    expect(server.mintToken('a/one')).not.toBe(server.mintToken('a/one'))
+  })
+
+  it('sends each token to ITS OWN vault, whatever else is open', async () => {
+    // The hazard this exists for: an agent session outlives a vault switch, so
+    // resolving by "the active vault" would have it read another vault's mail.
+    const asked: string[] = []
+    const { server, base } = await serve({}, (remote) => {
+      asked.push(remote)
+      return { threads: async () => [] } as unknown as GoogleOps
+    })
+    const mine = server.mintToken('me/personal')
+    const theirs = server.mintToken('syv/work')
+
+    await fetch(`${base}/threads?t=${mine}`)
+    await fetch(`${base}/threads?t=${theirs}`)
+
+    expect(asked).toEqual(['me/personal', 'syv/work'])
+  })
+
+  it('refuses a revoked token', async () => {
+    const { server, base } = await serve()
+    const token = server.mintToken(VAULT)
+    server.revoke(token)
+    expect((await fetch(`${base}/threads?t=${token}`)).status).toBe(403)
+  })
+
+  it('never resolves a vault for an unknown token', async () => {
+    const asked: string[] = []
+    const { base } = await serve({}, (remote) => {
+      asked.push(remote)
+      return {} as GoogleOps
+    })
+    await fetch(`${base}/threads?t=nope`)
+    expect(asked).toEqual([])
+  })
+
+  it('checks the token BEFORE reading the body', async () => {
+    // Standing property: an unauthenticated caller never gets to hand this
+    // process JSON to parse.
+    const { base } = await serve()
+    const res = await fetch(`${base}/send?t=nope`, {
+      method: 'POST',
+      body: '{ not json at all',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it('says what to do when the vault has no account, rather than refusing access', async () => {
+    // 403 means "you may not ask". This is "there is nothing to ask yet", and
+    // the agent reads the text.
+    const { base, token } = await serve({}, () => {
+      throw new Error('this vault has no Google account connected')
+    })
+    const res = await fetch(`${base}/threads?t=${token}`)
+    expect(res.status).not.toBe(403)
+    expect((await res.json()).error).toMatch(/no Google account/i)
   })
 })
 
@@ -122,15 +185,15 @@ describe('failures', () => {
 
 describe('it serves results, never credentials', () => {
   it('has no route that returns a token', async () => {
-    const { url, server } = await serve()
+    const { url, token } = await serve()
 
     const bodies = await Promise.all(
       ['/agenda', '/threads', '/thread'].map((p) => fetch(url(p)).then((r) => r.text())),
     )
 
-    // The instance token authenticates the caller; it must never be echoed, and
+    // The session token authenticates the caller; it must never be echoed, and
     // no Google credential exists on this side of the wall at all.
-    for (const body of bodies) expect(body).not.toContain(server.token())
+    for (const body of bodies) expect(body).not.toContain(token)
     for (const body of bodies) expect(body).not.toMatch(/access_token|refresh_token|Bearer/)
   })
 })

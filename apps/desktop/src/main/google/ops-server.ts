@@ -175,11 +175,27 @@ export interface GoogleOpsServer {
   start(): Promise<void>
   stop(): Promise<void>
   port(): number | null
-  token(): string
+  /**
+   * A bearer bound to one vault, for one agent session (D87).
+   *
+   * Per session rather than per app run, for two reasons. An agent session
+   * **outlives a vault switch** — it keeps running against its original vault's
+   * cwd while Holi shows another — so resolving by "whatever is active" would
+   * have a backgrounded agent read a different vault's mail, which is D87's own
+   * complaint arriving late and harder to see. And a token that dies with its
+   * session stops being valid for as long as the app is open.
+   */
+  mintToken(remote: string): string
+  revoke(token: string): void
 }
 
-export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
-  const token = randomBytes(16).toString('hex')
+/**
+ * @param opsFor the operations for one vault. Called per request, from the
+ *  vault named by the request's bearer — never from the active vault.
+ */
+export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): GoogleOpsServer {
+  /** token → the vault it speaks for. */
+  const tokens = new Map<string, string>()
   let server: Server | null = null
   let boundPort: number | null = null
 
@@ -189,7 +205,8 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
 
       // The port is ephemeral, but that is not a boundary — this closes the
       // "some other local process reads your mail" gap.
-      if (url.searchParams.get('t') !== token) {
+      const remote = tokens.get(url.searchParams.get('t') ?? '')
+      if (remote === undefined) {
         res.writeHead(403).end()
         return
       }
@@ -197,8 +214,11 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
       try {
         // The body is read only after the token has been checked, so an
         // unauthenticated caller never gets to hand this process JSON to parse.
+        const ops = opsFor(remote)
         const result =
-          req.method === 'POST' ? await routeWrite(url, await readBody(req)) : await route(url)
+          req.method === 'POST'
+            ? await routeWrite(ops, url, await readBody(req))
+            : await route(ops, url)
         if (result === undefined) {
           res.writeHead(404, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: 'unknown operation' }))
@@ -221,7 +241,7 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
     })()
   }
 
-  async function route(url: URL): Promise<unknown> {
+  async function route(ops: GoogleOps, url: URL): Promise<unknown> {
     const q = url.searchParams
     switch (url.pathname) {
       case '/agenda': {
@@ -249,7 +269,7 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
    * gate depends on: `send` is a route, not a flag on a general-purpose verb,
    * so a hook matching on the command that reaches it has something to match.
    */
-  async function routeWrite(url: URL, body: Record<string, unknown>): Promise<unknown> {
+  async function routeWrite(ops: GoogleOps, url: URL, body: Record<string, unknown>): Promise<unknown> {
     const id = () => {
       const value = body.id
       if (typeof value !== 'string' || value === '') throw new BadRequest('this operation needs an id')
@@ -365,6 +385,13 @@ export function createGoogleOpsServer(ops: GoogleOps): GoogleOpsServer {
         boundPort = null
       }),
     port: () => boundPort,
-    token: () => token,
+    mintToken(remote) {
+      const token = randomBytes(16).toString('hex')
+      tokens.set(token, remote)
+      return token
+    },
+    revoke(token) {
+      tokens.delete(token) // idempotent: a restart revokes before it mints
+    },
   }
 }

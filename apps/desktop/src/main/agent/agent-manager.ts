@@ -89,7 +89,18 @@ export interface AgentManagerDeps {
    *  path (D67). Read per-spawn like the hook server, since the channel
    *  outlives any one session. The child gets a door, never a token. */
   googlePort?: () => number | null
-  googleToken?: () => string | null
+  /**
+   * Mint the Google bearer for **this vault, this session** (D87), and revoke it
+   * on teardown.
+   *
+   * Not a getter, deliberately: a getter answers for whatever vault is active
+   * *now*, and an agent session outlives a vault switch — it keeps running
+   * against its original vault's cwd while Holi shows another. A bearer that
+   * drifted with the screen would have a backgrounded agent read and write
+   * another vault's mail, which is D87's own complaint arriving late.
+   */
+  mintGoogleToken?: (remote: string) => string | null
+  revokeGoogleToken?: (token: string) => void
   googleBin?: () => string | null
   /** The directory holding it, prepended to the child's PATH so the agent can
    *  type the bare name — which is what the send gate matches on (D70). */
@@ -137,6 +148,8 @@ export interface AgentManager {
 
 interface Session {
   vaultId: string
+  /** The Google bearer minted for this session, revoked when it ends. */
+  googleToken: string | null
   /** The clone dir the session launched in — the root its config fingerprint is
    *  read from. Held so a vault switch can't point the check at the wrong tree. */
   root: string
@@ -239,6 +252,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       working = false
       deps.host.active()?.resume() // never leave the vault paused behind a dead session
     }
+    // Before the next spawn mints its own: a dead session's bearer must stop
+    // opening the door.
+    if (current.googleToken !== null) deps.revokeGoogleToken?.(current.googleToken)
     current.snapshot.stop()
     await current.runtime.kill()
     current.mirror.dispose()
@@ -278,6 +294,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // rendered has typst next time; the download must never block this spawn.
     const typstBin = (await deps.resolveTypstBin?.()) ?? null
     deps.warmTypst?.()
+    const googleToken = deps.mintGoogleToken?.(vault.remote) ?? null
     // The vault's own config directory (D86), resolved here rather than at launch
     // because the active vault moves under this manager. A failure must not cost
     // the user their agent — the same treatment `resolveTypstBin` gets.
@@ -317,7 +334,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           hookToken: deps.hookToken?.() ?? null,
           typstBin,
           googlePort: deps.googlePort?.() ?? null,
-          googleToken: deps.googleToken?.() ?? null,
+          googleToken,
           googleBin: deps.googleBin?.() ?? null,
           holiBin: deps.holiBin?.() ?? null,
           binDir: deps.binDir?.() ?? null,
@@ -327,12 +344,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         rows,
       })
     } catch (err) {
+      if (googleToken !== null) deps.revokeGoogleToken?.(googleToken)
       snapshot.stop()
       terminal.dispose()
       throw err
     }
 
-    session = { vaultId, root: workRoot, runtime, mirror: terminal, snapshot }
+    session = { vaultId, googleToken, root: workRoot, runtime, mirror: terminal, snapshot }
     // Baseline the config the child just loaded, so a later change reads as stale.
     // `teardown` (run at the head of every start) already cleared the old flag.
     configBaseline = await fingerprintAgentConfig(workRoot)

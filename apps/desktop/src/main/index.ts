@@ -410,48 +410,61 @@ async function main(): Promise<void> {
    * they have no cache entry to patch: a new message reaches the list through
    * the next `history.list` delta, and the agenda always refetches.
    */
-  /** The data layer the agent's writes go through. Resolved per call, so it
-   *  follows a vault switch rather than holding whatever was open at launch. */
-  const agentGoogleData = async (): Promise<GoogleData> => {
-    const remote = host.active()?.remote
-    const data = remote === undefined ? null : await googleDataFor(remote)
+  /**
+   * The data layer for the vault whose bearer made the request (D87) — never
+   * the active vault. An agent session outlives a vault switch, so resolving by
+   * what is on screen would have a backgrounded agent write to another vault's
+   * mailbox.
+   */
+  const agentGoogleData = async (remote: string): Promise<GoogleData> => {
+    const data = await googleDataFor(remote)
     if (data === null) throw new Error('this vault has no Google account connected')
     return data
   }
 
-  const googleOps = createGoogleOpsServer({
+  /** A Google client for one vault's account, for the raw (uncached) ops. */
+  const agentGoogleApi = (remote: string): GoogleApi =>
+    new GoogleApi({
+      accessToken: async () => {
+        const session = await googleAccounts.sessionFor(remote)
+        if (session === null) throw new Error('this vault has no Google account connected')
+        return session.getAccessToken()
+      },
+    })
+
+  const googleOps = createGoogleOpsServer((remote) => ({
     // Through the SAME overrides file the panel writes. A calendar the user
     // switched off is not fetched for the agent either — otherwise "turn Jane's
     // calendar off" would hide her day from the panel while the agent kept
     // reading it, which is the opposite of what switching it off means.
     agenda: async (window) =>
-      listAgenda(googleApiFor(), window, { overrides: await calendarPrefs.read() }),
+      listAgenda(agentGoogleApi(remote), window, { overrides: await calendarPrefs.read() }),
     // The agent gets the list itself, not the page envelope: it asks a question
     // once and reads the answer, and `nextPageToken` is a UI affordance with
     // nothing to click on the other side of a shell command.
-    threads: async (query) => (await listThreads(googleApiFor(), { query })).threads,
+    threads: async (query) => (await listThreads(agentGoogleApi(remote), { query })).threads,
     // `textOnly` is the asymmetry, and it is deliberate: the UI renders
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
-    thread: async (id) => textOnly(await readThread(googleApiFor(), id)),
+    thread: async (id) => textOnly(await readThread(agentGoogleApi(remote), id)),
 
     // Label writes — through the vault's `GoogleData`, so the UI's cached list
     // learns about them at the same moment Gmail does.
-    setRead: async (id, read) => (await agentGoogleData()).setRead(id, read),
-    star: async (id, on) => (await agentGoogleData()).setStarred(id, on),
-    archive: async (id) => (await agentGoogleData()).archive(id),
-    trash: async (id) => (await agentGoogleData()).trash(id),
+    setRead: async (id, read) => (await agentGoogleData(remote)).setRead(id, read),
+    star: async (id, on) => (await agentGoogleData(remote)).setStarred(id, on),
+    archive: async (id) => (await agentGoogleData(remote)).archive(id),
+    trash: async (id) => (await agentGoogleData(remote)).trash(id),
 
     // New messages and events — nothing cached to patch.
-    draft: ({ threadId, ...mail }) => createDraft(googleApiFor(), mail, threadId),
+    draft: ({ threadId, ...mail }) => createDraft(agentGoogleApi(remote), mail, threadId),
     send: (input) =>
       'draftId' in input
-        ? sendDraft(googleApiFor(), input.draftId)
-        : sendMessage(googleApiFor(), input.mail),
-    reply: (threadId, body, all) => replyToThread(googleApiFor(), threadId, body, { all }),
-    schedule: (event) => createEvent(googleApiFor(), event),
-    reschedule: (id, patch) => updateEvent(googleApiFor(), id, patch),
-    unschedule: (id) => deleteEvent(googleApiFor(), id),
-  })
+        ? sendDraft(agentGoogleApi(remote), input.draftId)
+        : sendMessage(agentGoogleApi(remote), input.mail),
+    reply: (threadId, body, all) => replyToThread(agentGoogleApi(remote), threadId, body, { all }),
+    schedule: (event) => createEvent(agentGoogleApi(remote), event),
+    reschedule: (id, patch) => updateEvent(agentGoogleApi(remote), id, patch),
+    unschedule: (id) => deleteEvent(agentGoogleApi(remote), id),
+  }))
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))
   // Same bin directory, so one PATH prepend covers both.
@@ -549,7 +562,8 @@ async function main(): Promise<void> {
       void ensureTypst({ cacheDir: typstCacheDir })
     },
     googlePort: () => googleOps.port(),
-    googleToken: () => googleOps.token(),
+    mintGoogleToken: (remote) => googleOps.mintToken(remote),
+    revokeGoogleToken: (token) => googleOps.revoke(token),
     googleBin: () => googleCliPath,
     holiBin: () => holiCliPath,
     binDir: () => dirname(googleCliPath),
