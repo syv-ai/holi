@@ -264,3 +264,162 @@ export function resolveVaultSettings(
     warnings,
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What a vault is asked at birth
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which of the two files a row's answer is written to. */
+export type SettingTarget = 'committed' | 'local'
+
+/** One option in a `choice`. `value` is whatever the key holds — a `LandingTarget`
+ *  for `landing`, a `ColorScheme` for `colorScheme` — and is written verbatim. */
+export interface VaultSettingOption {
+  value: unknown
+  label: string
+  hint?: string
+}
+
+/**
+ * The shape of a choice. Three, because the four rows need three:
+ * a switch, a pick-one, and a set of switches that read as one decision.
+ */
+export type VaultSettingControl =
+  | { kind: 'toggle' }
+  | { kind: 'choice'; options: readonly VaultSettingOption[] }
+  | {
+      kind: 'group'
+      toggles: readonly { key: TransformName; label: string; explanation: string }[]
+    }
+
+/** A key the onboarding step asks about. Deliberately narrower than every key
+ *  the resolver answers — `maxCommittedFileBytes` has no row (see below). */
+export type VaultSettingKey = 'dailyNotes' | 'landing' | 'hooks' | 'colorScheme'
+
+export interface VaultSettingDescriptor {
+  key: VaultSettingKey
+  label: string
+  explanation: string
+  control: VaultSettingControl
+  /** Read from `VAULT_SETTING_DEFAULTS`, never restated — a second literal is a
+   *  second thing to keep in step. */
+  default: unknown
+  target: SettingTarget
+  /** Where this lives once the ritual is over. Carried as **data** so a row
+   *  structurally cannot ship without one: a step that changes something and
+   *  does not say where to change it later is a dead end for anyone who wants
+   *  to change their mind. */
+  whereToChange: string
+}
+
+const SETTINGS_FILE_HINT = 'Change it any time in .holi/settings.json'
+const LOCAL_FILE_HINT = 'Change it any time in .holi/settings.local.json — this machine only'
+
+/**
+ * The four rows the onboarding step renders, in order — and the source the seed
+ * writes `.holi/settings.json` from.
+ *
+ * **One list, two readers.** The act and the seed agreeing is not a convention
+ * anyone has to remember; adding a setting later is adding a row here, and both
+ * pick it up. `maxCommittedFileBytes` deliberately has no row: freezing it into
+ * every vault at creation would mean raising the default later never reaches the
+ * vaults that already exist.
+ */
+export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
+  {
+    key: 'dailyNotes',
+    label: 'Keep a daily note',
+    // The shared-vault warning lives here, and it is the whole reason this row
+    // exists: Holi used to guess the answer from the GitHub collaborator count.
+    explanation:
+      'A fresh note each morning, with yesterday’s filed away automatically. In a vault you share, everyone writes the same file — which gets messy fast.',
+    control: { kind: 'toggle' },
+    default: VAULT_SETTING_DEFAULTS.dailyNotes,
+    target: 'committed',
+    whereToChange: SETTINGS_FILE_HINT,
+  },
+  {
+    key: 'landing',
+    label: 'Open on',
+    explanation: 'What you see when you open this vault.',
+    control: {
+      kind: 'choice',
+      // Only what a brand-new vault can express: it holds no notes and no apps
+      // yet. Pointing `landing` at either stays a file edit, which is where
+      // authoring belongs.
+      options: [
+        { value: { kind: 'daily' }, label: 'Today’s note' },
+        { value: { kind: 'board' }, label: 'The board' },
+        { value: { kind: 'agenda' }, label: 'Your agenda' },
+        { value: { kind: 'mail' }, label: 'Mail' },
+      ],
+    },
+    default: VAULT_SETTING_DEFAULTS.landing,
+    target: 'committed',
+    whereToChange: `${SETTINGS_FILE_HINT} — including pointing it at a note or an app`,
+  },
+  {
+    key: 'hooks',
+    label: 'Tidy up on every commit',
+    explanation: 'Small fixes Holi makes for you when your work is saved.',
+    control: {
+      kind: 'group',
+      toggles: [
+        {
+          key: 'relink',
+          label: 'Fix links when a file moves',
+          explanation: 'Rewrites the links pointing at it, so nothing breaks.',
+        },
+        {
+          key: 'normalize-md',
+          label: 'Tidy markdown',
+          explanation: 'Trailing spaces and stray blank lines, quietly cleaned.',
+        },
+        {
+          key: 'archive-done',
+          label: 'File finished tasks away',
+          explanation: 'Off by default: it moves files, which changes what your board shows.',
+        },
+      ],
+    },
+    default: VAULT_SETTING_DEFAULTS.hooks,
+    target: 'committed',
+    whereToChange: SETTINGS_FILE_HINT,
+  },
+  {
+    key: 'colorScheme',
+    label: 'Appearance',
+    explanation: 'Light, dark, or whatever your Mac is set to.',
+    control: {
+      kind: 'choice',
+      options: [
+        { value: 'system', label: 'Match my system' },
+        { value: 'light', label: 'Light' },
+        { value: 'dark', label: 'Dark' },
+      ],
+    },
+    default: VAULT_SETTING_DEFAULTS.colorScheme,
+    // Machine-local, and the only row that is: a teammate's committed choice
+    // flipping your app to light mode is exactly the failure the `.local` layer
+    // exists to prevent.
+    target: 'local',
+    whereToChange: LOCAL_FILE_HINT,
+  },
+]
+
+/**
+ * The settings a freshly created vault is born with, for one of the two files.
+ *
+ * Built from the descriptors rather than hand-written, so the file a vault is
+ * seeded with and the questions it was asked cannot drift apart. Round-trips
+ * through `resolveVaultSettings` to exactly `VAULT_SETTING_DEFAULTS` — a seeded
+ * vault behaves identically to one with no settings files at all, which is what
+ * makes seeding safe to change.
+ */
+export function seedSettings(target: SettingTarget): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const d of VAULT_SETTING_DESCRIPTORS) {
+    if (d.target === target) out[d.key] = d.default
+  }
+  return out
+}

@@ -25,7 +25,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { LOCAL_ONLY_IGNORE_LINES, vaultRelPath } from '@holi/shared'
+import { LOCAL_ONLY_IGNORE_LINES, seedSettings, vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
@@ -210,6 +210,12 @@ const SETTINGS_JSON =
 /**
  * The vault's own settings, seeded once and then the user's.
  *
+ * **Built from `VAULT_SETTING_DESCRIPTORS`, not written out here.** The same
+ * list drives the onboarding step that asks about these, so the file a vault is
+ * born with and the questions it was asked cannot drift apart — and adding a
+ * setting later is adding a descriptor, not editing two places that have to
+ * agree.
+ *
  * The `hooks` block says **which** pre-commit transforms run, and can never say
  * what one is (D76): the script body ships in the binary and lives in
  * `.git/hooks/`, where nothing can push it onto anyone's laptop. Keys are the
@@ -218,12 +224,15 @@ const SETTINGS_JSON =
  * `archive-done` is off because it moves task files, which changes what the
  * board shows; a transform that rearranges someone's work is opt-in.
  */
-const HOLI_SETTINGS =
-  JSON.stringify(
-    { hooks: { relink: true, 'archive-done': false, 'normalize-md': true } },
-    null,
-    2,
-  ) + '\n'
+const HOLI_SETTINGS = JSON.stringify(seedSettings('committed'), null, 2) + '\n'
+
+/**
+ * The machine-local half — today, which appearance this machine follows.
+ *
+ * Gitignored by the seeded `*.local.*` rule, exactly like `theme.local.json`
+ * beside it, so a personal choice is never pushed to anyone.
+ */
+const HOLI_SETTINGS_LOCAL = JSON.stringify(seedSettings('local'), null, 2) + '\n'
 
 const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
 
@@ -323,10 +332,11 @@ export const ONCE_FILES: Record<string, string> = {
   '.holi/document-templates/contract/template.typ': contractTyp,
   '.holi/theme.json': THEME_SKELETON,
   '.holi/icons.json': ICONS_SKELETON,
-  // Seeded but gitignored (`*.local.*`) — the one machine-local file we seed, so
-  // the personal-override slot exists by default. The `.gitignore` is written
-  // first in `ensureSeeded`, so this is ignored before it lands.
+  // Seeded but gitignored (`*.local.*`) — the machine-local files, so the
+  // personal-override slot exists by default. The `.gitignore` is written first
+  // in `ensureSeeded`, so these are ignored before they land.
   '.holi/theme.local.json': THEME_SKELETON,
+  '.holi/settings.local.json': HOLI_SETTINGS_LOCAL,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   'MEMORY.md': MEMORY_MD,

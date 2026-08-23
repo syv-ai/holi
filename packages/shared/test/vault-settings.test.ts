@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   TRANSFORM_NAMES,
   VAULT_SETTING_DEFAULTS,
+  VAULT_SETTING_DESCRIPTORS,
   parseLandingTarget,
   resolveVaultSettings,
+  seedSettings,
 } from '../src/vault-settings'
 
 /** The committed file, as JSON text. */
@@ -237,5 +239,120 @@ describe('resolveVaultSettings — landing', () => {
       committed({ colorScheme: 'dark' }),
     )
     expect(s.landing).toEqual({ kind: 'app', appId: 'retro' })
+  })
+})
+
+describe('VAULT_SETTING_DESCRIPTORS', () => {
+  // The list is what the onboarding act renders AND what the seed writes. Both
+  // read it, so a row that is wrong here is wrong in two places at once.
+
+  it('describes a setting the resolver actually answers', () => {
+    for (const d of VAULT_SETTING_DESCRIPTORS) {
+      expect(VAULT_SETTING_DEFAULTS).toHaveProperty(d.key)
+    }
+  })
+
+  it('takes its default from the resolver rather than restating it', () => {
+    for (const d of VAULT_SETTING_DESCRIPTORS) {
+      expect(d.default).toEqual(VAULT_SETTING_DEFAULTS[d.key])
+    }
+  })
+
+  it('tells the user where every setting lives afterwards', () => {
+    // Carried as data so a row structurally cannot ship without one — a step
+    // that changes something and does not say where to change it later is a
+    // dead end for the person who wants to change their mind.
+    for (const d of VAULT_SETTING_DESCRIPTORS) {
+      expect(d.whereToChange.length).toBeGreaterThan(0)
+      expect(d.label.length).toBeGreaterThan(0)
+      expect(d.explanation.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('writes each row to exactly one of the two files', () => {
+    for (const d of VAULT_SETTING_DESCRIPTORS) {
+      expect(['committed', 'local']).toContain(d.target)
+    }
+  })
+
+  it('keeps appearance machine-local and everything else in the vault', () => {
+    // A teammate's committed choice flipping your app to light mode is exactly
+    // the failure the `.local` layer exists to prevent.
+    const local = VAULT_SETTING_DESCRIPTORS.filter((d) => d.target === 'local').map((d) => d.key)
+    expect(local).toEqual(['colorScheme'])
+  })
+
+  it('names no key twice', () => {
+    const keys = VAULT_SETTING_DESCRIPTORS.map((d) => d.key)
+    expect(new Set(keys).size).toBe(keys.length)
+  })
+
+  it('offers only landing targets a brand-new vault can express', () => {
+    // No notes and no apps exist yet, so the step cannot offer them. Pointing
+    // `landing` at either stays a file edit.
+    const landing = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'landing')!
+    expect(landing.control.kind).toBe('choice')
+    const values =
+      landing.control.kind === 'choice'
+        ? landing.control.options.map((o) => (o.value as { kind: string }).kind)
+        : []
+    expect(values).toEqual(['daily', 'board', 'agenda', 'mail'])
+  })
+
+  it('offers every colour scheme the resolver accepts', () => {
+    const scheme = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'colorScheme')!
+    const values =
+      scheme.control.kind === 'choice' ? scheme.control.options.map((o) => o.value) : []
+    expect(values).toEqual(['system', 'light', 'dark'])
+  })
+
+  it('groups the commit transforms under one heading, naming all three', () => {
+    const hooks = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'hooks')!
+    expect(hooks.control.kind).toBe('group')
+    const named = hooks.control.kind === 'group' ? hooks.control.toggles.map((t) => t.key) : []
+    expect([...named].sort()).toEqual([...TRANSFORM_NAMES].sort())
+  })
+})
+
+describe('seedSettings', () => {
+  it('writes the committed rows into the vault’s settings file', () => {
+    const seeded = seedSettings('committed')
+    expect(Object.keys(seeded).sort()).toEqual(['dailyNotes', 'hooks', 'landing'])
+  })
+
+  it('still declares every transform D76 expects, with archive-done off', () => {
+    // The seed used to be a hand-written literal. If a descriptor drops a
+    // transform, the seed silently stops declaring it and the vault inherits a
+    // default it never stated.
+    expect(seedSettings('committed').hooks).toEqual({
+      relink: true,
+      'archive-done': false,
+      'normalize-md': true,
+    })
+  })
+
+  it('writes appearance to the machine-local file, alone', () => {
+    expect(seedSettings('local')).toEqual({ colorScheme: 'system' })
+  })
+
+  it('seeds nothing the onboarding step does not ask about', () => {
+    // `maxCommittedFileBytes` has no descriptor on purpose: freezing it into
+    // every vault would mean raising the default later never reaches the vaults
+    // that already exist.
+    expect(seedSettings('committed')).not.toHaveProperty('maxCommittedFileBytes')
+  })
+
+  it('round-trips through the resolver to exactly the defaults', () => {
+    // The strongest statement the seed can make: a freshly seeded vault behaves
+    // identically to one with no settings files at all.
+    const resolved = resolveVaultSettings(
+      JSON.stringify(seedSettings('committed')),
+      JSON.stringify(seedSettings('local')),
+    )
+    expect(resolved.warnings).toEqual([])
+    expect(resolved.landing).toEqual(VAULT_SETTING_DEFAULTS.landing)
+    expect(resolved.dailyNotes).toBe(VAULT_SETTING_DEFAULTS.dailyNotes)
+    expect(resolved.colorScheme).toBe(VAULT_SETTING_DEFAULTS.colorScheme)
+    expect(resolved.hooks).toEqual(VAULT_SETTING_DEFAULTS.hooks)
   })
 })

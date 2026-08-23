@@ -83,6 +83,9 @@ describe('SEED_FILES', () => {
       '.holi/document-templates/report/template.typ',
       '.holi/icons.json',
       '.holi/settings.json',
+      // Machine-local, gitignored by the seeded `*.local.*` rule — the personal
+      // override slot, seeded so it exists by default (like theme.local.json).
+      '.holi/settings.local.json',
       '.holi/theme.json',
       '.holi/theme.local.json',
       '.holi/vault.json',
