@@ -46,6 +46,7 @@ import { syncLabel } from '../lib/sync-label'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
+import { openLandingAtom } from '../state/landing'
 import {
   activeTab,
   closePane,
@@ -124,6 +125,7 @@ export function Shell() {
   const setActiveRemote = useSetAtom(activeRemoteAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
+  const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
@@ -208,25 +210,33 @@ export function Shell() {
    *  re-setting `activeRemoteAtom` to the same value — does not re-open it. */
   const openedRemote = useRef<string | null>(null)
 
-  // Open the active vault in main, then land on today's daily and sweep prior
-  // days (FR-4/FR-5). One effect, once per remote, deliberately sequential.
+  // Open the active vault in main, then land on whatever it opens on and sweep
+  // prior days (FR-4/FR-5). One effect, once per remote, deliberately sequential.
   //
   // This is the ONLY caller of `vaults.open`, so cold start (the vault
   // `loadVaults` selects) and an explicit switch both open through here. The bug
   // this fixes: nothing opened the boot vault, so main's watcher never started
-  // and the tree stayed empty until you manually switched. Daily runs *after*
-  // open so it wins the race for the active doc; both no-op on shared vaults.
+  // and the tree stayed empty until you manually switched.
+  //
+  // Landing runs *after* open for the same reason daily used to: it wins the
+  // race for the active doc, and it reads the snapshot to tell a live target
+  // from a rotted one, so it needs the vault already scanned. The sweep runs
+  // last and reuses the settings landing just cached — the pair is one file
+  // read, not two.
   useEffect(() => {
     if (!activeRemote || openedRemote.current === activeRemote) return
     openedRemote.current = activeRemote
     void (async () => {
       await openVault(activeRemote)
-      await openDaily()
+      await openLanding()
       await sweepDaily()
     })()
-  }, [activeRemote, openVault, openDaily, sweepDaily])
+  }, [activeRemote, openVault, openLanding, sweepDaily])
 
-  // FR-6: ⌘⇧D jumps to today's daily (creating it if needed).
+  // FR-6: ⌘⇧D jumps to today's daily (creating it if needed). Deliberately NOT
+  // routed through `openLanding` — this is the gesture that still works in a
+  // vault whose `dailyNotes` is off, which is what makes "off" mean "stop doing
+  // this behind my back" rather than "the feature is gone".
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {

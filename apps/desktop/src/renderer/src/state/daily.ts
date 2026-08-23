@@ -3,33 +3,21 @@
  *
  * The correctness boundary is no longer a server's unique index (D45, gone): the
  * main proc does a deterministic if-not-exists-write, so two of your devices
- * mint an identical blob at an identical path and git merges them silently. All
- * this layer does is decide *whether* to ask (personal vaults only) and land you
- * on the result.
+ * mint an identical blob at an identical path and git merges them silently.
+ *
+ * This layer is now the *mechanism* only: mint today's daily and land on it.
+ * **Whether** to is `dailyNotes` in the vault's settings, and it is asked by
+ * `state/landing.ts` — which is what lets ⌘⇧D still mint one on demand in a
+ * vault that keeps no daily notes automatically.
  */
 import { atom } from 'jotai'
 import { dailyNoteFilename } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { openPinned, workspaceAtom } from './panes'
 import { todayAtom } from './tasks'
+import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
-/**
- * A vault is personal unless we positively know it has more than one GitHub
- * collaborator (`daily-notes.md` OQ#2, resolved). Checked via `github.collaborators`
- * when online; any failure — offline, signed out — defaults to **personal**, the
- * common case and the one that keeps daily notes working on a plane. Auto-creating
- * a daily in a *shared* vault is the harm this guards against, and that only
- * happens on a positive >1 answer.
- */
-export async function isPersonalVault(remote: string): Promise<boolean> {
-  try {
-    const { collaborators } = await trpc.github.collaborators.query({ remote })
-    return collaborators.length <= 1
-  } catch {
-    return true
-  }
-}
 
 /**
  * The path today's daily note *would* have, whether or not it exists.
@@ -44,13 +32,17 @@ export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)
 
 /**
  * Get-or-create today's daily for the active vault and land on it (FR-4).
- * Returns the path, or null when there is nothing to do (no vault, or a shared
- * one). Opens the note **pinned** — you are here to write in it, not browse it.
+ * Returns the path, or null when there is no active vault. Opens the note
+ * **pinned** — you are here to write in it, not browse it.
+ *
+ * **Unconditional.** It used to refuse in a shared vault, which meant ⌘⇧D was
+ * silently dead there; the policy now lives one layer up, so this is the verb
+ * and `landing` decides when to say it. Anything calling this is asking for
+ * today's note on purpose.
  */
 export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
   const remote = get(activeRemoteAtom)
   if (!remote) return null
-  if (!(await isPersonalVault(remote))) return null
 
   const { path, created } = await trpc.notes.getOrCreateDaily.mutate({ remote })
   if (created) await set(loadSnapshotAtom)
@@ -63,12 +55,18 @@ export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string |
  * Archive prior-day notes + GC stubs (FR-5), then commit — once. The sweep is
  * the one place a background process rewrites the vault's shape, so it lands as
  * a single deliberate commit rather than scattered autosaves (§Archiving).
- * No-op on shared vaults and when nothing changed.
+ *
+ * No-op when the vault keeps no daily notes, and when nothing changed. Off means
+ * "stop doing this behind my back", so the archiving stops with the minting —
+ * and resumes where it left off if the setting is turned back on.
  */
 export const sweepDailyAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  if (!(await isPersonalVault(remote))) return
+  // Cached by the landing that ran immediately before this on the launch path,
+  // so the pair costs one read rather than two.
+  const settings = await set(loadVaultSettingsAtom)
+  if (settings?.dailyNotes !== true) return
   const { archived, deleted } = await trpc.notes.sweepDaily.mutate({ remote })
   if (archived > 0 || deleted > 0) {
     await set(loadSnapshotAtom)
