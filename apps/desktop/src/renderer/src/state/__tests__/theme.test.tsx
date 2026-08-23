@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { ResolvedTheme } from '@holi/shared'
 import { render, waitFor } from '@/test/render'
 import { useVaultTheme } from '../theme'
+import { colorSchemeAtom } from '../color-scheme'
 import { activeRemoteAtom } from '../vaults'
 
 // Controllable stand-in for the theme read — keyed by remote so a vault switch
@@ -98,4 +99,29 @@ test('clears applied properties on unmount', async () => {
   await waitFor(() => expect(root().style.getPropertyValue('--primary')).toBe('#f00'))
   unmount()
   expect(root().style.getPropertyValue('--primary')).toBe('')
+})
+
+test('re-applies the vault theme when the colour scheme flips', async () => {
+  // The load-bearing case for the mode being a DEPENDENCY rather than a
+  // read-at-use. A resolved theme carries both blocks and only one is ever on
+  // the root, so a flip that did not re-apply would switch the base palette and
+  // leave the OTHER mode's vault overrides sitting there. Invisible in any vault
+  // with no theme file, which is most of them.
+  readMock.mockResolvedValue({
+    light: { primary: '#111111' },
+    dark: { primary: '#eeeeee' },
+    warnings: [],
+  })
+  const store = createStore()
+  store.set(activeRemoteAtom, 'me/one')
+  store.set(colorSchemeAtom, 'dark')
+  render(
+    <Provider store={store}>
+      <Probe />
+    </Provider>,
+  )
+  await waitFor(() => expect(root().style.getPropertyValue('--primary')).toBe('#eeeeee'))
+
+  store.set(colorSchemeAtom, 'light')
+  await waitFor(() => expect(root().style.getPropertyValue('--primary')).toBe('#111111'))
 })

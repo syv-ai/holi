@@ -19,15 +19,8 @@ import { useEffect, useRef } from 'react'
 import { themeBlockToVars } from '@holi/shared'
 import { ThemeApplicator } from '../lib/theme-applicator'
 import { trpc } from '../lib/trpc'
+import { activeModeAtom } from './color-scheme'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
-
-function activeMode(): 'light' | 'dark' {
-  // `data-theme` is unstamped today — the app is dark-first, so `:root` (dark)
-  // wins. Default to dark accordingly. When a light/dark toggle ships, this hook
-  // will need to re-run when the attribute flips (a MutationObserver, or a mode
-  // atom in its dep list).
-  return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'
-}
 
 /**
  * Keep `document.documentElement` styled with the active vault's theme. Call once
@@ -41,6 +34,13 @@ export function useVaultTheme(): void {
   // "vault changed — re-read the theme" tick. The theme file contents are not in
   // the snapshot (non-`.md` files carry only path + mtime), so we re-pull.
   const snapshot = useAtomValue(snapshotAtom)
+  // The mode is a dependency, not a read-at-use. A resolved theme carries a
+  // `light` and a `dark` block and only one is ever applied, so a flip that did
+  // not re-apply would leave the OTHER mode's custom properties sitting on the
+  // root: the base palette switches and the vault's overrides do not. That is a
+  // worse-looking bug than having no light mode at all, and it is invisible in
+  // any vault with no theme file.
+  const mode = useAtomValue(activeModeAtom)
   // A stable instance across renders. Read inside the effects (a ref, so not an
   // effect dependency), which keeps the diff/clear state with the DOM it owns.
   const applicatorRef = useRef<ThemeApplicator | null>(null)
@@ -63,7 +63,7 @@ export function useVaultTheme(): void {
               theme.warnings.map((w) => `  • ${w}`).join('\n'),
           )
         }
-        applicator.apply(themeBlockToVars(theme[activeMode()]))
+        applicator.apply(themeBlockToVars(theme[mode]))
       })
       .catch(() => {
         // Leave whatever is applied — the CSS defaults are always valid, and a
@@ -72,7 +72,7 @@ export function useVaultTheme(): void {
     return () => {
       cancelled = true
     }
-  }, [remote, snapshot])
+  }, [remote, snapshot, mode])
 
   // Clear on unmount only (Shell → sign-in/onboarding), so a vault palette never
   // lingers on a screen that isn't the vault.

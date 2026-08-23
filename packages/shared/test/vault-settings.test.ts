@@ -7,6 +7,7 @@ import {
   availableOptions,
   normaliseAnswers,
   parseSettingsPatch,
+  resolveColorMode,
   resolveVaultSettings,
   seedSettings,
   splitAnswersByTarget,
@@ -537,5 +538,22 @@ describe('normaliseAnswers', () => {
   it('is idempotent', () => {
     const once = normaliseAnswers({ dailyNotes: false, landing: { kind: 'daily' } })
     expect(normaliseAnswers(once)).toBe(once)
+  })
+})
+
+describe('resolveColorMode', () => {
+  it.each([
+    ['dark', true, 'dark'],
+    ['dark', false, 'dark'],
+    ['light', true, 'light'],
+    ['light', false, 'light'],
+  ] as const)('%s ignores the OS and stays %s', (scheme, systemDark, expected) => {
+    expect(resolveColorMode(scheme, systemDark)).toBe(expected)
+  })
+
+  it('follows the OS when the vault says system', () => {
+    // Not a third look: a deferral, and the OS answer changes while the app runs.
+    expect(resolveColorMode('system', true)).toBe('dark')
+    expect(resolveColorMode('system', false)).toBe('light')
   })
 })

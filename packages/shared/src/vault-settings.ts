@@ -585,3 +585,19 @@ export function normaliseAnswers(answers: Record<string, unknown>): Record<strin
   }
   return out
 }
+
+/**
+ * The mode a `colorScheme` setting actually resolves to, right now.
+ *
+ * `system` is not a third look: it is a deferral to the OS, and the OS answer
+ * changes while the app is running. Keeping the resolution pure means the
+ * renderer's job is only to say what the OS currently reports and to re-ask when
+ * it changes.
+ */
+export function resolveColorMode(
+  scheme: ColorScheme,
+  systemPrefersDark: boolean,
+): 'light' | 'dark' {
+  if (scheme === 'system') return systemPrefersDark ? 'dark' : 'light'
+  return scheme
+}

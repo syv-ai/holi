@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SignIn } from './features/auth/SignIn'
 import { Shell } from './components/Shell'
+import { useColorScheme } from './state/color-scheme'
 import { loadSessionAtom, sessionAtom } from './state/session'
 import { loadVaultsAtom, vaultsAtom, vaultsLoadedAtom } from './state/vaults'
 
@@ -12,6 +13,10 @@ export function App() {
   const vaultsLoaded = useAtomValue(vaultsLoadedAtom)
   const loadSession = useSetAtom(loadSessionAtom)
   const loadVaults = useSetAtom(loadVaultsAtom)
+
+  // Stamped from the root, not from Shell: the sign-in screen and the ritual are
+  // outside Shell and should still follow the OS rather than being stuck dark.
+  useColorScheme()
 
   useEffect(() => {
     void loadSession()
