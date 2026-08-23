@@ -2,7 +2,11 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { createAgentManager, type AgentManager } from '../src/main/agent/agent-manager'
+import {
+  createAgentManager,
+  type AgentManager,
+  type AgentManagerDeps,
+} from '../src/main/agent/agent-manager'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import type { PtyProcess } from '../src/main/agent/agent-runtime'
 import type { ActiveVault, VaultHost } from '../src/main/vault/active-vault'
@@ -61,7 +65,8 @@ async function rig(
     bin?: string | null
     active?: string | null
     turnSafetyMs?: number
-    configDir?: string | null
+    /** Per spawn now (D86). Returns the vault's own directory + sign-in state. */
+    resolveConfigDir?: AgentManagerDeps['resolveConfigDir']
   } = {},
 ): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
@@ -112,7 +117,7 @@ async function rig(
     hookToken: () => 'tkn',
     turnSafetyMs: opts.turnSafetyMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
-    configDir: opts.configDir,
+    resolveConfigDir: opts.resolveConfigDir,
     warmTypst: () => {
       warmed += 1
     },
@@ -325,10 +330,63 @@ describe('AgentManager', () => {
     expect(spawn.opts.env.HOLI_HOOK_TOKEN).toBe('tkn')
   })
 
-  it('spawns the child on Holi own config directory (D72)', async () => {
-    const r = await rig({ configDir: '/data/agent-config' })
+  it("spawns the child on the vault's own config directory (D86)", async () => {
+    const asked: Array<{ remote: string; root: string }> = []
+    const r = await rig({
+      resolveConfigDir: (v) => {
+        asked.push(v)
+        return Promise.resolve({ dir: '/data/agent-config/owner-repo-abc', signedIn: true })
+      },
+    })
     await r.manager.start({ vaultId: VAULT })
-    expect(r.spawns[0]!.opts.env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config')
+
+    expect(asked).toEqual([{ remote: VAULT, root: r.workRoot }])
+    expect(r.spawns[0]!.opts.env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config/owner-repo-abc')
+  })
+
+  it('resolves the directory per SPAWN, because the active vault moves under it', async () => {
+    // The bug this replaced: the path was resolved once per app launch, so every
+    // vault opened afterwards ran on the first one's config.
+    const r = await rig({
+      resolveConfigDir: ({ remote }) =>
+        Promise.resolve({ dir: `/data/agent-config/${remote.replace('/', '-')}`, signedIn: true }),
+    })
+    await r.manager.start({ vaultId: VAULT })
+    r.host.setActive('owner/second')
+    await r.manager.start({ vaultId: 'owner/second' })
+
+    expect(r.spawns[0]!.opts.env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config/owner-repo')
+    expect(r.spawns[1]!.opts.env.CLAUDE_CONFIG_DIR).toBe('/data/agent-config/owner-second')
+  })
+
+  it('tells the user this vault needs its own sign-in, in the terminal', async () => {
+    // §6, never built before this: an unauthenticated agent printed a bare
+    // `Not logged in` and the user was left to infer `/login`. Survivable once
+    // per install, not once per vault.
+    const r = await rig({
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/fresh', signedIn: false }),
+    })
+    await r.manager.start({ vaultId: VAULT })
+
+    const replayed = await r.manager.attach()
+    expect(replayed).toContain('/login')
+  })
+
+  it('says nothing when the vault is already signed in', async () => {
+    const r = await rig({
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/known', signedIn: true }),
+    })
+    await r.manager.start({ vaultId: VAULT })
+    expect(await r.manager.attach()).not.toContain('/login')
+  })
+
+  it('still spawns when the config cannot be resolved', async () => {
+    // An unreadable settings file must not cost the user their agent.
+    const r = await rig({ resolveConfigDir: () => Promise.reject(new Error('disk on fire')) })
+    await r.manager.start({ vaultId: VAULT })
+
+    expect(r.manager.status().running).toBe(true)
+    expect(r.spawns[0]!.opts.env.CLAUDE_CONFIG_DIR).toBeUndefined()
   })
 
   /**
@@ -338,7 +396,9 @@ describe('AgentManager', () => {
    * the moment `/login` is typed — which fires no spawn, no turn and no exit.
    */
   it('reports no login state at all — the terminal below says it', async () => {
-    const r = await rig({ configDir: '/data/agent-config' })
+    const r = await rig({
+      resolveConfigDir: () => Promise.resolve({ dir: '/data/agent-config', signedIn: false }),
+    })
     await r.manager.start({ vaultId: VAULT })
     expect(r.manager.status()).not.toHaveProperty('authenticated')
   })

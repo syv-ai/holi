@@ -26,8 +26,27 @@ import {
   resolveClaudeBin,
   type SpawnPty,
 } from './agent-runtime'
+import type { AgentConfigResolution } from './agent-config-dir'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
 import { TerminalMirror } from './terminal-mirror'
+
+/**
+ * Printed into the terminal record when a vault's config directory has never
+ * been signed into (§6 of the isolation spec, unbuilt until D86).
+ *
+ * **In the scrollback, not the panel header**, and that is D72's own argument
+ * rather than a walk-back of it: a header notice is duplicate state, and `/login`
+ * fires no spawn, no turn and no exit, so the copy in Holi's chrome goes stale
+ * the moment it matters. A line printed at spawn is a log entry, and stays true
+ * about that spawn.
+ *
+ * It says the per-vault part out loud, because a second `/login` on a machine
+ * that already has one otherwise reads as a bug.
+ */
+const SIGN_IN_NOTICE =
+  '\x1b[33mThis vault needs its own Claude sign-in. Type /login below.\r\n' +
+  'Each vault keeps its own Claude Code config, so signing in here\r\n' +
+  'does not touch your other vaults.\x1b[0m\r\n\r\n'
 
 export interface AgentStatus {
   running: boolean
@@ -71,10 +90,17 @@ export interface AgentManagerDeps {
    *  type the bare name — which is what the send gate matches on (D70). */
   holiBin?: () => string | null
   binDir?: () => string | null
-  /** Holi's own Claude Code config directory (D72), provisioned at startup by
-   *  `ensureAgentConfigDir` and handed to the child as `$CLAUDE_CONFIG_DIR`.
-   *  Omitted (tests, and only tests) → the agent runs on the machine config. */
-  configDir?: string | null
+  /** The vault's own Claude Code config directory (D86), handed to the child as
+   *  `$CLAUDE_CONFIG_DIR`, plus whether it has been signed into.
+   *
+   *  Called **per spawn**, not per app launch: the active vault changes while the
+   *  app runs, and the theme it stamps tracks a setting the user can flip without
+   *  restarting. Omitted (tests, and only tests) → the agent runs on the machine
+   *  config and no sign-in notice is printed. */
+  resolveConfigDir?: (vault: {
+    remote: string
+    root: string
+  }) => Promise<AgentConfigResolution | null>
   log?: (msg: string) => void
 }
 
@@ -247,9 +273,23 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // rendered has typst next time; the download must never block this spawn.
     const typstBin = (await deps.resolveTypstBin?.()) ?? null
     deps.warmTypst?.()
+    // The vault's own config directory (D86), resolved here rather than at launch
+    // because the active vault moves under this manager. A failure must not cost
+    // the user their agent — the same treatment `resolveTypstBin` gets.
+    const config = await (deps.resolveConfigDir?.({ remote: vault.remote, root: workRoot }) ?? Promise.resolve(null)).catch(
+      (err: unknown) => {
+        log(`config directory unresolved, running on the machine config: ${String(err)}`)
+        return null
+      },
+    )
     // Born at the caller's geometry: the mirror and the PTY share it, so the
     // replayed state and Claude's own TUI both match the pane.
     const terminal = new TerminalMirror(cols, rows)
+    // Into the MIRROR only, and before the PTY writes a byte, so the instruction
+    // sits above Claude's own output rather than under an Ink redraw. `teardown`
+    // ran at the head of this call and cleared `attached`, so nothing is listening
+    // yet; the renderer takes this line from `attach()`'s replay, once.
+    if (config && !config.signedIn) terminal.write(SIGN_IN_NOTICE)
     const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
     runtime.onData((data) => {
@@ -276,7 +316,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           googleBin: deps.googleBin?.() ?? null,
           holiBin: deps.holiBin?.() ?? null,
           binDir: deps.binDir?.() ?? null,
-          configDir: deps.configDir ?? null,
+          configDir: config?.dir ?? null,
         }),
         cols,
         rows,
