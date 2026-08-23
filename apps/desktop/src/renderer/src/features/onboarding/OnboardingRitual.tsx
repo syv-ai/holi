@@ -23,6 +23,7 @@ import {
   type Act,
   type Mode,
 } from '@/state/onboarding-flow'
+import { VaultSettingsAct } from './VaultSettingsAct'
 import './onboarding-ritual.css'
 
 type DotState = 'pending' | 'active' | 'done'
@@ -131,8 +132,9 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
 
   const back = () => {
     // The threshold is terminal: the vault already exists, so there is nothing
-    // to go back to — only "Open vault" forward.
-    if (s.act === 3) return
+    // to go back to — only "Open vault" forward. The settings act before it is
+    // NOT terminal; going back to rename is fine, the repo is already made.
+    if (s.act === 4) return
     if (s.view === 'join') {
       dispatch({ type: 'toForm' })
       return
@@ -211,7 +213,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
         advance()
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        if (s.act === 3) void enter()
+        if (s.act === 4) void enter()
         else if (s.act === 2 && s.view === 'form') void submit()
         else advance()
       } else if (e.key === 'Escape') {
@@ -264,6 +266,8 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               <span className="obrit-dot" data-state={dotState(2)} />
               <span className="obrit-rule" />
               <span className="obrit-dot" data-state={dotState(3)} />
+              <span className="obrit-rule" />
+              <span className="obrit-dot" data-state={dotState(4)} />
             </div>
             {dismissible && (
               <Tooltip content="Dismiss (Esc)">
@@ -434,7 +438,32 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
           </section>
 
           {/* ── Act 3: Threshold ── */}
-          <section className="obrit-act obrit-threshold" data-state={actState(3)}>
+          {/* ── Act 3: How this vault behaves ── */}
+          <section className="obrit-act obrit-settings-act" data-state={actState(3)}>
+            <div className="obrit-act-inner">
+              <div className="obrit-eyebrow">HOW THIS VAULT BEHAVES</div>
+              <h1 className="obrit-display obrit-settings-title">A few choices.</h1>
+              <p className="obrit-lede">
+                All of them have sensible answers already — change any of them now, or later, in
+                the files named beside each one.
+              </p>
+
+              <VaultSettingsAct
+                settings={s.settings}
+                onChange={(key, value) => dispatch({ type: 'setSetting', key, value })}
+              />
+
+              <div className="obrit-cta-row">
+                <Button variant="ceremony" onClick={advance}>
+                  Continue
+                  <span aria-hidden>→</span>
+                </Button>
+              </div>
+            </div>
+          </section>
+
+          {/* ── Act 4: Threshold ── */}
+          <section className="obrit-act obrit-threshold" data-state={actState(4)}>
             <div className="obrit-act-inner">
               <div className="obrit-thresh-rule" />
               <div className="obrit-eyebrow">YOUR VAULT IS READY</div>
@@ -485,7 +514,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
 
         <footer className="obrit-foot">
           <div className="obrit-foot-side">
-            {s.view === 'form' && s.act !== 3 && (s.act > startingAct(mode) || dismissible) && (
+            {s.view === 'form' && s.act !== 4 && (s.act > startingAct(mode) || dismissible) && (
               <Button variant="ghost" className={CEREMONY_GHOST} onClick={back}>
                 <span aria-hidden>←</span>
                 {s.act > startingAct(mode) ? 'back' : 'dismiss'}
