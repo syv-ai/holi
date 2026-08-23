@@ -34,7 +34,14 @@ const OUTCOME: Record<string, string> = {
 }
 
 export function GoogleConnection() {
-  const { account, setAccount, missingScopes, refresh: refreshGoogle } = useGoogleAccount()
+  const {
+    account,
+    setAccount,
+    missingScopes,
+    accounts,
+    currentSub,
+    refresh: refreshGoogle,
+  } = useGoogleAccount()
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' })
   /** Set while a connect is in flight, so unmounting cancels it rather than
    *  leaving a listener holding a port for the life of the app. */
@@ -74,12 +81,30 @@ export function GoogleConnection() {
     }
   }
 
+  /** Unlink THIS vault. The account and every other vault using it survive. */
   const disconnect = async () => {
     await trpc.google.disconnectVault.mutate().catch(() => undefined)
     setAccount(null)
     void refreshGoogle()
     setPhase({ kind: 'idle' })
   }
+
+  /** Reuse an account already connected here. No consent: the grant exists. */
+  const useAccount = async (sub: string) => {
+    await trpc.google.useAccount.mutate({ sub }).catch(() => undefined)
+    setAccount(undefined) // back to "not asked", so the shell re-reads with it
+    void refreshGoogle()
+  }
+
+  /** Revoke at Google and drop it everywhere. The destructive one. */
+  const removeAccount = async (sub: string) => {
+    await trpc.google.removeAccount.mutate({ sub }).catch(() => undefined)
+    setAccount(undefined)
+    void refreshGoogle()
+  }
+
+  /** Connected here, but not the one this vault uses. */
+  const others = accounts.filter((a) => a.sub !== currentSub)
 
   const connected = account != null
   const busy = phase.kind === 'connecting' || account === undefined
@@ -105,7 +130,7 @@ export function GoogleConnection() {
             ) : phase.kind === 'connecting' ? (
               'Waiting for your browser…'
             ) : (
-              'Read and triage your Gmail, read your Calendar. Applies to every vault.'
+              'Read and triage your Gmail, read your Calendar. This vault only.'
             )}
           </p>
           {!connected && phase.kind === 'idle' && phase.error !== undefined && (
@@ -121,7 +146,7 @@ export function GoogleConnection() {
               </Button>
             )}
             <Button variant="secondary" size="sm" onClick={() => void disconnect()}>
-              Disconnect
+              Disconnect this vault
             </Button>
           </div>
         ) : (
@@ -132,10 +157,31 @@ export function GoogleConnection() {
             disabled={busy}
             onClick={() => void connect()}
           >
-            {phase.kind === 'connecting' ? 'Connecting…' : 'Connect'}
+            {phase.kind === 'connecting' ? 'Connecting…' : 'Connect a different account…'}
           </Button>
         )}
       </div>
+
+      {/* Accounts connected on this machine that this vault is not using (D87).
+          Picking one is a mapping, not a consent round trip, so it is one click
+          and deliberately not dressed up as connecting. */}
+      {others.length > 0 && (
+        <ul className="space-y-1">
+          {others.map((other) => (
+            <li key={other.sub} className="flex items-center justify-between gap-3">
+              <span className="min-w-0 truncate text-xs text-muted-foreground">{other.email}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={() => void useAccount(other.sub)}>
+                  Use in this vault
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void removeAccount(other.sub)}>
+                  Remove from Holi
+                </Button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {connected &&
         (needsReconsent ? (
           <p className="text-xs text-amber-400">

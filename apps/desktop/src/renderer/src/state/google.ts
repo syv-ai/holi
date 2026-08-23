@@ -11,10 +11,11 @@
  * bearing: without it the shell cannot tell "no account" from "no answer", and
  * would flash the chips on every launch before hiding them again.
  */
-import { atom, useAtom } from 'jotai'
+import { atom, useAtom, useAtomValue } from 'jotai'
 import { useCallback, useEffect } from 'react'
 import type { GoogleAccount } from '../../../main/google/session'
 import { trpc } from '../lib/trpc'
+import { activeRemoteAtom } from './vaults'
 
 export type { GoogleAccount }
 
@@ -31,12 +32,32 @@ export const googleAccountAtom = atom<GoogleAccount | null | undefined>(undefine
  */
 export const googleMissingScopesAtom = atom<string[]>([])
 
+/** An account connected on this machine, as the picker needs it. */
+export interface ConnectedGoogleAccount {
+  sub: string
+  email: string
+}
+
+/**
+ * Every account connected on this machine, and the one the active vault uses.
+ *
+ * Two different facts since D87, and the second is the per-vault one: an account
+ * can be connected and used by no vault at all, which is what a fresh vault sees
+ * of the account you connected in another.
+ */
+export const googleAccountsAtom = atom<ConnectedGoogleAccount[]>([])
+export const googleCurrentSubAtom = atom<string | null>(null)
+
 export interface GoogleAccountState {
   /** `undefined` — not asked yet. `null` — asked, nothing connected. */
   account: GoogleAccount | null | undefined
   setAccount: (account: GoogleAccount | null | undefined) => void
   missingScopes: string[]
-  /** Re-read both halves from main. */
+  /** Every account connected on this machine (D87). */
+  accounts: ConnectedGoogleAccount[]
+  /** The account the active vault uses, or null. */
+  currentSub: string | null
+  /** Re-read every part from main. */
   refresh: () => Promise<void>
 }
 
@@ -55,6 +76,9 @@ export interface GoogleAccountState {
 export function useGoogleAccount(): GoogleAccountState {
   const [account, setAccount] = useAtom(googleAccountAtom)
   const [missingScopes, setMissingScopes] = useAtom(googleMissingScopesAtom)
+  const [accounts, setAccounts] = useAtom(googleAccountsAtom)
+  const [currentSub, setCurrentSub] = useAtom(googleCurrentSubAtom)
+  const activeRemote = useAtomValue(activeRemoteAtom)
 
   /**
    * Re-read both halves from main.
@@ -66,22 +90,41 @@ export function useGoogleAccount(): GoogleAccountState {
    */
   const refresh = useCallback(async () => {
     try {
-      const status = await trpc.google.status.query()
+      const [status, connected] = await Promise.all([
+        trpc.google.status.query(),
+        trpc.google.accounts.query(),
+      ])
       setAccount(status.account)
       setMissingScopes(status.missingScopes)
+      setAccounts(connected.accounts)
+      setCurrentSub(connected.current)
     } catch {
-      // The connector refuses outright when it is not configured. That is a
-      // normal state and not one the user can act on, so it reads as "not
-      // connected" — and settles, rather than re-querying on every render.
+      // The connector refuses outright when it is not configured, and so does a
+      // vault that is not open yet. Both are normal states the user cannot act
+      // on, so they read as "not connected" — and settle, rather than
+      // re-querying on every render.
       setAccount(null)
       setMissingScopes([])
+      setAccounts([])
+      setCurrentSub(null)
     }
-  }, [setAccount, setMissingScopes])
+  }, [setAccount, setMissingScopes, setAccounts, setCurrentSub])
 
   useEffect(() => {
     if (account !== undefined) return
     void refresh()
   }, [account, refresh])
 
-  return { account, setAccount, missingScopes, refresh }
+  /**
+   * A vault switch changes the answer without changing the account (D87).
+   *
+   * Dropped back to `undefined` rather than re-fetched here, so the query still
+   * happens in exactly one place and the shell's chips go through "not asked"
+   * rather than flashing the previous vault's answer at the new one.
+   */
+  useEffect(() => {
+    setAccount(undefined)
+  }, [activeRemote, setAccount])
+
+  return { account, setAccount, missingScopes, accounts, currentSub, refresh }
 }
