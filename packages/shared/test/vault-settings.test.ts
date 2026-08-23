@@ -7,6 +7,7 @@ import {
   parseSettingsPatch,
   resolveVaultSettings,
   seedSettings,
+  splitAnswersByTarget,
 } from '../src/vault-settings'
 
 /** The committed file, as JSON text. */
@@ -426,5 +427,54 @@ describe('parseSettingsPatch — the write-side trust boundary', () => {
     expect(parseSettingsPatch(JSON.stringify(seedSettings('local'))).patch).toEqual(
       seedSettings('local'),
     )
+  })
+})
+
+describe('splitAnswersByTarget', () => {
+  it('sends each answer to the file its descriptor names', () => {
+    const { committed, local } = splitAnswersByTarget({
+      dailyNotes: false,
+      landing: { kind: 'board' },
+      hooks: { relink: false },
+      colorScheme: 'dark',
+    })
+    expect(committed).toEqual({
+      dailyNotes: false,
+      landing: { kind: 'board' },
+      hooks: { relink: false },
+    })
+    expect(local).toEqual({ colorScheme: 'dark' })
+  })
+
+  it('carries only the keys it was actually given', () => {
+    const { committed, local } = splitAnswersByTarget({ dailyNotes: false })
+    expect(committed).toEqual({ dailyNotes: false })
+    expect(local).toEqual({})
+  })
+
+  it('drops an answer no descriptor claims', () => {
+    // The step can only answer what it asked. Anything else reaching the write
+    // would be a key the user was never shown.
+    const { committed, local } = splitAnswersByTarget({ nonsense: 1, reminders: {} })
+    expect(committed).toEqual({})
+    expect(local).toEqual({})
+  })
+
+  it('splits by the descriptors, not by a list written out here', () => {
+    // The extensibility claim, checked rather than hoped for: every descriptor
+    // reaches one of the two buckets, whatever the list grows to.
+    const answers = Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
+    const { committed, local } = splitAnswersByTarget(answers)
+    expect(Object.keys(committed).length + Object.keys(local).length).toBe(
+      VAULT_SETTING_DESCRIPTORS.length,
+    )
+  })
+
+  it('produces exactly what the seed wrote, when nothing was changed', () => {
+    // Clicking straight through must be a no-op, not a second opinion.
+    const answers = Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
+    const { committed, local } = splitAnswersByTarget(answers)
+    expect(committed).toEqual(seedSettings('committed'))
+    expect(local).toEqual(seedSettings('local'))
   })
 })

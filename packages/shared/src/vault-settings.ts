@@ -501,3 +501,25 @@ export function parseSettingsPatch(json: string | null): {
 
   return { patch, warnings }
 }
+
+/**
+ * Split the ritual's answers into one patch per file.
+ *
+ * Driven by each descriptor's `target`, never by a list of keys written out
+ * here — that is what makes "adding a setting is adding a descriptor" true of
+ * the write as well as the view. An answer for a key no descriptor claims is
+ * dropped: the step can only answer what it asked.
+ */
+export function splitAnswersByTarget(answers: Record<string, unknown>): {
+  committed: Record<string, unknown>
+  local: Record<string, unknown>
+} {
+  const committed: Record<string, unknown> = {}
+  const local: Record<string, unknown> = {}
+  for (const d of VAULT_SETTING_DESCRIPTORS) {
+    if (!(d.key in answers)) continue
+    const bucket = d.target === 'local' ? local : committed
+    bucket[d.key] = answers[d.key]
+  }
+  return { committed, local }
+}

@@ -23,6 +23,7 @@ import {
   type Act,
   type Mode,
 } from '@/state/onboarding-flow'
+import { splitAnswersByTarget } from '@holi/shared'
 import { VaultSettingsAct } from './VaultSettingsAct'
 import './onboarding-ritual.css'
 
@@ -148,6 +149,42 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
     if (onDismiss) onDismiss()
   }
 
+  /**
+   * Save the settings act's answers, then move on to the threshold.
+   *
+   * The vault already exists by here and its two settings files already hold
+   * the seed's defaults, so this MERGES the answers over them — which is why a
+   * failure is not fatal. A vault whose preferences did not stick is still a
+   * working vault with valid settings, and trapping someone on a settings step
+   * over it would be the worse outcome. Surface it and carry on.
+   *
+   * The split is by each descriptor's own `target`, so a setting added later
+   * reaches the right file without this function changing.
+   */
+  const saveSettings = async () => {
+    const remote = createdRemote
+    if (remote === null) {
+      advance()
+      return
+    }
+    const { committed, local } = splitAnswersByTarget(s.settings)
+    try {
+      const { warnings } = await trpc.settings.write.mutate({
+        remote,
+        committedJson: JSON.stringify(committed),
+        localJson: JSON.stringify(local),
+      })
+      // A refused value is not an error the ritual can act on, but it must not
+      // vanish either — the agent and the user can both read the file.
+      if (warnings.length > 0) console.warn(`[settings] ${warnings.join('; ')}`)
+    } catch (err) {
+      console.warn(
+        `[settings] could not save your choices: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    advance()
+  }
+
   // Create the vault from the naming act. On success the repo genuinely exists
   // and is pushed (the router commits + pushes before returning), so we advance
   // to the threshold, which can now say so truthfully and show the live remote.
@@ -214,6 +251,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
       } else if (e.key === 'Enter') {
         e.preventDefault()
         if (s.act === 4) void enter()
+        else if (s.act === 3) void saveSettings()
         else if (s.act === 2 && s.view === 'form') void submit()
         else advance()
       } else if (e.key === 'Escape') {
@@ -454,7 +492,7 @@ export function OnboardingRitual({ mode, onDismiss }: Props) {
               />
 
               <div className="obrit-cta-row">
-                <Button variant="ceremony" onClick={advance}>
+                <Button variant="ceremony" onClick={() => void saveSettings()}>
                   Continue
                   <span aria-hidden>→</span>
                 </Button>
