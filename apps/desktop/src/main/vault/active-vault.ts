@@ -175,7 +175,11 @@ export async function openActiveVault(args: {
   /** Where the seeded pre-commit hook should reach Holi (D76). Absent leaves
    *  the transforms unwired: the hook still runs and still exits 0, it just
    *  finds no endpoint and does nothing. */
-  hookEndpoint?: () => { port: number; token: string } | null
+  /** Where this vault's git hook calls back. Takes the remote so the token is
+   *  minted for THIS vault (D87's lesson): the endpoint is written into this
+   *  clone's `.git/hooks`, and a shared token let a commit here run the staged
+   *  transforms against whichever vault happened to be on screen. */
+  hookEndpoint?: (remote: string) => { port: number; token: string } | null
   timings?: Partial<SyncTimings>
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
@@ -193,7 +197,7 @@ export async function openActiveVault(args: {
   // Tell that hook how to reach us. Rewritten every open because the port is
   // ephemeral and moves on every restart; best-effort for the same reason as
   // the install above.
-  await writeHookEndpoint(root, args.hookEndpoint?.() ?? null).catch((err) =>
+  await writeHookEndpoint(root, args.hookEndpoint?.(args.remote) ?? null).catch((err) =>
     console.error('[vault] hook endpoint write failed:', err),
   )
 
@@ -776,7 +780,11 @@ export function createVaultHost(args: {
   onHeldBack?: (files: HeldBackFile[]) => void
   /** Read per open — the hook server binds after the host is built, and the
    *  port moves on every restart. */
-  hookEndpoint?: () => { port: number; token: string } | null
+  /** Where this vault's git hook calls back. Takes the remote so the token is
+   *  minted for THIS vault (D87's lesson): the endpoint is written into this
+   *  clone's `.git/hooks`, and a shared token let a commit here run the staged
+   *  transforms against whichever vault happened to be on screen. */
+  hookEndpoint?: (remote: string) => { port: number; token: string } | null
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null

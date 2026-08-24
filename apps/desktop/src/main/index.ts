@@ -276,9 +276,11 @@ async function main(): Promise<void> {
     onSyncState: (state) => send('vault:sync', state),
     // How the seeded pre-commit hook reaches us. A getter, read at open, so a
     // vault opened before the server bound still gets the live port.
-    hookEndpoint: () => {
+    hookEndpoint: (remote) => {
       const port = hookServer.port()
-      return port === null ? null : { port, token: hookServer.token() }
+      // This vault's standing token: it is written into that clone's
+      // `.git/hooks`, so it must outlast any agent session and any switch.
+      return port === null ? null : { port, token: hookServer.tokenForVault(remote) }
     },
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
@@ -473,14 +475,33 @@ async function main(): Promise<void> {
   /** Every ops route acts on the vault that is open right now. There is
    *  exactly one, and the agent's cwd IS its root, so taking a remote as an
    *  argument would only create a way for the two to disagree. */
-  const opsRoot = (): string | null => host.active()?.root ?? null
+  /**
+   * The clone the caller's vault lives in.
+   *
+   * Resolved from the **caller's remote**, not from `host.active()`. The old
+   * version took no argument and read whatever was on screen, on the reasoning
+   * that there is exactly one vault open and the agent's cwd is its root. D87
+   * found the premise false: an agent session outlives a vault switch, and a
+   * `git commit` in one clone fires that clone's hook whatever Holi is showing.
+   * The pre-commit transforms then ran against the wrong repository — a write,
+   * not merely a wrong read.
+   *
+   * The registry is the source, so a vault that is not currently open still
+   * resolves: its clone is on disk either way, and its git hook can fire.
+   */
+  const rootFor = async (remote: string): Promise<string | null> => {
+    const active = host.active()
+    if (active?.remote === remote) return active.root
+    return (await registry.list()).find((e) => e.remote === remote)?.path ?? null
+  }
 
   const hookServer = createHookServer({
     onTurnStart: () => agent.setTurnActive(true),
     onTurnEnd: () => agent.setTurnActive(false),
-    ops: createAgentOps({
+    opsFor: (remote) =>
+      createAgentOps({
       openApp: async (appId) => {
-        const root = opsRoot()
+        const root = await rootFor(remote)
         if (root === null) return { ok: false, error: 'no vault is open' }
         const result = await openAppOp(root, appId)
         // The tab opens only once the app is known to be openable: a refusal
@@ -490,7 +511,7 @@ async function main(): Promise<void> {
         return result
       },
       initApp: async (appId) => {
-        const root = opsRoot()
+        const root = await rootFor(remote)
         if (root === null) return { ok: false, error: 'no vault is open' }
         return initAppOp(root, appId)
       },
@@ -500,7 +521,7 @@ async function main(): Promise<void> {
        * script is a curl and an `exit 0`.
        */
       runPreCommitHooks: async () => {
-        const root = opsRoot()
+        const root = await rootFor(remote)
         if (root === null) return { changed: [], failed: [] }
         // No `notify` — Holi has no push seam into a live Claude Code session,
         // and typing into the agent's PTY is not one. The run log
@@ -513,13 +534,13 @@ async function main(): Promise<void> {
         return { changed: result.changed, failed: result.failed }
       },
       refreshSeed: async (input) => {
-        const root = opsRoot()
+        const root = await rootFor(remote)
         if (root === null) {
           return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
         }
         return refreshManaged(root, input)
       },
-    }),
+      }),
   })
   await hookServer.start()
   // D86: the vault agent runs on THIS VAULT's config directory, not the machine's
@@ -554,7 +575,8 @@ async function main(): Promise<void> {
       }),
     getWindow: () => mainWindow,
     hookPort: () => hookServer.port(),
-    hookToken: () => hookServer.token(),
+    mintHookToken: (remote) => hookServer.mintSessionToken(remote),
+    revokeHookToken: (token) => hookServer.revoke(token),
     // $TYPST_BIN for the md-to-pdf skill: find-only for the env, download-warm
     // fire-and-forget so a machine that never rendered has typst next time.
     resolveTypstBin: () => resolveTypstBin({ cacheDir: typstCacheDir }),

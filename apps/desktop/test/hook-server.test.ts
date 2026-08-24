@@ -1,6 +1,7 @@
 import { request } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
+import type { AgentOps } from '../src/main/agent/ops'
 
 /** POST to the running server; resolve with the status and (drained) body. */
 function post(port: number, path: string): Promise<{ status: number; body: string }> {
@@ -23,25 +24,86 @@ afterEach(async () => {
   for (const s of servers.splice(0)) await s.stop()
 })
 
-async function rig() {
+const VAULT = 'nthomsencph/privat'
+
+async function rig(opsFor?: (remote: string) => AgentOps) {
   let starts = 0
   let ends = 0
   const server = createHookServer({
     onTurnStart: () => (starts += 1),
     onTurnEnd: () => (ends += 1),
     log: () => {},
+    opsFor,
   })
   servers.push(server)
   await server.start()
-  return { server, port: () => server.port()!, token: () => server.token(), starts: () => starts, ends: () => ends }
+  const token = server.tokenForVault(VAULT)
+  return {
+    server,
+    port: () => server.port()!,
+    token: () => token,
+    starts: () => starts,
+    ends: () => ends,
+  }
 }
 
 describe('createHookServer', () => {
-  it('binds an ephemeral port and mints a stable hex token', async () => {
+  it('binds an ephemeral port and mints a stable hex token per vault', async () => {
     const r = await rig()
     expect(r.port()).toBeGreaterThan(0)
     expect(r.token()).toMatch(/^[0-9a-f]{32}$/)
-    expect(r.token()).toBe(r.token()) // stable
+    // Stable for the vault: this one is written into the clone's `.git/hooks`,
+    // so it has to keep working for as long as the app is running.
+    expect(r.server.tokenForVault(VAULT)).toBe(r.token())
+  })
+
+  it('gives two vaults two tokens', async () => {
+    const r = await rig()
+    expect(r.server.tokenForVault('a/one')).not.toBe(r.server.tokenForVault('a/two'))
+  })
+
+  it('routes each token to ITS OWN vault, whatever else is open', async () => {
+    // The hazard: `runPreCommit` used to resolve `host.active()`, so a commit in
+    // vault A ran A's staged transforms against whichever vault was on screen —
+    // rewriting files in the wrong repo.
+    const asked: string[] = []
+    const r = await rig((remote) => {
+      asked.push(remote)
+      return async () => ({ status: 200, body: '{}' })
+    })
+    const mine = r.server.tokenForVault('me/personal')
+    const theirs = r.server.tokenForVault('syv/work')
+
+    await post(r.port(), `/hooks/pre-commit?t=${mine}`)
+    await post(r.port(), `/hooks/pre-commit?t=${theirs}`)
+
+    expect(asked).toEqual(['me/personal', 'syv/work'])
+  })
+
+  it('mints a session token that can be revoked, unlike a vault one', async () => {
+    // Two lifetimes, deliberately. The vault's token lives in a file on disk and
+    // must outlast any session; an agent's dies with its session.
+    const r = await rig()
+    const session = r.server.mintSessionToken(VAULT)
+    expect(session).not.toBe(r.token())
+
+    expect((await post(r.port(), `/turn/start?t=${session}`)).status).toBe(204)
+    r.server.revoke(session)
+    expect((await post(r.port(), `/turn/start?t=${session}`)).status).toBe(403)
+    // The vault's own token is untouched by that, and revoking it is refused —
+    // it lives in a file on disk and must outlast any one session.
+    r.server.revoke(r.token())
+    expect((await post(r.port(), `/turn/start?t=${r.token()}`)).status).toBe(204)
+  })
+
+  it('never resolves a vault for an unknown token', async () => {
+    const asked: string[] = []
+    const r = await rig((remote) => {
+      asked.push(remote)
+      return async () => ({ status: 200, body: '{}' })
+    })
+    await post(r.port(), `/hooks/pre-commit?t=nope`).catch(() => undefined)
+    expect(asked).toEqual([])
   })
 
   it('POST /turn/start with the token fires onTurnStart and returns an empty 204', async () => {

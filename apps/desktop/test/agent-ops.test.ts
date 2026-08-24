@@ -37,13 +37,14 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
     onTurnStart: () => (starts += 1),
     onTurnEnd: () => (ends += 1),
     log: () => {},
-    ops: createAgentOps(deps),
+    // One vault in these; the server routes by the caller's token (D87).
+    opsFor: () => createAgentOps(deps),
   })
   servers.push(server)
   await server.start()
   return {
     port: () => server.port()!,
-    token: () => server.token(),
+    token: () => server.tokenForVault('owner/repo'),
     openApp,
     initApp,
     refreshSeed,
@@ -141,7 +142,7 @@ describe('auth and routing', () => {
     const server = createHookServer({ onTurnStart: () => {}, onTurnEnd: () => {}, log: () => {} })
     servers.push(server)
     await server.start()
-    const res = await post(server.port()!, `/app/open?t=${server.token()}&id=x`)
+    const res = await post(server.port()!, `/app/open?t=${server.tokenForVault('owner/repo')}&id=x`)
     expect(res.status).toBe(404)
   })
 })

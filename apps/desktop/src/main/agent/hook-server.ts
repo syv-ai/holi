@@ -23,9 +23,17 @@ export interface HookServerDeps {
   onTurnStart(): void
   onTurnEnd(): void
   log?: (msg: string) => void
-  /** The agent-ops routes, if this instance has them. Absent — in tests, and
-   *  before main wires them — leaves every ops path a 404 rather than a crash. */
-  ops?: AgentOps
+  /**
+   * The agent-ops routes for **one vault**, if this instance has them. Absent —
+   * in tests, and before main wires them — leaves every ops path a 404 rather
+   * than a crash.
+   *
+   * Resolved from the caller's token rather than from the active vault (D87's
+   * lesson, applied here): a `git commit` in one vault used to run its staged
+   * pre-commit transforms against whichever vault was on screen, which is a
+   * write to the wrong repository rather than merely a wrong read.
+   */
+  opsFor?: (remote: string) => AgentOps
 }
 
 export interface HookServer {
@@ -34,8 +42,16 @@ export interface HookServer {
   stop(): Promise<void>
   /** The bound port, or null before `start()`. */
   port(): number | null
-  /** The per-instance auth token the hooks must present. */
-  token(): string
+  /**
+   * This vault's standing token, minted once and stable for the app's life.
+   *
+   * It is written into the clone's `.git/hooks`, so it has to keep working
+   * across agent sessions and vault switches. Never revoked.
+   */
+  tokenForVault(remote: string): string
+  /** A token for one agent session in one vault, revoked when it ends. */
+  mintSessionToken(remote: string): string
+  revoke(token: string): void
 }
 
 /** Cap the drained request body — the hooks send nothing we read, so this is
@@ -44,7 +60,10 @@ const MAX_BODY_BYTES = 64 * 1024
 
 export function createHookServer(deps: HookServerDeps): HookServer {
   const log = deps.log ?? ((msg: string) => console.log(`[hook-server] ${msg}`))
-  const token = randomBytes(16).toString('hex')
+  /** token → the vault it speaks for. */
+  const tokens = new Map<string, string>()
+  /** remote → its standing token, so a vault's `.git/hooks` file stays valid. */
+  const vaultTokens = new Map<string, string>()
   let server: Server | null = null
   let boundPort: number | null = null
 
@@ -59,7 +78,8 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     // **The token is checked on the headers, before a byte of body is read.**
     // Draining first would mean an unauthenticated local process could make us
     // buffer up to the cap on every request just by being wrong about the token.
-    if (url.searchParams.get('t') !== token) {
+    const remote = tokens.get(url.searchParams.get('t') ?? '')
+    if (remote === undefined) {
       req.resume()
       res.writeHead(403).end()
       return
@@ -94,7 +114,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       const params = new URLSearchParams(url.search)
       for (const [key, value] of new URLSearchParams(body)) params.set(key, value)
 
-      void Promise.resolve(deps.ops?.(url.pathname, params) ?? null)
+      void Promise.resolve(deps.opsFor?.(remote)(url.pathname, params) ?? null)
         .then((reply) => {
           if (reply === null) {
             res.writeHead(404).end()
@@ -112,7 +132,26 @@ export function createHookServer(deps: HookServerDeps): HookServer {
   }
 
   return {
-    token: () => token,
+    tokenForVault(remote) {
+      let token = vaultTokens.get(remote)
+      if (token === undefined) {
+        token = randomBytes(16).toString('hex')
+        vaultTokens.set(remote, token)
+        tokens.set(token, remote)
+      }
+      return token
+    },
+    mintSessionToken(remote) {
+      const token = randomBytes(16).toString('hex')
+      tokens.set(token, remote)
+      return token
+    },
+    revoke(token) {
+      // A vault's standing token is not revocable through here: it lives in a
+      // file on disk and must outlast the session that happened to be open.
+      if (vaultTokens.get(tokens.get(token) ?? '') === token) return
+      tokens.delete(token)
+    },
     port: () => boundPort,
     start: () =>
       new Promise<void>((resolve, reject) => {

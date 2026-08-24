@@ -50,13 +50,14 @@ beforeEach(async () => {
     onTurnStart: () => {},
     onTurnEnd: () => {},
     log: () => {},
-    ops: createAgentOps(deps),
+    // One vault in these; the server routes by the caller's token (D87).
+    opsFor: () => createAgentOps(deps),
   })
   await server.start()
   env = {
     PATH: process.env.PATH ?? '',
     HOLI_HOOK_PORT: String(server.port()),
-    HOLI_HOOK_TOKEN: server.token(),
+    HOLI_HOOK_TOKEN: server.tokenForVault('owner/repo'),
   }
 })
 

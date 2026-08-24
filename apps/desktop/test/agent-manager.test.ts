@@ -69,6 +69,8 @@ async function rig(
     resolveConfigDir?: AgentManagerDeps['resolveConfigDir']
     mintGoogleToken?: AgentManagerDeps['mintGoogleToken']
     revokeGoogleToken?: AgentManagerDeps['revokeGoogleToken']
+    mintHookToken?: AgentManagerDeps['mintHookToken']
+    revokeHookToken?: AgentManagerDeps['revokeHookToken']
   } = {},
 ): Promise<Rig> {
   const dir = await mkdtemp(join(tmpdir(), 'holi-am-'))
@@ -116,12 +118,13 @@ async function rig(
     resolveBin: () => (opts.bin === undefined ? '/bin/fake-claude' : opts.bin),
     killGraceMs: 20,
     hookPort: () => 4242,
-    hookToken: () => 'tkn',
     turnSafetyMs: opts.turnSafetyMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
     resolveConfigDir: opts.resolveConfigDir,
     mintGoogleToken: opts.mintGoogleToken,
     revokeGoogleToken: opts.revokeGoogleToken,
+    mintHookToken: opts.mintHookToken,
+    revokeHookToken: opts.revokeHookToken,
     warmTypst: () => {
       warmed += 1
     },
@@ -327,7 +330,7 @@ describe('AgentManager', () => {
   })
 
   it('spawns the child with the hook port and token in its env', async () => {
-    const r = await rig()
+    const r = await rig({ mintHookToken: () => 'tkn' })
     await r.manager.start({ vaultId: VAULT })
     const spawn = r.spawns[0]!
     expect(spawn.opts.env.HOLI_HOOK_PORT).toBe('4242')
@@ -541,6 +544,36 @@ describe("the agent's Google bearer", () => {
     await r.manager.start({ vaultId: VAULT })
 
     expect(r.spawns[0]!.opts.env.HOLI_GOOGLE_TOKEN).toBeUndefined()
+    expect(r.manager.status().running).toBe(true)
+  })
+})
+
+describe("the agent's hook bearer", () => {
+  // Same shape and same reason as the Google bearer: an agent session outlives a
+  // vault switch, and the ops behind this token (`openApp`, `initApp`,
+  // `refreshSeed`) act on a vault's files.
+  it('is minted for the vault the session spawned in, and revoked with it', async () => {
+    const minted: string[] = []
+    const revoked: string[] = []
+    const r = await rig({
+      mintHookToken: (remote: string) => {
+        minted.push(remote)
+        return `hook-${minted.length}`
+      },
+      revokeHookToken: (token: string) => revoked.push(token),
+    })
+    await r.manager.start({ vaultId: VAULT })
+    expect(minted).toEqual([VAULT])
+    expect(r.spawns[0]!.opts.env.HOLI_HOOK_TOKEN).toBe('hook-1')
+
+    await r.manager.kill()
+    expect(revoked).toEqual(['hook-1'])
+  })
+
+  it('spawns without one when no minter is supplied', async () => {
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT })
+    expect(r.spawns[0]!.opts.env.HOLI_HOOK_TOKEN).toBeUndefined()
     expect(r.manager.status().running).toBe(true)
   })
 })
