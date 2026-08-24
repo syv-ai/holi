@@ -1548,7 +1548,9 @@ export function createRouter(deps: RouterDeps) {
      * It is what lets settings offer the one action that fixes it.
      */
     status: t.procedure.query(async () => {
-      const session = await deps.googleAccounts?.sessionFor(activeRemote()).catch(() => null)
+      const remote = activeRemoteOrNull()
+      const session =
+        remote === null ? null : await deps.googleAccounts?.sessionFor(remote).catch(() => null)
       return {
         account: session?.account ?? null,
         missingScopes: session?.missingScopes() ?? [],
@@ -1593,7 +1595,8 @@ export function createRouter(deps: RouterDeps) {
      */
     accounts: t.procedure.query(async () => {
       const manager = googleAccounts()
-      const session = await manager.sessionFor(activeRemote())
+      const remote = activeRemoteOrNull()
+      const session = remote === null ? null : await manager.sessionFor(remote)
       return { accounts: manager.list(), current: session?.accountSub ?? null }
     }),
 
@@ -2028,6 +2031,20 @@ export function createRouter(deps: RouterDeps) {
       throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'no vault is open' })
     }
     return remote
+  }
+
+  /**
+   * The active vault, or null.
+   *
+   * `status` and `accounts` use this rather than `activeRemote()` because **no
+   * vault open is not an error for them**: the renderer asks once on mount, and
+   * at startup that can land before the vault has finished opening. A throw
+   * there is a transient failure the renderer records as an answer, and the
+   * picker then stays empty until a reload — which is exactly how it behaved
+   * when this was written the other way.
+   */
+  function activeRemoteOrNull(): string | null {
+    return deps.host.active()?.remote ?? null
   }
 
   /** The active vault's session, or a precondition failure — the same refusal

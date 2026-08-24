@@ -1977,3 +1977,48 @@ describe('google accounts per vault', () => {
     expect(links.has('syv/work')).toBe(false)
   })
 })
+
+/**
+ * Asked before a vault is open (D87).
+ *
+ * The renderer reads this once on mount and records the answer. At startup that
+ * can land before the vault has finished opening, and a throw there is a
+ * transient failure it cannot tell from a real one: the account picker then
+ * stayed empty until a reload. Found in the running app.
+ */
+describe('google status and accounts with no vault open', () => {
+  async function noVaultRig() {
+    const base = await mkdtemp(join(tmpdir(), 'holi-rt-gnv-'))
+    dirs.push(base)
+    const registry = new VaultRegistry(join(base, 'vaults.json'))
+    const host = createVaultHost({ registry, onSnapshot: () => {}, onSyncState: () => {} })
+    hosts.push(host)
+    return createRouter({
+      registry,
+      session: await idleSession(base),
+      host, // nothing opened: `active()` is null
+      vaultRoot: join(base, 'Holi'),
+      openExternal: async () => {},
+      trashItem: async () => {},
+      downloadsDir: join(base, 'Downloads'),
+      typstCacheDir: join(base, 'typst'),
+      googleAccounts: {
+        list: () => [{ sub: 'sub-1', email: 'ada@syv.ai' }],
+        sessionFor: async () => null,
+      } as never,
+    }).createCaller({})
+  }
+
+  it('still lists the machine accounts, with no vault using one', async () => {
+    const caller = await noVaultRig()
+    expect(await caller.google.accounts()).toEqual({
+      accounts: [{ sub: 'sub-1', email: 'ada@syv.ai' }],
+      current: null,
+    })
+  })
+
+  it('reports no account rather than refusing', async () => {
+    const caller = await noVaultRig()
+    expect(await caller.google.status()).toEqual({ account: null, missingScopes: [] })
+  })
+})
