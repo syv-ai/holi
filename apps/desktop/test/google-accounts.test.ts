@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createGoogleAccounts } from '../src/main/google/accounts'
+import { GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET } from '../src/main/google/credentials'
 import { createVaultAccounts } from '../src/main/google/vault-accounts'
 import { GoogleTokenStore, type StoredGoogleAuth } from '../src/main/google/token-store'
 import type { LoopbackServer } from '../src/main/google/loopback-flow'
@@ -171,5 +172,75 @@ describe('onChange', () => {
     await accounts.removeAccount('sub-1')
 
     expect(seen).toContain('sub-1')
+  })
+})
+
+describe('the client credentials', () => {
+  /**
+   * `electron.ts` builds the manager with **no** `clientId` and no
+   * `clientSecret` — it always relied on the resolver that `GoogleSession`
+   * carried, and D87 moved `connect` here without bringing it along. Every rig
+   * above passes `clientId: 'client-1'`, which is exactly why the empty-string
+   * fallback shipped: consent died at Google with `Missing required parameter:
+   * client_id` before the user ever saw a consent screen.
+   *
+   * So this builds the manager the way production does, and asserts both halves.
+   * The secret is the half that fails later and reads differently — at the token
+   * exchange, after consent has already been given.
+   */
+  async function productionManager(exchange: { calls: Array<Record<string, string>> }) {
+    let state = ''
+    return createGoogleAccounts({
+      store,
+      vaults: createVaultAccounts(join(dir, 'google-vault-accounts.json')),
+      listen: async () => ({
+        port: 45123,
+        // Echoes back whatever state the authorization URL carried, so the
+        // exchange is reached without hardcoding a state the flow invented.
+        waitForRedirect: async () => ({ code: 'auth-code', state }),
+        close: () => {},
+      }),
+      openBrowser: async (url) => {
+        state = new URL(url).searchParams.get('state') ?? ''
+      },
+      fetch: (async (_url: string, init: RequestInit) => {
+        exchange.calls.push(
+          Object.fromEntries(new URLSearchParams(String(init.body)).entries()),
+        )
+        return {
+          ok: true,
+          json: async () => ({
+            access_token: 'at-1',
+            refresh_token: 'rt-1',
+            expires_in: 3600,
+            scope: 'openid email',
+            id_token: `header.${Buffer.from(
+              JSON.stringify({ sub: 'sub-9', email: 'ada@syv.ai' }),
+            ).toString('base64url')}.signature`,
+          }),
+          text: async () => '',
+        }
+      }) as unknown as typeof globalThis.fetch,
+      now: () => NOW,
+    })
+  }
+
+  it('sends the embedded client id when the wiring passes none', async () => {
+    const exchange = { calls: [] as Array<Record<string, string>> }
+    const accounts = await productionManager(exchange)
+
+    const flow = await accounts.connect(VAULT)
+
+    expect(new URL(flow.authUrl).searchParams.get('client_id')).toBe(GOOGLE_CLIENT_ID)
+  })
+
+  it('sends the embedded client secret on the token exchange', async () => {
+    const exchange = { calls: [] as Array<Record<string, string>> }
+    const accounts = await productionManager(exchange)
+
+    const flow = await accounts.connect(VAULT)
+    await flow.wait()
+
+    expect(exchange.calls[0]?.client_secret).toBe(GOOGLE_CLIENT_SECRET)
   })
 })

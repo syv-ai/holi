@@ -67,6 +67,25 @@ describe('GoogleConnection', () => {
     expect(screen.getAllByRole('button', { name: 'Use in this vault' })).toHaveLength(2)
   })
 
+  it('says plainly "Connect" when there is no account on this machine to differ from', async () => {
+    // The label follows the machine list, not this vault's link: offering a
+    // "different" account to a first-run user names one they do not have.
+    accounts.mockResolvedValue({ accounts: [], current: null })
+    render()
+
+    expect(await screen.findByRole('button', { name: 'Connect' })).toBeInTheDocument()
+  })
+
+  it('offers a different account only when this machine already has one', async () => {
+    // Accounts exist and this vault uses none: the rows above are the offer, and
+    // this button is the escape hatch from them.
+    render()
+
+    expect(
+      await screen.findByRole('button', { name: 'Connect a different account…' }),
+    ).toBeInTheDocument()
+  })
+
   it('reuses an account with one click and no consent round trip', async () => {
     render()
     await screen.findByText('ada@syv.ai')

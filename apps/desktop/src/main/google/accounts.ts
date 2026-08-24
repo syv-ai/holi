@@ -21,6 +21,7 @@ import {
   GOOGLE_SCOPES,
 } from './session'
 import { startLoopbackFlow, type Listen, type LoopbackFlow } from './loopback-flow'
+import { resolveClientId, resolveClientSecret } from './credentials'
 import type { GoogleAccounts, GoogleTokenStore, StoredGoogleAuth } from './token-store'
 import type { VaultAccountsStore } from './vault-accounts'
 
@@ -133,8 +134,8 @@ export async function createGoogleAccounts(
 
     async connect(remote) {
       const flow = await startLoopbackFlow({
-        clientId: deps.clientId ?? '',
-        clientSecret: deps.clientSecret,
+        clientId: resolveClientId(deps.clientId),
+        clientSecret: resolveClientSecret(deps.clientSecret),
         scopes: GOOGLE_SCOPES,
         listen: deps.listen,
         openBrowser: deps.openBrowser,

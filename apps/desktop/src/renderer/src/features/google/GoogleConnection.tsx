@@ -1,9 +1,11 @@
 /**
  * Connect / disconnect the Google account behind mail + calendar (D67).
  *
- * **Account-wide, not per-vault.** It renders inside vault settings because
- * that is the only settings surface today, so the copy says so plainly rather
- * than letting its position imply a scope it does not have.
+ * **Two scopes, and the panel's job is keeping them apart** (D87). An account is
+ * connected on this *machine*; a *vault* uses one of them. So the rows offer
+ * the machine's accounts, the connect button's label follows that list, and
+ * every act here — using, unlinking — is this vault's alone except "Remove from
+ * Holi", which is the machine's.
  *
  * The two-phase shape mirrors `SignIn`: `connect` returns as soon as the
  * browser is open, `awaitConnect` resolves when the grant lands. Nothing here
@@ -106,6 +108,16 @@ export function GoogleConnection() {
   /** Connected here, but not the one this vault uses. */
   const others = accounts.filter((a) => a.sub !== currentSub)
 
+  /**
+   * The connect button's label follows the **machine** list, not this vault's
+   * link (D87). "A different account" is only a sensible thing to offer when
+   * there is an account here to differ from; on a first run there is none, and
+   * naming one the user does not have is how the two scopes get confused. While
+   * the answer is still being asked for, `accounts` is empty and the button is
+   * disabled, so the plain label is also the safe one.
+   */
+  const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
+
   const connected = account != null
   const busy = phase.kind === 'connecting' || account === undefined
   /**
@@ -157,7 +169,7 @@ export function GoogleConnection() {
             disabled={busy}
             onClick={() => void connect()}
           >
-            {phase.kind === 'connecting' ? 'Connecting…' : 'Connect a different account…'}
+            {phase.kind === 'connecting' ? 'Connecting…' : connectLabel}
           </Button>
         )}
       </div>

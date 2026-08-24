@@ -17,40 +17,8 @@
  * for the same reason `viewer` is.
  */
 import { post, startLoopbackFlow, TOKEN_URL, type Listen, type LoopbackFlow } from './loopback-flow'
+import { resolveClientId, resolveClientSecret } from './credentials'
 import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './token-store'
-
-/**
- * The OAuth client id for Holi's Google app — an **existing registration**
- * (D67), reused rather than minted.
- *
- * A desktop client's id is not a secret, and neither is the `client_secret`
- * Google issues alongside it: for an installed app both ship in the binary and
- * **PKCE** is what actually protects the grant. This is the same premise
- * `github/session.ts` documents for its own public client id.
- *
- * `HOLI_GOOGLE_CLIENT_ID` / `HOLI_GOOGLE_CLIENT_SECRET` in the environment
- * override both, which is how you point a dev build at a different app without
- * editing source.
- */
-export const GOOGLE_CLIENT_ID = '132910330015-4ror8qtmhh69d1ms1s3s99tot5gm551q.apps.googleusercontent.com'
-
-/**
- * The desktop `client_secret` Google issued alongside the id above.
- *
- * **Committed on purpose, and it is not a credential.** Google's own docs say
- * the secret for an installed app "is obviously not treated as a secret" — it
- * ships in every copy of the binary and anyone can read it out. Google requires
- * it on the token exchange for a Desktop-type client, so it has to be here; the
- * thing that actually stops a stolen authorization code being redeemed is
- * **PKCE** (`pkce.ts`), which binds the exchange to a verifier that never
- * leaves this process.
- *
- * The consequence to be clear-eyed about: this pair identifies *Holi*, not a
- * user. It grants nothing on its own — every token still requires the user to
- * complete consent in their own browser. Rotating it is a config change, not an
- * incident.
- */
-export const GOOGLE_CLIENT_SECRET = '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'
 
 /**
  * **Mail is read-write within a bounded set; calendar stays read-only** (D68,
@@ -342,10 +310,10 @@ export class GoogleSession {
   }
 
   #clientId(): string {
-    return this.#deps.clientId ?? process.env.HOLI_GOOGLE_CLIENT_ID ?? GOOGLE_CLIENT_ID
+    return resolveClientId(this.#deps.clientId)
   }
 
   #clientSecret(): string | undefined {
-    return this.#deps.clientSecret ?? process.env.HOLI_GOOGLE_CLIENT_SECRET ?? GOOGLE_CLIENT_SECRET
+    return resolveClientSecret(this.#deps.clientSecret)
   }
 }
