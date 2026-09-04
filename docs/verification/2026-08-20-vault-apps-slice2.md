@@ -1,6 +1,6 @@
 # Vault apps slice 2 — what was checked by hand
 
-Companion to [`../plans/2026-08-20-vault-apps-slice2.md`](../plans/2026-08-20-vault-apps-slice2.md).
+Companion to the spent `2026-08-20-vault-apps-slice2` plan (deleted 2026-09-05; recoverable from git history).
 Verified **2026-08-20**, in the running dev app (`electron-vite dev --remote-debugging-port=9333`),
 signed in, against the real `nthomsencph/privat` vault — driven over CDP, with a screenshot, and
 with the generated `holi` CLI run from an ordinary terminal.

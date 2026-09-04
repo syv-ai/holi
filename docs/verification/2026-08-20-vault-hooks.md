@@ -1,6 +1,6 @@
 # Vault hooks — what was checked by hand
 
-Companion to [`../plans/2026-08-20-vault-hooks.md`](../plans/2026-08-20-vault-hooks.md).
+Companion to the spent `2026-08-20-vault-hooks` plan (deleted 2026-09-05; recoverable from git history).
 Verified **2026-08-20**, in a scratch vault (`apps/desktop/verify-hooks.mts`), never in a real one —
 these transforms rewrite files, and the point of the exercise is watching them do it. No network, no
 token, no GitHub.
