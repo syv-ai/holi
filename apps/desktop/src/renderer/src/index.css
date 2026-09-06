@@ -113,6 +113,60 @@
   --task-todo: #6e7681;
   --task-doing: #d29922;
   --task-done: #3fb950;
+
+  /* ── Rendered-table tokens (per-vault themeable) ───────────────────
+   * `codemirror-markdown-tables` paints a rendered table entirely from its own
+   * `--tbl-theme-*` properties, and it picks between its built-in light and
+   * dark arms from `EditorView.darkTheme` — a flag Holi never sets, because its
+   * editor is a `baseTheme` and its own switch is the `data-theme` stamp above,
+   * which the widget cannot see. So the widget came up in its LIGHT arm in both
+   * of Holi's modes, painting hardcoded hexes (#ffffff, #dcdcdc, #2483e2…).
+   *
+   * Restated here rather than passed as a `TableTheme.dark.with({…})` object to
+   * `markdownTables()`: an argument bakes the values at build time, which would
+   * cut per-vault themes out entirely. As custom properties they re-cascade,
+   * so a vault that recolours `--border` or `--popover` recolours its tables
+   * too, with no TypeScript involved. The package sets its own defaults through
+   * `:where(:root:has(&))` — specificity 0, deliberately, "to make it easy to
+   * override" — so a plain `:root` declaration wins.
+   *
+   * Every value is derived, so as with `--divider` one definition covers both
+   * modes: the light block re-states `--background`, `--border` and the rest on
+   * this same element, and the substitutions resolve per theme.
+   *
+   * `--border` and not `--divider` for a cell edge: a table cell is an OBJECT,
+   * and the split above is exactly that distinction.
+   *
+   * The two derived-from-`--foreground` mixes are the hover and drag states of
+   * a column/row divider, which is also the resize grip's fill — it has to be
+   * seen. The package derives them toward black, which is right for its light
+   * arm and backwards on a dark surface; toward `--foreground` is right in both
+   * (near-white on dark, near-black on light) and survives re-theming.
+   *
+   * even/odd row backgrounds are left alone: the package already defaults both
+   * to `var(--tbl-theme-row-background)`, so they follow the one set here. */
+  --tbl-theme-row-background: var(--background);
+  /* `--card` and not `--muted` for the header: dark-first, `--muted` and
+     `--border` are the same neutral-800, so a `--muted` header swallowed its
+     own cell borders. Against `--card` the ramp is three distinct steps in both
+     modes (page → header → edge), and "the header is the raised surface" is
+     what `--card` already means everywhere else. */
+  --tbl-theme-header-row-background: var(--card);
+  --tbl-theme-border-color: var(--border);
+  --tbl-theme-border-hover-color: color-mix(in srgb, var(--border), var(--foreground) 25%);
+  --tbl-theme-border-active-color: color-mix(in srgb, var(--border), var(--foreground) 55%);
+  --tbl-theme-outline-color: var(--ring);
+  --tbl-theme-text-color: var(--foreground);
+  --tbl-theme-menu-background: var(--popover);
+  --tbl-theme-menu-text-color: var(--popover-foreground);
+  --tbl-theme-menu-border-color: var(--border);
+  --tbl-theme-menu-hover-background: var(--accent);
+  --tbl-theme-menu-hover-text-color: var(--accent-foreground);
+  /* The select-all corner tints the whole table; `--selection` is already the
+     brand-derived translucent wash used for a text selection, and the blurred
+     state falls back to a neutral so it reads as "was selected", not "is". */
+  --tbl-theme-select-all-focus-overlay: var(--selection);
+  --tbl-theme-select-all-blur-overlay: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
 }
 [data-theme='light'] {
   color-scheme: light;

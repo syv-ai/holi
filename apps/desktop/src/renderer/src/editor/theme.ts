@@ -7,7 +7,12 @@ import { EditorView } from '@codemirror/view'
 const MONO = 'ui-monospace, SF Mono, monospace'
 
 export const editorTheme = EditorView.baseTheme({
-  '&': { height: '100%', fontSize: '14px' },
+  // The table widget reads its own `--tbl-style-font-family` (it defaults to
+  // `system-ui`, which belonged to no editor here). Declared on the editor
+  // element rather than `:root` so it can be scoped: every stack that borrows
+  // this base keeps its tables mono along with its prose, and the notes stack
+  // overrides it below — the same split `.cm-scroller` makes on the next line.
+  '&': { height: '100%', fontSize: '14px', '--tbl-style-font-family': MONO },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
   // `notesFontTheme` at the foot of this file — and only the notes editor does.
@@ -235,10 +240,15 @@ export const codeHighlighting = syntaxHighlighting(codeHighlightStyle)
  *   `.cm-scroller` is a DOM descendant of this one's, so the rule reaches it
  *   and has to be told not to.
  *
- * Tables need no rule: `codemirror-markdown-tables` renders them in `system-ui`
- * through its own `--tbl-style-font-family` and always has.
+ * Tables come along too. `codemirror-markdown-tables` paints its cells from
+ * `--tbl-style-font-family`, not from the inherited font, so the property has
+ * to be re-pointed the same way — a rendered table is prose and should read as
+ * prose. `editorTheme` sets it to `MONO` on the same element, which is what the
+ * composer and the plain/code editor keep; a `theme` outranks a `baseTheme`, so
+ * this wins for the notes stack. The menu font is left alone: that is UI.
  */
 export const notesFontTheme = EditorView.theme({
+  '&': { '--tbl-style-font-family': `var(--editor-font, ${MONO})` },
   '.cm-scroller': { fontFamily: `var(--editor-font, ${MONO})` },
   '.cm-code-line': { fontFamily: MONO },
   '.cm-inline-code': { fontFamily: MONO },
