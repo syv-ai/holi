@@ -12,6 +12,7 @@ import { agentThemeNote, type ColorMode } from '@/lib/agent-notices'
 import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom } from '@/state/vaults'
+import { terminalKeyAction } from '@/lib/agent-terminal-keys'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -128,24 +129,38 @@ export function AgentPanel() {
       if (selected) selectionRef.current = selected
     })
 
-    // Cmd/Ctrl+C with a selection copies (like a native terminal); without one
-    // it must fall through to the PTY as SIGINT.
+    /**
+     * The panel's one key hook — see `terminal-keys.ts` for which chords it
+     * claims and why.
+     *
+     * `preventDefault()` is load-bearing, not decoration: xterm returns early
+     * from its own keydown when this handler answers `false`, WITHOUT
+     * preventing the default, so the browser would go on to raise `keypress`
+     * on the hidden textarea and the key would be sent a second time.
+     */
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type !== 'keydown') return true
-      const mod = e.metaKey || e.ctrlKey
-      if (!mod) return true
       const selected = term.getSelection() || selectionRef.current
-      if (e.code === 'KeyC' && selected) {
-        void navigator.clipboard.writeText(selected)
-        return false
+      const action = terminalKeyAction(e, Boolean(selected))
+      if (!action) return true
+      e.preventDefault()
+      switch (action.kind) {
+        case 'write':
+          void window.holi.agent.write(action.seq)
+          break
+        case 'scroll':
+          if (action.to === 'top') term.scrollToTop()
+          else term.scrollToBottom()
+          break
+        case 'copy':
+          void navigator.clipboard.writeText(selected)
+          break
+        case 'paste':
+          void navigator.clipboard.readText().then((text) => {
+            if (text) void window.holi.agent.write(text)
+          })
+          break
       }
-      if (e.code === 'KeyV') {
-        void navigator.clipboard.readText().then((text) => {
-          if (text) void window.holi.agent.write(text)
-        })
-        return false
-      }
-      return true
+      return false
     })
 
     const offData = window.holi.agent.onData((data) => term.write(data))
