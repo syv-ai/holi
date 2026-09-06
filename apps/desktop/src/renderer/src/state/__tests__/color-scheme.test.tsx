@@ -47,6 +47,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   landing: { kind: 'daily' },
   dailyNotes: true,
   colorScheme,
+  editorFont: 'mono',
   hooks: { relink: true, 'archive-done': false, 'normalize-md': true },
   maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],

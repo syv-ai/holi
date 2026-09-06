@@ -46,6 +46,39 @@ export type ColorScheme = 'dark' | 'light' | 'system'
 
 export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
 
+/**
+ * The font the **notes editor** sets prose in. Code, frontmatter and the
+ * plain/code editor are never affected — see `notesFontTheme`.
+ *
+ * **A name, never a CSS string.** `.holi/settings.json` is committed, so in a
+ * shared vault this value was written by somebody else; a `font-family` taken
+ * from it verbatim is arbitrary CSS crossing a trust boundary, which is the
+ * whitelist argument D64 makes about theme tokens, with a different filename.
+ * Three names resolve to three stacks this file owns and nothing else gets
+ * through — so no sanitizer, and no amendment to D64's promise that a vault
+ * cannot re-space anything, because a vault cannot name a font either.
+ *
+ * `mono` is the default because it is what the editor has always been.
+ */
+export type EditorFont = 'mono' | 'sans' | 'serif'
+
+export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
+
+/**
+ * What each name means, and the only place it means anything.
+ *
+ * **System stacks, deliberately.** Holi bundles no web fonts — there is no
+ * `@font-face` anywhere in the renderer — so a name resolving to a family that
+ * happens not to be installed would fall back silently, and a setting that
+ * appears to do nothing is worse than one that is not offered. Every family
+ * here either ships with the OS or is a generic.
+ */
+export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.freeze({
+  mono: 'ui-monospace, "SF Mono", Menlo, monospace',
+  sans: 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif',
+  serif: 'ui-serif, Georgia, Cambria, "Times New Roman", serif',
+})
+
 /** The unique surfaces a vault can land on. Mirrors the renderer's
  *  `SingletonTab` deliberately rather than importing it — see `LandingTarget`. */
 export type SingletonLanding = 'board' | 'agenda' | 'mail'
@@ -75,6 +108,7 @@ export interface ResolvedVaultSettings {
   landing: LandingTarget
   dailyNotes: boolean
   colorScheme: ColorScheme
+  editorFont: EditorFont
   hooks: VaultHooks
   maxCommittedFileBytes: number
   /** Human-readable notes about dropped keys/values, surfaced so a typo is
@@ -98,6 +132,7 @@ export const VAULT_SETTING_DEFAULTS = Object.freeze({
   landing: Object.freeze({ kind: 'daily' }) as LandingTarget,
   dailyNotes: true,
   colorScheme: 'system' as ColorScheme,
+  editorFont: 'mono' as EditorFont,
   hooks: Object.freeze({
     relink: true,
     'archive-done': false,
@@ -182,6 +217,18 @@ function resolveColorScheme(files: Record<string, unknown>[], warnings: string[]
   return value as ColorScheme
 }
 
+function resolveEditorFont(files: Record<string, unknown>[], warnings: string[]): EditorFont {
+  const value = pick(files, 'editorFont')
+  if (value === undefined) return VAULT_SETTING_DEFAULTS.editorFont
+  if (typeof value !== 'string' || !EDITOR_FONTS.includes(value as EditorFont)) {
+    warnings.push(
+      `dropped "editorFont": expected one of ${EDITOR_FONTS.join(', ')}, got ${JSON.stringify(value)}`,
+    )
+    return VAULT_SETTING_DEFAULTS.editorFont
+  }
+  return value as EditorFont
+}
+
 function resolveLandingSetting(
   files: Record<string, unknown>[],
   warnings: string[],
@@ -259,6 +306,7 @@ export function resolveVaultSettings(
     landing: resolveLandingSetting(files, warnings),
     dailyNotes: resolveBoolean(files, 'dailyNotes', VAULT_SETTING_DEFAULTS.dailyNotes, warnings),
     colorScheme: resolveColorScheme(files, warnings),
+    editorFont: resolveEditorFont(files, warnings),
     hooks: resolveHooks(files, warnings),
     maxCommittedFileBytes: resolveMaxBytes(files, warnings),
     warnings,

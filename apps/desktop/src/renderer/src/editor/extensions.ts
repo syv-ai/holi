@@ -15,7 +15,7 @@ import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskC
 import { mentionSource, type MentionData } from './mentions'
 import { slashCommands } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
-import { codeHighlighting, editorTheme } from './theme'
+import { codeHighlighting, editorTheme, notesFontTheme } from './theme'
 
 /** Live seams the editor pulls on demand (the docExistsFacet pattern — closures
  * over the renderer's atoms, read when the user triggers `@`, never baked in). */
@@ -110,6 +110,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
       ...defaultKeymap,
     ]),
     editorTheme,
+    // Notes only. The mail composer and the plain/code editor take `editorTheme`
+    // alone and stay mono — see `notesFontTheme`.
+    notesFontTheme,
   ]
 }
 

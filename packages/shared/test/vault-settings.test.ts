@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  EDITOR_FONTS,
+  EDITOR_FONT_STACKS,
   TRANSFORM_NAMES,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
@@ -166,6 +168,8 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     ['a non-numeric file cap', { maxCommittedFileBytes: '10mb' }],
     ['an infinite file cap', { maxCommittedFileBytes: Number.POSITIVE_INFINITY }],
     ['an unknown colour scheme', { colorScheme: 'sepia' }],
+    ['an unknown editor font', { editorFont: 'comic' }],
+    ['an editor font given as a CSS stack', { editorFont: 'Georgia, serif' }],
     ['a non-object hooks block', { hooks: 'all' }],
     ['a non-boolean transform value', { hooks: { relink: 'on' } }],
   ])('falls back to the default for %s, and says so', (_label, value) => {
@@ -173,6 +177,7 @@ describe('resolveVaultSettings — malformed input never throws', () => {
     expect(s.warnings.length).toBeGreaterThan(0)
     expect(s.dailyNotes).toBe(true)
     expect(s.colorScheme).toBe('system')
+    expect(s.editorFont).toBe('mono')
     expect(s.maxCommittedFileBytes).toBe(VAULT_SETTING_DEFAULTS.maxCommittedFileBytes)
     expect(s.hooks.relink).toBe(true)
   })
@@ -555,5 +560,53 @@ describe('resolveColorMode', () => {
     // Not a third look: a deferral, and the OS answer changes while the app runs.
     expect(resolveColorMode('system', true)).toBe('dark')
     expect(resolveColorMode('system', false)).toBe('light')
+  })
+})
+
+describe('editorFont', () => {
+  it('is mono until a vault says otherwise', () => {
+    expect(VAULT_SETTING_DEFAULTS.editorFont).toBe('mono')
+    expect(resolveVaultSettings(null, null).editorFont).toBe('mono')
+  })
+
+  it.each(EDITOR_FONTS)('takes %s from the committed file', (font) => {
+    expect(resolveVaultSettings(committed({ editorFont: font }), null).editorFont).toBe(font)
+  })
+
+  it('lets the local file disagree with the vault, per key', () => {
+    const s = resolveVaultSettings(
+      committed({ editorFont: 'serif', colorScheme: 'light' }),
+      committed({ editorFont: 'mono' }),
+    )
+    expect(s.editorFont).toBe('mono')
+    // The key it stayed quiet about is still the vault's.
+    expect(s.colorScheme).toBe('light')
+  })
+
+  /**
+   * The reason the value is a name and not a font-family string: the committed
+   * file is written by whoever wrote the vault, so anything that is not one of
+   * three known words must not reach the renderer.
+   */
+  it('refuses a CSS string from a collaborator, and says so', () => {
+    const s = resolveVaultSettings(committed({ editorFont: "'X'; background: url(y)" }), null)
+    expect(s.editorFont).toBe('mono')
+    expect(s.warnings.join(' ')).toContain('editorFont')
+  })
+
+  it('resolves every name to a stack, and ends each one in a generic', () => {
+    for (const font of EDITOR_FONTS) {
+      const stack = EDITOR_FONT_STACKS[font]
+      expect(stack).toBeTruthy()
+      expect(stack.split(',').at(-1)?.trim()).toMatch(/^(monospace|sans-serif|serif)$/)
+    }
+  })
+
+  /** No onboarding row, so a new vault is born without the key and inherits the
+   *  default — which is what makes adding the setting invisible to a vault that
+   *  never asked for it. */
+  it('is not seeded into either file', () => {
+    expect(seedSettings('committed')).not.toHaveProperty('editorFont')
+    expect(seedSettings('local')).not.toHaveProperty('editorFont')
   })
 })

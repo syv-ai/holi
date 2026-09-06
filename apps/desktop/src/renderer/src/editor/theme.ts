@@ -2,9 +2,16 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
 
+/** The one mono stack, named once so the places that must *stay* mono when the
+ *  notes editor goes proportional cannot drift from the base they restore. */
+const MONO = 'ui-monospace, SF Mono, monospace'
+
 export const editorTheme = EditorView.baseTheme({
   '&': { height: '100%', fontSize: '14px' },
-  '.cm-scroller': { fontFamily: 'ui-monospace, SF Mono, monospace', lineHeight: '1.6' },
+  // Mono, for every stack that borrows this base: the plain/code editor, the mail
+  // composer and `DiffView`. The **notes** editor overrides it — see
+  // `notesFontTheme` at the foot of this file — and only the notes editor does.
+  '.cm-scroller': { fontFamily: MONO, lineHeight: '1.6' },
   /**
    * Left-aligned, NOT centred (`margin: 0 auto` was here and is deliberately
    * gone).
@@ -148,7 +155,7 @@ export const editorTheme = EditorView.baseTheme({
     gap: '0.4rem',
     padding: '3px 12px',
     borderTop: '1px solid #262626',
-    fontFamily: 'ui-monospace, SF Mono, monospace',
+    fontFamily: MONO,
     fontSize: '0.72rem',
     // Neutral while valid — the app's "quiet until wrong" cue, same as the
     // frontmatter chevron. `.cm-validity-invalid` reddens both dot and label.
@@ -203,3 +210,38 @@ const codeHighlightStyle = HighlightStyle.define([
 
 /** The highlight extension to add to the plain/code stack. */
 export const codeHighlighting = syntaxHighlighting(codeHighlightStyle)
+
+/**
+ * The notes editor's prose font, and the three things it must not reach.
+ *
+ * **`EditorView.theme`, not `baseTheme`** — a theme outranks a base theme, so
+ * this overrides `editorTheme`'s `.cm-scroller` for the one stack that includes
+ * it (`baseEditorExtensions`). The plain/code editor, the mail composer and
+ * `DiffView` include only the base and stay mono, which is not a detail: the
+ * plain editor is where `.json`, `.ts` and `.env` open, and column alignment is
+ * the whole point there.
+ *
+ * The value is a CSS custom property rather than a compartment because the
+ * setting can only change on a vault switch, and a var restyles every open
+ * editor at once with no reconfiguration and no per-view plumbing. Its fallback
+ * is the same mono stack, so an editor mounted before `useEditorFont` has
+ * stamped anything looks exactly as it always has.
+ *
+ * **What stays mono inside a proportional document:**
+ * - fenced code (`.cm-code-line`) and inline code (`.cm-inline-code`), which
+ *   carry their own decoration classes already;
+ * - the frontmatter widget (`.cm-fm`), including the nested YAML editor it
+ *   hosts — that editor never includes `editorTheme` itself, but its
+ *   `.cm-scroller` is a DOM descendant of this one's, so the rule reaches it
+ *   and has to be told not to.
+ *
+ * Tables need no rule: `codemirror-markdown-tables` renders them in `system-ui`
+ * through its own `--tbl-style-font-family` and always has.
+ */
+export const notesFontTheme = EditorView.theme({
+  '.cm-scroller': { fontFamily: `var(--editor-font, ${MONO})` },
+  '.cm-code-line': { fontFamily: MONO },
+  '.cm-inline-code': { fontFamily: MONO },
+  '.cm-fm': { fontFamily: MONO },
+  '.cm-fm .cm-scroller': { fontFamily: MONO },
+})
