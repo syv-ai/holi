@@ -67,7 +67,6 @@ import {
   workspaceAtom,
   type Tab,
 } from '../state/panes'
-import { sessionAtom } from '../state/session'
 import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
 import { VaultHistory } from '@/features/history/VaultHistory'
 import { useGoogleAccount } from '../state/google'
@@ -119,7 +118,6 @@ function formatBytes(bytes: number): string {
 }
 
 export function Shell() {
-  const session = useAtomValue(sessionAtom)
   const vaults = useAtomValue(vaultsAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const syncState = useAtomValue(syncStateAtom)
@@ -782,7 +780,10 @@ export function Shell() {
           <Tooltip content="version history">
             <Button
               variant="link"
-              className={`h-auto p-0 truncate ${TONE[label.tone]}`}
+              // Button's own `text-sm font-medium` would otherwise outrank the
+              // footer's `text-xs`, so the one word in the strip that changes
+              // sat a size and a weight above everything around it.
+              className={`h-auto p-0 text-xs font-normal truncate ${TONE[label.tone]}`}
               onClick={() => setVaultLogOpen(true)}
             >
               {label.text}
@@ -820,26 +821,26 @@ export function Shell() {
             </Tooltip>
           )}
         </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {/* The vault assistant's only door outside itself (#15). ⌘J used to be
-              the sole way in, and a live session was invisible once the drawer
-              was closed; this is both the door and the light. Same derivation as
-              the panel header, so the two cannot say different things. */}
-          <Tooltip content={`${agentState.title} (⌘J)`}>
-            <Button
-              variant="link"
-              aria-pressed={agentOpen}
-              className="h-auto shrink-0 gap-1.5 p-0 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => setAgentOpen((o) => !o)}
-            >
-              <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
-              Claude
-            </Button>
-          </Tooltip>
-          <span className="truncate">
-            {(activeRemote ?? 'no vault') + (session?.login ? ` · ${session.login}` : '')}
-          </span>
-        </div>
+        {/* The vault assistant's only door outside itself (#15). ⌘J used to be
+            the sole way in, and a live session was invisible once the drawer was
+            closed; this is both the door and the light. Same derivation as the
+            panel header, so the two cannot say different things.
+
+            It has this corner to itself. The vault's remote and the signed-in
+            login used to sit here, and neither was worth a permanent line: the
+            vault is named in the sidebar header you are already looking at, and
+            the login is in settings, where you go to change it. */}
+        <Tooltip content={`${agentState.title} (⌘J)`}>
+          <Button
+            variant="link"
+            aria-pressed={agentOpen}
+            className="h-auto shrink-0 gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+            onClick={() => setAgentOpen((o) => !o)}
+          >
+            <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
+            Claude
+          </Button>
+        </Tooltip>
       </footer>
     </div>
   )
