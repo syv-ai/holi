@@ -8,8 +8,13 @@ import { ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitive
 import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
-import { agentThemeNote, type ColorMode } from '@/lib/agent-notices'
-import { agentPanelOpenAtom, agentSeedPromptAtom, agentStatusAtom } from '@/state/agent'
+import { agentIndicator, agentThemeNote, type ColorMode } from '@/lib/agent-notices'
+import {
+  agentModeAtSpawnAtom,
+  agentPanelOpenAtom,
+  agentSeedPromptAtom,
+  agentStatusAtom,
+} from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom } from '@/state/vaults'
 import { terminalKeyAction } from '@/lib/agent-terminal-keys'
@@ -44,7 +49,7 @@ export function AgentPanel() {
    *  session is live is a real divergence the panel has to say out loud. State,
    *  not a ref, because the note must re-render when the mode changes. */
   const mode = useAtomValue(activeModeAtom)
-  const [modeAtSpawn, setModeAtSpawn] = useState<ColorMode | null>(null)
+  const [modeAtSpawn, setModeAtSpawn] = useAtom(agentModeAtSpawnAtom)
   /** …and a mirror of it for `startSession`, which must not take `mode` as a
    *  dependency: rebuilding that callback on a theme flip re-runs the open-effect
    *  that owns auto-start. */
@@ -197,7 +202,7 @@ export function AgentPanel() {
       fitRef.current = null
       disposeRef.current = null
     }
-  }, [setStatus, syncSize])
+  }, [setModeAtSpawn, setStatus, syncSize])
 
   // status still tracks without a terminal (the header dot works before the
   // drawer has ever been opened); the terminal itself is torn down on unmount.
@@ -236,7 +241,7 @@ export function AgentPanel() {
       setTimeout(() => term.write(HIDE_CURSOR), 500)
       setStatus(await window.holi.agent.status())
     },
-    [activeRemote, setStatus],
+    [activeRemote, setModeAtSpawn, setStatus],
   )
 
   // opening the drawer builds the terminal (first time) and starts a session
@@ -312,6 +317,7 @@ export function AgentPanel() {
   // the panel to match it.
 
   const themeNote = agentThemeNote({ running: status.running, modeAtSpawn, mode })
+  const indicator = agentIndicator({ ...status, themeNote })
 
   const restart = async () => {
     await window.holi.agent.kill()
@@ -324,20 +330,6 @@ export function AgentPanel() {
     termRef.current?.reset()
     await startSession(true) // bare --resume: the CLI shows its own picker
   }
-
-  const dot = status.working
-    ? 'animate-pulse bg-amber-400'
-    : status.running
-      ? 'bg-green-500'
-      : 'bg-muted-foreground'
-  // Spell out what the dot means — green alone is ambiguous. Driven by the
-  // hook-server turn signal now (reliable), so the word is back.
-  const state = status.working ? 'working…' : status.running ? 'running' : 'idle'
-  const stateTitle = status.working
-    ? 'Claude is working on your turn'
-    : status.running
-      ? 'session running — the vault assistant is live'
-      : 'no session — opens when you show the drawer (⌘J)'
 
   return (
     <ResizablePanel
@@ -370,17 +362,17 @@ export function AgentPanel() {
           onSelect: () => setOpen((o) => !o),
         }}
       >
-        <Tooltip content={stateTitle}>
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
+        <Tooltip content={indicator.title}>
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', indicator.dot)} />
         </Tooltip>
         <span className="text-foreground">Claude</span>
-        <Tooltip content={stateTitle}>
-          <span className="text-muted-foreground">{state}</span>
+        {/* Spell out what the dot means: green alone is ambiguous. The restart
+            nudges used to be amber sentences alongside this word; they are the
+            amber dot and this word now (`agentIndicator`), which keeps the bar
+            glanceable and says the same thing on hover. */}
+        <Tooltip content={indicator.title}>
+          <span className="text-muted-foreground">{indicator.state}</span>
         </Tooltip>
-        {status.configStale && (
-          <span className="truncate text-amber-400/80">shared config changed; restart to pick it up</span>
-        )}
-        {themeNote && <span className="truncate text-amber-400/80">{themeNote}</span>}
         {/* No login notice here, deliberately (D72), and D86 did not change that.
             A vault now needs its own `/login`, which is a genuinely new thing to
             say — but it is said in the SCROLLBACK, printed by main at spawn

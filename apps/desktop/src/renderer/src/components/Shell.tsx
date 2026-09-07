@@ -76,7 +76,9 @@ import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
-import { agentPanelOpenAtom } from '@/state/agent'
+import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentStatusAtom } from '@/state/agent'
+import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
+import { activeModeAtom } from '@/state/color-scheme'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -139,7 +141,20 @@ export function Shell() {
   const reconcile = useSetAtom(reconcileAtom)
   const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
-  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const [agentOpen, setAgentOpen] = useAtom(agentPanelOpenAtom)
+  // The footer's Claude control (#15) is the drawer's only affordance outside the
+  // drawer, so it needs the same inputs the panel header derives its dot from.
+  const agentStatus = useAtomValue(agentStatusAtom)
+  const agentModeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
+  const colorMode = useAtomValue(activeModeAtom)
+  const agentState = agentIndicator({
+    ...agentStatus,
+    themeNote: agentThemeNote({
+      running: agentStatus.running,
+      modeAtSpawn: agentModeAtSpawn,
+      mode: colorMode,
+    }),
+  })
   const shellLayout = usePanelLayout(activeRemote, 'shell')
   // The sidebar's own vertical split: the tree above, the apps section below.
   const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
@@ -805,9 +820,26 @@ export function Shell() {
             </Tooltip>
           )}
         </div>
-        <span className="shrink-0 truncate">
-          {(activeRemote ?? 'no vault') + (session?.login ? ` · ${session.login}` : '')}
-        </span>
+        <div className="flex shrink-0 items-center gap-3">
+          {/* The vault assistant's only door outside itself (#15). ⌘J used to be
+              the sole way in, and a live session was invisible once the drawer
+              was closed; this is both the door and the light. Same derivation as
+              the panel header, so the two cannot say different things. */}
+          <Tooltip content={`${agentState.title} (⌘J)`}>
+            <Button
+              variant="link"
+              aria-pressed={agentOpen}
+              className="h-auto shrink-0 gap-1.5 p-0 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => setAgentOpen((o) => !o)}
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
+              Claude
+            </Button>
+          </Tooltip>
+          <span className="truncate">
+            {(activeRemote ?? 'no vault') + (session?.login ? ` · ${session.login}` : '')}
+          </span>
+        </div>
       </footer>
     </div>
   )
