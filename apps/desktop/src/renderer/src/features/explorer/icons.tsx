@@ -5,7 +5,7 @@
  */
 import type { TaskStatus } from '@holi/shared'
 import { SiMarkdown } from '@icons-pack/react-simple-icons'
-import { ChevronRight, Folder, Square, SquareCheck, SquareDot } from 'lucide-react'
+import { AppWindow, ChevronRight, Folder, Square, SquareCheck, SquareDot } from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -19,6 +19,14 @@ export function ChevronIcon({ open }: { open: boolean }) {
 
 export function FolderIcon() {
   return <Folder size={14} aria-hidden="true" />
+}
+
+/** A vault app's own folder. An app is a thing you run, not a place you keep
+ *  files, and now that Edit Source reveals `.holi/apps/<id>/` in the tree (#18)
+ *  the folder is somewhere people actually look. Same glyph as the app rows in
+ *  the apps section, so one icon means "app" wherever it appears. */
+export function AppFolderIcon() {
+  return <AppWindow size={14} aria-hidden="true" />
 }
 
 export function MarkdownIcon() {

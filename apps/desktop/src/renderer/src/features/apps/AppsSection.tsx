@@ -32,7 +32,7 @@
  * it, find it on disk.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { ChevronRight, LayoutGrid } from 'lucide-react'
+import { AppWindow, ChevronRight } from 'lucide-react'
 import { useState } from 'react'
 import {
   Button,
@@ -338,7 +338,7 @@ function IconColumns({ appId }: { appId: string }): React.JSX.Element {
     <>
       <span className="w-4 shrink-0" aria-hidden="true" />
       <span className="flex w-4 shrink-0 justify-center">
-        <LayoutGrid aria-hidden="true" data-app-icon={appId} />
+        <AppWindow aria-hidden="true" data-app-icon={appId} />
       </span>
     </>
   )

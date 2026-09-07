@@ -184,3 +184,12 @@ export function appIdFromPath(path: string): string | null {
   const id = path.split('/')[2]
   return id !== undefined && isValidAppId(id) ? id : null
 }
+
+/** An app's own folder, `.holi/apps/<id>` — and nothing inside it. `appIdFromPath`
+ *  answers "which app does this belong to", which is true of every file in the
+ *  app; this answers "is this the app", which is what the tree needs to know to
+ *  draw the folder as an app rather than a folder. */
+export function isAppRootPath(path: string): boolean {
+  const id = appIdFromPath(path)
+  return id !== null && path === `${APPS_DIR}/${id}`
+}

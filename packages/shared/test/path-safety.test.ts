@@ -4,6 +4,7 @@ import {
   AGENT_SURFACE_FILES,
   APPS_DIR,
   appIdFromPath,
+  isAppRootPath,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
@@ -254,5 +255,25 @@ describe('appIdFromPath', () => {
     expect(appIdFromPath('notes/x.md')).toBe(null)
     expect(appIdFromPath('.holi/appsy/retro/index.html')).toBe(null)
     expect(appIdFromPath(APPS_DIR)).toBe(null)
+  })
+})
+
+describe('isAppRootPath', () => {
+  it('is true for the app folder itself', () => {
+    expect(isAppRootPath('.holi/apps/retro')).toBe(true)
+  })
+
+  it('is false for everything inside it — the app is the folder, not its files', () => {
+    // The distinction from `appIdFromPath`, which answers "which app is this
+    // part of" and is happy with all three of these.
+    expect(isAppRootPath('.holi/apps/retro/index.html')).toBe(false)
+    expect(isAppRootPath('.holi/apps/retro/sub')).toBe(false)
+    expect(isAppRootPath('.holi/apps/retro/sub/app.js')).toBe(false)
+  })
+
+  it('is false for the apps directory itself and for anything outside it', () => {
+    expect(isAppRootPath(APPS_DIR)).toBe(false)
+    expect(isAppRootPath('.holi/apps/My_App')).toBe(false)
+    expect(isAppRootPath('notes/retro')).toBe(false)
   })
 })

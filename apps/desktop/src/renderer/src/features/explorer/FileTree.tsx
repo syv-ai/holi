@@ -19,7 +19,7 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, ICONS_FILE, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
+import { fileKind, ICONS_FILE, isAppRootPath, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/cn'
 import { pendingSlot } from '@/lib/pending-slot'
@@ -38,7 +38,7 @@ import {
 } from '@/primitives'
 import { DeleteConfirm } from '@/composites'
 import { ExplorerHeader } from './ExplorerHeader'
-import { ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
+import { AppFolderIcon, ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
 import { fileIconFor } from './file-icons'
 import { useExplorerActions } from './useExplorerActions'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
@@ -724,7 +724,11 @@ export function FileTree({
                       {iconByPath.has(id) ? (
                         fileIconFor(id, iconByPath.get(id))
                       ) : isFolder ? (
-                        <FolderIcon />
+                        isAppRootPath(id) ? (
+                          <AppFolderIcon />
+                        ) : (
+                          <FolderIcon />
+                        )
                       ) : task ? (
                         <TaskIcon status={task.status} />
                       ) : (
