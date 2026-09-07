@@ -386,7 +386,7 @@ describe('ActiveVault — commit', () => {
     await writeFile(join(dir, 'during.md'), 'x\n', 'utf8')
     await sleep(SETTLE)
     expect(await count(dir)).toBe(before)
-    expect(active.syncState()).toEqual({ kind: 'paused', reason: 'reconciling' })
+    expect(active.syncState()).toEqual({ kind: 'paused', reason: 'reconciling', manual: true })
 
     active.resume()
     await writeFile(join(dir, 'after.md'), 'y\n', 'utf8')

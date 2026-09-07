@@ -49,8 +49,15 @@ export function syncLabel(state: SyncState): SyncLabel {
     case 'reconciling':
       return { text: 'reconciling', tone: 'warn' }
     case 'paused':
-      // Main writes the reason as a whole sentence, because only main knows
-      // why. Prefixing it here yields "paused: … — sync paused".
+      // A manual pause is the assistant holding the vault for its turn. It
+      // lifts itself, nothing is asked of the user, and the footer's Claude dot
+      // is already pulsing to say so — spelling "the assistant is working" out
+      // here in the attention colour said one thing twice and shouted it. FR-8
+      // still wants the vault to say it is paused, so it says exactly that,
+      // in the same tone as "up to date".
+      if (state.manual) return { text: 'sync paused', tone: 'quiet' }
+      // Main writes a blocked reason as a whole sentence, because only main
+      // knows why. Prefixing it here yields "paused: … — sync paused".
       return { text: state.reason, tone: 'warn' }
   }
 }

@@ -63,7 +63,16 @@ export type SyncState =
   | { kind: 'no-access' }
   | { kind: 'conflict'; paths: string[] }
   | { kind: 'reconciling'; paths: string[] }
-  | { kind: 'paused'; reason: string }
+  | {
+      kind: 'paused'
+      reason: string
+      /** True when someone asked for this pause and will lift it (the assistant
+       *  holding the vault for its turn). Such a pause is news, not a warning:
+       *  nothing is asked of the user and it clears itself. A pause that comes
+       *  from the repo being blocked carries no flag, because it is indefinite
+       *  and does want attention. */
+      manual?: boolean
+    }
 
 export interface SyncTimings {
   /** Quiet before a rescan. Short: the file tree has to feel live. */
@@ -305,7 +314,7 @@ export async function openActiveVault(args: {
     if (reconciling && conflictPaths !== null) {
       return { kind: 'reconciling', paths: conflictPaths }
     }
-    if (manualPause !== null) return { kind: 'paused', reason: manualPause }
+    if (manualPause !== null) return { kind: 'paused', reason: manualPause, manual: true }
     // Being blocked outranks the conflict banner, which is not the order it was
     // written in — running the app showed a vault on a feature branch still
     // announcing a conflict, as though it were otherwise working normally.
@@ -690,7 +699,7 @@ export async function openActiveVault(args: {
     },
     pause(reason) {
       manualPause = reason
-      setState({ kind: 'paused', reason })
+      setState({ kind: 'paused', reason, manual: true })
     },
     resume() {
       manualPause = null

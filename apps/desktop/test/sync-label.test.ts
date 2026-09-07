@@ -53,4 +53,13 @@ describe('syncLabel', () => {
       tone: 'warn',
     })
   })
+
+  it('says a manual pause quietly, without repeating who asked for it', () => {
+    // The assistant's hold lifts itself, so nothing is asked of the user, and
+    // the footer's Claude dot is already pulsing beside this. FR-8 still wants
+    // the vault to say it is paused; it does not want it shouted twice.
+    expect(syncLabel({ kind: 'paused', reason: 'the assistant is working', manual: true })).toEqual(
+      { text: 'sync paused', tone: 'quiet' },
+    )
+  })
 })
