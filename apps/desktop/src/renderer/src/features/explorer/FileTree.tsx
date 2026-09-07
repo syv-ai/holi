@@ -42,7 +42,7 @@ import { ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
 import { fileIconFor } from './file-icons'
 import { useExplorerActions } from './useExplorerActions'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
-import { joinPath, parentOf, renameBasenameRange, withMdExtension } from '@/lib/tree-paths'
+import { ancestorsOf, joinPath, parentOf, renameBasenameRange, withMdExtension } from '@/lib/tree-paths'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -55,6 +55,7 @@ import {
   vaultsAtom,
 } from '@/state/vaults'
 import { openDialogAtom } from '@/state/dialogs'
+import { revealRequestAtom } from '@/state/reveal'
 
 /** The inline editable row shown when creating a file or folder. */
 function PendingRow({
@@ -168,27 +169,45 @@ export function FileTree({
   // to the batch atoms. FileTree only reads its state and calls its methods.
   const actions = useExplorerActions(docPaths)
 
+  const revealRequest = useAtomValue(revealRequestAtom)
+  const revealPath = revealRequest?.path ?? null
+
   // Hidden entries are filtered out unless the per-vault toggle is on. "Hidden"
   // means dot-prefixed (`.holi/…`) OR machine-local (`*.local.*`, e.g.
   // `USER.local.md` at the root — not dot-prefixed, but the toggle should still
   // gate it). Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never
   // hidden.
   const data = useMemo(() => {
+    // A revealed path outranks the filter, for that one path only (#18). Edit
+    // Source opens `.holi/apps/<id>/index.html`, which is hidden in every vault
+    // that has not turned hidden files on — and a tree that cannot show the file
+    // it was just asked to reveal is the actual bug. The alternative, flipping
+    // `showHiddenByVault`, would change the whole explorer because you clicked
+    // one menu item; this changes nothing the user did not ask for.
+    //
+    // `buildTreeData` grows the ancestor folders from the path itself, so
+    // putting the file back is enough — `.holi`, `.holi/apps` and the app's own
+    // folder appear with it, and only along that branch.
     const visible = showHidden
       ? docPaths
-      : docPaths.filter((p) => !isHiddenPath(p) && !isLocalOnlyPath(p))
+      : docPaths.filter(
+          (p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)),
+        )
     // Real on-disk folders shown in their own right, so a folder appears even when
     // its whole content is filtered away above (only tasks, only hidden files) or
     // it is empty but for a `.gitkeep`. Hidden dirs (`.holi/…`) stay gated by the
     // same toggle. `pendingFolders` are the still-being-named client-only ones.
     const dirs = showHidden ? snapshot.dirs : snapshot.dirs.filter((d) => !isHiddenPath(d))
     return buildTreeData(visible, [...dirs, ...actions.pendingFolders])
-  }, [docPaths, snapshot.dirs, actions.pendingFolders, showHidden])
+  }, [docPaths, snapshot.dirs, actions.pendingFolders, showHidden, revealPath])
 
   // headless-tree captures config closures once; this ref keeps the loaders
   // reading the latest projection.
   const dataRef = useRef(data)
   dataRef.current = data
+
+  /** The last reveal actually carried out — see the reveal effect below. */
+  const revealedNonce = useRef<number | null>(null)
 
   // Selection-aware target set from a tree instance: the whole multi-selection
   // when the focused/clicked row is part of it, else just that one row (VS Code).
@@ -345,6 +364,43 @@ export function FileTree({
   useEffect(() => {
     tree.rebuildTree()
   }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * Answer a reveal request (#18): expand down to the path, select it, focus the
+   * row and bring it into view.
+   *
+   * **No dependency array on purpose.** Expanding a folder is headless-tree's
+   * own state, not React's — it re-renders without changing anything this effect
+   * could list as a dep. So the effect runs on every render and claims the nonce
+   * only once the work is actually done; the intermediate render caused by the
+   * expansions is what lets the second half run against rows that now exist.
+   *
+   * A row cannot be focused before its ancestors are expanded, hence the two
+   * passes rather than one.
+   */
+  useEffect(() => {
+    const req = revealRequest
+    if (req === null || revealedNonce.current === req.nonce) return
+    // A rename field owns the focus and the caret. Yanking either out from under
+    // someone mid-edit is worse than not revealing, so the request is dropped
+    // rather than deferred — by the time the rename ends it is stale anyway.
+    if (tree.isRenamingItem()) {
+      revealedNonce.current = req.nonce
+      return
+    }
+    const branch = ancestorsOf(req.path).filter((dir) => dataRef.current[dir])
+    const collapsed = branch.filter((dir) => !tree.getItemInstance(dir).isExpanded())
+    if (collapsed.length > 0) {
+      for (const dir of collapsed) tree.getItemInstance(dir).expand()
+      return // finish on the render those expansions cause
+    }
+    if (!dataRef.current[req.path]) return // not in the projection (yet, or ever)
+    revealedNonce.current = req.nonce
+    tree.setSelectedItems([req.path])
+    const item = tree.getItemInstance(req.path)
+    item.setFocused()
+    void item.scrollTo({ block: 'nearest' })
+  })
 
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)

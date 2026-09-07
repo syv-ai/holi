@@ -11,6 +11,20 @@ export const parentOf = (path: string): string => {
 export const joinPath = (parent: string, name: string): string =>
   parent ? `${parent}/${name}` : name
 
+/**
+ * Every folder between the vault root and `path`, outermost first.
+ *
+ * Outermost first matters: expanding a tree walks down, and a child cannot be
+ * expanded before its parent has been. The path itself is not included — it is
+ * the thing being revealed, not a folder on the way — and neither is the root,
+ * which is not addressed by a path.
+ */
+export const ancestorsOf = (path: string): string[] => {
+  const segments = path.split('/')
+  segments.pop()
+  return segments.map((_, i) => segments.slice(0, i + 1).join('/'))
+}
+
 /** A New File / rename name, defaulted to markdown. The vault is mostly markdown,
  *  so a bare name becomes a note (`note` → `note.md`); but a typed extension is
  *  kept literally — the vault holds arbitrary files now, so `hello.json` is a real

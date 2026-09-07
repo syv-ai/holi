@@ -57,6 +57,7 @@ import {
   unregisteredAppIdsAtom,
 } from '../../state/apps'
 import { activeTab, openApp, openInNewPane, openPinned, workspaceAtom } from '../../state/panes'
+import { revealPathAtom } from '../../state/reveal'
 import { activeRemoteAtom, backrefsForMany, vaultsAtom } from '../../state/vaults'
 
 const ID_RULE = 'lowercase letters, digits and dashes only'
@@ -88,6 +89,7 @@ export function AppsSection(): React.JSX.Element | null {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
+  const revealPath = useSetAtom(revealPathAtom)
   const renameApp = useSetAtom(renameAppAtom)
   const registerApp = useSetAtom(registerAppAtom)
   const deleteApp = useSetAtom(deleteAppAtom)
@@ -151,7 +153,16 @@ export function AppsSection(): React.JSX.Element | null {
         // a round-trip through the agent.
         <ContextMenuItem onSelect={() => void registerApp(appId)}>Finish this app</ContextMenuItem>
       )}
-      <ContextMenuItem onSelect={() => setWorkspace((w) => openPinned(w, entryOf(appId)))}>
+      {/* Opening the tab is only half of it: the file lives under `.holi/apps/`,
+          so in most vaults it is not in the explorer at all until the reveal
+          puts it there (#18). */}
+      <ContextMenuItem
+        onSelect={() => {
+          const entry = entryOf(appId)
+          setWorkspace((w) => openPinned(w, entry))
+          revealPath(entry)
+        }}
+      >
         Edit Source
       </ContextMenuItem>
       <ContextMenuSeparator />

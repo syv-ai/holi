@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ancestorsOf,
   basename,
   expandToFiles,
   freeCopyPath,
@@ -71,5 +72,25 @@ describe('tree-paths — folder & clipboard helpers', () => {
   it('freeCopyPath suffixes a folder name (no extension)', () => {
     const taken = (p: string) => pathTaken(['projects/x.md'], p)
     expect(freeCopyPath(taken, 'projects')).toBe('projects copy')
+  })
+})
+
+describe('ancestorsOf — the branch a reveal has to expand (#18)', () => {
+  it('lists every folder between the root and the file, outermost first', () => {
+    // Order is load-bearing: a child cannot be expanded before its parent has
+    // been, so the reveal walks this list downwards.
+    expect(ancestorsOf('.holi/apps/tasks-by-area/index.html')).toEqual([
+      '.holi',
+      '.holi/apps',
+      '.holi/apps/tasks-by-area',
+    ])
+  })
+
+  it('is empty at the top level, where there is nothing to expand', () => {
+    expect(ancestorsOf('AGENTS.md')).toEqual([])
+  })
+
+  it('excludes the path itself — it is the target, not a folder on the way', () => {
+    expect(ancestorsOf('a/b')).toEqual(['a'])
   })
 })
