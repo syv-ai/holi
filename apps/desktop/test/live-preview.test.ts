@@ -204,6 +204,21 @@ describe('buildDecorations — list indentation', () => {
     expect(all.some((d) => d.from === markAt - 1 && d.to === markAt)).toBe(true)
   })
 
+  // The parser calls a bare `-` a list item with nothing in it, so without this
+  // the line jumps 2em to the right the instant the marker is typed.
+  it('waits for the space that makes a marker a list', () => {
+    expect(depthOf('-', '-')).toBeUndefined()
+    expect(depthOf('*', '*')).toBeUndefined()
+    expect(depthOf('1.', '1.')).toBeUndefined()
+    expect(depthOf('- ', '- ')).toBe('--list-depth:1')
+  })
+
+  it('holds the text off the marker', () => {
+    const { all } = decos('- top')
+    const mark = all.find((d) => d.spec['class'] === 'cm-list-mark')
+    expect(mark).toEqual(expect.objectContaining({ from: 0, to: 1 }))
+  })
+
   it('indents every marker markdown has: -, * and 1.', () => {
     expect(depthOf('- dash', '- dash')).toBe('--list-depth:1')
     expect(depthOf('* star', '* star')).toBe('--list-depth:1')

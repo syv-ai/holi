@@ -64,3 +64,10 @@ it('leaves prose alone', () => {
   const v = mount('just a paragraph\n')
   expect(v.contentDOM.querySelectorAll('.cm-list')).toHaveLength(0)
 })
+
+it('leaves a bare marker alone until it has a space after it', () => {
+  expect(mount('-\n').contentDOM.querySelectorAll('.cm-list')).toHaveLength(0)
+  view?.destroy()
+  view = null
+  expect(mount('- \n').contentDOM.querySelectorAll('.cm-list')).toHaveLength(1)
+})

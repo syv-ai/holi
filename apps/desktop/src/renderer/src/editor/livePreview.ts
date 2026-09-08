@@ -72,6 +72,10 @@ const codeLine = Decoration.line({ class: 'cm-code-line' })
 const listLine = (depth: number) =>
   Decoration.line({ class: 'cm-list', attributes: { style: `--list-depth:${depth}` } })
 
+/** The marker, so the theme can hold the text off it. The one space markdown
+ *  requires is not much of a gap in a proportional face. */
+const listMark = Decoration.mark({ class: 'cm-list-mark' })
+
 class HrWidget extends WidgetType {
   override toDOM(): HTMLElement {
     const el = document.createElement('div')
@@ -173,6 +177,11 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           // code it is aligned with.
           const mark = node.node.firstChild
           if (mark === null || mark.name !== 'ListMark') break
+          // A marker with nothing after it is still a list item to the parser,
+          // so `- ` and `1.` indent the line the moment they are typed and it
+          // jumps out from under you. Wait for the space that makes it a list
+          // you can put something in.
+          if (!/[ \t]/.test(state.sliceDoc(mark.to, mark.to + 1))) break
           // Depth from the tree, never from the leading spaces: `BulletList` and
           // `OrderedList` nest around each `ListItem`, so the parent chain says
           // how deep this is no matter how the author typed it. `-`, `*` and
@@ -192,6 +201,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           let lead = mark.from
           while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
+          ranges.push({ from: mark.from, to: mark.to, deco: listMark })
           break
         }
         case 'QuoteMark':

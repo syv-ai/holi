@@ -16,9 +16,11 @@ export const editorTheme = EditorView.baseTheme({
     height: '100%',
     fontSize: '14px',
     '--tbl-style-font-family': MONO,
-    // One nesting level of a list, declared here so a stack that borrows this
-    // base can retune the whole ladder in one place.
+    // A list's two lengths, declared here so a stack that borrows this base can
+    // retune them in one place: one nesting level, and the space held between a
+    // marker and its text on top of the one space markdown already requires.
     '--list-indent': '2em',
+    '--list-gap': '0.5em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -70,6 +72,7 @@ export const editorTheme = EditorView.baseTheme({
    * conditionally, so the line does not move when the caret lands on it (FR-3b).
    */
   '.cm-list': { paddingLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))' },
+  '.cm-list-mark': { marginRight: 'var(--list-gap, 0.5em)' },
   '.cm-quote-mark': { color: '#737373' },
   // No pointer by default: a markdown link is editable text and a plain click
   // places the caret — only ⌘/Ctrl-click navigates (links.ts). The cursor is
