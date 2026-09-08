@@ -1,10 +1,16 @@
 /**
- * Simplified live preview (D22): a pure decoration builder over the syntax
- * tree + wiki-link grammar. Lines the selection touches render RAW (no
- * concealing decorations there); everything else renders. Rebuilds on
- * docChanged/selectionSet/viewport — a plain recompute, no animation.
+ * Live preview: a pure decoration builder over the syntax tree + wiki-link
+ * grammar. The ELEMENT the selection touches renders RAW (no concealing
+ * decorations on it); everything else renders, including the rest of its own
+ * line. Rebuilds on docChanged/selectionSet/viewport — a plain recompute.
+ *
+ * D91, which narrows D22. D22 revealed whole LINES, so a caret anywhere on a
+ * line stripped every chip, image and pair of `**` on it back to source at once.
+ * The unit is now the element, and `revealedSpans` below is the whole of the new
+ * rule: touched edges included, innermost only.
  */
 import { syntaxTree } from '@codemirror/language'
+import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common'
 import { Facet, RangeSetBuilder, type EditorState } from '@codemirror/state'
 import {
   Decoration,
@@ -160,19 +166,128 @@ class HrWidget extends WidgetType {
   }
 }
 
-/** Line numbers (1-based) the primary selection touches — these render raw. */
-export function activeLines(state: EditorState): Set<number> {
-  const lines = new Set<number>()
-  const sel = state.selection.main
-  const fromLine = state.doc.lineAt(sel.from).number
-  const toLine = state.doc.lineAt(sel.to).number
-  for (let n = fromLine; n <= toLine; n++) lines.add(n)
-  return lines
+/** A range in the document. The unit live preview reveals, and the unit D91
+ *  replaced D22's whole line with. */
+export interface Span {
+  from: number
+  to: number
+}
+
+/** Spans are compared by value, never by identity: they are built twice, once
+ *  to decide what the caret is on and once to decorate. */
+export function spanKey(span: Span): string {
+  return `${span.from}:${span.to}`
+}
+
+/**
+ * Does the selection touch this span? EDGE-INCLUSIVE, deliberately.
+ *
+ * A caret resting at either end counts as being on the element, so the `**` you
+ * have just finished typing stay on screen until you move off the word. Excluding
+ * the edges would close them the instant you type the second one and shift the
+ * rest of the line four characters left under your fingers.
+ */
+export function touches(sel: Span, span: Span): boolean {
+  return sel.from <= span.to && sel.to >= span.from
+}
+
+/**
+ * Of the spans the selection touches, the ones with nothing smaller inside them.
+ *
+ * This is what "the element the caret is on" means once elements nest.
+ * `**bold with [[a link]] inside**` is two spans, and with the caret on the link
+ * only the link comes back raw: you are not on the bold, you are on the thing
+ * inside it. Containment is the whole rule, and it is STRICT, so two elements
+ * that happen to share a range do not cancel each other out.
+ *
+ * Pure, and on numbers — the spans come from the tree in the caller.
+ */
+export function revealedSpans(spans: Span[], sel: Span): Set<string> {
+  const touched = spans.filter((s) => touches(sel, s))
+  const out = new Set<string>()
+  for (const s of touched) {
+    const holdsASmallerOne = touched.some(
+      (o) => o.from >= s.from && o.to <= s.to && (o.from > s.from || o.to < s.to),
+    )
+    if (!holdsASmallerOne) out.add(spanKey(s))
+  }
+  return out
+}
+
+/**
+ * The range that, when the selection touches it, shows an element's source.
+ *
+ * Usually the element itself. The exceptions are the marks that belong to a LINE
+ * rather than to a word — a heading's `#` and a list item's marker — because
+ * scoping those to the two columns they occupy would mean the caret had to land
+ * on the marker itself before you could edit the heading, which is not what "the
+ * heading you are on" means to anybody.
+ *
+ * `null` for everything live preview does not conceal conditionally: fenced code,
+ * quote marks, the frontmatter block, a list's leading indent.
+ */
+function revealSpan(state: EditorState, node: SyntaxNodeRef | SyntaxNode | null): Span | null {
+  if (node === null) return null
+  switch (node.name) {
+    case 'ATXHeading1':
+    case 'ATXHeading2':
+    case 'ATXHeading3':
+    case 'ATXHeading4':
+    case 'ATXHeading5':
+    case 'ATXHeading6':
+    case 'SetextHeading1':
+    case 'SetextHeading2':
+    case 'StrongEmphasis':
+    case 'Emphasis':
+    case 'Strikethrough':
+    case 'InlineCode':
+    case 'Link':
+    case 'Image':
+    case 'HorizontalRule':
+      return { from: node.from, to: node.to }
+    // A `#` is revealed by its heading, not by its own two columns.
+    case 'HeaderMark':
+      return revealSpan(state, node.node.parent)
+    case 'ListItem': {
+      const mark = node.node.firstChild
+      if (mark === null || mark.name !== 'ListMark') return null
+      const line = state.doc.lineAt(node.from)
+      return { from: line.from, to: line.to }
+    }
+    default:
+      return null
+  }
 }
 
 export function buildDecorations(state: EditorState, from: number, to: number): DecorationSet {
-  const active = activeLines(state)
-  const isActive = (pos: number) => active.has(state.doc.lineAt(pos).number)
+  // What the selection is on, worked out BEFORE anything is decorated: an
+  // element cannot know whether a smaller one inside it is the one being edited
+  // until the whole span list exists, so the tree is walked twice. The first
+  // walk collects ranges and nothing else.
+  const visible = state.sliceDoc(from, to)
+  // The wiki-link grammar is not part of the markdown tree, so its links are
+  // parsed up here to join the span list. The same parse is reused at the foot
+  // of this function rather than run twice.
+  const wikiLinks = parseWikiLinks(visible)
+  const spans: Span[] = wikiLinks.map((link) => ({ from: from + link.start, to: from + link.end }))
+  const wikiSpans = [...spans]
+  syntaxTree(state).iterate({
+    from,
+    to,
+    enter(node) {
+      const span = revealSpan(state, node)
+      if (span === null) return
+      // A wiki-link owns its own range and the markdown parser does not know it
+      // exists: it reads the inner `[notes/plan.md]` of `[[notes/plan.md]]` as a
+      // shortcut Link, and a `|**Label**` as strong text. Those nodes are not
+      // elements, and left in the list they would shadow the link they sit in —
+      // the chip would never open. Same rule the frontmatter region gets below.
+      if (wikiSpans.some((w) => span.from >= w.from && span.to <= w.to)) return
+      spans.push(span)
+    },
+  })
+  const revealed = revealedSpans(spans, state.selection.main)
+  const isActive = (span: Span | null) => span !== null && revealed.has(spanKey(span))
   // The frontmatter widget owns [0, fmEnd) as one atomic block-replace, so
   // nothing here may decorate inside it — GFM parses the leading `---` lines as
   // thematic breaks, and an HR (or a stray heading/paragraph mark) fighting the
@@ -187,7 +302,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     from,
     to,
     enter(node) {
-      const activeHere = isActive(node.from)
+      const activeHere = isActive(revealSpan(state, node))
       switch (node.name) {
         case 'ATXHeading1':
         case 'ATXHeading2':
@@ -377,11 +492,10 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)
   const taskByPath = state.facet(taskByPathFacet)
-  const visible = state.sliceDoc(from, to)
-  for (const link of parseWikiLinks(visible)) {
+  for (const link of wikiLinks) {
     const start = from + link.start
     const end = from + link.end
-    if (isActive(start)) continue
+    if (isActive({ from: start, to: end })) continue
     if (fileKind(link.target) === 'image') {
       // [[img.png]] embeds are vault-relative (used as-is); render inline.
       ranges.push({

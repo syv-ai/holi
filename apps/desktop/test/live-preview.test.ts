@@ -4,7 +4,13 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { buildDecorations, taskByPathFacet } from '../src/renderer/src/editor/livePreview'
+import {
+  buildDecorations,
+  revealedSpans,
+  spanKey,
+  taskByPathFacet,
+  touches,
+} from '../src/renderer/src/editor/livePreview'
 import type { WikiLinkChip } from '../src/renderer/src/editor/wikiLinkChips'
 
 function stateFor(doc: string, cursor = 0, extra: Extension[] = []) {
@@ -27,7 +33,7 @@ function specs(set: DecorationSet): { from: number; to: number; spec: Record<str
   return out
 }
 
-describe('buildDecorations (D22: plain decoration swap)', () => {
+describe('buildDecorations', () => {
   it('conceals heading marks on inactive lines', () => {
     const state = stateFor('# Title\n\nbody text', 12) // caret in body
     const decos = specs(buildDecorations(state, 0, state.doc.length))
@@ -119,8 +125,9 @@ describe('buildDecorations — task-path chips', () => {
   })
 
   it('reveals the raw [[…]] when the caret is inside it', () => {
-    // The caret starts on the line ABOVE: live preview reveals the whole line it touches,
-    // so a caret on the chip's own line would make this pass for the wrong reason.
+    // The caret starts on the line ABOVE the chip so that the chip's own line is
+    // not what puts it raw. Since D91 only the element itself would do that
+    // anyway, but the doc is left as it was: it costs nothing and covers both.
     const doc = `first\nsee [[${TASK}]] ok`
     expect(chipIn(doc, [known])).toBeDefined()
     const state = stateFor(doc, doc.indexOf('ship'), [known]) // caret inside the token
@@ -339,5 +346,93 @@ describe('buildDecorations — list indentation', () => {
   // indent the source already carries.
   it('decorates the marker line only, not the rest of the item', () => {
     expect(depthOf('- a long bullet\n  lazy continuation', 'lazy continuation')).toBeUndefined()
+  })
+})
+
+describe('revealedSpans (D91: the element, not the line)', () => {
+  const at = (pos: number) => ({ from: pos, to: pos })
+
+  it('counts a caret resting on either edge as being on the element', () => {
+    const bold = { from: 4, to: 12 }
+    expect(touches(at(4), bold)).toBe(true)
+    expect(touches(at(12), bold)).toBe(true)
+    expect(touches(at(3), bold)).toBe(false)
+    expect(touches(at(13), bold)).toBe(false)
+  })
+
+  it('reveals only the innermost of two nested elements', () => {
+    const outer = { from: 0, to: 30 }
+    const inner = { from: 10, to: 20 }
+    expect(revealedSpans([outer, inner], at(15))).toEqual(new Set([spanKey(inner)]))
+  })
+
+  it('reveals the outer element when the caret is on its own text', () => {
+    const outer = { from: 0, to: 30 }
+    const inner = { from: 10, to: 20 }
+    expect(revealedSpans([outer, inner], at(5))).toEqual(new Set([spanKey(outer)]))
+  })
+
+  it('keeps both when two elements share a range — containment is strict', () => {
+    const a = { from: 0, to: 10 }
+    const b = { from: 0, to: 10 }
+    expect(revealedSpans([a, b], at(5)).size).toBe(1)
+  })
+
+  it('reveals every innermost element a selection crosses', () => {
+    const one = { from: 0, to: 5 }
+    const two = { from: 10, to: 15 }
+    expect(revealedSpans([one, two], { from: 2, to: 12 })).toEqual(
+      new Set([spanKey(one), spanKey(two)]),
+    )
+  })
+})
+
+describe('buildDecorations — per-element reveal (D91)', () => {
+  const concealedAt = (doc: string, caret: number, at: number, to: number) => {
+    const state = stateFor(doc, caret)
+    return specs(buildDecorations(state, 0, doc.length)).some((d) => d.from === at && d.to === to)
+  }
+
+  it('leaves the rest of the line rendered when the caret is in one element', () => {
+    const doc = 'some **bold** and [[notes/plan.md]] here'
+    const state = stateFor(doc, doc.indexOf('bold'))
+    const decos = specs(buildDecorations(state, 0, doc.length))
+    const bold = doc.indexOf('**')
+    // the bold you are in shows its source...
+    expect(decos.some((d) => d.from === bold && d.to === bold + 2)).toBe(false)
+    // ...and the chip on the same line stays a chip, which D22 could not do
+    const start = doc.indexOf('[[')
+    expect(
+      decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined),
+    ).toBe(true)
+  })
+
+  it('keeps the marks up while the caret rests on the closing edge', () => {
+    const doc = 'some **bold** here'
+    const bold = doc.indexOf('**')
+    expect(concealedAt(doc, bold + 8, bold, bold + 2)).toBe(false)
+    // one step further out and it renders again
+    expect(concealedAt(doc, bold + 9, bold, bold + 2)).toBe(true)
+  })
+
+  it('reveals the inner element only, leaving the ** it sits in hidden', () => {
+    const doc = 'x **bold with [[notes/plan.md]] inside** y'
+    const state = stateFor(doc, doc.indexOf('plan'))
+    const decos = specs(buildDecorations(state, 0, doc.length))
+    const bold = doc.indexOf('**')
+    expect(decos.some((d) => d.from === bold && d.to === bold + 2)).toBe(true)
+    const start = doc.indexOf('[[')
+    expect(
+      decos.some((d) => d.from === start && (d.spec['widget'] as unknown) !== undefined),
+    ).toBe(false)
+  })
+
+  it("reveals a heading's # from anywhere on the heading, not just the marker", () => {
+    expect(concealedAt('# Title\n\nbody', 6, 0, 2)).toBe(false)
+  })
+
+  it('leaves the # hidden while the caret is on an element inside the heading', () => {
+    const doc = '# Title **bold** end'
+    expect(concealedAt(doc, doc.indexOf('bold'), 0, 2)).toBe(true)
   })
 })
