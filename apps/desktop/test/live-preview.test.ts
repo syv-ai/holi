@@ -236,6 +236,56 @@ describe('buildDecorations — list indentation', () => {
     expect(glyphIn(doc, '- four')).toBe('▪')
   })
 
+  it('indents a., A. and a), which markdown has no list for', () => {
+    for (const marker of ['a.', 'A.', 'a)', 'Z)']) {
+      expect(depthOf(`para\n\n${marker} item`, `${marker} item`)).toBe('--list-depth:1')
+    }
+  })
+
+  it('nests an alphabetic list under the numbered one it sits in', () => {
+    const doc = '1. one\n   a. sub\n   b. other'
+    expect(depthOf(doc, 'a. sub')).toBe('--list-depth:2')
+    expect(depthOf(doc, 'b. other')).toBe('--list-depth:2')
+  })
+
+  // The cost of a marker the parser does not know is that this file has to
+  // decide for itself, so it decides conservatively.
+  it('leaves a sentence that opens like one alone', () => {
+    expect(depthOf('Someone wrote it.\nA. Smith said so', 'A. Smith')).toBeUndefined()
+  })
+
+  it('leaves a fenced block alone', () => {
+    const doc = 'para\n\n```\n\na) not a list\n```'
+    expect(depthOf(doc, 'a) not')).toBeUndefined()
+  })
+
+  it('draws a task marker as a checkbox, and its bullet not at all', () => {
+    const doc = 'para\n\n- [ ] feed the cat'
+    const { all } = decos(doc)
+    const dash = doc.indexOf('- [ ]')
+    // The `- ` goes, space included, so the box sits where a bullet would.
+    expect(all.some((d) => d.from === dash && d.to === dash + 2)).toBe(true)
+    const box = all.find((d) => d.from === dash + 2 && d.to === dash + 5)
+    expect((box?.spec['widget'] as { checked?: boolean } | undefined)?.checked).toBe(false)
+  })
+
+  it('reads [x] and [X] as done', () => {
+    for (const marker of ['[x]', '[X]']) {
+      const doc = `para\n\n- ${marker} done`
+      const at = doc.indexOf(marker)
+      const box = decos(doc).all.find((d) => d.from === at && d.to === at + 3)
+      expect((box?.spec['widget'] as { checked?: boolean } | undefined)?.checked).toBe(true)
+    }
+  })
+
+  // A control the caret can chase away is a control you cannot click from the
+  // line it is on.
+  it('keeps the checkbox with the caret on its line', () => {
+    const doc = '- [ ] feed the cat'
+    const box = decos(doc, 8).all.find((d) => d.from === 2 && d.to === 5)
+    expect(box?.spec['widget']).toBeDefined()
+  })
+
   it('leaves an ordered marker as its number', () => {
     const { all } = decos('1. one')
     const marker = all.find((d) => d.from === 0 && d.to === 2)

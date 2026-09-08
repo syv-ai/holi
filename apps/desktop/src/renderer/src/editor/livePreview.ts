@@ -5,6 +5,7 @@
  * docChanged/selectionSet/viewport — a plain recompute, no animation.
  */
 import { syntaxTree } from '@codemirror/language'
+import type { SyntaxNode } from '@lezer/common'
 import { Facet, RangeSetBuilder, type EditorState } from '@codemirror/state'
 import {
   Decoration,
@@ -88,6 +89,15 @@ const listBullet = Decoration.mark({ class: 'cm-list-mark cm-list-bullet' })
  */
 const BULLETS = ['•', '◦', '▪']
 
+/**
+ * `a.`, `A.`, `a)` — an ordered list markdown does not have.
+ *
+ * CommonMark's ordered list is decimal only, so the parser reads these as an
+ * ordinary paragraph and the tree has nothing to say about them. They are the
+ * one kind of list line this file has to find for itself.
+ */
+const ALPHA_MARKER = /^([ \t]*)([A-Za-z][.)])[ \t]/
+
 class BulletWidget extends WidgetType {
   constructor(readonly glyph: string) {
     super()
@@ -102,6 +112,52 @@ class BulletWidget extends WidgetType {
     el.className = 'cm-list-mark cm-list-bullet'
     el.textContent = this.glyph
     return el
+  }
+}
+
+/**
+ * A task's `[ ]`, as something you can click.
+ *
+ * Unconditional, unlike every other swap in this file: it is a control, not a
+ * rendering of text, and a control that disappeared whenever the caret was on
+ * its line could not be clicked from there at all. Being unconditional is also
+ * what keeps the line still (FR-3b) — there is no second state to move to.
+ *
+ * The position comes from the DOM at click time rather than from a field, so an
+ * edit elsewhere in the line cannot leave a stale offset behind, and the source
+ * is checked before it is written: a widget that has outlived its text writes
+ * nothing.
+ */
+class TaskCheckWidget extends WidgetType {
+  constructor(readonly checked: boolean) {
+    super()
+  }
+
+  override eq(other: TaskCheckWidget): boolean {
+    return other.checked === this.checked
+  }
+
+  override toDOM(view: EditorView): HTMLElement {
+    const box = document.createElement('span')
+    box.className = this.checked ? 'cm-task-check cm-task-check-done' : 'cm-task-check'
+    box.setAttribute('role', 'checkbox')
+    box.setAttribute('aria-checked', String(this.checked))
+    box.textContent = this.checked ? '✓' : ''
+    box.addEventListener('mousedown', (event) => {
+      // Keep the caret where it is. A click that moved it would put the caret on
+      // this line, and the line the caret is on renders its marker raw.
+      event.preventDefault()
+      if (view.state.readOnly) return
+      const pos = view.posAtDOM(box)
+      if (!/^\[[ xX]\]$/.test(view.state.sliceDoc(pos, pos + 3))) return
+      view.dispatch({ changes: { from: pos, to: pos + 3, insert: this.checked ? '[ ]' : '[x]' } })
+    })
+    return box
+  }
+
+  /** The box handles its own clicks; CodeMirror should not read them as edits. */
+  override ignoreEvent(): boolean {
+    return true
   }
 }
 
@@ -230,6 +286,22 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           let lead = mark.from
           while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
+          // A task's checkbox IS its marker, so the `- ` in front of it goes,
+          // space and all, and the box lands where a bullet would have. Drawing
+          // both would say "list item" twice.
+          const task = mark.nextSibling
+          const taskMark = task?.name === 'Task' ? task.firstChild : null
+          if (taskMark !== null && taskMark !== undefined && taskMark.name === 'TaskMarker') {
+            ranges.push({ from: mark.from, to: mark.to + 1, deco: conceal })
+            ranges.push({
+              from: taskMark.from,
+              to: taskMark.to,
+              deco: Decoration.replace({
+                widget: new TaskCheckWidget(state.sliceDoc(taskMark.from, taskMark.to) !== '[ ]'),
+              }),
+            })
+            break
+          }
           // The marker draws as a bullet, except on the line the caret is on,
           // where every other mark in this file shows its source too. The two
           // wear the same box, so the swap costs no movement.
@@ -296,6 +368,39 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
       }
     },
   })
+
+  // Alphabetic ordered lists, which are not in the tree (see ALPHA_MARKER).
+  // Found by reading lines, and deliberately fussy about which ones count: a
+  // paragraph opening "A. Smith said" is a sentence, not a list. So the line has
+  // to either sit inside a list already — `a.` under `1.`, which is what these
+  // are nearly always for — or begin a block, which is the same rule markdown
+  // itself puts on an ordered list interrupting a paragraph.
+  const firstLine = state.doc.lineAt(from).number
+  const lastLine = state.doc.lineAt(to).number
+  for (let n = firstLine; n <= lastLine; n++) {
+    const line = state.doc.line(n)
+    const m = ALPHA_MARKER.exec(line.text)
+    if (m === null) continue
+    const markFrom = line.from + m[1]!.length
+    const markTo = markFrom + m[2]!.length
+    // The enclosing lists give the depth, and a fence vetoes the whole thing:
+    // `a) hello` inside a code block is code.
+    let depth = 0
+    let fenced = false
+    for (
+      let p: SyntaxNode | null = syntaxTree(state).resolveInner(markFrom, 1);
+      p !== null;
+      p = p.parent
+    ) {
+      if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+      if (p.name === 'FencedCode' || p.name === 'CodeBlock') fenced = true
+    }
+    if (fenced) continue
+    if (depth === 0 && n > 1 && state.doc.line(n - 1).text.trim() !== '') continue
+    ranges.push({ from: line.from, to: line.from, deco: listLine(depth + 1) })
+    if (markFrom > line.from) ranges.push({ from: line.from, to: markFrom, deco: conceal })
+    ranges.push({ from: markFrom, to: markTo, deco: listMark })
+  }
 
   // wiki-links via the shared grammar (not part of the markdown tree)
   const docExists = state.facet(docExistsFacet)

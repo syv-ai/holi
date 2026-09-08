@@ -24,6 +24,7 @@ export const editorTheme = EditorView.baseTheme({
     '--list-gap': '0.5em',
     '--list-space': '0.7em',
     '--list-bullet': '0.6em',
+    '--list-check': '0.95em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -88,6 +89,25 @@ export const editorTheme = EditorView.baseTheme({
   // the active line, so the line does not move when the caret arrives (FR-3b).
   // Ordered markers are never swapped and keep their natural width.
   '.cm-list-bullet': { display: 'inline-block', width: 'var(--list-bullet, 0.6em)' },
+  // A task's checkbox stands in for the marker, so it wears the marker's gap.
+  '.cm-task-check': {
+    display: 'inline-block',
+    width: 'var(--list-check, 0.95em)',
+    height: 'var(--list-check, 0.95em)',
+    lineHeight: 'var(--list-check, 0.95em)',
+    marginRight: 'var(--list-gap, 0.5em)',
+    verticalAlign: '-0.12em',
+    textAlign: 'center',
+    fontSize: '0.8em',
+    border: '1px solid var(--muted-foreground)',
+    borderRadius: '3px',
+    cursor: 'pointer',
+  },
+  '.cm-task-check-done': {
+    background: 'var(--task-done)',
+    borderColor: 'var(--task-done)',
+    color: 'var(--background)',
+  },
   '.cm-quote-mark': { color: '#737373' },
   // No pointer by default: a markdown link is editable text and a plain click
   // places the caret — only ⌘/Ctrl-click navigates (links.ts). The cursor is

@@ -1,11 +1,12 @@
 /**
- * The list indent, checked where it actually has to land: on the line element.
+ * Lists, checked where they actually have to land: in the rendered DOM.
  *
- * `livePreview`'s unit tests (`test/live-preview.test.ts`) prove the numbers the
- * decoration carries. This proves a line decoration's `attributes` reach the
- * rendered `.cm-line` at all, which is the half of the mechanism a wrong API
- * call would fail silently. jsdom does no layout, so the geometry those custom
- * properties drive is hand-verified, not asserted here.
+ * `livePreview`'s unit tests (`test/live-preview.test.ts`) prove the decorations
+ * carry the right things. This proves they reach the DOM — a line decoration's
+ * `attributes`, a widget's element, and the one thing no decoration can show on
+ * its own, a checkbox writing back to the document when it is clicked. jsdom
+ * does no layout, so the geometry the custom properties drive is hand-verified,
+ * not asserted here.
  */
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -18,7 +19,7 @@ afterEach(() => {
   view = null
 })
 
-function mount(doc: string): EditorView {
+function mount(doc: string, readOnly = false): EditorView {
   const parent = document.createElement('div')
   document.body.appendChild(parent)
   view = new EditorView({
@@ -31,6 +32,7 @@ function mount(doc: string): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
+        readOnly,
       }),
     }),
     parent,
@@ -78,4 +80,26 @@ it('leaves a bare marker alone until it has a space after it', () => {
   view?.destroy()
   view = null
   expect(mount('- \n').contentDOM.querySelectorAll('.cm-list')).toHaveLength(1)
+})
+
+function clickBox(v: EditorView): void {
+  const box = v.contentDOM.querySelector('.cm-task-check')
+  expect(box).not.toBeNull()
+  box!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+}
+
+it('writes the document when the checkbox is clicked, and back again', () => {
+  const v = mount('- [ ] feed the cat\n')
+  clickBox(v)
+  expect(v.state.doc.toString()).toBe('- [x] feed the cat\n')
+  clickBox(v)
+  expect(v.state.doc.toString()).toBe('- [ ] feed the cat\n')
+})
+
+// A reconcile holds the file read-only (FR-19), and a control that wrote anyway
+// would be the one way round a lock the rest of the editor honours.
+it('refuses to toggle while the document is locked', () => {
+  const v = mount('- [ ] feed the cat\n', true)
+  clickBox(v)
+  expect(v.state.doc.toString()).toBe('- [ ] feed the cat\n')
 })
