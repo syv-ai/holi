@@ -29,11 +29,12 @@ Living docs describe the product and current design. Code is the authority for
 what is actually implemented and for implementation/status claims: verify a PRD
 against the code rather than trusting a stale status sentence.
 
-`docs/specs/`, `docs/plans/`, `docs/notes/`, and `docs/verification/` are dated
+`docs/specs/`, `docs/plans/`, `docs/notes/`, `docs/handoffs/`, and
+`docs/verification/` are dated
 history, not current requirements. `docs/decisions.md` is a staging inbox; its
 agreed decisions must be consolidated into living docs. `docs/not-built.md`
 tracks designed-but-absent work, not every non-goal or open question. GitHub
-issues and `/tmp/holi-issues.json` are backlog/history and are non-authoritative
+issues are backlog/history and are non-authoritative
 unless current code and living docs support them.
 
 The root README contains useful orientation but its old “mid-pivot” and “does
@@ -64,6 +65,10 @@ pnpm lint
 pnpm exec prettier --check AGENTS.md CLAUDE.md
 ```
 
+Do not run the repository-wide `pnpm format` for a scoped change: the existing
+tree is not globally Prettier-clean, so it rewrites unrelated files. Format or
+check only the files you touched.
+
 `pnpm test` runs both workspace test scripts. Desktop Node tests are matched by
 `apps/desktop/test/**/*.test.ts`; renderer tests are a separate jsdom project
 matched by `apps/desktop/src/renderer/**/*.test.tsx`. The desktop Node project
@@ -74,8 +79,8 @@ increasing event waits. Shared-package tests run from its own Vitest script.
 `pnpm typecheck` runs each package's `tsc --noEmit`. `pnpm lint` intentionally
 lints only `apps/desktop/src/renderer/src/**/*.{ts,tsx}`; main and preload are
 not ESLint-covered, so use typecheck, tests, and the Electron build for those
-areas. `pnpm lint:gate` runs the same renderer lint with the gate explicitly at
-error level.
+areas. The renderer gate already runs at error level; `pnpm lint:gate` is a
+legacy alias with the same behavior as `pnpm lint`.
 
 ## Conventions and boundaries
 
