@@ -313,7 +313,9 @@ the prose: the half of the file you came to edit was behind a chevron, and the p
 Nothing else moves — same widget, same nested plain-YAML editor, same chevron, and the chevron still
 collapses a revealed file.
 
-**What it is: one in-editor widget with two states** (`editor/frontmatter.ts`). The region is
+**A markdown file with NO frontmatter still gets the bar** (2026-09-09, [`#17`](https://github.com/syv-ai/holi/issues/17)). "N chars · Last updated DD/MM/YY, Name" is a fact about a markdown file, not a fact about having metadata, and it used to disappear when a file had none purely as a side effect of there being nothing to collapse: the summary was only ever built to label a collapsed block. The widget is now inserted **above the first line** rather than replacing a region — `Decoration.widget` with `side: -1`, so a caret at position 0 is in the body and not against the bar — and it carries no chevron, because there is no block to open. It offers no way to add one either: the pre-commit scaffold does that on the next commit, and two ways to write the same four lines is one too many. Nothing else changes: the char count already came from `doc.slice(bodyStart(doc))` and `bodyStart` is 0 with no block, so the number was correct before it had anywhere to appear. It reaches markdown only, and by construction rather than by a check — a non-markdown text file opens in the plain stack, which has no frontmatter extension in it.
+
+**What it is: one in-editor widget with two states** (`editor/frontmatter.ts`), plus that third bare one. The region is
 *always* replaced by an atomic block decoration — collapsed, it is a **pill** carrying a summary and
 a validity dot; revealed, it hosts a **nested `EditorView`** — no markdown stack, no live preview, no formatting
 keymap, but the **YAML grammar and the same highlighting a `.yaml` file opens with**. Plain does not

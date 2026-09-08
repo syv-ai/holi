@@ -65,8 +65,52 @@ describe('frontmatterDecorations', () => {
     expect(widget.expanded).toBe(true)
   })
 
-  it('emits nothing when there is no frontmatter', () => {
-    expect(specs(frontmatterDecorations(stateFor('# just a heading\n\nbody')))).toHaveLength(0)
+  // #17: the bar is a fact about a markdown file, not about having metadata. It
+  // used to disappear when a file had no frontmatter, purely as a side effect of
+  // there being nothing to collapse.
+  describe('a file with no frontmatter', () => {
+    const BARE = '# just a heading\n\nbody'
+
+    it('still gets a bar, inserted above the first line rather than replacing it', () => {
+      const decos = specs(frontmatterDecorations(stateFor(BARE)))
+      expect(decos).toHaveLength(1)
+      expect(decos[0]!.from).toBe(0)
+      expect(decos[0]!.to).toBe(0)
+      expect(decos[0]!.spec.block).toBe(true)
+      // Before the line's own content, so a caret at 0 is in the body.
+      expect(decos[0]!.spec.side).toBe(-1)
+    })
+
+    it('tells the widget there is no block, which is what drops the chevron', () => {
+      const widget = specs(frontmatterDecorations(stateFor(BARE)))[0]!.spec.widget as {
+        body: string | null
+        expanded: boolean
+      }
+      expect(widget.body).toBeNull()
+      expect(widget.expanded).toBe(false)
+    })
+
+    it('counts the whole document, since none of it is frontmatter', () => {
+      const widget = specs(frontmatterDecorations(stateFor(BARE)))[0]!.spec.widget as {
+        chars: number
+      }
+      expect(widget.chars).toBe(BARE.trim().length)
+    })
+
+    it('carries the commit, so the bar says last-updated like any other', () => {
+      const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
+      const state = stateFor(BARE, [frontmatterCommitField])
+        .update({ effects: setFrontmatterCommit.of(commit) })
+        .state
+      const widget = specs(frontmatterDecorations(state))[0]!.spec.widget as { commit: unknown }
+      expect(widget.commit).toEqual(commit)
+    })
+
+    it('does not toggle: there is nothing to expand', () => {
+      const state = stateFor(BARE).update({ effects: toggleFrontmatter.of(true) }).state
+      const widget = specs(frontmatterDecorations(state))[0]!.spec.widget as { expanded: boolean }
+      expect(widget.expanded).toBe(false)
+    })
   })
 })
 

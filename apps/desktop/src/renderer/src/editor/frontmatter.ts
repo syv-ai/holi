@@ -180,7 +180,10 @@ class FrontmatterWidget extends WidgetType {
 
   constructor(
     readonly expanded: boolean,
-    readonly body: string,
+    /** The YAML between the fences, or **null when the file has no frontmatter
+     *  at all**. Null is the whole difference between the two things this widget
+     *  is: a block that collapses, and a bar that only reports. */
+    readonly body: string | null,
     /** Body char count, for the collapsed summary. */
     readonly chars: number,
     /** The file's last commit, for the collapsed summary (null until fetched). */
@@ -207,6 +210,21 @@ class FrontmatterWidget extends WidgetType {
     const wrap = document.createElement('div')
     wrap.className = 'cm-fm'
     wrap.setAttribute('data-frontmatter', this.expanded ? 'expanded' : 'collapsed')
+
+    if (this.body === null) {
+      // No frontmatter in the file. The bar is still shown, because "N chars ·
+      // Last updated …" is a fact about a markdown file rather than a fact about
+      // having metadata — it used to disappear only as a side effect of there
+      // being nothing to collapse (#17). No chevron: there is no block to open,
+      // and nothing here writes one, since `normalize-md` adds frontmatter on
+      // the next commit anyway and two ways to do it is one too many.
+      wrap.setAttribute('data-frontmatter', 'none')
+      const summary = document.createElement('span')
+      summary.className = 'cm-fm-summary cm-fm-bare'
+      summary.textContent = frontmatterSummary(this.chars, this.commit)
+      wrap.appendChild(summary)
+      return wrap
+    }
 
     if (!this.expanded) {
       // Collapsed: a chevron followed by a one-line summary — "N chars · Last
@@ -329,13 +347,21 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   // body line rather than being swallowed into the widget's row. See the long
   // comment there — this one character is the whole of the stray-caret bug.
   const block = frontmatterBlockRange(doc)
-  if (block === null) return Decoration.none
   const expanded = state.field(frontmatterExpandedField, false) ?? false
   // Body-only char count (everything past the frontmatter region), trimmed so a
-  // trailing newline isn't counted. Only shown collapsed, but computed here so
-  // the widget stays a pure render of what it is handed.
+  // trailing newline isn't counted. `bodyStart` is 0 when there is no block, so
+  // this is already right for both shapes. Only shown collapsed, but computed
+  // here so the widget stays a pure render of what it is handed.
   const chars = doc.slice(bodyStart(doc)).trim().length
   const commit = state.field(frontmatterCommitField, false) ?? null
+  if (block === null) {
+    // A markdown file with no frontmatter still gets the bar (#17) — inserted
+    // above the first line rather than replacing anything, since there is
+    // nothing here to replace. `side: -1` puts it before the line's own content
+    // so the caret at position 0 lands in the body, not against the widget.
+    const bare = Decoration.widget({ widget: new FrontmatterWidget(false, null, chars, commit), block: true, side: -1 })
+    return Decoration.set([bare.range(0)])
+  }
   const widget = new FrontmatterWidget(expanded, frontmatterBody(doc), chars, commit)
   const range: Range<Decoration> = Decoration.replace({ widget, block: true }).range(
     block.from,
@@ -393,6 +419,15 @@ const frontmatterTheme = EditorView.baseTheme({
     cursor: 'pointer',
   },
   '.cm-fm-summary': { color: 'inherit' },
+  // The bar a file with no frontmatter gets (#17). The pill's type and colour
+  // without the pill: there is nothing to press, so it is not a button.
+  '.cm-fm-bare': {
+    display: 'inline-block',
+    padding: '0.05rem 0.15rem',
+    fontSize: '0.8rem',
+    lineHeight: '1.2',
+    color: '#6b6b6b',
+  },
   // Expanded: one borderless unit — the chevron sits to the left of the YAML,
   // no title, no box. The chevron aligns to the first line.
   '.cm-fm-reveal': { display: 'flex', alignItems: 'flex-start', gap: '0.4rem' },
