@@ -21,6 +21,9 @@ export const editorTheme = EditorView.baseTheme({
     // `.cm-content`), so it is named once here and the three places that apply
     // it — the line, the frontmatter widget, the table widget — read it.
     '--editor-inset': '24px',
+    // What lets a heading's `#` slide instead of blink: without it `width: auto`
+    // is not an interpolable value and the transition below does nothing.
+    interpolateSize: 'allow-keywords',
     // A list's three lengths, declared here so a stack that borrows this base
     // can retune them in one place: one nesting level, the space held between a
     // marker and its text on top of the one space markdown already requires,
@@ -117,6 +120,64 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-heading-1': { fontSize: '1.5em' },
   '.cm-heading-2': { fontSize: '1.25em' },
   '.cm-heading-3': { fontSize: '1.1em' },
+  /**
+   * D92: the one animation in the editor, and the exception that FR-2's "no
+   * animation layer" is now written around. A heading's `#` slides out and back
+   * rather than blinking, because the heading is the block whose text moves
+   * furthest when its marks appear.
+   *
+   * `width: 0` to `width: auto`, which is only interpolable because of
+   * `interpolate-size` on the editor root. That is the whole reason this needs no
+   * measurement: the marks are one to six `#` plus a space in whatever face the
+   * vault chose (D87), a width no CSS unit knows — `ch` is the width of a zero —
+   * and the last attempt to measure a marker in this editor was deleted for being
+   * more machinery than it was worth (`cd4cf31`). `auto` IS the measurement, and
+   * the browser does it.
+   *
+   * `vertical-align: bottom` because an inline-block that clips takes its
+   * baseline from its bottom margin edge, which lifts the `#` off the text's
+   * baseline by a descender. Aligning the box to the line box's bottom instead
+   * puts it back.
+   *
+   * Nothing else in the editor animates. Decorations that move CodeMirror's own
+   * geometry peg its measure loop, which is why the rest of live preview is a
+   * plain swap; a single line's inline width for a quarter of a second is the
+   * whole of what is spent here.
+   */
+  '.cm-heading-mark': {
+    display: 'inline-block',
+    overflow: 'hidden',
+    // NOT inherited: `.cm-line` is `pre-wrap`, and at `width: 0` that wraps the
+    // `## ` inside this box onto one line per character. `overflow: hidden` only
+    // clips sideways, so the box keeps the height it wrapped to and a closed h2
+    // stood three lines tall. The marks are one line and are clipped, never
+    // wrapped.
+    whiteSpace: 'pre',
+    verticalAlign: 'bottom',
+    width: '0',
+    opacity: '0',
+  },
+  '.cm-heading-raw .cm-heading-mark': { width: 'auto', opacity: '1' },
+  /**
+   * The transition is declared ONLY here, under a class `heading-slide.ts` puts
+   * on for a moment after the caret moves.
+   *
+   * Unconditionally, every heading in a file animated its marks shut as the file
+   * opened. CodeMirror creates the mark span and settles its style in two steps,
+   * so the element's first resolved width is `auto` and the rule closing it reads
+   * as a change worth transitioning. `@starting-style` does not help, because
+   * this is not an insertion. Gating on a caret move does: a mark rendered by a
+   * scroll, or by opening a file, finds transitions switched off and just
+   * appears closed.
+   */
+  '&.cm-heading-sliding .cm-heading-mark': {
+    transition:
+      'width var(--duration-base, 240ms) var(--ease-settle, ease-out), opacity var(--duration-base, 240ms) var(--ease-settle, ease-out)',
+  },
+  // Respect the OS switch: the marks still appear, they just stop travelling.
+  '@media (prefers-reduced-motion: reduce)': {
+    '&.cm-heading-sliding .cm-heading-mark': { transition: 'none' },
+  },
 
   '.cm-strong': { fontWeight: '700' },
   '.cm-emphasis': { fontStyle: 'italic' },

@@ -11,6 +11,7 @@ import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
 import { languageForPath, validityStatus } from './languages'
+import { headingSlide } from './heading-slide'
 import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskChip } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap } from './lists'
@@ -81,6 +82,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
     livePreview,
+    // The caret's half of the heading slide: the transition is CSS, and
+    // CodeMirror has to be told to measure again while it runs.
+    headingSlide,
     // After livePreview: the block-replace owns the frontmatter region, and
     // livePreview is told to skip it (FR-2 hide / FR-16 reveal).
     frontmatterExtension,

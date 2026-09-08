@@ -34,17 +34,35 @@ function specs(set: DecorationSet): { from: number; to: number; spec: Record<str
 }
 
 describe('buildDecorations', () => {
-  it('conceals heading marks on inactive lines', () => {
-    const state = stateFor('# Title\n\nbody text', 12) // caret in body
-    const decos = specs(buildDecorations(state, 0, state.doc.length))
-    // the "# " HeaderMark (0-2) is concealed
-    expect(decos.some((d) => d.from === 0 && d.to === 2)).toBe(true)
+  // A heading's `#` is the one mark that is never replaced: it stays in the DOM
+  // as `.cm-heading-mark` so its box can be transitioned, and whether it is open
+  // is the LINE's `cm-heading-raw`. Both are asserted here because the pair is
+  // the contract the slide depends on.
+  const headingLineClass = (doc: string, caret: number) => {
+    const state = stateFor(doc, caret)
+    const line = specs(buildDecorations(state, 0, state.doc.length)).find(
+      (d) => d.from === 0 && d.to === 0,
+    )
+    return String(line?.spec['class'] ?? '')
+  }
+
+  it('marks the heading mark rather than replacing it, always', () => {
+    for (const caret of [12, 3]) {
+      const state = stateFor('# Title\n\nbody text', caret)
+      const mark = specs(buildDecorations(state, 0, state.doc.length)).find(
+        (d) => d.from === 0 && d.to === 2,
+      )
+      expect(mark?.spec['class']).toBe('cm-heading-mark')
+      expect(mark?.spec['widget']).toBeUndefined()
+    }
   })
 
-  it('reveals raw source on the active line', () => {
-    const state = stateFor('# Title\n\nbody text', 3) // caret inside the heading
-    const decos = specs(buildDecorations(state, 0, state.doc.length))
-    expect(decos.some((d) => d.from === 0 && d.to === 2)).toBe(false)
+  it('leaves the heading mark closed on an inactive line', () => {
+    expect(headingLineClass('# Title\n\nbody text', 12)).not.toContain('cm-heading-raw')
+  })
+
+  it('opens the heading mark on the active line', () => {
+    expect(headingLineClass('# Title\n\nbody text', 3)).toContain('cm-heading-raw')
   })
 
   it('conceals ** markers around strong text on inactive lines', () => {
@@ -427,12 +445,18 @@ describe('buildDecorations — per-element reveal (D91)', () => {
     ).toBe(false)
   })
 
-  it("reveals a heading's # from anywhere on the heading, not just the marker", () => {
-    expect(concealedAt('# Title\n\nbody', 6, 0, 2)).toBe(false)
+  const headingIsRaw = (doc: string, caret: number) => {
+    const state = stateFor(doc, caret)
+    const line = specs(buildDecorations(state, 0, doc.length)).find((d) => d.from === 0 && d.to === 0)
+    return String(line?.spec['class'] ?? '').includes('cm-heading-raw')
+  }
+
+  it("opens a heading's # from anywhere on the heading, not just the marker", () => {
+    expect(headingIsRaw('# Title\n\nbody', 6)).toBe(true)
   })
 
-  it('leaves the # hidden while the caret is on an element inside the heading', () => {
+  it('leaves the # closed while the caret is on an element inside the heading', () => {
     const doc = '# Title **bold** end'
-    expect(concealedAt(doc, doc.indexOf('bold'), 0, 2)).toBe(true)
+    expect(headingIsRaw(doc, doc.indexOf('bold'))).toBe(false)
   })
 })

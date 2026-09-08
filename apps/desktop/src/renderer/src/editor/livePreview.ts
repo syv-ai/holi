@@ -63,7 +63,20 @@ const strike = Decoration.mark({ class: 'cm-strikethrough' })
 const inlineCode = Decoration.mark({ class: 'cm-inline-code' })
 const quoteMark = Decoration.mark({ class: 'cm-quote-mark' })
 const linkText = Decoration.mark({ class: 'cm-md-link' })
-const headingLine = (level: number) => Decoration.line({ class: `cm-heading cm-heading-${level}` })
+/**
+ * The heading's line, and the state its `#` reads.
+ *
+ * `raw` is on the LINE rather than on the mark on purpose. It is what lets the
+ * `#` slide: the mark decoration below never changes, so CodeMirror keeps the
+ * same DOM element across a selection move and a CSS transition has something to
+ * run on. Flipping a class on the mark itself would rebuild it, and a transition
+ * cannot cross a node that was destroyed and made again.
+ */
+const headingLine = (level: number, raw: boolean) =>
+  Decoration.line({ class: `cm-heading cm-heading-${level}${raw ? ' cm-heading-raw' : ''}` })
+
+/** The `# `, always in the DOM, its box opened and closed by the theme. */
+const headingMark = Decoration.mark({ class: 'cm-heading-mark' })
 const codeLine = Decoration.line({ class: 'cm-code-line' })
 
 /**
@@ -312,15 +325,24 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
         case 'ATXHeading6': {
           const level = Number(node.name.slice('ATXHeading'.length))
           const line = state.doc.lineAt(node.from)
-          ranges.push({ from: line.from, to: line.from, deco: headingLine(level) })
+          ranges.push({ from: line.from, to: line.from, deco: headingLine(level, activeHere) })
           break
         }
         case 'HeaderMark': {
-          // conceal "# " (mark + the following space) on inactive lines
-          if (!activeHere) {
-            const end = state.sliceDoc(node.to, node.to + 1) === ' ' ? node.to + 1 : node.to
-            ranges.push({ from: node.from, to: end, deco: conceal })
+          // "# " — the mark and the space after it.
+          const end = state.sliceDoc(node.to, node.to + 1) === ' ' ? node.to + 1 : node.to
+          const heading = node.node.parent
+          if (heading !== null && heading.name.startsWith('ATXHeading')) {
+            // Marked, never replaced, and marked unconditionally: a replace takes
+            // the text out of the DOM, so there is no element left to transition
+            // and the swap can only blink. The open/closed state rides on the
+            // line's `cm-heading-raw` instead (see `headingLine`).
+            ranges.push({ from: node.from, to: end, deco: headingMark })
+            break
           }
+          // A setext underline has no heading line to carry that state, so it
+          // keeps the plain swap it has always had.
+          if (!activeHere) ranges.push({ from: node.from, to: end, deco: conceal })
           break
         }
         case 'StrongEmphasis':
