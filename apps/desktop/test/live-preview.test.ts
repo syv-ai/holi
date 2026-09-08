@@ -213,10 +213,49 @@ describe('buildDecorations — list indentation', () => {
     expect(depthOf('- ', '- ')).toBe('--list-depth:1')
   })
 
+  /** The glyph drawn for the marker starting `text`, or undefined. The caret
+   *  sits at 0, so every list line below the opening paragraph is inactive. */
+  function glyphIn(doc: string, text: string): string | undefined {
+    const at = doc.indexOf(text)
+    const found = decos(doc).all.find((d) => d.from === at && d.to === at + 1)
+    return (found?.spec['widget'] as { glyph?: string } | undefined)?.glyph
+  }
+
+  it('draws -, * and + as one bullet', () => {
+    for (const marker of ['-', '*', '+']) {
+      expect(glyphIn(`para\n\n${marker} item`, `${marker} item`)).toBe('•')
+    }
+  })
+
+  it('deepens the bullet the way a nested list looks everywhere else', () => {
+    const doc = 'para\n\n- one\n  - two\n    - three\n      - four'
+    expect(glyphIn(doc, '- one')).toBe('•')
+    expect(glyphIn(doc, '- two')).toBe('◦')
+    expect(glyphIn(doc, '- three')).toBe('▪')
+    // Deeper than the ladder goes keeps the last rung rather than falling off it.
+    expect(glyphIn(doc, '- four')).toBe('▪')
+  })
+
+  it('leaves an ordered marker as its number', () => {
+    const { all } = decos('1. one')
+    const marker = all.find((d) => d.from === 0 && d.to === 2)
+    expect(marker?.spec['widget']).toBeUndefined()
+    expect(marker?.spec['class']).toBe('cm-list-mark')
+  })
+
+  // Same contract as every other mark in the file, and the two states wear the
+  // same box, so the line does not move (FR-3b).
+  it('shows the raw marker on the line the caret is on', () => {
+    const { all } = decos('- item', 3)
+    const marker = all.find((d) => d.from === 0 && d.to === 1)
+    expect(marker?.spec['widget']).toBeUndefined()
+    expect(marker?.spec['class']).toContain('cm-list-bullet')
+  })
+
   it('holds the text off the marker', () => {
-    const { all } = decos('- top')
+    const { all } = decos('1. top')
     const mark = all.find((d) => d.spec['class'] === 'cm-list-mark')
-    expect(mark).toEqual(expect.objectContaining({ from: 0, to: 1 }))
+    expect(mark).toEqual(expect.objectContaining({ from: 0, to: 2 }))
   })
 
   it('indents every marker markdown has: -, * and 1.', () => {

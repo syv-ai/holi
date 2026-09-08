@@ -23,6 +23,7 @@ export const editorTheme = EditorView.baseTheme({
     '--list-indent': '2em',
     '--list-gap': '0.5em',
     '--list-space': '0.7em',
+    '--list-bullet': '0.6em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -83,6 +84,10 @@ export const editorTheme = EditorView.baseTheme({
     paddingTop: 'var(--list-space, 0.7em)',
   },
   '.cm-list-mark': { marginRight: 'var(--list-gap, 0.5em)' },
+  // One box for the raw `-`/`*`/`+` and for the dot that stands in for it off
+  // the active line, so the line does not move when the caret arrives (FR-3b).
+  // Ordered markers are never swapped and keep their natural width.
+  '.cm-list-bullet': { display: 'inline-block', width: 'var(--list-bullet, 0.6em)' },
   '.cm-quote-mark': { color: '#737373' },
   // No pointer by default: a markdown link is editable text and a plain click
   // places the caret — only ⌘/Ctrl-click navigates (links.ts). The cursor is

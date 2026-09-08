@@ -75,6 +75,35 @@ const listLine = (depth: number) =>
 /** The marker, so the theme can hold the text off it. The one space markdown
  *  requires is not much of a gap in a proportional face. */
 const listMark = Decoration.mark({ class: 'cm-list-mark' })
+/** A bullet marker, raw. Same box as the dot below, so swapping one for the
+ *  other on the active line moves nothing (FR-3b). */
+const listBullet = Decoration.mark({ class: 'cm-list-mark cm-list-bullet' })
+
+/**
+ * `-`, `*` and `+` are three spellings of one thing, so they draw as one thing.
+ *
+ * The ladder is the browser's own disc / circle / square, which is what a nested
+ * list looks like everywhere else, so the glyph says the depth a second time.
+ * Ordered markers are left alone: a number carries meaning that a dot cannot.
+ */
+const BULLETS = ['•', '◦', '▪']
+
+class BulletWidget extends WidgetType {
+  constructor(readonly glyph: string) {
+    super()
+  }
+
+  override eq(other: BulletWidget): boolean {
+    return other.glyph === this.glyph
+  }
+
+  override toDOM(): HTMLElement {
+    const el = document.createElement('span')
+    el.className = 'cm-list-mark cm-list-bullet'
+    el.textContent = this.glyph
+    return el
+  }
+}
 
 class HrWidget extends WidgetType {
   override toDOM(): HTMLElement {
@@ -201,7 +230,21 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           let lead = mark.from
           while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
-          ranges.push({ from: mark.from, to: mark.to, deco: listMark })
+          // The marker draws as a bullet, except on the line the caret is on,
+          // where every other mark in this file shows its source too. The two
+          // wear the same box, so the swap costs no movement.
+          const isBullet = /^[-*+]$/.test(state.sliceDoc(mark.from, mark.to))
+          const glyph = BULLETS[Math.min(depth, BULLETS.length) - 1] ?? BULLETS[0]!
+          ranges.push({
+            from: mark.from,
+            to: mark.to,
+            deco:
+              isBullet && !activeHere
+                ? Decoration.replace({ widget: new BulletWidget(glyph) })
+                : isBullet
+                  ? listBullet
+                  : listMark,
+          })
           break
         }
         case 'QuoteMark':
