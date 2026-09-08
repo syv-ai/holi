@@ -22,7 +22,7 @@ export const editorTheme = EditorView.baseTheme({
     // and the air above each item.
     '--list-indent': '2em',
     '--list-gap': '0.5em',
-    '--list-space': '0.35em',
+    '--list-space': '0.7em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -80,7 +80,7 @@ export const editorTheme = EditorView.baseTheme({
     // gap that the next paragraph would then sit inside. A wrapped item is one
     // line box and gets no second helping, and an item's continuation lines are
     // not `.cm-list` at all.
-    paddingTop: 'var(--list-space, 0.35em)',
+    paddingTop: 'var(--list-space, 0.7em)',
   },
   '.cm-list-mark': { marginRight: 'var(--list-gap, 0.5em)' },
   '.cm-quote-mark': { color: '#737373' },
