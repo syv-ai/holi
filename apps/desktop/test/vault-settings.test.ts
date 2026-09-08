@@ -120,7 +120,12 @@ describe('a machine-local hooks override', () => {
   it('leaves the transforms the local file says nothing about alone', async () => {
     const root = await vault('{"hooks":{"relink":false}}', '{"hooks":{"archive-done":true}}')
     const { hooks } = await readVaultSettings(root)
-    expect(hooks).toEqual({ relink: false, 'archive-done': true, 'normalize-md': true })
+    expect(hooks).toEqual({
+      relink: false,
+      'archive-done': true,
+      'normalize-md': true,
+      'scaffold-md': true,
+    })
   })
 })
 

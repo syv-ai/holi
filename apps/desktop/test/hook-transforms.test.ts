@@ -33,21 +33,26 @@ async function settings(json: string): Promise<void> {
 }
 
 describe('the transform set', () => {
-  it('is exactly three, and this is not a hook framework', () => {
+  it('is a short list in a fixed order, and this is not a hook framework', () => {
+    // `scaffold-md` sits before `normalize-md` so the block it writes is tidied
+    // by the same pass as everything else.
     expect(VAULT_TRANSFORMS.map((t) => t.name)).toEqual([
       'relink',
       'archive-done',
+      'scaffold-md',
       'normalize-md',
     ])
   })
 
-  it('defaults archive-done OFF and the other two on', () => {
+  it('defaults archive-done OFF and the rest on', () => {
     // It moves task files, which changes what the board shows. A transform that
-    // rearranges someone's work is opt-in.
+    // rearranges someone's work is opt-in. `scaffold-md` writes visible lines and
+    // is on anyway: it only ever fires on a file's first commit.
     expect(DEFAULT_HOOKS).toEqual({
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'scaffold-md': true,
     })
   })
 

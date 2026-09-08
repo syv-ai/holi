@@ -1,7 +1,7 @@
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
+import { TRANSFORM_NAMES, VAULT_SETTING_DEFAULTS, VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
 import { VaultSettingsAct } from '../VaultSettingsAct'
 
 function setup(over: Record<string, unknown> = {}) {
@@ -64,20 +64,21 @@ test('appearance is a choice too, and reports a plain string', async () => {
 test('the transforms are one row of several switches', async () => {
   const { onChange } = setup()
   const row = screen.getByRole('group', { name: 'Tidy up on every commit' })
-  expect(within(row).getAllByRole('checkbox')).toHaveLength(3)
+  expect(within(row).getAllByRole('checkbox')).toHaveLength(TRANSFORM_NAMES.length)
 
   await userEvent.click(within(row).getByRole('checkbox', { name: /File finished tasks away/ }))
   // The whole block comes back, not just the switch that moved — a patch naming
-  // one transform must not read as an answer about the other two.
+  // one transform must not read as an answer about the others.
   expect(onChange).toHaveBeenCalledWith('hooks', {
     relink: true,
     'archive-done': true,
     'normalize-md': true,
+    'scaffold-md': true,
   })
 })
 
 test('a transform switch shows the vault’s current answer', () => {
-  setup({ hooks: { relink: false, 'archive-done': true, 'normalize-md': true } })
+  setup({ hooks: { ...VAULT_SETTING_DEFAULTS.hooks, relink: false, 'archive-done': true } })
   const row = screen.getByRole('group', { name: 'Tidy up on every commit' })
   expect(
     within(row).getByRole('checkbox', { name: /Fix links when a file moves/ }),

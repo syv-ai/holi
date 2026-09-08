@@ -10,15 +10,19 @@ import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { readVaultSettings } from '../settings'
 import { archiveDone } from './archive-done'
 import { normalizeMd } from './normalize-md'
+import { scaffoldMd } from './scaffold-md'
 import { relink } from './relink'
 import type { HookSettings, Transform } from './runner'
 
 /** Order matters: `relink` first, because `archive-done` moves files and both
  *  rewrite links — running the rename fix-ups before the archive move keeps
- *  each one reasoning about a tree the other has finished with. */
+ *  each one reasoning about a tree the other has finished with. `scaffold-md`
+ *  goes before `normalize-md` so the block it writes is tidied by the same pass
+ *  as everything else, rather than being the one region nothing has checked. */
 export const VAULT_TRANSFORMS: Transform[] = [
   { name: 'relink', run: relink },
   { name: 'archive-done', run: (root, staged) => archiveDone(root, staged) },
+  { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged) },
   { name: 'normalize-md', run: normalizeMd },
 ]
 
@@ -31,8 +35,12 @@ export const VAULT_TRANSFORMS: Transform[] = [
  * that expires.
  *
  * `archive-done` is **off**: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in. The other
- * two only ever make a change the author would not have noticed making.
+ * shows, and a transform that rearranges someone's work is opt-in. `relink` and
+ * `normalize-md` only ever make a change the author would not have noticed
+ * making. `scaffold-md` is the one that IS visible — it writes four lines at the
+ * top of a note — and it is on anyway, because it only ever fires on a file's
+ * first commit and the alternative is the note losing its "N chars · Last
+ * updated" bar and its `created` date for good.
  */
 export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 

@@ -10,7 +10,7 @@
  */
 import { Provider, createStore } from 'jotai'
 import { expect, test } from 'vitest'
-import { EDITOR_FONT_STACKS, type ResolvedVaultSettings } from '@holi/shared'
+import { EDITOR_FONT_STACKS, VAULT_SETTING_DEFAULTS, type ResolvedVaultSettings } from '@holi/shared'
 import { render } from '@/test/render'
 import { EDITOR_FONT_VAR, useEditorFont } from '../editor-font'
 import { vaultSettingsAtom } from '../settings'
@@ -20,7 +20,7 @@ const settings = (editorFont: ResolvedVaultSettings['editorFont']): ResolvedVaul
   dailyNotes: true,
   colorScheme: 'system',
   editorFont,
-  hooks: { relink: true, 'archive-done': false, 'normalize-md': true },
+  hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],
 })

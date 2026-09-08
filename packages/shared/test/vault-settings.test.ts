@@ -33,6 +33,10 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      // On despite being the one transform whose change is VISIBLE: it fires
+      // only on a file's first commit, and the alternative is a note without a
+      // created date and without its "N chars · Last updated" bar (#17).
+      'scaffold-md': true,
     })
   })
 
@@ -44,7 +48,12 @@ describe('VAULT_SETTING_DEFAULTS', () => {
   })
 
   it('names every transform the hooks block can carry', () => {
-    expect([...TRANSFORM_NAMES].sort()).toEqual(['archive-done', 'normalize-md', 'relink'])
+    expect([...TRANSFORM_NAMES].sort()).toEqual([
+      'archive-done',
+      'normalize-md',
+      'relink',
+      'scaffold-md',
+    ])
   })
 })
 
@@ -120,13 +129,16 @@ describe('resolveVaultSettings — the local override', () => {
   it('merges hooks per transform rather than replacing the block', () => {
     // A local file naming one transform must not silently disable the others.
     const s = resolveVaultSettings(
-      committed({ hooks: { relink: true, 'archive-done': true, 'normalize-md': true } }),
+      committed({
+        hooks: { relink: true, 'archive-done': true, 'normalize-md': true, 'scaffold-md': true },
+      }),
       committed({ hooks: { 'archive-done': false } }),
     )
     expect(s.hooks).toEqual({
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'scaffold-md': true,
     })
   })
 
@@ -338,6 +350,7 @@ describe('seedSettings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'scaffold-md': true,
     })
   })
 

@@ -131,6 +131,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'scaffold-md': true,
     })
     expect(settings.warnings).toEqual([])
   })
@@ -171,6 +172,7 @@ describe('settings', () => {
       relink: true,
       'archive-done': false,
       'normalize-md': true,
+      'scaffold-md': true,
     })
   })
 

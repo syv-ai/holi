@@ -33,9 +33,14 @@
 /** The pre-commit transforms a vault can enable (D76). Kebab, matching the
  *  transform names themselves — a camelCase settings key beside a kebab
  *  transform name is a mapping table that exists only to be got wrong once. */
-export type TransformName = 'relink' | 'archive-done' | 'normalize-md'
+export type TransformName = 'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md'
 
-export const TRANSFORM_NAMES: readonly TransformName[] = ['relink', 'archive-done', 'normalize-md']
+export const TRANSFORM_NAMES: readonly TransformName[] = [
+  'relink',
+  'archive-done',
+  'normalize-md',
+  'scaffold-md',
+]
 
 /** Fully populated, unlike main's `HookSettings` — the resolver's job is to
  *  answer for every transform, so nothing downstream re-applies a default. */
@@ -137,6 +142,7 @@ export const VAULT_SETTING_DEFAULTS = Object.freeze({
     relink: true,
     'archive-done': false,
     'normalize-md': true,
+    'scaffold-md': true,
   }) as VaultHooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,
 })
@@ -433,6 +439,11 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
           key: 'normalize-md',
           label: 'Tidy markdown',
           explanation: 'Trailing spaces and stray blank lines, quietly cleaned.',
+        },
+        {
+          key: 'scaffold-md',
+          label: 'Give a new note its frontmatter',
+          explanation: 'A created date and empty tags, however the note arrived.',
         },
         {
           key: 'archive-done',

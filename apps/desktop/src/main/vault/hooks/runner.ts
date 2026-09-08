@@ -18,13 +18,19 @@
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
+import type { TransformName } from '@holi/shared'
 import { appendHookLog } from './log'
 import type { StagedChanges } from './staged'
 import type { TransformResult } from './relink'
 
 const exec = promisify(execFile)
 
-export type TransformName = 'relink' | 'archive-done' | 'normalize-md'
+/** Re-exported, never restated. This union was written out here as well until a
+ *  fourth transform was added and only one of the two copies knew about it —
+ *  the settings resolver and the runner disagreeing about which transforms exist
+ *  is a mapping table that exists only to be got wrong once, which is the same
+ *  argument the names themselves already carry. */
+export type { TransformName } from '@holi/shared'
 
 export interface Transform {
   name: TransformName

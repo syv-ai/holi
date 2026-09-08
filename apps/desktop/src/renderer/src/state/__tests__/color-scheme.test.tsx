@@ -11,7 +11,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { render, waitFor } from '@/test/render'
 import { useColorScheme } from '../color-scheme'
 import { vaultSettingsAtom } from '../settings'
-import type { ResolvedVaultSettings } from '@holi/shared'
+import { VAULT_SETTING_DEFAULTS, type ResolvedVaultSettings } from '@holi/shared'
 
 /** A controllable `prefers-color-scheme`. jsdom implements no media queries, and
  *  `test/setup.dom.ts` installs a stub that always answers "no match" — which
@@ -48,7 +48,7 @@ const settings = (colorScheme: ResolvedVaultSettings['colorScheme']): ResolvedVa
   dailyNotes: true,
   colorScheme,
   editorFont: 'mono',
-  hooks: { relink: true, 'archive-done': false, 'normalize-md': true },
+  hooks: VAULT_SETTING_DEFAULTS.hooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,
   warnings: [],
 })
