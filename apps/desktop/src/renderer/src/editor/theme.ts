@@ -16,6 +16,11 @@ export const editorTheme = EditorView.baseTheme({
     height: '100%',
     fontSize: '14px',
     '--tbl-style-font-family': MONO,
+    // The column's side inset. Every child of `.cm-content` that holds content
+    // has to carry it itself (see `.cm-line` below for why it cannot live on
+    // `.cm-content`), so it is named once here and the three places that apply
+    // it — the line, the frontmatter widget, the table widget — read it.
+    '--editor-inset': '24px',
     // A list's three lengths, declared here so a stack that borrows this base
     // can retune them in one place: one nesting level, the space held between a
     // marker and its text on top of the one space markdown already requires,
@@ -58,8 +63,29 @@ export const editorTheme = EditorView.baseTheme({
    * line's padding identical keeps that edge still. Were the indent padding, the
    * whole selection would shift by it whenever a list line happened to be the
    * first one on screen.
+   *
+   * The price is that a BLOCK WIDGET is not a line. CodeMirror renders one as a
+   * sibling of the lines, so it gets none of this and sat 24px out in the page
+   * margin until it was given the inset by hand. There are two — the frontmatter
+   * widget (`.cm-fm`, in frontmatter.ts) and the table below — and a third would
+   * need the same. Padding them does not disturb the selection edge: that is
+   * read off the first `.cm-line`, never off a widget.
    */
-  '.cm-line': { padding: '0 24px' },
+  '.cm-line': { padding: '0 var(--editor-inset)' },
+  /**
+   * The table widget, insetted to the same column as the text.
+   *
+   * `codemirror-markdown-tables` pads the widget by 16px on every side and then
+   * pulls it back by 10px, so its cells sit 6px inside the text edge and its
+   * drag handles have room to hang off the left. Both of its numbers are kept:
+   * the inset is added to its own offset rather than replacing it, which is what
+   * the `calc` says. Written `.cm-content div…` because the plugin's own rules
+   * for this element are two classes deep and a shallower one loses to them.
+   */
+  '.cm-content div.tbl-table-widget': {
+    marginLeft: 'calc(var(--editor-inset) - 10px)',
+    marginRight: 'var(--editor-inset)',
+  },
 
   // drawSelection() draws its own cursor and hides the native one, so caretColor
   // alone is invisible — the drawn cursor is a border-left element, style it.

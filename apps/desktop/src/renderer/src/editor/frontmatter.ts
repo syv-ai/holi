@@ -376,7 +376,9 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 })
 
 const frontmatterTheme = EditorView.baseTheme({
-  '.cm-fm': { margin: '0 0 0.5rem 0' },
+  // The inset every child of `.cm-content` carries itself: a block widget is not
+  // a `.cm-line` and gets none of the line's padding (theme.ts says why).
+  '.cm-fm': { margin: '0 var(--editor-inset) 0.5rem' },
   // Collapsed: a chevron mark + a muted one-line summary, inline.
   '.cm-fm-pill': {
     display: 'inline-flex',
