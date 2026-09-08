@@ -187,6 +187,40 @@ export const editorTheme = EditorView.baseTheme({
     borderRadius: '3px',
     padding: '0 3px',
   },
+  /**
+   * An unfocused table cell hides the `**`, `*` and `` ` `` it would otherwise
+   * show.
+   *
+   * The cell view is the plugin's own `contenteditable`, painted from highlight
+   * classes with no decorations behind it, so nothing there can conceal text the
+   * way live preview does. What makes this possible anyway is that a mark
+   * INHERITS the class of the node it sits in: `EmphasisMark`, `CodeMark` and
+   * `LinkMark` share one tag, but a link's `[` is the only one of the three that
+   * also carries `cm-cell-link`.
+   *
+   * **A link keeps its brackets on purpose.** Hiding them would leave a wiki-link
+   * as `[notes/plan.md]` — markdown parses the INNER pair of `[[…]]` as a
+   * shortcut link and the outer pair is plain text, so concealing one pair reads
+   * as a broken link rather than as a rendered one. Concealing properly is a
+   * decoration, and a cell has none; the caret has to enter the cell before the
+   * real thing takes over.
+   *
+   * Verified in the running app that a click still lands where it looks like it
+   * should: the plugin maps a click to a source offset through its own model
+   * rather than through rendered widths, so hidden characters do not shift it.
+   */
+  '.tbl-cell-view .cm-md-mark:not(.cm-cell-link)': { display: 'none' },
+  // Inline code and a link, in a cell and only in a cell. The classes exist
+  // everywhere the highlight style does — a fenced block's body carries
+  // `cm-cell-code` too — so the SELECTOR is what keeps them to a cell rather
+  // than the tagging.
+  '.tbl-cell-view .cm-cell-code': {
+    background: 'rgba(255,255,255,0.08)',
+    borderRadius: '3px',
+    padding: '0 3px',
+    fontFamily: MONO,
+  },
+  '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
   /**
    * Lists. `livePreview`'s `ListItem` case stamps the depth; this turns it into
@@ -392,6 +426,50 @@ const codeHighlightStyle = HighlightStyle.define([
 
 /** The highlight extension to add to the plain/code stack. */
 export const codeHighlighting = syntaxHighlighting(codeHighlightStyle)
+
+/**
+ * Markdown's own tags, mapped onto the classes live preview already uses.
+ *
+ * This exists for TABLE CELLS, and it is the only thing that reaches one.
+ * `codemirror-markdown-tables` renders an unfocused cell itself — a
+ * `contenteditable` div whose spans it classes from
+ * `highlightingFor(rootState, tags)` — so a cell is styled by a HighlightStyle
+ * and by nothing else. There are no decorations there, which is exactly why a
+ * cell cannot conceal its `**` the way the document can: concealing is a
+ * decoration, and a HighlightStyle only ever colours what is already on screen.
+ *
+ * Reusing live preview's own classes rather than restating the colours keeps
+ * bold-in-a-cell and bold-in-a-note one definition. Inline code is the one
+ * exception and takes a class of its own: its background is translucent, and in
+ * the document body the highlight would land on the same range as live
+ * preview's `.cm-inline-code` mark and paint it twice.
+ *
+ * `strikethrough` fires in the body only. A cell's grammar has no GFM in it, and
+ * the parser the plugin renders an unfocused cell with is not configurable.
+ */
+const markdownHighlightStyle = HighlightStyle.define([
+  // These three land on exactly the text live preview already marks, so they
+  // borrow its classes and bold-in-a-cell stays one definition.
+  { tag: t.strong, class: 'cm-strong' },
+  { tag: t.emphasis, class: 'cm-emphasis' },
+  { tag: t.strikethrough, class: 'cm-strikethrough' },
+  // These two do not, and get classes of their own that only a CELL styles.
+  // `monospace` is markdown's tag for `CodeText` as well as for `InlineCode`, so
+  // borrowing `.cm-inline-code` would put an inline-code background on every line
+  // of every fenced block; and `link` covers a link's brackets, which the body
+  // draws as punctuation.
+  { tag: t.monospace, class: 'cm-cell-code' },
+  { tag: t.link, class: 'cm-cell-link' },
+  // The delimiters. `EmphasisMark`, `CodeMark` and `LinkMark` all carry
+  // `processingInstruction`, so this class alone cannot tell them apart — what
+  // separates them is the class they INHERIT from the node they sit in, which is
+  // how the cell rule below reaches `**` without touching a link's brackets.
+  { tag: t.processingInstruction, class: 'cm-md-mark' },
+])
+
+/** Notes stack only. "Edit Source" opens a `.md` in the plain editor, where the
+ *  point is to see it raw. */
+export const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
 
 /**
  * The notes editor's prose font, and the three things it must not reach.

@@ -12,13 +12,20 @@ import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
 import { languageForPath, validityStatus } from './languages'
 import { headingSlide } from './heading-slide'
-import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskChip } from './livePreview'
+import {
+  docExistsFacet,
+  inlineOnlyFacet,
+  livePreview,
+  notePathFacet,
+  taskByPathFacet,
+  type TaskChip,
+} from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap } from './lists'
 import { slashCommands } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
-import { codeHighlighting, editorTheme, notesFontTheme } from './theme'
+import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
 
 /** Live seams the editor pulls on demand (the docExistsFacet pattern — closures
  * over the renderer's atoms, read when the user triggers `@`, never baked in). */
@@ -90,9 +97,33 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     frontmatterExtension,
     linkClickHandler(deps.nav),
     wikiHoverPreview(deps.readNote),
+    // The document's own markdown tags, so a rendered table's cells read as
+    // prose (#11). Everything else in this stack styles the body through
+    // decorations; a cell is reached only by a HighlightStyle, and `theme.ts`
+    // says why.
+    markdownHighlighting,
     // Nested in-cell editors mutate the same doc — verify live that these
     // transactions compose with yCollab (FR-10 risk), no binding bypass.
-    markdownTables(),
+    //
+    // A cell that has been CLICKED INTO gets a real editor, and it is given the
+    // inline half of this stack so that editing a cell behaves like editing
+    // anywhere else (#11). It has to be built here rather than at module scope
+    // because `livePreview` reads three facets off `deps`: unwired, a wiki-link
+    // in a cell would claim a missing note exists and a task chip would never
+    // appear.
+    //
+    // `markdownHighlighting` is deliberately NOT among them: the plugin already
+    // hands both the unfocused cell and the cell editor the ROOT editor's
+    // highlighter, so passing it again would be a third copy of the same classes.
+    markdownTables({
+      extensions: [
+        inlineOnlyFacet.of(true),
+        docExistsFacet.of(deps.docExists),
+        notePathFacet.of(deps.notePath),
+        taskByPathFacet.of(deps.taskByPath),
+        livePreview,
+      ],
+    }),
     autocompletion({
       override: [
         mentionSource(deps.mentionData),

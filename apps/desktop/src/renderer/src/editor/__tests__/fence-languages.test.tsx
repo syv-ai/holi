@@ -44,9 +44,16 @@ function mount(doc: string): EditorView {
  * `CodeMark` as `processingInstruction`, which the highlight style now colours
  * (that is the one overlap noted in `extensions.ts`). They are not the code, so
  * they do not count.
+ *
+ * Nor does `.cm-cell-code`. Markdown tags a fence's body `CodeText` with the same
+ * `monospace` it gives inline code, and `markdownHighlightStyle` classes that for
+ * TABLE CELLS, which is the only place the class is styled. A span saying
+ * "markdown thinks this is code" is not a language token, and a fence with no
+ * language still has exactly one of them: its whole body.
  */
 function bodyTokenSpans(editor: EditorView): string[] {
   return [...editor.dom.querySelectorAll('.cm-code-line span')]
+    .filter((el) => !el.classList.contains('cm-cell-code'))
     .map((el) => el.textContent ?? '')
     .filter((text) => !/^`+$/.test(text))
 }

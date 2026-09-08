@@ -6,6 +6,7 @@ import type { Extension } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import {
   buildDecorations,
+  inlineOnlyFacet,
   revealedSpans,
   spanKey,
   taskByPathFacet,
@@ -458,5 +459,51 @@ describe('buildDecorations — per-element reveal (D91)', () => {
   it('leaves the # closed while the caret is on an element inside the heading', () => {
     const doc = '# Title **bold** end'
     expect(headingIsRaw(doc, doc.indexOf('bold'))).toBe(false)
+  })
+})
+
+// A table cell's editor runs this same builder over a document the plugin has
+// stripped of block constructs. Most of these cannot occur there at all — the
+// gate is belt and braces on somebody else's list — but the alphabetic-list scan
+// and the image widget are ours and are not covered by it.
+describe('buildDecorations — inline only (a table cell)', () => {
+  const inline = (doc: string, caret = 0) =>
+    specs(buildDecorations(stateFor(doc, caret, [inlineOnlyFacet.of(true)]), 0, doc.length))
+  const normal = (doc: string, caret = 0) =>
+    specs(buildDecorations(stateFor(doc, caret), 0, doc.length))
+
+  it('still renders the inline marks, which is the whole point', () => {
+    const doc = 'some **bold** here'
+    const at = doc.indexOf('**')
+    expect(inline(doc).some((d) => d.from === at && d.to === at + 2)).toBe(true)
+  })
+
+  it('leaves a heading alone', () => {
+    const doc = '# Title'
+    expect(normal(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(true)
+    expect(inline(doc, 4).some((d) => String(d.spec['class'] ?? '').includes('cm-heading'))).toBe(false)
+  })
+
+  it('does not indent a line that reads like an alphabetic list', () => {
+    const doc = 'a. not a list in here'
+    expect(normal(doc).some((d) => String(d.spec['class'] ?? '').includes('cm-list'))).toBe(true)
+    expect(inline(doc).some((d) => String(d.spec['class'] ?? '').includes('cm-list'))).toBe(false)
+  })
+
+  it('does not draw an image, which markdown calls inline and we draw as a picture', () => {
+    // The caret sits on the line above: an image is edge-inclusive like anything
+    // else, and a caret anywhere in this one would reveal its source in both.
+    const doc = 'text\n\n![alt](pic.png)'
+    expect(normal(doc, 0).some((d) => (d.spec['widget'] as unknown) !== undefined)).toBe(true)
+    expect(inline(doc, 0).some((d) => (d.spec['widget'] as unknown) !== undefined)).toBe(false)
+  })
+
+  it('does not let a heading it is ignoring shadow an element inside it', () => {
+    // D91 works off spans; a gated node must be absent from that list too, or the
+    // heading would still be the innermost thing the caret is on.
+    const doc = '# Title **bold** end'
+    const at = doc.indexOf('**')
+    // caret on the bold: its marks show, and nothing above it claims the caret
+    expect(inline(doc, doc.indexOf('bold')).some((d) => d.from === at && d.to === at + 2)).toBe(false)
   })
 })

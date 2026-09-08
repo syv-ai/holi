@@ -94,6 +94,21 @@ sync status bar via `pause(reason)`. The log is the only surface today.
 
 ## Notes & editor
 
+**True live preview inside an *unfocused* table cell.** A rendered table's cells read as prose since
+2026-09-09 (#11, D93): bold is bold, inline code is code, a link is coloured, and `**`, `*` and
+`` ` `` are hidden. What is not there is the real thing — a wiki-link is not a chip in a cell, a
+markdown link still shows `[text](url)`, and an image is not drawn. **Why, exactly:**
+`codemirror-markdown-tables` renders an unfocused cell itself, as a `contenteditable` div whose
+spans it classes from `highlightingFor(rootState, tags)`. There are no decorations anywhere in that
+path, and everything live preview does beyond colouring — concealing a delimiter, replacing a range
+with a widget — *is* a decoration. The only editor in a table is the one that appears in the cell
+you have clicked into, and that one already has the full inline stack. **What it would take:**
+forking or patching the package so a cell view renders from a decoration set rather than from a
+highlighter, or replacing the table widget with one of our own. Both are large, against a dependency
+that is otherwise carrying its weight, and the gap is cosmetic — the source stays readable and one
+click gives you the real editor. Worth revisiting only if tables become a place where wiki-links are
+commonly written.
+
 **A binary with no extension Holi knows opens as text, and looks like corruption.** `fileKind`
 defaults to `text` for an unknown extension, which is the forgiving choice and the right one for a
 `.env` or a `Makefile` — but a `.ttf` in `.holi/document-templates/_brand/fonts/` opens in the plain

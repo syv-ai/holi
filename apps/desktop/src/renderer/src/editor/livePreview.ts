@@ -56,6 +56,43 @@ export const taskByPathFacet = Facet.define<
   combine: (values) => values[0] ?? (() => null),
 })
 
+/**
+ * Set on a table cell's editor, and nowhere else.
+ *
+ * A cell is a document with no blocks in it. `codemirror-markdown-tables`
+ * already removes `ATXHeading`, `Blockquote`, `BulletList`, `FencedCode`,
+ * `HorizontalRule`, `IndentedCode`, `OrderedList` and `SetextHeading` from the
+ * parser it gives a cell, so most of what this gates cannot occur there anyway —
+ * but that removal is the plugin's list rather than ours, and a cell that
+ * quietly grew a horizontal rule would be a poor way to discover it changed.
+ *
+ * Two things it gates are not covered by that list at all: the alphabetic-list
+ * scan below, which is a regex over lines and would indent a cell reading
+ * `a. thing`, and images, which markdown counts as inline and this file draws as
+ * a picture. A picture is not a table cell's business.
+ */
+export const inlineOnlyFacet = Facet.define<boolean, boolean>({
+  combine: (values) => values[0] ?? false,
+})
+
+/** What `inlineOnlyFacet` turns off. */
+const BLOCK_NODES = new Set([
+  'ATXHeading1',
+  'ATXHeading2',
+  'ATXHeading3',
+  'ATXHeading4',
+  'ATXHeading5',
+  'ATXHeading6',
+  'SetextHeading1',
+  'SetextHeading2',
+  'HeaderMark',
+  'FencedCode',
+  'ListItem',
+  'QuoteMark',
+  'HorizontalRule',
+  'Image',
+])
+
 const conceal = Decoration.replace({})
 const strong = Decoration.mark({ class: 'cm-strong' })
 const emphasis = Decoration.mark({ class: 'cm-emphasis' })
@@ -239,8 +276,13 @@ export function revealedSpans(spans: Span[], sel: Span): Set<string> {
  * `null` for everything live preview does not conceal conditionally: fenced code,
  * quote marks, the frontmatter block, a list's leading indent.
  */
-function revealSpan(state: EditorState, node: SyntaxNodeRef | SyntaxNode | null): Span | null {
+function revealSpan(
+  state: EditorState,
+  node: SyntaxNodeRef | SyntaxNode | null,
+  inlineOnly: boolean,
+): Span | null {
   if (node === null) return null
+  if (inlineOnly && BLOCK_NODES.has(node.name)) return null
   switch (node.name) {
     case 'ATXHeading1':
     case 'ATXHeading2':
@@ -260,7 +302,7 @@ function revealSpan(state: EditorState, node: SyntaxNodeRef | SyntaxNode | null)
       return { from: node.from, to: node.to }
     // A `#` is revealed by its heading, not by its own two columns.
     case 'HeaderMark':
-      return revealSpan(state, node.node.parent)
+      return revealSpan(state, node.node.parent, inlineOnly)
     case 'ListItem': {
       const mark = node.node.firstChild
       if (mark === null || mark.name !== 'ListMark') return null
@@ -284,11 +326,14 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
   const wikiLinks = parseWikiLinks(visible)
   const spans: Span[] = wikiLinks.map((link) => ({ from: from + link.start, to: from + link.end }))
   const wikiSpans = [...spans]
+  // A table cell's editor runs this same builder over a document that has no
+  // blocks in it (see `inlineOnlyFacet`).
+  const inlineOnly = state.facet(inlineOnlyFacet)
   syntaxTree(state).iterate({
     from,
     to,
     enter(node) {
-      const span = revealSpan(state, node)
+      const span = revealSpan(state, node, inlineOnly)
       if (span === null) return
       // A wiki-link owns its own range and the markdown parser does not know it
       // exists: it reads the inner `[notes/plan.md]` of `[[notes/plan.md]]` as a
@@ -315,7 +360,8 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     from,
     to,
     enter(node) {
-      const activeHere = isActive(revealSpan(state, node))
+      if (inlineOnly && BLOCK_NODES.has(node.name)) return
+      const activeHere = isActive(revealSpan(state, node, inlineOnly))
       switch (node.name) {
         case 'ATXHeading1':
         case 'ATXHeading2':
@@ -499,8 +545,11 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
 
   // Alphabetic ordered lists, which the parser does not report at all — the
   // predicate, and the reasoning behind how strict it is, live in `lists.ts`
-  // beside the Enter that continues them.
-  for (let n = state.doc.lineAt(from).number; n <= state.doc.lineAt(to).number; n++) {
+  // beside the Enter that continues them. A regex over lines, so unlike the
+  // block nodes above it is not removed from a cell's grammar and has to be
+  // switched off by hand.
+  const lastLine = inlineOnly ? 0 : state.doc.lineAt(to).number
+  for (let n = state.doc.lineAt(from).number; n <= lastLine; n++) {
     const line = state.doc.line(n)
     const item = alphaListAt(state, line)
     if (item === null) continue
