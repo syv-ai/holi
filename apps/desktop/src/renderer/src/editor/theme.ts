@@ -16,11 +16,13 @@ export const editorTheme = EditorView.baseTheme({
     height: '100%',
     fontSize: '14px',
     '--tbl-style-font-family': MONO,
-    // A list's two lengths, declared here so a stack that borrows this base can
-    // retune them in one place: one nesting level, and the space held between a
-    // marker and its text on top of the one space markdown already requires.
+    // A list's three lengths, declared here so a stack that borrows this base
+    // can retune them in one place: one nesting level, the space held between a
+    // marker and its text on top of the one space markdown already requires,
+    // and the air above each item.
     '--list-indent': '2em',
     '--list-gap': '0.5em',
+    '--list-space': '0.35em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -71,7 +73,15 @@ export const editorTheme = EditorView.baseTheme({
    * level lands where one written with four does. Nothing is concealed
    * conditionally, so the line does not move when the caret lands on it (FR-3b).
    */
-  '.cm-list': { paddingLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))' },
+  '.cm-list': {
+    paddingLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))',
+    // Padding, not margin: adjacent margins collapse, and CodeMirror measures
+    // line heights itself. Above rather than below, so a list gets no trailing
+    // gap that the next paragraph would then sit inside. A wrapped item is one
+    // line box and gets no second helping, and an item's continuation lines are
+    // not `.cm-list` at all.
+    paddingTop: 'var(--list-space, 0.35em)',
+  },
   '.cm-list-mark': { marginRight: 'var(--list-gap, 0.5em)' },
   '.cm-quote-mark': { color: '#737373' },
   // No pointer by default: a markdown link is editable text and a plain click
