@@ -16,6 +16,7 @@ import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap } from './lists'
 import { slashCommands } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
+import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, notesFontTheme } from './theme'
 
 /** Live seams the editor pulls on demand (the docExistsFacet pattern — closures
@@ -114,6 +115,8 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
       ...defaultKeymap,
     ]),
     editorTheme,
+    // …and which of `editorTheme`'s two halves CodeMirror should wear.
+    colorModeAware(),
     // Notes only. The mail composer and the plain/code editor take `editorTheme`
     // alone and stay mono — see `notesFontTheme`.
     notesFontTheme,
@@ -165,6 +168,8 @@ export function mailComposerExtensions(): Extension[] {
       ...defaultKeymap,
     ]),
     editorTheme,
+    // …and which of `editorTheme`'s two halves CodeMirror should wear.
+    colorModeAware(),
   ]
 }
 
@@ -203,5 +208,7 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
       ...defaultKeymap,
     ]),
     editorTheme,
+    // …and which of `editorTheme`'s two halves CodeMirror should wear.
+    colorModeAware(),
   ]
 }

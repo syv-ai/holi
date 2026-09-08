@@ -43,13 +43,48 @@ export const editorTheme = EditorView.baseTheme({
    * The horizontal padding is the other half: with the pane narrower than the
    * column, `maxWidth` stops applying and the text ran flush to both edges.
    */
-  '.cm-content': { padding: '16px 24px', maxWidth: '48rem', caretColor: '#e5e5e5' },
+  '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
+  /**
+   * The column's side margins live on the LINE, not on `.cm-content`.
+   *
+   * `drawSelection` draws the middle of a multi-line selection from one
+   * document-wide left edge, and it works that edge out from the padding of the
+   * first rendered line — not from the content's. With the 24px on `.cm-content`
+   * every line after the first was highlighted 24px into the page margin, which
+   * read as selectable whitespace that is not there. Moving it here makes the
+   * edge the text's own edge.
+   *
+   * It is why a list indents by MARGIN (below) rather than padding: keeping every
+   * line's padding identical keeps that edge still. Were the indent padding, the
+   * whole selection would shift by it whenever a list line happened to be the
+   * first one on screen.
+   */
+  '.cm-line': { padding: '0 24px' },
 
   // drawSelection() draws its own cursor and hides the native one, so caretColor
   // alone is invisible — the drawn cursor is a border-left element, style it.
   '.cm-cursor, .cm-cursor-primary': { borderLeftColor: '#e5e5e5', borderLeftWidth: '2px' },
-  '.cm-selectionBackground': { background: 'rgba(125,211,252,0.20)' },
-  '&.cm-focused .cm-selectionBackground': { background: 'rgba(125,211,252,0.28)' },
+  /**
+   * The app's own selection tint — D64's `--selection`, brand-derived and
+   * themeable per vault — rather than a second colour of the editor's own.
+   *
+   * Written at this depth, and not as `.cm-selectionBackground`, because
+   * CodeMirror's own selection rule is five classes deep and a shallower one
+   * loses to it however late it is mounted. This is the shape every CodeMirror
+   * theme uses to override it, one-dark included.
+   *
+   * Which of CodeMirror's two it was losing to used to be the worse half of the
+   * problem: nothing declared `EditorView.darkTheme`, so it painted the
+   * near-white `#d7d4f0` it ships for a LIGHT editor over this near-black one.
+   * That is fixed at its root now (`color-mode.ts`), and this is only about
+   * whose colour wins.
+   */
+  '&.cm-editor .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    background: 'color-mix(in srgb, var(--selection) 60%, transparent)',
+  },
+  '&.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground': {
+    background: 'var(--selection)',
+  },
 
   // headings: size only — no extra margins, so render/un-render doesn't jump (FR-3b)
   '.cm-heading': { fontWeight: '600' },
@@ -76,7 +111,7 @@ export const editorTheme = EditorView.baseTheme({
    * conditionally, so the line does not move when the caret lands on it (FR-3b).
    */
   '.cm-list': {
-    paddingLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))',
+    marginLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))',
     // Padding, not margin: adjacent margins collapse, and CodeMirror measures
     // line heights itself. Above rather than below, so a list gets no trailing
     // gap that the next paragraph would then sit inside. A wrapped item is one
