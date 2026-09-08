@@ -59,6 +59,19 @@ const linkText = Decoration.mark({ class: 'cm-md-link' })
 const headingLine = (level: number) => Decoration.line({ class: `cm-heading cm-heading-${level}` })
 const codeLine = Decoration.line({ class: 'cm-code-line' })
 
+/**
+ * A list line's indent, as its nesting depth. The length itself is in `theme.ts`.
+ *
+ * Depth is the only number that crosses, deliberately. An earlier version also
+ * boxed the marker to a measured width so that a wrapped bullet could hang under
+ * its own text; that needed the rendered width of `- ` in the vault's font,
+ * which no CSS unit knows and only a layout measurement could supply. It was
+ * more machinery than the result was worth. A wrapped line comes back to the
+ * marker, as it always has.
+ */
+const listLine = (depth: number) =>
+  Decoration.line({ class: 'cm-list', attributes: { style: `--list-depth:${depth}` } })
+
 class HrWidget extends WidgetType {
   override toDOM(): HTMLElement {
     const el = document.createElement('div')
@@ -150,6 +163,35 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
             const line = state.doc.line(n)
             ranges.push({ from: line.from, to: line.from, deco: codeLine })
           }
+          break
+        }
+        case 'ListItem': {
+          // Only the line the marker is on. A `ListItem` spans its children too
+          // — a nested list, a lazy continuation, a fenced block — and those
+          // lines carry their own indentation in the source; padding them as
+          // well would double it, and would shift a fenced block away from the
+          // code it is aligned with.
+          const mark = node.node.firstChild
+          if (mark === null || mark.name !== 'ListMark') break
+          // Depth from the tree, never from the leading spaces: `BulletList` and
+          // `OrderedList` nest around each `ListItem`, so the parent chain says
+          // how deep this is no matter how the author typed it. `-`, `*` and
+          // `1.` all arrive here the same way.
+          let depth = 0
+          for (let p = node.node.parent; p !== null; p = p.parent) {
+            if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
+          }
+          const line = state.doc.lineAt(node.from)
+          ranges.push({ from: line.from, to: line.from, deco: listLine(depth) })
+          // The author's own indentation goes away, or it would be added to the
+          // padding and a four-space list would sit twice as far in as a
+          // two-space one. Only the whitespace immediately before the marker: a
+          // list inside a blockquote has a `> ` in front of it, and that is
+          // styled, not hidden. Concealed on the active line too, so the line
+          // sits in the same place with the caret on it as without (FR-3b).
+          let lead = mark.from
+          while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
+          if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
           break
         }
         case 'QuoteMark':

@@ -12,7 +12,14 @@ export const editorTheme = EditorView.baseTheme({
   // element rather than `:root` so it can be scoped: every stack that borrows
   // this base keeps its tables mono along with its prose, and the notes stack
   // overrides it below — the same split `.cm-scroller` makes on the next line.
-  '&': { height: '100%', fontSize: '14px', '--tbl-style-font-family': MONO },
+  '&': {
+    height: '100%',
+    fontSize: '14px',
+    '--tbl-style-font-family': MONO,
+    // One nesting level of a list, declared here so a stack that borrows this
+    // base can retune the whole ladder in one place.
+    '--list-indent': '2em',
+  },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
   // `notesFontTheme` at the foot of this file — and only the notes editor does.
@@ -53,6 +60,16 @@ export const editorTheme = EditorView.baseTheme({
     padding: '0 3px',
   },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
+  /**
+   * Lists. `livePreview`'s `ListItem` case stamps the depth; this turns it into
+   * a distance, and that is the whole mechanism.
+   *
+   * The author's literal indentation is concealed rather than added to, so the
+   * depth alone decides where a line sits and a list written with two spaces per
+   * level lands where one written with four does. Nothing is concealed
+   * conditionally, so the line does not move when the caret lands on it (FR-3b).
+   */
+  '.cm-list': { paddingLeft: 'calc(var(--list-indent, 2em) * var(--list-depth, 1))' },
   '.cm-quote-mark': { color: '#737373' },
   // No pointer by default: a markdown link is editable text and a plain click
   // places the caret — only ⌘/Ctrl-click navigates (links.ts). The cursor is

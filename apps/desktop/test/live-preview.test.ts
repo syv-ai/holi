@@ -1,4 +1,4 @@
-import { markdown } from '@codemirror/lang-markdown'
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
@@ -134,5 +134,97 @@ describe('buildDecorations — task-path chips', () => {
       target: 'notes/plan.md',
       label: 'The Plan',
     })
+  })
+})
+
+describe('buildDecorations — list indentation', () => {
+  /** GFM, as production uses (`extensions.ts`): task items need it. */
+  function gfm(doc: string, cursor = 0) {
+    const state = EditorState.create({
+      doc,
+      selection: EditorSelection.single(cursor),
+      extensions: [markdown({ base: markdownLanguage })],
+    })
+    ensureSyntaxTree(state, state.doc.length, 5_000)
+    return state
+  }
+
+  function decos(doc: string, cursor = 0) {
+    const state = gfm(doc, cursor)
+    return { state, all: specs(buildDecorations(state, 0, state.doc.length)) }
+  }
+
+  /** The depth stamped on the line that `text` starts, or undefined. */
+  function depthOf(doc: string, text: string, cursor = 0): string | undefined {
+    const { state, all } = decos(doc, cursor)
+    const line = state.doc.lineAt(doc.indexOf(text))
+    const found = all.find((d) => d.from === line.from && d.spec['class'] === 'cm-list')
+    return (found?.spec['attributes'] as { style?: string } | undefined)?.style
+  }
+
+  it('indents a top-level bullet, which the raw source does not', () => {
+    expect(depthOf('para\n\n- top', '- top')).toBe('--list-depth:1')
+  })
+
+  it('takes the depth from the tree, so two spaces nest as deep as four', () => {
+    expect(depthOf('- top\n  - child', '- child')).toBe('--list-depth:2')
+    expect(depthOf('- top\n    - child', '- child')).toBe('--list-depth:2')
+  })
+
+  it('goes deeper again on a third level', () => {
+    expect(depthOf('- one\n  - two\n    - three', '- three')).toBe('--list-depth:3')
+  })
+
+  // The indent is arithmetic on the depth alone, so the author's own spaces have
+  // to stop taking up room, or a four-space list would still sit further in.
+  it('conceals the spaces the author typed before the marker', () => {
+    const doc = '- top\n  - child'
+    const { all } = decos(doc)
+    const markAt = doc.indexOf('- child')
+    expect(all.some((d) => d.from === markAt - 2 && d.to === markAt)).toBe(true)
+  })
+
+  // FR-3b: a conditional conceal would move the line when the caret arrived.
+  it('conceals them with the caret on the line too', () => {
+    const doc = '- top\n  - child'
+    const markAt = doc.indexOf('- child')
+    const { all } = decos(doc, doc.indexOf('child'))
+    expect(all.some((d) => d.from === markAt - 2 && d.to === markAt)).toBe(true)
+  })
+
+  // A list inside a blockquote has `> ` in front of the marker, and the quote
+  // mark is styled, not hidden.
+  it('conceals whitespace only, never a quote mark', () => {
+    const doc = '> - quoted'
+    const { all } = decos(doc)
+    const markAt = doc.indexOf('- quoted')
+    // The quote mark keeps its own styling, and nothing swallows it.
+    expect(all.some((d) => d.from === 0 && d.spec['class'] === 'cm-quote-mark')).toBe(true)
+    expect(all.some((d) => d.from === 0 && d.to === markAt)).toBe(false)
+    expect(all.some((d) => d.from === markAt - 1 && d.to === markAt)).toBe(true)
+  })
+
+  it('indents every marker markdown has: -, * and 1.', () => {
+    expect(depthOf('- dash', '- dash')).toBe('--list-depth:1')
+    expect(depthOf('* star', '* star')).toBe('--list-depth:1')
+    expect(depthOf('1. one', '1. one')).toBe('--list-depth:1')
+    expect(depthOf('* star\n  * nested', '* nested')).toBe('--list-depth:2')
+  })
+
+  it('indents an ordered list on the same ladder as a bulleted one', () => {
+    expect(depthOf('1. one\n   1. nested', '1. nested')).toBe('--list-depth:2')
+    // A two-digit marker is no different: the depth is the tree's, not the
+    // marker's width.
+    expect(depthOf('9. nine\n10. ten', '10. ten')).toBe('--list-depth:1')
+  })
+
+  it('leaves a task line a list line, chips and all', () => {
+    expect(depthOf('- [ ] feed the cat', '- [ ]')).toBe('--list-depth:1')
+  })
+
+  // A ListItem spans its children; padding those lines too would double the
+  // indent the source already carries.
+  it('decorates the marker line only, not the rest of the item', () => {
+    expect(depthOf('- a long bullet\n  lazy continuation', 'lazy continuation')).toBeUndefined()
   })
 })
