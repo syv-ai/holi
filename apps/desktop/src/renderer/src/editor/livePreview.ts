@@ -5,7 +5,6 @@
  * docChanged/selectionSet/viewport — a plain recompute, no animation.
  */
 import { syntaxTree } from '@codemirror/language'
-import type { SyntaxNode } from '@lezer/common'
 import { Facet, RangeSetBuilder, type EditorState } from '@codemirror/state'
 import {
   Decoration,
@@ -17,6 +16,7 @@ import {
 } from '@codemirror/view'
 import { fileKind, parseWikiLinks, resolveImageRef, type TaskStatus } from '@holi/shared'
 import { frontmatterRegion } from './frontmatter-region'
+import { alphaListAt } from './lists'
 import { ImageWidget } from './imageWidget'
 import { vaultAssetUrl } from '../lib/vault-asset'
 import { WikiLinkChip } from './wikiLinkChips'
@@ -88,15 +88,6 @@ const listBullet = Decoration.mark({ class: 'cm-list-mark cm-list-bullet' })
  * Ordered markers are left alone: a number carries meaning that a dot cannot.
  */
 const BULLETS = ['•', '◦', '▪']
-
-/**
- * `a.`, `A.`, `a)` — an ordered list markdown does not have.
- *
- * CommonMark's ordered list is decimal only, so the parser reads these as an
- * ordinary paragraph and the tree has nothing to say about them. They are the
- * one kind of list line this file has to find for itself.
- */
-const ALPHA_MARKER = /^([ \t]*)([A-Za-z][.)])[ \t]/
 
 class BulletWidget extends WidgetType {
   constructor(readonly glyph: string) {
@@ -369,37 +360,18 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     },
   })
 
-  // Alphabetic ordered lists, which are not in the tree (see ALPHA_MARKER).
-  // Found by reading lines, and deliberately fussy about which ones count: a
-  // paragraph opening "A. Smith said" is a sentence, not a list. So the line has
-  // to either sit inside a list already — `a.` under `1.`, which is what these
-  // are nearly always for — or begin a block, which is the same rule markdown
-  // itself puts on an ordered list interrupting a paragraph.
-  const firstLine = state.doc.lineAt(from).number
-  const lastLine = state.doc.lineAt(to).number
-  for (let n = firstLine; n <= lastLine; n++) {
+  // Alphabetic ordered lists, which the parser does not report at all — the
+  // predicate, and the reasoning behind how strict it is, live in `lists.ts`
+  // beside the Enter that continues them.
+  for (let n = state.doc.lineAt(from).number; n <= state.doc.lineAt(to).number; n++) {
     const line = state.doc.line(n)
-    const m = ALPHA_MARKER.exec(line.text)
-    if (m === null) continue
-    const markFrom = line.from + m[1]!.length
-    const markTo = markFrom + m[2]!.length
-    // The enclosing lists give the depth, and a fence vetoes the whole thing:
-    // `a) hello` inside a code block is code.
-    let depth = 0
-    let fenced = false
-    for (
-      let p: SyntaxNode | null = syntaxTree(state).resolveInner(markFrom, 1);
-      p !== null;
-      p = p.parent
-    ) {
-      if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
-      if (p.name === 'FencedCode' || p.name === 'CodeBlock') fenced = true
+    const item = alphaListAt(state, line)
+    if (item === null) continue
+    ranges.push({ from: line.from, to: line.from, deco: listLine(item.depth) })
+    if (item.markFrom > line.from) {
+      ranges.push({ from: line.from, to: item.markFrom, deco: conceal })
     }
-    if (fenced) continue
-    if (depth === 0 && n > 1 && state.doc.line(n - 1).text.trim() !== '') continue
-    ranges.push({ from: line.from, to: line.from, deco: listLine(depth + 1) })
-    if (markFrom > line.from) ranges.push({ from: line.from, to: markFrom, deco: conceal })
-    ranges.push({ from: markFrom, to: markTo, deco: listMark })
+    ranges.push({ from: item.markFrom, to: item.markTo, deco: listMark })
   }
 
   // wiki-links via the shared grammar (not part of the markdown tree)

@@ -248,10 +248,19 @@ describe('buildDecorations — list indentation', () => {
     expect(depthOf(doc, 'b. other')).toBe('--list-depth:2')
   })
 
+  it('keeps indenting past the first item, which no blank line precedes', () => {
+    const doc = 'para\n\na. first\nb. second\nc. third'
+    expect(depthOf(doc, 'b. second')).toBe('--list-depth:1')
+    expect(depthOf(doc, 'c. third')).toBe('--list-depth:1')
+  })
+
   // The cost of a marker the parser does not know is that this file has to
-  // decide for itself, so it decides conservatively.
+  // decide for itself, so it decides conservatively — and about the run, not
+  // the line, or the second sentence here would become a list on its own.
   it('leaves a sentence that opens like one alone', () => {
-    expect(depthOf('Someone wrote it.\nA. Smith said so', 'A. Smith')).toBeUndefined()
+    const doc = 'Someone wrote it.\nA. Smith said so\nB. Jones agreed'
+    expect(depthOf(doc, 'A. Smith')).toBeUndefined()
+    expect(depthOf(doc, 'B. Jones')).toBeUndefined()
   })
 
   it('leaves a fenced block alone', () => {

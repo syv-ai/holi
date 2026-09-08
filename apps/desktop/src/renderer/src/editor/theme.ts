@@ -24,7 +24,7 @@ export const editorTheme = EditorView.baseTheme({
     '--list-gap': '0.5em',
     '--list-space': '0.7em',
     '--list-bullet': '0.6em',
-    '--list-check': '0.95em',
+    '--list-check': '1.15em',
   },
   // Mono, for every stack that borrows this base: the plain/code editor, the mail
   // composer and `DiffView`. The **notes** editor overrides it — see
@@ -92,15 +92,15 @@ export const editorTheme = EditorView.baseTheme({
   // A task's checkbox stands in for the marker, so it wears the marker's gap.
   '.cm-task-check': {
     display: 'inline-block',
-    width: 'var(--list-check, 0.95em)',
-    height: 'var(--list-check, 0.95em)',
-    lineHeight: 'var(--list-check, 0.95em)',
+    width: 'var(--list-check, 1.15em)',
+    height: 'var(--list-check, 1.15em)',
+    lineHeight: 'var(--list-check, 1.15em)',
     marginRight: 'var(--list-gap, 0.5em)',
     verticalAlign: '-0.12em',
     textAlign: 'center',
     fontSize: '0.8em',
     border: '1px solid var(--muted-foreground)',
-    borderRadius: '3px',
+    borderRadius: '50%',
     cursor: 'pointer',
   },
   '.cm-task-check-done': {

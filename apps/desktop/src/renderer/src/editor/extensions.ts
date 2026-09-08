@@ -13,6 +13,7 @@ import { frontmatterExtension } from './frontmatter'
 import { languageForPath, validityStatus } from './languages'
 import { docExistsFacet, livePreview, notePathFacet, taskByPathFacet, type TaskChip } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
+import { alphaListKeymap } from './lists'
 import { slashCommands } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { codeHighlighting, editorTheme, notesFontTheme } from './theme'
@@ -98,6 +99,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // next-occurrence selections actually stack instead of collapsing to one.
     EditorState.allowMultipleSelections.of(true),
     formattingKeymap, // ⌘B / ⌘I / ⌘E / ⌘K / ⌘⇧X — higher precedence than defaults
+    // `markdown()` installs its own Enter, which continues every list the
+    // parser knows. This one continues `a.` / `A.` / `a)`, which it does not.
+    alphaListKeymap,
     keymap.of([
       ...completionKeymap,
       // ⌘D: select the word, then each press adds the next matching occurrence.
