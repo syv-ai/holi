@@ -142,9 +142,30 @@ export interface Commit {
   author: string
 }
 
+/** One file's change across a commit range — the unit an agent turn is reviewed
+ *  in (D88). */
+export interface RangeFile {
+  path: string
+  added: number
+  removed: number
+  /** `A` | `M` | `D` | `R<score>`. A rename reports its NEW path. */
+  status: string
+}
+
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
+  /** The current commit, or **null** on an unborn branch — a vault that has been
+   *  cloned or initialised and has no commits yet. Null rather than a throw
+   *  because that is a real state of a real vault, which `RepoStatus.unborn`
+   *  already names. */
+  head(): Promise<string | null>
+  /** The paths changed across `from..to`, with line counts.
+   *
+   *  **Empty on failure, never a throw.** A turn record outlives the commits it
+   *  names — a reset, a re-clone — and a range whose shas are gone is a turn
+   *  whose history is gone, which the caller reports rather than crashes on. */
+  rangeFiles(from: string, to: string): Promise<RangeFile[]>
   /** The vault's history — which IS git history (`prd/vaults-sync.md` §History).
    * `path` follows a file through renames. */
   log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
@@ -502,6 +523,67 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       .filter((s) => s !== '')
   }
 
+  async function head(): Promise<string | null> {
+    const res = await tryGit(root, ['rev-parse', 'HEAD'], opts)
+    return res.ok ? res.stdout.trim() : null
+  }
+
+  /**
+   * `from..to`, as paths with line counts.
+   *
+   * **Two calls, not one.** `--numstat` and `--name-status` cannot be combined:
+   * passing both to one `git diff` silently drops the counts — the last flag
+   * wins and you get name-status output with no error and no complaint. That was
+   * found by running it, and it is why this joins two results on the path.
+   */
+  async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
+    const range = `${from}..${to}`
+    const stat = await tryGit(root, ['diff', '--numstat', '-z', '--no-color', range], opts)
+    const names = await tryGit(root, ['diff', '--name-status', '-z', '--no-color', '-M', range], opts)
+    if (!stat.ok || !names.ok) return []
+
+    // `--numstat -z` is `added	removed	path `, and for a RENAME it spends
+    // three NUL-separated fields: the counts line ends after the tab, then old
+    // and new arrive as their own records.
+    const counts = new Map<string, { added: number; removed: number }>()
+    const statFields = stat.stdout.split('\0')
+    for (let i = 0; i < statFields.length; i++) {
+      const field = statFields[i]
+      if (field === undefined || field === '') continue
+      const parts = field.split('\t')
+      if (parts.length < 2) continue
+      // A binary file reports `-` for both counts. Zero is the honest number to
+      // show beside a picture; a dash in a `+N / -M` column reads as an error.
+      const added = parts[0] === '-' ? 0 : Number(parts[0])
+      const removed = parts[1] === '-' ? 0 : Number(parts[1])
+      // Two tabs and a trailing path: an ordinary entry. One trailing empty
+      // field: a rename, whose two paths are the next two records.
+      let path = parts[2] ?? ''
+      if (path === '') {
+        i += 2
+        path = statFields[i] ?? ''
+      }
+      if (path !== '') counts.set(path, { added, removed })
+    }
+
+    // `--name-status -z` is `status\0path\0`, except a rename, which is
+    // `R100\0old\0new\0`. Parsed as two fields the next file's status reads as
+    // a path and everything after it is wrong.
+    const out: RangeFile[] = []
+    const nameFields = names.stdout.split('\0')
+    for (let i = 0; i < nameFields.length; i++) {
+      const status = nameFields[i]
+      if (status === undefined || status === '') continue
+      const renamed = status.startsWith('R') || status.startsWith('C')
+      const path = nameFields[renamed ? i + 2 : i + 1] ?? ''
+      i += renamed ? 2 : 1
+      if (path === '') continue
+      const count = counts.get(path) ?? { added: 0, removed: 0 }
+      out.push({ path, status, added: count.added, removed: count.removed })
+    }
+    return out
+  }
+
   /** FR-20. A no-op when no merge is in progress, so the control can be pressed
    * twice without turning into an error. */
   async function abortMerge(): Promise<void> {
@@ -707,6 +789,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     log,
     show,
     changedFiles,
+    head,
+    rangeFiles,
     commitAll,
     commitFileNoVerify,
     excludeLocally,
