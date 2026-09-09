@@ -135,8 +135,26 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
      */
     const grow = () => {
       const before = dom.getBoundingClientRect().height
+      // Measured unscrolled: a bar of its own narrows the box, rewraps the text
+      // and changes the very height being measured.
+      field.style.overflowY = 'hidden'
       field.style.height = 'auto'
-      field.style.height = `${field.scrollHeight}px`
+      const content = field.scrollHeight
+      const max = parseFloat(getComputedStyle(field).maxHeight)
+      /**
+       * The overflow is decided here rather than left to `overflow-y: auto`.
+       *
+       * `index.css` paints `::-webkit-scrollbar` for the whole app, which makes
+       * Chromium give up OVERLAY scrollbars — so a scrollable box shows a
+       * permanent track rather than one that fades. `scrollHeight` is a rounded
+       * integer and a line box is not (14px at 1.6 is 22.4), so a height taken
+       * straight from it can be a fraction of a pixel short, and `auto` then
+       * shows that track forever over one pixel nobody can see. Saying when it
+       * may scroll costs a line and cannot round wrong.
+       */
+      const capped = Number.isFinite(max) && content > max
+      field.style.height = `${capped ? max : content}px`
+      field.style.overflowY = capped ? 'auto' : 'hidden'
       const after = dom.getBoundingClientRect().height
       if (after === before) return
 

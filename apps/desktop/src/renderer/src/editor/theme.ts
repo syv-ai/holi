@@ -420,7 +420,11 @@ export const editorTheme = EditorView.baseTheme({
     width: '26rem',
     maxWidth: '60vw',
     maxHeight: '40vh',
-    overflowY: 'auto',
+    // `askAgent.ts` turns this to `auto` at the moment the content passes
+    // `maxHeight`, and only then. See the note there: the app's scrollbars are
+    // not overlay ones, so `auto` plus a rounded `scrollHeight` shows a
+    // permanent track over a fraction of a pixel.
+    overflowY: 'hidden',
     padding: '0.5rem 0.6rem',
     color: 'var(--popover-foreground)',
     background: 'transparent',

@@ -235,6 +235,32 @@ describe('the selection tooltip', () => {
     expect(bubble.style.top).toBe('300px')
   })
 
+  it('scrolls only once it has nowhere left to grow', () => {
+    // The app paints its own scrollbars, so Chromium gives up overlay ones and a
+    // box that is scrollable by a fraction of a pixel shows a permanent track.
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    press(button()!)
+    const input = field()!
+    input.style.maxHeight = '100px'
+    let content = 40
+    Object.defineProperty(input, 'scrollHeight', { get: () => content })
+
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('40px')
+    expect(input.style.overflowY).toBe('hidden')
+
+    content = 300
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('100px')
+    expect(input.style.overflowY).toBe('auto')
+
+    // And back: shrinking below the cap takes the bar away again.
+    content = 60
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('60px')
+    expect(input.style.overflowY).toBe('hidden')
+  })
+
   it('sends what was typed, above the passage', () => {
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
