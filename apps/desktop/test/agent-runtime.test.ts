@@ -1,17 +1,32 @@
+import { execFileSync } from 'node:child_process'
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AgentRuntime,
   buildAgentArgs,
   buildAgentEnv,
+  defaultProbePid,
   resolveClaudeBin,
+  type PidState,
   type PtyProcess,
 } from '../src/main/agent/agent-runtime'
 
-/** Above the OS pid ceiling: the group kill fails, exposing the pty.kill path. */
+/** Above the OS pid ceiling — nothing real can ever share it. */
 const NO_SUCH_PID = 999_999
+
+/**
+ * The kill path asks the OS what a pid is before signalling it, so these tests
+ * state that answer explicitly instead of depending on which pids happen to
+ * exist on the machine running them. That dependency is exactly what made the
+ * old group kill dangerous: see the comment on AgentRuntime.signal().
+ */
+const probes = {
+  leader: () => 'group-leader' as PidState,
+  alive: () => 'alive' as PidState,
+  gone: () => 'gone' as PidState,
+}
 
 const dirs: string[] = []
 async function tempDir(): Promise<string> {
@@ -358,8 +373,8 @@ describe('AgentRuntime', () => {
   })
 
   it('a cooperative child dies on SIGTERM alone', async () => {
-    const { spawn, spawns } = fakeSpawn(NO_SUCH_PID) // group kill ESRCHes → observable pty.kill
-    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 50 })
+    const { spawn, spawns } = fakeSpawn(NO_SUCH_PID) // not a group leader → observable pty.kill
+    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 50, probePid: probes.alive })
     runtime.start(spawnArgs)
     const pty = spawns[0]!.pty
     const killed = runtime.kill()
@@ -371,7 +386,12 @@ describe('AgentRuntime', () => {
 
   it('a stubborn child escalates to SIGKILL after the grace period', async () => {
     const { spawn, spawns } = fakeSpawn(NO_SUCH_PID)
-    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 30, killBackstopMs: 200 })
+    const runtime = new AgentRuntime({
+      spawnPty: spawn,
+      killGraceMs: 30,
+      killBackstopMs: 200,
+      probePid: probes.alive,
+    })
     runtime.start(spawnArgs)
     const pty = spawns[0]!.pty
     const killed = runtime.kill()
@@ -384,7 +404,7 @@ describe('AgentRuntime', () => {
 
   it('killing a dead runtime is a no-op (before start and after exit)', async () => {
     const { spawn, spawns } = fakeSpawn(NO_SUCH_PID)
-    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 30 })
+    const runtime = new AgentRuntime({ spawnPty: spawn, killGraceMs: 30, probePid: probes.alive })
     await runtime.kill() // never started — resolves immediately
     expect(spawns).toHaveLength(0)
 
@@ -393,5 +413,97 @@ describe('AgentRuntime', () => {
     expect(runtime.isRunning).toBe(false)
     await runtime.kill() // resolves immediately, sends nothing
     expect(spawns[0]!.pty.kills).toEqual([])
+  })
+
+  it('signals the group only when the pid still leads its own group', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const { spawn, spawns } = fakeSpawn(4242)
+      const runtime = new AgentRuntime({
+        spawnPty: spawn,
+        killGraceMs: 50,
+        probePid: probes.leader,
+      })
+      runtime.start(spawnArgs)
+      const pty = spawns[0]!.pty
+      const killed = runtime.kill()
+      pty.exit(0)
+      await killed
+      expect(killSpy).toHaveBeenCalledWith(-4242, 'SIGTERM')
+      expect(pty.kills).toEqual([]) // the group kill covers the child
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+
+  /**
+   * The 2026-09-09 regression: a reaped child's pid can already belong to an
+   * unrelated process, and `kill(-pid)` would take down that stranger's whole
+   * process group. A pid the OS no longer knows as ours must be signalled in
+   * no way at all — not the group, not the pty.
+   */
+  it('never signals a pid the OS has already reaped', async () => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    try {
+      const { spawn, spawns } = fakeSpawn(4242)
+      const runtime = new AgentRuntime({
+        spawnPty: spawn,
+        killGraceMs: 20,
+        killBackstopMs: 200,
+        probePid: probes.gone,
+      })
+      runtime.start(spawnArgs)
+      const pty = spawns[0]!.pty
+      const killed = runtime.kill()
+      await new Promise((r) => setTimeout(r, 60)) // outlast the grace escalation
+      expect(killSpy).not.toHaveBeenCalled()
+      expect(pty.kills).toEqual([])
+      pty.exit(0)
+      await killed
+    } finally {
+      killSpy.mockRestore()
+    }
+  })
+})
+
+/**
+ * The probe itself, against the real OS.
+ *
+ * Everything above stubs it, which is what makes those tests deterministic and
+ * also what would let a broken probe pass all of them. This asks the machine.
+ * It signals nothing and spawns nothing: it reads the live pid table and checks
+ * the probe agrees with `ps` about who leads a group and who does not.
+ */
+describe('defaultProbePid', () => {
+  /** Every live pid on this machine with the group it belongs to. */
+  function pidTable(): { pid: number; pgid: number }[] {
+    return execFileSync('ps', ['-axo', 'pid=,pgid='], { encoding: 'utf8' })
+      .split('\n')
+      .map((line) => line.trim().split(/\s+/).map(Number))
+      .filter((f) => f.length === 2 && Number.isInteger(f[0]) && Number.isInteger(f[1]))
+      .map(([pid, pgid]) => ({ pid: pid!, pgid: pgid! }))
+  }
+
+  it('refuses pid 0, pid 1 and anything that is not a real pid', () => {
+    // 0 means "my own process group" and 1 is launchd. Signalling the negative
+    // of either is the worst thing this file could do.
+    expect(defaultProbePid(0)).toBe('gone')
+    expect(defaultProbePid(1)).toBe('gone')
+    expect(defaultProbePid(-5)).toBe('gone')
+    expect(defaultProbePid(1.5)).toBe('gone')
+  })
+
+  it('says gone for a pid that does not exist', () => {
+    expect(defaultProbePid(NO_SUCH_PID)).toBe('gone')
+  })
+
+  it('agrees with ps about who leads a group and who does not', () => {
+    const table = pidTable().filter((p) => p.pid > 1)
+    const leader = table.find((p) => p.pid === p.pgid)
+    const follower = table.find((p) => p.pid !== p.pgid)
+    expect(leader, 'no group leader on this machine?').toBeDefined()
+    expect(follower, 'no non-leader on this machine?').toBeDefined()
+    expect(defaultProbePid(leader!.pid)).toBe('group-leader')
+    expect(defaultProbePid(follower!.pid)).toBe('alive')
   })
 })

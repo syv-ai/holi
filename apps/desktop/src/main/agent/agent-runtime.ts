@@ -7,6 +7,7 @@
  * touch it. Everything above the PTY (env, args, binary discovery) is a pure
  * function.
  */
+import { execFileSync } from 'node:child_process'
 import { accessSync, constants } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -36,6 +37,34 @@ export const defaultSpawnPty: SpawnPty = (file, args, opts) => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pty = require('node-pty') as typeof import('node-pty')
   return pty.spawn(file, args, { name: 'xterm-256color', ...opts }) as unknown as PtyProcess
+}
+
+/**
+ * What a pid is at the moment we are about to signal it.
+ *  - `group-leader` — still the session leader we spawned; safe to signal the group
+ *  - `alive`        — a live process that does NOT lead its own group
+ *  - `gone`         — no such pid; nothing of ours to signal
+ */
+export type PidState = 'group-leader' | 'alive' | 'gone'
+
+/**
+ * Ask the OS what `pid` currently is. A node-pty child is setsid'd, so it leads
+ * a group whose id equals its own pid; that equality is what distinguishes our
+ * child from a stranger who was handed the same pid after ours was reaped.
+ */
+export const defaultProbePid = (pid: number): PidState => {
+  // pid 0 is "my own process group" and pid 1 is launchd — signalling either
+  // would be catastrophic, so they can never be ours.
+  if (!Number.isInteger(pid) || pid <= 1) return 'gone'
+  try {
+    const pgid = execFileSync('ps', ['-o', 'pgid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return Number(pgid) === pid ? 'group-leader' : 'alive'
+  } catch {
+    return 'gone' // ps exits non-zero when the pid does not exist
+  }
 }
 
 /**
@@ -218,6 +247,8 @@ export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string |
 
 export interface AgentRuntimeDeps {
   spawnPty?: SpawnPty
+  /** Liveness/ownership probe used before every signal (see `signal()`). */
+  probePid?: (pid: number) => PidState
   /** SIGTERM → grace → SIGKILL (the old app's 2s). */
   killGraceMs?: number
   /** Cap on waiting for the exit event after SIGKILL. */
@@ -245,11 +276,13 @@ export class AgentRuntime {
   private exitWaiters: Array<() => void> = []
   private killTimer: ReturnType<typeof setTimeout> | null = null
   private readonly spawnPty: SpawnPty
+  private readonly probePid: (pid: number) => PidState
   private readonly killGraceMs: number
   private readonly killBackstopMs: number
 
   constructor(deps: AgentRuntimeDeps = {}) {
     this.spawnPty = deps.spawnPty ?? defaultSpawnPty
+    this.probePid = deps.probePid ?? defaultProbePid
     this.killGraceMs = deps.killGraceMs ?? 2_000
     this.killBackstopMs = deps.killBackstopMs ?? 5_000
   }
@@ -319,17 +352,66 @@ export class AgentRuntime {
     await exited
   }
 
+  /**
+   * Signal the child, choosing the target from what the pid IS right now.
+   *
+   * ┌─ READ THIS BEFORE TOUCHING THE KILL PATH ────────────────────────────┐
+   * This used to be an unconditional `process.kill(-pty.pid, signal)`, and on
+   * 2026-09-09 that took down unrelated applications on the developer's
+   * machine — Warp, Cursor and the host Electron app all died at once with
+   * SIGTERM and no crash report.
+   *
+   * The mechanism: `kill(-pid)` signals an entire process GROUP, and node-pty
+   * reports the child's exit asynchronously. Between the kernel reaping the
+   * child (which frees its pid for reuse *immediately*) and our `onExit`
+   * callback running, `this.pty` still looks live — so both the initial
+   * SIGTERM and the grace-period SIGKILL could fire at a pid the OS had
+   * already handed to somebody else. Signalling the negative of that pid
+   * kills a stranger's whole process group.
+   *
+   * That window is normally microseconds against hours of pid-reuse headroom,
+   * which is why this stood for a long time. It became reproducible when the
+   * machine started churning thousands of short-lived pids a minute (a runaway
+   * Spotlight reindex) while under enough load to delay our own callbacks:
+   * recycling dropped to minutes and the race started landing. Treat "the
+   * window is tiny" as a reason to guard it, not to skip the guard.
+   *
+   * So: never signal a pid on the strength of a JS object still existing. Ask
+   * the OS what the pid is, immediately before signalling, every time.
+   *   - `group-leader` → still our setsid'd child; signal the group, which is
+   *     the whole point here (claude's helpers — node sidecars, ripgrep — die
+   *     with it instead of leaking).
+   *   - `alive` → a live pid that does not lead its own group, so it cannot be
+   *     our node-pty child's session. Signal only the child via node-pty; NEVER
+   *     negate a pid we have not positively identified as ours.
+   *   - `gone` → already reaped. Send nothing. There is no one left to signal
+   *     and the pid may already belong to someone else.
+   * └──────────────────────────────────────────────────────────────────────┘
+   */
   private signal(pty: PtyProcess, signal: 'SIGTERM' | 'SIGKILL'): void {
-    try {
-      process.kill(-pty.pid, signal) // negative pid = the whole group
-    } catch {
-      // no such group (already reaped, or the child never led one) — fall back
-      // to the pty's own kill so a live child still gets the signal
-      try {
-        pty.kill(signal)
-      } catch {
-        // already gone
-      }
+    // Cheap guard first: onExit nulls `this.pty`, so a mismatch means we
+    // already know it is dead without paying for a probe.
+    if (this.pty !== pty) return
+
+    switch (this.probePid(pty.pid)) {
+      case 'group-leader':
+        try {
+          process.kill(-pty.pid, signal) // negative pid = the whole group
+        } catch {
+          // Reaped between the probe and here: the residual race is now bounded
+          // by these two statements rather than by a callback round-trip. The
+          // pid cannot have been *reused* that fast, so this is a plain no-op.
+        }
+        return
+      case 'alive':
+        try {
+          pty.kill(signal)
+        } catch {
+          // raced with exit
+        }
+        return
+      case 'gone':
+        return
     }
   }
 }
