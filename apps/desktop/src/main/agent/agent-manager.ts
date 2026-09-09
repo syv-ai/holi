@@ -18,7 +18,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { AGENT_CONFIG_FILES } from '@holi/shared'
-import type { VaultHost } from '../vault/active-vault'
+import type { ActiveVault, VaultHost } from '../vault/active-vault'
+import type { TurnLog } from './turn-log'
 import {
   AgentRuntime,
   buildAgentArgs,
@@ -83,6 +84,12 @@ export interface AgentManagerDeps {
   /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
    *  Default 600000 (10 min). */
   turnSafetyMs?: number
+  /** Records what a turn changed, as a commit range (D88). Keyed by vault ROOT
+   *  rather than by remote: the caller already holds the vault it verified, and
+   *  a second remote-to-root lookup could resolve to a different one. Absent in
+   *  tests that do not care, and absent means no recording rather than a broken
+   *  one. */
+  turnLogFor?: (vaultRoot: string) => TurnLog
   /** Find-only typst path for the child's `$TYPST_BIN` (the md-to-pdf skill).
    *  No download — the resolver only looks. Null when typst isn't installed. */
   resolveTypstBin?: () => Promise<string | null>
@@ -232,16 +239,74 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     if (active === working) return
     working = active
     if (active) {
-      deps.host.active()?.pause('the assistant is working')
+      const vault = deps.host.active()
+      // Captured BEFORE the pause. It is the same sha either way today; the
+      // ordering states the intent, which is that the base is the tree the turn
+      // started against rather than the tree it was allowed to touch.
+      captureTurnBase(vault)
+      vault?.pause('the assistant is working')
       // Stop is not guaranteed (interrupt/crash) — cap the pause so a turn that
       // never signals its end can't strand the vault paused.
       clearSafety()
       safetyTimer = setTimeout(() => setTurnActive(false), turnSafetyMs)
     } else {
       clearSafety()
+      // Resume BEFORE the commit: `commitAll` refuses to run while the vault
+      // reads as paused, and a turn that never resumed the vault is the failure
+      // the safety cap exists to prevent.
       deps.host.active()?.resume()
+      // Fire and forget, and every rejection swallowed. This function answers a
+      // hook request that must return an empty body immediately, and a failed
+      // turn record must never disturb the sync resume it shares a body with.
+      void recordTurnEnd().catch((err: unknown) => log(`turn record failed: ${String(err)}`))
     }
     pushStatus()
+  }
+
+  /** The turn's starting sha, and the vault it belongs to. Null between turns,
+   *  and null for a turn nobody is recording. */
+  let turnBase: { remote: string; base: string } | null = null
+  /** `head()` is async and `setTurnActive` is not, so the end of the turn waits
+   *  on the start of it rather than racing it. */
+  let turnBasePending: Promise<void> = Promise.resolve()
+
+  function captureTurnBase(vault: ActiveVault | null): void {
+    turnBase = null
+    if (vault === null || deps.turnLogFor === undefined) return
+    const remote = vault.remote
+    turnBasePending = vault.repo
+      .head()
+      .then((sha) => {
+        if (sha !== null) turnBase = { remote, base: sha }
+      })
+      .catch(() => {})
+  }
+
+  async function recordTurnEnd(): Promise<void> {
+    const turnLogFor = deps.turnLogFor
+    if (turnLogFor === undefined) return
+    await turnBasePending
+    const started = turnBase
+    turnBase = null
+    if (started === null) return
+
+    const vault = deps.host.active()
+    // The vault can be switched or closed mid-turn. Recording against whichever
+    // one is open now would attribute this turn's work to a different vault,
+    // which is the same mistake D87 caught in D86's migration.
+    if (vault === null || vault.remote !== started.remote) return
+
+    // Taken explicitly rather than observed. Waiting for the idle committer to
+    // fire on its own would make the end sha race a 3-second timer that the
+    // safety-cap path does not respect; `commitNow` returns null on a clean
+    // tree, which is the ordinary outcome of a turn that only read.
+    const end = (await vault.commitNow()) ?? (await vault.repo.head())
+    if (end === null) return
+    await turnLogFor(vault.root).append({
+      base: started.base,
+      end,
+      at: new Date().toISOString(),
+    })
   }
 
   async function teardown(): Promise<void> {

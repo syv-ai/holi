@@ -65,6 +65,7 @@ import {
   resolveVaultAgentConfig,
 } from './agent/agent-config-dir'
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
+import { openTurnLog } from './agent/turn-log'
 import { createHookServer } from './agent/hook-server'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
@@ -574,6 +575,8 @@ async function main(): Promise<void> {
         systemPrefersDark: nativeTheme.shouldUseDarkColors,
       }),
     getWindow: () => mainWindow,
+    // What each turn changed, as a commit range, in the vault it ran in (D88).
+    turnLogFor: openTurnLog,
     hookPort: () => hookServer.port(),
     mintHookToken: (remote) => hookServer.mintSessionToken(remote),
     revokeHookToken: (token) => hookServer.revoke(token),
