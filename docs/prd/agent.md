@@ -216,6 +216,20 @@ The vault is a **regular git repo** and the agent may run **any** git it likes �
 
 `AGENTS.md` states this to the agent plainly: *git is yours; Holi pauses its own sync while you work, and reconciles when you're done.* This **supersedes** the old AGENTS.md prohibition on the agent running git.
 
+## Reviewing a turn — the footer says what it changed (D88)
+
+The turn bracket above does a second job: it is also the boundary a **review** is drawn around. The review happens **after** the turn, never as a gate before the write. [`vaults-sync.md`](vaults-sync.md) §Non-goals rules out an outbound gate, and Claude Code's own permission prompts already ask; a second gate would ask twice and stop the agent working while you were away from the machine.
+
+**A turn is a commit range.** `base` is HEAD when the turn starts, `end` is the sha of the settle commit at the end of it, and what the turn changed is `git diff base..end`. A range rather than a working-tree diff, because a working-tree diff keeps growing and would attribute a day of your own writing to the agent. A range rather than a record of the agent's tool calls, because git catches the files it changed through `Bash` — a `sed`, an `mv`, a script — that a `Write|Edit|MultiEdit` matcher never sees.
+
+**Only the range is stored** (`.holi/turns.local.json`, capped at 50, `.local.` so it never syncs: a turn is a thing that happened on this machine, and a teammate pulling your agent's turn boundaries would be reading your session rather than the vault). The file list and every diff are asked of git when they are shown. Storing the paths as well would be a second copy of an answer git already holds, and one that goes stale the moment anything else touches the tree.
+
+**The footer says `Claude changed 4 files`** and opens a panel beside history: each file with its `+N / −M`, and the selected file's diff as a merge view with per-hunk accept and reject. A hunk rejected is written back as a **new commit**, never a rewrite, the same rule [`vaults-sync.md`](vaults-sync.md) §History gives Restore. The resolutions are collected and written when you say so rather than as you make them, so a file's worth of them is one commit instead of a dozen.
+
+**A record outlives the commits it names.** After a reset or a re-clone the range is unreachable, and the panel says the turn's history is gone rather than showing a turn that appears to have changed nothing — which it cannot be, since a turn that changed nothing is never recorded.
+
+The recording is a **passenger on the pause**. It is fire-and-forget with every failure swallowed, because it shares a hook handler with the sync resume, and losing a record is a much smaller failure than a vault left paused. For the same reason the turn's commit is taken *after* the resume: Holi's committer refuses to run while the vault reads as paused.
+
 ## The agent as merge resolver
 
 This replaces the old bridge/turn-protocol/reconcile section, and is much smaller than what it replaces.
