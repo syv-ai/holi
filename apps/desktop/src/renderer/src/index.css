@@ -114,6 +114,29 @@
   --task-doing: #d29922;
   --task-done: #3fb950;
 
+  /* ── Diff tokens ─────────────────────────────────────────────────
+   * The two hues a diff is made of, stated once so every part of one derives
+   * from them: changed text, deleted text, the line tint under each, and the
+   * change gutter's stripe.
+   *
+   * `@codemirror/merge` writes its whole palette as `&light`/`&dark` pairs of
+   * hardcoded hexes, and `DiffView` used to answer that by declaring itself
+   * dark unconditionally. That was true of the app until light mode shipped
+   * (D85), after which a light vault got a black `#0a0a0a` band across every
+   * diff. Naming the hues here is what lets the view stop caring which mode it
+   * is in.
+   *
+   * Mid-ramp 500s on purpose, and no light arm: every use below is either a
+   * translucent wash over the page or a 3px stripe beside it, and a 500 reads
+   * against near-black and near-white alike. A tint is not text, so the
+   * darker-on-light rule the syntax ramp needs does not apply.
+   *
+   * Not in the theme whitelist, like `--syntax-*` and unlike `--link`: red is
+   * removed and green is added is close to a convention, and nothing has asked
+   * to recolour it. A vault theme could eventually reach them. */
+  --diff-added: var(--color-green-500);
+  --diff-removed: var(--color-red-500);
+
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
    * `codemirror-markdown-tables` paints a rendered table entirely from its own
    * `--tbl-theme-*` properties, and it picks between its built-in light and
@@ -460,10 +483,24 @@
   --plate-alt: #e2e2e2;
   background-color: var(--plate);
   background-image:
-    linear-gradient(45deg, var(--plate-alt) 25%, transparent 25%, transparent 75%, var(--plate-alt) 75%),
-    linear-gradient(45deg, var(--plate-alt) 25%, transparent 25%, transparent 75%, var(--plate-alt) 75%);
+    linear-gradient(
+      45deg,
+      var(--plate-alt) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--plate-alt) 75%
+    ),
+    linear-gradient(
+      45deg,
+      var(--plate-alt) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--plate-alt) 75%
+    );
   background-size: 16px 16px;
-  background-position: 0 0, 8px 8px;
+  background-position:
+    0 0,
+    8px 8px;
 }
 
 /**

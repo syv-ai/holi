@@ -18,32 +18,73 @@ import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
+import { colorModeAware } from '@/editor/color-mode'
 import { editorTheme } from '@/editor/theme'
 
 /**
- * `{ dark: true }` marks the editor dark so `@codemirror/merge`'s own `&dark`
- * rules apply — `editorTheme` is a `baseTheme` with no dark flag, so without this
- * the merge view falls back to its LIGHT variants (a white "N unchanged lines"
- * bar on our dark UI). The `.cm-collapsedLines` override then replaces that bar's
- * hardcoded gradient with a flat, subtle strip that reads on any background.
+ * The diff's palette, taken off the app's tokens rather than off the mode.
+ *
+ * **This used to declare `{ dark: true }`**, which picked `@codemirror/merge`'s
+ * own `&dark` arm and was right while Holi was dark-only. Light mode shipped
+ * with D85 and the flag stayed, so a diff in a light vault came up wearing dark
+ * chrome — most visibly a black `#0a0a0a` strip where the "N unchanged lines"
+ * bar should be. The flag is gone; `colorModeAware()` tells the view which mode
+ * it is actually in, the way the app's other three editor stacks already do.
+ *
+ * With the colours below stated as tokens, almost nothing in a diff branches on
+ * the mode any more — which is the point. What remains is CodeMirror's core
+ * chrome (the cursor, above all, since the resolvable mode is editable) and the
+ * package's `.cm-inlineChangedLineGutter`, a mode-independent purple marking a
+ * line that has an insertion and a deletion on it. Both are left alone.
+ *
+ * **Every selector is written `&.cm-merge-b …` deliberately.** `unifiedMergeView`
+ * puts `cm-merge-b` on the editor, and so does the package's own theme: its
+ * rules are `&dark.cm-merge-b .cm-changedText` and friends, three classes deep.
+ * A theme beats a `baseTheme` only at EQUAL specificity (both mount through
+ * `StyleModule`; the base one is `Prec.lowest`, so it lands earlier in the
+ * sheet), and the overrides here used to be written one class shallower — so
+ * the two that had a `&dark`-scoped counterpart, `.cm-changedText` and the
+ * inline `.cm-deletedText`, never actually applied and the package's gradient
+ * underline was what showed. Matching the package's shape fixes that too.
  */
-const diffTheme = EditorView.theme(
-  {
-    '.cm-collapsedLines': {
-      background: 'none',
-      backgroundColor: '#0a0a0a', // neutral-950, the app's standard background
-      color: '#888',
-      border: 'none',
-    },
-    '.cm-collapsedLines:hover': { color: '#aaa' },
-    // The package marks changed/deleted text with a 2px bottom gradient — it reads
-    // as an underline. Replace it with a full solid background: green for
-    // insertions, red for deletions, the way a diff normally shades text.
-    '.cm-changedText': { background: 'rgba(34,197,94,0.28)' },
-    '.cm-deletedChunk .cm-deletedText, .cm-deletedText': { background: 'rgba(239,68,68,0.30)' },
+const diffTheme = EditorView.theme({
+  // The "N unchanged lines" strip. The package paints it with a hardcoded
+  // gradient; this is a flat neutral wash instead, and TRANSLUCENT because the
+  // panels that host a diff set no background of their own — an opaque colour
+  // is a guess about a surface this component cannot see, which is precisely
+  // how `#0a0a0a` got here.
+  '&.cm-merge-b .cm-collapsedLines': {
+    background: 'none',
+    backgroundColor: 'color-mix(in srgb, var(--muted-foreground) 12%, transparent)',
+    color: 'var(--muted-foreground)',
+    border: 'none',
   },
-  { dark: true },
-)
+  '&.cm-merge-b .cm-collapsedLines:hover': { color: 'var(--foreground)' },
+  // The package marks changed/deleted text with a 2px bottom gradient — it reads
+  // as an underline. Replace it with a full solid background: green for
+  // insertions, red for deletions, the way a diff normally shades text.
+  '&.cm-merge-b .cm-changedText': {
+    background: 'color-mix(in srgb, var(--diff-added) 28%, transparent)',
+  },
+  '&.cm-merge-b .cm-deletedText, &.cm-merge-b .cm-deletedChunk .cm-deletedText': {
+    background: 'color-mix(in srgb, var(--diff-removed) 30%, transparent)',
+  },
+  // The whole-line wash under a change. The package's is neither of these hues
+  // — a deletion gets a muddy tan (`rgba(160,128,100,.08)`) — so a red word sat
+  // on a brown line beside a red gutter. Same tokens, far lower alpha, since
+  // this one is the backdrop the shaded text above has to stay legible on.
+  '&.cm-merge-b .cm-changedLine, &.cm-merge-b .cm-inlineChangedLine': {
+    backgroundColor: 'color-mix(in srgb, var(--diff-added) 10%, transparent)',
+  },
+  '&.cm-merge-b .cm-deletedChunk': {
+    backgroundColor: 'color-mix(in srgb, var(--diff-removed) 10%, transparent)',
+  },
+  // The 3px change gutter. The one thing left that `{ dark: true }` still
+  // decided after the overrides above, so tokenising it is what makes dropping
+  // the flag a clean swap rather than a trade.
+  '&.cm-merge-b .cm-changedLineGutter': { background: 'var(--diff-added)' },
+  '&.cm-merge-b .cm-deletedLineGutter': { background: 'var(--diff-removed)' },
+})
 
 export function DiffView({
   before,
@@ -84,6 +125,7 @@ export function DiffView({
           EditorView.editable.of(resolvable),
           EditorView.lineWrapping,
           editorTheme,
+          colorModeAware(),
           diffTheme,
           // Every accept and reject is an edit to the document, so one listener
           // covers both without knowing which control was pressed — and covers a

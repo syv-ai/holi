@@ -9,8 +9,9 @@
  * The read-only mode is asserted here rather than assumed, because the history
  * panel has depended on it since it was written and nothing else guards it.
  */
+import { EditorView } from '@codemirror/view'
 import { render } from '@/test/render'
-import { expect, test, vi } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 import { DiffView } from '../DiffView'
 
 const BEFORE = 'one\ntwo\nthree\n'
@@ -70,4 +71,42 @@ test('does not rebuild the view when the resolver identity changes', () => {
   const first = container.querySelector('.cm-editor')
   rerender(<DiffView before={BEFORE} after={AFTER} onResolve={() => {}} />)
   expect(container.querySelector('.cm-editor')).toBe(first)
+})
+
+/**
+ * The colour mode. This view used to declare `{ dark: true }` unconditionally,
+ * which was true of the app until light mode shipped (D85) and after that put a
+ * black `#0a0a0a` band across every diff in a light vault.
+ *
+ * Asserted on `EditorView.darkTheme` for the reason `editor/color-mode.test`
+ * gives: it is the input to every `&light`/`&dark` pair in CodeMirror's and
+ * `@codemirror/merge`'s base themes, and jsdom does not resolve the cascade.
+ */
+afterEach(() => document.documentElement.removeAttribute('data-theme'))
+
+const viewIn = (root: HTMLElement): EditorView => {
+  const view = EditorView.findFromDOM(root.querySelector<HTMLElement>('.cm-editor')!)
+  expect(view, 'no EditorView mounted').not.toBeNull()
+  return view!
+}
+
+test('takes its colour mode from the root stamp, not from a hardcoded flag', () => {
+  document.documentElement.setAttribute('data-theme', 'light')
+  const { container } = render(<DiffView before={BEFORE} after={AFTER} />)
+  expect(viewIn(container).state.facet(EditorView.darkTheme)).toBe(false)
+})
+
+// Dark-first, the same reading `index.css` makes: only an explicit stamp is light.
+test('takes anything that is not light as dark', () => {
+  const { container } = render(<DiffView before={BEFORE} after={AFTER} />)
+  expect(viewIn(container).state.facet(EditorView.darkTheme)).toBe(true)
+})
+
+test('follows a theme flip while a diff is open', async () => {
+  const { container } = render(<DiffView before={BEFORE} after={AFTER} />)
+  const view = viewIn(container)
+  expect(view.state.facet(EditorView.darkTheme)).toBe(true)
+  document.documentElement.setAttribute('data-theme', 'light')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(view.state.facet(EditorView.darkTheme)).toBe(false)
 })
