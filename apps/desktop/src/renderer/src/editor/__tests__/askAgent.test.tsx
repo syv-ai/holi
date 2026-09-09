@@ -188,6 +188,53 @@ describe('the selection tooltip', () => {
     expect(input.style.height).toBe('60px')
   })
 
+  /**
+   * The blink he reported: a newline made the bubble flash down over the passage
+   * and jump back up.
+   *
+   * CodeMirror places the tooltip with an inline `top` and only corrects it on
+   * its next measure, a frame later, so a taller bubble grows downward first.
+   * jsdom lays nothing out, so the two heights are stated here; what is being
+   * tested is that the growth is taken off `top` in the same tick.
+   */
+  const growable = () => {
+    const bubble = document.querySelector<HTMLElement>('.cm-ask-agent')!
+    const input = field()!
+    input.style.height = '40px'
+    let content = 40
+    Object.defineProperty(input, 'scrollHeight', { get: () => content })
+    Object.defineProperty(bubble, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ height: parseFloat(input.style.height) || 0 }) as DOMRect,
+    })
+    return { bubble, input, grow: (to: number) => {
+      content = to
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    } }
+  }
+
+  it('holds its bottom edge still as it grows, so it does not blink', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    press(button()!)
+    const { bubble, grow } = growable()
+    bubble.classList.add('cm-tooltip-above')
+    bubble.style.top = '300px'
+    grow(100) // 60px taller
+    expect(bubble.style.top).toBe('240px')
+  })
+
+  it('lets it grow downward when the bubble is below the passage', () => {
+    // CodeMirror flips it when there is no room above, and then growing down is
+    // the correct direction. Compensating anyway would walk it up the screen.
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    press(button()!)
+    const { bubble, grow } = growable()
+    bubble.classList.add('cm-tooltip-below')
+    bubble.style.top = '300px'
+    grow(100)
+    expect(bubble.style.top).toBe('300px')
+  })
+
   it('sends what was typed, above the passage', () => {
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])

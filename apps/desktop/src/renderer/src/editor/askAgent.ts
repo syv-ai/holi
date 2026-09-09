@@ -61,7 +61,7 @@ export function promptForSelection(state: EditorState, notePath: string): string
  * so the stylesheet animates for exactly this long: the number lives once, here,
  * and the CSS reads it.
  */
-const EXIT_MS = 140
+const EXIT_MS = 220
 
 /** Nothing to fade for someone who asked not to be moved, so nothing to wait for
  *  either. Read at use rather than cached: the OS setting can change while the
@@ -133,12 +133,31 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
      * over the text it is about. Only on a real change, so this is a few
      * transactions per message rather than one per keystroke.
      */
-    let height = 0
     const grow = () => {
+      const before = dom.getBoundingClientRect().height
       field.style.height = 'auto'
       field.style.height = `${field.scrollHeight}px`
-      if (field.scrollHeight === height) return
-      height = field.scrollHeight
+      const after = dom.getBoundingClientRect().height
+      if (after === before) return
+
+      /**
+       * Hold the bottom edge still while it grows.
+       *
+       * CodeMirror places this tooltip with an inline `top` and only corrects it
+       * on its NEXT measure, which is a frame away. So a taller bubble grows
+       * downward over the passage it is about and then jumps back up — a blink
+       * on every newline. Moving `top` by exactly the growth, here and now,
+       * lands on the value CodeMirror is about to compute, so its measure
+       * confirms the position rather than correcting it.
+       *
+       * Only when the bubble is ABOVE the passage. CodeMirror flips it below
+       * when there is no room, marks which it chose, and growing downward is
+       * right in that case.
+       */
+      if (dom.classList.contains('cm-tooltip-above')) {
+        const top = parseFloat(dom.style.top)
+        if (!Number.isNaN(top)) dom.style.top = `${top - (after - before)}px`
+      }
       view.dispatch({})
     }
     field.oninput = grow

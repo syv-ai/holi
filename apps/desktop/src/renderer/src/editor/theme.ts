@@ -440,7 +440,10 @@ export const editorTheme = EditorView.baseTheme({
    * change and a mount-time animation would replay on every frame of a drag.
    */
   '.cm-ask-agent-open': {
-    animation: 'cm-ask-in var(--duration-micro, 160ms) var(--ease-settle, ease-out) both',
+    // Slower than the app's own micro/base durations, and deliberately: at 160ms
+    // this read as nothing happening at all. A popover opening is a thing to
+    // notice, not a thing to catch.
+    animation: 'cm-ask-in 320ms var(--ease-settle, ease-out) both',
   },
   '.cm-ask-agent-leaving': {
     animation: 'cm-ask-out var(--ask-exit, 140ms) var(--ease-settle, ease-out) both',
@@ -450,12 +453,12 @@ export const editorTheme = EditorView.baseTheme({
   // Enough travel to register as the popover opening rather than as a flicker,
   // and anchored at the bottom because the bubble sits above the passage.
   '@keyframes cm-ask-in': {
-    from: { opacity: '0', transform: 'translateY(6px) scale(0.94)' },
+    from: { opacity: '0', transform: 'translateY(10px) scale(0.88)' },
     to: { opacity: '1', transform: 'none' },
   },
   '@keyframes cm-ask-out': {
     from: { opacity: '1', transform: 'none' },
-    to: { opacity: '0', transform: 'translateY(4px) scale(0.94)' },
+    to: { opacity: '0', transform: 'translateY(8px) scale(0.90)' },
   },
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
