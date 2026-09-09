@@ -1,13 +1,18 @@
 /**
- * A read-only unified diff, rendered with `@codemirror/merge`'s `unifiedMergeView`
- * in **inline + compact** mode:
+ * A unified diff, rendered with `@codemirror/merge`'s `unifiedMergeView` in
+ * **inline + compact** mode:
  *  - `allowInlineDiffs` — small in-line edits render inline (solid green/red) rather
  *    than as the default gradient-underlined separate lines.
  *  - `collapseUnchanged` — long unchanged runs fold away, so the change is the focus.
  *
- * Read-only: `mergeControls: false` drops the accept/reject affordances (this is a
- * view of history, not a merge to resolve) and the editor is non-editable. `original`
- * is the before-content; the doc is the after.
+ * `original` is the before-content; the doc is the after.
+ *
+ * **Two modes, and `onResolve` is the switch.** Without it this is what it has
+ * always been: a read-only view of history, with `mergeControls: false` dropping
+ * the accept/reject affordances because there is nothing to resolve about a
+ * commit that already happened. With it, the chunks grow their controls and the
+ * document becomes editable, which is what an agent turn needs — a hunk the
+ * agent wrote is a hunk you may want back (D88).
  */
 import { unifiedMergeView } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
@@ -40,8 +45,33 @@ const diffTheme = EditorView.theme(
   { dark: true },
 )
 
-export function DiffView({ before, after }: { before: string; after: string }) {
+export function DiffView({
+  before,
+  after,
+  onResolve,
+}: {
+  before: string
+  after: string
+  /** Present: the chunks get accept/reject controls, the document is editable,
+   *  and this fires with the whole document text after every resolution.
+   *  Absent: read-only, exactly as the history panel has always had it. */
+  onResolve?: (text: string) => void
+}) {
   const host = useRef<HTMLDivElement>(null)
+  /**
+   * Held in a ref and kept OUT of the effect below.
+   *
+   * The panel above re-renders on every state change and hands down a fresh
+   * closure each time. In the dependency array that would destroy and rebuild
+   * the whole merge view between accepting one chunk and looking at the next,
+   * losing the resolutions so far. The ref lets the effect depend on the
+   * documents, which are the only things that should rebuild it.
+   */
+  const resolve = useRef(onResolve)
+  resolve.current = onResolve
+  // Whether there is a resolver may change the extensions, so unlike its
+  // identity it does belong in the dependencies.
+  const resolvable = onResolve !== undefined
 
   useEffect(() => {
     if (host.current === null) return
@@ -50,14 +80,20 @@ export function DiffView({ before, after }: { before: string; after: string }) {
       state: EditorState.create({
         doc: after,
         extensions: [
-          EditorState.readOnly.of(true),
-          EditorView.editable.of(false),
+          EditorState.readOnly.of(!resolvable),
+          EditorView.editable.of(resolvable),
           EditorView.lineWrapping,
           editorTheme,
           diffTheme,
+          // Every accept and reject is an edit to the document, so one listener
+          // covers both without knowing which control was pressed — and covers a
+          // hand edit too, which an editable merge view also allows.
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) resolve.current?.(update.state.doc.toString())
+          }),
           unifiedMergeView({
             original: before,
-            mergeControls: false,
+            mergeControls: resolvable,
             allowInlineDiffs: true,
             gutter: true,
             collapseUnchanged: { margin: 2 },
@@ -66,7 +102,7 @@ export function DiffView({ before, after }: { before: string; after: string }) {
       }),
     })
     return () => view.destroy()
-  }, [before, after])
+  }, [before, after, resolvable])
 
   return <div ref={host} className="h-full overflow-auto text-[11px]" />
 }
