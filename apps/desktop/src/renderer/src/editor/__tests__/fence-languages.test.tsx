@@ -28,6 +28,7 @@ function mount(doc: string): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
+        askAgent: () => {},
       }),
     }),
     parent,

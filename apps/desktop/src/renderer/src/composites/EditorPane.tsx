@@ -20,7 +20,7 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import type { Task } from '@holi/shared'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
@@ -30,6 +30,7 @@ import type { MentionData } from '@/editor/mentions'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
+import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -84,6 +85,16 @@ export function EditorPane({
   mentionRef.current = {
     notes: snapshot.docs.map((d) => ({ path: d.path })),
     tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
+  }
+  const setAgentSeed = useSetAtom(agentSeedPromptAtom)
+  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on
+   *  every render, and a seam that closed over a stale setter would seed the
+   *  panel and never open it. */
+  const askAgentRef = useRef<(prompt: string) => void>(() => {})
+  askAgentRef.current = (prompt) => {
+    setAgentSeed(prompt)
+    setAgentOpen(true)
   }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
@@ -170,6 +181,7 @@ export function EditorPane({
                     ),
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
+                  askAgent: (prompt) => askAgentRef.current(prompt),
                   notePath: path,
                   readOnly,
                 })),

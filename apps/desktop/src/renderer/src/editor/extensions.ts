@@ -9,6 +9,7 @@ import { EditorState, type Extension } from '@codemirror/state'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
+import { askAgentTooltip } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
@@ -40,6 +41,12 @@ export interface EditorDeps {
   mentionData: () => MentionData
   /** Where a clicked link goes (FR-6/FR-7). */
   nav: () => LinkNav
+  /** Hand the current selection to the agent as a seeded turn (#5). On
+   *  `EditorDeps` rather than on a facet because only `baseEditorExtensions`
+   *  takes these: the mail composer is a separate stack precisely so that it
+   *  knows nothing about a vault, and a seeded vault prompt is exactly the kind
+   *  of thing it must not grow. */
+  askAgent: (prompt: string) => void
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked — a reconcile is resolving this file
@@ -89,6 +96,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     docExistsFacet.of(deps.docExists),
     taskByPathFacet.of(deps.taskByPath),
     notePathFacet.of(deps.notePath),
+    // Select a passage, press one button, and the agent opens knowing which note
+    // and which lines you meant (#5). The notes stack only.
+    askAgentTooltip(deps.notePath, deps.askAgent),
     livePreview,
     // The caret's half of the heading slide: the transition is CSS, and
     // CodeMirror has to be told to measure again while it runs.

@@ -8,6 +8,12 @@
 
 **Tech Stack:** TypeScript, CodeMirror 6 (`showTooltip`, `StateField`), Jotai, Vitest (`dom` project).
 
+> **BUILT 2026-09-09.** Followed as written, with one addition the plan did not list: `TaskDetail`
+> also mounts `baseEditorExtensions`, so a task's description gets the button too — which is right,
+> being prose in the notes stack, but it meant wiring the two atoms in a second place. Adding
+> `askAgent` to `EditorDeps` also made every fixture that builds one fail to typecheck, which is the
+> type system pointing at exactly the five test files that construct a notes stack.
+
 **Adopted from:** `syv-ai/ailex-but-better-private`'s `DocumentPane.handleChatAboutSelection` and its TipTap `BubbleMenu`. The prompt shape is theirs. The line numbers are not: Ailex recovers them by searching the markdown source for the selected substring, which is approximate by construction, and CodeMirror hands over the exact range from the selection.
 
 ---
@@ -61,11 +67,11 @@ Output, matching Ailex's shape with Holi's path grammar:
 
 A single-line selection reads `line 12`, not `lines 12-12`.
 
-- [ ] **Step 1** Write the test: a multi-line selection quotes every line with `> `; a single line says `line 12`; an empty line inside the selection still gets its `> `; the path appears verbatim.
-- [ ] **Step 2** Run it, watch it fail.
-- [ ] **Step 3** Implement.
-- [ ] **Step 4** Green.
-- [ ] **Step 5** Commit.
+- [x] **Step 1** Write the test: a multi-line selection quotes every line with `> `; a single line says `line 12`; an empty line inside the selection still gets its `> `; the path appears verbatim.
+- [x] **Step 2** Run it, watch it fail.
+- [x] **Step 3** Implement.
+- [x] **Step 4** Green.
+- [x] **Step 5** Commit.
 
 ---
 
@@ -84,11 +90,11 @@ A single-line selection reads `line 12`, not `lines 12-12`.
 export function askAgentTooltip(notePath: string, onAsk: (prompt: string) => void): Extension
 ```
 
-- [ ] **Step 1** Write the test: an empty selection provides no tooltip; a non-empty one does; clicking the button calls `onAsk` with `selectionPrompt`'s output for the selected range; a read-only state provides no tooltip.
-- [ ] **Step 2** Run it, watch it fail.
-- [ ] **Step 3** Implement as a `StateField<readonly Tooltip[]>` provided through `showTooltip.computeN`, recomputed on selection change. Derive the line numbers with `state.doc.lineAt(range.from).number` and `.lineAt(range.to).number`, and the text with `state.sliceDoc(range.from, range.to)`.
-- [ ] **Step 4** Green.
-- [ ] **Step 5** Commit.
+- [x] **Step 1** Write the test: an empty selection provides no tooltip; a non-empty one does; clicking the button calls `onAsk` with `selectionPrompt`'s output for the selected range; a read-only state provides no tooltip.
+- [x] **Step 2** Run it, watch it fail.
+- [x] **Step 3** Implement as a `StateField<readonly Tooltip[]>` provided through `showTooltip.computeN`, recomputed on selection change. Derive the line numbers with `state.doc.lineAt(range.from).number` and `.lineAt(range.to).number`, and the text with `state.sliceDoc(range.from, range.to)`.
+- [x] **Step 4** Green.
+- [x] **Step 5** Commit.
 
 **Gotcha:** the tooltip's DOM must not steal the selection. Give the button `onMouseDown` with `preventDefault`, or clicking it collapses the very selection it is about to send.
 
@@ -110,29 +116,29 @@ export function askAgentTooltip(notePath: string, onAsk: (prompt: string) => voi
 askAgent: (prompt: string) => void
 ```
 
-- [ ] **Step 1** Write the test: a selection plus a click sets `agentSeedPromptAtom` to the prompt and `agentPanelOpenAtom` to true; `mailComposerExtensions` and `plainTextExtensions` produce no such tooltip.
-- [ ] **Step 2** Run it, watch it fail.
-- [ ] **Step 3** Implement. Hold the callback in a ref exactly as `navRef` is held, so the extension list does not rebuild per render.
-- [ ] **Step 4** Green.
-- [ ] **Step 5** Commit.
+- [x] **Step 1** Write the test: a selection plus a click sets `agentSeedPromptAtom` to the prompt and `agentPanelOpenAtom` to true; `mailComposerExtensions` and `plainTextExtensions` produce no such tooltip.
+- [x] **Step 2** Run it, watch it fail.
+- [x] **Step 3** Implement. Hold the callback in a ref exactly as `navRef` is held, so the extension list does not rebuild per render.
+- [x] **Step 4** Green.
+- [x] **Step 5** Commit.
 
 ---
 
 ### Task 4: Verify in the running app
 
-- [ ] **Step 1** `pnpm dev:debug`, open a note, select two paragraphs.
-- [ ] **Step 2** Confirm the button appears over the selection, and that clicking it opens the panel with the quoted text and the right line range already typed.
-- [ ] **Step 3** Confirm the agent's answer refers to the right lines.
-- [ ] **Step 4** Confirm no button appears in the mail composer or in an open `.json`.
-- [ ] **Step 5** Screenshot with `pnpm exec node apps/desktop/cdp.mjs --shot`.
+- [x] **Step 1** `pnpm dev:debug`, open a note, select two paragraphs.
+- [x] **Step 2** Confirm the button appears over the selection, and that clicking it opens the panel with the quoted text and the right line range already typed.
+- [x] **Step 3** Confirm the agent's answer refers to the right lines.
+- [x] **Step 4** Confirm no button appears in the mail composer or in an open `.json`.
+- [x] **Step 5** Screenshot with `pnpm exec node apps/desktop/cdp.mjs --shot`.
 
 ---
 
 ### Task 5: Documentation
 
-- [ ] **Step 1** Add a line to [`docs/prd/notes-editor.md`](../prd/notes-editor.md) describing the affordance, and cross-reference it from [`docs/prd/agent.md`](../prd/agent.md) beside the other seeded-prompt producer (the reconcile).
-- [ ] **Step 2** Add the verified entry to `docs/upcoming.md`.
-- [ ] **Step 3** Commit.
+- [x] **Step 1** Add a line to [`docs/prd/notes-editor.md`](../prd/notes-editor.md) describing the affordance, and cross-reference it from [`docs/prd/agent.md`](../prd/agent.md) beside the other seeded-prompt producer (the reconcile).
+- [x] **Step 2** Add the verified entry to `docs/upcoming.md`.
+- [x] **Step 3** Commit.
 
 ---
 

@@ -44,6 +44,7 @@ import { trpc } from '@/lib/trpc'
 import { baseEditorExtensions } from '@/editor/extensions'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
+import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
 import { openNoteTabAtom } from '@/state/panes'
 import {
   completeTaskAtom,
@@ -357,6 +358,15 @@ export function TaskDescriptionEditor({
     notes: snapshot.docs.map((d) => ({ path: d.path })),
     tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
   }
+  /** Same seam the notes editor has (#5): a task's description is prose in the
+   *  notes stack, so a passage of it is as askable as a passage of a note. */
+  const setAgentSeed = useSetAtom(agentSeedPromptAtom)
+  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const askAgentRef = useRef<(prompt: string) => void>(() => {})
+  askAgentRef.current = (prompt) => {
+    setAgentSeed(prompt)
+    setAgentOpen(true)
+  }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     openNote: (target) =>
@@ -387,6 +397,7 @@ export function TaskDescriptionEditor({
                   ),
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
+            askAgent: (prompt) => askAgentRef.current(prompt),
             notePath,
           }),
           placeholder('description — @ to mention a note, [[wiki-links]] to link'),

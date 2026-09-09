@@ -30,6 +30,7 @@ function mount(): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
+        askAgent: () => {},
       }),
     }),
     parent,

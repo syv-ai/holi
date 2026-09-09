@@ -32,6 +32,7 @@ function mount(doc: string, readOnly = false): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: 'note.md',
+        askAgent: () => {},
         readOnly,
       }),
     }),

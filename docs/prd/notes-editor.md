@@ -387,6 +387,18 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 
 ---
 
+## Ask Claude about a selection
+
+Select a passage, press one button, and the agent drawer opens already knowing which note and which lines you meant ([`#5`](https://github.com/syv-ai/holi/issues/5), 2026-09-09). The prompt reads `[From projects/roadmap.md, lines 12-18]` followed by the passage quoted with `> `, and a single-line selection says `line 12` rather than `lines 12-12`.
+
+**The line numbers are exact, and that is the point.** The affordance is adopted from ailex's `handleChatAboutSelection`, which recovers them by searching the markdown source for the selected substring — approximate by construction, and wrong outright when the passage appears twice. CodeMirror already holds the range, so the prompt quotes a location rather than guessing at one.
+
+**A CodeMirror tooltip over the selection**, provided by a `StateField` through `showTooltip`, recomputed on a selection or document change and on nothing else. The button takes `mousedown` with `preventDefault` rather than `click`: the tooltip is outside the content, so a plain click moves focus and collapses the very selection it is about to send.
+
+**Which stacks get it, and why the others must not.** The seam is `askAgent` on `EditorDeps`, so only `baseEditorExtensions` can have it — the mail composer is a separate stack precisely because it knows nothing about a vault, and a seeded vault prompt is exactly the kind of thing it must not grow; `plainTextExtensions` takes a path and a read-only flag, and a `.json` is not a note. A task's description **does** get it, being prose in the notes stack. **A locked file shows no button**: a reconcile is resolving it ([`vaults-sync.md`](vaults-sync.md) FR-19), and handing that to a second conversation mid-merge is the one case this must not offer.
+
+**No new transport.** `agentSeedPromptAtom` is the whole wire, and the reconcile handoff already fills it ([`agent.md`](agent.md)).
+
 ## Images and other binaries
 
 **The vault is text-first *by authorship*, not by content** (D62). Any file lives in a vault as an ordinary committed file; what makes the vault text-first is that markdown is the thing you *write*, and a PDF is something it **emits** ([`pdf-export.md`](pdf-export.md)) rather than something it imports. That resolved a real contradiction: an earlier design had incoming PDFs converted to markdown on entry with the original archived to object storage, which is machinery serving a direction the work does not flow in — at Syv, rich documents are produced by the vault, not imported into it.

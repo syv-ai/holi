@@ -340,6 +340,25 @@ export const editorTheme = EditorView.baseTheme({
     background: 'color-mix(in srgb, var(--link-missing) 10%, transparent)',
   },
 
+  /**
+   * "Ask Claude", over a selection (#5).
+   *
+   * A tooltip rather than anything mounted in the content: it has to sit above
+   * the passage without being part of it, and CodeMirror already positions
+   * tooltips against a range. `.cm-tooltip` supplies the shell, so this is only
+   * the button inside it.
+   */
+  '.cm-ask-agent button': {
+    padding: '0.15rem 0.5rem',
+    fontSize: '0.75rem',
+    lineHeight: '1.4',
+    color: 'var(--foreground)',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+  },
+  '.cm-ask-agent button:hover': { color: 'var(--link)' },
+
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
 

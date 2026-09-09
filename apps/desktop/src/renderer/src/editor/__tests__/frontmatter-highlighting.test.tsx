@@ -33,6 +33,7 @@ function mount(doc: string): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath: '.claude/skills/demo/SKILL.md',
+        askAgent: () => {},
       }),
     }),
     parent,
