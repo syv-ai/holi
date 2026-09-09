@@ -98,6 +98,23 @@ describe('MermaidWidget', () => {
     expect(initialize).toHaveBeenCalledTimes(1)
     expect(render).toHaveBeenCalledTimes(3)
   })
+
+  it('takes its palette from the app, and re-takes it when the app flips', async () => {
+    // Mermaid bakes the palette in at initialize. Without this, a vault in light
+    // mode draws black-on-black diagrams.
+    render.mockResolvedValue({ svg: '<svg></svg>' })
+    document.documentElement.dataset['theme'] = 'light'
+    new MermaidWidget('a').toDOM()
+    await settle()
+    expect(initialize.mock.calls[0]![0]).toMatchObject({ theme: 'default' })
+
+    document.documentElement.dataset['theme'] = 'dark'
+    new MermaidWidget('b').toDOM()
+    await settle()
+    expect(initialize).toHaveBeenCalledTimes(2)
+    expect(initialize.mock.calls[1]![0]).toMatchObject({ theme: 'dark' })
+    delete document.documentElement.dataset['theme']
+  })
 })
 
 function stateFor(doc: string, cursor = 0, extra: Extension[] = []) {

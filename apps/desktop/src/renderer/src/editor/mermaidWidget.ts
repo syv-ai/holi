@@ -22,27 +22,49 @@ type Mermaid = {
 }
 
 let loading: Promise<Mermaid> | null = null
+/** The palette the loaded instance was configured with, so a flip is noticed. */
+let configured: 'light' | 'dark' | null = null
+
+/** The app's current mode, from the stamp `color-scheme.ts` puts on the root.
+ *  Both modes are stamped explicitly (D85), and `lib/mail-frame.ts` reads it the
+ *  same way for the same reason: a surface that paints its own colours has to be
+ *  told which ones. */
+function appTheme(): 'light' | 'dark' {
+  return document.documentElement.dataset['theme'] === 'light' ? 'light' : 'dark'
+}
 
 function mermaid(): Promise<Mermaid> {
-  loading ??= import('mermaid').then((mod) => {
-    const api = mod.default as unknown as Mermaid
-    // `startOnLoad` would have it scan the document for `.mermaid` elements on
-    // its own, which is the opposite of what a decoration wants: the editor says
-    // what renders and when.
-    //
-    // `securityLevel: 'loose'` is NOT set, deliberately. A vault is shared, so a
-    // diagram can arrive from a collaborator or from the agent, and mermaid's
-    // strict default is what keeps a click handler out of a note.
-    api.initialize({ startOnLoad: false, theme: 'dark' })
+  loading ??= import('mermaid').then((mod) => mod.default as unknown as Mermaid)
+  return loading.then((api) => {
+    // Mermaid bakes the palette in at `initialize`, so this runs again whenever
+    // the app's mode has changed since the last one — otherwise a vault switched
+    // to light draws black-on-black diagrams. What it does NOT do is repaint the
+    // diagrams already on screen: their DOM is reused (that is what `eq` is for)
+    // and nothing recomputes a decoration on a theme flip. They come right when
+    // the fence is next edited or the note reopened, and closing that properly
+    // means a StateEffect on the theme, which is more machinery than the case
+    // has yet earned.
+    const theme = appTheme()
+    if (configured !== theme) {
+      // `startOnLoad` would have it scan the document for `.mermaid` elements on
+      // its own, which is the opposite of what a decoration wants: the editor
+      // says what renders and when.
+      //
+      // `securityLevel: 'loose'` is NOT set, deliberately. A vault is shared, so
+      // a diagram can arrive from a collaborator or from the agent, and
+      // mermaid's strict default is what keeps a click handler out of a note.
+      api.initialize({ startOnLoad: false, theme: theme === 'light' ? 'default' : 'dark' })
+      configured = theme
+    }
     return api
   })
-  return loading
 }
 
 /** Test seam: the memo above is module state, so one test's load would
  *  otherwise still be held when the next one asserts on it. */
 export function resetMermaidForTests(): void {
   loading = null
+  configured = null
 }
 
 let seq = 0
