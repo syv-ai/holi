@@ -2,17 +2,22 @@
  * The ritual's settings act — how this vault behaves, asked once, at birth.
  *
  * **Renders the list; does not know the list.** Every row comes from
- * `VAULT_SETTING_DESCRIPTORS`, which is also what `seed-content.ts` builds the
+ * `RITUAL_SETTING_DESCRIPTORS`, which is also what `seed-content.ts` builds the
  * vault's `settings.json` from. Adding a setting later is adding a descriptor —
  * this file should not need touching, and the tests assert against the list's
  * length rather than a number so that stays true.
+ *
+ * **The ritual's list is a subset**, not all of them. A preference with a good
+ * default and no consequence at a vault's first moment is one more thing between
+ * somebody and their first note; it lives in the settings tab instead, and
+ * `askedAtBirth` is where each row says which it is.
  *
  * Nothing here is required. Every row carries a default and the seed has already
  * written it, so clicking straight through is a no-op rather than a choice
  * deferred.
  */
 import {
-  VAULT_SETTING_DESCRIPTORS,
+  RITUAL_SETTING_DESCRIPTORS,
   availableOptions,
   type VaultSettingDescriptor,
 } from '@holi/shared'
@@ -133,7 +138,7 @@ function Row({
 export function VaultSettingsAct({ settings, onChange }: Props) {
   return (
     <div className="obrit-settings">
-      {VAULT_SETTING_DESCRIPTORS.map((descriptor) => (
+      {RITUAL_SETTING_DESCRIPTORS.map((descriptor) => (
         <Row key={descriptor.key} descriptor={descriptor} settings={settings} onChange={onChange} />
       ))}
     </div>

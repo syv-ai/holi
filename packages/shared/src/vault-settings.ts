@@ -349,9 +349,21 @@ export type VaultSettingControl =
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
 
-/** A key the onboarding step asks about. Deliberately narrower than every key
- *  the resolver answers — `maxCommittedFileBytes` has no row (see below). */
-export type VaultSettingKey = 'dailyNotes' | 'landing' | 'hooks' | 'colorScheme'
+/** A key a descriptor can describe — every setting with a control, which the
+ *  settings tab renders and which is a superset of what the ritual asks
+ *  (`askedAtBirth`).
+ *
+ *  Deliberately narrower than every key the resolver answers:
+ *  `maxCommittedFileBytes` has no row. D85's reasoning was about the seed —
+ *  freezing a number into every vault means raising the default later reaches
+ *  none of them — and it has not been re-argued for a pane where the choice
+ *  would be explicit. Until it is, the file is that setting's interface. */
+export type VaultSettingKey =
+  | 'dailyNotes'
+  | 'landing'
+  | 'hooks'
+  | 'colorScheme'
+  | 'editorFont'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -362,6 +374,18 @@ export interface VaultSettingDescriptor {
    *  second thing to keep in step. */
   default: unknown
   target: SettingTarget
+  /**
+   * Whether the onboarding ritual asks this at a vault's birth, and the seed
+   * therefore writes it.
+   *
+   * **Not every setting is a question for a stranger.** The ritual is four acts
+   * long and every row in it is one more thing between somebody and their first
+   * note, so a preference with a good default and no consequence at birth stays
+   * out of it — `editorFont` is the case that forced the flag (D87 deliberately
+   * gave it no row). The settings pane renders the whole list regardless, which
+   * is the difference between "every setting" and "every question".
+   */
+  askedAtBirth: boolean
   /** Where this lives once the ritual is over. Carried as **data** so a row
    *  structurally cannot ship without one: a step that changes something and
    *  does not say where to change it later is a dead end for anyone who wants
@@ -369,7 +393,14 @@ export interface VaultSettingDescriptor {
   whereToChange: string
 }
 
-const SETTINGS_FILE_HINT = 'Change it any time in .holi/settings.json'
+
+/** The two files a setting can live in. Named here because the settings pane
+ *  offers both as an escape hatch and the hint below names one of them — three
+ *  string literals agreeing is a coincidence that expires. */
+export const SETTINGS_FILE = '.holi/settings.json'
+export const SETTINGS_LOCAL_FILE = '.holi/settings.local.json'
+
+const SETTINGS_FILE_HINT = `Change it any time in ${SETTINGS_FILE}`
 const LOCAL_FILE_HINT =
   'Change it any time in .holi/settings.local.json, which stays on this machine'
 
@@ -394,6 +425,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     control: { kind: 'toggle' },
     default: VAULT_SETTING_DEFAULTS.dailyNotes,
     target: 'committed',
+    askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
   },
   {
@@ -421,6 +453,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     },
     default: VAULT_SETTING_DEFAULTS.landing,
     target: 'committed',
+    askedAtBirth: true,
     whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
   },
   {
@@ -454,6 +487,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     },
     default: VAULT_SETTING_DEFAULTS.hooks,
     target: 'committed',
+    askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
   },
   {
@@ -473,9 +507,35 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // flipping your app to light mode is exactly the failure the `.local` layer
     // exists to prevent.
     target: 'local',
+    askedAtBirth: true,
     whereToChange: LOCAL_FILE_HINT,
   },
+  {
+    key: 'editorFont',
+    label: 'Notes are set in',
+    explanation:
+      'Prose only. Code, frontmatter and the plain editor stay monospaced whatever this says.',
+    control: {
+      kind: 'choice',
+      options: [
+        { value: 'mono', label: 'Monospace' },
+        { value: 'sans', label: 'Sans' },
+        { value: 'serif', label: 'Serif' },
+      ],
+    },
+    default: VAULT_SETTING_DEFAULTS.editorFont,
+    target: 'committed',
+    // Not asked at birth, deliberately (D87): it has a good default, no
+    // consequence at a vault's first moment, and the ritual is already four acts
+    // long. The settings pane is where a preference like this belongs.
+    askedAtBirth: false,
+    whereToChange: SETTINGS_FILE_HINT,
+  },
 ]
+
+/** The subset the ritual asks and the seed writes — see `askedAtBirth`. */
+export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =
+  VAULT_SETTING_DESCRIPTORS.filter((d) => d.askedAtBirth)
 
 /**
  * The settings a freshly created vault is born with, for one of the two files.
@@ -488,7 +548,11 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
  */
 export function seedSettings(target: SettingTarget): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  for (const d of VAULT_SETTING_DESCRIPTORS) {
+  // The ritual's list, not every setting: a vault should be born declaring the
+  // answers it was asked for, and inherit the rest. Freezing a preference nobody
+  // was asked about into every vault means raising its default later reaches none
+  // of them.
+  for (const d of RITUAL_SETTING_DESCRIPTORS) {
     if (d.target === target) out[d.key] = d.default
   }
   return out

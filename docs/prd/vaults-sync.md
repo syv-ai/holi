@@ -170,6 +170,20 @@ It used to be parsed by two independent hand-rolled readers with nothing shared 
 
 A machine-local `.holi/settings.local.json` overrides it **per key**, the layering theme (D64) and icons (D82) already use. It never syncs, and it is where `colorScheme` lives: a collaborator's committed choice flipping your app to light mode is the failure that layer exists to prevent. Unknown top-level keys are ignored **without a warning**, because the reminder delivery watermark already keeps a `reminders` block in the local file.
 
+### Settings are a tab (2026-09-09, [`#16`](https://github.com/syv-ai/holi/issues/16))
+
+Until now **no setting was editable from the running app**: the onboarding ritual was the only writer and it is a one-shot flow you cannot get back to, so changing a hook or the editor font meant hand-editing JSON. Settings is now an ordinary singleton tab — splittable beside the note you are changing it for, closable, one per window — and **a tab rather than a modal on purpose**, because a modal blocks the window exactly while you want to compare a setting against the vault it applies to.
+
+**One list, three readers.** The pane renders `VAULT_SETTING_DESCRIPTORS` and writes through `settings.write`, which is the ritual's only writer, so the two surfaces structurally cannot drift into writing different shapes. The ritual renders `RITUAL_SETTING_DESCRIPTORS` — the subset whose `askedAtBirth` is true — and the seed writes that same subset. **Not every setting is a question for a stranger**: the ritual is four acts long and every row is one more thing between somebody and their first note, so a preference with a good default and no consequence at birth stays out of it. `editorFont` is the case that forced the distinction (D87 deliberately gave it no ritual row) and it is a first-class row in the pane.
+
+**Each row says which layer it writes**, `vault` or `this machine`, because a pane that silently committed a machine-local preference would defeat the layer it was writing to.
+
+**Changes apply now, and that question is settled rather than dodged.** The resolved settings are cached per vault, and the cache's own docstring said re-reading them mid-session would mean answering "what happens to the tab you are looking at". The answer turned out to be that most of them already apply: `hooks` and `maxCommittedFileBytes` are read by main on every commit, `colorScheme` re-applies through `useVaultTheme` (D85), and `editorFont` is a CSS custom property. So a write forces the cache and the app follows. **`landing` is the exception and its row says so**: it describes what happens when a vault opens, and this one already did.
+
+**The resolver's `warnings[]` are shown**, each beside the setting it names, which nothing displayed before — a malformed value was replaced by a default and never mentioned. And the files stay the interface: the pane offers `.holi/settings.json`, its `.local` sibling and `.holi/theme.json` as tabs, the same escape hatch "Edit Icon…" gives its map.
+
+**What it does not do yet.** `maxCommittedFileBytes` has no control: D85 argued a number should not be frozen into every vault, and that argument was about the *seed* rather than about an explicit choice in a pane — it has not been re-argued, so the file remains that setting's interface. Theme tokens (D64) have no controls either; the pane links the file. And the other `.holi/*.json` files are deliberately left where they are — `vault.json`, `icons.json`, `seed-state.local.json` and `context.local.json` are state or data that happen to be JSON, not settings, and moving config files in a committed vault breaks every vault that exists to buy tidiness.
+
 ---
 
 ## Dependencies

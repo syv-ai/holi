@@ -145,6 +145,8 @@ export function parseTabPayload(text: string): Tab | null {
   if (kind === 'app') {
     return typeof appId === 'string' && appId !== '' ? { kind: 'app', appId } : null
   }
-  if (kind === 'board' || kind === 'agenda' || kind === 'mail') return { kind }
+  if (kind === 'board' || kind === 'agenda' || kind === 'mail' || kind === 'settings') {
+    return { kind }
+  }
   return null
 }

@@ -58,6 +58,7 @@ import {
   openAgenda,
   openBoard,
   openMail,
+  openSettings,
   openPinned,
   openInNewPane,
   openPreview,
@@ -78,6 +79,7 @@ import { ConflictBanner } from '@/composites/ConflictBanner'
 import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentStatusAtom } from '@/state/agent'
 import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
+import { vaultPanelOpenAtom } from '@/state/vault-panel'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -211,7 +213,8 @@ export function Shell() {
    * strip, which is the earliest a drag can be heading for a pane.
    */
   const [overStrip, setOverStrip] = useState(false)
-  const [showSettings, setShowSettings] = useState(false)
+  // An atom, not local state: the settings tab opens this panel too (#16).
+  const [showSettings, setShowSettings] = useAtom(vaultPanelOpenAtom)
   const [showAdd, setShowAdd] = useState(false)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
@@ -498,13 +501,17 @@ export function Shell() {
                       )}
                     </Button>
                   </Tooltip>
-                  <Tooltip content="vault settings">
+                  {/* The gear opens the SETTINGS TAB, which is what a gear is
+                      taken to mean. What it used to open — identity, members,
+                      visibility — is not a preference and keeps its own
+                      read-only panel, reachable from inside that tab. */}
+                  <Tooltip content="settings">
                     <Button
                       variant="ghost"
                       size="icon-xs"
                       className="shrink-0 text-muted-foreground"
-                      aria-label="vault settings"
-                      onClick={() => setShowSettings((v) => !v)}
+                      aria-label="settings"
+                      onClick={() => setWorkspace((w) => openSettings(w))}
                     >
                       <Settings size={16} />
                     </Button>

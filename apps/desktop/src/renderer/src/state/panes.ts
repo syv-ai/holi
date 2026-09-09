@@ -41,8 +41,12 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
  *  **Named, not derived.** This was `Exclude<Tab, {kind:'note'}>['kind']`, which
  *  encoded "every tab that is not a note is unique" — true until vault apps, of
  *  which there are as many as the vault holds. Derived, `openSingleton(w,'app')`
- *  typechecked and would have opened a tab with no `appId` at all. */
-export type SingletonTab = 'board' | 'agenda' | 'mail'
+ *  typechecked and would have opened a tab with no `appId` at all.
+ *
+ *  **Settings is one of these rather than a modal** (#16): a modal blocks the
+ *  window while you compare a setting against the vault it applies to, and a tab
+ *  is splittable beside the note you are changing it for. */
+export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings'
 
 /**
  * The two categories are now named rather than derived (see `SingletonTab`): a
@@ -54,7 +58,7 @@ export type Tab =
   /** A vault app (D74), identified by its directory name under `.holi/apps/`.
    *  There is one tab per app, not one per vault. */
   | { kind: 'app'; appId: string }
-  /** The board, the Google agenda and mail (D67) — one of each, ever. */
+  /** The board, the Google agenda, mail (D67) and settings — one of each, ever. */
   | { kind: SingletonTab }
 
 export interface Pane {
@@ -152,6 +156,10 @@ export function openAgenda(workspace: Workspace): Workspace {
 
 export function openMail(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'mail')
+}
+
+export function openSettings(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'settings')
 }
 
 /** Open a vault app in the active pane, or focus it if it is already there.

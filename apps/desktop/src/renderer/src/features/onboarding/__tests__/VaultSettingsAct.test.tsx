@@ -1,30 +1,36 @@
 import { render, screen, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { TRANSFORM_NAMES, VAULT_SETTING_DEFAULTS, VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
+import {
+  RITUAL_SETTING_DESCRIPTORS,
+  TRANSFORM_NAMES,
+  VAULT_SETTING_DEFAULTS,
+} from '@holi/shared'
 import { VaultSettingsAct } from '../VaultSettingsAct'
 
 function setup(over: Record<string, unknown> = {}) {
   const onChange = vi.fn()
-  const settings = Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
+  const settings = Object.fromEntries(RITUAL_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
   render(<VaultSettingsAct settings={{ ...settings, ...over }} onChange={onChange} />)
   return { onChange }
 }
 
 test('renders one row per descriptor, in the list’s own order', () => {
   setup()
-  // Asserted against the list, never a hardcoded 4: the whole point of the
+  // Asserted against the list, never a hardcoded number: the whole point of the
   // descriptor list is that adding a setting is adding a row and nothing else.
+  // The RITUAL's subset — a preference the ritual does not ask about renders in
+  // the settings tab instead (`askedAtBirth`).
   const rows = screen.getAllByRole('group')
-  expect(rows).toHaveLength(VAULT_SETTING_DESCRIPTORS.length)
+  expect(rows).toHaveLength(RITUAL_SETTING_DESCRIPTORS.length)
   expect(rows.map((r) => r.getAttribute('data-setting'))).toEqual(
-    VAULT_SETTING_DESCRIPTORS.map((d) => d.key),
+    RITUAL_SETTING_DESCRIPTORS.map((d) => d.key),
   )
 })
 
 test('every row says what it is and where to change it later', () => {
   setup()
-  for (const d of VAULT_SETTING_DESCRIPTORS) {
+  for (const d of RITUAL_SETTING_DESCRIPTORS) {
     const row = screen.getByRole('group', { name: d.label })
     expect(within(row).getByText(d.explanation)).toBeInTheDocument()
     // A step that changes something and does not say where to change it later

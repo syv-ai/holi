@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   EDITOR_FONTS,
   EDITOR_FONT_STACKS,
+  RITUAL_SETTING_DESCRIPTORS,
   TRANSFORM_NAMES,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
@@ -492,8 +493,10 @@ describe('splitAnswersByTarget', () => {
   })
 
   it('produces exactly what the seed wrote, when nothing was changed', () => {
-    // Clicking straight through must be a no-op, not a second opinion.
-    const answers = Object.fromEntries(VAULT_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
+    // Clicking straight through must be a no-op, not a second opinion. The
+    // RITUAL's list: a setting the ritual never asked about is not an answer it
+    // could have changed, and the seed does not write one.
+    const answers = Object.fromEntries(RITUAL_SETTING_DESCRIPTORS.map((d) => [d.key, d.default]))
     const { committed, local } = splitAnswersByTarget(answers)
     expect(committed).toEqual(seedSettings('committed'))
     expect(local).toEqual(seedSettings('local'))
