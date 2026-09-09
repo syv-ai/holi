@@ -175,9 +175,15 @@ export const editorTheme = EditorView.baseTheme({
     transition:
       'width var(--duration-base, 240ms) var(--ease-settle, ease-out), opacity var(--duration-base, 240ms) var(--ease-settle, ease-out)',
   },
-  // Respect the OS switch: the marks still appear, they just stop travelling.
+  /**
+   * The OS switch, for both of the editor's two animations. The heading's marks
+   * still appear and the ask popover still arrives and leaves; neither travels.
+   * `askAgent.ts` reads the same preference and then waits for nothing, so its
+   * send does not sit through a fade that is not happening.
+   */
   '@media (prefers-reduced-motion: reduce)': {
     '&.cm-heading-sliding .cm-heading-mark': { transition: 'none' },
+    '.cm-ask-agent-field, .cm-ask-agent-leaving': { animation: 'none' },
   },
 
   '.cm-strong': { fontWeight: '700' },
@@ -359,45 +365,65 @@ export const editorTheme = EditorView.baseTheme({
     cursor: 'pointer',
   },
   '.cm-ask-agent button:hover': { color: 'var(--link)' },
-  '.cm-ask-agent-form': {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '0.25rem',
-    padding: '0.35rem',
-    // Wide enough for a sentence, and capped so a long selection's tooltip does
-    // not stretch to the width of the passage it is anchored over.
-    width: '22rem',
-    maxWidth: '60vw',
+  /**
+   * The popover: one field in a bubble, and the motion in and out.
+   *
+   * **The shell IS the tooltip.** CodeMirror puts `cm-tooltip` on the very
+   * element the tooltip's `create` returns rather than wrapping it, so this is
+   * one element wearing both classes. An ancestor selector (`:has`) therefore
+   * matches nothing, which is how the first version of this rule silently did
+   * nothing at all; and the pair is what outranks CodeMirror's own `.cm-tooltip`
+   * rule, whose background is the light one. The field inside is transparent, so
+   * there is one box rather than two.
+   *
+   * **`transform` and `opacity` only.** CodeMirror positions this tooltip itself
+   * against the range, and animating anything that changes layout would drag its
+   * measure loop into every frame — the cost the editor's no-animation rule
+   * exists to refuse.
+   *
+   * `--ask-exit` is written onto the element by `askAgent.ts`, so the fade and
+   * the timer that waits for it are one number rather than two that can drift.
+   */
+  '.cm-tooltip.cm-ask-agent': {
+    padding: '0',
+    overflow: 'hidden',
+    color: 'var(--popover-foreground)',
+    background: 'var(--popover)',
+    border: '1px solid var(--border)',
+    borderRadius: '8px',
+    boxShadow: 'var(--shadow-popover)',
   },
-  '.cm-ask-agent-form textarea': {
+  '.cm-ask-agent-field': {
+    display: 'block',
     // `inherit` would take the vault's prose face (D87); this is UI, not prose.
     font: 'inherit',
     fontSize: '0.75rem',
     lineHeight: '1.5',
-    padding: '0.3rem 0.4rem',
-    color: 'var(--foreground)',
-    background: 'var(--background)',
-    border: '1px solid var(--border)',
-    borderRadius: '4px',
-    resize: 'vertical',
+    width: '22rem',
+    maxWidth: '60vw',
+    padding: '0.35rem 0.45rem',
+    color: 'var(--popover-foreground)',
+    background: 'transparent',
+    border: 'none',
+    borderRadius: '0',
+    resize: 'none',
     outline: 'none',
+    animation: 'cm-ask-in var(--duration-micro, 160ms) var(--ease-settle, ease-out) both',
   },
-  '.cm-ask-agent-form textarea:focus': { borderColor: 'var(--ring)' },
-  '.cm-ask-agent-form textarea::placeholder': { color: 'var(--muted-foreground)' },
-  // Right-aligned, the way a send control sits in every message box.
-  '.cm-ask-agent button.cm-ask-agent-send': {
-    alignSelf: 'flex-end',
-    padding: '0.15rem 0.55rem',
-    borderRadius: '4px',
-    color: 'var(--foreground)',
-    background: 'var(--accent)',
+  '.cm-ask-agent-field::placeholder': { color: 'var(--muted-foreground)' },
+  '.cm-ask-agent-leaving': {
+    animation: 'cm-ask-out var(--ask-exit, 140ms) var(--ease-settle, ease-out) both',
+    // The message is already gone; nothing here is worth a click on the way out.
+    pointerEvents: 'none',
   },
-  '.cm-ask-agent button.cm-ask-agent-send:hover': {
-    color: 'var(--foreground)',
-    background: 'var(--accent)',
-    filter: 'brightness(1.15)',
+  '@keyframes cm-ask-in': {
+    from: { opacity: '0', transform: 'translateY(3px) scale(0.98)' },
+    to: { opacity: '1', transform: 'none' },
   },
-
+  '@keyframes cm-ask-out': {
+    from: { opacity: '1', transform: 'none' },
+    to: { opacity: '0', transform: 'translateY(-2px) scale(0.98)' },
+  },
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
 

@@ -6,6 +6,7 @@
  * by searching the source for the selected substring, which is approximate by
  * construction and simply wrong when the passage appears twice.
  */
+import { waitFor } from '@/test/render'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -89,8 +90,12 @@ function mount(doc: string, selection: EditorSelection, extensions: unknown[]): 
 /** The trigger, which is the only button until the form is open. */
 const button = () =>
   document.querySelector<HTMLButtonElement>('.cm-ask-agent button:not(.cm-ask-agent-send)')
-const field = () => document.querySelector<HTMLTextAreaElement>('.cm-ask-agent-form textarea')
-const sendButton = () => document.querySelector<HTMLButtonElement>('.cm-ask-agent-send')
+const field = () => document.querySelector<HTMLTextAreaElement>('.cm-ask-agent-field')
+
+/** ⌘/Ctrl + Enter. A plain Enter is a newline, so a multi-line message cannot be
+ *  sent half written. */
+const sendKey = (input: HTMLTextAreaElement) =>
+  input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true }))
 
 /** mousedown, not click: the tooltip is outside the content, so a plain click
  *  moves focus and collapses the selection the message is about. */
@@ -139,36 +144,73 @@ describe('the selection tooltip', () => {
     expect(field()).not.toBeNull()
   })
 
+  it('is a field and nothing else — the placeholder is the only instruction', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    press(button()!)
+    // No send button: a second control beside a field you are already typing in
+    // is a thing to look at rather than a thing to use.
+    expect(document.querySelectorAll('.cm-ask-agent button')).toHaveLength(0)
+    expect(field()!.placeholder).toContain('⌘↵')
+  })
+
   it('sends what was typed, above the passage', () => {
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
     press(button()!)
-    field()!.value = 'Rewrite this in one sentence'
-    press(sendButton()!)
+    const input = field()!
+    input.value = 'Rewrite this in one sentence'
+    sendKey(input)
     expect(onAsk).toHaveBeenCalledWith(
       'Rewrite this in one sentence\n\n[From a.md, line 1]\n> one',
     )
   })
 
-  it('sends on Enter and takes a newline on Shift+Enter', () => {
-    // The convention every message box uses, and the one a reader tries first.
+  it('takes a plain Enter as a newline rather than as send', () => {
+    // A message about a passage is often more than one line, and a bare Enter
+    // would send it half written.
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
     press(button()!)
     const input = field()!
     input.value = 'first line'
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
-    expect(onAsk).not.toHaveBeenCalled()
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    expect(onAsk).toHaveBeenCalledWith('first line\n\n[From a.md, line 1]\n> one')
+    expect(onAsk).not.toHaveBeenCalled()
   })
 
   it('sends the passage alone when the field is left empty', () => {
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
     press(button()!)
-    press(sendButton()!)
+    sendKey(field()!)
     expect(onAsk).toHaveBeenCalledWith('[From a.md, line 1]\n> one')
+  })
+
+  it('lets go of the passage once it is sent, which is what closes the popover', async () => {
+    // The tooltip exists because the selection is not empty, so collapsing it is
+    // the whole of how this closes — one mechanism rather than a second dismiss
+    // path that would have to agree with the first.
+    const onAsk = vi.fn()
+    const v = mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    sendKey(field()!)
+    expect(v.state.selection.main.empty).toBe(false) // still selected while it fades
+    await waitFor(() => expect(v.state.selection.main.empty).toBe(true))
+    expect(v.state.selection.main.head).toBe(3) // the caret lands after the passage
+    expect(field()).toBeNull()
+    expect(button()).toBeNull()
+  })
+
+  it('sends once however many times the key is pressed', async () => {
+    // The passage is still selected during the fade, so the field is still there
+    // to type into.
+    const onAsk = vi.fn()
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    const input = field()!
+    sendKey(input)
+    sendKey(input)
+    sendKey(input)
+    expect(onAsk).toHaveBeenCalledTimes(1)
   })
 
   it('Escape goes back to the button, not out of the editor', () => {

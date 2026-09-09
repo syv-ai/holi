@@ -13,8 +13,8 @@
  * `EditorDeps`, and `EditorPane` puts it in `agentSeedPromptAtom` — the wire the
  * reconcile handoff already uses. Nothing here knows there is an agent.
  */
-import { StateField, type EditorState, type Extension } from '@codemirror/state'
-import { showTooltip, type Tooltip } from '@codemirror/view'
+import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
+import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
 
 /**
  * The seeded turn for a selection. `from`/`to` are 1-based inclusive line
@@ -57,41 +57,78 @@ export function promptForSelection(state: EditorState, notePath: string): string
 }
 
 /**
- * The tooltip's two states: a button, and the form it opens into.
+ * How long the popover takes to leave. Set as a custom property on the element
+ * so the stylesheet animates for exactly this long: the number lives once, here,
+ * and the CSS reads it.
+ */
+const EXIT_MS = 140
+
+/** Nothing to fade for someone who asked not to be moved, so nothing to wait for
+ *  either. Read at use rather than cached: the OS setting can change while the
+ *  app runs. */
+const exitMs = (): number =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true ? 0 : EXIT_MS
+
+/**
+ * The tooltip's two states: a button, and the popover it opens into.
  *
- * Both live in one element that swaps its own children, rather than in a
+ * **The popover is a textarea and nothing else.** No send button, no chrome: the
+ * placeholder says how to send, which is the only instruction it needs, and a
+ * second control beside a field you are already typing in is a thing to look at
+ * rather than a thing to use.
+ *
+ * Both states live in one element that swaps its own children, rather than in a
  * `StateField`, because the state is genuinely local — nothing outside this
  * tooltip can act on whether the field is open. A selection change rebuilds the
- * tooltip and so closes the form, which is the right answer anyway: you are now
- * asking about a different passage.
+ * tooltip and so closes the popover, which is the right answer anyway: you are
+ * now asking about a different passage.
  *
- * **Nothing here may collapse the selection.** The tooltip is outside the
- * editor's content, so a plain click on the button moves focus and takes the
+ * **Nothing here may collapse the selection by accident.** The tooltip is outside
+ * the editor's content, so a plain click on the button moves focus and takes the
  * highlight with it; `preventDefault` on `mousedown` is what stops that. The
- * TEXTAREA is the exception and must take focus, which is safe because the
- * selection lives in the editor's state and not in the DOM: focusing elsewhere
- * dims the highlight without changing what is selected. The quote was built
- * before either happened regardless.
+ * textarea is the exception and must take focus, which is safe because the
+ * selection lives in the editor's state and not in the DOM.
+ *
+ * **Sending collapses it on purpose**, which is the whole of how this closes.
+ * The tooltip exists because the selection is not empty, so putting the caret at
+ * the end of the passage removes it — one mechanism rather than a second
+ * "dismiss" path that would have to agree with the first. The message goes out
+ * before the animation, so nothing waits on it; the collapse follows the fade so
+ * there is something to fade.
  */
-function askAgentDom(quote: string, onAsk: (prompt: string) => void): HTMLElement {
+function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) => void): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
+  dom.style.setProperty('--ask-exit', `${EXIT_MS}ms`)
 
-  const send = (instruction: string) => onAsk(askPrompt(instruction, quote))
+  let leaving: ReturnType<typeof setTimeout> | null = null
 
-  const form = (): HTMLElement => {
-    const wrap = document.createElement('div')
-    wrap.className = 'cm-ask-agent-form'
+  const send = (instruction: string) => {
+    if (leaving !== null) return // already on the way out
+    onAsk(askPrompt(instruction, quote))
+    dom.classList.add('cm-ask-agent-leaving')
+    leaving = setTimeout(() => {
+      leaving = null
+      // The passage stays selected until now, and letting go of it is what takes
+      // this tooltip off the screen.
+      view.dispatch({ selection: EditorSelection.cursor(view.state.selection.main.to) })
+      view.focus()
+    }, exitMs())
+  }
 
+  const popover = (): HTMLElement => {
     const field = document.createElement('textarea')
     field.rows = 2
-    field.placeholder = 'What should the agent do with this?'
-    field.setAttribute('aria-label', 'Instructions for the agent')
-    // Enter sends, because this is a message rather than a document. Shift+Enter
-    // is the newline, which is the convention every chat box uses and the one a
-    // reader will try first.
+    field.className = 'cm-ask-agent-field'
+    // The only instruction the popover carries, and the reason it needs no
+    // button. ⌘ is the app's own convention for a shortcut in copy (⌘J, ⌘T).
+    field.placeholder = 'Ask the agent, ⌘↵ to send'
+    field.setAttribute('aria-label', 'Instructions for the agent, Command Enter to send')
     field.onkeydown = (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      // ⌘/Ctrl + Enter, so a plain Enter is still a newline. A message about a
+      // passage is often more than one line, and a bare Enter would send it half
+      // written.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         send(field.value)
         return
@@ -104,20 +141,9 @@ function askAgentDom(quote: string, onAsk: (prompt: string) => void): HTMLElemen
         dom.replaceChildren(trigger())
       }
     }
-
-    const submit = document.createElement('button')
-    submit.type = 'button'
-    submit.className = 'cm-ask-agent-send'
-    submit.textContent = 'Ask agent'
-    submit.onmousedown = (e) => {
-      e.preventDefault()
-      send(field.value)
-    }
-
-    wrap.append(field, submit)
     // After it is in the tree, or focus lands on a node with no layout yet.
     queueMicrotask(() => field.focus())
-    return wrap
+    return field
   }
 
   const trigger = (): HTMLElement => {
@@ -126,13 +152,29 @@ function askAgentDom(quote: string, onAsk: (prompt: string) => void): HTMLElemen
     button.textContent = 'Ask agent'
     button.onmousedown = (e) => {
       e.preventDefault()
-      dom.replaceChildren(form())
+      dom.replaceChildren(popover())
+      // The popover is much wider than the button it replaced, and CodeMirror
+      // positions this tooltip itself. A bare DOM swap is invisible to it, so
+      // the bubble would stay placed for the button and could hang off the edge
+      // of the editor. An empty transaction is the cheapest thing that makes it
+      // measure again, and it changes neither the document nor the selection, so
+      // nothing else in the stack recomputes.
+      view.dispatch({})
     }
     return button
   }
 
   dom.appendChild(trigger())
-  return dom
+  return {
+    dom,
+    // The tooltip can go before the fade finishes — another selection, the note
+    // closing — and the pending dispatch would then land on a view that has
+    // moved on.
+    destroy: () => {
+      if (leaving !== null) clearTimeout(leaving)
+      leaving = null
+    },
+  }
 }
 
 function tooltipFor(state: EditorState, notePath: string, onAsk: (prompt: string) => void): Tooltip[] {
@@ -150,7 +192,7 @@ function tooltipFor(state: EditorState, notePath: string, onAsk: (prompt: string
       pos: range.from,
       end: range.to,
       above: true,
-      create: () => ({ dom: askAgentDom(prompt, onAsk) }),
+      create: (view) => askAgentView(view, prompt, onAsk),
     },
   ]
 }
