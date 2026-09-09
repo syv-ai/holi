@@ -12,7 +12,6 @@
  * these are main-process shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
-import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
 import { activeRemoteAtom } from './vaults'
 
@@ -84,18 +83,27 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
  * Write back what the reviewer resolved to, as a **new commit** — never a
  * rewrite (`prd/vaults-sync.md` §History).
  *
- * The live buffers are flushed first so the editor's external-write reconcile
- * reloads the file cleanly (clean buffer → silent reload) instead of 3-way
- * merging its own revert, which is what `history.ts`'s restore does and for the
- * same reason. The file list is then re-asked: the revert has just minted a
- * commit inside the range being looked at.
+ * **The buffers are deliberately NOT flushed first**, which is where this parts
+ * company with `history.ts`'s restore. Restore replaces a file with an older
+ * version, so the user is discarding the current state on purpose and a flush
+ * followed by a clean reload is the coherent thing. A turn revert takes back
+ * what the AGENT did, and the reader's own unsaved edits are not what is being
+ * taken back: flushing would write them to disk and then overwrite them with the
+ * resolved text, losing them silently.
+ *
+ * So a file open with a dirty buffer gets no special case at all. The write hits
+ * disk, the watcher reports it, and `decideReload` runs — a clean buffer reloads
+ * silently, a dirty one 3-way merges, an overlap routes to reconcile. That
+ * machinery exists and this is the case it was built for.
+ *
+ * The file list is then re-asked: the revert has just minted a commit inside the
+ * range being looked at.
  */
 export const revertFileAtom = atom(
   null,
   async (get, set, { path, text }: { path: string; text: string }) => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return
-    await flushAllBuffers()
     await trpc.turns.revert.mutate({ remote, path, text })
     await set(loadTurnFilesAtom)
   },

@@ -37,13 +37,15 @@ vi.mock('@/lib/trpc', () => ({
   },
 }))
 
-vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => Promise.resolve() }))
+const flushAllBuffers = vi.fn(() => Promise.resolve())
+vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => flushAllBuffers() }))
 
 const TURN = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z' }
 const REMOTE = 'git@github.com:syv-ai/vault.git'
 
 beforeEach(() => {
-  for (const fn of [list, files, fileDiff, revert]) fn.mockReset()
+  for (const fn of [list, files, fileDiff, revert, flushAllBuffers]) fn.mockReset()
+  flushAllBuffers.mockResolvedValue(undefined)
   list.mockResolvedValue([TURN])
   files.mockResolvedValue([{ path: 'a.md', status: 'M', added: 2, removed: 1 }])
   fileDiff.mockResolvedValue({ before: 'old\n', after: 'new\n' })
@@ -148,4 +150,14 @@ test('a reset clears the last turn off the screen', async () => {
   expect(s.get(turnFilesAtom)).toEqual([])
   expect(s.get(selectedTurnPathAtom)).toBeNull()
   expect(s.get(turnDiffAtom)).toBeNull()
+})
+
+test('does not flush the open buffer before reverting', () => {
+  // Where this parts company with History's Restore. Restore replaces a file
+  // with an older version, so the current state is being discarded on purpose
+  // and a flush plus a clean reload is coherent. A turn revert takes back what
+  // the AGENT did; the reader's own unsaved edits are not part of that, and
+  // flushing would write them to disk only to overwrite them with the resolved
+  // text. Left alone, `decideReload` 3-way merges them instead.
+  expect(flushAllBuffers).not.toHaveBeenCalled()
 })
