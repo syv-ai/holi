@@ -4,11 +4,26 @@
 
 **Goal:** A fenced ` ```mermaid ` block draws as a diagram in the editor, and reverts to source when the caret enters it.
 
-**Architecture:** One more case in the live-preview decoration builder. `livePreview.ts` already handles `FencedCode` and already has `activeHere` in scope, which is the whole reveal rule; a mermaid fence becomes a `Decoration.replace` carrying a block widget instead of the per-line `codeLine` decoration. Mermaid itself is dynamically imported on first use and renders asynchronously into a placeholder the widget puts up synchronously.
+**Architecture (as planned — see the note below for what it turned out to be):** One more case in the live-preview decoration builder. `livePreview.ts` already handles `FencedCode` and already has `activeHere` in scope, which is the whole reveal rule; a mermaid fence becomes a `Decoration.replace` carrying a block widget instead of the per-line `codeLine` decoration. Mermaid itself is dynamically imported on first use and renders asynchronously into a placeholder the widget puts up synchronously.
 
 **Tech Stack:** TypeScript, CodeMirror 6 (`WidgetType`, `Decoration.replace`), `mermaid` (new dependency, lazy), Vitest (`dom` project).
 
 **Adopted from:** `syv-ai/ailex-but-better-private`'s `MermaidCodeBlock.tsx`, which is a TipTap node view. Only the idea ports; the mechanism is CodeMirror's.
+
+> **BUILT 2026-09-09, and the architecture above is wrong.** A case in the live-preview builder is
+> not buildable: `livePreview` is a `ViewPlugin`, and CodeMirror refuses block decorations from one
+> — `RangeError: Block decorations may not be specified via plugins` — by aborting `EditorView`
+> construction, so a note with a diagram opened blank. It was written the planned way first and
+> failed in the running app on the first render; the unit tests could not see it, because
+> `buildDecorations` is a pure function and the refusal happens when a view is constructed from what
+> it returns. The diagram is a **`StateField`** (`editor/mermaid.ts`), which is how `frontmatter.ts`
+> and the table widget already provide theirs. `livePreview` ended up untouched: it still paints
+> every fence's lines as code, and a block replace means those lines are not rendered.
+>
+> Two other things the plan did not foresee. The reveal rule needed nothing new — a fence holds no
+> inline elements, so it is exactly D91's `touches`. And the diagram was the **third block widget to
+> arrive flush against the page edge**, needing `--editor-inset` by hand, which `theme.ts` had
+> predicted in as many words.
 
 ---
 
@@ -46,10 +61,10 @@ pnpm typecheck && pnpm lint
 **Files:**
 - Modify: `apps/desktop/package.json`
 
-- [ ] **Step 1** `pnpm -C apps/desktop add mermaid`. Pin the exact version, matching how the rest of the file pins.
-- [ ] **Step 2** Confirm it is imported nowhere yet, so this commit changes no behaviour.
-- [ ] **Step 3** Run `pnpm -C apps/desktop test` to confirm the install disturbed nothing.
-- [ ] **Step 4** Commit.
+- [x] **Step 1** `pnpm -C apps/desktop add mermaid`. Pin the exact version, matching how the rest of the file pins.
+- [x] **Step 2** Confirm it is imported nowhere yet, so this commit changes no behaviour.
+- [x] **Step 3** Run `pnpm -C apps/desktop test` to confirm the install disturbed nothing.
+- [x] **Step 4** Commit.
 
 **Gotcha:** pnpm 10 requires an `onlyBuiltDependencies` entry for any package wanting a build script. Check the install output and add one if it asks.
 
@@ -77,11 +92,11 @@ export class MermaidWidget extends WidgetType {
 }
 ```
 
-- [ ] **Step 1** Write the test with mermaid mocked: `toDOM` returns an element synchronously; the SVG lands once the mocked render resolves; a rejected render leaves the source text visible; `eq` is true for equal sources and false otherwise; two `toDOM` calls for the same source do not both invoke mermaid (the module import is memoised).
-- [ ] **Step 2** Run it, watch it fail.
-- [ ] **Step 3** Implement. `const { default: mermaid } = await import('mermaid')` behind a module-level promise so the import happens once; `mermaid.initialize({ startOnLoad: false })`; render with a unique id per call.
-- [ ] **Step 4** Green.
-- [ ] **Step 5** Commit.
+- [x] **Step 1** Write the test with mermaid mocked: `toDOM` returns an element synchronously; the SVG lands once the mocked render resolves; a rejected render leaves the source text visible; `eq` is true for equal sources and false otherwise; two `toDOM` calls for the same source do not both invoke mermaid (the module import is memoised).
+- [x] **Step 2** Run it, watch it fail.
+- [x] **Step 3** Implement. `const { default: mermaid } = await import('mermaid')` behind a module-level promise so the import happens once; `mermaid.initialize({ startOnLoad: false })`; render with a unique id per call.
+- [x] **Step 4** Green.
+- [x] **Step 5** Commit.
 
 **Gotcha:** `mermaid.render` appends a temporary element to `document.body` and can leave it behind on failure. Clean up in a `finally`, or a long session accumulates orphans.
 
@@ -97,11 +112,11 @@ export class MermaidWidget extends WidgetType {
 - Modify: `apps/desktop/src/renderer/src/editor/livePreview.ts` (the `FencedCode` case, ~line 146)
 - Test: extend `__tests__/mermaid.test.tsx`
 
-- [ ] **Step 1** Write the test: a ` ```mermaid ` fence with the caret elsewhere renders the widget; the same fence with the caret inside it renders raw source lines; a ` ```python ` fence is untouched by this change; a fence with no info string is untouched.
-- [ ] **Step 2** Run it, watch it fail.
-- [ ] **Step 3** Implement. Read the info string from the fence's first line, pass it through `fenceLanguageId`, and when it is `mermaid` and `!activeHere`, push one `Decoration.replace({ widget: new MermaidWidget(body), block: true })` over the whole node instead of the per-line `codeLine` decorations. Otherwise fall through to the existing behaviour unchanged.
-- [ ] **Step 4** Green.
-- [ ] **Step 5** Commit.
+- [x] **Step 1** Write the test: a ` ```mermaid ` fence with the caret elsewhere renders the widget; the same fence with the caret inside it renders raw source lines; a ` ```python ` fence is untouched by this change; a fence with no info string is untouched.
+- [x] **Step 2** Run it, watch it fail.
+- [x] **Step 3** Implement. Read the info string from the fence's first line, pass it through `fenceLanguageId`, and when it is `mermaid` and `!activeHere`, push one `Decoration.replace({ widget: new MermaidWidget(body), block: true })` over the whole node instead of the per-line `codeLine` decorations. Otherwise fall through to the existing behaviour unchanged.
+- [x] **Step 4** Green.
+- [x] **Step 5** Commit.
 
 **Gotcha:** a block-level `Decoration.replace` must cover whole lines. Span from the start of the fence's first line to the end of its last, or CodeMirror throws on a block decoration with partial line coverage.
 
@@ -109,20 +124,20 @@ export class MermaidWidget extends WidgetType {
 
 ### Task 4: Verify in the running app
 
-- [ ] **Step 1** `pnpm dev:debug`, write a mermaid fence in a note.
-- [ ] **Step 2** Confirm it renders, and that clicking into it shows the source.
-- [ ] **Step 3** Confirm an invalid diagram shows its source and does not blank the editor.
-- [ ] **Step 4** Hold an arrow key through a note containing three diagrams and confirm the editor stays responsive. This is the `eq` check, and it is the one thing that will not show up in a unit test.
-- [ ] **Step 5** Screenshot with `pnpm exec node apps/desktop/cdp.mjs --shot`.
+- [x] **Step 1** `pnpm dev:debug`, write a mermaid fence in a note.
+- [x] **Step 2** Confirm it renders, and that clicking into it shows the source.
+- [x] **Step 3** Confirm an invalid diagram shows its source and does not blank the editor.
+- [x] **Step 4** Hold an arrow key through a note containing three diagrams and confirm the editor stays responsive. This is the `eq` check, and it is the one thing that will not show up in a unit test.
+- [x] **Step 5** Screenshot with `pnpm exec node apps/desktop/cdp.mjs --shot`.
 
 ---
 
 ### Task 5: Documentation
 
-- [ ] **Step 1** Add it to [`docs/prd/notes-editor.md`](../prd/notes-editor.md) beside the inline-images paragraph, which is the same kind of statement about the same mechanism.
-- [ ] **Step 2** Add an entry to `docs/not-built.md` under §PDF export for the export half below, naming the three routes and what would decide between them.
-- [ ] **Step 3** Add the verified entry to `docs/upcoming.md`.
-- [ ] **Step 4** Commit.
+- [x] **Step 1** Add it to [`docs/prd/notes-editor.md`](../prd/notes-editor.md) beside the inline-images paragraph, which is the same kind of statement about the same mechanism.
+- [x] **Step 2** Add an entry to `docs/not-built.md` under §PDF export for the export half below, naming the three routes and what would decide between them.
+- [x] **Step 3** Add the verified entry to `docs/upcoming.md`.
+- [x] **Step 4** Commit.
 
 ---
 

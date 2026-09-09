@@ -10,6 +10,7 @@ import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
 import { frontmatterExtension } from './frontmatter'
+import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
 import { headingSlide } from './heading-slide'
 import {
@@ -95,6 +96,10 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // After livePreview: the block-replace owns the frontmatter region, and
     // livePreview is told to skip it (FR-2 hide / FR-16 reveal).
     frontmatterExtension,
+    // Also a StateField, and for the same reason as the line above: CodeMirror
+    // refuses block decorations from a plugin. ```mermaid draws as a diagram
+    // (#6).
+    mermaidExtension,
     linkClickHandler(deps.nav),
     wikiHoverPreview(deps.readNote),
     // The document's own markdown tags, so a rendered table's cells read as

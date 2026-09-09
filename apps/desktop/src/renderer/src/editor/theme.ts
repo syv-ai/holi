@@ -68,11 +68,12 @@ export const editorTheme = EditorView.baseTheme({
    * first one on screen.
    *
    * The price is that a BLOCK WIDGET is not a line. CodeMirror renders one as a
-   * sibling of the lines, so it gets none of this and sat 24px out in the page
-   * margin until it was given the inset by hand. There are two — the frontmatter
-   * widget (`.cm-fm`, in frontmatter.ts) and the table below — and a third would
-   * need the same. Padding them does not disturb the selection edge: that is
-   * read off the first `.cm-line`, never off a widget.
+   * sibling of the lines, so it gets none of this and sits 24px out in the page
+   * margin until it is given the inset by hand. There are three — the
+   * frontmatter widget (`.cm-fm`, in frontmatter.ts), the table below, and a
+   * rendered mermaid diagram — and each one arrived flush to the edge before
+   * anyone remembered. Insetting them does not disturb the selection edge: that
+   * is read off the first `.cm-line`, never off a widget.
    */
   '.cm-line': { padding: '0 var(--editor-inset)' },
   /**
@@ -222,6 +223,31 @@ export const editorTheme = EditorView.baseTheme({
   },
   '.tbl-cell-view .cm-cell-link': { color: 'var(--link)' },
   '.cm-code-line': { background: 'rgba(255,255,255,0.04)' },
+  /**
+   * A rendered mermaid diagram (#6).
+   *
+   * The same restraint FR-3b asks of every other rendered block: no box, no
+   * border, and vertical padding close to what the source occupied, so a note
+   * does not lurch when a diagram opens or closes. It scrolls sideways rather
+   * than shrinking, because a flowchart squeezed to a narrow pane is unreadable
+   * in a way that a scrollbar is not.
+   *
+   * The side margin is the third instance of the note on `.cm-line`: a BLOCK
+   * WIDGET is not a line and gets none of the line's padding, so without this it
+   * sits out in the page margin exactly as the frontmatter widget and the table
+   * did. That comment predicted a third and this is it.
+   */
+  '.cm-mermaid': { padding: '0.3em 0', margin: '0 var(--editor-inset)', overflowX: 'auto' },
+  '.cm-mermaid svg': { maxWidth: '100%', height: 'auto' },
+  // What is on screen until the render lands, and what stays there when it
+  // fails. Styled as the code it is rather than as an error.
+  '.cm-mermaid-source': {
+    margin: '0',
+    fontFamily: MONO,
+    whiteSpace: 'pre-wrap',
+    background: 'rgba(255,255,255,0.04)',
+    color: 'var(--muted-foreground)',
+  },
   /**
    * Lists. `livePreview`'s `ListItem` case stamps the depth; this turns it into
    * a distance, and that is the whole mechanism.

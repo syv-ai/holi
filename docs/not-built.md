@@ -159,6 +159,28 @@ D67–D70.
 
 ## PDF export
 
+**A mermaid diagram renders in the editor and not in the PDF.** Since 2026-09-09 a ```mermaid fence
+draws as a diagram in a note ([`#6`](https://github.com/syv-ai/holi/issues/6)); a PDF made from that
+note still shows the fence as a code block. That inconsistency is worse than the feature being absent
+in both places, so it should not stay open long — but it is a design question rather than a task, and
+it is [`#9`](https://github.com/syv-ai/holi/issues/9).
+
+**Why it is not simply "call mermaid in the exporter".** Mermaid needs a DOM, and the two places a
+PDF gets made have different amounts of one. `ConvertToPdf` runs in the renderer and has a DOM. The
+agent's `md-to-pdf` skill shells `typst compile` directly and never enters Holi at all, so it has
+none. Three routes, and the choice between them is the decision:
+
+1. **Pre-render in the renderer.** Cheap, and fixes only the UI path — the agent's PDFs would still
+   show code blocks, so the two paths would disagree about what a vault's documents look like.
+2. **An offscreen `BrowserWindow` in main, behind an ops endpoint.** Both paths reach it, the agent's
+   through the `holi` CLI it already uses. Coherent, and much the most work.
+3. **Do not render mermaid in PDFs at all**, and say so in the `md-to-pdf` skill. Honest, and it
+   keeps one story rather than two.
+
+Route 2 is the only one where the two PDF paths agree, which is the property that matters. Whether
+that earns an offscreen window is what has not been decided.
+
+
 **Template distribution across vaults.** Templates are per-vault committed content, which is what
 makes a team consistent *within* a vault and does nothing across five of them. A shared brand repo
 cloned as a vault is the obvious answer and has not been designed.
