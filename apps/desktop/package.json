@@ -49,6 +49,7 @@
     "jotai": "^2.20.1",
     "lucide-react": "^1.27.0",
     "marked": "^18.0.9",
+    "mermaid": "^11.17.2",
     "node-pty": "^1.0.0",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
