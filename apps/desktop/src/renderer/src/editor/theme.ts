@@ -183,7 +183,7 @@ export const editorTheme = EditorView.baseTheme({
    */
   '@media (prefers-reduced-motion: reduce)': {
     '&.cm-heading-sliding .cm-heading-mark': { transition: 'none' },
-    '.cm-ask-agent-field, .cm-ask-agent-leaving': { animation: 'none' },
+    '.cm-ask-agent-open, .cm-ask-agent-leaving': { animation: 'none' },
   },
 
   '.cm-strong': { fontWeight: '700' },
@@ -386,6 +386,8 @@ export const editorTheme = EditorView.baseTheme({
    */
   '.cm-tooltip.cm-ask-agent': {
     padding: '0',
+    // It sits above the passage, so it grows out of its own bottom edge.
+    transformOrigin: 'bottom center',
     overflow: 'hidden',
     color: 'var(--popover-foreground)',
     background: 'var(--popover)',
@@ -393,36 +395,67 @@ export const editorTheme = EditorView.baseTheme({
     borderRadius: '8px',
     boxShadow: 'var(--shadow-popover)',
   },
+  /**
+   * The field reads as the note does. Size and weight are inherited from the
+   * editor's own 14px here; the FACE is set once, by `notesFontTheme` at the foot
+   * of this file, which is the seam the scroller and the frontmatter widget
+   * already use. What you are writing about is prose, and so is what you write.
+   *
+   * **No `font-family` in this rule, deliberately.** A `theme` and a `baseTheme`
+   * generate selectors of equal specificity, so a family set in both would be
+   * settled by which stylesheet happens to come last. Setting it in exactly one
+   * place is not a preference, it is what makes the answer not depend on that.
+   *
+   * No height of its own: `askAgent.ts` grows it with its content and tells
+   * CodeMirror to re-place the bubble when it does. `maxHeight` is where growing
+   * stops and scrolling starts, so one long message cannot cover the note it is
+   * about.
+   */
   '.cm-ask-agent-field': {
     display: 'block',
-    // `inherit` would take the vault's prose face (D87); this is UI, not prose.
-    font: 'inherit',
-    fontSize: '0.75rem',
-    lineHeight: '1.5',
-    width: '22rem',
+    fontSize: 'inherit',
+    fontWeight: 'inherit',
+    fontStyle: 'inherit',
+    lineHeight: '1.6',
+    width: '26rem',
     maxWidth: '60vw',
-    padding: '0.35rem 0.45rem',
+    maxHeight: '40vh',
+    overflowY: 'auto',
+    padding: '0.5rem 0.6rem',
     color: 'var(--popover-foreground)',
     background: 'transparent',
     border: 'none',
     borderRadius: '0',
     resize: 'none',
     outline: 'none',
-    animation: 'cm-ask-in var(--duration-micro, 160ms) var(--ease-settle, ease-out) both',
   },
   '.cm-ask-agent-field::placeholder': { color: 'var(--muted-foreground)' },
+  /**
+   * The BUBBLE animates, not the field inside it.
+   *
+   * Animating the field was the first version and it was invisible: the bubble
+   * arrived instantly at full size and a transparent field faded inside it, so
+   * there was nothing to see. `-open` is added by the press rather than being on
+   * the element from birth, because this element is rebuilt on every selection
+   * change and a mount-time animation would replay on every frame of a drag.
+   */
+  '.cm-ask-agent-open': {
+    animation: 'cm-ask-in var(--duration-micro, 160ms) var(--ease-settle, ease-out) both',
+  },
   '.cm-ask-agent-leaving': {
     animation: 'cm-ask-out var(--ask-exit, 140ms) var(--ease-settle, ease-out) both',
     // The message is already gone; nothing here is worth a click on the way out.
     pointerEvents: 'none',
   },
+  // Enough travel to register as the popover opening rather than as a flicker,
+  // and anchored at the bottom because the bubble sits above the passage.
   '@keyframes cm-ask-in': {
-    from: { opacity: '0', transform: 'translateY(3px) scale(0.98)' },
+    from: { opacity: '0', transform: 'translateY(6px) scale(0.94)' },
     to: { opacity: '1', transform: 'none' },
   },
   '@keyframes cm-ask-out': {
     from: { opacity: '1', transform: 'none' },
-    to: { opacity: '0', transform: 'translateY(-2px) scale(0.98)' },
+    to: { opacity: '0', transform: 'translateY(4px) scale(0.94)' },
   },
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
@@ -619,4 +652,8 @@ export const notesFontTheme = EditorView.theme({
   '.cm-inline-code': { fontFamily: MONO },
   '.cm-fm': { fontFamily: MONO },
   '.cm-fm .cm-scroller': { fontFamily: MONO },
+  // The ask popover is about a passage of prose, so it is written in the same
+  // face. It reaches here because CodeMirror mounts a tooltip as a child of
+  // `.cm-editor`, which is where this theme's class lives.
+  '.cm-ask-agent-field': { fontFamily: `var(--editor-font, ${MONO})` },
 })

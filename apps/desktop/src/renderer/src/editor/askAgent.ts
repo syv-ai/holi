@@ -118,8 +118,30 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
 
   const popover = (): HTMLElement => {
     const field = document.createElement('textarea')
-    field.rows = 2
+    field.rows = 1
     field.className = 'cm-ask-agent-field'
+
+    /**
+     * Grow with what is typed rather than scroll inside a fixed box.
+     *
+     * `height: auto` first, because `scrollHeight` of an element already sized to
+     * its content reports that size and never shrinks again — a message you cut
+     * back down would keep the height of its longest draft.
+     *
+     * A change in height changes the size of a bubble CodeMirror has positioned,
+     * and it is anchored ABOVE the passage, so it has to be told or it grows down
+     * over the text it is about. Only on a real change, so this is a few
+     * transactions per message rather than one per keystroke.
+     */
+    let height = 0
+    const grow = () => {
+      field.style.height = 'auto'
+      field.style.height = `${field.scrollHeight}px`
+      if (field.scrollHeight === height) return
+      height = field.scrollHeight
+      view.dispatch({})
+    }
+    field.oninput = grow
     // The only instruction the popover carries, and the reason it needs no
     // button. ⌘ is the app's own convention for a shortcut in copy (⌘J, ⌘T).
     field.placeholder = 'Ask the agent, ⌘↵ to send'
@@ -138,11 +160,17 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
       if (e.key === 'Escape') {
         e.preventDefault()
         e.stopPropagation()
+        dom.classList.remove('cm-ask-agent-open')
         dom.replaceChildren(trigger())
+        view.dispatch({})
       }
     }
-    // After it is in the tree, or focus lands on a node with no layout yet.
-    queueMicrotask(() => field.focus())
+    // After it is in the tree: focus lands on a node with no layout yet, and
+    // `scrollHeight` of a detached element is 0.
+    queueMicrotask(() => {
+      field.focus()
+      grow()
+    })
     return field
   }
 
@@ -153,6 +181,11 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
     button.onmousedown = (e) => {
       e.preventDefault()
       dom.replaceChildren(popover())
+      // The bubble animates in, not the field inside it. The bubble IS this
+      // element, and it is rebuilt on every selection change — so a mount-time
+      // animation would replay on every frame of a drag-select. A class added by
+      // the press instead runs it exactly when the popover opens.
+      dom.classList.add('cm-ask-agent-open')
       // The popover is much wider than the button it replaced, and CodeMirror
       // positions this tooltip itself. A bare DOM swap is invisible to it, so
       // the bubble would stay placed for the button and could hang off the edge

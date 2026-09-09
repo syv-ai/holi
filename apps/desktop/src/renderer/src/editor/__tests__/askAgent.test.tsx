@@ -153,6 +153,41 @@ describe('the selection tooltip', () => {
     expect(field()!.placeholder).toContain('⌘↵')
   })
 
+  it('marks the bubble as open, which is what animates', () => {
+    // The first version animated the FIELD, inside a bubble that arrived
+    // instantly at full size — so there was nothing to see. The class goes on at
+    // the press rather than at mount, because this element is rebuilt on every
+    // selection change and a mount-time animation would replay through a drag.
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    const bubble = document.querySelector('.cm-ask-agent')!
+    expect(bubble.classList.contains('cm-ask-agent-open')).toBe(false)
+    press(button()!)
+    expect(bubble.classList.contains('cm-ask-agent-open')).toBe(true)
+  })
+
+  it('grows with what is typed rather than scrolling inside a fixed box', () => {
+    // jsdom lays nothing out, so the height the browser would report is stated
+    // here. What is being tested is that the field takes it, and takes it again.
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    press(button()!)
+    const input = field()!
+    let content = 40
+    Object.defineProperty(input, 'scrollHeight', { get: () => content })
+
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('40px')
+
+    content = 160
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('160px')
+
+    // And back down: `height: auto` before measuring is what lets a message cut
+    // short lose the height of its longest draft.
+    content = 60
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    expect(input.style.height).toBe('60px')
+  })
+
   it('sends what was typed, above the passage', () => {
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
