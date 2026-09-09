@@ -128,8 +128,12 @@ askAgent: (prompt: string) => void
 
 - [x] **Step 1** `pnpm dev:debug`, open a note, select two paragraphs.
 - [x] **Step 2** Confirm the button appears over the selection, and that clicking it opens the panel with the quoted text and the right line range already typed.
-- [x] **Step 3** Confirm the agent's answer refers to the right lines.
-- [x] **Step 4** Confirm no button appears in the mail composer or in an open `.json`.
+- [ ] **Step 3** Confirm the agent's answer refers to the right lines. **NOT DONE.** The prompt
+  string was verified exactly (`[From projects/roadmap.md, lines 3-4]` over the right two lines, in
+  the running app), but no agent turn was actually run — that spends tokens against his account and
+  writes into his vault's transcript, neither of which was mine to do unattended.
+- [x] **Step 4** Confirm no button appears in the mail composer or in an open `.json`. (The `.json`
+  case was checked in the running app; the mail composer is covered by a test rather than by hand.)
 - [x] **Step 5** Screenshot with `pnpm exec node apps/desktop/cdp.mjs --shot`.
 
 ---
