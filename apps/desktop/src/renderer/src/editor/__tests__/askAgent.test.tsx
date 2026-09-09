@@ -1,5 +1,5 @@
 /**
- * Ask Claude about a selection (#5).
+ * Ask the agent about a selection (#5).
  *
  * The prompt is the interesting half. Its line numbers are exact because
  * CodeMirror holds the range — the affordance this is adopted from recovers them
@@ -9,7 +9,7 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { askAgentTooltip, promptForSelection, selectionPrompt } from '../askAgent'
+import { askAgentTooltip, askPrompt, promptForSelection, selectionPrompt } from '../askAgent'
 import { baseEditorExtensions, mailComposerExtensions, plainTextExtensions } from '../extensions'
 
 describe('selectionPrompt', () => {
@@ -86,7 +86,37 @@ function mount(doc: string, selection: EditorSelection, extensions: unknown[]): 
   return view
 }
 
-const button = () => document.querySelector<HTMLButtonElement>('.cm-ask-agent button')
+/** The trigger, which is the only button until the form is open. */
+const button = () =>
+  document.querySelector<HTMLButtonElement>('.cm-ask-agent button:not(.cm-ask-agent-send)')
+const field = () => document.querySelector<HTMLTextAreaElement>('.cm-ask-agent-form textarea')
+const sendButton = () => document.querySelector<HTMLButtonElement>('.cm-ask-agent-send')
+
+/** mousedown, not click: the tooltip is outside the content, so a plain click
+ *  moves focus and collapses the selection the message is about. */
+const press = (el: HTMLElement) =>
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+
+describe('askPrompt', () => {
+  const QUOTE = '[From a.md, line 1]\n> one'
+
+  it('puts the instruction first and the passage under it', () => {
+    // The instruction is the sentence to act on; a quote reads as context for
+    // what precedes it.
+    expect(askPrompt('Tighten this', QUOTE)).toBe(`Tighten this\n\n${QUOTE}`)
+  })
+
+  it('sends the passage alone when nothing was typed', () => {
+    // What the button did before it grew a field, and "look at this" is a real
+    // thing to want to say.
+    expect(askPrompt('', QUOTE)).toBe(QUOTE)
+    expect(askPrompt('   \n  ', QUOTE)).toBe(QUOTE)
+  })
+
+  it('does not carry the field’s stray whitespace into the message', () => {
+    expect(askPrompt('  Tighten this\n', QUOTE)).toBe(`Tighten this\n\n${QUOTE}`)
+  })
+})
 
 describe('the selection tooltip', () => {
   it('offers nothing when nothing is selected', () => {
@@ -97,15 +127,60 @@ describe('the selection tooltip', () => {
   it('offers a button over a selection', () => {
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
     expect(button()).not.toBeNull()
+    expect(button()!.textContent).toBe('Ask agent')
   })
 
-  it('hands over the finished prompt when pressed', () => {
+  it('opens a field rather than sending straight away', () => {
+    // The whole point of the field: a passage on its own is not an instruction.
     const onAsk = vi.fn()
     mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
-    // mousedown, not click: the tooltip is outside the content, so a plain click
-    // moves focus and collapses the selection it is about to send.
-    button()!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    press(button()!)
+    expect(onAsk).not.toHaveBeenCalled()
+    expect(field()).not.toBeNull()
+  })
+
+  it('sends what was typed, above the passage', () => {
+    const onAsk = vi.fn()
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    field()!.value = 'Rewrite this in one sentence'
+    press(sendButton()!)
+    expect(onAsk).toHaveBeenCalledWith(
+      'Rewrite this in one sentence\n\n[From a.md, line 1]\n> one',
+    )
+  })
+
+  it('sends on Enter and takes a newline on Shift+Enter', () => {
+    // The convention every message box uses, and the one a reader tries first.
+    const onAsk = vi.fn()
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    const input = field()!
+    input.value = 'first line'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }))
+    expect(onAsk).not.toHaveBeenCalled()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(onAsk).toHaveBeenCalledWith('first line\n\n[From a.md, line 1]\n> one')
+  })
+
+  it('sends the passage alone when the field is left empty', () => {
+    const onAsk = vi.fn()
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    press(sendButton()!)
     expect(onAsk).toHaveBeenCalledWith('[From a.md, line 1]\n> one')
+  })
+
+  it('Escape goes back to the button, not out of the editor', () => {
+    // Escape here means "not this", not "stop selecting" — the selection is
+    // still what the tooltip is anchored to.
+    const onAsk = vi.fn()
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    press(button()!)
+    field()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    expect(field()).toBeNull()
+    expect(button()).not.toBeNull()
+    expect(onAsk).not.toHaveBeenCalled()
   })
 
   it('offers nothing on a locked file', () => {

@@ -341,12 +341,13 @@ export const editorTheme = EditorView.baseTheme({
   },
 
   /**
-   * "Ask Claude", over a selection (#5).
+   * "Ask agent", over a selection (#5).
    *
    * A tooltip rather than anything mounted in the content: it has to sit above
    * the passage without being part of it, and CodeMirror already positions
    * tooltips against a range. `.cm-tooltip` supplies the shell, so this is only
-   * the button inside it.
+   * what sits inside it — first a button, and once pressed the field it opens
+   * into, so the passage can be sent with an instruction rather than alone.
    */
   '.cm-ask-agent button': {
     padding: '0.15rem 0.5rem',
@@ -358,6 +359,44 @@ export const editorTheme = EditorView.baseTheme({
     cursor: 'pointer',
   },
   '.cm-ask-agent button:hover': { color: 'var(--link)' },
+  '.cm-ask-agent-form': {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.25rem',
+    padding: '0.35rem',
+    // Wide enough for a sentence, and capped so a long selection's tooltip does
+    // not stretch to the width of the passage it is anchored over.
+    width: '22rem',
+    maxWidth: '60vw',
+  },
+  '.cm-ask-agent-form textarea': {
+    // `inherit` would take the vault's prose face (D87); this is UI, not prose.
+    font: 'inherit',
+    fontSize: '0.75rem',
+    lineHeight: '1.5',
+    padding: '0.3rem 0.4rem',
+    color: 'var(--foreground)',
+    background: 'var(--background)',
+    border: '1px solid var(--border)',
+    borderRadius: '4px',
+    resize: 'vertical',
+    outline: 'none',
+  },
+  '.cm-ask-agent-form textarea:focus': { borderColor: 'var(--ring)' },
+  '.cm-ask-agent-form textarea::placeholder': { color: 'var(--muted-foreground)' },
+  // Right-aligned, the way a send control sits in every message box.
+  '.cm-ask-agent button.cm-ask-agent-send': {
+    alignSelf: 'flex-end',
+    padding: '0.15rem 0.55rem',
+    borderRadius: '4px',
+    color: 'var(--foreground)',
+    background: 'var(--accent)',
+  },
+  '.cm-ask-agent button.cm-ask-agent-send:hover': {
+    color: 'var(--foreground)',
+    background: 'var(--accent)',
+    filter: 'brightness(1.15)',
+  },
 
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
