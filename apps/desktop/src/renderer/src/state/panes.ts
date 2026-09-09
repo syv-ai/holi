@@ -45,8 +45,14 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
  *
  *  **Settings is one of these rather than a modal** (#16): a modal blocks the
  *  window while you compare a setting against the vault it applies to, and a tab
- *  is splittable beside the note you are changing it for. */
-export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings'
+ *  is splittable beside the note you are changing it for.
+ *
+ *  **History joined them for the same reason.** It was a full-screen modal, and
+ *  reading what a commit changed is exactly the thing you want beside the note
+ *  it changed. The per-NOTE history side panel is untouched: that one is the
+ *  first of a set of sidebars a note unfolds, which is a different surface from
+ *  a vault-wide one. */
+export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
 
 /**
  * The two categories are now named rather than derived (see `SingletonTab`): a
@@ -58,7 +64,8 @@ export type Tab =
   /** A vault app (D74), identified by its directory name under `.holi/apps/`.
    *  There is one tab per app, not one per vault. */
   | { kind: 'app'; appId: string }
-  /** The board, the Google agenda, mail (D67) and settings — one of each, ever. */
+  /** The board, the Google agenda, mail (D67), settings and history — one of
+   *  each, ever. */
   | { kind: SingletonTab }
 
 export interface Pane {
@@ -160,6 +167,11 @@ export function openMail(workspace: Workspace): Workspace {
 
 export function openSettings(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'settings')
+}
+
+/** The vault's commit history, as a tab. */
+export function openHistory(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'history')
 }
 
 /** Open a vault app in the active pane, or focus it if it is already there.

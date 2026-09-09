@@ -65,12 +65,19 @@ import { snapshotAtom } from '@/state/vaults'
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
  *  apps use their id instead — both are keyed by something the tab carries
  *  rather than by its kind, so neither can live in a lookup like this. */
-const TAB_NAME = { board: 'board', agenda: 'agenda', mail: 'mail', settings: 'settings' } as const
+const TAB_NAME = {
+  board: 'board',
+  agenda: 'agenda',
+  mail: 'mail',
+  settings: 'settings',
+  history: 'history',
+} as const
 const TAB_LABEL: Partial<Record<string, string>> = {
   board: 'task board',
   agenda: 'your Google agenda',
   mail: 'your Gmail',
   settings: 'how this vault behaves',
+  history: 'every commit in this vault',
 }
 
 /** The strip's `gap-1`, in px — the caret is drawn in the gap before a pill. */

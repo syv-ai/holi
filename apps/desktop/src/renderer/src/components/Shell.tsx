@@ -60,6 +60,7 @@ import {
   moveTabToNewPane,
   openAgenda,
   openBoard,
+  openHistory,
   openMail,
   openSettings,
   openPinned,
@@ -71,8 +72,7 @@ import {
   workspaceAtom,
   type Tab,
 } from '../state/panes'
-import { historyOpenAtom, historyTargetPathAtom, vaultLogOpenAtom } from '../state/history'
-import { VaultHistory } from '@/features/history/VaultHistory'
+import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
 import { openDialogAtom } from '../state/dialogs'
@@ -136,7 +136,6 @@ export function Shell() {
   const historyOpen = useAtomValue(historyOpenAtom)
   const turnReviewOpen = useAtomValue(turnReviewOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
-  const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
@@ -708,7 +707,6 @@ export function Shell() {
           <AgentPanel />
         </ResizablePanelGroup>
 
-        {vaultLogOpen && <VaultHistory onClose={() => setVaultLogOpen(false)} />}
         <DialogHost />
       </div>
 
@@ -808,7 +806,7 @@ export function Shell() {
               // footer's `text-xs`, so the one word in the strip that changes
               // sat a size and a weight above everything around it.
               className={`h-auto p-0 text-xs font-normal truncate ${TONE[label.tone]}`}
-              onClick={() => setVaultLogOpen(true)}
+              onClick={() => setWorkspace(openHistory)}
             >
               {label.text}
             </Button>

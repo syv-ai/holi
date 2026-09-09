@@ -15,8 +15,11 @@ export type DialogSize = 'sm' | 'md' | 'lg' | 'full'
 
 // Each size is self-contained: its width AND the layout that width implies.
 // sm/md/lg are content-height form dialogs that scroll as one column; `full` is
-// a fixed-height workspace modal (VaultHistory's 3-pane git browser) whose body
-// scrolls internally, so the modal itself must not become a scroll box.
+// a fixed-height workspace modal whose body scrolls internally, so the modal
+// itself must not become a scroll box. **`full` currently has no consumer**: the
+// vault history was the only one and became a tab, for the reason settings did.
+// Kept because it is two lines and the shape it describes is a real one, not
+// because anything needs it today.
 //
 // `[&>*]:min-w-0` is load-bearing, not tidying. A grid child defaults to
 // `min-width: auto`, which refuses to shrink below its content — so one long
@@ -42,8 +45,8 @@ type DialogProps = {
    *
    * Off when the dialog's own footer already offers a way out — a Cancel button
    * beside a corner ✕ is two controls for one intent, and the ✕ is the one with
-   * no label. It stays the default because `full`-size workspace modals
-   * (VaultHistory) carry no footer at all, and there the ✕ is the only visible
+   * no label. It stays the default because a dialog without a footer — which a
+   * `full`-size workspace modal has no room for — has nothing else offering a
    * way out; Esc and click-outside work either way, but neither is visible.
    */
   closable?: boolean

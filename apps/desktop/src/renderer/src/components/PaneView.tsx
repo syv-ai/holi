@@ -20,6 +20,7 @@ import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
 import { AppFrame } from '@/features/apps/AppFrame'
 import { SettingsView } from '@/features/settings/SettingsView'
+import { HistoryView } from '@/features/history/HistoryView'
 import { BoardView } from '@/features/tasks/BoardView'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
@@ -166,6 +167,8 @@ export function PaneView({
           <MailView />
         ) : tab?.kind === 'settings' ? (
           <SettingsView />
+        ) : tab?.kind === 'history' ? (
+          <HistoryView />
         ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
           <ImageViewer path={tab.path} />
         ) : tab?.kind === 'note' &&
