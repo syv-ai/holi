@@ -149,6 +149,24 @@ describe('buildAgentEnv', () => {
     expect(env.HOLI_AGENT_TOKEN).toBeUndefined()
   })
 
+  it('drops an inherited DISABLE_ALTERNATE_SCREEN, which would beat NO_FLICKER', () => {
+    // Claude Code checks its explicit "off" BEFORE our "on", and its "off" is
+    // `NO_FLICKER=false` OR `DISABLE_ALTERNATE_SCREEN` set at all. Inherited
+    // from a shell profile it silently wins and the flicker comes back.
+    const env = buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' })
+    expect(env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN).toBeUndefined()
+    expect(env.CLAUDE_CODE_NO_FLICKER).toBe('1')
+  })
+
+  it('keeps CLAUDE_CODE_ACCESSIBILITY, which also disables the renderer', () => {
+    // It disables the same renderer, and that is the point: a screen-reader user
+    // asking for flat output outranks our preference about flicker.
+    expect(
+      buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_ACCESSIBILITY: '1' })
+        .CLAUDE_CODE_ACCESSIBILITY,
+    ).toBe('1')
+  })
+
   it('forces NO_FLICKER on — the embedded xterm flickers under the full-redraw renderer', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin' }).CLAUDE_CODE_NO_FLICKER).toBe('1')
   })

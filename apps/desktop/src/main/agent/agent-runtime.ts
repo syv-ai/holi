@@ -148,6 +148,26 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
   delete env.CLAUDE_CODE_MESSAGING_TOKEN
   delete env.CLAUDE_CODE_EXECPATH
   env.TERM = 'xterm-256color'
+  /**
+   * The flicker-free alt-screen renderer, for every session Holi starts.
+   *
+   * The classic renderer redraws the whole screen and visibly flickers inside
+   * the embedded xterm.js; this one patches a virtual viewport instead.
+   *
+   * **The `delete` is the load-bearing half.** Claude Code decides in this
+   * order: an explicit "off" is checked BEFORE our "on", and its "off" is
+   * `CLAUDE_CODE_NO_FLICKER=false` OR `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`
+   * being set at all. So an inherited `DISABLE_ALTERNATE_SCREEN` — from a shell
+   * profile, or from the terminal Holi was launched out of — silently wins over
+   * the line above and the flicker comes back with nothing said about it.
+   *
+   * This is the one `CLAUDE_CODE_*` variable stripped for a reason other than
+   * session identity, and it earns it by being the exact inverse of a setting
+   * Holi is forcing. `CLAUDE_CODE_ACCESSIBILITY` is deliberately NOT stripped:
+   * it disables this renderer too, and a screen-reader user asking for flat
+   * output outranks our preference about flicker.
+   */
+  delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   env.CLAUDE_CODE_NO_FLICKER = '1'
   // Reserved keys: strip any inherited value so a vault/user env can't spoof the
   // hook target, then set our own only when a live server is running.
