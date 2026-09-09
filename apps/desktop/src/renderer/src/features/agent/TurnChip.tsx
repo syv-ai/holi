@@ -18,9 +18,11 @@ import {
   latestTurnAtom,
   loadLatestTurnAtom,
   loadTurnFilesAtom,
+  resetTurnReviewAtom,
   turnFilesAtom,
   turnReviewOpenAtom,
 } from '@/state/turns'
+import { activeRemoteAtom } from '@/state/vaults'
 
 export function TurnChip(): React.JSX.Element | null {
   const { working } = useAtomValue(agentStatusAtom)
@@ -29,7 +31,29 @@ export function TurnChip(): React.JSX.Element | null {
   const loadLatest = useSetAtom(loadLatestTurnAtom)
   const loadFiles = useSetAtom(loadTurnFilesAtom)
   const setOpen = useSetAtom(turnReviewOpenAtom)
+  const reset = useSetAtom(resetTurnReviewAtom)
+  const remote = useAtomValue(activeRemoteAtom)
   const wasWorking = useRef(working)
+  const lastRemote = useRef(remote)
+
+  /**
+   * A vault SWITCH clears the review and closes it.
+   *
+   * The record is per vault and this component outlives the switch, so without
+   * this the footer would offer the previous vault's turn — and opening it would
+   * ask the NEW vault's git for a range it has never heard of. The chip is the
+   * always-mounted owner of this lifecycle; the panel only renders what it finds.
+   *
+   * The edge and not the level, like the turn flag below: on mount there is
+   * nothing to clear, and clearing anyway would throw away a record that has
+   * just been loaded.
+   */
+  useEffect(() => {
+    if (lastRemote.current === remote) return
+    lastRemote.current = remote
+    reset()
+    setOpen(false)
+  }, [remote, reset, setOpen])
 
   // On mount, and on each turn that ends. The edge, not the level: `working`
   // stays false between turns and this must not re-ask on every unrelated push.

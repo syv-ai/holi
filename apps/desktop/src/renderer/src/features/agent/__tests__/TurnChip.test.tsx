@@ -14,6 +14,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { TurnChip } from '../TurnChip'
 import { AGENT_STATUS_IDLE, agentStatusAtom } from '@/state/agent'
 import { latestTurnAtom, turnFilesAtom, turnReviewOpenAtom, type Turn } from '@/state/turns'
+import { activeRemoteAtom } from '@/state/vaults'
 
 const list = vi.fn()
 const files = vi.fn()
@@ -41,6 +42,7 @@ beforeEach(() => {
 
 function setup(seed: { turn?: Turn | null; files?: ReturnType<typeof file>[] } = {}) {
   const store = createStore()
+  store.set(activeRemoteAtom, 'git@github.com:syv-ai/vault.git')
   store.set(latestTurnAtom, seed.turn === undefined ? TURN : seed.turn)
   store.set(turnFilesAtom, seed.files ?? [file('a.md'), file('b.md')])
   return {
@@ -110,4 +112,23 @@ test('asks for a record on mount when it has none', async () => {
   // ago and nothing has pushed a status since.
   setup({ turn: null })
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+})
+
+test('a vault switch clears the last vault’s turn and closes the review', async () => {
+  // The record is per vault and this component outlives the switch. Left alone,
+  // the footer would offer the previous vault's turn, and opening it would ask
+  // the new vault's git for a range it has never heard of.
+  const { store } = setup()
+  store.set(turnReviewOpenAtom, true)
+  // The new vault has never run a turn, so nothing refills what the switch clears.
+  list.mockResolvedValue([])
+  await act(async () => {
+    store.set(activeRemoteAtom, 'git@github.com:syv-ai/other.git')
+  })
+  await waitFor(() => expect(store.get(latestTurnAtom)).toBeNull())
+  expect(store.get(turnFilesAtom)).toEqual([])
+  // Closed, because the panel it was showing belongs to a vault that is no
+  // longer open.
+  expect(store.get(turnReviewOpenAtom)).toBe(false)
+  expect(screen.queryByRole('button', { name: /Claude changed/ })).toBeNull()
 })
