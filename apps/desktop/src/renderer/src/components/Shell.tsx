@@ -26,6 +26,9 @@ import {
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
+import { TurnChip } from '@/features/agent/TurnChip'
+import { TurnReview } from '@/features/agent/TurnReview'
+import { turnReviewOpenAtom } from '@/state/turns'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
@@ -131,6 +134,7 @@ export function Shell() {
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
+  const turnReviewOpen = useAtomValue(turnReviewOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const [vaultLogOpen, setVaultLogOpen] = useAtom(vaultLogOpenAtom)
   const openDialog = useSetAtom(openDialogAtom)
@@ -671,6 +675,19 @@ export function Shell() {
             </>
           )}
 
+          {/* What the assistant's last turn changed (D88). A sibling of history
+              because it is the same kind of reading — a diff over a commit
+              range rather than over one commit. It renders nothing unless the
+              footer chip has something to open. */}
+          {turnReviewOpen && (
+            <>
+              <ResizableHandle />
+              <ResizablePanel id="turn-review" defaultSize={384} minSize={220}>
+                <TurnReview />
+              </ResizablePanel>
+            </>
+          )}
+
           {showSettings && (
             <>
               <ResizableHandle />
@@ -827,6 +844,9 @@ export function Shell() {
               </Button>
             </Tooltip>
           )}
+          {/* Last, so a conflict still owns this corner when there is one: a
+              turn's file count is news, and a conflict is a thing to act on. */}
+          <TurnChip />
         </div>
         {/* The vault assistant's only door outside itself (#15). ⌘J used to be
             the sole way in, and a live session was invisible once the drawer was
