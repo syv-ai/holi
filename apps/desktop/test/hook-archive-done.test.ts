@@ -20,7 +20,7 @@ beforeEach(async () => {
 
 afterAll(cleanupFixtures)
 
-const NOTHING: StagedChanges = { added: [], modified: [], renamed: [] }
+const NOTHING: StagedChanges = { added: [], modified: [], renamed: [], deleted: [] }
 
 /** Days after the fixture's commits, so "how long ago" is controlled without
  *  rewriting git's clock. */

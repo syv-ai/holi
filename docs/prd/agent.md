@@ -105,7 +105,7 @@ Holi builds **no config composition and no per-user config sync**. The layering 
 **Shared (committed to the repo).**
 - `.claude/` — shared **skills** and **commands**, and `settings.json` with **seeded permission defaults** plus the `UserPromptSubmit` hook config (which emits only the focused-note line). (Persona files are deferred — see Per-turn context.)
 - `AGENTS.md` (the user's "System"), imported by a Holi-managed `CLAUDE.md` shim.
-- `MEMORY.md` (the shared vault scratchpad).
+- `memory/` — the vault's memory, one fact per file (see §Memory below). `MEMORY.md` is the older shape and is still read.
 
 CC reads all of this from the cwd natively — **zero extra machinery**. A teammate updating a shared skill is an ordinary commit.
 
@@ -130,7 +130,27 @@ CC reads all of this from the cwd natively — **zero extra machinery**. A teamm
 - **`.holi/settings.json`** — vault-wide app settings, committed.
 - **`.holi/settings.local.json`** — machine-local, gitignored (sync watermarks, reminder delivery state, UI prefs).
 
-Because these are real files, native `Read/Edit/Write` on `MEMORY.md` / `USER.local.md` / a skill file *is* the edit path — no memory or skill ops.
+Because these are real files, native `Read/Edit/Write` on a `memory/` file / `USER.local.md` / a skill file *is* the edit path — no memory or skill ops.
+
+## Memory — a directory of typed files (D89)
+
+**A memory is one fact in one file** under `memory/` at the vault root. Content, not plumbing, which is why it is at the root and not under `.holi/`: the thing the user most wants to read and correct should not be a file they have to unhide first.
+
+Frontmatter carries `type` (a short free-form string), a one-line `description`, and an optional `title`. **`type` is free-form on purpose** — the session overview prints the *types in use* with counts, which makes the vocabulary self-documenting and self-converging with no registry for anyone to maintain. `AGENTS.md` suggests a starting set and nothing enforces it. The body is the fact, and memories link to each other with ordinary `[[memory/other.md]]` wiki-links, so `relink`, backlinks and the editor's chips work on them exactly as on any note.
+
+**Personal memory is `memory/x.local.md`** and needed no new machinery: D65's `.local.` marker plus the seeded `*.local.*` ignore already do it.
+
+**`memory/index.md` is generated** by the `memory-index` pre-commit transform ([`vaults-sync.md`](vaults-sync.md) FR-9), so the index lands in the *same commit* as the memory it describes — anywhere else and every commit is followed by an index commit, forever — and a burst of memory writes in one turn coalesces into one commit with its index already correct. **It lists shared memories only**: the index is committed, and a personal memory's title and description must appear in no committed file anywhere.
+
+**The indexer maintains; it never enforces.** Missing `title` takes the H1 then the filename, missing `description` takes the body's first sentence, missing `type` is written as `note`, and frontmatter that is not valid YAML is treated exactly as if it were absent. Nothing in it can fail a commit, which is FR-9 and not a courtesy.
+
+**One memory surface, not two.** Claude Code keeps its own auto-memory outside the vault, where it never syncs and no teammate sees it, and the agent reaches for it because it is the surface its own system prompt describes. The seeded `.claude/settings.json` sets **`autoMemoryEnabled: false`**, merged into vaults that already exist the way `disableClaudeAiConnectors` is and only when the key is absent. **Off rather than redirected:** `autoMemoryDirectory` would point Claude Code's memory at `memory/`, and is refused twice — Claude Code ignores it in checked-in project settings by its own rule, so Holi could only set it per clone; and its format is Anthropic's, whose `[[slug]]` links address memories by *name* where Holi's address vault *paths*, so Holi would be committing a format it does not control to every member of a shared repository.
+
+**A `SessionStart` hook prints an overview** (`.claude/hooks/memory-overview.mjs`), capped at ~3,000 characters: the types in use with counts, the index lines verbatim, the personal memories the index cannot carry, and the last three commits touching `memory/`. `SessionStart` rather than `UserPromptSubmit` because memory is *session* state — and because it fires on `compact` as well as `startup` and `resume`, which is precisely the moment the agent has forgotten it has memory at all. Over the cap it drops **descriptions first and never titles**: a memory whose name the agent cannot see is one it will never `Read`. With memory files present but no index yet — a `memory/` filled in outside Holi, or an index somebody deleted — it says exactly that and points at the directory, rather than printing an overview that silently omits every shared memory. Deliberately not a fallback scan: reading and grouping the files in the hook would be a second copy of the indexer, kept in step by nobody.
+
+**Nothing moves `MEMORY.md` or `USER.local.md`.** Both keep working and are still read. A new vault is seeded with `memory/index.md` in its empty form instead of a `MEMORY.md`; a vault that has one keeps it, `AGENTS.md` names it as the older shape, and the overview offers to split it. **The split is agent work the user asks for** — moving content the user wrote is exactly the unattended shared-layer edit [`not-built.md`](../not-built.md) rules against.
+
+**`memory/` is on the agent surface**, so a vault app may neither read nor list it: what the user told the assistant does not become readable by being spread over more files. The same predicate is what keeps `scaffold-md` from prepending a `created:` block to a memory file.
 
 ## Per-turn context & system prompt
 
@@ -197,7 +217,7 @@ So the tool surface is still **zero ops**, and it now holds for external data to
 - **A managed file that only lands at vault creation is a migration that never happens** (D70). `ensureSeeded` was write-if-absent and ran only on clone/adopt, so the gate would have been absent from every vault that already existed — the hook file unwritten, `PreToolUse` unwired, and `send` reaching a real mailbox with nothing asking. `.claude/settings.json` is now **merged** key-wise (as `.gitignore` already was line-wise: add what Holi requires, keep the user's own hooks and rules, leave malformed JSON alone), and seeding runs on **every vault open**. Any future managed file inherits this or repeats the bug.
 - **A managed file Holi wrote and nobody edited is refreshed, not frozen.** Create-if-missing is what makes seeding safe to run on every open — and it also means a managed file can never be improved. A skill shipped with four gaps in it stays wrong on every machine that ever opened the vault, and the authoring skill is the main lever a feature like vault apps has for being usable. So `SEED_FILES` splits by **who owns the file after it is written**:
   - **Holi-managed** — `.claude/skills/**` and `.claude/hooks/**`. Documentation and code Holi ships. **Refreshed on open**, but only when Holi can prove nobody touched the file: the sha256 of what it last wrote, per path, in `.holi/seed-state.local.json`. A hash that differs means a human or an agent changed it — leave it, and say so. `holi seed refresh [path] [--force]` does it on demand.
-  - **Seeded once** — `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`, `.holi/theme.json`, `.holi/document-templates/**`. These become the user's the moment they exist, and **no flag changes that**: `--force` overrides an *edit check*, and a once-file was never Holi's to check.
+  - **Seeded once** — `AGENTS.md`, `CLAUDE.md`, `memory/index.md`, `.holi/theme.json`, `.holi/document-templates/**`. (`memory/index.md` is here for a sharper reason than the others: *managed* means rewritten when the shipped version changes, and the `memory-index` transform rewrites that file on every commit touching a memory — since seeding runs on every vault **open**, the two would fight and the vault's real index would be replaced by the empty stub about once a session.) These become the user's the moment they exist, and **no flag changes that**: `--force` overrides an *edit check*, and a once-file was never Holi's to check.
   - `.claude/settings.json` keeps its own third rule, merged key-wise, above.
 
   **No record means no refresh**, and that is the load-bearing case rather than an edge one: every vault that existed when this shipped predates the hashes, so the other answer would rewrite everyone's edited skills once, silently, on the next open. The single exception is a file already byte-identical to what Holi ships — it *is* ours however it got there, so recording it is what lets the next version ever arrive.

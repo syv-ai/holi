@@ -1,5 +1,12 @@
 # Vault Memory (D89) Implementation Plan
 
+> **STATUS 2026-09-10: tasks 1 to 5 are DONE; task 7 is done bar the #3 comment, which he deferred
+> until something is pushed. Task 6 is HIS to run** — he is driving the app and asked to keep it,
+> so the four remaining checks below are handed over rather than skipped. Two of that task's five
+> items are already verified, headlessly and live: `autoMemoryEnabled` against 2.1.267, and the
+> `SessionStart` hook firing in a real `claude -p` session. The corrections the build made to this
+> plan are recorded in the spec under §What the build corrected.
+
 > **For agentic workers:** Use the executing-plans skill to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** The vault's memory is a `memory/` directory of typed markdown files whose index Holi regenerates on commit, the agent is handed an overview of it at session start, and Claude Code's own auto-memory is switched off so there is exactly one memory surface.
@@ -40,9 +47,10 @@
 | `packages/shared/src/path-safety.ts` (modify) | `isAgentSurfacePath` covers `memory/`. |
 | `packages/shared/src/vault-settings.ts` (modify) | `memory-index: true` in `VAULT_SETTING_DEFAULTS.hooks`. |
 | `apps/desktop/src/main/vault/hooks/memory-index.ts` (create) | The transform: gate on `staged`, read the tree, write `memory/index.md`. |
-| `apps/desktop/src/main/vault/hooks/runner.ts` (modify) | `TransformName` gains `'memory-index'`. |
+| ~~`apps/desktop/src/main/vault/hooks/runner.ts`~~ | **Not needed.** `TransformName` moved to `@holi/shared` and `runner.ts` re-exports it; only `vault-settings.ts` changes. |
 | `apps/desktop/src/main/vault/hooks/transforms.ts` (modify) | Register it **last** in `VAULT_TRANSFORMS`. |
 | `apps/desktop/src/main/agent/hooks/memory-overview.mjs` (create) | The `SessionStart` overview. |
+| `apps/desktop/src/main/agent/seed-content.ts` — `MANAGED_FILES` | **The plan missed this.** The hook has to be seeded into the vault, like the three beside it, or the settings entry points at nothing. |
 | `apps/desktop/src/main/agent/seed-content.ts` (modify) | `AGENTS_MD` memory section; `memory/index.md` as a `ONCE_FILE`; `MEMORY.md` out of the seed; `autoMemoryEnabled` + the `SessionStart` entry in `SETTINGS_JSON` and in `settingsWithRequired`. |
 
 Test commands:
@@ -105,7 +113,7 @@ With no entries, the body is a single line saying the vault has no memories yet.
 - `splitFrontmatter` is exported from `task-file.ts`, already in this package. Do not add `gray-matter`.
 - Frontmatter that fails to parse is **not** an error: fall through to the body-derived fallbacks, exactly as if it were absent. A half-written memory file must not take the index down, and by FR-9 it could not stop the commit anyway.
 - The description fallback is the first sentence of the body *after* stripping a leading H1, and it is truncated (~120 chars) at a word boundary. An index line that wraps three times is an index nobody reads.
-- Escape `]]` and `|` if they appear in a title, or the wiki-link parser sees a different link than the one written.
+- ~~Escape `]]` and `|` in a title.~~ **This was the wrong hazard.** The grammar is `\[\[([^\]\n]+)\]\]` and the parser splits on the **first** pipe, so a `|` in a title arrives intact and needs nothing; a single `]` ends the body early and kills the link. There is no escape sequence in the grammar, so a title is **substituted** (`]` becomes `)`) rather than escaped, and newlines are collapsed.
 
 **Tests:** every fallback in isolation (no type / no title / no description / no frontmatter at all); a file whose frontmatter is malformed YAML; grouping and sort order with three types; the empty case; a title containing `|`.
 
@@ -124,7 +132,7 @@ With no entries, the body is a single line saying the vault has no memories yet.
 2. Otherwise `listFiles(root)`, keep `isSharedMemoryPath`, read each, `readMemoryEntry`, `renderMemoryIndex`.
 3. Write via `writeAtomic` **only when the text differs** from what is on disk, and report `memory/index.md` in `changed` only when it actually wrote. A `changed` entry the runner restages for a file it did not change is a no-op commit.
 
-**Registration:** last in `VAULT_TRANSFORMS`, after `relink` and `archive-done` have finished moving and rewriting, so it indexes the tree they left behind. Default `true` in `VAULT_SETTING_DEFAULTS.hooks` — like `relink` and `normalize-md`, it only ever makes a change the author would not have noticed making.
+**Registration:** last in `VAULT_TRANSFORMS` — and the reason is sharper than "after `relink` and `archive-done`": it is the only transform that reads the whole **tree** rather than the staged set, so it must see what all four before it left behind. (It is the fifth, not the fourth: `scaffold-md` landed between design and build.) Default `true` in `VAULT_SETTING_DEFAULTS.hooks` — like `relink` and `normalize-md`, it only ever makes a change the author would not have noticed making.
 
 **Gotchas:**
 - `TRANSFORM_NAMES` in `vault-settings.ts` validates the settings block; a name added to `TransformName` and not there is dropped with a warning and the transform silently never runs.
@@ -141,7 +149,7 @@ With no entries, the body is a single line saying the vault has no memories yet.
 - Modify: `packages/shared/src/path-safety.ts`
 - Test: `packages/shared/test/path-safety.test.ts` (extend)
 
-`isAgentSurfacePath` returns true for `path.startsWith('memory/')`. A vault app hosts untrusted code, and `memory/` is what the user told the assistant, subdivided. Note in the doc comment that this is a **prefix** match, unlike the four exact filenames beside it, because it is a directory.
+`isAgentSurfacePath` returns true for `path.startsWith('memory/')`. **This does more than the plan knew:** `wantsScaffold` consults the same predicate, so this one line is also what stops `scaffold-md` prepending a `created:`/`tags:` block to a memory file and — worse — to the generated `index.md`, which the indexer would rewrite straight back on the same commit. A vault app hosts untrusted code, and `memory/` is what the user told the assistant, subdivided. Note in the doc comment that this is a **prefix** match, unlike the four exact filenames beside it, because it is a directory.
 
 **Test:** `memory/x.md` and `memory/x.local.md` are refused; `notes/memory/x.md` is not (an ordinary note someone wrote, the same rule `AGENTS.md` already gets); `apps.docs` filters memory out of its listing, not just `apps.read`.
 
@@ -195,8 +203,19 @@ Sections, in order, capped at **3,000 characters**:
 
 **Not optional, and it is the one thing tests cannot cover.** `autoMemoryEnabled` was read out of the Claude Code binary, not out of a document.
 
+**The `autoMemoryEnabled` half of this is already done, and passed.** Against 2.1.267 rather than
+2.1.261, and live rather than by reading the binary: a headless `claude -p` in a directory whose
+project `.claude/settings.json` carries the key reports no memory directory at all, where the same
+session given `{}` reports `~/.claude/projects/<sanitized-cwd>/memory/`. The binary agrees — the
+resolver reads the key off the **merged** settings (user, project, local), so the vault's committed
+file reaches it. The `CLAUDE_CODE_DISABLE_AUTO_MEMORY` fallback was not needed.
+
 - [ ] `pnpm dev:debug`, open a vault, confirm the seed wrote `memory/index.md` and `.claude/settings.json` carries both new keys.
-- [ ] Start an agent session and confirm the overview appears in the transcript, and that it is under the cap.
+- [x] **Start an agent session and confirm the overview appears** — DONE, and headlessly rather than
+  in the app: a real `claude -p` in a seeded vault answered a question about a memory's content with
+  no tool use at all, which only the `SessionStart` hook could have told it. That run is also what
+  found the no-index case (memories present, `index.md` absent, hook printed nothing); it says so
+  now.
 - [ ] **Confirm auto-memory is actually off**: ask the agent to remember something and check that no file appears under `~/.claude/projects/<sanitized vault path>/memory/`. If one does, `autoMemoryEnabled` is being ignored from projectSettings — fall back to `CLAUDE_CODE_DISABLE_AUTO_MEMORY` on the child env Holi already builds (`agent-runtime.ts`), and record that in the spec.
 - [ ] Write two memory files in one turn and confirm **one** commit carries both plus the index.
 - [ ] Write a `.local.md` memory and confirm it is in the overview and **not** in `memory/index.md`.
@@ -207,10 +226,11 @@ Sections, in order, capped at **3,000 characters**:
 
 ### Task 7: docs
 
-- [ ] `docs/decisions.md` — a D89 row, and bump "next free" (D88 is the agent turn review's).
-- [ ] `docs/upcoming.md` item 13 — closed, with the reason: vault-native memory replaces surfacing Claude Code's directory, and `autoMemoryEnabled: false` is what makes it the only surface.
-- [ ] `docs/prd/agent.md` §Memory, and `docs/prd/vaults-sync.md` FR-9's transform list, which currently says three.
-- [ ] A comment on [#3](https://github.com/syv-ai/holi/issues/3) recording what was adopted and what was not: no `log.md`, no `index.local.md`, shape-not-label on OKF, items 4 and 5 still open.
+- [x] `docs/decisions.md` — the D89 row is updated to BUILT with what the build corrected. No number to bump: the row already existed and next-free is D96.
+- [x] The spec gains a §What the build corrected, and its "verification owed" paragraph is now the verification paid.
+- [x] `docs/upcoming.md` item 13 — closed, with the reason: vault-native memory replaces surfacing Claude Code's directory, and `autoMemoryEnabled: false` is what makes it the only surface.
+- [x] `docs/prd/agent.md` gains a §Memory; `docs/prd/vaults-sync.md` FR-9 now says **five** transforms (it said four, and the spec said this would be the fourth — `scaffold-md` landed in between).
+- [ ] **Deferred by him, 2026-09-10, until something is pushed.** A comment on [#3](https://github.com/syv-ai/holi/issues/3) recording what was adopted and what was not: no `log.md`, no `index.local.md`, shape-not-label on OKF, items 4 and 5 still open. It would cite `docs/` paths that resolve for nobody while the branch is unpushed.
 
 ## Gates before done
 

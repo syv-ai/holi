@@ -33,13 +33,19 @@
 /** The pre-commit transforms a vault can enable (D76). Kebab, matching the
  *  transform names themselves — a camelCase settings key beside a kebab
  *  transform name is a mapping table that exists only to be got wrong once. */
-export type TransformName = 'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md'
+export type TransformName =
+  | 'relink'
+  | 'archive-done'
+  | 'normalize-md'
+  | 'scaffold-md'
+  | 'memory-index'
 
 export const TRANSFORM_NAMES: readonly TransformName[] = [
   'relink',
   'archive-done',
   'normalize-md',
   'scaffold-md',
+  'memory-index',
 ]
 
 /** Fully populated, unlike main's `HookSettings` — the resolver's job is to
@@ -129,9 +135,12 @@ export interface ResolvedVaultSettings {
  * shared; the resolver always builds fresh objects from it.
  *
  * `archive-done` is off: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in (D76). The
- * 10 MB cap mirrors `main/vault/large-files.ts` — notes-vault assets sit well
- * under it, and GitHub warns at 50.
+ * shows, and a transform that rearranges someone's work is opt-in (D76).
+ * `memory-index` is on, with `relink` and `normalize-md`, for their reason: it
+ * only ever rewrites `memory/index.md`, a file it generated and that says so on
+ * its first line, so it cannot make a change the author would notice making.
+ * The 10 MB cap mirrors `main/vault/large-files.ts` — notes-vault assets sit
+ * well under it, and GitHub warns at 50.
  */
 export const VAULT_SETTING_DEFAULTS = Object.freeze({
   landing: Object.freeze({ kind: 'daily' }) as LandingTarget,
@@ -143,6 +152,7 @@ export const VAULT_SETTING_DEFAULTS = Object.freeze({
     'archive-done': false,
     'normalize-md': true,
     'scaffold-md': true,
+    'memory-index': true,
   }) as VaultHooks,
   maxCommittedFileBytes: 10 * 1024 * 1024,
 })
@@ -477,6 +487,11 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
           key: 'scaffold-md',
           label: 'Give a new note its frontmatter',
           explanation: 'A created date and empty tags, however the note arrived.',
+        },
+        {
+          key: 'memory-index',
+          label: 'Keep the memory index current',
+          explanation: 'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
         },
         {
           key: 'archive-done',

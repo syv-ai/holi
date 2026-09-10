@@ -38,6 +38,9 @@ describe('VAULT_SETTING_DEFAULTS', () => {
       // only on a file's first commit, and the alternative is a note without a
       // created date and without its "N chars · Last updated" bar (#17).
       'scaffold-md': true,
+      // On for relink's reason (D89): it only ever rewrites a file it generated
+      // and that says so on its first line.
+      'memory-index': true,
     })
   })
 
@@ -51,6 +54,7 @@ describe('VAULT_SETTING_DEFAULTS', () => {
   it('names every transform the hooks block can carry', () => {
     expect([...TRANSFORM_NAMES].sort()).toEqual([
       'archive-done',
+      'memory-index',
       'normalize-md',
       'relink',
       'scaffold-md',
@@ -131,7 +135,13 @@ describe('resolveVaultSettings — the local override', () => {
     // A local file naming one transform must not silently disable the others.
     const s = resolveVaultSettings(
       committed({
-        hooks: { relink: true, 'archive-done': true, 'normalize-md': true, 'scaffold-md': true },
+        hooks: {
+          relink: true,
+          'archive-done': true,
+          'normalize-md': true,
+          'scaffold-md': true,
+          'memory-index': true,
+        },
       }),
       committed({ hooks: { 'archive-done': false } }),
     )
@@ -140,6 +150,7 @@ describe('resolveVaultSettings — the local override', () => {
       'archive-done': false,
       'normalize-md': true,
       'scaffold-md': true,
+      'memory-index': true,
     })
   })
 
@@ -329,7 +340,7 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     expect(values).toEqual(['system', 'light', 'dark'])
   })
 
-  it('groups the commit transforms under one heading, naming all three', () => {
+  it('groups the commit transforms under one heading, naming every one', () => {
     const hooks = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'hooks')!
     expect(hooks.control.kind).toBe('group')
     const named = hooks.control.kind === 'group' ? hooks.control.toggles.map((t) => t.key) : []
@@ -352,6 +363,7 @@ describe('seedSettings', () => {
       'archive-done': false,
       'normalize-md': true,
       'scaffold-md': true,
+      'memory-index': true,
     })
   })
 

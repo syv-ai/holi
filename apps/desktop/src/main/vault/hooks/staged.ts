@@ -18,6 +18,18 @@ export interface StagedChanges {
   modified: string[]
   /** Paired by git's own similarity detection, not by us. */
   renamed: { from: string; to: string }[]
+  /**
+   * Paths this commit removes.
+   *
+   * **Dropped until D89, and the reason it was dropped is worth keeping.** The
+   * first four transforms all rewrite the changed file itself, and there is
+   * nothing to rewrite in a file that is going away. `memory-index` is the
+   * first whose output depends on a file's ABSENCE: deleting a memory has to
+   * rebuild `memory/index.md`, or the index goes on listing a file that is no
+   * longer there. So this is populated, and a transform is free to keep
+   * ignoring it — the other four do.
+   */
+  deleted: string[]
 }
 
 /**
@@ -36,7 +48,7 @@ export async function stagedChanges(root: string): Promise<StagedChanges> {
     { cwd: root, maxBuffer: 32 * 1024 * 1024 },
   )
 
-  const changes: StagedChanges = { added: [], modified: [], renamed: [] }
+  const changes: StagedChanges = { added: [], modified: [], renamed: [], deleted: [] }
   const fields = stdout.split('\0')
 
   for (let i = 0; i < fields.length; i += 1) {
@@ -60,9 +72,9 @@ export async function stagedChanges(root: string): Promise<StagedChanges> {
     if (path === undefined) continue
     if (kind === 'A') changes.added.push(path)
     else if (kind === 'M') changes.modified.push(path)
-    // D (delete), T (typechange), U (unmerged) and X (unknown) are deliberately
-    // dropped: there is nothing to rewrite in a file that is going away, and an
-    // unmerged path belongs to the conflict flow rather than to a transform.
+    else if (kind === 'D') changes.deleted.push(path)
+    // T (typechange), U (unmerged) and X (unknown) stay dropped: an unmerged
+    // path belongs to the conflict flow rather than to a transform.
   }
   return changes
 }

@@ -147,9 +147,31 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
   'USER.local.md',
 ]
 
+/** Where the vault's memory lives (D89). **Content, not plumbing** — at the
+ *  root rather than under `.holi/`, because the thing the user most wants to
+ *  read and correct should not be a file they have to unhide first.
+ *
+ *  Declared here rather than in `memory-index.ts`, where the rest of the memory
+ *  rules live, because `isAgentSurfacePath` below needs it and that module needs
+ *  `isLocalOnlyPath` from this one. The constant is the lower fact of the two. */
+export const MEMORY_DIR = 'memory'
+
 /** Whether a vault-relative path is part of the agent surface. The four named
  *  files match **exactly** (like `isVaultConfigPath`, so `notes/AGENTS.md` is an
- *  ordinary note someone wrote); `.claude/` matches as a whole subtree.
+ *  ordinary note someone wrote); `.claude/` and `memory/` match as whole
+ *  subtrees.
+ *
+ *  **`memory/` is `MEMORY.md` subdivided** (D89). A vault app hosts untrusted
+ *  code, and what the user told the assistant does not become readable by
+ *  spreading it over more files. A prefix rather than an exact name because it
+ *  is a directory, which also means `notes/memory/x.md` stays an ordinary note.
+ *
+ *  **This is load-bearing for `scaffold-md` as well as for vault apps.**
+ *  `wantsScaffold` refuses the agent surface, so adding `memory/` here is also
+ *  what stops the scaffolder prepending a `created:`/`tags:` block to a memory
+ *  file — whose frontmatter is `type` and `description` — and, worse, to the
+ *  generated `memory/index.md`, which the indexer would then rewrite straight
+ *  back on the same commit.
  *
  *  **Git hooks are deliberately absent, because they are not vault content.**
  *  Holi's `pre-commit` lives in `.git/hooks/`, which git never commits and the
@@ -158,7 +180,11 @@ export const AGENT_SURFACE_FILES: readonly string[] = [
  *  tracked tree WOULD need to be here, and that is one of the reasons it is not
  *  seeded there. */
 export function isAgentSurfacePath(path: string): boolean {
-  return AGENT_SURFACE_FILES.includes(path) || path.startsWith('.claude/')
+  return (
+    AGENT_SURFACE_FILES.includes(path) ||
+    path.startsWith('.claude/') ||
+    path.startsWith(`${MEMORY_DIR}/`)
+  )
 }
 
 /** Where vault apps live. Already hidden from the tree by `isHiddenPath`. */

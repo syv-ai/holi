@@ -1,14 +1,16 @@
 /**
- * The three transforms, and the vault's say over which of them run.
+ * The commit transforms, and the vault's say over which of them run.
  *
- * **Exactly three, and this is not a hook framework.** Designing a config
- * surface before a second hook has asked for one is the argument that killed
- * `manifest.json` in D74, and it applies here unchanged. A fourth transform
- * gets added to this array; it does not get a plugin system.
+ * **This is not a hook framework.** Designing a config surface before a second
+ * hook has asked for one is the argument that killed `manifest.json` in D74, and
+ * it applies here unchanged. A new transform gets added to this array; it does
+ * not get a plugin system. (This comment used to say "exactly three", and had
+ * been listing four for a while.)
  */
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { readVaultSettings } from '../settings'
 import { archiveDone } from './archive-done'
+import { memoryIndex } from './memory-index'
 import { normalizeMd } from './normalize-md'
 import { scaffoldMd } from './scaffold-md'
 import { relink } from './relink'
@@ -18,12 +20,17 @@ import type { HookSettings, Transform } from './runner'
  *  rewrite links — running the rename fix-ups before the archive move keeps
  *  each one reasoning about a tree the other has finished with. `scaffold-md`
  *  goes before `normalize-md` so the block it writes is tidied by the same pass
- *  as everything else, rather than being the one region nothing has checked. */
+ *  as everything else, rather than being the one region nothing has checked.
+ *  `memory-index` is **last**, because it is the only one that reads the whole
+ *  tree rather than the staged set: it has to see the tree the four before it
+ *  left behind, including a memory file `relink` just rewrote links in and one
+ *  `normalize-md` just tidied. */
 export const VAULT_TRANSFORMS: Transform[] = [
   { name: 'relink', run: relink },
   { name: 'archive-done', run: (root, staged) => archiveDone(root, staged) },
   { name: 'scaffold-md', run: (root, staged) => scaffoldMd(root, staged) },
   { name: 'normalize-md', run: normalizeMd },
+  { name: 'memory-index', run: memoryIndex },
 ]
 
 /**

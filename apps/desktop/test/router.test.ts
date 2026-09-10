@@ -132,6 +132,7 @@ describe('settings', () => {
       'archive-done': false,
       'normalize-md': true,
       'scaffold-md': true,
+      'memory-index': true,
     })
     expect(settings.warnings).toEqual([])
   })
@@ -173,6 +174,7 @@ describe('settings', () => {
       'archive-done': false,
       'normalize-md': true,
       'scaffold-md': true,
+      'memory-index': true,
     })
   })
 
@@ -1210,8 +1212,9 @@ describe('vaults.add', () => {
       '.claude/skills/vault-apps/SKILL.md',
       'AGENTS.md',
       'CLAUDE.md',
-      'MEMORY.md',
       'README.md',
+      // D89: a new vault is seeded with the memory directory, not a MEMORY.md.
+      'memory/index.md',
     ])
     const entry = (await caller.vaults.list()).find((v) => v.remote === 'syv-ai/notes')
     expect(entry?.path).toBe(join(base, 'Holi', 'syv-ai', 'notes'))
@@ -1849,7 +1852,17 @@ describe('apps', () => {
     // agent surface is an app reading its way toward the agent's configuration —
     // and MEMORY.md/USER.local.md are what the user told the assistant privately.
     const { caller } = await appsRig()
-    for (const path of ['AGENTS.md', 'CLAUDE.md', 'MEMORY.md', 'USER.local.md', '.claude/settings.json']) {
+    for (const path of [
+      'AGENTS.md',
+      'CLAUDE.md',
+      'MEMORY.md',
+      'USER.local.md',
+      '.claude/settings.json',
+      // D89. `memory/` is MEMORY.md subdivided, and does not become readable by
+      // being spread over more files.
+      'memory/index.md',
+      'memory/shell-quirks.md',
+    ]) {
       await expect(caller.apps.read({ remote: REMOTE, path })).rejects.toMatchObject({
         code: 'FORBIDDEN',
       })
@@ -1879,6 +1892,10 @@ describe('apps', () => {
     expect(paths).not.toContain('AGENTS.md')
     expect(paths).not.toContain('CLAUDE.md')
     expect(paths).not.toContain('MEMORY.md')
+    // The listing, not just the read: an app that cannot open a memory but can
+    // see every memory's path has still been told what the vault remembers.
+    expect(paths).not.toContain('memory/index.md')
+    expect(paths.some((p) => p.startsWith('memory/'))).toBe(false)
   })
 
   it('lists the vault tasks', async () => {

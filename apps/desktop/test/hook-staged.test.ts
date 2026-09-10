@@ -41,13 +41,19 @@ describe('stagedChanges', () => {
       added: ['notes/new.md'],
       modified: [],
       renamed: [],
+      deleted: [],
     })
   })
 
   it('sees a staged edit', async () => {
     await commit('a.md', '# a\n')
     await stage('a.md', '# a, edited\n')
-    expect(await stagedChanges(repo)).toEqual({ added: [], modified: ['a.md'], renamed: [] })
+    expect(await stagedChanges(repo)).toEqual({
+      added: [],
+      modified: ['a.md'],
+      renamed: [],
+      deleted: [],
+    })
   })
 
   it('sees a rename as ONE renamed entry, not an add plus a delete', async () => {
@@ -58,6 +64,7 @@ describe('stagedChanges', () => {
       added: [],
       modified: [],
       renamed: [{ from: 'a.md', to: 'b.md' }],
+      deleted: [],
     })
   })
 
@@ -86,7 +93,12 @@ describe('stagedChanges', () => {
     await commit('a.md', '# a\n')
     await writeFile(join(repo, 'a.md'), '# not added\n', 'utf8')
     await writeFile(join(repo, 'untracked.md'), '# nor this\n', 'utf8')
-    expect(await stagedChanges(repo)).toEqual({ added: [], modified: [], renamed: [] })
+    expect(await stagedChanges(repo)).toEqual({
+      added: [],
+      modified: [],
+      renamed: [],
+      deleted: [],
+    })
   })
 
   it('survives a path with spaces and non-ASCII', async () => {
@@ -112,15 +124,29 @@ describe('stagedChanges', () => {
     expect((await stagedChanges(repo)).added).toEqual(['assets/logo.png'])
   })
 
-  it('sees a deletion as none of the three', async () => {
-    // Nothing to rewrite in a file that is going away; `relink` reads renames.
+  it('reports a deletion on its own list', async () => {
+    // Dropped entirely until D89. The four transforms that predate `memory-index`
+    // all rewrite the changed file itself, and there is nothing to rewrite in a
+    // file that is going away — but `memory-index`'s output is a list of what
+    // EXISTS, so a deleted memory that did not re-index would leave the index
+    // naming a file that is gone.
     await commit('a.md', '# a\n')
     await rm(join(repo, 'a.md'))
     await plainGit(repo, ['add', '-A'])
-    expect(await stagedChanges(repo)).toEqual({ added: [], modified: [], renamed: [] })
+    expect(await stagedChanges(repo)).toEqual({
+      added: [],
+      modified: [],
+      renamed: [],
+      deleted: ['a.md'],
+    })
   })
 
   it('reports nothing in a clean repo', async () => {
-    expect(await stagedChanges(repo)).toEqual({ added: [], modified: [], renamed: [] })
+    expect(await stagedChanges(repo)).toEqual({
+      added: [],
+      modified: [],
+      renamed: [],
+      deleted: [],
+    })
   })
 })

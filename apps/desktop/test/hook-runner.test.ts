@@ -22,7 +22,7 @@ beforeEach(async () => {
 
 afterAll(cleanupFixtures)
 
-const NOTHING: StagedChanges = { added: [], modified: [], renamed: [] }
+const NOTHING: StagedChanges = { added: [], modified: [], renamed: [], deleted: [] }
 
 /** A transform that reports it changed `changed`, without touching anything. */
 function fake(name: string, changed: string[] = [], notes: string[] = []): Transform {

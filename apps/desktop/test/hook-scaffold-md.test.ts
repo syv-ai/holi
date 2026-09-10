@@ -35,7 +35,12 @@ async function file(rel: string, text: string): Promise<void> {
 
 const read = (rel: string) => readFile(join(root, rel), 'utf8')
 
-const added = (paths: string[]): StagedChanges => ({ added: paths, modified: [], renamed: [] })
+const added = (paths: string[]): StagedChanges => ({
+  added: paths,
+  modified: [],
+  renamed: [],
+  deleted: [],
+})
 
 describe('what it scaffolds', () => {
   it('gives a new note a created date and empty tags', async () => {
@@ -119,7 +124,7 @@ describe('the added set is the whole answer to "whose file is this"', () => {
     // A note that arrived on a pull is never in a staged set at all; one that has
     // been here a year is `modified`. Neither is ours to rewrite.
     await file('theirs.md', 'body\n')
-    const result = await scaffoldMd(root, { added: [], modified: ['theirs.md'], renamed: [] }, TODAY)
+    const result = await scaffoldMd(root, { added: [], modified: ['theirs.md'], renamed: [], deleted: [] }, TODAY)
     expect(result.changed).toEqual([])
     expect(await read('theirs.md')).toBe('body\n')
   })
@@ -128,7 +133,7 @@ describe('the added set is the whole answer to "whose file is this"', () => {
     await file('to.md', 'body\n')
     const result = await scaffoldMd(
       root,
-      { added: [], modified: [], renamed: [{ from: 'from.md', to: 'to.md' }] },
+      { added: [], modified: [], renamed: [{ from: 'from.md', to: 'to.md' }], deleted: [] },
       TODAY,
     )
     expect(result.changed).toEqual([])

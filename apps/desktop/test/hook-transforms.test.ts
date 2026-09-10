@@ -41,6 +41,10 @@ describe('the transform set', () => {
       'archive-done',
       'scaffold-md',
       'normalize-md',
+      // Last, and for its own reason: it is the only transform that reads the
+      // whole TREE rather than the staged set, so it has to see what the four
+      // before it left behind (D89).
+      'memory-index',
     ])
   })
 
@@ -53,6 +57,9 @@ describe('the transform set', () => {
       'archive-done': false,
       'normalize-md': true,
       'scaffold-md': true,
+      // On for relink's reason: it only ever rewrites a file it generated, and
+      // that file says it is generated on its first line.
+      'memory-index': true,
     })
   })
 

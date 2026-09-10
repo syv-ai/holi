@@ -202,12 +202,25 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     expect(isAgentSurfacePath('.claude/skills/theme/SKILL.md')).toBe(true)
   })
 
+  it('matches everything under memory/ — MEMORY.md subdivided is still memory', () => {
+    // D89. A vault app hosts untrusted code, and what the user told the
+    // assistant does not become readable by spreading it over more files.
+    expect(isAgentSurfacePath('memory/shell-quirks.md')).toBe(true)
+    expect(isAgentSurfacePath('memory/people/ada.md')).toBe(true)
+    expect(isAgentSurfacePath('memory/index.md')).toBe(true)
+    // A personal one is refused for a second reason on top of this one.
+    expect(isAgentSurfacePath('memory/salary.local.md')).toBe(true)
+  })
+
   it('is an exact match at the root, so a same-named note elsewhere is ordinary content', () => {
     // The same rule isVaultConfigPath follows: `notes/AGENTS.md` is a note a
     // human wrote about agents, not the file the agent loads.
     expect(isAgentSurfacePath('notes/AGENTS.md')).toBe(false)
     expect(isAgentSurfacePath('agents.md')).toBe(false)
     expect(isAgentSurfacePath('inbox.md')).toBe(false)
+    // `memory/` is a PREFIX, so the same courtesy applies one level down.
+    expect(isAgentSurfacePath('notes/memory/x.md')).toBe(false)
+    expect(isAgentSurfacePath('memory.md')).toBe(false)
   })
 
   it('leaves the rest of .holi/ alone — that is Holi config, not the agent surface', () => {

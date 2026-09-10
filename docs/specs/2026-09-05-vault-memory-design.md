@@ -1,6 +1,6 @@
 # Vault memory (D89) — design
 
-**Date** 2026-09-05 · **Status** designed, not built
+**Date** 2026-09-05 · **Status** BUILT 2026-09-10. Kept as the design of record; the notes marked **[built]** below are where the build corrected it
 **Source of the idea** [`syv-ai/holi#3`](https://github.com/syv-ai/holi/issues/3), an evaluation of
 [understory](https://github.com/thecodacus/understory) whose deterministic OKF layer is the part
 worth having. Scope agreed 2026-09-05: items 1 to 3 of that issue.
@@ -162,7 +162,7 @@ and nothing in this format prevents adding them the day it is not.
 
 ## The `memory-index` transform
 
-A fourth entry in `VAULT_TRANSFORMS` (`apps/desktop/src/main/vault/hooks/transforms.ts`), enabled by
+A new entry in `VAULT_TRANSFORMS` (the fifth, not the fourth this said: `scaffold-md` landed between design and build) (`apps/desktop/src/main/vault/hooks/transforms.ts`), enabled by
 default in `VAULT_SETTING_DEFAULTS.hooks`. That file's own comment anticipates this: *"A fourth
 transform gets added to this array; it does not get a plugin system."*
 
@@ -246,12 +246,13 @@ lever twice.
   `[[path.md]]` grammar *inside* the vault. Holi would be committing a format it does not control to
   every member of a shared repository.
 
-**Verification owed before the key ships:** that `autoMemoryEnabled: false` is honoured from
-projectSettings. `autoMemoryDirectory` is explicitly ignored there and `autoMemoryEnabled` carries no
-such caveat, which is the natural reading — disabling is safe, redirecting is not — but this was read
-out of a binary rather than a document. If it turns out to be ignored there too, the fallback is the
-environment variable on the child process Holi already spawns, which is strictly more reliable and
-correctly *less* shareable.
+**[built] The verification this owed is paid, and live rather than static.** Against 2.1.267: a
+headless session in a directory whose project `.claude/settings.json` carries the key reports no
+memory directory at all, where the same session given `{}` reports
+`~/.claude/projects/<sanitized-cwd>/memory/`. Reading the binary agrees — the resolver takes
+`autoMemoryEnabled` off the **merged** settings (user, then project, then local), so a vault's
+committed file reaches it and outranks a user-level `true`. `CLAUDE_CODE_DISABLE_AUTO_MEMORY` is
+checked *before* the setting and stays available as a fallback that was not needed.
 
 ## `MEMORY.md` and `USER.local.md` are not moved by code
 
@@ -268,6 +269,32 @@ asks for**, which is the same shape as every other shared-layer change.
 `USER.local.md` is the same file with a different audience and gets the same treatment. Its `.local.`
 already does precisely what `memory/x.local.md` would do, so folding it in buys a migration and
 nothing else.
+
+## What the build corrected
+
+Three things, none of which changes the design, all of which would have cost the next reader time.
+
+**[built] `memory/` in `isAgentSurfacePath` is load-bearing for `scaffold-md`, not only for apps.**
+`wantsScaffold` consults that predicate, so the same one-line change is what stops the scaffolder
+prepending a `created:`/`tags:` block to a memory file — whose frontmatter is `type` and
+`description`, not metadata about prose — and, worse, to the generated `index.md`, which the indexer
+would then rewrite straight back on the same commit. The two would have taken turns forever.
+
+**[built] "Runs last" has a sharper reason than the ordering one given below.** `memory-index` is the
+only transform that reads the whole **tree** rather than the staged set, so it must see the tree the
+other four left behind: a memory file `relink` has just rewritten links in, one `normalize-md` has
+just tidied.
+
+**[built] A vault can have memories and no index, and the hook printed nothing for it.** Found by
+running a real `claude -p` session against a seeded vault: with `memory/*.md` present but no
+`index.md`, the agent was told the vault remembers nothing. It now says so and points at the
+directory. Not a fallback scan — that would be a second copy of the indexer living in the hook.
+
+**[built] The wiki-link hazard was the wrong one.** The grammar is `\[\[([^\]\n]+)\]\]` and the
+parser splits on the **first** pipe, so a `|` inside a title arrives intact and needs no escaping at
+all; what breaks a link is a single `]`, which ends the body early so the token stops matching and
+the reader gets raw brackets. The grammar has no escape sequence, so a title is **substituted**
+rather than escaped.
 
 ## Vault apps must not read memory
 

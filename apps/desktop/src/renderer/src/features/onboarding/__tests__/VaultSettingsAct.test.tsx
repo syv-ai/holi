@@ -80,6 +80,7 @@ test('the transforms are one row of several switches', async () => {
     'archive-done': true,
     'normalize-md': true,
     'scaffold-md': true,
+    'memory-index': true,
   })
 })
 

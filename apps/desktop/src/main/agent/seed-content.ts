@@ -25,12 +25,19 @@
  */
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { LOCAL_ONLY_IGNORE_LINES, seedSettings, vaultRelPath } from '@holi/shared'
+import {
+  LOCAL_ONLY_IGNORE_LINES,
+  MEMORY_INDEX,
+  MEMORY_INDEX_EMPTY,
+  seedSettings,
+  vaultRelPath,
+} from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
 import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
+import memoryOverviewHook from './hooks/memory-overview.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -80,15 +87,14 @@ Run git freely, merges included. Holi pauses its own commit/pull loop for the le
 
 ## Memory
 
-- \`MEMORY.md\` — shared with the vault. Conventions, environment quirks, ways of working.
-- \`USER.local.md\` — your model of one person. The \`.local.\` is what makes it gitignored, so it never leaves this clone. Personal detail goes here, not in \`MEMORY.md\`.
-`
+A memory is **one fact in one file** under \`memory/\`. Write one whenever you learn something this vault will want again.
 
-const MEMORY_MD = `# Memory
+- Frontmatter: \`type\` (free-form — \`convention\`, \`environment\`, \`person\`, \`project\`, \`reference\`, \`preference\` are a starting set, not a list to stay inside) and a one-line \`description\`, which is what the index and the session overview print. \`title\` is optional and falls back to the H1, then the filename.
+- The body is the fact. Link other memories with ordinary wiki-links: \`[[memory/other.md]]\`.
+- \`memory/whatever.local.md\` is **personal** — the \`.local.\` makes it gitignored, so it never leaves this clone. Anything about one person goes there.
+- \`memory/index.md\` is **generated** on commit. Edit the memory files; edits to the index are discarded.
 
-Shared working memory of this vault — conventions, environment quirks,
-approaches that didn't work, pointers to skills worth reusing. Synced to every
-member. Budget: 5,000 characters; consolidate when it fills up.
+\`MEMORY.md\` and \`USER.local.md\` are the older shape. Both still work and are still read. Splitting one into \`memory/\` is worth doing when the user asks; do not do it unasked.
 `
 
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
@@ -124,6 +130,10 @@ const SETTINGS_JSON =
           },
         ],
         Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
+        // What this vault remembers, once per session (D89). Fires on startup,
+        // resume AND compact — the third is the one that matters most, being
+        // exactly when the agent has just forgotten it has memory at all.
+        SessionStart: [{ hooks: [{ type: 'command', command: hookCommand('memory-overview') }] }],
         // The vault-app validator. Advisory only — it reports and exits 0 —
         // because slice 1's authoring loop had no feedback in it at all: the
         // agent wrote an app blind and asked the user to go and look, so a
@@ -176,6 +186,29 @@ const SETTINGS_JSON =
        * project settings cannot reach those, and that is a separate decision.
        */
       disableClaudeAiConnectors: true,
+      /**
+       * One memory surface, not two (D89).
+       *
+       * Claude Code keeps its own auto-memory under
+       * `~/.claude/projects/<sanitized-cwd>/memory/`. That directory is outside
+       * the vault, never syncs, is invisible to teammates, and the agent reaches
+       * for it in preference to the vault's because it is the surface its own
+       * system prompt describes. `memory/` is the vault's answer; this key
+       * closes the other door so there is one place to look.
+       *
+       * **Off rather than redirected.** `autoMemoryDirectory` could point Claude
+       * Code at `memory/`, and is the wrong lever twice: it is explicitly
+       * ignored when set in projectSettings, so Holi could only set it per
+       * clone; and its format is Anthropic's, with `[[slug]]` links that address
+       * memories by name where Holi's address them by vault path. Holi would be
+       * committing a format it does not control to every member of a shared
+       * repository.
+       *
+       * Verified live against 2.1.267 rather than read out of the binary: with
+       * this key in a project `.claude/settings.json`, a session reports no
+       * memory directory at all; with `{}` it reports one.
+       */
+      autoMemoryEnabled: false,
       permissions: {
         // seeded egress gating (PRD §Security posture) — the user still
         // approves each one, they just don't slip through unasked
@@ -282,6 +315,7 @@ export const MANAGED_FILES: Record<string, string> = {
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
   '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
   '.claude/hooks/vault-app-check.mjs': vaultAppCheckHook,
+  '.claude/hooks/memory-overview.mjs': memoryOverviewHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -339,7 +373,24 @@ export const ONCE_FILES: Record<string, string> = {
   '.holi/settings.local.json': HOLI_SETTINGS_LOCAL,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
-  'MEMORY.md': MEMORY_MD,
+  /**
+   * The memory directory exists and is tracked from a vault's first commit
+   * (D89), in its empty-state form — after that the `memory-index` transform
+   * owns the file.
+   *
+   * A ONCE_FILE and emphatically not a MANAGED_FILE: managed means "rewritten
+   * when the shipped version changes", and this one is rewritten by a transform
+   * on every commit that touches a memory. The two would fight, and the seed
+   * runs on every vault OPEN, so the vault's real index would be replaced by the
+   * empty stub roughly once a session.
+   *
+   * `MEMORY.md` is no longer seeded. Vaults that have one keep it, it is still
+   * read, and nothing here moves it — that is content the user wrote, and
+   * relocating it automatically is exactly the unattended shared-layer edit
+   * `not-built.md` rules against. `AGENTS.md` names it as the older shape and
+   * the session overview offers to split it when asked.
+   */
+  [MEMORY_INDEX]: MEMORY_INDEX_EMPTY,
   '.claude/settings.json': SETTINGS_JSON,
 }
 
@@ -405,9 +456,10 @@ export function settingsWithRequired(existing: string | null): string | null {
   }
 
   const required = JSON.parse(SETTINGS_JSON) as {
-    hooks: { PreToolUse: unknown[]; PostToolUse: unknown[] }
+    hooks: { PreToolUse: unknown[]; PostToolUse: unknown[]; SessionStart: unknown[] }
     permissions: { ask: string[] }
     disableClaudeAiConnectors: boolean
+    autoMemoryEnabled: boolean
   }
   let changed = false
 
@@ -429,6 +481,21 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
+  /**
+   * One memory surface (D89), merged here for `disableClaudeAiConnectors`'s
+   * reason: every vault that exists today already has a `settings.json`, so the
+   * creation path would reach none of them.
+   *
+   * **Only when absent.** A user who set it `true` has said something — they
+   * want Claude Code's own auto-memory as well — and Holi does not argue with
+   * them once a session. The vault's `memory/` works either way; what the key
+   * buys is that there is one place to look rather than two.
+   */
+  if (settings.autoMemoryEnabled === undefined) {
+    settings.autoMemoryEnabled = required.autoMemoryEnabled
+    changed = true
+  }
+
   // The gate. Matched by the script it runs rather than by deep-equality, so a
   // user who reordered or annotated the entry does not get a duplicate.
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>
@@ -447,6 +514,16 @@ export function settingsWithRequired(existing: string | null): string | null {
   const postToolUse = Array.isArray(hooks.PostToolUse) ? hooks.PostToolUse : []
   if (!JSON.stringify(postToolUse).includes('vault-app-check')) {
     hooks.PostToolUse = [...postToolUse, ...required.hooks.PostToolUse]
+    settings.hooks = hooks
+    changed = true
+  }
+
+  // The session overview (D89), matched by the script it runs rather than by
+  // deep-equality, the way the two gates above are: a user who reordered or
+  // annotated the entry does not get a duplicate.
+  const sessionStart = Array.isArray(hooks.SessionStart) ? hooks.SessionStart : []
+  if (!JSON.stringify(sessionStart).includes('memory-overview')) {
+    hooks.SessionStart = [...sessionStart, ...required.hooks.SessionStart]
     settings.hooks = hooks
     changed = true
   }

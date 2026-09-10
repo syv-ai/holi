@@ -125,6 +125,7 @@ describe('a machine-local hooks override', () => {
       'archive-done': true,
       'normalize-md': true,
       'scaffold-md': true,
+      'memory-index': true,
     })
   })
 })
