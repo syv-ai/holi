@@ -14,9 +14,17 @@
  * have meant pulling headless-tree into a consumer that needs no part of it.
  * What the two genuinely share is the row's *look*, which is tokens.
  */
+import { Fragment } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import { Button } from '@/primitives'
+import {
+  Button,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/primitives'
 import type { SettingsSection } from './sections'
 
 export function SettingsRail({
@@ -80,5 +88,65 @@ export function SettingsRail({
         )
       })}
     </nav>
+  )
+}
+
+/**
+ * The rail, for a pane too narrow to hold one.
+ *
+ * A pane's `minSize` is 240px, so the settings tab can be a third of the width
+ * the rail plus a column of controls needs. Below the threshold the rail is
+ * replaced by this rather than squeezed: a 100px rail truncates every label to
+ * two words, which is a worse navigation than a picker.
+ *
+ * **It carries the headings too.** Losing the jump links here would be the
+ * wrong way round — a narrow pane is not a shorter section, it is a taller one,
+ * so a jump into the middle of Appearance matters more at this width than at
+ * full width, not less. They appear under the section you are in, indented,
+ * exactly as they do in the rail.
+ *
+ * Values are prefixed rather than bare ids, because a section and a heading can
+ * legitimately share a name — Appearance's own list is a title away from it.
+ */
+export function SettingsPicker({
+  sections,
+  activeId,
+  onSelect,
+  onJump,
+}: {
+  sections: readonly SettingsSection[]
+  activeId: string
+  onSelect: (id: string) => void
+  onJump: (headingId: string) => void
+}): React.JSX.Element {
+  return (
+    <Select
+      // Never a stored value: choosing a heading is a scroll, not a selection,
+      // so the control always reads as the section you are in.
+      value={`s:${activeId}`}
+      onValueChange={(value) => {
+        const [kind, ...rest] = value.split(':')
+        const id = rest.join(':')
+        if (kind === 's') onSelect(id)
+        else onJump(id)
+      }}
+    >
+      <SelectTrigger size="sm" className="w-full" aria-label="Settings section">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {sections.map((section) => (
+          <Fragment key={section.id}>
+            <SelectItem value={`s:${section.id}`}>{section.label}</SelectItem>
+            {section.id === activeId &&
+              section.headings.map((h) => (
+                <SelectItem key={h.id} value={`h:${h.id}`} className="pl-8 text-muted-foreground">
+                  {h.title}
+                </SelectItem>
+              ))}
+          </Fragment>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }

@@ -30,7 +30,7 @@ import { TriangleAlert } from 'lucide-react'
 import { Button } from '@/primitives'
 import { openPinned, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
-import { SettingsRail } from './SettingsRail'
+import { SettingsPicker, SettingsRail } from './SettingsRail'
 import { DEFAULT_SECTION_ID, SETTINGS_SECTIONS } from './sections'
 import { useVaultSettings } from './useVaultSettings'
 
@@ -64,8 +64,13 @@ export function SettingsView(): React.JSX.Element {
   const section = SETTINGS_SECTIONS.find((s) => s.id === activeId) ?? SETTINGS_SECTIONS[0]!
 
   return (
-    <div className="flex h-full min-h-0">
-      <div className="w-44 shrink-0 overflow-y-auto border-r border-border">
+    // **A container query, not a media query.** This is a pane, not the window:
+    // the same app at the same window size shows this tab full width or beside
+    // two other panes, and only the tab's OWN width decides whether a rail fits.
+    // A pane's `minSize` is 240px and the rail plus a column of controls wants
+    // roughly 560, so below that the rail becomes a picker above the content.
+    <div className="@container flex h-full min-h-0 flex-col @min-[560px]:flex-row">
+      <div className="hidden w-44 shrink-0 overflow-y-auto border-r border-border @min-[560px]:block">
         <SettingsRail
           sections={SETTINGS_SECTIONS}
           activeId={section.id}
@@ -74,7 +79,16 @@ export function SettingsView(): React.JSX.Element {
         />
       </div>
 
-      <div ref={scroller} className="min-w-0 flex-1 overflow-y-auto">
+      <div className="shrink-0 border-b border-border p-2 @min-[560px]:hidden">
+        <SettingsPicker
+          sections={SETTINGS_SECTIONS}
+          activeId={section.id}
+          onSelect={setActiveId}
+          onJump={jump}
+        />
+      </div>
+
+      <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-6 py-4">
           <h2 className="text-sm font-medium">{section.label}</h2>
 
