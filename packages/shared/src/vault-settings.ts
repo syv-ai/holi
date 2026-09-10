@@ -363,17 +363,19 @@ export type VaultSettingControl =
  *  settings tab renders and which is a superset of what the ritual asks
  *  (`askedAtBirth`).
  *
- *  Deliberately narrower than every key the resolver answers:
- *  `maxCommittedFileBytes` has no row. D85's reasoning was about the seed —
- *  freezing a number into every vault means raising the default later reaches
- *  none of them — and it has not been re-argued for a pane where the choice
- *  would be explicit. Until it is, the file is that setting's interface. */
+ *  Every key the resolver answers now has a row. `maxCommittedFileBytes` was
+ *  the holdout, and the distinction that let it in is `askedAtBirth`: D85's
+ *  argument was about the SEED — freezing a number into every vault means
+ *  raising the default later reaches none of them — and a pane is one person
+ *  choosing for one vault, which is a different act. Its descriptor is not in
+ *  the ritual, so the seed still writes nothing. */
 export type VaultSettingKey =
   | 'dailyNotes'
   | 'landing'
   | 'hooks'
   | 'colorScheme'
   | 'editorFont'
+  | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -420,9 +422,10 @@ const LOCAL_FILE_HINT =
  *
  * **One list, two readers.** The act and the seed agreeing is not a convention
  * anyone has to remember; adding a setting later is adding a row here, and both
- * pick it up. `maxCommittedFileBytes` deliberately has no row: freezing it into
- * every vault at creation would mean raising the default later never reaches the
- * vaults that already exist.
+ * pick it up. The seed reads only the `askedAtBirth` subset, which is what lets
+ * a setting have a pane row without being frozen into every new vault —
+ * `maxCommittedFileBytes` is the one that needs that and the reason the
+ * distinction exists.
  */
 export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
   {
@@ -503,6 +506,33 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     default: VAULT_SETTING_DEFAULTS.hooks,
     target: 'committed',
     askedAtBirth: true,
+    whereToChange: SETTINGS_FILE_HINT,
+  },
+  {
+    key: 'maxCommittedFileBytes',
+    label: 'Largest file to commit',
+    // Why there is a cap at all, in the terms the refusal will use. This is the
+    // vault's ONE veto (FR-9): every other pre-commit transform is an opinion
+    // and lets the commit through, because git history is permanent and push is
+    // automatic, so an oversized blob committed once is published forever.
+    explanation:
+      'Anything bigger is left out of the commit and reported, rather than pushed to everyone. GitHub itself warns at 50 MB and refuses at 100.',
+    control: {
+      kind: 'choice',
+      options: [
+        { value: 5 * 1024 * 1024, label: '5 MB' },
+        { value: 10 * 1024 * 1024, label: '10 MB' },
+        { value: 25 * 1024 * 1024, label: '25 MB' },
+        { value: 100 * 1024 * 1024, label: '100 MB', hint: 'GitHub’s own hard limit' },
+      ],
+    },
+    default: VAULT_SETTING_DEFAULTS.maxCommittedFileBytes,
+    target: 'committed',
+    // **Not asked at birth, and that is the whole of D85's argument surviving.**
+    // The ritual asks what a vault must decide to exist; a size cap is not that,
+    // and a number written into every vault at creation is a default that can
+    // never be raised for the vaults that already have one.
+    askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
   },
   {

@@ -333,6 +333,26 @@ describe('VAULT_SETTING_DESCRIPTORS', () => {
     expect(values).toEqual(['daily', 'board', 'agenda', 'mail'])
   })
 
+  it('gives the file-size cap a row without seeding it (D85 survives)', () => {
+    // The distinction the row rests on: a pane is one person choosing for one
+    // vault, where the SEED would freeze a number into every vault and make
+    // raising the default later reach none of them.
+    const cap = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'maxCommittedFileBytes')!
+    expect(cap).toBeDefined()
+    expect(cap.askedAtBirth).toBe(false)
+    expect(RITUAL_SETTING_DESCRIPTORS.map((d) => d.key)).not.toContain('maxCommittedFileBytes')
+    expect(seedSettings('committed')).not.toHaveProperty('maxCommittedFileBytes')
+  })
+
+  it('offers the cap in bytes, with the current default among the options', () => {
+    // A choice whose options exclude the value in force renders as nothing
+    // selected, which reads as a broken row.
+    const cap = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'maxCommittedFileBytes')!
+    const values = cap.control.kind === 'choice' ? cap.control.options.map((o) => o.value) : []
+    expect(values).toEqual([5 * 1024 * 1024, 10 * 1024 * 1024, 25 * 1024 * 1024, 100 * 1024 * 1024])
+    expect(values).toContain(VAULT_SETTING_DEFAULTS.maxCommittedFileBytes)
+  })
+
   it('offers every colour scheme the resolver accepts', () => {
     const scheme = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === 'colorScheme')!
     const values =
