@@ -10,11 +10,14 @@ import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { THEME_TOKENS } from '@holi/shared'
+import { THEME_TOKENS, VAULT_SETTING_DEFAULTS } from '@holi/shared'
 import { ThemeSection } from '../ThemeSection'
+import { activeRemoteAtom } from '@/state/vaults'
 
 const themeRead = vi.fn()
 const themeWrite = vi.fn()
+const settingsRead = vi.fn()
+const settingsWrite = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -22,16 +25,34 @@ vi.mock('@/lib/trpc', () => ({
       read: { query: () => themeRead() },
       write: { mutate: (input: unknown) => themeWrite(input) },
     },
+    // Appearance carries the `colorScheme` row as well as the tokens, and that
+    // row is a descriptor like any other — so this mock has to answer for the
+    // settings file too, or every test here passes while logging an unhandled
+    // rejection.
+    settings: {
+      read: { query: () => settingsRead() },
+      write: { mutate: (input: unknown) => settingsWrite(input) },
+    },
   },
 }))
 
 const REMOTE = 'syv-ai/holi'
 
+/** The store the section needs: a remote, because the settings row reads the
+ *  active vault's file. */
+function store() {
+  const s = createStore()
+  s.set(activeRemoteAtom, REMOTE)
+  return s
+}
+
 function setup(theme: { light?: object; dark?: object; warnings?: string[] } = {}) {
   themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [], ...theme })
   themeWrite.mockResolvedValue({ ok: true, warnings: [] })
+  settingsRead.mockResolvedValue({ ...VAULT_SETTING_DEFAULTS, warnings: [] })
+  settingsWrite.mockResolvedValue({ ok: true, warnings: [] })
   return render(
-    <Provider store={createStore()}>
+    <Provider store={store()}>
       <ThemeSection remote={REMOTE} />
     </Provider>,
   )
@@ -42,6 +63,8 @@ const patchOf = (call: number = 0) => JSON.parse(themeWrite.mock.calls[call]![0]
 beforeEach(() => {
   themeRead.mockReset()
   themeWrite.mockReset()
+  settingsRead.mockReset()
+  settingsWrite.mockReset()
 })
 
 test('renders a control for every whitelisted token', async () => {
@@ -87,7 +110,7 @@ test('writes into the mode on screen, and switching mode switches the target', a
   setup()
   await waitFor(() => expect(screen.getByText('--radius')).toBeInTheDocument())
 
-  await userEvent.click(screen.getByRole('radio', { name: 'Light' }))
+  await userEvent.click(screen.getByRole('radio', { name: 'Light palette' }))
   await userEvent.type(screen.getByRole('textbox', { name: 'Radius' }), '1rem')
   await userEvent.tab()
 
@@ -124,8 +147,10 @@ test('surfaces a refused value rather than swallowing it', async () => {
   // colour did not stick — saying nothing would read as a control that works.
   themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [] })
   themeWrite.mockResolvedValue({ ok: true, warnings: ['refused "radius" (dark): "5 dogs"'] })
+  settingsRead.mockResolvedValue({ ...VAULT_SETTING_DEFAULTS, warnings: [] })
+  settingsWrite.mockResolvedValue({ ok: true, warnings: [] })
   render(
-    <Provider store={createStore()}>
+    <Provider store={store()}>
       <ThemeSection remote={REMOTE} />
     </Provider>,
   )

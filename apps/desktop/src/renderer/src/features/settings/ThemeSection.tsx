@@ -38,6 +38,9 @@ import {
   THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, ColorSwatch, Input, Tooltip } from '@/primitives'
+import { SectionHeading } from './SectionHeading'
+import { LIGHT_AND_DARK } from './appearance-headings'
+import { DescriptorSection } from './DescriptorSection'
 import { tokenToHex } from '@/lib/css-color'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
@@ -198,27 +201,82 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
    */
   const values = useMemo(() => (theme === null ? {} : theme[mode]), [theme, mode])
 
-  if (theme === null) {
-    return <p className="px-6 py-4 text-xs text-muted-foreground">Reading this vault’s theme…</p>
-  }
-
   return (
-    <div className="border-t border-border px-6 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <SectionHeading title={LIGHT_AND_DARK} />
+      {/* `colorScheme` is a descriptor like any other and lands here by saying
+          so, rather than by this component knowing about it. */}
+      <DescriptorSection section="appearance" />
+
+      {/* **Above the theme's own loading gate, not behind it.** Light/dark is a
+          settings row and the theme file is a separate read; gating the whole
+          section on the slower of the two would blank a control that is already
+          answerable. */}
+      {theme === null ? (
+        <p className="py-4 text-xs text-muted-foreground">Reading this vault&rsquo;s theme…</p>
+      ) : (
+        <ThemeTokens
+          theme={theme}
+          values={values}
+          mode={mode}
+          setMode={setMode}
+          layer={layer}
+          setLayer={setLayer}
+          error={error}
+          write={write}
+        />
+      )}
+    </div>
+  )
+}
+
+function ThemeTokens({
+  theme,
+  values,
+  mode,
+  setMode,
+  layer,
+  setLayer,
+  error,
+  write,
+}: {
+  theme: ResolvedTheme
+  /** What this vault says for the mode on screen. */
+  values: Record<string, string | undefined>
+  mode: ThemeMode
+  setMode: (next: ThemeMode) => void
+  layer: Layer
+  setLayer: (next: Layer) => void
+  error: string | null
+  write: (slug: string, value: string | null) => Promise<void>
+}): React.JSX.Element {
+  return (
+    <>
+      {/* **Sticky, because they govern everything below them.** Mode and layer
+          are chosen once for the whole section, so a swatch forty rows down
+          still has to say which mode it is showing and where a change would
+          land. Scrolling them away would make every swatch ambiguous. */}
+      <div className="sticky top-0 z-10 -mx-1 mt-4 flex flex-wrap items-center justify-between gap-3 bg-background px-1 py-2">
         <div>
-          <h2 className="text-sm font-medium">Theme</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <h3 className="text-xs font-medium">Theme</h3>
+          <p className="text-[11px] text-muted-foreground">
             Colours and chrome, and nothing else — a theme cannot move or resize anything.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          {/* **"palette", not "Dark"/"Light".** The `colorScheme` row directly
+              above this one is also Light/Dark, and it means something else
+              entirely: that one sets what the app IS, this one sets which of the
+              two blocks in the theme file a swatch edits. Two identically
+              labelled controls a few rows apart is the ambiguity that appeared
+              the moment they shared a section. */}
           <Segmented
-            label="Mode"
+            label="Which palette you are editing"
             value={mode}
             onChange={setMode}
             options={[
-              { value: 'dark' as const, label: 'Dark' },
-              { value: 'light' as const, label: 'Light' },
+              { value: 'dark' as const, label: 'Dark palette' },
+              { value: 'light' as const, label: 'Light palette' },
             ]}
           />
           <Segmented
@@ -246,9 +304,10 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
       ))}
 
       {THEME_TOKEN_GROUPS.map((group) => (
-        <section key={group.title} className="mt-4">
-          <h3 className="text-xs font-medium">{group.title}</h3>
-          <p className="text-[11px] text-muted-foreground">{group.blurb}</p>
+        <section key={group.title}>
+          {/* The rail's jump target for this group, derived from the same title
+              the rail derives its id from. */}
+          <SectionHeading title={group.title} blurb={group.blurb} />
           <div className="mt-1 divide-y divide-divider">
             {group.tokens.map((slug) => (
               <TokenRow
@@ -262,6 +321,6 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
           </div>
         </section>
       ))}
-    </div>
+    </>
   )
 }

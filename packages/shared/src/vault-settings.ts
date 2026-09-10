@@ -394,6 +394,22 @@ export interface VaultSettingDescriptor {
    *  does not say where to change it later is a dead end for anyone who wants
    *  to change their mind. */
   whereToChange: string
+  /**
+   * Which section of the settings tab this row appears under.
+   *
+   * **Carried here rather than in the renderer's section registry**, so that
+   * "adding a setting is adding a descriptor" stays true of *where it lands*
+   * and not only that it lands. A registry holding its own list of keys would
+   * be a second place to edit, and the failure mode is a new setting that
+   * renders nowhere at all.
+   *
+   * A plain string, not a union of the section ids: the ids live in the
+   * renderer and this package is browser-safe domain rules with no knowledge of
+   * a tab. A renderer test asserts every value here names a real section, which
+   * is the check a union would have given for free but in the layer that
+   * actually owns the list.
+   */
+  section: string
 }
 
 /**
@@ -439,6 +455,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
+    section: 'general',
   },
   {
     key: 'landing',
@@ -467,6 +484,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     target: 'committed',
     askedAtBirth: true,
     whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
+    section: 'general',
   },
   {
     key: 'hooks',
@@ -507,6 +525,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
+    section: 'commits',
   },
   {
     key: 'maxCommittedFileBytes',
@@ -534,6 +553,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // never be raised for the vaults that already have one.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
+    section: 'commits',
   },
   {
     key: 'colorScheme',
@@ -554,6 +574,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     target: 'local',
     askedAtBirth: true,
     whereToChange: LOCAL_FILE_HINT,
+    section: 'appearance',
   },
   {
     key: 'editorFont',
@@ -575,6 +596,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // long. The settings pane is where a preference like this belongs.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
+    section: 'editor',
   },
 ]
 

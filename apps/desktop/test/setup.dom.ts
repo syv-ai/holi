@@ -12,6 +12,11 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.releasePointerCapture = () => {}
 }
 if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {}
+// jsdom computes no layout, so it implements neither scroll method on an
+// element. The settings rail uses both — `scrollTo` to start a section at the
+// top, `scrollIntoView` to jump to a heading — and without these a section
+// change throws instead of scrolling nowhere.
+if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {}
 globalThis.ResizeObserver ??= class {
   observe() {}
   unobserve() {}
