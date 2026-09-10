@@ -25,10 +25,14 @@ import {
   THEME_LOCAL_FILE,
   THEME_TOKEN_GROUPS,
 } from '@holi/shared'
+import { AccountSection } from './AccountSection'
+import { ConnectionsSection } from './ConnectionsSection'
 import { DescriptorSection } from './DescriptorSection'
 import { ThemeSection } from './ThemeSection'
+import { VaultSection } from './VaultSection'
 import { headingId } from './SectionHeading'
 import { LIGHT_AND_DARK } from './appearance-headings'
+import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
 
 export interface SettingsSectionHeading {
   /** The anchor the rail scrolls to — `headingId(title)`, never hand-written. */
@@ -85,6 +89,31 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     headings: [],
     files: [SETTINGS_FILE, SETTINGS_LOCAL_FILE],
     Component: () => <DescriptorSection section="commits" />,
+  },
+  {
+    id: 'connections',
+    label: 'Connections',
+    headings: [],
+    // Nothing on disk in the vault: a Google grant is the machine's, held by
+    // main's credential storage, and the renderer never sees a token.
+    files: [],
+    Component: () => <ConnectionsSection />,
+  },
+  {
+    id: 'vault',
+    label: 'Vault',
+    headings: [heading(WHERE_IT_LIVES), heading(COLLABORATORS)],
+    // What GitHub says, not what a file says. `.holi/vault` is the marker that
+    // this clone IS a vault and holds nothing to edit.
+    files: [],
+    Component: () => <VaultSection />,
+  },
+  {
+    id: 'account',
+    label: 'Account',
+    headings: [],
+    files: [],
+    Component: () => <AccountSection />,
   },
 ]
 

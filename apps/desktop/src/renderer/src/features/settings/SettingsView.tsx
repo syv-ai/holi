@@ -26,11 +26,10 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { ExternalLink, TriangleAlert } from 'lucide-react'
+import { TriangleAlert } from 'lucide-react'
 import { Button } from '@/primitives'
 import { openPinned, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
-import { vaultPanelOpenAtom } from '@/state/vault-panel'
 import { SettingsRail } from './SettingsRail'
 import { DEFAULT_SECTION_ID, SETTINGS_SECTIONS } from './sections'
 import { useVaultSettings } from './useVaultSettings'
@@ -39,7 +38,6 @@ export function SettingsView(): React.JSX.Element {
   const remote = useAtomValue(activeRemoteAtom)
   const { resolved, error, unattributed } = useVaultSettings()
   const setWorkspace = useSetAtom(workspaceAtom)
-  const setVaultPanel = useSetAtom(vaultPanelOpenAtom)
   const [activeId, setActiveId] = useState(DEFAULT_SECTION_ID)
   const scroller = useRef<HTMLDivElement | null>(null)
 
@@ -101,7 +99,13 @@ export function SettingsView(): React.JSX.Element {
               these are files, they are readable, and a pane that hid them would
               be claiming to be the only way to change a vault's mind. Per
               section rather than one anonymous row at the end of everything, so
-              it says WHICH file backs what you are looking at. */}
+              it says WHICH file backs what you are looking at.
+
+              Absent, not empty, for the sections backed by nothing on disk:
+              what GitHub says about a vault and which Google account this
+              machine holds are not files, and offering none under a sentence
+              promising some would be worse than saying nothing. */}
+          {section.files.length > 0 && (
           <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
             <p className="text-xs text-muted-foreground">
               {section.files.length === 1
@@ -121,20 +125,7 @@ export function SettingsView(): React.JSX.Element {
               ))}
             </div>
           </div>
-
-          {/* Identity and membership are not preferences, so they keep their own
-              panel; this is the door to it, so a gear does not mean two things. */}
-          <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
-            <Button
-              variant="ghost"
-              size="xs"
-              className="gap-1.5 text-muted-foreground"
-              onClick={() => setVaultPanel(true)}
-            >
-              This vault on GitHub
-              <ExternalLink size={12} />
-            </Button>
-          </div>
+          )}
         </div>
       </div>
     </div>

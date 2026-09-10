@@ -1,5 +1,14 @@
 /**
- * Connect / disconnect the Google account behind mail + calendar (D67).
+ * The Connections section: the Google account behind mail + calendar (D67).
+ *
+ * **Lives under `features/settings/`, not `features/google/`, because a feature
+ * may only import primitives, composites and itself.** It was previously
+ * composed into the legacy vault panel by the shell as a `connections` prop,
+ * which is the workaround that injection existed for. With the settings tab
+ * owning every settings surface it is simply one of the sections, and the shell
+ * no longer has to know it exists. The mail and agenda views are unaffected:
+ * nothing here is shared with them but `state/google.ts`, which is not a
+ * feature.
  *
  * **Two scopes, and the panel's job is keeping them apart** (D87). An account is
  * connected on this *machine*; a *vault* uses one of them. So the rows offer
@@ -19,9 +28,9 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
-import { useGoogleAccount } from '../../state/google'
-import { useAlwaysAllowedSenders, useForgetImageSenders } from '../../state/mail-images'
-import { trpc } from '../../lib/trpc'
+import { useGoogleAccount } from '@/state/google'
+import { useAlwaysAllowedSenders, useForgetImageSenders } from '@/state/mail-images'
+import { trpc } from '@/lib/trpc'
 
 /** The flow's transient state. "Connected" is deliberately absent — that is the
  *  shared atom's to know. */
@@ -35,7 +44,7 @@ const OUTCOME: Record<string, string> = {
   cancelled: '',
 }
 
-export function GoogleConnection() {
+export function ConnectionsSection(): React.JSX.Element {
   const {
     account,
     setAccount,

@@ -69,7 +69,7 @@ export function TurnReview(): React.JSX.Element | null {
 
   if (!open || turn === null) return null
 
-  // The house busy/error wrapper (HistoryPanel, VaultSettings) — reused.
+  // The house busy/error wrapper (HistoryPanel, VaultSection) — reused.
   const guard = (fn: () => Promise<unknown>) => async () => {
     setBusy(true)
     setError(null)

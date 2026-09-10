@@ -37,7 +37,7 @@ import {
   THEME_FILE,
   THEME_LOCAL_FILE,
 } from '@holi/shared'
-import { Button, ColorSwatch, Input, Tooltip } from '@/primitives'
+import { Button, ColorSwatch, Dialog, Input, Tooltip } from '@/primitives'
 import { SectionHeading } from './SectionHeading'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { DescriptorSection } from './DescriptorSection'
@@ -216,6 +216,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
         <p className="py-4 text-xs text-muted-foreground">Reading this vault&rsquo;s theme…</p>
       ) : (
         <ThemeTokens
+          remote={remote}
           theme={theme}
           values={values}
           mode={mode}
@@ -231,6 +232,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
 }
 
 function ThemeTokens({
+  remote,
   theme,
   values,
   mode,
@@ -240,6 +242,7 @@ function ThemeTokens({
   error,
   write,
 }: {
+  remote: string
   theme: ResolvedTheme
   /** What this vault says for the mode on screen. */
   values: Record<string, string | undefined>
@@ -321,6 +324,64 @@ function ThemeTokens({
           </div>
         </section>
       ))}
+
+      <ResetTheme remote={remote} />
     </>
+  )
+}
+
+/**
+ * Back to the standard look, in one act.
+ *
+ * **Not the same control as a row's reset**, which is why both exist: a row's
+ * reset deletes one key, and this deletes both theme files. Ported out of the
+ * legacy vault panel, which was the only place it lived — the token pane
+ * shipped without it, so a vault with forty overrides had forty resets and no
+ * way back.
+ *
+ * Confirmed, because deleting the COMMITTED file removes the shared theme for
+ * collaborators too, on their next sync.
+ */
+function ResetTheme({ remote }: { remote: string }): React.JSX.Element {
+  const [confirming, setConfirming] = useState(false)
+
+  const reset = (): void => {
+    // The running app reverts itself: the file deletion fires the watcher, which
+    // re-reads the (now empty) theme and clears the applied tokens.
+    void trpc.theme.reset.mutate({ remote }).finally(() => setConfirming(false))
+  }
+
+  return (
+    <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
+      <p className="text-xs text-muted-foreground">
+        Clear every colour this vault has set, in both files and both modes.
+      </p>
+      <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setConfirming(true)}>
+        Reset theme
+      </Button>
+
+      {confirming && (
+        <Dialog open onClose={() => setConfirming(false)} size="sm">
+          <div className="grid gap-4">
+            <Dialog.Header>Reset theme?</Dialog.Header>
+            <Dialog.Body>
+              <p className="text-xs text-muted-foreground">
+                Deletes <span className="font-mono">{THEME_FILE}</span> and{' '}
+                <span className="font-mono">{THEME_LOCAL_FILE}</span>, returning the vault to the
+                standard look. The shared theme is removed for collaborators on the next sync.
+              </p>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={reset}>
+                Reset theme
+              </Button>
+            </Dialog.Footer>
+          </div>
+        </Dialog>
+      )}
+    </div>
   )
 }

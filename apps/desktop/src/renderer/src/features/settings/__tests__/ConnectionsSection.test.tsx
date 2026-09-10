@@ -10,14 +10,14 @@ import { render as rtlRender, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { GoogleConnection } from '../GoogleConnection'
+import { ConnectionsSection } from '../ConnectionsSection'
 
 /** A fresh jotai store per test: the google atoms are module level, so one
  *  case's answer would otherwise still be held when the next one renders. */
 const render = () =>
   rtlRender(
     <Provider store={createStore()}>
-      <GoogleConnection />
+      <ConnectionsSection />
     </Provider>,
   )
 
@@ -58,7 +58,7 @@ beforeEach(() => {
   disconnectVault.mockResolvedValue({ ok: true })
 })
 
-describe('GoogleConnection', () => {
+describe('ConnectionsSection', () => {
   it('offers the accounts already connected here to a vault with none', async () => {
     render()
 

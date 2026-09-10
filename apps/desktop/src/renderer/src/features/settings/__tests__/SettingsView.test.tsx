@@ -26,6 +26,7 @@ const read = vi.fn()
 const write = vi.fn()
 const themeRead = vi.fn()
 const themeWrite = vi.fn()
+const collaborators = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -39,7 +40,27 @@ vi.mock('@/lib/trpc', () => ({
     theme: {
       read: { query: () => themeRead() },
       write: { mutate: (input: unknown) => themeWrite(input) },
+      reset: { mutate: vi.fn() },
     },
+    // The tests below walk EVERY section, so this mock has to answer for the
+    // three ported out of the legacy vault panel as well. Each has its own file
+    // for its own behaviour; these are here only so the walk does not throw.
+    github: {
+      collaborators: { query: () => collaborators() },
+      openCollaboratorSettings: { mutate: vi.fn() },
+    },
+    google: {
+      status: { query: async () => ({ account: null, missingScopes: [] }) },
+      accounts: { query: async () => ({ accounts: [], current: null }) },
+      connect: { mutate: vi.fn() },
+      awaitConnect: { mutate: vi.fn() },
+      cancelConnect: { mutate: vi.fn() },
+      disconnectVault: { mutate: vi.fn() },
+      useAccount: { mutate: vi.fn() },
+      removeAccount: { mutate: vi.fn() },
+      imageSenders: { query: async () => [] },
+    },
+    vaults: { unpushed: { query: async () => [] } },
   },
 }))
 
@@ -56,6 +77,7 @@ function setup(over: Record<string, unknown> = {}) {
   write.mockResolvedValue({ ok: true, warnings: [] })
   themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [] })
   themeWrite.mockResolvedValue({ ok: true, warnings: [] })
+  collaborators.mockResolvedValue({ visibility: 'private', collaborators: [] })
   return render(
     <Provider store={store}>
       <SettingsView />
@@ -77,6 +99,7 @@ beforeEach(() => {
   write.mockReset()
   themeRead.mockReset()
   themeWrite.mockReset()
+  collaborators.mockReset()
 })
 
 test('every descriptor is filed under a section that exists', () => {

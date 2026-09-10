@@ -33,7 +33,6 @@ import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
-import { GoogleConnection } from '@/features/google/GoogleConnection'
 import { DialogHost } from './DialogHost'
 import { PaneView } from './PaneView'
 import { EditorPane } from '@/composites'
@@ -44,7 +43,6 @@ import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
-import { VaultSettings } from '@/features/vault/VaultSettings'
 import { syncLabel } from '../lib/sync-label'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
@@ -82,7 +80,6 @@ import { ConflictBanner } from '@/composites/ConflictBanner'
 import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentStatusAtom } from '@/state/agent'
 import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
-import { vaultPanelOpenAtom } from '@/state/vault-panel'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -216,8 +213,6 @@ export function Shell() {
    * strip, which is the earliest a drag can be heading for a pane.
    */
   const [overStrip, setOverStrip] = useState(false)
-  // An atom, not local state: the settings tab opens this panel too (#16).
-  const [showSettings, setShowSettings] = useAtom(vaultPanelOpenAtom)
   const [showAdd, setShowAdd] = useState(false)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
@@ -687,17 +682,6 @@ export function Shell() {
             </>
           )}
 
-          {showSettings && (
-            <>
-              <ResizableHandle />
-              <ResizablePanel id="settings" defaultSize={320} minSize={240}>
-                <VaultSettings
-                  onClose={() => setShowSettings(false)}
-                  connections={<GoogleConnection />}
-                />
-              </ResizablePanel>
-            </>
-          )}
 
           {/* The agent drawer is now a first-class member of the row: always
               mounted (its PTY + scrollback survive), collapsed to nothing when

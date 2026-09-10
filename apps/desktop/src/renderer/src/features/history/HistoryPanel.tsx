@@ -51,7 +51,7 @@ export function HistoryPanel() {
     if (open && targetPath) void loadVersions()
   }, [open, targetPath, loadVersions, reset])
 
-  // The house busy/error wrapper (VaultSettings) — reused, not reinvented.
+  // The house busy/error wrapper (VaultSection) — reused, not reinvented.
   const guard = (fn: () => Promise<unknown>) => async () => {
     setBusy(true)
     setError(null)
