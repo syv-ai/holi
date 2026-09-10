@@ -69,47 +69,59 @@ export function SettingsView(): React.JSX.Element {
     // two other panes, and only the tab's OWN width decides whether a rail fits.
     // A pane's `minSize` is 240px and the rail plus a column of controls wants
     // roughly 560, so below that the rail becomes a picker above the content.
-    <div className="@container flex h-full min-h-0 flex-col @min-[560px]:flex-row">
-      <div className="hidden w-44 shrink-0 overflow-y-auto border-r border-border @min-[560px]:block">
-        <SettingsRail
-          sections={SETTINGS_SECTIONS}
-          activeId={section.id}
-          onSelect={setActiveId}
-          onJump={jump}
-        />
-      </div>
+    //
+    // **Two elements, and they cannot be one.** A container query resolves
+    // against the nearest ANCESTOR container, never against the element that
+    // declares `container-type` itself — so `@container` and `@min-[560px]:*`
+    // on the same div gives a query that can never match. The children's
+    // variants worked (the rail appeared, the picker hid) while the row/column
+    // switch silently did not, which reads as "the rail is there but the
+    // content dropped below it".
+    <div className="@container h-full min-h-0">
+      <div className="flex h-full min-h-0 flex-col @min-[560px]:flex-row">
+        <div className="hidden w-44 shrink-0 overflow-y-auto border-r border-border @min-[560px]:block">
+          <SettingsRail
+            sections={SETTINGS_SECTIONS}
+            activeId={section.id}
+            onSelect={setActiveId}
+            onJump={jump}
+          />
+        </div>
 
-      <div className="shrink-0 border-b border-border p-2 @min-[560px]:hidden">
-        <SettingsPicker
-          sections={SETTINGS_SECTIONS}
-          activeId={section.id}
-          onSelect={setActiveId}
-          onJump={jump}
-        />
-      </div>
+        <div className="shrink-0 border-b border-border p-2 @min-[560px]:hidden">
+          <SettingsPicker
+            sections={SETTINGS_SECTIONS}
+            activeId={section.id}
+            onSelect={setActiveId}
+            onJump={jump}
+          />
+        </div>
 
-      <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-2xl px-6 py-4">
-          <h2 className="text-sm font-medium">{section.label}</h2>
+        <div ref={scroller} className="min-h-0 min-w-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-2xl px-6 py-4">
+            <h2 className="text-sm font-medium">{section.label}</h2>
 
-          {error !== null && (
-            <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
-            </p>
-          )}
-          {/* Warnings the resolver could not attribute to any key. Shown once at
+            {error !== null && (
+              <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                {error}
+              </p>
+            )}
+            {/* Warnings the resolver could not attribute to any key. Shown once at
               the top of whichever section you are in rather than dropped: a
               value refused for being malformed used to vanish silently. */}
-          {unattributed.map((warning) => (
-            <p key={warning} className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground">
-              <TriangleAlert size={13} className="mt-0.5 shrink-0" />
-              {warning}
-            </p>
-          ))}
+            {unattributed.map((warning) => (
+              <p
+                key={warning}
+                className="mt-3 flex items-start gap-1.5 text-xs text-muted-foreground"
+              >
+                <TriangleAlert size={13} className="mt-0.5 shrink-0" />
+                {warning}
+              </p>
+            ))}
 
-          <section.Component remote={remote} />
+            <section.Component remote={remote} />
 
-          {/* The escape hatch, the same one "Edit Icon…" offers for its map:
+            {/* The escape hatch, the same one "Edit Icon…" offers for its map:
               these are files, they are readable, and a pane that hid them would
               be claiming to be the only way to change a vault's mind. Per
               section rather than one anonymous row at the end of everything, so
@@ -119,27 +131,28 @@ export function SettingsView(): React.JSX.Element {
               what GitHub says about a vault and which Google account this
               machine holds are not files, and offering none under a sentence
               promising some would be worse than saying nothing. */}
-          {section.files.length > 0 && (
-          <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
-            <p className="text-xs text-muted-foreground">
-              {section.files.length === 1
-                ? 'This section is a view of one file in the vault, and you can edit it by hand.'
-                : 'This section is a view of two files in the vault, and you can edit them by hand.'}
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              {section.files.map((file) => (
-                <Button
-                  key={file}
-                  variant="secondary"
-                  size="xs"
-                  onClick={() => setWorkspace((w) => openPinned(w, file))}
-                >
-                  {file}
-                </Button>
-              ))}
-            </div>
+            {section.files.length > 0 && (
+              <div className="mt-6 flex flex-col gap-2 border-t border-border pt-4">
+                <p className="text-xs text-muted-foreground">
+                  {section.files.length === 1
+                    ? 'This section is a view of one file in the vault, and you can edit it by hand.'
+                    : 'This section is a view of two files in the vault, and you can edit them by hand.'}
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {section.files.map((file) => (
+                    <Button
+                      key={file}
+                      variant="secondary"
+                      size="xs"
+                      onClick={() => setWorkspace((w) => openPinned(w, file))}
+                    >
+                      {file}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-          )}
         </div>
       </div>
     </div>
