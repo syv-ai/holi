@@ -136,6 +136,15 @@
    * to recolour it. A vault theme could eventually reach them. */
   --diff-added: var(--color-green-500);
   --diff-removed: var(--color-red-500);
+  /* The same two hues as TEXT, for a churn count beside a commit (`+40 −3`).
+     Separate tokens, and the paragraph above is the reason: a 500 is chosen to
+     read as a wash behind words, and green-500 as text on white paper is about
+     2.2:1. So this pair does take a light arm, exactly as the syntax ramp does
+     and for its reason — on white the job is contrast against the paper, not
+     glow against the ink. Same split as `--primary` (a fill) and `--brand`
+     (the same brand as text), which cannot be one token either. */
+  --diff-added-foreground: var(--color-green-400);
+  --diff-removed-foreground: var(--color-red-400);
 
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
    * `codemirror-markdown-tables` paints a rendered table entirely from its own
@@ -239,6 +248,12 @@
   --syntax-punctuation: var(--color-neutral-600);
   --syntax-invalid: var(--color-red-600);
 
+  /* Down to the 600/700 end, for the syntax ramp's reason. The tint tokens
+     `--diff-added`/`--diff-removed` deliberately have no light arm; these do,
+     because they are read as text. */
+  --diff-added-foreground: var(--color-green-700);
+  --diff-removed-foreground: var(--color-red-700);
+
   /* The popover shadow is softened here, and it did not use to be overridden at
      all — the old note said black-alpha "reads fine on a light surface", which
      was true of the 0.1 alpha it described. The dark-first value is now carrying
@@ -270,6 +285,11 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-divider: var(--divider);
+  /* The diff hues as TEXT utilities, so a churn count beside a commit reads in
+     the same green and red as the diff it summarises. The tint tokens are not
+     exposed here: nothing outside `DiffView` paints with them. */
+  --color-diff-added-foreground: var(--diff-added-foreground);
+  --color-diff-removed-foreground: var(--diff-removed-foreground);
   --color-input: var(--input);
   --color-ring: var(--ring);
 

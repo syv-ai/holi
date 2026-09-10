@@ -9,7 +9,7 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { DiffView, SidePanel } from '@/composites'
+import { Churn, DiffView, SidePanel } from '@/composites'
 import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
@@ -104,6 +104,7 @@ export function HistoryPanel() {
         <span className="block w-full truncate">{v.subject || '(no message)'}</span>
         <span className="block w-full truncate text-[10px] text-muted-foreground">
           {when(v.date)} · {v.author}
+          <Churn added={v.added} removed={v.removed} />
         </span>
       </Button>
       <Tooltip content={`open commit ${v.sha.slice(0, 7)} on GitHub`}>

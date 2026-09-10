@@ -18,7 +18,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Button, Tooltip } from '@/primitives'
-import { DiffView, PanelHeader } from '@/composites'
+import { Churn, DiffView, PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import {
   commitDiffsAtom,
@@ -136,6 +136,7 @@ export function HistoryView(): React.JSX.Element {
         <span className="block w-full truncate">{c.subject || '(no message)'}</span>
         <span className="block w-full truncate text-[10px] text-muted-foreground">
           {when(c.date)} · {c.author}
+          <Churn added={c.added} removed={c.removed} />
         </span>
       </Button>
       <Tooltip content={`open commit ${c.sha.slice(0, 7)} on GitHub`}>

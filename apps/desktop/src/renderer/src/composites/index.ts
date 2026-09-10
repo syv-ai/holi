@@ -1,5 +1,6 @@
 export { DeleteConfirm } from './DeleteConfirm'
 export { DateTimePicker, type DatePreset } from './DateTimePicker'
+export { Churn } from './Churn'
 export { DiffView } from './DiffView'
 export { EditorPane } from './EditorPane'
 export { FormField } from './FormField'

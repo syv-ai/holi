@@ -582,6 +582,83 @@ describe('log', () => {
     )
   })
 
+  it('counts the lines a commit added and removed', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'a.md', 'one\ntwo\nthree\n')
+    await commitFile(dir, 'a.md', 'one\nCHANGED\nthree\nfour\n')
+
+    const [head] = await openRepo(dir).log({ limit: 1 })
+    expect(head!.added).toBe(2)
+    expect(head!.removed).toBe(1)
+  })
+
+  it('sums across every file in the commit', async () => {
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'a.md'), 'a\na\n', 'utf8')
+    await writeFile(join(dir, 'b.md'), 'b\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'two files'])
+
+    const [head] = await openRepo(dir).log({ limit: 1 })
+    expect(head!.added).toBe(3)
+    expect(head!.removed).toBe(0)
+  })
+
+  it('counts only the ONE file when given a path', async () => {
+    // Which is the more useful number in a note's own history: the panel is
+    // about that note, not about everything committed alongside it.
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'mine.md'), 'x\n', 'utf8')
+    await writeFile(join(dir, 'other.md'), 'y\ny\ny\ny\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'both'])
+
+    const [head] = await openRepo(dir).log({ path: 'mine.md', limit: 1 })
+    expect(head!.added).toBe(1)
+  })
+
+  it('counts a binary file as nothing, because it has no lines', async () => {
+    // `--numstat` writes `-` for both, which must read as 0 rather than NaN.
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'logo.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]))
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', 'add a binary'])
+
+    const [head] = await openRepo(dir).log({ limit: 1 })
+    expect(head!.added).toBe(0)
+    expect(head!.removed).toBe(0)
+    expect(Number.isNaN(head!.added)).toBe(false)
+  })
+
+  it('still parses a subject full of tabs, now that numstat is tab-separated', async () => {
+    // The counts and the subject are on different lines — the subject is `%s`,
+    // which is one line by definition — so a tab in a message cannot be read as
+    // a numstat field. Worth pinning: this is the shape that breaks.
+    const dir = await makeClone(await makeRemote())
+    await writeFile(join(dir, 'a.md'), 'one\ntwo\n', 'utf8')
+    await plainGit(dir, ['add', '-A'])
+    await plainGit(dir, ['commit', '-m', '9\t9\tnot-a-path.md\tand more'])
+
+    const [head] = await openRepo(dir).log({ limit: 1 })
+    expect(head!.subject).toBe('9\t9\tnot-a-path.md\tand more')
+    expect(head!.added).toBe(2)
+  })
+
+  it('reports no churn for a merge, which has no diff of its own', async () => {
+    const dir = await makeClone(await makeRemote())
+    await commitFile(dir, 'base.md', 'base\n')
+    await plainGit(dir, ['checkout', '-b', 'side'])
+    await commitFile(dir, 'side.md', 'side\n')
+    await plainGit(dir, ['checkout', 'main'])
+    await commitFile(dir, 'main.md', 'main\n')
+    await plainGit(dir, ['merge', '--no-ff', '--no-edit', 'side'])
+
+    const [head] = await openRepo(dir).log({ limit: 1 })
+    expect(head!.subject).toMatch(/^Merge/)
+    expect(head!.added).toBe(0)
+    expect(head!.removed).toBe(0)
+  })
+
   it('returns an empty list for a repo with no commits, rather than throwing', async () => {
     const base = await tmp('holi-git-nolog-')
     const dir = join(base, 'fresh')

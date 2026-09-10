@@ -149,6 +149,11 @@ export interface Commit {
   /** ISO 8601, author date. */
   date: string
   author: string
+  /** Lines added across the commit, summed over its files — or over the ONE
+   *  file when `log` was given a path, which is the more useful number there.
+   *  Named to match `RangeFile`, which counts the same thing. */
+  added: number
+  removed: number
 }
 
 /** One file's change across a commit range — the unit an agent turn is reviewed
@@ -486,7 +491,13 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
    * commit message corrupt the parse of the log it appears in.
    */
   async function log(o: { path?: string; limit?: number } = {}): Promise<Commit[]> {
-    const args = ['log', '-z', '--format=%H%x1f%s%x1f%aI%x1f%an']
+    // **RS (0x1e) leads each record, rather than `-z` separating them.**
+    // `--numstat` writes its own newline-separated lines after each commit, and
+    // under `-z` it NUL-terminates paths as well — so the record separator and
+    // the payload would be the same byte. A leading RS keeps one unambiguous
+    // record boundary, and `%s` is the subject's FIRST line by definition, so
+    // no field inside a record can contain a newline either.
+    const args = ['log', '--numstat', '--format=%x1e%H%x1f%s%x1f%aI%x1f%an']
     if (o.limit !== undefined) args.push(`-n${o.limit}`)
     // `--follow` needs exactly one pathspec, and must precede the `--`.
     if (o.path !== undefined) args.push('--follow', '--', o.path)
@@ -496,13 +507,26 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     const raw = await runGit(root, args, opts).catch(() => '')
 
     return raw
-      .split('\0')
-      .filter((record) => record !== '')
+      .split('\x1e')
+      .filter((record) => record.trim() !== '')
       .map((record) => {
-        const [sha = '', subject = '', date = '', author = ''] = record.split('\x1f')
-        // `-z` leaves a newline between records in some git versions; the sha is
-        // fixed-width and leads, so trimming it is enough to normalise.
-        return { sha: sha.trim(), subject, date, author }
+        const [header = '', ...stats] = record.split('\n')
+        const [sha = '', subject = '', date = '', author = ''] = header.split('\x1f')
+
+        // `<added>\t<removed>\t<path>`. The path is deliberately not read: it
+        // is the one field git may quote, and the counts are all this needs.
+        // A BINARY file reports `-` for both, which `Number` makes NaN and `||`
+        // makes 0 — an image has no lines, and calling that zero is right.
+        let added = 0
+        let removed = 0
+        for (const line of stats) {
+          const [a, r] = line.split('\t')
+          if (a === undefined || r === undefined) continue
+          added += Number(a) || 0
+          removed += Number(r) || 0
+        }
+
+        return { sha: sha.trim(), subject, date, author, added, removed }
       })
   }
 

@@ -21,6 +21,11 @@ export interface Version {
    *  already newest-first. */
   date: string
   author: string
+  /** Lines added and removed, summed over the commit — or over the ONE file
+   *  when this list is a note's own history, which is the more useful number
+   *  there. Both zero on a merge, which `--numstat` reports no diff for. */
+  added: number
+  removed: number
 }
 
 /**
