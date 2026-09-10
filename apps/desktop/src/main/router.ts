@@ -91,6 +91,7 @@ import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
+import { migrateVaultState } from './vault/migrate-state'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
@@ -535,6 +536,7 @@ export function createRouter(deps: RouterDeps) {
     }
     await ensureSeeded(repo.root)
     await migrateApps(repo.root)
+    await migrateVaultState(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -757,6 +759,7 @@ export function createRouter(deps: RouterDeps) {
          */
         await ensureSeeded(root)
         await migrateApps(root)
+        await migrateVaultState(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()

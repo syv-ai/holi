@@ -78,7 +78,7 @@ export function partitionBySize(
  * exactly the case these transforms exist for: a `git mv` outside the app is
  * what `relink` fixes.
  */
-export const ENDPOINT_FILE = '.holi/hook-endpoint.local.txt'
+export const ENDPOINT_FILE = '.holi/state/hook-endpoint.local.txt'
 
 export async function writeHookEndpoint(
   root: string,

@@ -5,7 +5,7 @@
 // (Glob/grep/git); vault conventions and memory guidance live in AGENTS.md.
 // See prd/agent.md §Per-turn context.
 //
-// Pure local read (<50 ms): Holi's main process keeps `.holi/context.local.json`
+// Pure local read (<50 ms): Holi's main process keeps `.holi/state/context.local.json`
 // current, so this never talks to a server. Outside Holi — or with nothing
 // focused — the file is absent and it prints nothing.
 
@@ -16,7 +16,7 @@ const root = process.env.CLAUDE_PROJECT_DIR || process.cwd()
 
 let context = null
 try {
-  context = JSON.parse(readFileSync(join(root, '.holi/context.local.json'), 'utf8'))
+  context = JSON.parse(readFileSync(join(root, '.holi/state/context.local.json'), 'utf8'))
 } catch {
   // no editor context (bare CLI, or nothing focused yet) — print nothing
 }

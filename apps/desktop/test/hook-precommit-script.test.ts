@@ -105,10 +105,10 @@ describe('the transform half never vetoes', () => {
   it('exits 0 when the endpoint file points nowhere', async () => {
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi'), { recursive: true })
+    await mkdir(join(dir, '.holi/state'), { recursive: true })
     // A stale endpoint from a previous run: the port is closed now.
     await writeFile(
-      join(dir, '.holi/hook-endpoint.local.txt'),
+      join(dir, '.holi/state/hook-endpoint.local.txt'),
       '1\nstale\n',
       'utf8',
     )
@@ -119,8 +119,8 @@ describe('the transform half never vetoes', () => {
   it('exits 0 when the endpoint file is junk', async () => {
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi'), { recursive: true })
-    await writeFile(join(dir, '.holi/hook-endpoint.local.txt'), 'not an endpoint at all', 'utf8')
+    await mkdir(join(dir, '.holi/state'), { recursive: true })
+    await writeFile(join(dir, '.holi/state/hook-endpoint.local.txt'), 'not an endpoint at all', 'utf8')
     await stage(dir, 'a.md', '# a\n')
     expect((await commit(dir)).code).toBe(0)
   })
@@ -130,9 +130,9 @@ describe('the transform half never vetoes', () => {
     // user's point of view. The curl gets a hard timeout.
     const dir = await repo()
     await installGitHook(dir, 1024)
-    await mkdir(join(dir, '.holi'), { recursive: true })
+    await mkdir(join(dir, '.holi/state'), { recursive: true })
     await writeFile(
-      join(dir, '.holi/hook-endpoint.local.txt'),
+      join(dir, '.holi/state/hook-endpoint.local.txt'),
       '9\nx\n', // discard port: accepts, never answers
       'utf8',
     )
@@ -161,9 +161,9 @@ describe('it actually reaches Holi', () => {
     const port = (server.address() as AddressInfo).port
 
     try {
-      await mkdir(join(dir, '.holi'), { recursive: true })
+      await mkdir(join(dir, '.holi/state'), { recursive: true })
       await writeFile(
-        join(dir, '.holi/hook-endpoint.local.txt'),
+        join(dir, '.holi/state/hook-endpoint.local.txt'),
         `${port}\ntok-123\n`,
         'utf8',
       )
@@ -190,9 +190,9 @@ describe('it actually reaches Holi', () => {
     const port = (server.address() as AddressInfo).port
 
     try {
-      await mkdir(join(dir, '.holi'), { recursive: true })
+      await mkdir(join(dir, '.holi/state'), { recursive: true })
       await writeFile(
-        join(dir, '.holi/hook-endpoint.local.txt'),
+        join(dir, '.holi/state/hook-endpoint.local.txt'),
         `${port}\nx\n`,
         'utf8',
       )

@@ -25,8 +25,8 @@ afterEach(async () => {
 const SKILL = '.claude/skills/vault-apps/SKILL.md'
 
 describe('the state file itself', () => {
-  it('lives at .holi/seed-state.local.json and never syncs', () => {
-    expect(SEED_STATE_FILE).toBe('.holi/seed-state.local.json')
+  it('lives at .holi/state/seed-state.local.json and never syncs', () => {
+    expect(SEED_STATE_FILE).toBe('.holi/state/seed-state.local.json')
     expect(isLocalOnlyPath(SEED_STATE_FILE)).toBe(true)
   })
 
@@ -36,7 +36,7 @@ describe('the state file itself', () => {
 
   it('reads as empty rather than throwing when it is corrupt', async () => {
     const root = await tempDir()
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(join(root, SEED_STATE_FILE), '{ not json')
     expect(await readSeedState(root)).toEqual({})
   })

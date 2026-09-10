@@ -1,6 +1,6 @@
 /**
  * The per-turn focus file the UserPromptSubmit hook reads: the note the user has
- * focused in the editor, written to `.holi/context.local.json` in the vault's
+ * focused in the editor, written to `.holi/state/context.local.json` in the vault's
  * clone. This is the ONE piece of per-turn state the agent cannot discover
  * itself (it is editor-UI focus, which only Holi holds); tasks, backreferences
  * and sync state the agent finds with its own native tools, and vault
@@ -13,7 +13,7 @@
 import { vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 
-export const CONTEXT_FILE = '.holi/context.local.json'
+export const CONTEXT_FILE = '.holi/state/context.local.json'
 
 export interface FocusInput {
   focusedPath: string | null

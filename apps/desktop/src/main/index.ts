@@ -526,7 +526,7 @@ async function main(): Promise<void> {
         if (root === null) return { changed: [], failed: [] }
         // No `notify` — Holi has no push seam into a live Claude Code session,
         // and typing into the agent's PTY is not one. The run log
-        // (`.holi/hooks.local.log`) is the agent-readable surface, and it reads
+        // (`.holi/state/hooks.local.log`) is the agent-readable surface, and it reads
         // it when asked. Tracked in not-built.md.
         const result = await runPreCommit(root, await stagedChanges(root), {
           settings: await readHookSettings(root),

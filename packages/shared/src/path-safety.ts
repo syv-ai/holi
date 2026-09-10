@@ -44,7 +44,7 @@ export function vaultRelPath(raw: string): VaultRelPath {
 
 /** Machine-local paths that sync/mirror/export layers must never treat as
  * committed vault content — identified **solely** by the `.local.` marker in the
- * basename (`.holi/settings.local.json`, `.holi/context.local.json`,
+ * basename (`.holi/settings.local.json`, `.holi/state/context.local.json`,
  * `.holi/theme.local.json`, `CLAUDE.local.md`, `USER.local.md`).
  *
  * The marker is the whole rule on purpose: a file's git-vs-local status must be

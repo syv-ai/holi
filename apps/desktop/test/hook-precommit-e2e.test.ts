@@ -43,7 +43,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   await exec('git', ['init', '-q', '-b', 'main', dir])
   await git(dir, ['config', 'user.email', 'test@holi.invalid'])
   await git(dir, ['config', 'user.name', 'Holi Test'])
-  await mkdir(join(dir, '.holi'), { recursive: true })
+  await mkdir(join(dir, '.holi/state'), { recursive: true })
   await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
   // `scaffold-md` is off HERE, not in the product: every fixture below is a new
   // `.md` and would otherwise be committed with a frontmatter block on top,
@@ -175,7 +175,7 @@ describe('the log', () => {
     await git(dir, ['mv', 'a.md', 'b.md'])
     await git(dir, ['commit', '-q', '-m', 'rename'])
 
-    const log = await readFile(join(dir, '.holi/hooks.local.log'), 'utf8')
+    const log = await readFile(join(dir, '.holi/state/hooks.local.log'), 'utf8')
     expect(log).toMatch(/relink: rewrote links in 1 file/)
 
     const { stdout } = await git(dir, ['ls-files'])

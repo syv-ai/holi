@@ -19,7 +19,7 @@
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-export const HOOKS_LOG_FILE = '.holi/hooks.local.log'
+export const HOOKS_LOG_FILE = '.holi/state/hooks.local.log'
 
 /** Roughly a few hundred commits' worth of transform notes. */
 const MAX_LINES = 2000

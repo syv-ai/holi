@@ -32,7 +32,7 @@ import { join } from 'node:path'
 import { vaultRelPath } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 
-export const SEED_STATE_FILE = '.holi/seed-state.local.json'
+export const SEED_STATE_FILE = '.holi/state/seed-state.local.json'
 
 /** path -> sha256 of the content Holi wrote there. */
 export type SeedState = Record<string, string>

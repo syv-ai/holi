@@ -232,7 +232,7 @@ describe('the log', () => {
   })
 
   it('is gitignored in a seeded vault', async () => {
-    await mkdir(join(repo, '.holi'), { recursive: true })
+    await mkdir(join(repo, '.holi/state'), { recursive: true })
     await writeFile(join(repo, '.gitignore'), '*.local.*\n', 'utf8')
     await runPreCommit(repo, NOTHING, {
       settings: { relink: true },
@@ -241,12 +241,12 @@ describe('the log', () => {
     const ignored = await plainGit(repo, [
       'check-ignore',
       '-q',
-      '.holi/hooks.local.log',
+      '.holi/state/hooks.local.log',
     ]).then(
       () => true,
       () => false,
     )
     expect(ignored).toBe(true)
-    expect(await readFile(join(repo, '.holi/hooks.local.log'), 'utf8')).toContain('something')
+    expect(await readFile(join(repo, '.holi/state/hooks.local.log'), 'utf8')).toContain('something')
   })
 })

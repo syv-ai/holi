@@ -86,7 +86,7 @@ in the user's input box as if they had typed it, which is worse than saying noth
 This bites the pre-commit transforms (D76 part 4, [`prd/vaults-sync.md`](prd/vaults-sync.md) FR-9),
 which wanted to tell the agent what they rewrote. The runner supports a `notify` callback and main
 leaves it unwired. The substitute is a pull surface: a capped, machine-local
-`.holi/hooks.local.log` the agent reads when asked — the first agent-readable log in Holi, and the
+`.holi/state/hooks.local.log` the agent reads when asked — the first agent-readable log in Holi, and the
 only one.
 
 **Also not built:** D76's floor for when no agent session is open — surfacing a hook failure in the

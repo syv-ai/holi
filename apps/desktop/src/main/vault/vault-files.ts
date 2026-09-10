@@ -50,7 +50,7 @@ export function isNonContentPath(rel: string): boolean {
 
 /**
  * Non-content **plus** local-only. This is what the *watcher* ignores: a change
- * to `.holi/context.local.json` (rewritten every agent turn) must not storm the
+ * to `.holi/state/context.local.json` (rewritten every agent turn) must not storm the
  * rescan loop. The snapshot uses `isNonContentPath` instead, so those files
  * still appear in the tree — refreshed on the periodic heal rather than live.
  */

@@ -395,7 +395,7 @@ describe('ensureSeeded — the .gitignore', () => {
 
     await ensureSeeded(root)
     await writeFile(join(root, 'USER.local.md'), 'private notes about the user\n')
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(join(root, '.holi/settings.local.json'), '{"machine":"local"}\n')
     await writeFile(join(root, 'shared.md'), 'this one should travel\n')
     // A bare USER.md is ordinary content now — the name has no `.local.`, so it
@@ -427,9 +427,9 @@ describe('hook scripts', () => {
 
   it('user-prompt-submit emits only the focused-note line from context.local.json', async () => {
     const root = await tempDir()
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(
-      join(root, '.holi/context.local.json'),
+      join(root, '.holi/state/context.local.json'),
       JSON.stringify({ focusedPath: 'notes/plan.md', openPaths: ['notes/plan.md', 'notes/other.md'] }),
     )
 
@@ -445,7 +445,7 @@ describe('hook scripts', () => {
   it('user-prompt-submit prints nothing when nothing is focused', async () => {
     const root = await tempDir()
     await writeFile(join(root, 'MEMORY.md'), 'Vault uses British English.')
-    // no .holi/context.local.json → nothing focused → nothing to inject
+    // no .holi/state/context.local.json → nothing focused → nothing to inject
 
     const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
     expect(run.code).toBe(0)

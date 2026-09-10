@@ -25,8 +25,8 @@ afterEach(async () => {
 })
 
 describe('the log file', () => {
-  it('lives at .holi/hooks.local.log and never syncs', () => {
-    expect(HOOKS_LOG_FILE).toBe('.holi/hooks.local.log')
+  it('lives at .holi/state/hooks.local.log and never syncs', () => {
+    expect(HOOKS_LOG_FILE).toBe('.holi/state/hooks.local.log')
     expect(isLocalOnlyPath(HOOKS_LOG_FILE)).toBe(true)
   })
 

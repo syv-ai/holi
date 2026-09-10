@@ -350,7 +350,7 @@ export function Shell() {
 
   // Feed the agent's per-turn hook the focused note — the one piece of state it
   // cannot discover itself (editor-UI focus). Main writes it to
-  // `.holi/context.local.json`; a no-op when no session is running.
+  // `.holi/state/context.local.json`; a no-op when no session is running.
   useEffect(() => {
     const focusedPath = tab?.kind === 'note' ? tab.path : null
     const openPaths = pane.tabs.flatMap((t) => (t.kind === 'note' ? [t.path] : []))
