@@ -19,6 +19,7 @@
  * repeating its parent's name is noise.
  */
 import {
+  ICONS_FILE,
   SETTINGS_FILE,
   SETTINGS_LOCAL_FILE,
   THEME_FILE,
@@ -28,6 +29,7 @@ import {
 import { AccountSection } from './AccountSection'
 import { ConnectionsSection } from './ConnectionsSection'
 import { DescriptorSection } from './DescriptorSection'
+import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
 import { VaultSection } from './VaultSection'
 import { headingId } from './SectionHeading'
@@ -82,6 +84,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     headings: [heading(LIGHT_AND_DARK), ...THEME_TOKEN_GROUPS.map((g) => heading(g.title))],
     files: [THEME_FILE, THEME_LOCAL_FILE],
     Component: ({ remote }) => <ThemeSection remote={remote} />,
+  },
+  {
+    id: 'icons',
+    label: 'Icons',
+    headings: [],
+    files: [ICONS_FILE],
+    Component: () => <IconsSection />,
   },
   {
     id: 'commits',
