@@ -58,17 +58,22 @@ export function SettingsRail({
                 active && 'border-l-primary bg-accent font-medium text-foreground',
               )}
             >
-              {section.headings.length > 0 ? (
-                <ChevronRight
-                  size={12}
-                  aria-hidden="true"
-                  className={cn('shrink-0 transition-transform', active && 'rotate-90')}
-                />
-              ) : (
-                // Keeps every label on one x-position whether or not its section
-                // has children, so the rail does not look ragged.
-                <span aria-hidden="true" className="w-3 shrink-0" />
-              )}
+              {/* **Always the chevron, hidden rather than swapped.** A
+                  same-width spacer was not the same box: the button's
+                  `[&_svg]` rules and the flex gap applied to one and not the
+                  other, so a section with no headings sat 6px further right
+                  than one with them — reading as though the plain entries were
+                  children of the entry above. `invisible` keeps the identical
+                  element, so they cannot drift again. */}
+              <ChevronRight
+                size={12}
+                aria-hidden="true"
+                className={cn(
+                  'shrink-0 transition-transform',
+                  section.headings.length === 0 && 'invisible',
+                  active && 'rotate-90',
+                )}
+              />
               <span className="truncate">{section.label}</span>
             </Button>
 

@@ -28,6 +28,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
+import { SettingsHeading, SettingsNote } from './settings-ui'
 import { useGoogleAccount } from '@/state/google'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from '@/state/mail-images'
 import { trpc } from '@/lib/trpc'
@@ -139,11 +140,11 @@ export function ConnectionsSection(): React.JSX.Element {
   const needsReconsent = connected && missingScopes.length > 0
 
   return (
-    <section className="space-y-2">
-      <h3 className="font-medium">Google</h3>
+    <section>
+      <SettingsHeading title="Google" />
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="truncate text-[11px] text-muted-foreground">
             {connected ? (
               <>
                 Connected as <span className="text-foreground">{account.email}</span>
@@ -155,25 +156,25 @@ export function ConnectionsSection(): React.JSX.Element {
             )}
           </p>
           {!connected && phase.kind === 'idle' && phase.error !== undefined && (
-            <p className="mt-0.5 truncate text-xs text-amber-400">{phase.error}</p>
+            <p className="mt-0.5 truncate text-[11px] text-amber-400">{phase.error}</p>
           )}
         </div>
 
         {connected ? (
           <div className="flex shrink-0 items-center gap-2">
             {needsReconsent && (
-              <Button size="sm" disabled={busy} onClick={() => void connect()}>
+              <Button size="xs" disabled={busy} onClick={() => void connect()}>
                 {phase.kind === 'connecting' ? 'Connecting…' : 'Reconnect'}
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={() => void disconnect()}>
+            <Button variant="secondary" size="xs" onClick={() => void disconnect()}>
               Disconnect this vault
             </Button>
           </div>
         ) : (
           <Button
             variant="secondary"
-            size="sm"
+            size="xs"
             className="shrink-0"
             disabled={busy}
             onClick={() => void connect()}
@@ -187,15 +188,17 @@ export function ConnectionsSection(): React.JSX.Element {
           Picking one is a mapping, not a consent round trip, so it is one click
           and deliberately not dressed up as connecting. */}
       {others.length > 0 && (
-        <ul className="space-y-1">
+        <ul className="mt-2 space-y-1">
           {others.map((other) => (
             <li key={other.sub} className="flex items-center justify-between gap-3">
-              <span className="min-w-0 truncate text-xs text-muted-foreground">{other.email}</span>
+              <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+                {other.email}
+              </span>
               <span className="flex shrink-0 items-center gap-2">
-                <Button size="sm" variant="secondary" onClick={() => void useAccount(other.sub)}>
+                <Button size="xs" variant="secondary" onClick={() => void useAccount(other.sub)}>
                   Use in this vault
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => void removeAccount(other.sub)}>
+                <Button size="xs" variant="ghost" onClick={() => void removeAccount(other.sub)}>
                   Remove from Holi
                 </Button>
               </span>
@@ -205,15 +208,15 @@ export function ConnectionsSection(): React.JSX.Element {
       )}
       {connected &&
         (needsReconsent ? (
-          <p className="text-xs text-amber-400">
+          <p className="mt-2 text-[11px] text-amber-400">
             Holi needs new permissions. Mail still loads, but marking read, starring, archiving and
             contacts will not work until you reconnect.
           </p>
         ) : (
-          <p className="text-xs text-muted-foreground">
+          <SettingsNote className="mt-2">
             Holi can read your mail and calendar, and mark read, star, archive or trash a thread. It
             cannot delete mail permanently or change your calendar.
-          </p>
+          </SettingsNote>
         ))}
       {connected && <ImageSenders />}
     </section>
@@ -236,7 +239,7 @@ function ImageSenders(): React.JSX.Element | null {
   if (senders === undefined || senders.size === 0) return null
 
   return (
-    <p className="flex items-baseline gap-2 text-xs text-muted-foreground">
+    <p className="mt-2 flex items-baseline gap-2 text-[11px] text-muted-foreground">
       <span className="min-w-0 flex-1">
         Images load automatically from {senders.size}{' '}
         {senders.size === 1 ? 'sender' : 'senders'}.

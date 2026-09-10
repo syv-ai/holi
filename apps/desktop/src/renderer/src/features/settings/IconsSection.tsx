@@ -21,6 +21,7 @@ import { useMemo } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ICONS_FILE } from '@holi/shared'
 import { Button, Tooltip } from '@/primitives'
+import { SettingsList, SettingsNote } from './settings-ui'
 import { trpc } from '@/lib/trpc'
 import { openDialogAtom } from '@/state/dialogs'
 import { openPinned, workspaceAtom } from '@/state/panes'
@@ -62,24 +63,27 @@ export function IconsSection(): React.JSX.Element {
 
   if (entries.length === 0) {
     return (
-      <p className="py-4 text-xs text-muted-foreground">
+      <SettingsNote>
         Nothing has an icon yet. Right-click a note, a folder or a file in the tree and choose
         &ldquo;Edit Icon…&rdquo;.
-      </p>
+      </SettingsNote>
     )
   }
 
   return (
-    <ul className="mt-2 divide-y divide-divider">
+    <SettingsList>
       {entries.map(([path, emoji]) => {
         const stale = !present.has(path)
         return (
-          <li key={path} className="flex items-center gap-3 py-2" data-icon-path={path}>
+          <div key={path} className="flex items-center gap-3 py-2" data-icon-path={path}>
+            {/* `text-base` is the one size override in this tab that is not
+                typography: an emoji at `text-xs` is unreadable, and this is the
+                glyph the row exists to show. */}
             <span className="w-5 shrink-0 text-center text-base leading-none" aria-hidden="true">
               {emoji}
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-xs">{path}</span>
+              <span className="block truncate text-xs font-medium">{path}</span>
               {stale && (
                 <span className="text-[11px] text-muted-foreground">
                   no longer in this vault — renamed or deleted
@@ -101,9 +105,9 @@ export function IconsSection(): React.JSX.Element {
                 Clear
               </Button>
             </Tooltip>
-          </li>
+          </div>
         )
       })}
-    </ul>
+    </SettingsList>
   )
 }

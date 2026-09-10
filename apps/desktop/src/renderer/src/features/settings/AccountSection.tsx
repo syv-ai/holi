@@ -14,7 +14,7 @@ import { Button, Checkbox, Dialog } from '@/primitives'
 import { trpc } from '@/lib/trpc'
 import { unpushedWarning } from '@/lib/unpushed-warning'
 import { sessionAtom, signOutAtom } from '@/state/session'
-import { ExternalLink } from './VaultSection'
+import { ExternalLink, SettingsNote } from './settings-ui'
 
 const userUrl = (login: string) => `https://github.com/${login}`
 
@@ -39,8 +39,8 @@ export function AccountSection(): React.JSX.Element {
   }, [confirmSignOut])
 
   return (
-    <div className="pt-4 text-sm">
-      <div className="flex items-center justify-between">
+    <div>
+      <div className="flex items-center justify-between gap-3">
         {/* The signed-in user, linked to their GitHub profile. */}
         {session?.login ? (
           <ExternalLink
@@ -50,9 +50,11 @@ export function AccountSection(): React.JSX.Element {
             {session.login}
           </ExternalLink>
         ) : (
-          <p className="text-muted-foreground">not signed in</p>
+          <SettingsNote>not signed in</SettingsNote>
         )}
-        <Button variant="secondary" size="sm" onClick={() => setConfirmSignOut(true)}>
+        {/* `xs`, like every other in-content action in this tab. The dialog's
+            own footer below is where `sm` belongs. */}
+        <Button variant="secondary" size="xs" onClick={() => setConfirmSignOut(true)}>
           Sign out
         </Button>
       </div>

@@ -3,7 +3,11 @@
  *
  * Extracted from `SettingsView` when the tab gained a rail: the rows are no
  * longer one list in one component, they are whatever the section on screen
- * claims from `VAULT_SETTING_DESCRIPTORS`. The row itself did not change.
+ * claims from `VAULT_SETTING_DESCRIPTORS`.
+ *
+ * The layout is `SettingsRow`, shared with every other section, so this file
+ * decides only what a *setting* adds to a row: the layer badge, the
+ * next-open caveat, the three control kinds, and the resolver's complaint.
  */
 import { TriangleAlert } from 'lucide-react'
 import {
@@ -13,6 +17,7 @@ import {
   type VaultSettingDescriptor,
 } from '@holi/shared'
 import { Button, Checkbox, Tooltip } from '@/primitives'
+import { SettingsRow } from './settings-ui'
 
 /** The one setting whose value is a statement about an event that has already
  *  happened by the time you can change it. Everything else applies as you go. */
@@ -32,6 +37,8 @@ export function Layer({
           : `this machine only — written to ${SETTINGS_LOCAL_FILE}, which is never committed`
       }
     >
+      {/* `--border`, not `--divider`: this is a chip, and a chip is an object
+          whose edge has to be seen. See the note in `settings-ui.tsx`. */}
       <span className="rounded border border-border px-1.5 py-0.5 text-[10px] leading-4 text-muted-foreground">
         {committed ? 'vault' : 'this machine'}
       </span>
@@ -54,35 +61,32 @@ export function SettingRow({
   const value = settings[key] ?? descriptor.default
 
   return (
-    <div
+    <SettingsRow
       role="group"
       aria-label={label}
       data-setting={key}
-      className="flex flex-col gap-2 border-b border-border py-4 last:border-b-0"
-    >
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium">{label}</span>
-            <Layer target={descriptor.target} />
-            {APPLIES_ON_NEXT_OPEN.has(key) && (
-              <span className="text-[10px] leading-4 text-muted-foreground">
-                takes effect next time this vault opens
-              </span>
-            )}
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">{explanation}</p>
-        </div>
-
-        {control.kind === 'toggle' && (
+      label={label}
+      description={explanation}
+      meta={
+        <>
+          <Layer target={descriptor.target} />
+          {APPLIES_ON_NEXT_OPEN.has(key) && (
+            <span className="text-[10px] leading-4 text-muted-foreground">
+              takes effect next time this vault opens
+            </span>
+          )}
+        </>
+      }
+      control={
+        control.kind === 'toggle' ? (
           <Checkbox
             checked={value === true}
             onCheckedChange={(next) => onChange(key, next === true)}
             aria-label={label}
           />
-        )}
-      </div>
-
+        ) : undefined
+      }
+    >
       {control.kind === 'choice' && (
         <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
           {/* Filtered, not disabled — the same call the ritual makes. A greyed
@@ -108,7 +112,7 @@ export function SettingRow({
       )}
 
       {control.kind === 'group' && (
-        <div className="flex flex-col gap-2 pt-1">
+        <div className="flex flex-col gap-2">
           {control.toggles.map((toggle) => {
             const block = (value ?? {}) as Record<string, boolean>
             return (
@@ -126,7 +130,9 @@ export function SettingRow({
                 />
                 <span className="min-w-0">
                   <span className="text-xs">{toggle.label}</span>
-                  <span className="ml-1.5 text-xs text-muted-foreground">{toggle.explanation}</span>
+                  <span className="ml-1.5 text-[11px] text-muted-foreground">
+                    {toggle.explanation}
+                  </span>
                 </span>
               </label>
             )
@@ -138,11 +144,11 @@ export function SettingRow({
           existed nothing displayed at all — a value dropped for being malformed
           was silently replaced by a default and never mentioned. */}
       {warnings.map((warning) => (
-        <p key={warning} className="flex items-start gap-1.5 text-xs text-destructive">
+        <p key={warning} className="flex items-start gap-1.5 text-[11px] text-destructive">
           <TriangleAlert size={13} className="mt-0.5 shrink-0" />
           {warning}
         </p>
       ))}
-    </div>
+    </SettingsRow>
   )
 }

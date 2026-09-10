@@ -12,9 +12,8 @@
  * that would ever show it.
  *
  * Ported out of `features/vault/VaultSettings.tsx` when the settings tab grew a
- * rail. Nothing about the content changed; it stopped being a side panel behind
- * a door in another settings surface, which is what it had been since the tab
- * existed.
+ * rail, and put on the shared vocabulary in `settings-ui.tsx` when that tab
+ * stopped being six surfaces with six type scales.
  */
 import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
@@ -25,7 +24,12 @@ import { cn } from '@/lib/cn'
 import { collaboratorsErrorText, errorCodeOf } from '@/lib/collaborators-error'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, vaultsAtom } from '@/state/vaults'
-import { SectionHeading } from './SectionHeading'
+import {
+  ExternalLink,
+  SettingsField,
+  SettingsHeading,
+  SettingsNote,
+} from './settings-ui'
 import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
 
 /** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git` — this one is for a
@@ -47,35 +51,6 @@ const displayLocalPath = (fullPath: string, remote: string): string => {
   const parts = fullPath.split('/')
   const rootLeaf = parts[parts.length - remote.split('/').length - 1]
   return rootLeaf ? `${rootLeaf}/${remote}` : fullPath
-}
-
-/** An external link rendered as the `link` Button (an OS-browser jump via
- *  `openExternal`, not in-app navigation — so a button, not an `<a href>`). */
-export function ExternalLink({
-  url,
-  onOpen,
-  block,
-  children,
-}: {
-  url: string
-  onOpen: () => void
-  block?: boolean
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <Tooltip content={url}>
-      <Button
-        variant="link"
-        onClick={onOpen}
-        className={cn(
-          'h-auto max-w-full justify-start truncate p-0 font-normal text-muted-foreground hover:text-brand',
-          block && 'block',
-        )}
-      >
-        {children}
-      </Button>
-    </Tooltip>
-  )
 }
 
 /** A collaborator's GitHub avatar. Falls back to a neutral initial circle when
@@ -124,21 +99,16 @@ export function VaultSection(): React.JSX.Element {
   }, [remote])
 
   return (
-    <div className="text-sm">
-      <SectionHeading title={WHERE_IT_LIVES} />
+    <div>
+      <SettingsHeading title={WHERE_IT_LIVES} />
       {entry === undefined ? (
-        <p className="py-2 text-muted-foreground">no vault open</p>
+        <SettingsNote>no vault open</SettingsNote>
       ) : (
-        // Where the vault points, and where its clone lives on disk. Each value
-        // sits on its own line under a small label so a long remote or path has
-        // the full width before it truncates. A vault IS its remote; the local
-        // path is the clone FR-15 promises survives a sign-out. Both are links:
-        // the remote opens GitHub, the path reveals the folder in Finder.
-        <div className="mt-2 space-y-2">
-          <div className="space-y-0.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Remote
-            </div>
+        // A vault IS its remote; the local path is the clone FR-15 promises
+        // survives a sign-out. Both are links: the remote opens GitHub, the path
+        // reveals the folder in Finder.
+        <div className="space-y-2">
+          <SettingsField label="Remote">
             <ExternalLink
               url={originUrl(entry.remote)}
               onOpen={() => void window.holi.openExternal(originUrl(entry.remote))}
@@ -146,11 +116,8 @@ export function VaultSection(): React.JSX.Element {
             >
               {entry.remote}
             </ExternalLink>
-          </div>
-          <div className="space-y-0.5">
-            <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Local
-            </div>
+          </SettingsField>
+          <SettingsField label="Local">
             <ExternalLink
               url={entry.path}
               onOpen={() => void window.holi.openPath(entry.path)}
@@ -158,30 +125,37 @@ export function VaultSection(): React.JSX.Element {
             >
               {displayLocalPath(entry.path, entry.remote)}
             </ExternalLink>
-          </div>
+          </SettingsField>
+          <SettingsField label="Visibility">
+            {members === null ? (
+              <SettingsNote>reading…</SettingsNote>
+            ) : (
+              <p
+                className={cn(
+                  'text-xs',
+                  // The one place this tab shouts. A vault silently becoming
+                  // public is the highest-severity thing that can happen to it.
+                  members.visibility === 'public' ? 'text-amber-400' : 'text-muted-foreground',
+                )}
+              >
+                {members.visibility}
+              </p>
+            )}
+          </SettingsField>
         </div>
       )}
-      {members && (
-        <p
-          className={cn(
-            'mt-2 text-xs',
-            members.visibility === 'public' ? 'text-amber-400' : 'text-muted-foreground',
-          )}
-        >
-          {members.visibility}
-        </p>
-      )}
 
-      <SectionHeading title={COLLABORATORS} />
+      <SettingsHeading title={COLLABORATORS} />
       {/* Manage sits inline, subtle: Holi does not implement invitation
           (FR-11), it points at the flow that does, so this is a quiet deep-link
           rather than a primary action. */}
-      <div className="mt-1 flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">Who can see this vault, and at what level.</p>
+      <div className="flex items-center justify-between gap-3">
+        <SettingsNote>Who can see this vault, and at what level.</SettingsNote>
         <Button
           variant="link"
+          size="xs"
           disabled={remote === null}
-          className="h-auto gap-1.5 p-0 text-xs font-normal text-muted-foreground no-underline hover:text-foreground hover:no-underline"
+          className="h-auto shrink-0 gap-1.5 p-0 font-normal text-muted-foreground no-underline hover:text-foreground hover:no-underline"
           onClick={() => {
             if (remote !== null) void trpc.github.openCollaboratorSettings.mutate({ remote })
           }}
@@ -195,12 +169,10 @@ export function VaultSection(): React.JSX.Element {
           crash. The raw message stays in the tooltip. */}
       {error !== null && (
         <Tooltip content={error.raw}>
-          <p className="mt-2 text-xs text-muted-foreground">{error.text}</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">{error.text}</p>
         </Tooltip>
       )}
-      {members === null && error === null && (
-        <p className="mt-2 text-xs text-muted-foreground">loading…</p>
-      )}
+      {members === null && error === null && <SettingsNote className="mt-2">loading…</SettingsNote>}
       <ul className="mt-2 space-y-1">
         {members?.collaborators.map((c) => (
           <li key={c.accountId} className="flex items-center gap-2">

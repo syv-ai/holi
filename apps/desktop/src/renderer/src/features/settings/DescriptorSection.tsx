@@ -8,6 +8,7 @@
  */
 import { VAULT_SETTING_DESCRIPTORS } from '@holi/shared'
 import { SettingRow } from './SettingRow'
+import { SettingsList } from './settings-ui'
 import { useVaultSettings } from './useVaultSettings'
 
 /** The descriptors filed under a section, in the order the shared list declares
@@ -20,7 +21,7 @@ export function DescriptorSection({ section }: { section: string }): React.JSX.E
   const { values, change, warningsFor } = useVaultSettings()
 
   return (
-    <>
+    <SettingsList>
       {descriptorsIn(section).map((descriptor) => (
         <SettingRow
           key={descriptor.key}
@@ -30,6 +31,6 @@ export function DescriptorSection({ section }: { section: string }): React.JSX.E
           warnings={warningsFor(descriptor.key)}
         />
       ))}
-    </>
+    </SettingsList>
   )
 }

@@ -38,7 +38,8 @@ import {
   THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, ColorSwatch, Dialog, Input, Tooltip } from '@/primitives'
-import { SectionHeading } from './SectionHeading'
+import { SettingsList, SettingsNote, SettingsRow } from './settings-ui'
+import { SettingsHeading } from './settings-ui'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { DescriptorSection } from './DescriptorSection'
 import { tokenToHex } from '@/lib/css-color'
@@ -102,19 +103,21 @@ function TokenRow({
   useEffect(() => setDraft(set ?? ''), [set])
 
   return (
-    <div className="flex items-start gap-3 py-1.5">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="text-xs">{themeTokenLabel(slug)}</span>
+    <SettingsRow
+      className="py-2"
+      label={themeTokenLabel(slug)}
+      description={note}
+      meta={
+        <>
           <code className="text-[10px] text-muted-foreground">--{slug}</code>
           {set === undefined && (
             <span className="text-[10px] leading-4 text-muted-foreground">default</span>
           )}
-        </div>
-        {note !== undefined && <p className="mt-0.5 text-[11px] text-muted-foreground">{note}</p>}
-      </div>
-
-      {kind === 'color' ? (
+        </>
+      }
+      control={
+        <div className="flex items-center gap-3">
+          {kind === 'color' ? (
         <ColorSwatch
           shown={shown}
           hex={tokenToHex(slug)}
@@ -134,23 +137,24 @@ function TokenRow({
             if (draft.trim() === '') onClear()
             else if (draft !== set) onSet(draft.trim())
           }}
-          className="h-6 w-44 shrink-0 px-1.5 py-0 font-mono text-[11px]"
-        />
-      )}
+            className="h-6 w-44 shrink-0 px-1.5 py-0 font-mono text-[11px]"
+          />
+          )}
 
-      <Tooltip content={set === undefined ? 'already the default' : 'back to the default'}>
-        <Button
-          variant="ghost"
-          size="xs"
-          aria-label={`reset ${themeTokenLabel(slug)}`}
-          disabled={set === undefined}
-          onClick={onClear}
-          className="size-6 shrink-0 p-0"
-        >
-          <RotateCcw size={12} />
-        </Button>
-      </Tooltip>
-    </div>
+          <Tooltip content={set === undefined ? 'already the default' : 'back to the default'}>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label={`reset ${themeTokenLabel(slug)}`}
+              disabled={set === undefined}
+              onClick={onClear}
+            >
+              <RotateCcw size={12} />
+            </Button>
+          </Tooltip>
+        </div>
+      }
+    />
   )
 }
 
@@ -203,7 +207,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
 
   return (
     <div>
-      <SectionHeading title={LIGHT_AND_DARK} />
+      <SettingsHeading title={LIGHT_AND_DARK} />
       {/* `colorScheme` is a descriptor like any other and lands here by saying
           so, rather than by this component knowing about it. */}
       <DescriptorSection section="appearance" />
@@ -262,9 +266,9 @@ function ThemeTokens({
       <div className="sticky top-0 z-10 -mx-1 mt-4 flex flex-wrap items-center justify-between gap-3 bg-background px-1 py-2">
         <div>
           <h3 className="text-xs font-medium">Theme</h3>
-          <p className="text-[11px] text-muted-foreground">
+          <SettingsNote>
             Colours and chrome, and nothing else — a theme cannot move or resize anything.
-          </p>
+          </SettingsNote>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {/* **"palette", not "Dark"/"Light".** The `colorScheme` row directly
@@ -295,23 +299,23 @@ function ThemeTokens({
       </div>
 
       {error !== null && (
-        <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 px-3 py-2 text-[11px] text-destructive">
           {error}
         </p>
       )}
 
       {theme.warnings.map((warning) => (
-        <p key={warning} className="mt-2 text-xs text-muted-foreground">
+        <SettingsNote key={warning} className="mt-2">
           {warning}
-        </p>
+        </SettingsNote>
       ))}
 
       {THEME_TOKEN_GROUPS.map((group) => (
         <section key={group.title}>
           {/* The rail's jump target for this group, derived from the same title
               the rail derives its id from. */}
-          <SectionHeading title={group.title} blurb={group.blurb} />
-          <div className="mt-1 divide-y divide-divider">
+          <SettingsHeading title={group.title} blurb={group.blurb} />
+          <SettingsList>
             {group.tokens.map((slug) => (
               <TokenRow
                 key={slug}
@@ -321,7 +325,7 @@ function ThemeTokens({
                 onClear={() => void write(slug, null)}
               />
             ))}
-          </div>
+          </SettingsList>
         </section>
       ))}
 
@@ -352,10 +356,11 @@ function ResetTheme({ remote }: { remote: string }): React.JSX.Element {
   }
 
   return (
-    <div className="mt-6 flex items-center justify-between gap-3 border-t border-border pt-4">
-      <p className="text-xs text-muted-foreground">
-        Clear every colour this vault has set, in both files and both modes.
-      </p>
+    // **No rule of its own.** This used to draw a `border-t` immediately above
+    // the view's footer, which draws one too, so a section boundary appeared as
+    // two hairlines a few pixels apart. Spacing separates it now.
+    <div className="mt-6 flex items-center justify-between gap-3">
+      <SettingsNote>Clear every colour this vault has set, in both files and both modes.</SettingsNote>
       <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setConfirming(true)}>
         Reset theme
       </Button>

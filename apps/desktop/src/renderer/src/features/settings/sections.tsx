@@ -32,7 +32,7 @@ import { DescriptorSection } from './DescriptorSection'
 import { IconsSection } from './IconsSection'
 import { ThemeSection } from './ThemeSection'
 import { VaultSection } from './VaultSection'
-import { headingId } from './SectionHeading'
+import { headingId } from './settings-ui'
 import { LIGHT_AND_DARK } from './appearance-headings'
 import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
 

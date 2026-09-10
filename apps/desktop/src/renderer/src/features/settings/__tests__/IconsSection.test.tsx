@@ -52,7 +52,9 @@ test('says where icons come from when there are none', () => {
 
 test('lists every entry in the map, whatever it points at', () => {
   setup({ 'notes/b.md': '🌱', 'a.md': '📌', projects: '📁' }, { docs: ['a.md', 'notes/b.md'], dirs: ['projects'] })
-  const rows = screen.getAllByRole('listitem')
+  // Rows are groups of controls rather than a semantic list, the same shape
+  // every other settings row has — `data-icon-path` is the handle.
+  const rows = [...document.querySelectorAll('[data-icon-path]')]
   // Sorted by path, not by insertion order: the file is written by whoever
   // edited last, and a list that reorders itself is not a list.
   expect(rows.map((r) => r.getAttribute('data-icon-path'))).toEqual([
@@ -67,10 +69,10 @@ test('names an entry whose path is no longer in the vault', () => {
   // pointing at nothing. Invisible in the tree, because the row it decorated is
   // gone; this list is the only place it can be found and removed.
   setup({ 'old-name.md': '🌱', 'kept.md': '📌' }, { docs: ['kept.md'] })
-  const stale = screen.getByText('old-name.md').closest('li')!
+  const stale = screen.getByText('old-name.md').closest<HTMLElement>('[data-icon-path]')!
   expect(within(stale).getByText(/no longer in this vault/)).toBeInTheDocument()
 
-  const kept = screen.getByText('kept.md').closest('li')!
+  const kept = screen.getByText('kept.md').closest<HTMLElement>('[data-icon-path]')!
   expect(within(kept).queryByText(/no longer in this vault/)).not.toBeInTheDocument()
 })
 
