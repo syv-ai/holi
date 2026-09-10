@@ -15,6 +15,7 @@
  * directly rather than through a visible effect — nothing renders differently
  * when the browser steals a drop.
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, waitFor } from '@/test/render'
@@ -38,7 +39,7 @@ vi.mock('../../../lib/trpc', () => ({
 
 const REMOTE = 'syv-ai/holi'
 const VAULT_PATH = '/Users/ada/vaults/holi'
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 /** jsdom implements no `DataTransfer`; this is the subset the tree reads. The

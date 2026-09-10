@@ -5,6 +5,7 @@
  * there is no icon state here to get out of sync, and one source means no
  * precedence to test.
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen } from '@/test/render'
@@ -12,7 +13,7 @@ import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
 
 const REMOTE = 'syv-ai/holi'
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 vi.mock('../../../lib/trpc', () => ({

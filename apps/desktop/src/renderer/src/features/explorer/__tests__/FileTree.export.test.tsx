@@ -6,6 +6,7 @@
  * landed. Anything else loses the file — copied nowhere, and deleted from the
  * one place that had it.
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
@@ -42,7 +43,7 @@ vi.mock('../../../lib/trpc', () => ({
 }))
 
 const REMOTE = 'syv-ai/holi'
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 function tree() {

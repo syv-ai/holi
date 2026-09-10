@@ -98,7 +98,16 @@ export function ensureAskpass(): Promise<string> {
   return askpassPromise
 }
 
-export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {}
+export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
+  /**
+   * Written to the command's stdin, which is then closed.
+   *
+   * For the commands that take a path LIST. `check-ignore` is the one today:
+   * a vault can hold thousands of files and passing them as arguments hits
+   * `E2BIG` — silently, and only on the vaults big enough to matter.
+   */
+  input?: string
+}
 
 export interface RepoStatus {
   branch: string
@@ -328,7 +337,7 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
   const gitPath = opts.gitPath ?? 'git'
   const askpass = await ensureAskpass()
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       gitPath,
       args,
       {
@@ -355,6 +364,13 @@ async function runGitOnce(cwd: string, args: string[], opts: RunOpts): Promise<G
         resolve({ ok: !err, code, stdout: String(stdout), stderr: String(stderr) })
       },
     )
+    if (opts.input !== undefined) {
+      // EPIPE is normal here, not a failure: git may exit before reading all of
+      // it (`check-ignore` stops at a bad pathspec). The callback above still
+      // fires with the real exit code, which is the answer that matters.
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(opts.input)
+    }
   })
 }
 

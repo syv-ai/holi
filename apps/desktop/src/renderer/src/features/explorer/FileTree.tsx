@@ -201,6 +201,18 @@ export function FileTree({
     return buildTreeData(visible, [...dirs, ...actions.pendingFolders])
   }, [docPaths, snapshot.dirs, actions.pendingFolders, showHidden, revealPath])
 
+  /**
+   * What git ignores, so the tree can dim it the way every IDE does.
+   *
+   * A file that will never be committed and one that will are otherwise
+   * indistinguishable in this tree, and the NAME does not tell you: `*.local.*`
+   * is only the seeded rule, a vault may ignore anything, and a vault seeded
+   * before D65 carries a bare `USER.md` line. Answered by `git check-ignore` in
+   * main and carried on the snapshot, so this is a lookup rather than a rule
+   * the renderer would have to keep in step with git.
+   */
+  const ignoredSet = useMemo(() => new Set(snapshot.ignored), [snapshot.ignored])
+
   // headless-tree captures config closures once; this ref keeps the loaders
   // reading the latest projection.
   const dataRef = useRef(data)
@@ -676,6 +688,16 @@ export function FileTree({
             const level = item.getItemMeta().level
             const isCut = actions.clipboard?.mode === 'cut' && actions.clipboard.paths.includes(id)
             const task = taskByPath.get(id)
+            /**
+             * Gitignored, dimmed — VS Code's treatment, and every IDE's.
+             *
+             * On the row's CONTENTS rather than on the row, so a dimmed file
+             * still gets a solid selection highlight when you click it. `isCut`
+             * above does dim the whole row, and means something different: that
+             * is a pending move, a state the row is briefly in, where this is
+             * a standing fact about the file.
+             */
+            const dim = ignoredSet.has(id) ? 'opacity-50' : ''
             const rowProps = item.getProps()
             const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
             const row = (
@@ -715,11 +737,13 @@ export function FileTree({
                       isCut ? 'opacity-40' : '',
                     ].join(' ')}
                   >
-                    <span className="flex w-4 shrink-0 justify-center text-muted-foreground">
+                    <span
+                      className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
+                    >
                       {isFolder ? <ChevronIcon open={item.isExpanded()} /> : null}
                     </span>
                     <span
-                      className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'}`}
+                      className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'} ${dim}`}
                     >
                       {iconByPath.has(id) ? (
                         fileIconFor(id, iconByPath.get(id))
@@ -749,7 +773,7 @@ export function FileTree({
                     ) : (
                       <>
                         <span
-                          className={`min-w-0 flex-1 truncate ${
+                          className={`min-w-0 flex-1 truncate ${dim} ${
                             task?.status === 'done' ? 'text-muted-foreground line-through' : ''
                           }`}
                         >

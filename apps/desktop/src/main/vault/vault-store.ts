@@ -28,6 +28,7 @@ import {
   TaskFileError,
   type VaultSnapshot,
 } from '@holi/shared'
+import { ignoredPaths } from './git-ignored'
 import { isNonContentPath, listFiles } from './vault-files'
 
 // The shape is `@holi/shared`'s: the renderer reads it too, and a type that
@@ -53,7 +54,15 @@ function isDaily(text: string): boolean {
 
 /** Everything the vault holds, read fresh off disk. */
 export async function scanVault(root: string): Promise<VaultSnapshot> {
-  const snapshot: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+  const snapshot: VaultSnapshot = {
+    docs: [],
+    tasks: [],
+    broken: [],
+    files: [],
+    dirs: [],
+    icons: {},
+    ignored: [],
+  }
 
   // `.holi/icons.json` (committed) under `.holi/icons.local.json` (personal),
   // the theme's layering. Read here rather than over its own IPC so the tree
@@ -85,6 +94,15 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
     }
   }
   snapshot.dirs = [...dirs]
+
+  // Asked of the walk's own list plus the directories derived from it, so the
+  // cost is bounded by the tree we are about to render rather than by what is
+  // on disk — a vault app's `node_modules` is already out of `all`, and
+  // `git status --ignored` would have enumerated every file inside it.
+  //
+  // Directories are included because a wholly-ignored FOLDER looking like
+  // ordinary content is the same complaint one level up from a file doing it.
+  snapshot.ignored = await ignoredPaths(root, [...all, ...snapshot.dirs])
 
   for (const path of all) {
     // A keep-marker exists only to hold its directory open (already captured in

@@ -10,6 +10,7 @@
  * `active={0}` with one tab is load-bearing: jsdom measures every pill at 0×0,
  * so `tabWindow` keeps only the active one in the DOM (see TabStrip.test.tsx).
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
 import { render, screen } from '@/test/render'
@@ -17,7 +18,7 @@ import type { Tab } from '@/state/panes'
 import { snapshotAtom } from '@/state/vaults'
 import { TabStrip } from '../TabStrip'
 
-const EMPTY = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+const EMPTY = emptyVaultSnapshot()
 const store = getDefaultStore()
 
 function strip(tab: Tab, icons: Record<string, string> = {}) {

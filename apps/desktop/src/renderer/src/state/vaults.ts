@@ -1,6 +1,6 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { type DocMeta, GITKEEP, scaffoldNoteText, type VaultEntry, type VaultSnapshot } from '@holi/shared'
+import { type DocMeta, GITKEEP, scaffoldNoteText, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot} from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import { flushAllBuffers } from '../lib/buffer-registry'
@@ -36,7 +36,7 @@ export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('h
  * whether they also render as leaves in the file tree (with a task glyph). */
 export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
-const EMPTY_SNAPSHOT: VaultSnapshot = { docs: [], tasks: [], broken: [], files: [], dirs: [], icons: {} }
+const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 
 /**
  * The whole vault, as last read off disk.

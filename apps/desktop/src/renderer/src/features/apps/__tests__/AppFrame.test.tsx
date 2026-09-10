@@ -6,6 +6,7 @@
  * answer only the frame it mounted, and it must pass the vault its own idea of
  * which app is speaking rather than the app's.
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
@@ -36,10 +37,7 @@ const store = getDefaultStore()
 function withApps(...ids: string[]) {
   store.set(activeRemoteAtom, REMOTE)
   store.set(snapshotAtom, {
-    docs: [],
-    tasks: [],
-    broken: [],
-    dirs: [], icons: {},
+    ...emptyVaultSnapshot(),
     // Both files: registration is the manifest plus the entry document.
     files: ids
       .flatMap((id) => [`.holi/apps/${id}/index.html`, `.holi/apps/${id}/app.yaml`])

@@ -154,7 +154,43 @@ export interface VaultSnapshot {
    *  only place an icon lives. Covers notes, folders and binaries alike, which
    *  is why a note's frontmatter is NOT a second source (see `icon-map.ts`). */
   icons: Record<string, string>
+  /**
+   * The paths git ignores, so the tree can dim them the way every IDE does.
+   *
+   * Answered by `git check-ignore` rather than by a rule in the renderer,
+   * because **the name does not tell you**: `*.local.*` is only the seeded
+   * rule, a vault may ignore anything, and an older vault carries a bare
+   * `USER.md` line. A file that will never be committed and one that will look
+   * identical otherwise.
+   *
+   * Files **and** directories: a wholly-ignored folder that looks like ordinary
+   * content is the same complaint one level up. Empty whenever git could not be
+   * asked, which the tree renders as "nothing known to be ignored" rather than
+   * as an error — this decorates a tree, it does not decide what is in one.
+   */
+  ignored: string[]
 }
+
+/**
+ * A snapshot of nothing, for the two callers that need one before a scan has
+ * run and for the many tests that care about one field.
+ *
+ * A factory rather than a frozen const: every field is a fresh mutable
+ * container, and a shared `[]` handed to a caller that pushes to it is a bug
+ * that shows up somewhere else entirely. Spread it (`{...emptyVaultSnapshot(),
+ * docs}`) rather than writing the shape out — a literal is a list that has to
+ * be found and extended every time this interface grows, which is exactly what
+ * adding `ignored` had to do to ten of them.
+ */
+export const emptyVaultSnapshot = (): VaultSnapshot => ({
+  docs: [],
+  tasks: [],
+  broken: [],
+  files: [],
+  dirs: [],
+  icons: {},
+  ignored: [],
+})
 
 /** The lane a task sits in: its containing folder, '' for the vault root. */
 export function taskArea(task: Pick<Task, 'path'>): string {

@@ -5,6 +5,7 @@
  * follow — because a launcher whose only destination is "go make one" is a dead
  * end wearing the clothes of a feature.
  */
+import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import userEvent from '@testing-library/user-event'
@@ -30,10 +31,7 @@ function withApps(...ids: string[]) {
 /** Raw paths under `.holi/apps/`, for the half-written cases. */
 function withFiles(...relPaths: string[]) {
   store.set(snapshotAtom, {
-    docs: [],
-    tasks: [],
-    broken: [],
-    dirs: [], icons: {},
+    ...emptyVaultSnapshot(),
     files: relPaths.map((p) => ({ path: `.holi/apps/${p}`, updatedAt: '' })),
   })
 }

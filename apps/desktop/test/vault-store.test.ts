@@ -1,3 +1,4 @@
+import { emptyVaultSnapshot } from '@holi/shared'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -117,13 +118,7 @@ describe('scanVault', () => {
 
   it('is empty, not an error, on a vault with nothing in it', async () => {
     const root = await vault({})
-    await expect(scanVault(root)).resolves.toEqual({
-      docs: [],
-      tasks: [],
-      broken: [],
-      files: [],
-      dirs: [], icons: {},
-    })
+    await expect(scanVault(root)).resolves.toEqual(emptyVaultSnapshot())
   })
 
   it('surfaces every ancestor directory of every file as a dir', async () => {
