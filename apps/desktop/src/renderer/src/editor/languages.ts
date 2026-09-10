@@ -4,7 +4,7 @@
  * The vault is mostly markdown (its own editor) plus two narrow sets that are
  * *not* a general code editor:
  *
- * - **config** — `.holi/theme.json`, a `.yaml`, a `.env`, the odd `.toml`.
+ * - **config** — `.holi/settings/theme.json`, a `.yaml`, a `.env`, the odd `.toml`.
  * - **the web three** — an app under `.holi/apps/` is unbuilt HTML, CSS and JS
  *   the browser runs as-is, so those are the only source files the editor
  *   actually meets. TypeScript is left out on purpose: nothing compiles it, so
@@ -34,15 +34,7 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 import { parse as parseYaml, YAMLParseError } from 'yaml'
 
 /** `ini` covers the whole properties/env family (`.env`, `.ini`, `.conf`). */
-export type LangId =
-  | 'json'
-  | 'yaml'
-  | 'toml'
-  | 'ini'
-  | 'shell'
-  | 'javascript'
-  | 'html'
-  | 'css'
+export type LangId = 'json' | 'yaml' | 'toml' | 'ini' | 'shell' | 'javascript' | 'html' | 'css'
 
 const BY_EXT: Record<string, LangId> = {
   json: 'json',
@@ -80,7 +72,10 @@ export function languageIdForPath(path: string): LangId | null {
   // Dotfiles: no `name.ext` split to make, so classify by the whole name.
   if (base.startsWith('.')) {
     if (base === '.env' || base.startsWith('.env.')) return 'ini'
-    if (base.endsWith('rc') && (base.includes('bash') || base.includes('zsh') || base.includes('sh')))
+    if (
+      base.endsWith('rc') &&
+      (base.includes('bash') || base.includes('zsh') || base.includes('sh'))
+    )
       return 'shell'
     return null
   }
@@ -112,10 +107,22 @@ function yamlLinter(): Extension {
       if (err instanceof YAMLParseError) {
         const [from, to] = err.pos
         return [
-          { from: Math.min(from, len), to: Math.min(Math.max(to, from + 1), len), severity: 'error', message: err.message },
+          {
+            from: Math.min(from, len),
+            to: Math.min(Math.max(to, from + 1), len),
+            severity: 'error',
+            message: err.message,
+          },
         ]
       }
-      return [{ from: 0, to: len, severity: 'error', message: err instanceof Error ? err.message : 'Invalid YAML' }]
+      return [
+        {
+          from: 0,
+          to: len,
+          severity: 'error',
+          message: err instanceof Error ? err.message : 'Invalid YAML',
+        },
+      ]
     }
   })
 }

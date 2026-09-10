@@ -85,7 +85,7 @@ export function emptyWorkspace(): Workspace {
 }
 
 /** Where the tabs actually live. Not persisted: whether tabs survive a restart
- *  is an open product question, and `.holi/settings.local.json` is where the
+ *  is an open product question, and `.holi/settings/app.local.json` is where the
  *  answer would go (`notes-editor.md` §Panes). */
 export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 
@@ -242,7 +242,11 @@ export function openPreview(workspace: Workspace, path: string): Workspace {
     const previewIdx = pane.tabs.findIndex((t) => t.kind === 'note' && t.preview)
     const tab: Tab = { kind: 'note', path, preview: true }
     if (previewIdx !== -1) {
-      return { ...pane, tabs: pane.tabs.map((t, i) => (i === previewIdx ? tab : t)), active: previewIdx }
+      return {
+        ...pane,
+        tabs: pane.tabs.map((t, i) => (i === previewIdx ? tab : t)),
+        active: previewIdx,
+      }
     }
     return { tabs: [...pane.tabs, tab], active: pane.tabs.length }
   })
@@ -315,7 +319,10 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
 
 /** `retargetTab` for a whole batch (FR-11, folder/multi-move). One map, applied
  *  across all panes; a tab whose path is a `from` follows to its `to`. */
-export function retargetTabs(workspace: Workspace, moves: { from: string; to: string }[]): Workspace {
+export function retargetTabs(
+  workspace: Workspace,
+  moves: { from: string; to: string }[],
+): Workspace {
   const map = new Map(moves.map((m) => [m.from, m.to]))
   return {
     ...workspace,
@@ -367,7 +374,8 @@ export function closeTabsForPaths(workspace: Workspace, paths: string[]): Worksp
       const activeTab = pane.tabs[pane.active]
       const tabs = pane.tabs.filter((t) => !gone(t))
       if (tabs.length === 0) return { tabs, active: -1 }
-      if (activeTab !== undefined && !gone(activeTab)) return { tabs, active: tabs.indexOf(activeTab) }
+      if (activeTab !== undefined && !gone(activeTab))
+        return { tabs, active: tabs.indexOf(activeTab) }
       return { tabs, active: Math.max(0, Math.min(pane.active, tabs.length - 1)) }
     }),
   }
@@ -418,7 +426,11 @@ export function focusPane(workspace: Workspace, index: number): Workspace {
 export function splitPane(workspace: Workspace): Workspace {
   const at = workspace.active + 1
   return {
-    panes: [...workspace.panes.slice(0, at), { tabs: [], active: -1 }, ...workspace.panes.slice(at)],
+    panes: [
+      ...workspace.panes.slice(0, at),
+      { tabs: [], active: -1 },
+      ...workspace.panes.slice(at),
+    ],
     active: at,
   }
 }
@@ -434,7 +446,11 @@ export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
   if (existing !== null) return focusExisting(workspace, existing)
   const at = workspace.active + 1
   return {
-    panes: [...workspace.panes.slice(0, at), { tabs: [tab], active: 0 }, ...workspace.panes.slice(at)],
+    panes: [
+      ...workspace.panes.slice(0, at),
+      { tabs: [tab], active: 0 },
+      ...workspace.panes.slice(at),
+    ],
     active: at,
   }
 }
@@ -450,9 +466,7 @@ export function closePane(workspace: Workspace, index: number): Workspace {
   if (workspace.panes.length <= 1 || index < 0 || index >= workspace.panes.length) return workspace
   const panes = workspace.panes.filter((_, i) => i !== index)
   const active =
-    workspace.active > index
-      ? workspace.active - 1
-      : Math.min(workspace.active, panes.length - 1)
+    workspace.active > index ? workspace.active - 1 : Math.min(workspace.active, panes.length - 1)
   return { panes, active }
 }
 

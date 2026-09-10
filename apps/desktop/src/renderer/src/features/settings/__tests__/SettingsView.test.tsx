@@ -67,7 +67,9 @@ test('renders every setting, not just the ones the ritual asks about', async () 
   // Against the list, never a number: adding a setting is adding a descriptor.
   // This is the FULL list, which is the difference between this and the ritual —
   // `editorFont` has no birth question and still belongs here.
-  await waitFor(() => expect(screen.getAllByRole('group')).toHaveLength(VAULT_SETTING_DESCRIPTORS.length))
+  await waitFor(() =>
+    expect(screen.getAllByRole('group')).toHaveLength(VAULT_SETTING_DESCRIPTORS.length),
+  )
   expect(screen.getAllByRole('group').map((r) => r.getAttribute('data-setting'))).toEqual(
     VAULT_SETTING_DESCRIPTORS.map((d) => d.key),
   )
@@ -88,13 +90,17 @@ test('writes a committed setting to the committed file, and a local one to the l
   const daily = await screen.findByRole('group', { name: 'Keep a daily note' })
   await userEvent.click(within(daily).getByRole('checkbox'))
   await waitFor(() => expect(write).toHaveBeenCalled())
-  expect(write.mock.calls[0]![0]).toMatchObject({ committedJson: JSON.stringify({ dailyNotes: false }) })
+  expect(write.mock.calls[0]![0]).toMatchObject({
+    committedJson: JSON.stringify({ dailyNotes: false }),
+  })
   expect(write.mock.calls[0]![0]).not.toHaveProperty('localJson')
 
   const appearance = await screen.findByRole('group', { name: 'Appearance' })
   await userEvent.click(within(appearance).getByRole('radio', { name: 'Dark' }))
   await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
-  expect(write.mock.calls[1]![0]).toMatchObject({ localJson: JSON.stringify({ colorScheme: 'dark' }) })
+  expect(write.mock.calls[1]![0]).toMatchObject({
+    localJson: JSON.stringify({ colorScheme: 'dark' }),
+  })
   expect(write.mock.calls[1]![0]).not.toHaveProperty('committedJson')
 })
 
@@ -126,6 +132,6 @@ test('says which settings wait for the next vault open', async () => {
 
 test('offers the files themselves', async () => {
   setup()
-  expect(await screen.findByRole('button', { name: '.holi/settings.json' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: '.holi/settings.local.json' })).toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '.holi/settings/app.json' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '.holi/settings/app.local.json' })).toBeInTheDocument()
 })

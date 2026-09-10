@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { parseTaskFile } from '@holi/shared'
+import { parseTaskFile, SETTINGS_FILE } from '@holi/shared'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import { createVaultHost, type VaultHost } from '../src/main/vault/active-vault'
 import { ensureSeeded } from '../src/main/agent/seed-content'
@@ -140,7 +140,7 @@ describe('settings', () => {
   it('reads a landing target the vault actually committed', async () => {
     const { caller, root } = await rig()
     await writeFile(
-      join(root, '.holi', 'settings.json'),
+      join(root, SETTINGS_FILE),
       JSON.stringify({ landing: { kind: 'board' } }),
       'utf8',
     )
@@ -185,9 +185,10 @@ describe('settings', () => {
       committedJson: JSON.stringify({ dailyNotes: false, evil: { rm: '-rf' } }),
     })
     expect(result.warnings).toEqual([])
-    const onDisk = JSON.parse(
-      await readFile(join(root, '.holi', 'settings.json'), 'utf8'),
-    ) as Record<string, unknown>
+    const onDisk = JSON.parse(await readFile(join(root, SETTINGS_FILE), 'utf8')) as Record<
+      string,
+      unknown
+    >
     expect(onDisk).not.toHaveProperty('evil')
     expect(onDisk.dailyNotes).toBe(false)
   })
@@ -449,7 +450,10 @@ describe('notes', () => {
 
   it('copy duplicates without rewriting links, and refuses to clobber', async () => {
     const { caller, root } = await rig({ 'a.md': 'body [[x.md]]', 'taken.md': 'mine' })
-    const result = await caller.notes.copy({ remote: REMOTE, copies: [{ from: 'a.md', to: 'dup.md' }] })
+    const result = await caller.notes.copy({
+      remote: REMOTE,
+      copies: [{ from: 'a.md', to: 'dup.md' }],
+    })
     expect(result).toEqual({ copied: ['dup.md'] })
     expect(await readFile(join(root, 'dup.md'), 'utf8')).toBe('body [[x.md]]')
     await expect(
@@ -478,9 +482,9 @@ describe('notes', () => {
       'p/b.md': 'other',
       'outside.md': '[[p/a.md]] and [[p/b.md]]',
     })
-    expect(await caller.notes.backrefsMany({ remote: REMOTE, paths: ['p/a.md', 'p/b.md'] })).toEqual([
-      { path: 'outside.md', count: 2 },
-    ])
+    expect(
+      await caller.notes.backrefsMany({ remote: REMOTE, paths: ['p/a.md', 'p/b.md'] }),
+    ).toEqual([{ path: 'outside.md', count: 2 }])
   })
 
   it('the batch procedures guard paths just like the single ones', async () => {
@@ -540,7 +544,9 @@ describe('tasks', () => {
   it('suffixes a colliding slug rather than refusing or clobbering', async () => {
     // Two tasks can honestly share a title, and a board quick-add that errors on
     // a repeated title reads as a bug.
-    const { caller } = await rig({ 'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n' })
+    const { caller } = await rig({
+      'task.call-the-vendor.md': '---\ntitle: Call the vendor\n---\n',
+    })
     expect((await caller.tasks.create({ remote: REMOTE, title: 'Call the vendor' })).path).toBe(
       'task.call-the-vendor-2.md',
     )
@@ -684,9 +690,9 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    expect((await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })).reminder).toBe(
-      '1d',
-    )
+    expect(
+      (await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })).reminder,
+    ).toBe('1d')
   })
 
   it('ends the series when the recurrence has run past its endDate', async () => {
@@ -1102,7 +1108,13 @@ describe('github', () => {
                 login: 'octocat',
                 id: 1,
                 avatar_url: 'https://avatars.githubusercontent.com/u/1?v=4',
-                permissions: { admin: false, maintain: false, push: true, triage: true, pull: true },
+                permissions: {
+                  admin: false,
+                  maintain: false,
+                  push: true,
+                  triage: true,
+                  pull: true,
+                },
               },
             ],
           },
@@ -1135,9 +1147,7 @@ describe('github', () => {
   it('refuses to open a settings page for a remote that is not owner/repo', async () => {
     // The value is interpolated into a URL. Validate before, not after.
     const { caller, openExternal } = await authRig({}, seeded())
-    await expect(
-      caller.github.openCollaboratorSettings({ remote: '../../evil' }),
-    ).rejects.toThrow()
+    await expect(caller.github.openCollaboratorSettings({ remote: '../../evil' })).rejects.toThrow()
     expect(openExternal).not.toHaveBeenCalled()
   })
 
@@ -1160,9 +1170,7 @@ describe('github', () => {
       seeded(),
     )
 
-    await expect(caller.github.repos()).rejects.toThrow(
-      /https:\/\/github\.com\/orgs\/syv-ai\/sso/,
-    )
+    await expect(caller.github.repos()).rejects.toThrow(/https:\/\/github\.com\/orgs\/syv-ai\/sso/)
   })
 
   it('fails clearly when signed out', async () => {
@@ -1234,9 +1242,9 @@ describe('vaults.add', () => {
     const { caller, base } = await rig()
     const origin = await makeNonVaultRemote()
 
-    await expect(
-      caller.vaults.add({ remote: 'syv-ai/just-code', url: origin }),
-    ).rejects.toThrow(/not a Holi vault/)
+    await expect(caller.vaults.add({ remote: 'syv-ai/just-code', url: origin })).rejects.toThrow(
+      /not a Holi vault/,
+    )
 
     expect((await caller.vaults.list()).map((v) => v.remote)).toEqual([REMOTE])
     // The clone made to inspect it is removed, so a refused adopt leaves nothing.
@@ -1346,7 +1354,8 @@ describe('vaults.create', () => {
     expect(await plainGit(dest, ['status', '--porcelain'])).toBe('')
     let pushed = false
     for (let i = 0; i < 100 && !pushed; i++) {
-      pushed = (await plainGit(dest, ['rev-list', '--count', 'origin/main']).catch(() => '0')) !== '0'
+      pushed =
+        (await plainGit(dest, ['rev-list', '--count', 'origin/main']).catch(() => '0')) !== '0'
       if (!pushed) await new Promise((r) => setTimeout(r, 20))
     }
     expect(pushed).toBe(true)
@@ -1420,7 +1429,9 @@ describe('sync', () => {
     // the checker — the explicit pushNow can no-op if the seed's open-drain push
     // is still in flight, and the coalescer's retry lands a beat later.
     for (let i = 0; i < 200; i++) {
-      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(() => '1')
+      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(
+        () => '1',
+      )
       if (ahead === '0') break
       await new Promise((r) => setTimeout(r, 20))
     }
@@ -1444,7 +1455,9 @@ describe('sync', () => {
     await caller.sync.commitNow()
     await caller.sync.pushNow()
     for (let i = 0; i < 200; i++) {
-      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(() => '1')
+      const ahead = await plainGit(dest, ['rev-list', '--count', 'origin/main..HEAD']).catch(
+        () => '1',
+      )
       if (ahead === '0') break
       await new Promise((r) => setTimeout(r, 20))
     }
@@ -1490,17 +1503,17 @@ describe('pdf', () => {
     // fixture declares.
     expect(await caller.pdf.templates({ remote: REMOTE })).toEqual(
       expect.arrayContaining([
-      {
-        name: 'Plain',
-        slug: 'plain',
-        description: 'Clean.',
-        fields: [
-          { key: 'date', label: 'Date', type: 'text', required: false },
-          { key: 'recipient', label: 'Recipient', type: 'text', required: true },
-        ],
-        warnings: [],
-      },
-    ]),
+        {
+          name: 'Plain',
+          slug: 'plain',
+          description: 'Clean.',
+          fields: [
+            { key: 'date', label: 'Date', type: 'text', required: false },
+            { key: 'recipient', label: 'Recipient', type: 'text', required: true },
+          ],
+          warnings: [],
+        },
+      ]),
     )
   })
 
@@ -1664,9 +1677,7 @@ describe('google composer procedures', () => {
     const result = await caller.google.send({ mail: MAIL, threadId: 't1' })
 
     expect(result).toEqual({ id: 'm-1' })
-    expect(calls).toEqual([
-      { name: 'sendMail', input: { threadId: 't1', mail: { ...MAIL } } },
-    ])
+    expect(calls).toEqual([{ name: 'sendMail', input: { threadId: 't1', mail: { ...MAIL } } }])
   })
 
   it('send carries the html the renderer previewed', async () => {
@@ -1784,12 +1795,13 @@ describe('google forwarding', () => {
       trashItem: async () => {},
       downloadsDir: join(base, 'Downloads'),
       typstCacheDir: join(base, 'typst'),
-      googleDataFor: async () => ({
-        sendMail: async (input: unknown) => {
-          calls.push(input)
-          return { id: 'm-1' }
-        },
-      }) as never,
+      googleDataFor: async () =>
+        ({
+          sendMail: async (input: unknown) => {
+            calls.push(input)
+            return { id: 'm-1' }
+          },
+        }) as never,
     }).createCaller({})
 
     await caller.google.send({
@@ -1872,9 +1884,11 @@ describe('apps', () => {
 
   it('refuses a path that leaves the vault, at the same boundary notes.read uses', async () => {
     const { caller } = await appsRig()
-    await expect(caller.apps.read({ remote: REMOTE, path: '../outside.md' })).rejects.toMatchObject({
-      code: 'BAD_REQUEST',
-    })
+    await expect(caller.apps.read({ remote: REMOTE, path: '../outside.md' })).rejects.toMatchObject(
+      {
+        code: 'BAD_REQUEST',
+      },
+    )
   })
 
   it('says NOT_FOUND for a missing note, distinguishably from a refusal', async () => {

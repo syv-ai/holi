@@ -22,6 +22,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
+/** Machine state, so it lives with the rest of it (#16). Gitignored by the
+ *  `.local.` marker, which is why the name keeps it under `state/`. */
+export const TURNS_FILE = '.holi/state/turns.local.json'
+
 export interface TurnRecord {
   /** HEAD when the turn started. */
   base: string
@@ -47,11 +51,13 @@ const CAP = 50
 function isRecord(value: unknown): value is TurnRecord {
   if (value === null || typeof value !== 'object') return false
   const r = value as Record<string, unknown>
-  return typeof r['base'] === 'string' && typeof r['end'] === 'string' && typeof r['at'] === 'string'
+  return (
+    typeof r['base'] === 'string' && typeof r['end'] === 'string' && typeof r['at'] === 'string'
+  )
 }
 
 export function openTurnLog(vaultRoot: string): TurnLog {
-  const path = join(vaultRoot, '.holi', 'turns.local.json')
+  const path = join(vaultRoot, TURNS_FILE)
 
   const list = async (): Promise<TurnRecord[]> => {
     let raw: string

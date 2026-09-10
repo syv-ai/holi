@@ -31,6 +31,7 @@ import {
   MEMORY_INDEX_EMPTY,
   seedSettings,
   vaultRelPath,
+  VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { writeAtomic } from '../vault/vault-files'
 import { mayRefresh, readSeedState, recordSeeded } from './seed-state'
@@ -158,7 +159,10 @@ const SETTINGS_JSON =
         // not recognise, so the cost of matching broadly is one child process
         // per Bash call.
         PreToolUse: [
-          { matcher: 'Bash', hooks: [{ type: 'command', command: hookCommand('google-send-gate') }] },
+          {
+            matcher: 'Bash',
+            hooks: [{ type: 'command', command: hookCommand('google-send-gate') }],
+          },
           // The same gate, over Gmail's *MCP* tools (2026-08-14).
           //
           // A `Bash` matcher sees only Bash. When a claude.ai Gmail connector is
@@ -270,7 +274,10 @@ const HOLI_SETTINGS = JSON.stringify(seedSettings('committed'), null, 2) + '\n'
  */
 const HOLI_SETTINGS_LOCAL = JSON.stringify(seedSettings('local'), null, 2) + '\n'
 
-const VAULT_MARKER = JSON.stringify({ version: 1 }, null, 2) + '\n'
+/** One line: the vault format version. Not JSON, because nothing ever parsed
+ *  it — `isVaultClone` asks only whether the file can be read. See
+ *  `VAULT_MARKER_FILE` for why an extensionless flag rather than a document. */
+const VAULT_MARKER = '1\n'
 
 /** The Plain template's manifest — a clean, unbranded layout with two optional
  * metadata fields (Date, Recipient) that the Convert dialog renders as inputs
@@ -298,7 +305,8 @@ const PLAIN_MANIFEST =
  * (`theme.local.json`, gitignored) overrides go. Empty blocks = the standard
  * look until edited; the token vocabulary lives in the seeded `theme` skill.
  */
-const THEME_SKELETON = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} }, null, 2) + '\n'
+const THEME_SKELETON =
+  JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} }, null, 2) + '\n'
 
 /** Written only when absent. Never updated, so a member's edit survives. */
 /**
@@ -351,7 +359,7 @@ export const MANAGED_FILES: Record<string, string> = {
  * because a seed that only runs at creation is a migration that never happens.
  */
 /**
- * `.holi/icons.json` — path → emoji, for the things that cannot carry an icon
+ * `.holi/settings/icons.json` — path → emoji, for the things that cannot carry an icon
  * in their own frontmatter: folders, non-markdown files, and the agent-surface
  * files where frontmatter would become prompt text. Seeded empty so the file is
  * discoverable (and so the agent has somewhere obvious to write) rather than
@@ -360,8 +368,8 @@ export const MANAGED_FILES: Record<string, string> = {
 const ICONS_SKELETON = `{}\n`
 
 export const ONCE_FILES: Record<string, string> = {
-  '.holi/vault.json': VAULT_MARKER,
-  '.holi/settings.json': HOLI_SETTINGS,
+  [VAULT_MARKER_FILE]: VAULT_MARKER,
+  '.holi/settings/app.json': HOLI_SETTINGS,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
   // The branded set and its shared brand foundation (D66 rename, spec
@@ -379,13 +387,13 @@ export const ONCE_FILES: Record<string, string> = {
   '.holi/document-templates/memo/template.typ': memoTyp,
   '.holi/document-templates/contract/template.json': contractManifest,
   '.holi/document-templates/contract/template.typ': contractTyp,
-  '.holi/theme.json': THEME_SKELETON,
-  '.holi/icons.json': ICONS_SKELETON,
+  '.holi/settings/theme.json': THEME_SKELETON,
+  '.holi/settings/icons.json': ICONS_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the machine-local files, so the
   // personal-override slot exists by default. The `.gitignore` is written first
   // in `ensureSeeded`, so these are ignored before they land.
-  '.holi/theme.local.json': THEME_SKELETON,
-  '.holi/settings.local.json': HOLI_SETTINGS_LOCAL,
+  '.holi/settings/theme.local.json': THEME_SKELETON,
+  '.holi/settings/app.local.json': HOLI_SETTINGS_LOCAL,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   /**
@@ -688,8 +696,7 @@ export async function refreshManaged(
     return { refreshed, skipped }
   }
 
-  const targets =
-    opts.path === undefined ? Object.keys(MANAGED_FILES) : [opts.path]
+  const targets = opts.path === undefined ? Object.keys(MANAGED_FILES) : [opts.path]
 
   for (const rel of targets) {
     const content = MANAGED_FILES[rel]!

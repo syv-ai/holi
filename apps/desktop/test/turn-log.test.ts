@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openTurnLog } from '../src/main/agent/turn-log'
+import { openTurnLog, TURNS_FILE } from '../src/main/agent/turn-log'
 
 let root: string
 const dirs: string[] = []
@@ -24,7 +24,7 @@ afterEach(async () => {
 })
 
 const record = (n: number) => ({ base: `base${n}`, end: `end${n}`, at: `2026-09-09T0${n}:00:00Z` })
-const file = () => join(root, '.holi', 'turns.local.json')
+const file = () => join(root, TURNS_FILE)
 
 describe('reading', () => {
   it('is empty for a vault that has never run a turn', async () => {
@@ -32,19 +32,19 @@ describe('reading', () => {
   })
 
   it('is empty rather than throwing on a file that is not JSON', async () => {
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(file(), 'not json', 'utf8')
     expect(await openTurnLog(root).list()).toEqual([])
   })
 
   it('is empty rather than throwing on JSON that is not a list', async () => {
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(file(), '{"turns":[]}', 'utf8')
     expect(await openTurnLog(root).list()).toEqual([])
   })
 
   it('drops one hand-edited record rather than the whole day', async () => {
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(file(), JSON.stringify([record(1), { base: 'x' }, record(2)]), 'utf8')
     expect(await openTurnLog(root).list()).toEqual([record(1), record(2)])
   })

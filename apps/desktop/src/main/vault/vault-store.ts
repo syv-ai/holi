@@ -36,7 +36,6 @@ import { isNonContentPath, listFiles } from './vault-files'
 // lie. Re-exported so the scan and its result still read as one module.
 export type { BrokenTask, VaultSnapshot } from '@holi/shared'
 
-
 /**
  * `type: daily-note` in the file's **leading** frontmatter block, and nowhere
  * else. Scanning the whole text would let a note containing a horizontal rule
@@ -64,12 +63,14 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
     ignored: [],
   }
 
-  // `.holi/icons.json` (committed) under `.holi/icons.local.json` (personal),
+  // `.holi/settings/icons.json` (committed) under `.holi/settings/icons.local.json` (personal),
   // the theme's layering. Read here rather than over its own IPC so the tree
   // gets the map in the same push as the paths it decorates — a second channel
   // would mean a render where a folder's icon had not arrived yet.
   const iconJson = await Promise.all(
-    [ICONS_FILE, ICONS_LOCAL_FILE].map((rel) => readFile(`${root}/${rel}`, 'utf8').catch(() => null)),
+    [ICONS_FILE, ICONS_LOCAL_FILE].map((rel) =>
+      readFile(`${root}/${rel}`, 'utf8').catch(() => null),
+    ),
   )
   snapshot.icons = resolveIconMap(iconJson[0] ?? null, iconJson[1] ?? null).icons
 

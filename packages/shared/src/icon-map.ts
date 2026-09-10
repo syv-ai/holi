@@ -1,5 +1,5 @@
 /**
- * `.holi/icons.json` — the vault's per-path icon map, and the **only** place an
+ * `.holi/settings/icons.json` — the vault's per-path icon map, and the **only** place an
  * icon lives (D82).
  *
  * A note's own frontmatter was tried first and dropped: `icon:` in a note
@@ -11,8 +11,8 @@
  * precedence rule between them cost more to explain than the travelling
  * property was worth, so there is one.
  *
- * Its layering is the theme's (D64): `.holi/icons.json` is committed and shared
- * with everyone who clones the vault, and a gitignored `.holi/icons.local.json`
+ * Its layering is the theme's (D64): the committed file is and shared
+ * with everyone who clones the vault, and a gitignored `icons.local.json` beside it
  * overrides it **per key**, so a one-line personal file changes one entry and
  * inherits the rest.
  *
@@ -24,9 +24,9 @@
 import { vaultRelPath } from './path-safety'
 
 /** The committed icon map — rides the normal watcher/snapshot path. */
-export const ICONS_FILE = '.holi/icons.json'
+export const ICONS_FILE = '.holi/settings/icons.json'
 /** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
-export const ICONS_LOCAL_FILE = '.holi/icons.local.json'
+export const ICONS_LOCAL_FILE = '.holi/settings/icons.local.json'
 
 /**
  * Exactly one emoji, in the forms a keyboard or picker actually produces:
@@ -80,7 +80,6 @@ export function isOneEmoji(value: string): boolean {
     ONE_PICTOGRAPH.test(value)
   )
 }
-
 
 export interface ResolvedIconMap {
   /** Vault-relative path → a single emoji. Only valid entries survive. */
@@ -141,7 +140,7 @@ export function resolveIconMap(
  * The committed map with one path set or cleared, as JSON text ready to write.
  *
  * Pure so the "Edit icon" gesture is testable without a filesystem: the caller
- * reads `.holi/icons.json`, hands the text here, and writes what comes back.
+ * reads `.holi/settings/icons.json`, hands the text here, and writes what comes back.
  *
  * Keys come out **normalized and sorted**. Sorted because this file is
  * committed and a map whose order followed the order things were iconed would

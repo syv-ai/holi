@@ -1,7 +1,7 @@
 /**
  * The vault's colours and chrome, with real controls (#16, D64).
  *
- * The settings tab used to end with a link to `.holi/theme.json` and the words
+ * The settings tab used to end with a link to `.holi/settings/theme.json` and the words
  * "no controls here yet". This is that gap.
  *
  * **Two axes, chosen once for the whole section rather than per token**, because
@@ -34,6 +34,8 @@ import {
   themeTokenLabel,
   type ResolvedTheme,
   type ThemeMode,
+  THEME_FILE,
+  THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, ColorSwatch, Input, Tooltip } from '@/primitives'
 import { tokenToHex } from '@/lib/css-color'
@@ -41,9 +43,6 @@ import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
 
 type Layer = 'committed' | 'local'
-
-const THEME_FILE = '.holi/theme.json'
-const THEME_LOCAL_FILE = '.holi/theme.local.json'
 
 /** A pair of buttons that read as one choice. The settings rows above use the
  *  same shape for `choice`, so the section does not introduce a new control. */

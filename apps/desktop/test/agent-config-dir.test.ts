@@ -1,3 +1,4 @@
+import { SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,7 +33,7 @@ const VAULT = 'owner/repo'
 const OTHER_VAULT = 'owner/other'
 
 describe('ensureAgentConfigDir', () => {
-  it('creates the vault\'s own directory under userData and returns its absolute path', async () => {
+  it("creates the vault's own directory under userData and returns its absolute path", async () => {
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT)
 
@@ -119,7 +120,10 @@ describe('ensureAgentConfigDir', () => {
   it('does not overrule a user who deliberately set it false', async () => {
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT)
-    await writeFile(join(configDir, 'settings.json'), JSON.stringify({ disableClaudeAiConnectors: false }))
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ disableClaudeAiConnectors: false }),
+    )
 
     await ensureAgentConfigDir(userData, VAULT)
 
@@ -216,12 +220,9 @@ describe('resolveVaultAgentConfig', () => {
   /** A vault clone with a machine-local colour choice, or none at all. */
   async function vault(colorScheme?: string): Promise<string> {
     const root = join(await tempDir(), 'clone')
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/settings'), { recursive: true })
     if (colorScheme !== undefined) {
-      await writeFile(
-        join(root, '.holi', 'settings.local.json'),
-        JSON.stringify({ colorScheme }),
-      )
+      await writeFile(join(root, SETTINGS_LOCAL_FILE), JSON.stringify({ colorScheme }))
     }
     return root
   }
@@ -358,7 +359,9 @@ describe('migrateSharedAgentConfig', () => {
     expect(JSON.parse(await readFile(join(dir, '.claude.json'), 'utf8')).oauthAccount).toEqual({
       id: 'a',
     })
-    expect(await readFile(join(dir, 'projects', 'a-vault', 'session.jsonl'), 'utf8')).toBe('a turn\n')
+    expect(await readFile(join(dir, 'projects', 'a-vault', 'session.jsonl'), 'utf8')).toBe(
+      'a turn\n',
+    )
     expect(await readdir(dir)).toContain('plugins')
     expect(await readdir(flat(userData))).toEqual([agentConfigSlug(VAULT)])
   })

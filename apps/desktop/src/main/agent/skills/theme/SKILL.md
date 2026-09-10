@@ -12,10 +12,10 @@ break the layout.
 
 ## The files
 
-- **`.holi/theme.json`** — the vault's theme. Committed, so it travels with the
+- **`.holi/settings/theme.json`** — the vault's theme. Committed, so it travels with the
   vault and everyone who clones it sees it. This is the one to edit for a shared
   look.
-- **`.holi/theme.local.json`** — a personal override, gitignored (never
+- **`.holi/settings/theme.local.json`** — a personal override, gitignored (never
   committed). If it exists, its keys win over `theme.json` **per key**, so a
   one-line local file can recolour just `primary` and inherit the rest.
 

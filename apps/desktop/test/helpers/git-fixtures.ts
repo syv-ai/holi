@@ -62,11 +62,11 @@ export async function makeRemote(): Promise<string> {
   const seed = join(base, 'seed')
   await exec('git', ['clone', bare, seed])
   await writeFile(join(seed, 'README.md'), '# Vault\n', 'utf8')
-  // The `.holi/vault.json` marker, so these origins read as real Holi vaults —
+  // The `.holi/vault` marker, so these origins read as real Holi vaults —
   // `vaults.add` refuses to adopt (and seed) anything without it. Kept in the
   // one seed commit so commit-count and log assertions are unaffected.
   await mkdir(join(seed, '.holi'), { recursive: true })
-  await writeFile(join(seed, '.holi', 'vault.json'), '{\n  "version": 1\n}\n', 'utf8')
+  await writeFile(join(seed, '.holi', 'vault'), '1\n', 'utf8')
   await plainGit(seed, ['add', '-A'])
   await plainGit(seed, ['commit', '-m', 'seed'])
   await plainGit(seed, ['push', 'origin', 'main'])

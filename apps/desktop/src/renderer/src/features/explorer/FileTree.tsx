@@ -42,7 +42,13 @@ import { AppFolderIcon, ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from '
 import { fileIconFor } from './file-icons'
 import { useExplorerActions } from './useExplorerActions'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
-import { ancestorsOf, joinPath, parentOf, renameBasenameRange, withMdExtension } from '@/lib/tree-paths'
+import {
+  ancestorsOf,
+  joinPath,
+  parentOf,
+  renameBasenameRange,
+  withMdExtension,
+} from '@/lib/tree-paths'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -155,12 +161,9 @@ export function FileTree({
     [snapshot, showTasks],
   )
   // Task-by-path, so a task leaf can show a status glyph and strike a done name.
-  const taskByPath = useMemo(
-    () => new Map(snapshot.tasks.map((t) => [t.path, t])),
-    [snapshot],
-  )
+  const taskByPath = useMemo(() => new Map(snapshot.tasks.map((t) => [t.path, t])), [snapshot])
 
-  // One source: `.holi/icons.json`, which covers a note, a folder and a binary
+  // One source: `.holi/settings/icons.json`, which covers a note, a folder and a binary
   // alike. A note's frontmatter is deliberately not a second one (D82).
   const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
 
@@ -190,9 +193,7 @@ export function FileTree({
     // folder appear with it, and only along that branch.
     const visible = showHidden
       ? docPaths
-      : docPaths.filter(
-          (p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)),
-        )
+      : docPaths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
     // Real on-disk folders shown in their own right, so a folder appears even when
     // its whole content is filtered away above (only tasks, only hidden files) or
     // it is empty but for a `.gitkeep`. Hidden dirs (`.holi/…`) stay gated by the
@@ -225,7 +226,8 @@ export function FileTree({
   // when the focused/clicked row is part of it, else just that one row (VS Code).
   const targetsFrom = (t: TreeInstance<TreeItemData>, clickedId?: string): string[] => {
     const sel = t.getSelectedItems().map((i) => i.getId())
-    if (clickedId !== undefined) return sel.length > 1 && sel.includes(clickedId) ? sel : [clickedId]
+    if (clickedId !== undefined)
+      return sel.length > 1 && sel.includes(clickedId) ? sel : [clickedId]
     const focused = t.getFocusedItem()?.getId()
     if (sel.length > 1 && focused && sel.includes(focused)) return sel
     return focused ? [focused] : sel
@@ -512,7 +514,10 @@ export function FileTree({
             </ContextMenuItem>
           </>
         )}
-        <ContextMenuItem variant="destructive" onSelect={() => actions.startDelete(targets, isFolder)}>
+        <ContextMenuItem
+          variant="destructive"
+          onSelect={() => actions.startDelete(targets, isFolder)}
+        >
           Delete
           <ContextMenuShortcut>⌫</ContextMenuShortcut>
         </ContextMenuItem>
@@ -538,9 +543,7 @@ export function FileTree({
             because this is now the ONLY way out: dropping a row into Finder
             does not work (see not-built.md). */}
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => actions.copyOut(targets)}>
-          Copy to Folder…
-        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => actions.copyOut(targets)}>Copy to Folder…</ContextMenuItem>
         <ContextMenuItem onSelect={() => actions.startMoveOut(targets, isFolder)}>
           Move to Folder…
         </ContextMenuItem>

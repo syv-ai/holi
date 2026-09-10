@@ -1,7 +1,7 @@
 /**
  * The large-file gate's view of the vault's settings.
  *
- * One key, named here so the gate does not have to know that `.holi/settings.json`
+ * One key, named here so the gate does not have to know that `.holi/settings/app.json`
  * holds anything else. The parsing, merging and defaulting all live in
  * `@holi/shared`'s `resolveVaultSettings` — this used to hand-roll its own
  * `JSON.parse`, which was the second of two independent readers of the same file

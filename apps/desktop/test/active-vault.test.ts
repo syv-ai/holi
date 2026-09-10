@@ -1,3 +1,4 @@
+import { SETTINGS_FILE } from '@holi/shared'
 /**
  * The open vault: what it sees, when it commits, and when it syncs.
  *
@@ -44,7 +45,11 @@ const SETTLE = 400
  * Polling returns the moment the condition is true, so the common case stays
  * fast and the timeout only bounds the failure.
  */
-async function waitFor(what: string, predicate: () => Promise<boolean> | boolean, timeoutMs = 8_000) {
+async function waitFor(
+  what: string,
+  predicate: () => Promise<boolean> | boolean,
+  timeoutMs = 8_000,
+) {
   const deadline = Date.now() + timeoutMs
   for (;;) {
     if (await predicate()) return
@@ -208,8 +213,7 @@ describe('ActiveVault — snapshot', () => {
 })
 
 describe('ActiveVault — commit', () => {
-  const count = async (dir: string) =>
-    Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
+  const count = async (dir: string) => Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
   const subject = async (dir: string) => plainGit(dir, ['log', '-1', '--format=%s'])
 
   /** Timings for a loop that commits promptly. */
@@ -252,12 +256,12 @@ describe('ActiveVault — commit', () => {
   })
 
   it('holds an oversized file out of the commit, keeping the tree clean', async () => {
-    // Threshold 1 KB (via .holi/settings.json, read at open); a >1 KB file is
+    // Threshold 1 KB (via .holi/settings/app.json, read at open); a >1 KB file is
     // held back while the ordinary note (and the settings file itself) commit.
     const origin = await makeRemote()
     const dir = await makeClone(origin)
-    await mkdir(join(dir, '.holi'), { recursive: true })
-    await writeFile(join(dir, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
     await writeFile(join(dir, 'note.md'), 'a thought\n', 'utf8')
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await sleep(QUIESCE)
@@ -286,8 +290,8 @@ describe('ActiveVault — commit', () => {
   it('does not spin an empty commit when only held-back files remain', async () => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
-    await mkdir(join(dir, '.holi'), { recursive: true })
-    await writeFile(join(dir, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
     await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await sleep(QUIESCE)
 
@@ -541,8 +545,9 @@ describe('ActiveVault — sync', () => {
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
     await theyPublish(teammate, 'theirs.md', 'their note\n')
 
-    await waitFor('their note to arrive', async () =>
-      (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
+    await waitFor(
+      'their note to arrive',
+      async () => (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
     )
     await waitFor('the tree to show it', () =>
       active.snapshot().docs.some((d) => d.path === 'theirs.md'),
@@ -596,8 +601,9 @@ describe('ActiveVault — sync', () => {
     open.push(active)
 
     await active.pushNow()
-    await waitFor('offline with the waiting count', () =>
-      JSON.stringify(active.syncState()) === JSON.stringify({ kind: 'offline', count: 2 }),
+    await waitFor(
+      'offline with the waiting count',
+      () => JSON.stringify(active.syncState()) === JSON.stringify({ kind: 'offline', count: 2 }),
     )
   })
 
@@ -1082,8 +1088,9 @@ describe('ActiveVault — sync', () => {
     await theyPublish(teammate, 'focus.md', 'arrived\n')
 
     active.onFocus()
-    await waitFor('the focus pull', async () =>
-      (await readFile(join(dir, 'focus.md'), 'utf8').catch(() => null)) !== null,
+    await waitFor(
+      'the focus pull',
+      async () => (await readFile(join(dir, 'focus.md'), 'utf8').catch(() => null)) !== null,
     )
   })
 
@@ -1095,8 +1102,9 @@ describe('ActiveVault — sync', () => {
     // would otherwise be considered finished before it had started.
     await theyPublish(teammate, 'early.md', 'arrives\n')
     active.onFocus()
-    await waitFor('the first focus pull to complete', async () =>
-      (await readFile(join(dir, 'early.md'), 'utf8').catch(() => null)) !== null,
+    await waitFor(
+      'the first focus pull to complete',
+      async () => (await readFile(join(dir, 'early.md'), 'utf8').catch(() => null)) !== null,
     )
 
     // Publish AFTER that pull, then focus again inside the throttle window.
@@ -1160,8 +1168,9 @@ describe('ActiveVault — sync', () => {
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 10 })
     await theyPublish(teammate, 'theirs.md', 'theirs\n')
 
-    await waitFor('their note, exactly once', async () =>
-      (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
+    await waitFor(
+      'their note, exactly once',
+      async () => (await readFile(join(dir, 'theirs.md'), 'utf8').catch(() => null)) !== null,
     )
     await waitFor('a settled state', () => active.syncState().kind === 'up-to-date')
     expect((await active.repo.status()).merging).toBe(false)
@@ -1227,8 +1236,8 @@ describe('VaultHost', () => {
 
   it('forwards the held-back set from the opened vault to onHeldBack', async () => {
     const { registry, a } = await twoVaults()
-    await mkdir(join(a, '.holi'), { recursive: true })
-    await writeFile(join(a, '.holi', 'settings.json'), '{"maxCommittedFileBytes": 1024}', 'utf8')
+    await mkdir(join(a, '.holi/settings'), { recursive: true })
+    await writeFile(join(a, SETTINGS_FILE), '{"maxCommittedFileBytes": 1024}', 'utf8')
     await writeFile(join(a, 'big.bin'), 'x'.repeat(2000), 'utf8')
     await sleep(QUIESCE)
 

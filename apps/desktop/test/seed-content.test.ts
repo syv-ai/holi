@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY } from '@holi/shared'
+import { LOCAL_ONLY_IGNORE_LINES, MEMORY_INDEX_EMPTY, VAULT_MARKER_FILE } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BRAND_BINARIES } from '../src/main/agent/templates/_brand/binary-assets.generated'
 import {
@@ -41,7 +41,10 @@ interface HookRun {
 }
 
 /** Bare `node` is broken in this environment — spawn the running interpreter. */
-function runHook(name: string, opts: { env?: Record<string, string>; cwd?: string; stdin?: string }): Promise<HookRun> {
+function runHook(
+  name: string,
+  opts: { env?: Record<string, string>; cwd?: string; stdin?: string },
+): Promise<HookRun> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [join(HOOKS_DIR, `${name}.mjs`)], {
       cwd: opts.cwd ?? process.cwd(),
@@ -56,7 +59,7 @@ function runHook(name: string, opts: { env?: Record<string, string>; cwd?: strin
 }
 
 describe('SEED_FILES', () => {
-  it('covers exactly the spec\'s managed set (USER.local.md is machine-local, never seeded)', () => {
+  it("covers exactly the spec's managed set (USER.local.md is machine-local, never seeded)", () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-overview.mjs',
@@ -83,14 +86,14 @@ describe('SEED_FILES', () => {
       '.holi/document-templates/proposal/template.typ',
       '.holi/document-templates/report/template.json',
       '.holi/document-templates/report/template.typ',
-      '.holi/icons.json',
-      '.holi/settings.json',
+      '.holi/settings/app.json',
       // Machine-local, gitignored by the seeded `*.local.*` rule — the personal
       // override slot, seeded so it exists by default (like theme.local.json).
-      '.holi/settings.local.json',
-      '.holi/theme.json',
-      '.holi/theme.local.json',
-      '.holi/vault.json',
+      '.holi/settings/app.local.json',
+      '.holi/settings/icons.json',
+      '.holi/settings/theme.json',
+      '.holi/settings/theme.local.json',
+      '.holi/vault',
       'AGENTS.md',
       'CLAUDE.md',
       // D89. `MEMORY.md` is no longer seeded — a new vault gets the directory
@@ -102,7 +105,9 @@ describe('SEED_FILES', () => {
   it('carries only the brand text; the brand binaries seed from BRAND_BINARIES', () => {
     // The 4 Raleway TTFs + logo are binary, base64 in the generated module, not
     // strings in SEED_FILES. brand.typ imports Raleway by family name only.
-    expect(Object.keys(SEED_FILES).filter((k) => k.endsWith('.ttf') || k.endsWith('.png'))).toEqual([])
+    expect(Object.keys(SEED_FILES).filter((k) => k.endsWith('.ttf') || k.endsWith('.png'))).toEqual(
+      [],
+    )
     expect(Object.keys(BRAND_BINARIES).sort()).toEqual([
       '.holi/document-templates/_brand/fonts/Raleway-bold.ttf',
       '.holi/document-templates/_brand/fonts/Raleway-boldItalic.ttf',
@@ -113,7 +118,7 @@ describe('SEED_FILES', () => {
   })
 
   it('seeds an empty, valid theme.json and a blank theme.local.json', () => {
-    for (const key of ['.holi/theme.json', '.holi/theme.local.json'] as const) {
+    for (const key of ['.holi/settings/theme.json', '.holi/settings/theme.local.json'] as const) {
       expect(JSON.parse(SEED_FILES[key]!)).toMatchObject({ dark: {}, light: {} })
     }
   })
@@ -157,7 +162,7 @@ describe('SEED_FILES', () => {
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {
     const skill = SEED_FILES['.claude/skills/theme/SKILL.md']!
     expect(skill).toContain('name: theme')
-    expect(skill).toContain('.holi/theme.json') // the file it authors
+    expect(skill).toContain('.holi/settings/theme.json') // the file it authors
     expect(skill).toContain('primary') // a token from the whitelist
   })
 
@@ -175,8 +180,13 @@ describe('SEED_FILES', () => {
     expect(MANAGED_FILES['.claude/skills/using-tasks/SKILL.md']).toBeDefined()
   })
 
-  it('.holi/vault.json is the durable vault marker', () => {
-    expect(JSON.parse(SEED_FILES['.holi/vault.json']!)).toEqual({ version: 1 })
+  it('.holi/vault is the durable vault marker, and not a document', () => {
+    // Its EXISTENCE is the signal — `isVaultClone` asks only whether it reads —
+    // so the JSON it used to hold was a shape nothing ever parsed. One line, the
+    // format version, so a future migration has something to branch on.
+    expect(SEED_FILES[VAULT_MARKER_FILE]).toBe('1\n')
+    expect(VAULT_MARKER_FILE).toBe('.holi/vault')
+    expect(VAULT_MARKER_FILE.includes('.json')).toBe(false)
   })
 
   it('CLAUDE.md is exactly the AGENTS.md import shim', () => {
@@ -296,12 +306,14 @@ describe('ensureSeeded', () => {
     const brand = await readFile(join(root, '.holi/document-templates/_brand/brand.typ'), 'utf8')
     expect(brand).toContain('with-brand')
     expect(brand).toContain('Raleway')
-    expect(await readFile(join(root, '.holi/document-templates/proposal/template.typ'), 'utf8')).toContain(
-      'render-body',
-    )
+    expect(
+      await readFile(join(root, '.holi/document-templates/proposal/template.typ'), 'utf8'),
+    ).toContain('render-body')
 
     // Binaries: bytes match the decoded base64, and a font is a real TrueType file.
-    const font = await readFile(join(root, '.holi/document-templates/_brand/fonts/Raleway-regular.ttf'))
+    const font = await readFile(
+      join(root, '.holi/document-templates/_brand/fonts/Raleway-regular.ttf'),
+    )
     const expected = Buffer.from(
       BRAND_BINARIES['.holi/document-templates/_brand/fonts/Raleway-regular.ttf']!,
       'base64',
@@ -396,7 +408,8 @@ describe('ensureSeeded — the .gitignore', () => {
     await ensureSeeded(root)
     await writeFile(join(root, 'USER.local.md'), 'private notes about the user\n')
     await mkdir(join(root, '.holi/state'), { recursive: true })
-    await writeFile(join(root, '.holi/settings.local.json'), '{"machine":"local"}\n')
+    await mkdir(join(root, '.holi/settings'), { recursive: true })
+    await writeFile(join(root, '.holi/settings/app.local.json'), '{"machine":"local"}\n')
     await writeFile(join(root, 'shared.md'), 'this one should travel\n')
     // A bare USER.md is ordinary content now — the name has no `.local.`, so it
     // is NOT ignored and MUST travel. This is the honesty guarantee: locality is
@@ -411,10 +424,10 @@ describe('ensureSeeded — the .gitignore', () => {
     expect(committed).toContain('shared.md')
     expect(committed).toContain('AGENTS.md')
     expect(committed).toContain('USER.md') // no longer special-cased — it travels
-    expect(committed).toContain('.holi/theme.json') // seeded + committed (shared theme)
+    expect(committed).toContain('.holi/settings/theme.json') // seeded + committed (shared theme)
     expect(committed).not.toContain('USER.local.md')
-    expect(committed).not.toContain('.holi/settings.local.json')
-    expect(committed).not.toContain('.holi/theme.local.json') // seeded but gitignored
+    expect(committed).not.toContain('.holi/settings/app.local.json')
+    expect(committed).not.toContain('.holi/settings/theme.local.json') // seeded but gitignored
   })
 })
 
@@ -430,10 +443,16 @@ describe('hook scripts', () => {
     await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(
       join(root, '.holi/state/context.local.json'),
-      JSON.stringify({ focusedPath: 'notes/plan.md', openPaths: ['notes/plan.md', 'notes/other.md'] }),
+      JSON.stringify({
+        focusedPath: 'notes/plan.md',
+        openPaths: ['notes/plan.md', 'notes/other.md'],
+      }),
     )
 
-    const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
+    const run = await runHook('user-prompt-submit', {
+      cwd: root,
+      env: { CLAUDE_PROJECT_DIR: root },
+    })
     expect(run.code).toBe(0)
     // The one piece of state the agent cannot discover itself (prd/agent.md
     // §Per-turn); everything else it finds natively, so nothing else is injected.
@@ -447,7 +466,10 @@ describe('hook scripts', () => {
     await writeFile(join(root, 'MEMORY.md'), 'Vault uses British English.')
     // no .holi/state/context.local.json → nothing focused → nothing to inject
 
-    const run = await runHook('user-prompt-submit', { cwd: root, env: { CLAUDE_PROJECT_DIR: root } })
+    const run = await runHook('user-prompt-submit', {
+      cwd: root,
+      env: { CLAUDE_PROJECT_DIR: root },
+    })
     expect(run.code).toBe(0)
     expect(run.stdout).toBe('')
   })
@@ -677,14 +699,14 @@ describe('the managed / once split (D75)', () => {
     ])
   })
 
-  it('leaves the files that become the user\'s in the once class', () => {
+  it("leaves the files that become the user's in the once class", () => {
     // `memory/index.md` is here rather than in MANAGED_FILES for a sharper
     // reason than the others: managed means "rewritten when the shipped version
     // changes", and the memory-index transform rewrites this file on every
     // commit that touches a memory. Seeding runs on every vault OPEN, so the two
     // would fight and the vault's real index would be replaced by the empty stub
     // roughly once a session.
-    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/theme.json']) {
+    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.json']) {
       expect(ONCE_FILES[rel]).toBeDefined()
       expect(MANAGED_FILES[rel]).toBeUndefined()
     }
@@ -833,7 +855,7 @@ describe('refreshManaged — what `holi seed refresh` does', () => {
     expect(await readFile(join(root, SKILL), 'utf8')).toBe(SEED_FILES[SKILL])
   })
 
-  it('--force does NOT reach a once-file — AGENTS.md is the user\'s', async () => {
+  it("--force does NOT reach a once-file — AGENTS.md is the user's", async () => {
     const root = await tempDir()
     await ensureSeeded(root)
     await writeFile(join(root, 'AGENTS.md'), '# my rules\n')

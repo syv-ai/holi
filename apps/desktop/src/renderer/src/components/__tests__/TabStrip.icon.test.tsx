@@ -1,5 +1,5 @@
 /**
- * `.holi/icons.json` decorates a tab pill, exactly as it decorates a tree row (D82).
+ * `.holi/settings/icons.json` decorates a tab pill, exactly as it decorates a tree row (D82).
  *
  * The strip's icon is `fileIconFor`, the same function the tree calls, so what
  * is under test here is only the plumbing: the map lives in the snapshot and

@@ -78,7 +78,7 @@ The shared vault-assistant identity: **SOUL.md** / **IDENTITY.md** + shared **AG
 Claude Code's native layering, unmodified:
 1. **Shared** — the repo's `.claude/`, `AGENTS.md`, `MEMORY.md`. CC picks them up from the cwd; they travel because they are committed.
 2. **Personal** — the user's own `~/.claude` + `CLAUDE.local.md` + `USER.local.md`: machine-local, never touched by Holi.
-3. **Holi app settings** — `.holi/settings.json` (committed, vault-wide) + `.holi/settings.local.json` (gitignored, machine-local) — the same shared/local convention CC itself uses.
+3. **Holi app settings** — `.holi/settings/app.json` (committed, vault-wide) + `.holi/settings/app.local.json` (gitignored, machine-local) — the same shared/local convention CC itself uses.
 
 Chat history is machine-local, never committed.
 

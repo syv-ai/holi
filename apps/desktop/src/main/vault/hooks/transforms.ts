@@ -66,7 +66,7 @@ export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
  * tested there.
  *
  * **Reads the local override too**, unlike the hand-rolled reader this replaced.
- * `.holi/settings.local.json` can turn a transform off on *this machine* — which
+ * `.holi/settings/app.local.json` can turn a transform off on *this machine* — which
  * is not a D76 concern, because a local file is written by you and can still only
  * say *whether* one of Holi's own transforms runs, never what one is. It is what
  * lets you keep `archive-done` off while the vault you share says on.

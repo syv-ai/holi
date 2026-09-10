@@ -1,7 +1,7 @@
 /**
  * The active vault's resolved settings, read once per vault.
  *
- * `.holi/settings.json` under its per-key `.holi/settings.local.json` override,
+ * `.holi/settings/app.json` under its per-key `.holi/settings/app.local.json` override,
  * resolved in main (`vault/settings.ts`) and handed over whole. The renderer
  * never parses either file — a settings value that reached the workspace without
  * crossing `resolveVaultSettings` would be a value nothing validated.

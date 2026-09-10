@@ -14,7 +14,7 @@
  * `core.hooksPath` pointed into the tracked tree would mean a teammate's push
  * runs their code on your laptop, on every commit, with your filesystem. That
  * is D74's escalation argument with a different filename. The script body ships
- * in the binary; `.holi/settings.json` carries booleans and nothing else.
+ * in the binary; `.holi/settings/app.json` carries booleans and nothing else.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'

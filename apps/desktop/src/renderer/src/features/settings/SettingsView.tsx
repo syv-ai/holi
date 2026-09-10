@@ -32,6 +32,8 @@ import {
   availableOptions,
   type ResolvedVaultSettings,
   type VaultSettingDescriptor,
+  THEME_FILE,
+  THEME_LOCAL_FILE,
 } from '@holi/shared'
 import { Button, Checkbox, Tooltip } from '@/primitives'
 import { ThemeSection } from './ThemeSection'
@@ -44,12 +46,6 @@ import { vaultPanelOpenAtom } from '@/state/vault-panel'
 /** The one setting whose value is a statement about an event that has already
  *  happened by the time you can change it. Everything else applies as you go. */
 const APPLIES_ON_NEXT_OPEN = new Set<string>(['landing'])
-
-/** Named here rather than imported from main: these two are vault-relative
- *  paths the renderer only ever shows and opens, and `main/vault/theme.ts` is
- *  across the IPC seam. */
-const THEME_FILE = '.holi/theme.json'
-const THEME_LOCAL_FILE = '.holi/theme.local.json'
 
 function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'

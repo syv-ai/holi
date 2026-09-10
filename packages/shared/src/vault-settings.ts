@@ -1,8 +1,8 @@
 /**
  * The vault's own settings — the pure core (parse → merge → validate → default).
  *
- * Two files, both optional: `.holi/settings.json` (committed, shared with
- * everyone who clones the vault) and `.holi/settings.local.json` (gitignored,
+ * Two files, both optional: `.holi/settings/app.json` (committed, shared with
+ * everyone who clones the vault) and `.holi/settings/app.local.json` (gitignored,
  * this machine only), the second overriding the first **per key**. Same layering
  * as `theme.ts` and `icon-map.ts`, for the same reason: a vault can say how it
  * behaves, and you can disagree with it on your own laptop without touching what
@@ -34,11 +34,7 @@
  *  transform names themselves — a camelCase settings key beside a kebab
  *  transform name is a mapping table that exists only to be got wrong once. */
 export type TransformName =
-  | 'relink'
-  | 'archive-done'
-  | 'normalize-md'
-  | 'scaffold-md'
-  | 'memory-index'
+  'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md' | 'memory-index'
 
 export const TRANSFORM_NAMES: readonly TransformName[] = [
   'relink',
@@ -61,7 +57,7 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
  *
- * **A name, never a CSS string.** `.holi/settings.json` is committed, so in a
+ * **A name, never a CSS string.** `.holi/settings/app.json` is committed, so in a
  * shared vault this value was written by somebody else; a `font-family` taken
  * from it verbatim is arbitrary CSS crossing a trust boundary, which is the
  * whitelist argument D64 makes about theme tokens, with a different filename.
@@ -370,12 +366,7 @@ export type VaultSettingControl =
  *  choosing for one vault, which is a different act. Its descriptor is not in
  *  the ritual, so the seed still writes nothing. */
 export type VaultSettingKey =
-  | 'dailyNotes'
-  | 'landing'
-  | 'hooks'
-  | 'colorScheme'
-  | 'editorFont'
-  | 'maxCommittedFileBytes'
+  'dailyNotes' | 'landing' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
 
 export interface VaultSettingDescriptor {
   key: VaultSettingKey
@@ -405,20 +396,28 @@ export interface VaultSettingDescriptor {
   whereToChange: string
 }
 
-
-/** The two files a setting can live in. Named here because the settings pane
- *  offers both as an escape hatch and the hint below names one of them — three
- *  string literals agreeing is a coincidence that expires. */
-export const SETTINGS_FILE = '.holi/settings.json'
-export const SETTINGS_LOCAL_FILE = '.holi/settings.local.json'
+/**
+ * The two files a setting can live in.
+ *
+ * **`app.json`, not `settings.json`, and under `settings/`.** Everything a
+ * person chooses about a vault now lives in one directory — settings, theme and
+ * icons — and `settings/settings.json` was the one path in that layout that
+ * read badly. `app` says what it holds: how the app behaves here, as opposed to
+ * how it looks (`theme.json`) or what it labels things with (`icons.json`).
+ *
+ * Named here and imported everywhere, including by main and the renderer, which
+ * both used to declare their own copy. Three string literals agreeing is a
+ * coincidence that expires — and it nearly did in this very move.
+ */
+export const SETTINGS_FILE = '.holi/settings/app.json'
+export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.json'
 
 const SETTINGS_FILE_HINT = `Change it any time in ${SETTINGS_FILE}`
-const LOCAL_FILE_HINT =
-  'Change it any time in .holi/settings.local.json, which stays on this machine'
+const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which stays on this machine`
 
 /**
  * The four rows the onboarding step renders, in order — and the source the seed
- * writes `.holi/settings.json` from.
+ * writes `.holi/settings/app.json` from.
  *
  * **One list, two readers.** The act and the seed agreeing is not a convention
  * anyone has to remember; adding a setting later is adding a row here, and both
@@ -494,7 +493,8 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
         {
           key: 'memory-index',
           label: 'Keep the memory index current',
-          explanation: 'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
+          explanation:
+            'Rebuilds memory/index.md so what the vault knows stays listed in one place.',
         },
         {
           key: 'archive-done',

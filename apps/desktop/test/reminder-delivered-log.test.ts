@@ -1,3 +1,4 @@
+import { SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -6,7 +7,7 @@ import { createDeliveredLog } from '../src/main/reminders/delivered-log'
 
 let root: string
 const rootFor = (remote: string) => (remote === 'o/r' ? root : null)
-const settingsPath = () => join(root, '.holi', 'settings.local.json')
+const settingsPath = () => join(root, SETTINGS_LOCAL_FILE)
 
 beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), 'holi-delivered-'))
@@ -43,7 +44,7 @@ describe('createDeliveredLog', () => {
   })
 
   it('preserves an unrelated sibling key when writing', async () => {
-    await mkdir(join(root, '.holi'), { recursive: true })
+    await mkdir(join(root, '.holi/settings'), { recursive: true })
     await writeFile(settingsPath(), JSON.stringify({ launchPrompted: true }), 'utf8')
     const log = createDeliveredLog(rootFor)
     log.markDelivered('o/r', 'task.a.md', '2026-07-28T09:00')

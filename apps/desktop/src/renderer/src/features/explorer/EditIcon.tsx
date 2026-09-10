@@ -24,7 +24,7 @@ function lastEmojiOf(raw: string): string {
 }
 
 /**
- * Set or clear a path's icon in `.holi/icons.json` (D82).
+ * Set or clear a path's icon in `.holi/settings/icons.json` (D82).
  *
  * The map is the only place an icon lives, so this is the only gesture that
  * sets one and it works the same on a note, a folder and a PDF. There is no
@@ -47,7 +47,7 @@ export function EditIcon({
   path: string
   /** The map's current entry, or null. */
   current: string | null
-  /** Open `.holi/icons.json` itself. A closure rather than a path because only
+  /** Open `.holi/settings/icons.json` itself. A closure rather than a path because only
    *  the tree holds the opener — the dialog is mounted in `DialogHost`, a
    *  sibling of the pane state that owns tabs. */
   onOpenMap: () => void
@@ -65,7 +65,7 @@ export function EditIcon({
       onClose()
     } catch (err) {
       // Kept open on failure: closing would look like it worked.
-      setError(err instanceof Error ? err.message : 'could not write .holi/icons.json')
+      setError(err instanceof Error ? err.message : 'could not write .holi/settings/icons.json')
       setBusy(false)
     }
   }
@@ -108,7 +108,7 @@ export function EditIcon({
               onClose()
             }}
           >
-            .holi/icons.json
+            .holi/settings/icons.json
           </Button>
           .
         </p>

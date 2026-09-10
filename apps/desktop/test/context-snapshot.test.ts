@@ -23,7 +23,7 @@ interface Rig {
 async function rig(): Promise<Rig> {
   const root = await mkdtemp(join(tmpdir(), 'holi-ctx-'))
   dirs.push(root)
-  await mkdir(join(root, '.holi'), { recursive: true })
+  await mkdir(join(root, '.holi/settings'), { recursive: true })
   const snapshot = new ContextSnapshot({ workRoot: root, debounceMs: 20 })
   snapshots.push(snapshot)
   return {

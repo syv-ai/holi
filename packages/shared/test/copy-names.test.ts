@@ -49,7 +49,7 @@ describe('freeCopyPath', () => {
   it('does the same for the other local files, which have their own extensions', () => {
     for (const [path, expected] of [
       ['USER.local.md', 'USER copy.local.md'],
-      ['.holi/settings.local.json', '.holi/settings copy.local.json'],
+      ['.holi/settings/app.local.json', '.holi/settings/app copy.local.json'],
     ] as const) {
       const copy = freeCopyPath((p) => p === path, path)
       expect(copy).toBe(expected)
@@ -58,8 +58,7 @@ describe('freeCopyPath', () => {
   })
 
   it('counts up on a local file without losing the marker', () => {
-    const taken = (p: string) =>
-      ['a.local.md', 'a copy.local.md'].includes(p)
+    const taken = (p: string) => ['a.local.md', 'a copy.local.md'].includes(p)
     const copy = freeCopyPath(taken, 'a.local.md')
     expect(copy).toBe('a copy 2.local.md')
     expect(isLocalOnlyPath(copy)).toBe(true)

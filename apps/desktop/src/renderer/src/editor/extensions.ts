@@ -140,11 +140,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
       ],
     }),
     autocompletion({
-      override: [
-        mentionSource(deps.mentionData),
-        slashCommands,
-        markdownTableAutocompleter(),
-      ],
+      override: [mentionSource(deps.mentionData), slashCommands, markdownTableAutocompleter()],
     }),
     // Code-editor keys. Multi-cursor is off by default — enable it so ⌘D's
     // next-occurrence selections actually stack instead of collapsing to one.
@@ -236,7 +232,7 @@ export function mailComposerExtensions(): Extension[] {
  */
 export function plainTextExtensions(path: string, readOnly = false): Extension[] {
   return [
-    // FR-19 reaches the plain stack too: a conflicted `.holi/settings.json` or
+    // FR-19 reaches the plain stack too: a conflicted `.holi/settings/app.json` or
     // `.gitignore` is at least as common as conflicted prose.
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),

@@ -24,7 +24,7 @@ afterEach(async () => {
 async function vault(files: Record<string, string> = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'holi-theme-write-'))
   roots.push(root)
-  await mkdir(join(root, '.holi'), { recursive: true })
+  await mkdir(join(root, '.holi/settings'), { recursive: true })
   for (const [rel, text] of Object.entries(files)) await writeFile(join(root, rel), text, 'utf8')
   return root
 }

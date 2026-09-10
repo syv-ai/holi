@@ -44,13 +44,14 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   await git(dir, ['config', 'user.email', 'test@holi.invalid'])
   await git(dir, ['config', 'user.name', 'Holi Test'])
   await mkdir(join(dir, '.holi/state'), { recursive: true })
+  await mkdir(join(dir, '.holi/settings'), { recursive: true })
   await writeFile(join(dir, '.gitignore'), '*.local.*\n', 'utf8')
   // `scaffold-md` is off HERE, not in the product: every fixture below is a new
   // `.md` and would otherwise be committed with a frontmatter block on top,
   // which obscures what each test is actually asserting about relink and
   // normalize. One test turns it back on and checks it through a real commit.
   await writeFile(
-    join(dir, '.holi/settings.json'),
+    join(dir, '.holi/settings/app.json'),
     JSON.stringify({ hooks: { 'scaffold-md': false, ...settings } }, null, 2),
     'utf8',
   )
@@ -61,18 +62,19 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
     onTurnEnd: () => {},
     log: () => {},
     // One vault in these; the server routes by the caller's token (D87).
-    opsFor: () => createAgentOps({
-      openApp: () => Promise.resolve({ ok: true }),
-      initApp: () => Promise.resolve({ ok: true, created: [] }),
-      refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
-      runPreCommitHooks: async () => {
-        const result = await runPreCommit(dir, await stagedChanges(dir), {
-          settings: await readHookSettings(dir),
-          transforms: VAULT_TRANSFORMS,
-        })
-        return { changed: result.changed, failed: result.failed }
-      },
-    }),
+    opsFor: () =>
+      createAgentOps({
+        openApp: () => Promise.resolve({ ok: true }),
+        initApp: () => Promise.resolve({ ok: true, created: [] }),
+        refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
+        runPreCommitHooks: async () => {
+          const result = await runPreCommit(dir, await stagedChanges(dir), {
+            settings: await readHookSettings(dir),
+            transforms: VAULT_TRANSFORMS,
+          })
+          return { changed: result.changed, failed: result.failed }
+        },
+      }),
   })
   servers.push(server)
   await server.start()
@@ -156,7 +158,7 @@ describe('scaffold-md, through a real commit', () => {
     await git(dir, ['add', '-A'])
     await git(dir, ['commit', '-q', '-m', 'seed'])
 
-    await writeFile(join(dir, '.holi/settings.json'), JSON.stringify({ hooks: {} }), 'utf8')
+    await writeFile(join(dir, '.holi/settings/app.json'), JSON.stringify({ hooks: {} }), 'utf8')
     await writeFile(join(dir, 'theirs.md'), 'body, edited\n', 'utf8')
     await git(dir, ['add', '-A'])
     await git(dir, ['commit', '-q', '-m', 'edit'])
@@ -196,17 +198,21 @@ describe('nothing here can stop a commit', () => {
       onTurnEnd: () => {},
       log: () => {},
       // One vault in these; the server routes by the caller's token (D87).
-    opsFor: () => createAgentOps({
-        openApp: () => Promise.resolve({ ok: true }),
-        initApp: () => Promise.resolve({ ok: true, created: [] }),
-        refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
-        runPreCommitHooks: () => Promise.reject(new Error('everything is broken')),
-      }),
+      opsFor: () =>
+        createAgentOps({
+          openApp: () => Promise.resolve({ ok: true }),
+          initApp: () => Promise.resolve({ ok: true, created: [] }),
+          refreshSeed: () => Promise.resolve({ refreshed: [], skipped: [] }),
+          runPreCommitHooks: () => Promise.reject(new Error('everything is broken')),
+        }),
     })
     servers.push(server)
     await server.start()
     await installGitHook(dir, 10 * 1024 * 1024)
-    await writeHookEndpoint(dir, { port: server.port()!, token: server.tokenForVault('owner/repo') })
+    await writeHookEndpoint(dir, {
+      port: server.port()!,
+      token: server.tokenForVault('owner/repo'),
+    })
 
     await writeFile(join(dir, 'a.md'), '# a\n', 'utf8')
     await git(dir, ['add', '-A'])

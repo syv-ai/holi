@@ -44,8 +44,8 @@ export function vaultRelPath(raw: string): VaultRelPath {
 
 /** Machine-local paths that sync/mirror/export layers must never treat as
  * committed vault content — identified **solely** by the `.local.` marker in the
- * basename (`.holi/settings.local.json`, `.holi/state/context.local.json`,
- * `.holi/theme.local.json`, `CLAUDE.local.md`, `USER.local.md`).
+ * basename (`.holi/settings/app.local.json`, `.holi/state/context.local.json`,
+ * `.holi/settings/theme.local.json`, `CLAUDE.local.md`, `USER.local.md`).
  *
  * The marker is the whole rule on purpose: a file's git-vs-local status must be
  * legible from its name, never a special-cased exception. (This is why the
@@ -68,19 +68,42 @@ export function isLocalOnlyPath(path: string): boolean {
 export const LOCAL_ONLY_IGNORE_LINES: readonly string[] = ['*.local.*']
 
 /**
+ * The sentinel that says a clone IS a Holi vault, and the durable on-disk twin
+ * of the `holi-vault` GitHub topic.
+ *
+ * **Extensionless, and its EXISTENCE is the signal.** It used to be
+ * `.holi/vault` holding `{"version": 1}` — a shape nothing ever parsed,
+ * because the only reader asks whether the file can be read at all. An
+ * extension promises a document you open; this is a flag, and the convention
+ * for one is a bare name (`py.typed`, `.gitkeep`, `.nvmrc`).
+ *
+ * It still carries a single line — the format version — so a future migration
+ * has something to branch on. That costs nothing and an empty file throws the
+ * option away.
+ *
+ * At the top of `.holi/` rather than in `settings/` or `state/`: it is neither
+ * a choice somebody made nor machine state, and a marker buried a level down is
+ * a worse marker.
+ */
+export const VAULT_MARKER_FILE = '.holi/vault'
+
+/**
  * The shared, committed config files whose contents configure the whole vault:
- * `.holi/settings.json` (Holi) and `.claude/settings.json` (the agent). A merge
- * conflict in either is a conflict in *config*, not content, and can leave the
- * vault misconfigured while it lasts — so the sync UI surfaces it louder than an
- * ordinary note conflict (vaults-sync.md §Edge cases). The machine-local
+ * `.holi/settings/app.json` (Holi) and `.claude/settings.json` (the agent). A
+ * merge conflict in either is a conflict in *config*, not content, and can leave
+ * the vault misconfigured while it lasts — so the sync UI surfaces it louder than
+ * an ordinary note conflict (vaults-sync.md §Edge cases). The machine-local
  * `*.local.json` overrides are absent on purpose: they never sync, so they
  * cannot conflict.
  */
-export const VAULT_CONFIG_FILES: readonly string[] = ['.holi/settings.json', '.claude/settings.json']
+export const VAULT_CONFIG_FILES: readonly string[] = [
+  '.holi/settings/app.json',
+  '.claude/settings.json',
+]
 
 /** Whether a vault-relative path is one of the shared config files
  * (`VAULT_CONFIG_FILES`) — an exact match, so a same-named file elsewhere in the
- * tree (`notes/settings.json`) or a local override (`.holi/settings.local.json`)
+ * tree (`notes/settings.json`) or a local override (`.holi/settings/app.local.json`)
  * is not one. */
 export function isVaultConfigPath(path: string): boolean {
   return VAULT_CONFIG_FILES.includes(path)
@@ -94,12 +117,16 @@ export function isVaultConfigPath(path: string): boolean {
  * (overlaps `VAULT_CONFIG_FILES` — it is both sync-conflict-worthy and
  * restart-worthy), `CLAUDE.md`, and the `AGENTS.md` it shims to.
  *
- * Deliberately NOT here: `.holi/settings.json` (Holi's config, not the agent's),
+ * Deliberately NOT here: `.holi/settings/app.json` (Holi's config, not the agent's),
  * `*.local.*` overrides (never synced, so a collaborator's pull can't change
  * them), and hooks/skills (external scripts re-read per invocation, not cached at
  * launch — no restart needed).
  */
-export const AGENT_CONFIG_FILES: readonly string[] = ['.claude/settings.json', 'CLAUDE.md', 'AGENTS.md']
+export const AGENT_CONFIG_FILES: readonly string[] = [
+  '.claude/settings.json',
+  'CLAUDE.md',
+  'AGENTS.md',
+]
 
 /**
  * Whether a vault-relative path is "hidden" in the explorer — true iff any

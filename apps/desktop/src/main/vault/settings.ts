@@ -1,15 +1,15 @@
 /**
  * Reads a vault's settings off disk and resolves them.
  *
- * Two files, both optional: `.holi/settings.json` (committed, shared with
- * everyone who clones the vault) and `.holi/settings.local.json` (gitignored,
+ * Two files, both optional: `.holi/settings/app.json` (committed, shared with
+ * everyone who clones the vault) and `.holi/settings/app.local.json` (gitignored,
  * this machine only). The pure `resolveVaultSettings` (in `@holi/shared`) does
  * the merge + validation + defaulting; this module is only the disk half — a
  * missing or unreadable file degrades to `null`, never an error, so a vault with
  * no settings resolves to the defaults and the app behaves as it always did.
  *
  * Deliberately the same shape as `vault/theme.ts`, which does exactly this for
- * `.holi/theme.json`. Two files that differ only in which resolver they call
+ * `.holi/settings/theme.json`. Two files that differ only in which resolver they call
  * should not differ in anything else.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -19,14 +19,19 @@ import {
   resolveVaultSettings,
   type ResolvedVaultSettings,
   type TransformName,
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
 } from '@holi/shared'
 
-/** The committed, shared settings — rides the normal watcher/snapshot path. */
-export const SETTINGS_FILE = '.holi/settings.json'
-/** The personal override — gitignored (`*.local.*`). Also where the reminder
- *  delivery watermark lives, which is why the resolver ignores keys it does not
- *  know rather than warning about them. */
-export const SETTINGS_LOCAL_FILE = '.holi/settings.local.json'
+/**
+ * The committed, shared settings and the personal override beside it.
+ *
+ * **Re-exported, not redeclared.** These were a second copy of the literal, and
+ * a path declared twice is a path that gets moved once. The local file is also
+ * where the reminder delivery watermark lives, which is why the resolver
+ * ignores keys it does not know rather than warning about them.
+ */
+export { SETTINGS_FILE, SETTINGS_LOCAL_FILE }
 
 async function readOrNull(abs: string): Promise<string | null> {
   try {

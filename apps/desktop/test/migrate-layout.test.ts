@@ -13,7 +13,8 @@ import { SEED_STATE_FILE } from '../src/main/agent/seed-state'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import { HOOKS_LOG_FILE } from '../src/main/vault/hooks/log'
 import { ENDPOINT_FILE } from '../src/main/vault/large-files'
-import { STATE_DIR, migrateVaultState } from '../src/main/vault/migrate-state'
+import { SETTINGS_FILE, THEME_FILE, ICONS_FILE, VAULT_MARKER_FILE } from '@holi/shared'
+import { STATE_DIR, migrateVaultLayout } from '../src/main/vault/migrate-layout'
 
 const roots: string[] = []
 afterEach(async () => {
@@ -35,7 +36,7 @@ const gone = async (root: string, rel: string) =>
     () => true,
   )
 
-describe('migrateVaultState', () => {
+describe('migrateVaultLayout', () => {
   it('moves all four, keeping their contents', async () => {
     const root = await vault({
       '.holi/seed-state.local.json': '{"a":1}',
@@ -44,7 +45,7 @@ describe('migrateVaultState', () => {
       '.holi/hook-endpoint.local.txt': '4000\ntok\n',
     })
 
-    const moved = await migrateVaultState(root)
+    const moved = await migrateVaultLayout(root)
 
     expect(moved.sort()).toEqual(
       [CONTEXT_FILE, ENDPOINT_FILE, HOOKS_LOG_FILE, SEED_STATE_FILE].sort(),
@@ -54,48 +55,85 @@ describe('migrateVaultState', () => {
     expect(await gone(root, '.holi/seed-state.local.json')).toBe(true)
   })
 
-  it('leaves settings, theme, the marker and the icons where they are', async () => {
-    // The whole point of the split: these are not machine state. `vault.json`'s
-    // path is its meaning, and `icons.json` is edited through the row menu.
+  it('leaves .holi with two directories and one flag', async () => {
+    // The shape this exists to produce. Everything a person chooses in
+    // `settings/`, everything nobody opens in `state/`, and the marker on top.
     const root = await vault({
-      '.holi/settings.json': '{}',
+      '.holi/settings.json': '{"dailyNotes":true}',
       '.holi/settings.local.json': '{}',
       '.holi/theme.json': '{}',
       '.holi/theme.local.json': '{}',
+      '.holi/icons.json': '{"a.md":"🎯"}',
+      '.holi/icons.local.json': '{}',
       '.holi/vault.json': '{"version":1}',
-      '.holi/icons.json': '{}',
+      '.holi/context.local.json': '{}',
     })
 
-    await migrateVaultState(root)
+    await migrateVaultLayout(root)
 
-    expect((await readdir(join(root, '.holi'))).sort()).toEqual([
+    expect((await readdir(join(root, '.holi'))).sort()).toEqual(['settings', 'state', 'vault'])
+    expect((await readdir(join(root, '.holi/settings'))).sort()).toEqual([
+      'app.json',
+      'app.local.json',
       'icons.json',
-      'settings.json',
-      'settings.local.json',
+      'icons.local.json',
       'theme.json',
       'theme.local.json',
-      'vault.json',
     ])
+  })
+
+  it('renames settings.json to app.json, contents intact', async () => {
+    // `settings/settings.json` was the one path in this layout that read badly.
+    const root = await vault({ '.holi/settings.json': '{"dailyNotes":false}' })
+
+    await migrateVaultLayout(root)
+
+    expect(await read(root, SETTINGS_FILE)).toBe('{"dailyNotes":false}')
+    expect(SETTINGS_FILE).toBe('.holi/settings/app.json')
+  })
+
+  it('turns the marker into an extensionless flag', async () => {
+    // Nothing ever parsed the JSON — `isVaultClone` asks only whether the file
+    // reads — so the extension was promising a document that never existed.
+    const root = await vault({ '.holi/vault.json': '{"version":1}' })
+
+    await migrateVaultLayout(root)
+
+    expect(VAULT_MARKER_FILE).toBe('.holi/vault')
+    expect(await gone(root, '.holi/vault.json')).toBe(true)
+    // The move keeps whatever was inside; the seed writes `1` from now on.
+    expect(await read(root, VAULT_MARKER_FILE)).toBe('{"version":1}')
+  })
+
+  it('keeps icons a separate file rather than folding it into the theme', async () => {
+    // They share a layering pattern and nothing else: a theme is a CLOSED
+    // whitelist validated as CSS, an icon map is unbounded and path-keyed.
+    const root = await vault({ '.holi/icons.json': '{"a.md":"🎯"}', '.holi/theme.json': '{}' })
+
+    await migrateVaultLayout(root)
+
+    expect(await read(root, ICONS_FILE)).toBe('{"a.md":"🎯"}')
+    expect(await read(root, THEME_FILE)).toBe('{}')
   })
 
   it('is a no-op the second time, and reports nothing moved', async () => {
     // It runs on every open, so the steady state has to cost nothing and say so.
     const root = await vault({ '.holi/seed-state.local.json': '{"a":1}' })
 
-    expect(await migrateVaultState(root)).toEqual([SEED_STATE_FILE])
-    expect(await migrateVaultState(root)).toEqual([])
+    expect(await migrateVaultLayout(root)).toEqual([SEED_STATE_FILE])
+    expect(await migrateVaultLayout(root)).toEqual([])
     expect(await read(root, SEED_STATE_FILE)).toBe('{"a":1}')
   })
 
   it('does nothing, and does not throw, for a vault that never had any', async () => {
     const root = await vault()
-    await expect(migrateVaultState(root)).resolves.toEqual([])
+    await expect(migrateVaultLayout(root)).resolves.toEqual([])
   })
 
   it('cannot stop a vault opening, even pointed at nothing', async () => {
     // It runs ahead of the watcher and the sync loop; none of these files is
     // worth refusing to open a vault over.
-    await expect(migrateVaultState(join(tmpdir(), 'holi-does-not-exist'))).resolves.toEqual([])
+    await expect(migrateVaultLayout(join(tmpdir(), 'holi-does-not-exist'))).resolves.toEqual([])
   })
 
   it('keeps the .local. marker, or git would start committing them', async () => {

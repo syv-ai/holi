@@ -14,11 +14,21 @@
  * renderer turns a resolved block into custom properties with `themeBlockToVars`
  * and writes them onto `document.documentElement`.
  *
- * Precedence: `.holi/theme.json` (committed, shared) is the base; a personal
- * `.holi/theme.local.json` (gitignored) overrides it **per key within each
+ * Precedence: `.holi/settings/theme.json` (committed, shared) is the base; a personal
+ * `.holi/settings/theme.local.json` (gitignored) overrides it **per key within each
  * mode**, so a one-line local file can recolour just `primary` and inherit the
  * rest. See the handoff/design notes for the decision trail.
  */
+
+/**
+ * The two files a theme lives in, beside the settings they belong with.
+ *
+ * Declared here rather than in main, because the renderer names them too (the
+ * settings pane offers both as an escape hatch) and main writes them. Three
+ * copies of a path is three chances to move two of them.
+ */
+export const THEME_FILE = '.holi/settings/theme.json'
+export const THEME_LOCAL_FILE = '.holi/settings/theme.local.json'
 
 /** The light/dark scheme a block applies to. */
 export type ThemeMode = 'light' | 'dark'
@@ -206,7 +216,10 @@ function resolveBlock(
  * "no theme" for that file. The result contains only whitelisted, validated
  * tokens — it is safe to write straight onto the DOM.
  */
-export function resolveTheme(committedJson: string | null, localJson: string | null): ResolvedTheme {
+export function resolveTheme(
+  committedJson: string | null,
+  localJson: string | null,
+): ResolvedTheme {
   const committed = committedJson === null ? null : parseVaultTheme(committedJson)
   const local = localJson === null ? null : parseVaultTheme(localJson)
   const warnings: string[] = []
@@ -255,7 +268,14 @@ export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
   {
     title: 'Surfaces',
     blurb: 'The page and the things that sit on it.',
-    tokens: ['background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground'],
+    tokens: [
+      'background',
+      'foreground',
+      'card',
+      'card-foreground',
+      'popover',
+      'popover-foreground',
+    ],
   },
   {
     title: 'Brand and action',

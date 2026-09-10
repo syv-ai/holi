@@ -1,5 +1,5 @@
 /**
- * `.holi/icons.json` decorates a tree row (D82).
+ * `.holi/settings/icons.json` decorates a tree row (D82).
  *
  * The snapshot carries the resolved map, so the tree stays a pure projection —
  * there is no icon state here to get out of sync, and one source means no

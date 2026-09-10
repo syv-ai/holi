@@ -12,7 +12,7 @@
  * `color-scheme:` unset, which is what paints the native window background
  * behind the app, and that shows as a white flash at the edges of a dark window.
  *
- * The setting lives in `.holi/settings.local.json` and so is per vault and per
+ * The setting lives in `.holi/settings/app.local.json` and so is per vault and per
  * machine. Until a vault is open there is nothing to read, and the default
  * (`system`) applies, which is why the sign-in screen and the ritual follow the
  * OS rather than being stuck dark.

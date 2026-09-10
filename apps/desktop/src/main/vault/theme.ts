@@ -1,22 +1,29 @@
 /**
  * Reads a vault's theme off disk and resolves it.
  *
- * Two files, both optional: `.holi/theme.json` (committed, shared with everyone
- * who clones the vault) and `.holi/theme.local.json` (gitignored, this machine
+ * Two files, both optional: `.holi/settings/theme.json` (committed, shared with everyone
+ * who clones the vault) and `.holi/settings/theme.local.json` (gitignored, this machine
  * only). The pure `resolveTheme` (in `@holi/shared`) does the merge + whitelist
  * + validation; this module is only the disk half — a missing or unreadable
  * file degrades to `null`, never an error, so a vault with no theme resolves to
  * the empty theme and the app falls back to its defaults.
  */
-import { readFile, rename, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { applyThemePatch, resolveTheme, type ResolvedTheme, type ThemePatch } from '@holi/shared'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import {
+  THEME_FILE,
+  THEME_LOCAL_FILE,
+  applyThemePatch,
+  resolveTheme,
+  type ResolvedTheme,
+  type ThemePatch,
+} from '@holi/shared'
 
-/** The committed, shared theme — rides the normal watcher/snapshot path. */
-export const THEME_FILE = '.holi/theme.json'
-/** The personal override — gitignored (`*.local.*`); the watcher is taught to
- *  see it despite the local-only filter (see `watcher.ts`). */
-export const THEME_LOCAL_FILE = '.holi/theme.local.json'
+/** Re-exported from `@holi/shared`, where they are declared once: main writes
+ *  these files and the renderer names them, and a path declared in three places
+ *  is a path that gets moved in two. The local one is gitignored (`*.local.*`);
+ *  the watcher is taught to see it despite the local-only filter. */
+export { THEME_FILE, THEME_LOCAL_FILE }
 
 async function readOrNull(abs: string): Promise<string | null> {
   try {
@@ -75,6 +82,9 @@ export async function writeVaultTheme(
   if (patch.light === undefined && patch.dark === undefined) return
   const abs = join(root, layer === 'committed' ? THEME_FILE : THEME_LOCAL_FILE)
   const next = applyThemePatch(await readOrNull(abs), patch)
+  // `.holi/settings/` may not exist: a vault whose theme was never written, or
+  // one someone tidied by hand. Harmless when it does.
+  await mkdir(dirname(abs), { recursive: true })
   const tmp = `${abs}.tmp`
   await writeFile(tmp, next, 'utf8')
   await rename(tmp, abs)

@@ -208,7 +208,11 @@ export function VaultSettings({
             </>
           )}
           {members && (
-            <p className={members.visibility === 'public' ? 'text-amber-400' : 'text-muted-foreground'}>
+            <p
+              className={
+                members.visibility === 'public' ? 'text-amber-400' : 'text-muted-foreground'
+              }
+            >
               {members.visibility}
             </p>
           )}
@@ -266,14 +270,15 @@ export function VaultSettings({
         </section>
 
         {/* Appearance. Authoring the theme stays file-based (the agent or the user
-          * edits `.holi/theme.json`); the one thing that wants a button is the
-          * escape hatch back to standard, because "delete a token you can't see
-          * the name of" is not something a file makes easy. */}
+         * edits `.holi/settings/theme.json`); the one thing that wants a button is the
+         * escape hatch back to standard, because "delete a token you can't see
+         * the name of" is not something a file makes easy. */}
         <section className="space-y-2">
           <h3 className="font-medium">Appearance</h3>
           <div className="flex items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
-              This vault&rsquo;s colours &amp; chrome. Edit <span className="font-mono">.holi/theme.json</span>.
+              This vault&rsquo;s colours &amp; chrome. Edit{' '}
+              <span className="font-mono">.holi/settings/theme.json</span>.
             </p>
             <Button
               variant="secondary"
@@ -288,14 +293,14 @@ export function VaultSettings({
         </section>
 
         {/* Account-wide connections (the Google connector, D67), passed in
-          * rather than imported: they are not part of *this vault's* settings,
-          * and a feature reaching into another feature is exactly what the
-          * boundaries gate exists to stop. Rendered above Account because a
-          * connection is not a destructive control. */}
+         * rather than imported: they are not part of *this vault's* settings,
+         * and a feature reaching into another feature is exactly what the
+         * boundaries gate exists to stop. Rendered above Account because a
+         * connection is not a destructive control. */}
         {connections}
 
         {/* Account actions live here, not in the footer: the footer reports state,
-          * it does not act — and sign out is the one destructive control here. */}
+         * it does not act — and sign out is the one destructive control here. */}
         <section className="mt-auto space-y-2 border-t border-divider pt-4">
           <h3 className="font-medium">Account</h3>
           <div className="flex items-center justify-between">
@@ -380,9 +385,10 @@ export function VaultSettings({
             <Dialog.Header>Reset theme?</Dialog.Header>
             <Dialog.Body>
               <p className="text-xs text-muted-foreground">
-                Deletes <span className="font-mono">.holi/theme.json</span> and{' '}
-                <span className="font-mono">.holi/theme.local.json</span>, returning the vault to the
-                standard look. The shared theme is removed for collaborators on the next sync.
+                Deletes <span className="font-mono">.holi/settings/theme.json</span> and{' '}
+                <span className="font-mono">.holi/settings/theme.local.json</span>, returning the
+                vault to the standard look. The shared theme is removed for collaborators on the
+                next sync.
               </p>
             </Dialog.Body>
             <Dialog.Footer>

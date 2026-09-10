@@ -1,10 +1,11 @@
+import { SETTINGS_LOCAL_FILE } from '@holi/shared'
 /**
  * The delivery watermark, named. Two verbs over the per-task last-fired map:
  * `read` is what `sweep` indexes (one file read per vault per tick), `markDelivered`
  * advances it. The "never re-fire / never commit / per-task last-fired" invariant
  * lives behind this interface, not in the evaluator.
  *
- * Backed by each vault's `.holi/settings.local.json` under a `reminders` key —
+ * Backed by each vault's `.holi/settings/app.local.json` under a `reminders` key —
  * gitignored by the seeded `*.local.*` rule, so a fire is never a commit. Siblings
  * (e.g. a future login-item flag) share the file, so writes merge rather than clobber.
  * Synchronous by design: the sweep tick reads and marks inline.
@@ -18,7 +19,7 @@ export interface DeliveredLog {
   markDelivered(remote: string, path: string, fireAt: string): void
 }
 
-const settingsFile = (root: string) => join(root, '.holi', 'settings.local.json')
+const settingsFile = (root: string) => join(root, SETTINGS_LOCAL_FILE)
 
 function loadSettings(root: string): Record<string, unknown> {
   const file = settingsFile(root)

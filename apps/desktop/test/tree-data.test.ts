@@ -11,11 +11,11 @@ describe('buildTreeData', () => {
     expect(data['inbox.md'].name).toBe('inbox.md')
   })
 
-  it('does not filter hidden entries — that is the tree view\'s job now (isHiddenPath)', () => {
+  it("does not filter hidden entries — that is the tree view's job now (isHiddenPath)", () => {
     // buildTreeData is a pure projection of the paths it is given; FileTree filters
     // dotfiles upstream via the per-vault show/hide toggle. MEMORY.md is never
     // hidden (not dot-prefixed), so it stays regardless.
-    const data = buildTreeData(['.holi/vault.json', 'MEMORY.md', 'note.md'])
+    const data = buildTreeData(['.holi/vault', 'MEMORY.md', 'note.md'])
     expect(data[ROOT_ID].children).toEqual(['.holi', 'MEMORY.md', 'note.md'])
   })
 

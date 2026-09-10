@@ -31,14 +31,10 @@ import {
   type VaultEntry,
   type VaultRelPath,
   parseThemePatch,
+  VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
-import {
-  initAppOp,
-  renameAppOp,
-  type AppInitResult,
-  type AppRenameResult,
-} from './apps/app-ops'
+import { initAppOp, renameAppOp, type AppInitResult, type AppRenameResult } from './apps/app-ops'
 import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { copyNotes } from './vault/copy'
@@ -91,7 +87,7 @@ import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
-import { migrateVaultState } from './vault/migrate-state'
+import { migrateVaultLayout } from './vault/migrate-layout'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
@@ -215,11 +211,12 @@ function localToday(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
-/** Whether a clone carries the `.holi/vault.json` marker — i.e. it is a Holi
- * vault rather than an arbitrary repo. The durable on-disk twin of the
- * `holi-vault` GitHub topic (github/api.ts). */
+/** Whether a clone carries the `.holi/vault` marker — i.e. it is a Holi vault
+ * rather than an arbitrary repo. The durable on-disk twin of the `holi-vault`
+ * GitHub topic (github/api.ts). Its EXISTENCE is the whole signal; the one line
+ * inside is a format version nothing branches on yet. */
 async function isVaultClone(root: string): Promise<boolean> {
-  return readFile(join(root, '.holi', 'vault.json'), 'utf8').then(
+  return readFile(join(root, VAULT_MARKER_FILE), 'utf8').then(
     () => true,
     () => false,
   )
@@ -525,7 +522,7 @@ export function createRouter(deps: RouterDeps) {
     // already a vault. `ensureSeeded` below would otherwise write `AGENTS.md`,
     // `.claude/` and friends into a plain code repo and the auto-push would carry
     // them upstream, quietly turning someone's codebase into a half-vault. The
-    // marker is the `.holi/vault.json` the seed commits at creation. A repo we
+    // marker is the `.holi/vault` the seed commits at creation. A repo we
     // just cloned for this is removed on refusal so nothing is left behind; a
     // pre-existing adopted path is left exactly as we found it.
     if (opts.requireVault && !(await isVaultClone(repo.root))) {
@@ -536,7 +533,7 @@ export function createRouter(deps: RouterDeps) {
     }
     await ensureSeeded(repo.root)
     await migrateApps(repo.root)
-    await migrateVaultState(repo.root)
+    await migrateVaultLayout(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -559,7 +556,7 @@ export function createRouter(deps: RouterDeps) {
   async function migrateApps(root: string): Promise<void> {
     const migrated = await migrateAppManifests(root)
     if (migrated.length > 0) {
-      console.log(`[apps] wrote a manifest for: ${migrated.join(", ")}`)
+      console.log(`[apps] wrote a manifest for: ${migrated.join(', ')}`)
     }
   }
   /** remote -> the clone's root on this machine. Every path-taking procedure
@@ -759,7 +756,7 @@ export function createRouter(deps: RouterDeps) {
          */
         await ensureSeeded(root)
         await migrateApps(root)
-        await migrateVaultState(root)
+        await migrateVaultLayout(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()
@@ -769,7 +766,9 @@ export function createRouter(deps: RouterDeps) {
       .input(fields({ remote: 'string', url: 'string?' }))
       // FR-7: clone the chosen repo into the managed root and open it — but only
       // if it is already a vault (see `addVault`'s `requireVault`).
-      .mutation(({ input }) => addVault(safeRemote(input.remote), input.url, { requireVault: true })),
+      .mutation(({ input }) =>
+        addVault(safeRemote(input.remote), input.url, { requireVault: true }),
+      ),
 
     create: t.procedure
       .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
@@ -1114,9 +1113,8 @@ export function createRouter(deps: RouterDeps) {
      *  somewhere to put the reason. */
     rename: vaultMutation
       .input(fields({ remote: 'string', from: 'string', to: 'string' }))
-      .mutation(
-        async ({ input }): Promise<AppRenameResult> =>
-          renameAppOp(await rootFor(input.remote), input.from, input.to),
+      .mutation(async ({ input }): Promise<AppRenameResult> =>
+        renameAppOp(await rootFor(input.remote), input.from, input.to),
       ),
 
     /** Write the manifest that registers a directory as a finished app — the
@@ -1124,9 +1122,8 @@ export function createRouter(deps: RouterDeps) {
      *  overwrites, so it cannot clobber a manifest someone is mid-way through. */
     register: vaultMutation
       .input(fields({ remote: 'string', appId: 'string' }))
-      .mutation(
-        async ({ input }): Promise<AppInitResult> =>
-          initAppOp(await rootFor(input.remote), input.appId),
+      .mutation(async ({ input }): Promise<AppInitResult> =>
+        initAppOp(await rootFor(input.remote), input.appId),
       ),
   })
 
@@ -1152,7 +1149,7 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /**
-     * Set or clear a path's icon in `.holi/icons.json` (D82).
+     * Set or clear a path's icon in `.holi/settings/icons.json` (D82).
      *
      * The map rather than the note's frontmatter, whatever the path is: one
      * gesture with one destination is what makes the menu item explicable, and
@@ -1270,13 +1267,11 @@ export function createRouter(deps: RouterDeps) {
     // Batch delete: file, folder (expanded by the renderer) or multi-selection.
     // Lands as one commit-pair (the renderer wraps it); a missing path is not an
     // error, matching single delete.
-    deleteMany: vaultMutation
-      .input(pathsInput)
-      .mutation(async ({ input }) => {
-        const root = await rootFor(input.remote)
-        for (const p of input.paths) await removeDocFile(root, safe(p))
-        return { ok: true as const }
-      }),
+    deleteMany: vaultMutation.input(pathsInput).mutation(async ({ input }) => {
+      const root = await rootFor(input.remote)
+      for (const p of input.paths) await removeDocFile(root, safe(p))
+      return { ok: true as const }
+    }),
 
     /**
      * A drop from Finder (FR-13). `sources` are absolute paths OUTSIDE the
@@ -1376,13 +1371,14 @@ export function createRouter(deps: RouterDeps) {
      *  file with no commits yet (new/untracked). */
     list: t.procedure
       .input(fields({ path: 'string' }))
-      .query(
-        ({ input }): Promise<Commit[]> =>
-          activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
+      .query(({ input }): Promise<Commit[]> =>
+        activeOrThrow().repo.log({ path: safe(input.path), limit: HISTORY_LIMIT }),
       ),
 
     /** The whole vault's commit log, newest-first — the broad history dialog. */
-    log: t.procedure.query((): Promise<Commit[]> => activeOrThrow().repo.log({ limit: HISTORY_LIMIT })),
+    log: t.procedure.query((): Promise<Commit[]> =>
+      activeOrThrow().repo.log({ limit: HISTORY_LIMIT }),
+    ),
 
     /** The paths one commit changed — the file list beside a commit's diff. */
     changed: t.procedure
@@ -1506,25 +1502,23 @@ export function createRouter(deps: RouterDeps) {
     // Back to standard: delete both theme files. A write (deletion), so it lives
     // as a mutation. The running app reverts on its own via the watcher — no
     // channel needed.
-    reset: t.procedure
-      .input(fields({ remote: 'string' }))
-      .mutation(async ({ input }) => {
-        await resetVaultTheme(await rootFor(input.remote))
-        return { ok: true as const }
-      }),
+    reset: t.procedure.input(fields({ remote: 'string' })).mutation(async ({ input }) => {
+      await resetVaultTheme(await rootFor(input.remote))
+      return { ok: true as const }
+    }),
   })
 
   // The vault's own settings: what it opens on, whether it keeps a daily note,
   // which pre-commit transforms run, and how it should look — resolved from
-  // `.holi/settings.json` under its per-key `.holi/settings.local.json`
+  // `.holi/settings/app.json` under its per-key `.holi/settings/app.local.json`
   // override. A read, like `theme.read`: the files are authored by the user or
   // the agent with ordinary file tools. The one write is the onboarding step,
   // which arrives with it.
   const settings = t.router({
     read: t.procedure
       .input(fields({ remote: 'string' }))
-      .query(
-        ({ input }): Promise<ResolvedVaultSettings> => rootFor(input.remote).then(readVaultSettings),
+      .query(({ input }): Promise<ResolvedVaultSettings> =>
+        rootFor(input.remote).then(readVaultSettings),
       ),
 
     /**
@@ -1563,16 +1557,24 @@ export function createRouter(deps: RouterDeps) {
         async ({
           input,
         }): Promise<
-          { name: string; slug: string; description: string; fields: TemplateField[]; warnings: string[] }[]
+          {
+            name: string
+            slug: string
+            description: string
+            fields: TemplateField[]
+            warnings: string[]
+          }[]
         > => {
           const root = await rootFor(input.remote)
-          return (await listTemplates(root)).map(({ name, slug, description, fields, warnings }) => ({
-            name,
-            slug,
-            description,
-            fields,
-            warnings,
-          }))
+          return (await listTemplates(root)).map(
+            ({ name, slug, description, fields, warnings }) => ({
+              name,
+              slug,
+              description,
+              fields,
+              warnings,
+            }),
+          )
         },
       ),
 
@@ -1593,7 +1595,10 @@ export function createRouter(deps: RouterDeps) {
         if (typstBin === null) {
           throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'typst is not available' })
         }
-        const base = input.path.split('/').at(-1)!.replace(/\.(md|markdown)$/i, '')
+        const base = input.path
+          .split('/')
+          .at(-1)!
+          .replace(/\.(md|markdown)$/i, '')
         const outPath = input.outPath ?? join(deps.downloadsDir, `${base}.pdf`)
         await renderPdf({
           typstBin,
@@ -1683,12 +1688,10 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     /** Point this vault at an account already connected. No consent. */
-    useAccount: t.procedure
-      .input(fields({ sub: 'string' }))
-      .mutation(async ({ input }) => {
-        await googleAccounts().link(activeRemote(), input.sub)
-        return { ok: true as const }
-      }),
+    useAccount: t.procedure.input(fields({ sub: 'string' })).mutation(async ({ input }) => {
+      await googleAccounts().link(activeRemote(), input.sub)
+      return { ok: true as const }
+    }),
 
     /**
      * Revoke an account at Google and drop it everywhere, including from every
@@ -1698,12 +1701,10 @@ export function createRouter(deps: RouterDeps) {
      * rather than acting on the active vault, so removing an account is always
      * an explicit choice of WHICH account.
      */
-    removeAccount: t.procedure
-      .input(fields({ sub: 'string' }))
-      .mutation(async ({ input }) => {
-        await googleAccounts().removeAccount(input.sub)
-        return { ok: true as const }
-      }),
+    removeAccount: t.procedure.input(fields({ sub: 'string' })).mutation(async ({ input }) => {
+      await googleAccounts().removeAccount(input.sub)
+      return { ok: true as const }
+    }),
 
     /**
      * Unlink **this vault**. The account and its tokens survive, and any other
@@ -1750,17 +1751,18 @@ export function createRouter(deps: RouterDeps) {
      */
     agendaCached: t.procedure
       .input(fields({ timeMin: 'string', timeMax: 'string' }))
-      .query(async ({ input }): Promise<CalendarEvent[] | null> =>
-        (await googleReads())?.cachedAgenda(
-          { timeMin: input.timeMin, timeMax: input.timeMax },
-          await calendarOverrides(),
-        ) ?? null,
+      .query(
+        async ({ input }): Promise<CalendarEvent[] | null> =>
+          (await googleReads())?.cachedAgenda(
+            { timeMin: input.timeMin, timeMax: input.timeMax },
+            await calendarOverrides(),
+          ) ?? null,
       ),
 
     /** Every calendar the account can draw from, with its colour and whether it
      *  is switched on — what the agenda's calendar picker renders. */
-    calendars: t.procedure.query(
-      async (): Promise<CalendarChoice[]> => resolveCalendars(googleApi(), await calendarOverrides()),
+    calendars: t.procedure.query(async (): Promise<CalendarChoice[]> =>
+      resolveCalendars(googleApi(), await calendarOverrides()),
     ),
 
     /**
@@ -1897,21 +1899,17 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const }
       }),
 
-    archive: t.procedure
-      .input(fields({ id: 'string' }))
-      .mutation(async ({ input }) => {
-        await (await googleWrites()).archive(input.id).catch(rethrowGoogle)
-        return { ok: true as const }
-      }),
+    archive: t.procedure.input(fields({ id: 'string' })).mutation(async ({ input }) => {
+      await (await googleWrites()).archive(input.id).catch(rethrowGoogle)
+      return { ok: true as const }
+    }),
 
     /** Trash, which Gmail keeps for 30 days. Not delete: permanent removal
      *  needs `https://mail.google.com/`, which Holi does not request. */
-    trash: t.procedure
-      .input(fields({ id: 'string' }))
-      .mutation(async ({ input }) => {
-        await (await googleWrites()).trash(input.id).catch(rethrowGoogle)
-        return { ok: true as const }
-      }),
+    trash: t.procedure.input(fields({ id: 'string' })).mutation(async ({ input }) => {
+      await (await googleWrites()).trash(input.id).catch(rethrowGoogle)
+      return { ok: true as const }
+    }),
 
     /**
      * The composer (D71).
@@ -2003,7 +2001,9 @@ export function createRouter(deps: RouterDeps) {
      * `fetchCategoryUnread` for why these are counted rather than estimated,
      * and why `labels.get` is the wrong source despite being one request.
      */
-    categoryCounts: t.procedure.query((): Promise<CategoryCounts> => fetchCategoryCounts(googleApi())),
+    categoryCounts: t.procedure.query((): Promise<CategoryCounts> =>
+      fetchCategoryCounts(googleApi()),
+    ),
 
     /**
      * The senders whose remote images always load.
@@ -2012,14 +2012,14 @@ export function createRouter(deps: RouterDeps) {
      * say how many standing exceptions exist — a permission the user cannot
      * see is not one they can revoke.
      */
-    imageSenders: t.procedure.query(async (): Promise<string[]> => (await deps.imagePrefs?.read()) ?? []),
+    imageSenders: t.procedure.query(
+      async (): Promise<string[]> => (await deps.imagePrefs?.read()) ?? [],
+    ),
 
-    allowImagesFrom: t.procedure
-      .input(fields({ sender: 'string' }))
-      .mutation(async ({ input }) => {
-        await imagePrefs().allow(input.sender)
-        return { ok: true as const }
-      }),
+    allowImagesFrom: t.procedure.input(fields({ sender: 'string' })).mutation(async ({ input }) => {
+      await imagePrefs().allow(input.sender)
+      return { ok: true as const }
+    }),
 
     forgetImageSenders: t.procedure.mutation(async () => {
       await imagePrefs().clear()
@@ -2154,7 +2154,9 @@ export function createRouter(deps: RouterDeps) {
     // Resolved inside the getter, not here: that keeps every call site
     // synchronous AND means the object cannot outlive a vault switch any more
     // than it could outlive a disconnect.
-    return new GoogleApi({ accessToken: () => activeGoogleSession().then((s) => s.getAccessToken()) })
+    return new GoogleApi({
+      accessToken: () => activeGoogleSession().then((s) => s.getAccessToken()),
+    })
   }
 
   return t.router({
@@ -2189,6 +2191,5 @@ const TRPC_CODE = {
   'not-found': 'NOT_FOUND',
   other: 'INTERNAL_SERVER_ERROR',
 } as const satisfies Record<GitHubApiError['kind'], TRPCError['code']>
-
 
 export type AppRouter = ReturnType<typeof createRouter>

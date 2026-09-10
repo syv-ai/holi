@@ -23,7 +23,7 @@ import { isRemote } from '../vault/registry'
  * listing for free, so the "join a vault" picker can show only real vaults
  * without a per-repo probe, and `vaults.add` can refuse to seed a code repo
  * (which would otherwise commit `AGENTS.md`/`.claude/` into it). The durable
- * on-disk twin of this flag is `.holi/vault.json`, written by the seed.
+ * on-disk twin of this flag is `.holi/vault`, written by the seed.
  */
 export const HOLI_VAULT_TOPIC = 'holi-vault'
 
@@ -87,12 +87,7 @@ export interface ApiDeps {
 /** The five refusals that change what the user is told. Everything else is
  * `other`, because inventing a fifth meaning is how a wrong message ships. */
 export type GitHubErrorKind =
-  | 'unauthorized'
-  | 'forbidden'
-  | 'saml-required'
-  | 'rate-limited'
-  | 'not-found'
-  | 'other'
+  'unauthorized' | 'forbidden' | 'saml-required' | 'rate-limited' | 'not-found' | 'other'
 
 export class GitHubApiError extends Error {
   status: number
@@ -140,9 +135,7 @@ export class GitHubApi {
       `&affiliation=owner,collaborator,organization_member`
 
     const raw = await this.#paginate(url)
-    return raw
-      .map(toRepo)
-      .sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
+    return raw.map(toRepo).sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
   }
 
   /** One repo. */

@@ -1,7 +1,7 @@
 /**
  * `archive-done` — move long-finished tasks under `archive/`, links and all.
  *
- * **Off by default** (see the seeded `.holi/settings.json`). It moves task
+ * **Off by default** (see the seeded `.holi/settings/app.json`). It moves task
  * files, which changes what the board shows, and a transform that rearranges
  * someone's work has to be asked for rather than assumed.
  *

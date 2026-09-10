@@ -1,7 +1,7 @@
 /**
  * The palette an app starts from, before the vault's theme is laid over it.
  *
- * Without this, `appHeadHtml` injects only what `.holi/theme.json` *overrides* —
+ * Without this, `appHeadHtml` injects only what `.holi/settings/theme.json` *overrides* —
  * and a vault with no theme (the common case; the seeded file is `{}`) gives an
  * app **no tokens at all**. Every `var(--foreground)` then resolves to nothing,
  * the browser falls back to black text on a transparent page, and the app is

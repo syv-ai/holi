@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { THEME_FILE, THEME_LOCAL_FILE, readVaultTheme, resetVaultTheme } from '../src/main/vault/theme'
+import {
+  THEME_FILE,
+  THEME_LOCAL_FILE,
+  readVaultTheme,
+  resetVaultTheme,
+} from '../src/main/vault/theme'
 
 const dirs: string[] = []
 async function tempDir(): Promise<string> {
@@ -15,7 +20,7 @@ afterEach(async () => {
 })
 
 async function writeTheme(root: string, rel: string, body: unknown): Promise<void> {
-  await mkdir(join(root, '.holi'), { recursive: true })
+  await mkdir(join(root, '.holi/settings'), { recursive: true })
   await writeFile(join(root, rel), JSON.stringify(body), 'utf8')
 }
 

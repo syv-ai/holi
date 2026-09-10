@@ -21,7 +21,7 @@ import {
 describe('isHiddenPath (explorer show/hide)', () => {
   it('hides a dot-prefixed file or dir at the root', () => {
     expect(isHiddenPath('.gitignore')).toBe(true)
-    expect(isHiddenPath('.holi/vault.json')).toBe(true)
+    expect(isHiddenPath('.holi/vault')).toBe(true)
     expect(isHiddenPath('.claude/settings.json')).toBe(true)
   })
 
@@ -63,18 +63,18 @@ describe('isVaultConfigPath (config-conflict prominence)', () => {
     for (const p of VAULT_CONFIG_FILES) {
       expect(isVaultConfigPath(p)).toBe(true)
     }
-    expect(isVaultConfigPath('.holi/settings.json')).toBe(true)
+    expect(isVaultConfigPath('.holi/settings/app.json')).toBe(true)
     expect(isVaultConfigPath('.claude/settings.json')).toBe(true)
   })
 
   it('does not match machine-local overrides (they never sync, so never conflict)', () => {
-    expect(isVaultConfigPath('.holi/settings.local.json')).toBe(false)
+    expect(isVaultConfigPath('.holi/settings/app.local.json')).toBe(false)
   })
 
   it('does not match other files in the config dirs, or ordinary content', () => {
     for (const p of [
-      '.holi/theme.json',
-      '.holi/vault.json',
+      '.holi/settings/theme.json',
+      '.holi/vault',
       '.claude/agents/foo.md',
       'settings.json',
       'notes/settings.json',
@@ -91,7 +91,7 @@ describe('AGENT_CONFIG_FILES (restart-to-pick-up detection)', () => {
     expect(AGENT_CONFIG_FILES).toContain('CLAUDE.md')
     expect(AGENT_CONFIG_FILES).toContain('AGENTS.md')
     // Holi's own config never affects the agent; local overrides never sync.
-    expect(AGENT_CONFIG_FILES).not.toContain('.holi/settings.json')
+    expect(AGENT_CONFIG_FILES).not.toContain('.holi/settings/app.json')
     expect(AGENT_CONFIG_FILES).not.toContain('.claude/settings.local.json')
   })
 
@@ -156,7 +156,12 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     lines.some((line) => {
       const base = path.split('/').at(-1)!
       if (!line.includes('*')) return path === line || base === line
-      const re = new RegExp(`^${line.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`)
+      const re = new RegExp(
+        `^${line
+          .split('*')
+          .map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
+          .join('.*')}$`,
+      )
       return re.test(base)
     })
 
@@ -166,9 +171,9 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     // machine-local file to every collaborator.
     for (const path of [
       'USER.local.md',
-      '.holi/settings.local.json',
+      '.holi/settings/app.local.json',
       '.holi/context.local.json',
-      '.holi/theme.local.json',
+      '.holi/settings/theme.local.json',
       'CLAUDE.local.md',
     ]) {
       expect(isLocalOnlyPath(path)).toBe(true)
@@ -179,7 +184,13 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
   it('does not ignore ordinary vault content — incl. a bare USER.md (local-ness is only the .local. marker)', () => {
     // USER.md is no longer special-cased: a synced-looking name IS synced. The
     // personal model lives at USER.local.md, whose name declares its locality.
-    for (const path of ['AGENTS.md', 'MEMORY.md', 'USER.md', 'notes/user.md', 'projects/local-plans.md']) {
+    for (const path of [
+      'AGENTS.md',
+      'MEMORY.md',
+      'USER.md',
+      'notes/user.md',
+      'projects/local-plans.md',
+    ]) {
       expect(isLocalOnlyPath(path)).toBe(false)
       expect(ignoredBy(LOCAL_ONLY_IGNORE_LINES, path)).toBe(false)
     }
@@ -191,7 +202,12 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
     for (const path of AGENT_SURFACE_FILES) {
       expect(isAgentSurfacePath(path)).toBe(true)
     }
-    expect([...AGENT_SURFACE_FILES]).toEqual(['AGENTS.md', 'CLAUDE.md', 'MEMORY.md', 'USER.local.md'])
+    expect([...AGENT_SURFACE_FILES]).toEqual([
+      'AGENTS.md',
+      'CLAUDE.md',
+      'MEMORY.md',
+      'USER.local.md',
+    ])
   })
 
   it('matches everything under .claude/ — settings, hooks and skills alike', () => {
@@ -224,8 +240,8 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
   })
 
   it('leaves the rest of .holi/ alone — that is Holi config, not the agent surface', () => {
-    expect(isAgentSurfacePath('.holi/settings.json')).toBe(false)
-    expect(isAgentSurfacePath('.holi/theme.json')).toBe(false)
+    expect(isAgentSurfacePath('.holi/settings/app.json')).toBe(false)
+    expect(isAgentSurfacePath('.holi/settings/theme.json')).toBe(false)
     expect(isAgentSurfacePath('.holi/apps/retro/index.html')).toBe(false)
   })
 
@@ -264,7 +280,7 @@ describe('appIdFromPath', () => {
 
   it('is null for an invalid id or a path outside APPS_DIR', () => {
     expect(appIdFromPath('.holi/apps/My_App/index.html')).toBe(null)
-    expect(appIdFromPath('.holi/theme.json')).toBe(null)
+    expect(appIdFromPath('.holi/settings/theme.json')).toBe(null)
     expect(appIdFromPath('notes/x.md')).toBe(null)
     expect(appIdFromPath('.holi/appsy/retro/index.html')).toBe(null)
     expect(appIdFromPath(APPS_DIR)).toBe(null)
