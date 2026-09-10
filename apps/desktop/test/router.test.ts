@@ -1207,6 +1207,7 @@ describe('vaults.add', () => {
     expect(snap.docs.map((d) => d.path).sort()).toEqual([
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/memory/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',

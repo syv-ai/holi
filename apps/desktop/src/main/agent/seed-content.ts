@@ -43,6 +43,7 @@ import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
 import vaultAppsSkill from './skills/vault-apps/SKILL.md?raw'
 import usingTasksSkill from './skills/using-tasks/SKILL.md?raw'
+import memorySkill from './skills/memory/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -94,7 +95,9 @@ A memory is **one fact in one file** under \`memory/\`. Write one whenever you l
 - \`memory/whatever.local.md\` is **personal** — the \`.local.\` makes it gitignored, so it never leaves this clone. Anything about one person goes there.
 - \`memory/index.md\` is **generated** on commit. Edit the memory files; edits to the index are discarded.
 
-\`MEMORY.md\` and \`USER.local.md\` are the older shape. Both still work and are still read. Splitting one into \`memory/\` is worth doing when the user asks; do not do it unasked.
+Use the **memory** skill when writing one.
+
+\`MEMORY.md\` and \`USER.local.md\` are the older shape. Both still work and are still read, and neither is written to any more — a personal fact goes in \`memory/<name>.local.md\`, which the session overview announces, where \`USER.local.md\` is auto-loaded by nothing and listed nowhere. Splitting either into \`memory/\` is worth doing when the user asks; never unasked.
 `
 
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
@@ -321,6 +324,18 @@ export const MANAGED_FILES: Record<string, string> = {
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
   '.claude/skills/vault-apps/SKILL.md': vaultAppsSkill,
   '.claude/skills/using-tasks/SKILL.md': usingTasksSkill,
+  /**
+   * How to write a memory (D89).
+   *
+   * **A skill rather than more `AGENTS.md` prose, because `AGENTS.md` is a
+   * ONCE_FILE and cannot be corrected.** A vault seeded before D65 still tells
+   * the agent that `USER.md` is machine-local — a claim Holi made and then
+   * invalidated — and nothing has ever been able to reach it. Skills are
+   * managed, so this one lands in every vault on the next open and can be
+   * improved later, which is exactly the argument D75 already made about the
+   * vault-apps skill.
+   */
+  '.claude/skills/memory/SKILL.md': memorySkill,
 }
 
 /**

@@ -65,6 +65,7 @@ describe('SEED_FILES', () => {
       '.claude/settings.json',
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/memory/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
@@ -669,6 +670,7 @@ describe('the managed / once split (D75)', () => {
       '.claude/hooks/vault-app-check.mjs',
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
+      '.claude/skills/memory/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
@@ -976,6 +978,34 @@ describe('vault memory (D89)', () => {
     // Free-form on purpose: the overview prints the types in use, which lets the
     // vocabulary document and converge on itself with no registry to maintain.
     expect(prose).toMatch(/free-form/)
+  })
+
+  it('ships a memory skill, because AGENTS.md cannot be corrected', () => {
+    // The reason this is a skill and not more `AGENTS.md` prose: `AGENTS.md` is
+    // a ONCE_FILE, so a vault seeded before D65 still tells the agent that
+    // `USER.md` is machine-local — a claim Holi made and then invalidated — and
+    // nothing has ever been able to reach it. Skills are managed.
+    const skill = SEED_FILES['.claude/skills/memory/SKILL.md']!
+    expect(MANAGED_FILES['.claude/skills/memory/SKILL.md']).toBeDefined()
+
+    const prose = skill.replace(/\s+/g, ' ')
+    expect(prose).toContain('one fact in one file')
+    // The filename is the only thing that decides privacy (D65).
+    expect(prose).toMatch(/\.local\.md.*gitignored|gitignored.*\.local\.md/)
+    // The index is generated; an edit to it is discarded silently.
+    expect(prose).toMatch(/Do not edit .memory\/index\.md./)
+    // Never migrate someone's MEMORY.md unprompted — that is a shared-layer
+    // auto-edit, which `not-built.md` rules against.
+    expect(prose).toMatch(/only when the user asks/)
+  })
+
+  it('stops naming USER.local.md as somewhere to write', () => {
+    // It is auto-loaded by nothing, appears in no index and in no overview, so
+    // `memory/<name>.local.md` does the same job strictly better. Named as
+    // legacy, never deleted.
+    const prose = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
+    expect(prose).toMatch(/older shape/)
+    expect(prose).toMatch(/memory\/<name>\.local\.md/)
   })
 
   it('reaches a vault that already exists, both keys and the hook', () => {

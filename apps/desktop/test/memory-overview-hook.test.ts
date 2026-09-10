@@ -131,12 +131,34 @@ describe('memory-overview', () => {
     const { out } = await run(
       await vault({ 'memory/index.md': INDEX, 'MEMORY.md': '# Memory\n\nWe use pnpm.\n' }),
     )
-    expect(out).toMatch(/legacy `MEMORY\.md`/)
+    expect(out).toMatch(/`MEMORY\.md` in the older shape/)
+  })
+
+  it('names USER.local.md too, which nothing else ever surfaces', async () => {
+    // It is auto-loaded by nothing and appears in no index, so without this line
+    // a fact in it is one the agent has to remember to go looking for.
+    const { out } = await run(
+      await vault({ 'memory/index.md': INDEX, 'USER.local.md': '# Ada\n\nPrefers short replies.\n' }),
+    )
+    expect(out).toMatch(/`USER\.local\.md` in the older shape/)
+  })
+
+  it('names both when both are there, in one line', async () => {
+    const { out } = await run(
+      await vault({
+        'memory/index.md': INDEX,
+        'MEMORY.md': '# Memory\n\nWe use pnpm.\n',
+        'USER.local.md': '# Ada\n\nPrefers short replies.\n',
+      }),
+    )
+    expect(out).toMatch(/`MEMORY\.md` and `USER\.local\.md` in the older shape/)
   })
 
   it('says nothing about an empty MEMORY.md, which is the old seed’s leftover', async () => {
-    const { out } = await run(await vault({ 'memory/index.md': INDEX, 'MEMORY.md': '\n' }))
-    expect(out).not.toMatch(/legacy/)
+    const { out } = await run(
+      await vault({ 'memory/index.md': INDEX, 'MEMORY.md': '\n', 'USER.local.md': '  \n' }),
+    )
+    expect(out).not.toMatch(/older shape/)
   })
 
   it('survives a directory that is not a git repository', async () => {

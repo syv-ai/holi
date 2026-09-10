@@ -177,13 +177,24 @@ function render({ descriptions }) {
   const log = recent()
   if (log.length > 0) out.push('', '## recent', '', ...log.map((l) => `- ${l}`))
 
-  // Only when there is something in it to split. An empty MEMORY.md is the
-  // seed's own leftover and suggesting work on it would be noise.
-  const legacy = readOr(join(root, 'MEMORY.md'))
-  if (legacy !== null && legacy.trim() !== '') {
+  // The two older shapes. Only when there is something in one to split: an
+  // empty `MEMORY.md` is the old seed's own leftover, and suggesting work on it
+  // would be noise.
+  //
+  // `USER.local.md` is named here for a reason of its own. It is auto-loaded by
+  // nothing — the `CLAUDE.md` shim imports `AGENTS.md` and only that — and it
+  // appears in no index and in no overview, so a fact in it is one the agent has
+  // to remember to go and look for. A `memory/<name>.local.md` is printed right
+  // here at the start of every session. That is the whole difference, and it is
+  // why this line exists rather than the file simply carrying on.
+  const legacy = ['MEMORY.md', 'USER.local.md'].filter((name) => {
+    const text = readOr(join(root, name))
+    return text !== null && text.trim() !== ''
+  })
+  if (legacy.length > 0) {
     out.push(
       '',
-      'This vault also has a legacy `MEMORY.md`. Worth splitting into `memory/` when the user asks.',
+      `This vault also has ${legacy.map((n) => `\`${n}\``).join(' and ')} in the older shape. Still read, never moved unasked; worth splitting into \`memory/\` when the user asks.`,
     )
   }
 
