@@ -2,7 +2,7 @@
  * Applies the active vault's theme to the document root.
  *
  * The theme is a set of whitelisted colour/chrome token values (resolved in main
- * from `.holi/settings/theme.json` + `.holi/settings/theme.local.json`). Writing them as custom
+ * from `.holi/settings/theme.yaml` + `.holi/settings/theme.local.yaml`). Writing them as custom
  * properties on `document.documentElement` re-cascades the app's semantic tokens
  * — `--primary`, `--radius`, `--shadow-popover`, … — because those are `var()`
  * pointers (see `index.css`). It is deliberately the document ROOT and not an

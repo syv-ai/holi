@@ -85,7 +85,7 @@ export function emptyWorkspace(): Workspace {
 }
 
 /** Where the tabs actually live. Not persisted: whether tabs survive a restart
- *  is an open product question, and `.holi/settings/app.local.json` is where the
+ *  is an open product question, and `.holi/settings/app.local.yaml` is where the
  *  answer would go (`notes-editor.md` §Panes). */
 export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 

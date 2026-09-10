@@ -51,7 +51,7 @@ async function vault(settings: Record<string, boolean> = {}): Promise<string> {
   // which obscures what each test is actually asserting about relink and
   // normalize. One test turns it back on and checks it through a real commit.
   await writeFile(
-    join(dir, '.holi/settings/app.json'),
+    join(dir, '.holi/settings/app.yaml'),
     JSON.stringify({ hooks: { 'scaffold-md': false, ...settings } }, null, 2),
     'utf8',
   )
@@ -158,7 +158,7 @@ describe('scaffold-md, through a real commit', () => {
     await git(dir, ['add', '-A'])
     await git(dir, ['commit', '-q', '-m', 'seed'])
 
-    await writeFile(join(dir, '.holi/settings/app.json'), JSON.stringify({ hooks: {} }), 'utf8')
+    await writeFile(join(dir, '.holi/settings/app.yaml'), JSON.stringify({ hooks: {} }), 'utf8')
     await writeFile(join(dir, 'theirs.md'), 'body, edited\n', 'utf8')
     await git(dir, ['add', '-A'])
     await git(dir, ['commit', '-q', '-m', 'edit'])

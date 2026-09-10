@@ -13,7 +13,20 @@ import { SEED_STATE_FILE } from '../src/main/agent/seed-state'
 import { CONTEXT_FILE } from '../src/main/agent/context-snapshot'
 import { HOOKS_LOG_FILE } from '../src/main/vault/hooks/log'
 import { ENDPOINT_FILE } from '../src/main/vault/large-files'
-import { SETTINGS_FILE, THEME_FILE, ICONS_FILE, VAULT_MARKER_FILE } from '@holi/shared'
+import { VAULT_MARKER_FILE } from '@holi/shared'
+
+/**
+ * The layout migration's targets, spelled out rather than imported.
+ *
+ * `SETTINGS_FILE` and friends are `.yaml` now, and this module still moves
+ * things to `.json` on purpose: `migrateSettingsFormat` converts them straight
+ * afterwards, so a vault three layouts behind is fixed in one pass by two steps
+ * that know nothing about each other. Importing the constants here would make
+ * this file assert the other migration's job and fail for the wrong reason.
+ */
+const SETTINGS_FILE = '.holi/settings/app.json'
+const THEME_FILE = '.holi/settings/theme.json'
+const ICONS_FILE = '.holi/settings/icons.json'
 import { STATE_DIR, migrateVaultLayout } from '../src/main/vault/migrate-layout'
 
 const roots: string[] = []

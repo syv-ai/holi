@@ -15,7 +15,7 @@ export type ColorMode = 'light' | 'dark'
  * rather than an attempt to hot-swap another program's settings.
  *
  * **Compared here rather than fingerprinted in main**, deliberately: the setting
- * lives in `.holi/settings/app.local.json`, which is outside `AGENT_CONFIG_FILES`
+ * lives in `.holi/settings/app.local.yaml`, which is outside `AGENT_CONFIG_FILES`
  * because `*.local.*` never syncs and so no collaborator's pull can change it.
  * Widening that set to catch a local theme flip would contradict the reason it
  * is drawn where it is. The renderer already knows both modes.

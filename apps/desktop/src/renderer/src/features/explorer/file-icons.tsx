@@ -125,7 +125,7 @@ const BY_EXT: Record<string, [IconCmp, string]> = {
 /**
  * The leaf icon for a vault file path.
  *
- * An icon from `.holi/settings/icons.json` wins outright: the whole point of the feature
+ * An icon from `.holi/settings/icons.yaml` wins outright: the whole point of the feature
  * is to override the type glyph, so the two never appear together. `icon` is
  * already validated to be exactly one emoji when the map is resolved — nothing
  * longer can reach here and stretch the row.

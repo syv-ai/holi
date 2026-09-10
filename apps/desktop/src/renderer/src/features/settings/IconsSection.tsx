@@ -3,7 +3,7 @@
  *
  * **The map had no view.** An icon is set from a tree row's "Edit Icon…", one
  * path at a time, and the only way to see the whole map was to open
- * `.holi/settings/icons.json` and read JSON. That is fine for setting one and
+ * `.holi/settings/icons.yaml` and read JSON. That is fine for setting one and
  * useless for the thing a list is actually for: noticing that six of them point
  * at files you renamed months ago.
  *

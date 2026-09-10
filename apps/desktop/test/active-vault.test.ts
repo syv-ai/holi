@@ -256,7 +256,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('holds an oversized file out of the commit, keeping the tree clean', async () => {
-    // Threshold 1 KB (via .holi/settings/app.json, read at open); a >1 KB file is
+    // Threshold 1 KB (via .holi/settings/app.yaml, read at open); a >1 KB file is
     // held back while the ordinary note (and the settings file itself) commit.
     const origin = await makeRemote()
     const dir = await makeClone(origin)

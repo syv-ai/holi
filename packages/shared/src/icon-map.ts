@@ -1,5 +1,5 @@
 /**
- * `.holi/settings/icons.json` — the vault's per-path icon map, and the **only** place an
+ * `.holi/settings/icons.yaml` — the vault's per-path icon map, and the **only** place an
  * icon lives (D82).
  *
  * A note's own frontmatter was tried first and dropped: `icon:` in a note
@@ -21,12 +21,13 @@
  * to "no icon", never to lost content — and refusing to let anyone icon a
  * folder to avoid a cosmetic staleness is the worse trade.
  */
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { vaultRelPath } from './path-safety'
 
 /** The committed icon map — rides the normal watcher/snapshot path. */
-export const ICONS_FILE = '.holi/settings/icons.json'
+export const ICONS_FILE = '.holi/settings/icons.yaml'
 /** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
-export const ICONS_LOCAL_FILE = '.holi/settings/icons.local.json'
+export const ICONS_LOCAL_FILE = '.holi/settings/icons.local.yaml'
 
 /**
  * Exactly one emoji, in the forms a keyboard or picker actually produces:
@@ -94,7 +95,7 @@ export interface ResolvedIconMap {
 function parseMap(json: string | null): Record<string, unknown> {
   if (json === null || json.trim() === '') return {}
   try {
-    const parsed: unknown = JSON.parse(json)
+    const parsed: unknown = parseYaml(json)
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {}
@@ -140,7 +141,7 @@ export function resolveIconMap(
  * The committed map with one path set or cleared, as JSON text ready to write.
  *
  * Pure so the "Edit icon" gesture is testable without a filesystem: the caller
- * reads `.holi/settings/icons.json`, hands the text here, and writes what comes back.
+ * reads `.holi/settings/icons.yaml`, hands the text here, and writes what comes back.
  *
  * Keys come out **normalized and sorted**. Sorted because this file is
  * committed and a map whose order followed the order things were iconed would
@@ -173,5 +174,9 @@ export function withIcon(json: string | null, path: string, emoji: string | null
 
   const sorted: Record<string, unknown> = {}
   for (const key of Object.keys(out).sort()) sorted[key] = out[key]
-  return `${JSON.stringify(sorted, null, 2)}\n`
+  // Rewritten whole rather than merged into the existing document, because the
+  // whole point of this function is that the map is SORTED and normalised —
+  // keeping the old node order would defeat it. The map has no generated
+  // commentary to lose: it is one entry per path, and a path explains itself.
+  return stringifyYaml(sorted, { lineWidth: 0 })
 }

@@ -4,7 +4,7 @@
  * The vault is mostly markdown (its own editor) plus two narrow sets that are
  * *not* a general code editor:
  *
- * - **config** — `.holi/settings/theme.json`, a `.yaml`, a `.env`, the odd `.toml`.
+ * - **config** — `.holi/settings/theme.yaml`, a `.yaml`, a `.env`, the odd `.toml`.
  * - **the web three** — an app under `.holi/apps/` is unbuilt HTML, CSS and JS
  *   the browser runs as-is, so those are the only source files the editor
  *   actually meets. TypeScript is left out on purpose: nothing compiles it, so

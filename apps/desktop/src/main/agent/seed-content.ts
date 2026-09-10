@@ -26,10 +26,17 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
+  applyThemePatch,
+  ICONS_FILE,
   LOCAL_ONLY_IGNORE_LINES,
   MEMORY_INDEX,
   MEMORY_INDEX_EMPTY,
   seedSettings,
+  seedSettingsText,
+  SETTINGS_FILE,
+  SETTINGS_LOCAL_FILE,
+  THEME_FILE,
+  THEME_LOCAL_FILE,
   vaultRelPath,
   VAULT_MARKER_FILE,
 } from '@holi/shared'
@@ -264,15 +271,15 @@ const SETTINGS_JSON =
  * `archive-done` is off because it moves task files, which changes what the
  * board shows; a transform that rearranges someone's work is opt-in.
  */
-const HOLI_SETTINGS = JSON.stringify(seedSettings('committed'), null, 2) + '\n'
+const HOLI_SETTINGS = seedSettingsText(seedSettings('committed'))
 
 /**
  * The machine-local half — today, which appearance this machine follows.
  *
- * Gitignored by the seeded `*.local.*` rule, exactly like `theme.local.json`
+ * Gitignored by the seeded `*.local.*` rule, exactly like `theme.local.yaml`
  * beside it, so a personal choice is never pushed to anyone.
  */
-const HOLI_SETTINGS_LOCAL = JSON.stringify(seedSettings('local'), null, 2) + '\n'
+const HOLI_SETTINGS_LOCAL = seedSettingsText(seedSettings('local'))
 
 /** One line: the vault format version. Not JSON, because nothing ever parsed
  *  it — `isVaultClone` asks only whether the file can be read. See
@@ -301,12 +308,11 @@ const PLAIN_MANIFEST =
 /**
  * The vault's colour/chrome theme, seeded empty (D64). Both files ship in every
  * vault so theming is discoverable — a member opens the vault, finds them under
- * show-hidden, and knows where shared (`theme.json`, committed) vs personal
- * (`theme.local.json`, gitignored) overrides go. Empty blocks = the standard
+ * show-hidden, and knows where shared (`theme.yaml`, committed) vs personal
+ * (`theme.local.yaml`, gitignored) overrides go. Empty blocks = the standard
  * look until edited; the token vocabulary lives in the seeded `theme` skill.
  */
-const THEME_SKELETON =
-  JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} }, null, 2) + '\n'
+const THEME_SKELETON = applyThemePatch(null, {})
 
 /** Written only when absent. Never updated, so a member's edit survives. */
 /**
@@ -359,17 +365,17 @@ export const MANAGED_FILES: Record<string, string> = {
  * because a seed that only runs at creation is a migration that never happens.
  */
 /**
- * `.holi/settings/icons.json` — path → emoji, for the things that cannot carry an icon
+ * `.holi/settings/icons.yaml` — path → emoji, for the things that cannot carry an icon
  * in their own frontmatter: folders, non-markdown files, and the agent-surface
  * files where frontmatter would become prompt text. Seeded empty so the file is
  * discoverable (and so the agent has somewhere obvious to write) rather than
  * being a convention you have to be told about.
  */
-const ICONS_SKELETON = `{}\n`
+const ICONS_SKELETON = '{}\n'
 
 export const ONCE_FILES: Record<string, string> = {
   [VAULT_MARKER_FILE]: VAULT_MARKER,
-  '.holi/settings/app.json': HOLI_SETTINGS,
+  [SETTINGS_FILE]: HOLI_SETTINGS,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
   // The branded set and its shared brand foundation (D66 rename, spec
@@ -387,13 +393,13 @@ export const ONCE_FILES: Record<string, string> = {
   '.holi/document-templates/memo/template.typ': memoTyp,
   '.holi/document-templates/contract/template.json': contractManifest,
   '.holi/document-templates/contract/template.typ': contractTyp,
-  '.holi/settings/theme.json': THEME_SKELETON,
-  '.holi/settings/icons.json': ICONS_SKELETON,
+  [THEME_FILE]: THEME_SKELETON,
+  [ICONS_FILE]: ICONS_SKELETON,
   // Seeded but gitignored (`*.local.*`) — the machine-local files, so the
   // personal-override slot exists by default. The `.gitignore` is written first
   // in `ensureSeeded`, so these are ignored before they land.
-  '.holi/settings/theme.local.json': THEME_SKELETON,
-  '.holi/settings/app.local.json': HOLI_SETTINGS_LOCAL,
+  [THEME_LOCAL_FILE]: THEME_SKELETON,
+  [SETTINGS_LOCAL_FILE]: HOLI_SETTINGS_LOCAL,
   'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   /**

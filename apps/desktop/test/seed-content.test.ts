@@ -1,3 +1,4 @@
+import { parse as parseYaml } from 'yaml'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -86,18 +87,14 @@ describe('SEED_FILES', () => {
       '.holi/document-templates/proposal/template.typ',
       '.holi/document-templates/report/template.json',
       '.holi/document-templates/report/template.typ',
-      '.holi/settings/app.json',
-      // Machine-local, gitignored by the seeded `*.local.*` rule — the personal
-      // override slot, seeded so it exists by default (like theme.local.json).
-      '.holi/settings/app.local.json',
-      '.holi/settings/icons.json',
-      '.holi/settings/theme.json',
-      '.holi/settings/theme.local.json',
+      '.holi/settings/app.local.yaml',
+      '.holi/settings/app.yaml',
+      '.holi/settings/icons.yaml',
+      '.holi/settings/theme.local.yaml',
+      '.holi/settings/theme.yaml',
       '.holi/vault',
       'AGENTS.md',
       'CLAUDE.md',
-      // D89. `MEMORY.md` is no longer seeded — a new vault gets the directory
-      // instead, and one that already has the file keeps it.
       'memory/index.md',
     ])
   })
@@ -117,9 +114,9 @@ describe('SEED_FILES', () => {
     ])
   })
 
-  it('seeds an empty, valid theme.json and a blank theme.local.json', () => {
-    for (const key of ['.holi/settings/theme.json', '.holi/settings/theme.local.json'] as const) {
-      expect(JSON.parse(SEED_FILES[key]!)).toMatchObject({ dark: {}, light: {} })
+  it('seeds an empty, valid theme.yaml and a blank theme.local.yaml', () => {
+    for (const key of ['.holi/settings/theme.yaml', '.holi/settings/theme.local.yaml'] as const) {
+      expect(parseYaml(SEED_FILES[key]!)).toMatchObject({ dark: {}, light: {} })
     }
   })
 
@@ -162,7 +159,7 @@ describe('SEED_FILES', () => {
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {
     const skill = SEED_FILES['.claude/skills/theme/SKILL.md']!
     expect(skill).toContain('name: theme')
-    expect(skill).toContain('.holi/settings/theme.json') // the file it authors
+    expect(skill).toContain('.holi/settings/theme.yaml') // the file it authors
     expect(skill).toContain('primary') // a token from the whitelist
   })
 
@@ -409,7 +406,7 @@ describe('ensureSeeded — the .gitignore', () => {
     await writeFile(join(root, 'USER.local.md'), 'private notes about the user\n')
     await mkdir(join(root, '.holi/state'), { recursive: true })
     await mkdir(join(root, '.holi/settings'), { recursive: true })
-    await writeFile(join(root, '.holi/settings/app.local.json'), '{"machine":"local"}\n')
+    await writeFile(join(root, '.holi/settings/app.local.yaml'), '{"machine":"local"}\n')
     await writeFile(join(root, 'shared.md'), 'this one should travel\n')
     // A bare USER.md is ordinary content now — the name has no `.local.`, so it
     // is NOT ignored and MUST travel. This is the honesty guarantee: locality is
@@ -424,10 +421,10 @@ describe('ensureSeeded — the .gitignore', () => {
     expect(committed).toContain('shared.md')
     expect(committed).toContain('AGENTS.md')
     expect(committed).toContain('USER.md') // no longer special-cased — it travels
-    expect(committed).toContain('.holi/settings/theme.json') // seeded + committed (shared theme)
+    expect(committed).toContain('.holi/settings/theme.yaml') // seeded + committed (shared theme)
     expect(committed).not.toContain('USER.local.md')
-    expect(committed).not.toContain('.holi/settings/app.local.json')
-    expect(committed).not.toContain('.holi/settings/theme.local.json') // seeded but gitignored
+    expect(committed).not.toContain('.holi/settings/app.local.yaml')
+    expect(committed).not.toContain('.holi/settings/theme.local.yaml') // seeded but gitignored
   })
 })
 
@@ -582,7 +579,7 @@ describe('ensureSeeded — settings.json', () => {
 
     const { written } = await ensureSeeded(root)
 
-    const settings = JSON.parse(await readFile(join(root, '.claude/settings.json'), 'utf8'))
+    const settings = parseYaml(await readFile(join(root, '.claude/settings.json'), 'utf8'))
     expect(settings.hooks.PreToolUse[0].hooks[0].command).toContain('google-send-gate.mjs')
     expect(written).toContain('.claude/settings.json')
     // And the hook it invokes actually landed, or the wiring points at nothing.
@@ -706,7 +703,7 @@ describe('the managed / once split (D75)', () => {
     // commit that touches a memory. Seeding runs on every vault OPEN, so the two
     // would fight and the vault's real index would be replaced by the empty stub
     // roughly once a session.
-    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.json']) {
+    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.yaml']) {
       expect(ONCE_FILES[rel]).toBeDefined()
       expect(MANAGED_FILES[rel]).toBeUndefined()
     }

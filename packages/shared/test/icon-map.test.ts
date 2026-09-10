@@ -1,7 +1,8 @@
+import { parse, stringify } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import { resolveIconMap, withIcon } from '../src/icon-map'
 
-const json = (o: unknown) => JSON.stringify(o)
+const json = (o: unknown) => stringify(o)
 
 describe('resolveIconMap', () => {
   it('reads a committed map', () => {
@@ -127,15 +128,15 @@ describe('what counts as an emoji', () => {
 })
 
 describe('withIcon', () => {
-  const parse = (s: string) => JSON.parse(s) as Record<string, string>
+  const read = (s: string) => parse(s) as Record<string, string>
 
   it('sets an icon on a vault with no map yet', () => {
-    expect(parse(withIcon(null, 'AGENTS.md', '🤖'))).toEqual({ 'AGENTS.md': '🤖' })
+    expect(read(withIcon(null, 'AGENTS.md', '🤖'))).toEqual({ 'AGENTS.md': '🤖' })
   })
 
   it('replaces the entry for a path that already has one', () => {
     const before = json({ 'AGENTS.md': '🤖', 'MEMORY.md': '🧠' })
-    expect(parse(withIcon(before, 'AGENTS.md', '👽'))).toEqual({
+    expect(read(withIcon(before, 'AGENTS.md', '👽'))).toEqual({
       'AGENTS.md': '👽',
       'MEMORY.md': '🧠',
     })
@@ -143,17 +144,17 @@ describe('withIcon', () => {
 
   it('clears an entry when handed null, leaving the others', () => {
     const before = json({ 'AGENTS.md': '🤖', 'MEMORY.md': '🧠' })
-    expect(parse(withIcon(before, 'AGENTS.md', null))).toEqual({ 'MEMORY.md': '🧠' })
+    expect(read(withIcon(before, 'AGENTS.md', null))).toEqual({ 'MEMORY.md': '🧠' })
   })
 
   it('clearing a path that was never there is not an error', () => {
-    expect(parse(withIcon(json({ a: '🎯' }), 'b', null))).toEqual({ a: '🎯' })
+    expect(read(withIcon(json({ a: '🎯' }), 'b', null))).toEqual({ a: '🎯' })
   })
 
   it('does not leave two spellings of one path behind', () => {
     // `Clients/` and `Clients` are the same folder; editing one must not add
     // a second line that claims it too.
-    expect(parse(withIcon(json({ 'Clients/': '👥' }), 'Clients', '📅'))).toEqual({
+    expect(read(withIcon(json({ 'Clients/': '👥' }), 'Clients', '📅'))).toEqual({
       Clients: '📅',
     })
   })
@@ -164,7 +165,9 @@ describe('withIcon', () => {
   })
 
   it('ends with a newline, like every other file the vault commits', () => {
-    expect(withIcon(null, 'a.md', '🎯').endsWith('}\n')).toBe(true)
+    // The closing brace went with the move to YAML; the newline is the part
+    // that mattered, and git still cares about it.
+    expect(withIcon(null, 'a.md', '🎯').endsWith('\n')).toBe(true)
   })
 
   it('refuses to write something that is not a single emoji', () => {
@@ -174,7 +177,7 @@ describe('withIcon', () => {
 
   it('leaves a hand-written key it cannot normalize alone rather than deleting it', () => {
     // Editing one entry must not quietly prune lines a person wrote.
-    const out = parse(withIcon(json({ '../odd': '🎯', a: '🧠' }), 'a', '👥'))
+    const out = read(withIcon(json({ '../odd': '🎯', a: '🧠' }), 'a', '👥'))
     expect(out['../odd']).toBe('🎯')
   })
 })

@@ -66,6 +66,12 @@ const MOVES: readonly (readonly [string, string])[] = [
   // Settings, theme and icons. These are COMMITTED (bar the `.local.` ones), so
   // unlike the four above this half of the move is a change collaborators see.
   //
+  // **Still `.json` on the right, deliberately.** These files became YAML after
+  // this table was written, and `migrateSettingsFormat` converts them — it runs
+  // straight after this on the way into a vault. Chaining the two beats teaching
+  // a rename table to parse: a vault three layouts behind lands here first and
+  // is converted second, in one pass, with neither step knowing about the other.
+  //
   // **The left column is deliberately a dead literal.** These paths no longer
   // exist anywhere else in the codebase, which is the point: a migration table
   // written in terms of today's constants describes a move from a place to

@@ -5,6 +5,7 @@
  * worth testing here is that a write lands in the right FILE, keeps what it did
  * not touch, and survives arriving at a vault that has no theme file yet.
  */
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,7 +30,7 @@ async function vault(files: Record<string, string> = {}): Promise<string> {
   return root
 }
 
-const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8').then(JSON.parse)
+const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8').then(parseYaml)
 
 describe('writeVaultTheme', () => {
   it('creates the committed file when the vault has no theme yet', async () => {
@@ -45,7 +46,7 @@ describe('writeVaultTheme', () => {
   })
 
   it('puts a local write in the local file and leaves the committed one alone', async () => {
-    const root = await vault({ [THEME_FILE]: JSON.stringify({ dark: { primary: '#111111' } }) })
+    const root = await vault({ [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111' } }) })
 
     await writeVaultTheme(root, 'local', { dark: { primary: '#ff0000' } })
 
@@ -57,7 +58,7 @@ describe('writeVaultTheme', () => {
     // A vault's theme is as likely to have been written by hand or by the agent
     // as by these controls, so a whole-file replace would eat their work.
     const root = await vault({
-      [THEME_FILE]: JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } }),
+      [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111', brand: '#222222' } }),
     })
 
     await writeVaultTheme(root, 'committed', { dark: { primary: '#ff0000' } })
@@ -67,7 +68,7 @@ describe('writeVaultTheme', () => {
 
   it('clears a token on null, which is what a reset does', async () => {
     const root = await vault({
-      [THEME_FILE]: JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } }),
+      [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111', brand: '#222222' } }),
     })
 
     await writeVaultTheme(root, 'committed', { dark: { primary: null } })

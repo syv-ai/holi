@@ -2,7 +2,7 @@
 
 A per-day journaling note, auto-created when you open your **personal** vault, seeded with a title, that you land on. A small but real v1 feature — and one that got substantially simpler when the server went away: creating today's note is now `if (!exists) write(seed)`.
 
-Daily notes are **something the vault says it wants**, via `dailyNotes` in `.holi/settings/app.json` (D85). It defaults to on, and the onboarding step asks at vault creation, explaining that in a shared vault everyone writes the same file.
+Daily notes are **something the vault says it wants**, via `dailyNotes` in `.holi/settings/app.yaml` (D85). It defaults to on, and the onboarding step asks at vault creation, explaining that in a shared vault everyone writes the same file.
 
 **This replaced a guess.** Until D85 the answer was inferred from the GitHub collaborator count: sole collaborator meant a daily note, more than one meant none, and every failed check counted as personal. The reasoning was sound (one owner means one author and one clock) but it answered a question nobody had been asked, cost a network round trip on every cold start, and was decided by a timeout when you were offline. The harm it guarded against is real and unchanged: two people in a shared vault both write `DD-MM-YYYY.md`, the same file. That is now something the user is told at the moment they choose, rather than something chosen for them.
 

@@ -5,7 +5,7 @@ import { SETTINGS_LOCAL_FILE } from '@holi/shared'
  * advances it. The "never re-fire / never commit / per-task last-fired" invariant
  * lives behind this interface, not in the evaluator.
  *
- * Backed by each vault's `.holi/settings/app.local.json` under a `reminders` key —
+ * Backed by each vault's `.holi/settings/app.local.yaml` under a `reminders` key —
  * gitignored by the seeded `*.local.*` rule, so a fire is never a commit. Siblings
  * (e.g. a future login-item flag) share the file, so writes merge rather than clobber.
  * Synchronous by design: the sweep tick reads and marks inline.

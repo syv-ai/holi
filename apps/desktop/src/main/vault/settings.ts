@@ -1,22 +1,24 @@
 /**
  * Reads a vault's settings off disk and resolves them.
  *
- * Two files, both optional: `.holi/settings/app.json` (committed, shared with
- * everyone who clones the vault) and `.holi/settings/app.local.json` (gitignored,
+ * Two files, both optional: `.holi/settings/app.yaml` (committed, shared with
+ * everyone who clones the vault) and `.holi/settings/app.local.yaml` (gitignored,
  * this machine only). The pure `resolveVaultSettings` (in `@holi/shared`) does
  * the merge + validation + defaulting; this module is only the disk half — a
  * missing or unreadable file degrades to `null`, never an error, so a vault with
  * no settings resolves to the defaults and the app behaves as it always did.
  *
  * Deliberately the same shape as `vault/theme.ts`, which does exactly this for
- * `.holi/settings/theme.json`. Two files that differ only in which resolver they call
- * should not differ in anything else.
+ * `.holi/settings/theme.yaml`. Two files that differ only in which resolver they
+ * call should not differ in anything else.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   TRANSFORM_NAMES,
+  parseSettingsText,
   resolveVaultSettings,
+  writeSettingsText,
   type ResolvedVaultSettings,
   type TransformName,
   SETTINGS_FILE,
@@ -56,27 +58,15 @@ export interface VaultSettingsWrite {
   local?: Record<string, unknown>
 }
 
-/** Read a settings file as raw JSON, preserving every sibling key. Anything
- *  unusable reads as `{}` — a corrupt file is replaced rather than allowed to
- *  refuse the write forever. */
-async function readRaw(abs: string): Promise<Record<string, unknown>> {
-  const text = await readFile(abs, 'utf8').catch(() => null)
-  if (text === null) return {}
-  try {
-    const parsed: unknown = JSON.parse(text)
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : {}
-  } catch {
-    return {}
-  }
-}
-
 /** Merge one patch over one file's existing contents and write it atomically.
  *  `hooks` merges per transform; every other key replaces. */
 async function mergeInto(abs: string, patch: Record<string, unknown>): Promise<void> {
-  const existing = await readRaw(abs)
-  const next: Record<string, unknown> = { ...existing, ...patch }
+  const text = await readFile(abs, 'utf8').catch(() => null)
+  // Read twice, for two different things: the VALUES, to merge `hooks` against,
+  // and the TEXT, so the write can keep the document. A file that is unusable
+  // reads as `{}` rather than refusing the write forever.
+  const existing = parseSettingsText(text)
+  const next: Record<string, unknown> = { ...patch }
 
   // Per transform, so a patch answering one does not silently disable the rest.
   if (patch.hooks !== undefined) {
@@ -97,8 +87,13 @@ async function mergeInto(abs: string, patch: Record<string, unknown>): Promise<v
   // Atomic rename, copied from `reminders/delivered-log.ts`: a half-written
   // settings file is a vault that will not open the way it was asked to, and a
   // surviving `.tmp` in `.holi` would be committed and synced to everyone.
+  //
+  // **The document, not the values.** `writeSettingsText` merges into the file
+  // as it was written, so the explanations above each key survive the write —
+  // and so does anything the user or the agent added. Stringifying `next` would
+  // delete all of it, once, permanently.
   const tmp = `${abs}.tmp`
-  await writeFile(tmp, JSON.stringify(next, null, 2) + '\n', 'utf8')
+  await writeFile(tmp, writeSettingsText(text, next), 'utf8')
   await rename(tmp, abs)
 }
 

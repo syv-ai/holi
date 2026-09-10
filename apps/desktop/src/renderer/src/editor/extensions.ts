@@ -232,7 +232,7 @@ export function mailComposerExtensions(): Extension[] {
  */
 export function plainTextExtensions(path: string, readOnly = false): Extension[] {
   return [
-    // FR-19 reaches the plain stack too: a conflicted `.holi/settings/app.json` or
+    // FR-19 reaches the plain stack too: a conflicted `.holi/settings/app.yaml` or
     // `.gitignore` is at least as common as conflicted prose.
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),

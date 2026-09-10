@@ -44,8 +44,8 @@ export function vaultRelPath(raw: string): VaultRelPath {
 
 /** Machine-local paths that sync/mirror/export layers must never treat as
  * committed vault content — identified **solely** by the `.local.` marker in the
- * basename (`.holi/settings/app.local.json`, `.holi/state/context.local.json`,
- * `.holi/settings/theme.local.json`, `CLAUDE.local.md`, `USER.local.md`).
+ * basename (`.holi/settings/app.local.yaml`, `.holi/state/context.local.json`,
+ * `.holi/settings/theme.local.yaml`, `CLAUDE.local.md`, `USER.local.md`).
  *
  * The marker is the whole rule on purpose: a file's git-vs-local status must be
  * legible from its name, never a special-cased exception. (This is why the
@@ -89,7 +89,7 @@ export const VAULT_MARKER_FILE = '.holi/vault'
 
 /**
  * The shared, committed config files whose contents configure the whole vault:
- * `.holi/settings/app.json` (Holi) and `.claude/settings.json` (the agent). A
+ * `.holi/settings/app.yaml` (Holi) and `.claude/settings.json` (the agent). A
  * merge conflict in either is a conflict in *config*, not content, and can leave
  * the vault misconfigured while it lasts — so the sync UI surfaces it louder than
  * an ordinary note conflict (vaults-sync.md §Edge cases). The machine-local
@@ -97,13 +97,13 @@ export const VAULT_MARKER_FILE = '.holi/vault'
  * cannot conflict.
  */
 export const VAULT_CONFIG_FILES: readonly string[] = [
-  '.holi/settings/app.json',
+  '.holi/settings/app.yaml',
   '.claude/settings.json',
 ]
 
 /** Whether a vault-relative path is one of the shared config files
  * (`VAULT_CONFIG_FILES`) — an exact match, so a same-named file elsewhere in the
- * tree (`notes/settings.json`) or a local override (`.holi/settings/app.local.json`)
+ * tree (`notes/settings.json`) or a local override (`.holi/settings/app.local.yaml`)
  * is not one. */
 export function isVaultConfigPath(path: string): boolean {
   return VAULT_CONFIG_FILES.includes(path)
@@ -117,7 +117,7 @@ export function isVaultConfigPath(path: string): boolean {
  * (overlaps `VAULT_CONFIG_FILES` — it is both sync-conflict-worthy and
  * restart-worthy), `CLAUDE.md`, and the `AGENTS.md` it shims to.
  *
- * Deliberately NOT here: `.holi/settings/app.json` (Holi's config, not the agent's),
+ * Deliberately NOT here: `.holi/settings/app.yaml` (Holi's config, not the agent's),
  * `*.local.*` overrides (never synced, so a collaborator's pull can't change
  * them), and hooks/skills (external scripts re-read per invocation, not cached at
  * launch — no restart needed).

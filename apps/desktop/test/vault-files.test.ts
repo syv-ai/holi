@@ -41,7 +41,7 @@ describe('vault-files', () => {
 
   it('isIgnoredPath (what the watcher ignores): local-only, tmp markers, junk', () => {
     expect(isIgnoredPath('USER.local.md')).toBe(true)
-    expect(isIgnoredPath('.holi/settings/app.local.json')).toBe(true)
+    expect(isIgnoredPath('.holi/settings/app.local.yaml')).toBe(true)
     expect(isIgnoredPath('notes/.holi-tmp-abc123')).toBe(true)
     expect(isIgnoredPath('.DS_Store')).toBe(true)
     expect(isIgnoredPath('notes/a.md')).toBe(false)
@@ -56,7 +56,7 @@ describe('vault-files', () => {
     expect(isNonContentPath('node_modules/x/y.js')).toBe(true)
     expect(isNonContentPath('.git/HEAD')).toBe(true)
     // Local-only files ARE content the store surfaces (git keeps them uncommitted).
-    expect(isNonContentPath('.holi/settings/theme.local.json')).toBe(false)
+    expect(isNonContentPath('.holi/settings/theme.local.yaml')).toBe(false)
     expect(isNonContentPath('USER.local.md')).toBe(false)
     expect(isNonContentPath('notes/a.md')).toBe(false)
   })

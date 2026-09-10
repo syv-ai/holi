@@ -237,12 +237,12 @@ test('offers the files the section on screen is a view of', async () => {
   // Per section rather than one anonymous row at the end of the tab: the point
   // is saying WHICH file backs what you are looking at.
   setup()
-  expect(await screen.findByRole('button', { name: '.holi/settings/app.json' })).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: '.holi/settings/theme.json' })).not.toBeInTheDocument()
+  expect(await screen.findByRole('button', { name: '.holi/settings/app.yaml' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '.holi/settings/theme.yaml' })).not.toBeInTheDocument()
 
   await go('Appearance')
-  expect(screen.getByRole('button', { name: '.holi/settings/theme.json' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '.holi/settings/theme.yaml' })).toBeInTheDocument()
   expect(
-    screen.getByRole('button', { name: '.holi/settings/theme.local.json' }),
+    screen.getByRole('button', { name: '.holi/settings/theme.local.yaml' }),
   ).toBeInTheDocument()
 })

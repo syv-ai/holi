@@ -12,7 +12,7 @@ import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { VAULT_SETTING_DEFAULTS } from '@holi/shared'
 
-/** The default cap when `.holi/settings/app.json` sets no `maxCommittedFileBytes`.
+/** The default cap when `.holi/settings/app.yaml` sets no `maxCommittedFileBytes`.
  *  10 MB: notes-vault assets (images, PDFs) sit well under; this catches videos,
  *  datasets, exported binaries. (GitHub warns at 50 / blocks at 100 MB.) */
 export const DEFAULT_MAX_COMMITTED_FILE_BYTES = VAULT_SETTING_DEFAULTS.maxCommittedFileBytes
@@ -52,7 +52,7 @@ export function partitionBySize(
  * never stages an oversized file so never trips this; the agent commits in the
  * same clone, so it does. Git hooks live in `.git/hooks/` and are not committed,
  * so this is written per clone on open — the resolved limit is baked in, so a
- * `.holi/settings/app.json` change re-installs with the new number.
+ * `.holi/settings/app.yaml` change re-installs with the new number.
  *
  * Bounded, not a prison: `git commit --no-verify` bypasses it, matching the
  * agent-security stance (guard accidents, don't blocklist git). POSIX `sh`; the
@@ -100,7 +100,7 @@ export async function installGitHook(root: string, threshold: number): Promise<v
   const hooksDir = join(root, '.git', 'hooks')
   await mkdir(hooksDir, { recursive: true })
   const script = `#!/bin/sh
-# Holi large-file guard (auto-generated; set maxCommittedFileBytes in .holi/settings/app.json).
+# Holi large-file guard (auto-generated; set maxCommittedFileBytes in .holi/settings/app.yaml).
 limit=${threshold}
 offenders=$(git diff --cached --name-only --diff-filter=AM | while IFS= read -r f; do
   [ -f "$f" ] || continue

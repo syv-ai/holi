@@ -1,8 +1,8 @@
 /**
  * Reads a vault's theme off disk and resolves it.
  *
- * Two files, both optional: `.holi/settings/theme.json` (committed, shared with everyone
- * who clones the vault) and `.holi/settings/theme.local.json` (gitignored, this machine
+ * Two files, both optional: `.holi/settings/theme.yaml` (committed, shared with everyone
+ * who clones the vault) and `.holi/settings/theme.local.yaml` (gitignored, this machine
  * only). The pure `resolveTheme` (in `@holi/shared`) does the merge + whitelist
  * + validation; this module is only the disk half — a missing or unreadable
  * file degrades to `null`, never an error, so a vault with no theme resolves to

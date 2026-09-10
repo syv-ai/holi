@@ -88,6 +88,7 @@ import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { migrateVaultLayout } from './vault/migrate-layout'
+import { migrateSettingsFormat } from './vault/migrate-settings-format'
 import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
@@ -534,6 +535,7 @@ export function createRouter(deps: RouterDeps) {
     await ensureSeeded(repo.root)
     await migrateApps(repo.root)
     await migrateVaultLayout(repo.root)
+      await migrateSettingsFormat(repo.root)
     await deps.registry.add({
       remote,
       path: repo.root,
@@ -757,6 +759,7 @@ export function createRouter(deps: RouterDeps) {
         await ensureSeeded(root)
         await migrateApps(root)
         await migrateVaultLayout(root)
+      await migrateSettingsFormat(root)
         await deps.registry.touch(input.remote, now())
         const active = await deps.host.open(input.remote)
         return active.snapshot()
@@ -1149,7 +1152,7 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /**
-     * Set or clear a path's icon in `.holi/settings/icons.json` (D82).
+     * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82).
      *
      * The map rather than the note's frontmatter, whatever the path is: one
      * gesture with one destination is what makes the menu item explicable, and
@@ -1510,7 +1513,7 @@ export function createRouter(deps: RouterDeps) {
 
   // The vault's own settings: what it opens on, whether it keeps a daily note,
   // which pre-commit transforms run, and how it should look — resolved from
-  // `.holi/settings/app.json` under its per-key `.holi/settings/app.local.json`
+  // `.holi/settings/app.yaml` under its per-key `.holi/settings/app.local.yaml`
   // override. A read, like `theme.read`: the files are authored by the user or
   // the agent with ordinary file tools. The one write is the onboarding step,
   // which arrives with it.

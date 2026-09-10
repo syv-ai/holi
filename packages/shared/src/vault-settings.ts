@@ -1,8 +1,8 @@
 /**
  * The vault's own settings — the pure core (parse → merge → validate → default).
  *
- * Two files, both optional: `.holi/settings/app.json` (committed, shared with
- * everyone who clones the vault) and `.holi/settings/app.local.json` (gitignored,
+ * Two files, both optional: `.holi/settings/app.yaml` (committed, shared with
+ * everyone who clones the vault) and `.holi/settings/app.local.yaml` (gitignored,
  * this machine only), the second overriding the first **per key**. Same layering
  * as `theme.ts` and `icon-map.ts`, for the same reason: a vault can say how it
  * behaves, and you can disagree with it on your own laptop without touching what
@@ -29,6 +29,8 @@
  * This module is pure and browser-safe (no fs). The main process reads the two
  * files off disk and hands their text to `resolveVaultSettings`.
  */
+
+import { parse as parseYaml } from 'yaml'
 
 /** The pre-commit transforms a vault can enable (D76). Kebab, matching the
  *  transform names themselves — a camelCase settings key beside a kebab
@@ -57,7 +59,7 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
  * The font the **notes editor** sets prose in. Code, frontmatter and the
  * plain/code editor are never affected — see `notesFontTheme`.
  *
- * **A name, never a CSS string.** `.holi/settings/app.json` is committed, so in a
+ * **A name, never a CSS string.** `.holi/settings/app.yaml` is committed, so in a
  * shared vault this value was written by somebody else; a `font-family` taken
  * from it verbatim is arbitrary CSS crossing a trust boundary, which is the
  * whitelist argument D64 makes about theme tokens, with a different filename.
@@ -123,12 +125,19 @@ export interface ResolvedVaultSettings {
   warnings: string[]
 }
 
-/** Parse one file. Anything that is not a JSON object reads as "no settings" —
- *  a half-written file must not stop a vault opening. */
-function parseFile(json: string | null): Record<string, unknown> {
-  if (json === null || json.trim() === '') return {}
+/**
+ * Parse one file. Anything that is not a mapping reads as "no settings" — a
+ * half-written file must not stop a vault opening.
+ *
+ * **YAML, which also reads the JSON these files used to be.** YAML is a
+ * superset of JSON, so a vault whose `app.json` has not been renamed yet still
+ * resolves; the migration only has to move the file, never translate it, and a
+ * vault caught mid-migration is never unreadable.
+ */
+function parseFile(text: string | null): Record<string, unknown> {
+  if (text === null || text.trim() === '') return {}
   try {
-    const parsed: unknown = JSON.parse(json)
+    const parsed: unknown = parseYaml(text)
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {}
@@ -325,8 +334,8 @@ export interface VaultSettingDescriptor {
  * both used to declare their own copy. Three string literals agreeing is a
  * coincidence that expires — and it nearly did in this very move.
  */
-export const SETTINGS_FILE = '.holi/settings/app.json'
-export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.json'
+export const SETTINGS_FILE = '.holi/settings/app.yaml'
+export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.yaml'
 
 const SETTINGS_FILE_HINT = `Change it any time in ${SETTINGS_FILE}`
 const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which stays on this machine`
@@ -423,7 +432,7 @@ export interface VaultSetting {
 
 /**
  * The four rows the onboarding step renders, in order — and the source the seed
- * writes `.holi/settings/app.json` from.
+ * writes `.holi/settings/app.yaml` from.
  *
  * **One list, two readers.** The act and the seed agreeing is not a convention
  * anyone has to remember; adding a setting later is adding a row here, and both

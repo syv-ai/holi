@@ -111,7 +111,7 @@ legacy alias with the same behavior as `pnpm lint`.
 
 - Never commit secrets, tokens, or machine state. Root `.gitignore` excludes
   `.env`, `*.local`, logs, build output, and dependencies. Vault-local files such
-  as `USER.local.md`, `CLAUDE.local.md`, `.holi/settings/app.local.json`,
+  as `USER.local.md`, `CLAUDE.local.md`, `.holi/settings/app.local.yaml`,
   `memory/*.local.md`, and `*.local.*` must remain machine-local; the GitHub
   token is kept by the app's credential storage, not in source. Local-ness is
   the `.local.` marker and nothing else (D65): a bare `USER.md` is ordinary

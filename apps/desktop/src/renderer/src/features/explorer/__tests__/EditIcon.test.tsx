@@ -1,5 +1,5 @@
 /**
- * "Edit Icon…" writes `.holi/settings/icons.json` — for a note, a folder or a PDF alike.
+ * "Edit Icon…" writes `.holi/settings/icons.yaml` — for a note, a folder or a PDF alike.
  *
  * The field holds one emoji and refuses anything else, so most of what would
  * otherwise be validation is tested as input behaviour instead.
@@ -108,7 +108,7 @@ test('keeps a multi-codepoint emoji whole', async () => {
 test('the map link opens the file and closes the dialog', async () => {
   const { onClose, onOpenMap } = open()
 
-  await userEvent.click(screen.getByText('.holi/settings/icons.json'))
+  await userEvent.click(screen.getByText('.holi/settings/icons.yaml'))
 
   expect(onOpenMap).toHaveBeenCalledTimes(1)
   expect(onClose).toHaveBeenCalledTimes(1)

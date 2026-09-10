@@ -1,7 +1,7 @@
 /**
  * The vault's colours and chrome, with real controls (#16, D64).
  *
- * The settings tab used to end with a link to `.holi/settings/theme.json` and the words
+ * The settings tab used to end with a link to `.holi/settings/theme.yaml` and the words
  * "no controls here yet". This is that gap.
  *
  * **Two axes, chosen once for the whole section rather than per token**, because

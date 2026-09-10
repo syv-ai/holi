@@ -1,3 +1,4 @@
+import { parse, stringify } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import {
   THEME_TOKENS,
@@ -34,7 +35,7 @@ describe('parseVaultTheme', () => {
 describe('resolveTheme — whitelist', () => {
   it('keeps whitelisted color + chrome tokens', () => {
     const { dark } = resolveTheme(
-      JSON.stringify({
+      stringify({
         dark: {
           primary: '#3b82f6',
           background: 'oklch(0.16 0 0)',
@@ -58,7 +59,7 @@ describe('resolveTheme — whitelist', () => {
 
   it('drops unknown keys with a warning, keeping the rest', () => {
     const { dark, warnings } = resolveTheme(
-      JSON.stringify({ dark: { primary: '#fff', width: '50px', notAToken: 'x' } }),
+      stringify({ dark: { primary: '#fff', width: '50px', notAToken: 'x' } }),
       null,
     )
     expect(dark).toEqual({ primary: '#fff' })
@@ -76,7 +77,7 @@ describe('resolveTheme — whitelist', () => {
 describe('resolveTheme — validation', () => {
   it('keeps valid color forms (hex, rgb, hsl, oklch, named)', () => {
     const { dark } = resolveTheme(
-      JSON.stringify({
+      stringify({
         dark: {
           primary: '#3b82f6',
           secondary: 'rgb(59 130 246)',
@@ -92,7 +93,7 @@ describe('resolveTheme — validation', () => {
 
   it('drops a color value that smuggles CSS injection', () => {
     const { dark, warnings } = resolveTheme(
-      JSON.stringify({ dark: { primary: 'red; } body { display:none }' } }),
+      stringify({ dark: { primary: 'red; } body { display:none }' } }),
       null,
     )
     expect(dark.primary).toBeUndefined()
@@ -100,28 +101,28 @@ describe('resolveTheme — validation', () => {
   })
 
   it('drops a color token whose value is not color-shaped', () => {
-    const { dark } = resolveTheme(JSON.stringify({ dark: { primary: '0.75rem' } }), null)
+    const { dark } = resolveTheme(stringify({ dark: { primary: '0.75rem' } }), null)
     expect(dark.primary).toBeUndefined()
   })
 
   it('validates radius as a length, rejecting a bare color', () => {
-    expect(resolveTheme(JSON.stringify({ dark: { radius: '0.75rem' } }), null).dark.radius).toBe('0.75rem')
-    expect(resolveTheme(JSON.stringify({ dark: { radius: '#fff' } }), null).dark.radius).toBeUndefined()
+    expect(resolveTheme(stringify({ dark: { radius: '0.75rem' } }), null).dark.radius).toBe('0.75rem')
+    expect(resolveTheme(stringify({ dark: { radius: '#fff' } }), null).dark.radius).toBeUndefined()
   })
 
   it('rejects a shadow value with injection but keeps an ordinary one', () => {
-    expect(resolveTheme(JSON.stringify({ dark: { 'shadow-popover': '0 2px 8px #0006' } }), null).dark['shadow-popover']).toBe('0 2px 8px #0006')
-    expect(resolveTheme(JSON.stringify({ dark: { 'shadow-popover': 'url(evil)' } }), null).dark['shadow-popover']).toBeUndefined()
+    expect(resolveTheme(stringify({ dark: { 'shadow-popover': '0 2px 8px #0006' } }), null).dark['shadow-popover']).toBe('0 2px 8px #0006')
+    expect(resolveTheme(stringify({ dark: { 'shadow-popover': 'url(evil)' } }), null).dark['shadow-popover']).toBeUndefined()
   })
 })
 
 describe('resolveTheme — precedence (local over committed)', () => {
   it('deep-merges per key, local winning, within each mode', () => {
-    const committed = JSON.stringify({
+    const committed = stringify({
       dark: { primary: '#111', background: '#000' },
       light: { primary: '#eee' },
     })
-    const local = JSON.stringify({ dark: { primary: '#f00' } })
+    const local = stringify({ dark: { primary: '#f00' } })
     const { dark, light } = resolveTheme(committed, local)
     // local overrode only primary; background survives from committed
     expect(dark).toEqual({ primary: '#f00', background: '#000' })
@@ -130,7 +131,7 @@ describe('resolveTheme — precedence (local over committed)', () => {
   })
 
   it('local-only works with no committed file', () => {
-    const { dark } = resolveTheme(null, JSON.stringify({ dark: { primary: '#f00' } }))
+    const { dark } = resolveTheme(null, stringify({ dark: { primary: '#f00' } }))
     expect(dark).toEqual({ primary: '#f00' })
   })
 })
@@ -141,7 +142,7 @@ describe('resolveTheme — fallback', () => {
   })
 
   it('falls back cleanly when a file is malformed JSON', () => {
-    const { dark } = resolveTheme('{ broken', JSON.stringify({ dark: { primary: '#f00' } }))
+    const { dark } = resolveTheme('{ broken', stringify({ dark: { primary: '#f00' } }))
     expect(dark).toEqual({ primary: '#f00' })
   })
 })
@@ -189,7 +190,7 @@ describe('THEME_TOKEN_GROUPS', () => {
 
 describe('parseThemePatch', () => {
   it('takes a valid colour for one mode', () => {
-    const { patch, warnings } = parseThemePatch(JSON.stringify({ dark: { primary: '#ff0000' } }))
+    const { patch, warnings } = parseThemePatch(stringify({ dark: { primary: '#ff0000' } }))
     expect(patch).toEqual({ dark: { primary: '#ff0000' } })
     expect(warnings).toEqual([])
   })
@@ -197,13 +198,13 @@ describe('parseThemePatch', () => {
   it('treats null as clear-it, which is how a reset reaches the file', () => {
     // Not an empty string: that would be dropped as invalid and leave the old
     // value in place, so the control would appear to do nothing.
-    const { patch, warnings } = parseThemePatch(JSON.stringify({ light: { primary: null } }))
+    const { patch, warnings } = parseThemePatch(stringify({ light: { primary: null } }))
     expect(patch).toEqual({ light: { primary: null } })
     expect(warnings).toEqual([])
   })
 
   it('refuses a token outside the whitelist', () => {
-    const { patch, warnings } = parseThemePatch(JSON.stringify({ dark: { position: 'absolute' } }))
+    const { patch, warnings } = parseThemePatch(stringify({ dark: { position: 'absolute' } }))
     expect(patch).toEqual({})
     expect(warnings[0]).toMatch(/unknown token "position"/)
   })
@@ -211,7 +212,7 @@ describe('parseThemePatch', () => {
   it('refuses a value the resolver would later drop', () => {
     // The pane must not be able to store something that reads back as nothing.
     const { patch, warnings } = parseThemePatch(
-      JSON.stringify({ dark: { primary: 'url(http://x)', radius: '5 dogs' } }),
+      stringify({ dark: { primary: 'url(http://x)', radius: '5 dogs' } }),
     )
     expect(patch).toEqual({})
     expect(warnings).toHaveLength(2)
@@ -225,30 +226,30 @@ describe('parseThemePatch', () => {
 })
 
 describe('applyThemePatch', () => {
-  const seeded = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} })
+  const seeded = stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} })
 
   it('sets a token in one mode and leaves the other alone', () => {
-    const next = JSON.parse(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }))
+    const next = parse(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }))
     expect(next.dark).toEqual({ primary: '#ff0000' })
     expect(next.light).toEqual({})
   })
 
   it('merges per key, keeping tokens the pane never touched', () => {
     // A vault's theme is as likely to have been written by hand or by the agent.
-    const existing = JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } })
-    const next = JSON.parse(applyThemePatch(existing, { dark: { primary: '#ff0000' } }))
+    const existing = stringify({ dark: { primary: '#111111', brand: '#222222' } })
+    const next = parse(applyThemePatch(existing, { dark: { primary: '#ff0000' } }))
     expect(next.dark).toEqual({ primary: '#ff0000', brand: '#222222' })
   })
 
   it('deletes the key on null rather than writing an empty value', () => {
-    const existing = JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } })
-    const next = JSON.parse(applyThemePatch(existing, { dark: { primary: null } }))
+    const existing = stringify({ dark: { primary: '#111111', brand: '#222222' } })
+    const next = parse(applyThemePatch(existing, { dark: { primary: null } }))
     expect(next.dark).toEqual({ brand: '#222222' })
     expect('primary' in next.dark).toBe(false)
   })
 
   it('keeps both blocks and the schema, even starting from nothing', () => {
-    const next = JSON.parse(applyThemePatch(null, { light: { primary: '#ff0000' } }))
+    const next = parse(applyThemePatch(null, { light: { primary: '#ff0000' } }))
     expect(next.$schema).toBe('holi-theme/v1')
     expect(next.dark).toEqual({})
     expect(next.light).toEqual({ primary: '#ff0000' })

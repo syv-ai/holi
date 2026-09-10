@@ -121,7 +121,7 @@ export function tabKey(tab: Tab): string {
       : tab.kind
 }
 
-/** `icons` is `.holi/settings/icons.json` as the snapshot resolved it (D82), keyed by
+/** `icons` is `.holi/settings/icons.yaml` as the snapshot resolved it (D82), keyed by
  *  vault-relative path. It has to be passed in rather than read here: this is a
  *  module-level function, and the tree already proves the map belongs to the
  *  snapshot and not to a store of its own. Only a note tab can carry one — the

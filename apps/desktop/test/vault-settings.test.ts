@@ -7,6 +7,7 @@
  * that `readMaxCommittedFileBytes` still answers exactly as it did when it had
  * its own hand-rolled `JSON.parse`.
  */
+import { parse as parseYaml } from 'yaml'
 import { SETTINGS_FILE, SETTINGS_LOCAL_FILE } from '@holi/shared'
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -108,7 +109,7 @@ describe('readVaultSettings', () => {
 
 describe('a machine-local hooks override', () => {
   // NEW behaviour, and the one thing folding the readers together changed.
-  // `readHookSettings` used to read `.holi/settings/app.json` alone, so the hooks
+  // `readHookSettings` used to read `.holi/settings/app.yaml` alone, so the hooks
   // block was the only setting the `.local` layering did not reach.
   //
   // It is not a D76 concern: a local file is written by YOU, never pushed to
@@ -135,7 +136,7 @@ describe('a machine-local hooks override', () => {
 
 describe('writeVaultSettings', () => {
   const settingsAt = async (root: string, file: string) =>
-    JSON.parse(await readFile(join(root, file), 'utf8'))
+    parseYaml(await readFile(join(root, file), 'utf8'))
 
   it('creates the file when the vault has none', async () => {
     const root = await vault()

@@ -150,7 +150,7 @@ export interface VaultSnapshot {
    *  files are tasks, or hidden) or it is empty but for a `.gitkeep`. Git tracks
    *  no empty directory; the keep-file is what makes an empty one survive a clone. */
   dirs: string[]
-  /** `.holi/settings/icons.json` resolved: vault-relative path → a single emoji, and the
+  /** `.holi/settings/icons.yaml` resolved: vault-relative path → a single emoji, and the
    *  only place an icon lives. Covers notes, folders and binaries alike, which
    *  is why a note's frontmatter is NOT a second source (see `icon-map.ts`). */
   icons: Record<string, string>

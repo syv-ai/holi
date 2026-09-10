@@ -5,24 +5,28 @@ description: Recolour this vault's Holi app — set colours and chrome (corner r
 
 # Theme this vault
 
-Each vault carries its own colour + chrome theme. Edit a JSON file and the running
+Each vault carries its own colour + chrome theme. Edit a YAML file and the running
 app re-themes live — no restart. You can only change **colours and chrome**; there
 is deliberately no way to move, resize, or re-space anything, so a theme can never
 break the layout.
 
 ## The files
 
-- **`.holi/settings/theme.json`** — the vault's theme. Committed, so it travels with the
+- **`.holi/settings/theme.yaml`** — the vault's theme. Committed, so it travels with the
   vault and everyone who clones it sees it. This is the one to edit for a shared
   look.
-- **`.holi/settings/theme.local.json`** — a personal override, gitignored (never
-  committed). If it exists, its keys win over `theme.json` **per key**, so a
+- **`.holi/settings/theme.local.yaml`** — a personal override, gitignored (never
+  committed). If it exists, its keys win over `theme.yaml` **per key**, so a
   one-line local file can recolour just `primary` and inherit the rest.
 
-Both files already exist in every vault, seeded empty (`{"dark":{},"light":{}}`)
-— edit them, no need to create. Malformed JSON, unknown keys, and invalid values
-are ignored (the app falls back to defaults) — so a typo is safe, but check your
-work: a dropped key just won't take effect.
+Both files already exist in every vault, seeded with empty `dark:` and `light:`
+blocks — edit them, no need to create. Malformed YAML, unknown keys, and invalid
+values are ignored (the app falls back to defaults) — so a typo is safe, but
+check your work: a dropped key just won't take effect.
+
+Each file carries a comment above every token saying what it paints. **Leave
+those in place** — Holi regenerates a missing one, but a note you add yourself is
+kept, so the file is a good place to record why a colour was chosen.
 
 ## Shape
 
@@ -30,19 +34,19 @@ Two blocks, `light` and `dark`. The app is dark today, so put your values under
 `dark` (fill `light` too if you want to be ready for a future light mode). Every
 value is a plain CSS value.
 
-```json
-{
-  "dark": {
-    "primary": "#8b5cf6",
-    "primary-foreground": "#ffffff",
-    "background": "oklch(0.15 0.01 285)",
-    "ring": "#8b5cf6",
-    "radius": "0.75rem",
-    "selection": "#8b5cf6",
-    "shadow-popover": "0 8px 24px rgb(0 0 0 / 0.5)"
-  },
-  "light": {}
-}
+```yaml
+# The dark palette.
+dark:
+  # A hex value has to be quoted: a bare `#` starts a YAML comment.
+  primary: "#8b5cf6"
+  primary-foreground: "#ffffff"
+  background: oklch(0.15 0.01 285)
+  ring: "#8b5cf6"
+  radius: 0.75rem
+  selection: "#8b5cf6"
+  shadow-popover: 0 8px 24px rgb(0 0 0 / 0.5)
+# The light palette.
+light: {}
 ```
 
 ## The tokens you can set

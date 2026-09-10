@@ -1,3 +1,4 @@
+import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -185,7 +186,7 @@ describe('settings', () => {
       committedJson: JSON.stringify({ dailyNotes: false, evil: { rm: '-rf' } }),
     })
     expect(result.warnings).toEqual([])
-    const onDisk = JSON.parse(await readFile(join(root, SETTINGS_FILE), 'utf8')) as Record<
+    const onDisk = parseYaml(await readFile(join(root, SETTINGS_FILE), 'utf8')) as Record<
       string,
       unknown
     >
@@ -262,7 +263,7 @@ describe('vaults', () => {
 
     await caller.vaults.open({ remote: REMOTE })
 
-    const after = JSON.parse(await readFile(settings, 'utf8'))
+    const after = parseYaml(await readFile(settings, 'utf8'))
     expect(JSON.stringify(after.hooks.PreToolUse)).toContain('google-send-gate')
     expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
   })

@@ -23,7 +23,7 @@ export type ActiveDialog = { closable?: boolean } & (
    */
   | { id: 'compose-mail'; size: 'lg' }
   /**
-   * Set or clear a path's icon in `.holi/settings/icons.json` (D82). Carries the map's
+   * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82). Carries the map's
    * current entry, which the tree already has, so the dialog opens filled in
    * rather than fetching it back.
    */
@@ -33,7 +33,7 @@ export type ActiveDialog = { closable?: boolean } & (
       remote: string
       path: string
       current: string | null
-      /** Opens `.holi/settings/icons.json` itself. A closure, unlike every other field
+      /** Opens `.holi/settings/icons.yaml` itself. A closure, unlike every other field
        *  here, because opening a tab is the pane state's job and the tree is the
        *  only holder of that opener the summon passes through. */
       onOpenMap: () => void

@@ -63,7 +63,7 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
     ignored: [],
   }
 
-  // `.holi/settings/icons.json` (committed) under `.holi/settings/icons.local.json` (personal),
+  // `.holi/settings/icons.yaml` (committed) under `.holi/settings/icons.local.yaml` (personal),
   // the theme's layering. Read here rather than over its own IPC so the tree
   // gets the map in the same push as the paths it decorates — a second channel
   // would mean a render where a folder's icon had not arrived yet.

@@ -163,7 +163,7 @@ export function FileTree({
   // Task-by-path, so a task leaf can show a status glyph and strike a done name.
   const taskByPath = useMemo(() => new Map(snapshot.tasks.map((t) => [t.path, t])), [snapshot])
 
-  // One source: `.holi/settings/icons.json`, which covers a note, a folder and a binary
+  // One source: `.holi/settings/icons.yaml`, which covers a note, a folder and a binary
   // alike. A note's frontmatter is deliberately not a second one (D82).
   const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
 

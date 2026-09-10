@@ -1,8 +1,8 @@
 /**
  * The notes editor's prose font, stamped as a CSS custom property.
  *
- * The vault says `editorFont: 'mono' | 'sans' | 'serif'` in `.holi/settings/app.json`
- * or overrides it per machine in `.holi/settings/app.local.json`; the name resolves
+ * The vault says `editorFont: 'mono' | 'sans' | 'serif'` in `.holi/settings/app.yaml`
+ * or overrides it per machine in `.holi/settings/app.local.yaml`; the name resolves
  * to a stack in `@holi/shared` and lands on `:root` as `--editor-font`, which
  * `notesFontTheme` reads. A name rather than a font-family string is the point:
  * the committed file is written by whoever wrote the vault, and in a shared one

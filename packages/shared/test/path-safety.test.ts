@@ -63,17 +63,17 @@ describe('isVaultConfigPath (config-conflict prominence)', () => {
     for (const p of VAULT_CONFIG_FILES) {
       expect(isVaultConfigPath(p)).toBe(true)
     }
-    expect(isVaultConfigPath('.holi/settings/app.json')).toBe(true)
+    expect(isVaultConfigPath('.holi/settings/app.yaml')).toBe(true)
     expect(isVaultConfigPath('.claude/settings.json')).toBe(true)
   })
 
   it('does not match machine-local overrides (they never sync, so never conflict)', () => {
-    expect(isVaultConfigPath('.holi/settings/app.local.json')).toBe(false)
+    expect(isVaultConfigPath('.holi/settings/app.local.yaml')).toBe(false)
   })
 
   it('does not match other files in the config dirs, or ordinary content', () => {
     for (const p of [
-      '.holi/settings/theme.json',
+      '.holi/settings/theme.yaml',
       '.holi/vault',
       '.claude/agents/foo.md',
       'settings.json',
@@ -91,7 +91,7 @@ describe('AGENT_CONFIG_FILES (restart-to-pick-up detection)', () => {
     expect(AGENT_CONFIG_FILES).toContain('CLAUDE.md')
     expect(AGENT_CONFIG_FILES).toContain('AGENTS.md')
     // Holi's own config never affects the agent; local overrides never sync.
-    expect(AGENT_CONFIG_FILES).not.toContain('.holi/settings/app.json')
+    expect(AGENT_CONFIG_FILES).not.toContain('.holi/settings/app.yaml')
     expect(AGENT_CONFIG_FILES).not.toContain('.claude/settings.local.json')
   })
 
@@ -171,9 +171,9 @@ describe('LOCAL_ONLY_IGNORE_LINES', () => {
     // machine-local file to every collaborator.
     for (const path of [
       'USER.local.md',
-      '.holi/settings/app.local.json',
+      '.holi/settings/app.local.yaml',
       '.holi/context.local.json',
-      '.holi/settings/theme.local.json',
+      '.holi/settings/theme.local.yaml',
       'CLAUDE.local.md',
     ]) {
       expect(isLocalOnlyPath(path)).toBe(true)
@@ -240,8 +240,8 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
   })
 
   it('leaves the rest of .holi/ alone — that is Holi config, not the agent surface', () => {
-    expect(isAgentSurfacePath('.holi/settings/app.json')).toBe(false)
-    expect(isAgentSurfacePath('.holi/settings/theme.json')).toBe(false)
+    expect(isAgentSurfacePath('.holi/settings/app.yaml')).toBe(false)
+    expect(isAgentSurfacePath('.holi/settings/theme.yaml')).toBe(false)
     expect(isAgentSurfacePath('.holi/apps/retro/index.html')).toBe(false)
   })
 
@@ -280,7 +280,7 @@ describe('appIdFromPath', () => {
 
   it('is null for an invalid id or a path outside APPS_DIR', () => {
     expect(appIdFromPath('.holi/apps/My_App/index.html')).toBe(null)
-    expect(appIdFromPath('.holi/settings/theme.json')).toBe(null)
+    expect(appIdFromPath('.holi/settings/theme.yaml')).toBe(null)
     expect(appIdFromPath('notes/x.md')).toBe(null)
     expect(appIdFromPath('.holi/appsy/retro/index.html')).toBe(null)
     expect(appIdFromPath(APPS_DIR)).toBe(null)

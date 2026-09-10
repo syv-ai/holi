@@ -29,7 +29,7 @@ afterEach(async () => {
 
 async function settings(json: string): Promise<void> {
   await mkdir(join(root, '.holi/settings'), { recursive: true })
-  await writeFile(join(root, '.holi/settings/app.json'), json, 'utf8')
+  await writeFile(join(root, '.holi/settings/app.yaml'), json, 'utf8')
 }
 
 describe('the transform set', () => {

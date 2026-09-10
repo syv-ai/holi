@@ -49,7 +49,7 @@ describe('freeCopyPath', () => {
   it('does the same for the other local files, which have their own extensions', () => {
     for (const [path, expected] of [
       ['USER.local.md', 'USER copy.local.md'],
-      ['.holi/settings/app.local.json', '.holi/settings/app copy.local.json'],
+      ['.holi/settings/app.local.yaml', '.holi/settings/app copy.local.yaml'],
     ] as const) {
       const copy = freeCopyPath((p) => p === path, path)
       expect(copy).toBe(expected)

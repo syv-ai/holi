@@ -54,14 +54,14 @@ it('is an ordinary editable document otherwise', () => {
 })
 
 it('locks a plain file too — a conflicted config is the common case', () => {
-  // `.holi/settings/app.json` and `.gitignore` conflict at least as often as prose,
+  // `.holi/settings/app.yaml` and `.gitignore` conflict at least as often as prose,
   // and they open in the plain stack, which is a different set of extensions.
   const parent = document.createElement('div')
   document.body.appendChild(parent)
   view = new EditorView({
     state: EditorState.create({
       doc: '{}\n',
-      extensions: plainTextExtensions('.holi/settings/app.json', true),
+      extensions: plainTextExtensions('.holi/settings/app.yaml', true),
     }),
     parent,
   })

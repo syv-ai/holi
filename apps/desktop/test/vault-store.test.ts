@@ -94,8 +94,8 @@ describe('scanVault', () => {
     const root = await vault({
       'note.md': '# real\n',
       'USER.local.md': '# private\n',
-      '.holi/settings/app.local.json': '{}\n',
-      '.holi/settings/theme.local.json': '{}\n',
+      '.holi/settings/app.local.yaml': '{}\n',
+      '.holi/settings/theme.local.yaml': '{}\n',
     })
     const snap = await scanVault(root)
     // Local-only markdown does NOT become a note — it stays out of docs and the
@@ -104,8 +104,8 @@ describe('scanVault', () => {
     // ...but every local file DOES reach the snapshot as a file, so the tree can
     // show it under show-hidden. Git keeps it uncommitted, not the scanner.
     expect(snap.files.map((f) => f.path).sort()).toEqual([
-      '.holi/settings/app.local.json',
-      '.holi/settings/theme.local.json',
+      '.holi/settings/app.local.yaml',
+      '.holi/settings/theme.local.yaml',
       'USER.local.md',
     ])
   })

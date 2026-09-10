@@ -3,7 +3,7 @@ import { languageIdForPath, syntaxValid } from '../languages'
 
 describe('languageIdForPath', () => {
   it('maps config extensions to a language', () => {
-    expect(languageIdForPath('.holi/settings/theme.json')).toBe('json')
+    expect(languageIdForPath('.holi/document-templates/plain/template.json')).toBe('json')
     expect(languageIdForPath('notes/data.jsonc')).toBe('json')
     expect(languageIdForPath('config.yaml')).toBe('yaml')
     expect(languageIdForPath('config.yml')).toBe('yaml')
@@ -59,9 +59,9 @@ describe('languageIdForPath', () => {
 
 describe('syntaxValid', () => {
   it('gates JSON on parseability', () => {
-    expect(syntaxValid('.holi/settings/theme.json', '{"a": 1}')).toBe(true)
-    expect(syntaxValid('.holi/settings/theme.json', '{"a": 1,}')).toBe(false)
-    expect(syntaxValid('.holi/settings/theme.json', '{ not json')).toBe(false)
+    expect(syntaxValid('.holi/document-templates/plain/template.json', '{"a": 1}')).toBe(true)
+    expect(syntaxValid('.holi/document-templates/plain/template.json', '{"a": 1,}')).toBe(false)
+    expect(syntaxValid('.holi/document-templates/plain/template.json', '{ not json')).toBe(false)
   })
 
   it('gates YAML on parseability', () => {
@@ -80,8 +80,8 @@ describe('syntaxValid', () => {
   })
 
   it('treats an empty or whitespace buffer as valid (nothing to be invalid)', () => {
-    expect(syntaxValid('.holi/settings/theme.json', '')).toBe(true)
-    expect(syntaxValid('.holi/settings/theme.json', '   \n  ')).toBe(true)
+    expect(syntaxValid('.holi/document-templates/plain/template.json', '')).toBe(true)
+    expect(syntaxValid('.holi/document-templates/plain/template.json', '   \n  ')).toBe(true)
     expect(syntaxValid('config.yaml', '')).toBe(true)
   })
 })

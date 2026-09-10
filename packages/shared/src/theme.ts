@@ -14,11 +14,14 @@
  * renderer turns a resolved block into custom properties with `themeBlockToVars`
  * and writes them onto `document.documentElement`.
  *
- * Precedence: `.holi/settings/theme.json` (committed, shared) is the base; a personal
- * `.holi/settings/theme.local.json` (gitignored) overrides it **per key within each
+ * Precedence: `.holi/settings/theme.yaml` (committed, shared) is the base; a personal
+ * `.holi/settings/theme.local.yaml` (gitignored) overrides it **per key within each
  * mode**, so a one-line local file can recolour just `primary` and inherit the
  * rest. See the handoff/design notes for the decision trail.
  */
+
+import { parse as parseYaml } from 'yaml'
+import { mergeYamlDocument } from './yaml-document'
 
 /**
  * The two files a theme lives in, beside the settings they belong with.
@@ -27,8 +30,8 @@
  * settings pane offers both as an escape hatch) and main writes them. Three
  * copies of a path is three chances to move two of them.
  */
-export const THEME_FILE = '.holi/settings/theme.json'
-export const THEME_LOCAL_FILE = '.holi/settings/theme.local.json'
+export const THEME_FILE = '.holi/settings/theme.yaml'
+export const THEME_LOCAL_FILE = '.holi/settings/theme.local.yaml'
 
 /** The light/dark scheme a block applies to. */
 export type ThemeMode = 'light' | 'dark'
@@ -172,7 +175,7 @@ function isValidTokenValue(slug: string, value: string): boolean {
 export function parseVaultTheme(json: string): VaultTheme | null {
   let parsed: unknown
   try {
-    parsed = JSON.parse(json)
+    parsed = parseYaml(json)
   } catch {
     return null
   }
@@ -414,6 +417,31 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
  * not touch, and a vault's theme is as likely to have been written by hand or
  * by the agent as by these controls.
  */
+/**
+ * The note a theme key carries: which palette a block is, and what a token
+ * paints. Straight from `THEME_TOKEN_GROUPS` and `THEME_TOKEN_NOTES`, so the
+ * file explains a token in exactly the words the settings tab does.
+ */
+function themeComment(path: readonly string[]): string | undefined {
+  if (path.length === 1) {
+    if (path[0] === 'light') return 'The light palette.'
+    if (path[0] === 'dark') return 'The dark palette.'
+    return undefined
+  }
+  if (path.length !== 2) return undefined
+  const slug = path[1]!
+  const group = THEME_TOKEN_GROUPS.find((g) => g.tokens.includes(slug))
+  if (group === undefined) return undefined
+  const note = THEME_TOKEN_NOTES[slug]
+  return note === undefined ? group.title : `${group.title} — ${note}`
+}
+
+/** Serialise a theme, keeping the document and its notes. See
+ *  `yaml-document.ts` for why this is never a stringify. */
+function writeThemeText(existing: string | null, values: Record<string, unknown>): string {
+  return mergeYamlDocument(existing, values, themeComment)
+}
+
 export function applyThemePatch(json: string | null, patch: ThemePatch): string {
   const current = json === null ? null : parseVaultTheme(json)
   const next: Record<string, unknown> = { ...(current ?? {}) }
@@ -438,5 +466,9 @@ export function applyThemePatch(json: string | null, patch: ThemePatch): string 
   // the schema implies them, and a file that loses one reads as half-written.
   next.light ??= {}
   next.dark ??= {}
-  return `${JSON.stringify(next, null, 2)}\n`
+  // **The document, not the values.** A theme file carries the notes explaining
+  // what each token paints, and a person or the agent may have added their own;
+  // stringifying `next` would delete every one of them on the first swatch
+  // anybody touched.
+  return writeThemeText(json, next)
 }
