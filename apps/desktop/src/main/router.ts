@@ -30,6 +30,7 @@ import {
   type TaskPatch,
   type VaultEntry,
   type VaultRelPath,
+  parseThemePatch,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
 import {
@@ -90,7 +91,7 @@ import { ensureClone } from './vault/clone'
 import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
-import { readVaultTheme, resetVaultTheme } from './vault/theme'
+import { readVaultTheme, resetVaultTheme, writeVaultTheme } from './vault/theme'
 import { readVaultSettings, writeVaultSettings } from './vault/settings'
 import { parseSettingsPatch } from '@holi/shared'
 import type { ResolvedTheme, ResolvedVaultSettings } from '@holi/shared'
@@ -1464,13 +1465,40 @@ export function createRouter(deps: RouterDeps) {
   })
 
   // Per-vault theming: the resolved (merged + validated) colour/chrome tokens
-  // the renderer writes onto the document root. A read, not a write — the theme
-  // files are authored by the user or the agent with ordinary file tools, never
-  // through the router, which is why there is no `theme.write` here.
+  // the renderer writes onto the document root.
+  //
+  // It gained a `write` when the settings tab gained real controls (#16). The
+  // note that used to sit here said the files are authored by hand or by the
+  // agent and never through the router — that is still true of how most themes
+  // get written, and the writer merges per key per mode precisely so those two
+  // authors keep their tokens.
   const theme = t.router({
     read: t.procedure
       .input(fields({ remote: 'string' }))
       .query(({ input }): Promise<ResolvedTheme> => rootFor(input.remote).then(readVaultTheme)),
+
+    /**
+     * One pane edit, into one of the two files.
+     *
+     * **Takes a JSON string and parses it HERE**, exactly as `settings.write`
+     * does and for its reason: `fields` validates `string` and `boolean` only,
+     * so the patch arrives as text and goes through `parseThemePatch` — the
+     * same whitelist and the same per-token value check that guard a committed
+     * file a teammate wrote. A write cannot reach these files by a route that
+     * skips the check, and D64's promise that a theme is structurally incapable
+     * of changing layout holds however the theme was authored.
+     *
+     * Returns the warnings rather than throwing: a refused token must not
+     * strand the pane, and the caller can say which colour did not stick.
+     */
+    write: t.procedure
+      .input(fields({ remote: 'string', layer: 'string', patchJson: 'string' }))
+      .mutation(async ({ input }) => {
+        const layer = input.layer === 'local' ? 'local' : 'committed'
+        const { patch, warnings } = parseThemePatch(input.patchJson)
+        await writeVaultTheme(await rootFor(input.remote), layer, patch)
+        return { ok: true as const, warnings }
+      }),
 
     // Back to standard: delete both theme files. A write (deletion), so it lives
     // as a mutation. The running app reverts on its own via the watcher — no

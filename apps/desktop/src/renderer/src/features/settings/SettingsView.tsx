@@ -34,6 +34,7 @@ import {
   type VaultSettingDescriptor,
 } from '@holi/shared'
 import { Button, Checkbox, Tooltip } from '@/primitives'
+import { ThemeSection } from './ThemeSection'
 import { trpc } from '@/lib/trpc'
 import { openPinned, workspaceAtom } from '@/state/panes'
 import { loadVaultSettingsAtom } from '@/state/settings'
@@ -43,6 +44,12 @@ import { vaultPanelOpenAtom } from '@/state/vault-panel'
 /** The one setting whose value is a statement about an event that has already
  *  happened by the time you can change it. Everything else applies as you go. */
 const APPLIES_ON_NEXT_OPEN = new Set<string>(['landing'])
+
+/** Named here rather than imported from main: these two are vault-relative
+ *  paths the renderer only ever shows and opens, and `main/vault/theme.ts` is
+ *  across the IPC seam. */
+const THEME_FILE = '.holi/theme.json'
+const THEME_LOCAL_FILE = '.holi/theme.local.json'
 
 function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'
@@ -282,16 +289,26 @@ export function SettingsView(): React.JSX.Element {
             <Button
               variant="secondary"
               size="xs"
-              onClick={() => setWorkspace((w) => openPinned(w, '.holi/theme.json'))}
+              onClick={() => setWorkspace((w) => openPinned(w, THEME_FILE))}
             >
-              .holi/theme.json
+              {THEME_FILE}
+            </Button>
+            <Button
+              variant="secondary"
+              size="xs"
+              onClick={() => setWorkspace((w) => openPinned(w, THEME_LOCAL_FILE))}
+            >
+              {THEME_LOCAL_FILE}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Colours and chrome live in <code>.holi/theme.json</code> (D64) and have no controls
-            here yet — the file is the interface for now.
-          </p>
         </div>
+
+        {/* Colours and chrome, in the same tab and the same list. They are the
+            same kind of thing as the rows above — how this vault behaves —
+            and they layer over two files the same way, so splitting them into
+            a second surface would have been a filing decision showing through
+            the UI. */}
+        <ThemeSection remote={remote} />
 
         {/* Identity and membership are not preferences, so they keep their own
             panel; this is the door to it, so a gear does not mean two things. */}

@@ -4,6 +4,12 @@ import {
   parseVaultTheme,
   resolveTheme,
   themeBlockToVars,
+  THEME_TOKEN_GROUPS,
+  THEME_TOKEN_NOTES,
+  themeTokenKind,
+  themeTokenLabel,
+  parseThemePatch,
+  applyThemePatch,
 } from '../src/theme'
 
 describe('parseVaultTheme', () => {
@@ -147,5 +153,115 @@ describe('themeBlockToVars', () => {
       '--radius': '1rem',
       '--shadow-popover': '0 1px 2px #000',
     })
+  })
+})
+
+describe('THEME_TOKEN_GROUPS', () => {
+  it('covers every whitelisted token exactly once', () => {
+    // A token added to the whitelist and forgotten here is settable in the file
+    // and invisible in the pane, which is the drift this guard exists for.
+    const grouped = THEME_TOKEN_GROUPS.flatMap((g) => g.tokens)
+    expect([...grouped].sort()).toEqual([...THEME_TOKENS].sort())
+    expect(new Set(grouped).size).toBe(grouped.length)
+  })
+
+  it('gives every token a control kind the validator agrees with', () => {
+    for (const slug of THEME_TOKENS) {
+      expect(themeTokenKind(slug)).not.toBeNull()
+    }
+    expect(themeTokenKind('radius')).toBe('length')
+    expect(themeTokenKind('shadow-popover')).toBe('shadow')
+    expect(themeTokenKind('background')).toBe('color')
+    expect(themeTokenKind('not-a-token')).toBeNull()
+  })
+
+  it('derives a label from the slug rather than restating it', () => {
+    expect(themeTokenLabel('card-foreground')).toBe('Card foreground')
+    expect(themeTokenLabel('background')).toBe('Background')
+  })
+
+  it('notes only tokens that actually exist', () => {
+    for (const slug of Object.keys(THEME_TOKEN_NOTES)) {
+      expect(THEME_TOKENS).toContain(slug)
+    }
+  })
+})
+
+describe('parseThemePatch', () => {
+  it('takes a valid colour for one mode', () => {
+    const { patch, warnings } = parseThemePatch(JSON.stringify({ dark: { primary: '#ff0000' } }))
+    expect(patch).toEqual({ dark: { primary: '#ff0000' } })
+    expect(warnings).toEqual([])
+  })
+
+  it('treats null as clear-it, which is how a reset reaches the file', () => {
+    // Not an empty string: that would be dropped as invalid and leave the old
+    // value in place, so the control would appear to do nothing.
+    const { patch, warnings } = parseThemePatch(JSON.stringify({ light: { primary: null } }))
+    expect(patch).toEqual({ light: { primary: null } })
+    expect(warnings).toEqual([])
+  })
+
+  it('refuses a token outside the whitelist', () => {
+    const { patch, warnings } = parseThemePatch(JSON.stringify({ dark: { position: 'absolute' } }))
+    expect(patch).toEqual({})
+    expect(warnings[0]).toMatch(/unknown token "position"/)
+  })
+
+  it('refuses a value the resolver would later drop', () => {
+    // The pane must not be able to store something that reads back as nothing.
+    const { patch, warnings } = parseThemePatch(
+      JSON.stringify({ dark: { primary: 'url(http://x)', radius: '5 dogs' } }),
+    )
+    expect(patch).toEqual({})
+    expect(warnings).toHaveLength(2)
+  })
+
+  it('is empty, not a throw, for nonsense', () => {
+    expect(parseThemePatch('not json').patch).toEqual({})
+    expect(parseThemePatch(null).patch).toEqual({})
+    expect(parseThemePatch('').patch).toEqual({})
+  })
+})
+
+describe('applyThemePatch', () => {
+  const seeded = JSON.stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} })
+
+  it('sets a token in one mode and leaves the other alone', () => {
+    const next = JSON.parse(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }))
+    expect(next.dark).toEqual({ primary: '#ff0000' })
+    expect(next.light).toEqual({})
+  })
+
+  it('merges per key, keeping tokens the pane never touched', () => {
+    // A vault's theme is as likely to have been written by hand or by the agent.
+    const existing = JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } })
+    const next = JSON.parse(applyThemePatch(existing, { dark: { primary: '#ff0000' } }))
+    expect(next.dark).toEqual({ primary: '#ff0000', brand: '#222222' })
+  })
+
+  it('deletes the key on null rather than writing an empty value', () => {
+    const existing = JSON.stringify({ dark: { primary: '#111111', brand: '#222222' } })
+    const next = JSON.parse(applyThemePatch(existing, { dark: { primary: null } }))
+    expect(next.dark).toEqual({ brand: '#222222' })
+    expect('primary' in next.dark).toBe(false)
+  })
+
+  it('keeps both blocks and the schema, even starting from nothing', () => {
+    const next = JSON.parse(applyThemePatch(null, { light: { primary: '#ff0000' } }))
+    expect(next.$schema).toBe('holi-theme/v1')
+    expect(next.dark).toEqual({})
+    expect(next.light).toEqual({ primary: '#ff0000' })
+  })
+
+  it('round-trips through resolveTheme, so the pane cannot write a dead value', () => {
+    const written = applyThemePatch(seeded, { dark: { primary: '#ff0000', radius: '1rem' } })
+    const resolved = resolveTheme(written, null)
+    expect(resolved.dark).toEqual({ primary: '#ff0000', radius: '1rem' })
+    expect(resolved.warnings).toEqual([])
+  })
+
+  it('ends with one newline, like every other file Holi writes', () => {
+    expect(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }).endsWith('}\n')).toBe(true)
   })
 })

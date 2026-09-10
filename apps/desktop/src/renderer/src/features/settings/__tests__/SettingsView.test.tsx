@@ -17,12 +17,20 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 const read = vi.fn()
 const write = vi.fn()
+const themeRead = vi.fn()
+const themeWrite = vi.fn()
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
     settings: {
       read: { query: () => read() },
       write: { mutate: (input: unknown) => write(input) },
+    },
+    // The tab renders the theme section too, so the mock has to answer for it —
+    // otherwise every test here passes while logging an unhandled rejection.
+    theme: {
+      read: { query: () => themeRead() },
+      write: { mutate: (input: unknown) => themeWrite(input) },
     },
   },
 }))
@@ -38,6 +46,8 @@ function setup(over: Record<string, unknown> = {}) {
   store.set(activeRemoteAtom, 'git@github.com:syv-ai/vault.git')
   read.mockResolvedValue(resolved(over))
   write.mockResolvedValue({ ok: true, warnings: [] })
+  themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [] })
+  themeWrite.mockResolvedValue({ ok: true, warnings: [] })
   return render(
     <Provider store={store}>
       <SettingsView />
@@ -48,6 +58,8 @@ function setup(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   read.mockReset()
   write.mockReset()
+  themeRead.mockReset()
+  themeWrite.mockReset()
 })
 
 test('renders every setting, not just the ones the ritual asks about', async () => {

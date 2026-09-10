@@ -1,5 +1,6 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
+export { ColorSwatch } from './ColorSwatch'
 export {
   ContextMenu,
   ContextMenuCheckboxItem,

@@ -228,3 +228,195 @@ export function themeBlockToVars(block: ThemeBlock): Record<string, string> {
   }
   return vars
 }
+
+/**
+ * The groups the settings tab renders the tokens in, and the order it renders
+ * them.
+ *
+ * **Grouping is the only thing hand-written here.** A label is derived from the
+ * slug (`card-foreground` → "Card foreground") rather than restated: thirty
+ * hand-written strings that repeat their own key are thirty chances for one to
+ * drift, and the slugs were chosen to be read. A `note` is written only where
+ * the name genuinely is not enough — where two tokens sound interchangeable and
+ * are not.
+ *
+ * Every token appears exactly once, which `theme.test.ts` pins against
+ * `THEME_TOKENS`: a token added to the whitelist and forgotten here would be
+ * settable in the file and invisible in the pane.
+ */
+export interface ThemeTokenGroup {
+  title: string
+  /** What this group is for, in the pane. */
+  blurb: string
+  tokens: readonly string[]
+}
+
+export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
+  {
+    title: 'Surfaces',
+    blurb: 'The page and the things that sit on it.',
+    tokens: ['background', 'foreground', 'card', 'card-foreground', 'popover', 'popover-foreground'],
+  },
+  {
+    title: 'Brand and action',
+    blurb: 'The colour this vault is, and the things you can press.',
+    tokens: ['primary', 'primary-foreground', 'brand', 'ring', 'selection'],
+  },
+  {
+    title: 'Supporting',
+    blurb: 'Quieter fills: a hover, a secondary button, text that is not the point.',
+    tokens: [
+      'secondary',
+      'secondary-foreground',
+      'muted',
+      'muted-foreground',
+      'accent',
+      'accent-foreground',
+    ],
+  },
+  {
+    title: 'Warnings',
+    blurb: 'Destructive actions, and anything that has gone wrong.',
+    tokens: ['destructive', 'destructive-foreground'],
+  },
+  {
+    title: 'Edges',
+    blurb: 'What separates one thing from another.',
+    tokens: ['border', 'divider', 'input'],
+  },
+  {
+    title: 'Scrollbars',
+    blurb: 'The thumb, at rest and under the pointer.',
+    tokens: ['scrollbar-thumb', 'scrollbar-thumb-hover'],
+  },
+  {
+    title: 'In a note',
+    blurb: 'Wiki-link chips and task orbs, inside the editor.',
+    tokens: ['link', 'link-missing', 'task', 'task-todo', 'task-doing', 'task-done'],
+  },
+  {
+    title: 'Chrome',
+    blurb: 'Shape and depth rather than colour.',
+    tokens: ['radius', 'shadow-popover', 'shadow-dialog'],
+  },
+]
+
+/** The handful of tokens whose name is genuinely not enough, because a
+ *  neighbouring token sounds like it means the same thing. */
+export const THEME_TOKEN_NOTES: Readonly<Record<string, string>> = Object.freeze({
+  primary: 'The brand as a FILL, with primary-foreground on top of it.',
+  brand: 'The same brand as TEXT. A fill dark enough to carry pale text is too dark to be text.',
+  accent: 'The subtle hover surface, not the brand.',
+  divider: 'The seam between two panes. `border` is the edge of an object.',
+  selection: 'Highlighted text. Follows the brand unless you set it.',
+})
+
+/** `card-foreground` → `Card foreground`. */
+export function themeTokenLabel(slug: string): string {
+  const words = slug.replace(/-/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
+/** Which control a token wants: a colour needs a swatch and a picker, a length
+ *  and a shadow are typed. Derived from the same three lists the validator
+ *  uses, so a control can never disagree with what will be accepted. */
+export function themeTokenKind(slug: string): 'color' | 'length' | 'shadow' | null {
+  if (COLOR_SET.has(slug)) return 'color'
+  if (LENGTH_SET.has(slug)) return 'length'
+  if (SHADOW_SET.has(slug)) return 'shadow'
+  return null
+}
+
+/** A theme edit: a token set to a value, or to `null` to clear it and fall back
+ *  to Holi's default. Both modes are optional — a pane edits one at a time. */
+export interface ThemePatch {
+  light?: Record<string, string | null>
+  dark?: Record<string, string | null>
+}
+
+/**
+ * Read an untrusted object as a theme **patch** — only the tokens it names,
+ * each validated, and nothing else.
+ *
+ * The settings pane's counterpart to `parseSettingsPatch`, and it exists for
+ * that function's reason: a write must not reach these files by a route that
+ * skips the check a hand-written file gets. The same `isValidTokenValue` guards
+ * both, so the pane cannot store a value the resolver would later drop —
+ * which would read as a control that does nothing.
+ *
+ * **`null` is a legal value and means "clear it".** Resetting a token to
+ * Holi's default is deleting the key, not writing an empty string, which would
+ * be dropped as invalid and leave the old value in place.
+ */
+export function parseThemePatch(json: string | null): { patch: ThemePatch; warnings: string[] } {
+  const warnings: string[] = []
+  const patch: ThemePatch = {}
+  if (json === null || json.trim() === '') return { patch, warnings }
+
+  const parsed = parseVaultTheme(json)
+  if (parsed === null) {
+    warnings.push('refused a theme patch that is not a JSON object')
+    return { patch, warnings }
+  }
+
+  for (const mode of ['light', 'dark'] as const) {
+    const block: unknown = parsed[mode]
+    if (block === undefined) continue
+    if (block === null || typeof block !== 'object' || Array.isArray(block)) {
+      warnings.push(`refused "${mode}": expected an object`)
+      continue
+    }
+    const out: Record<string, string | null> = {}
+    for (const [slug, value] of Object.entries(block as Record<string, unknown>)) {
+      if (!THEME_TOKENS.includes(slug)) {
+        warnings.push(`refused unknown token "${slug}" (${mode})`)
+        continue
+      }
+      if (value === null) {
+        out[slug] = null
+        continue
+      }
+      if (typeof value !== 'string' || !isValidTokenValue(slug, value)) {
+        warnings.push(`refused "${slug}" (${mode}): ${JSON.stringify(value)}`)
+        continue
+      }
+      out[slug] = value.trim()
+    }
+    if (Object.keys(out).length > 0) patch[mode] = out
+  }
+  return { patch, warnings }
+}
+
+/**
+ * Apply a patch to a theme file's text, returning the new text.
+ *
+ * Per key per mode, never a replace: the file may carry tokens this pane did
+ * not touch, and a vault's theme is as likely to have been written by hand or
+ * by the agent as by these controls.
+ */
+export function applyThemePatch(json: string | null, patch: ThemePatch): string {
+  const current = json === null ? null : parseVaultTheme(json)
+  const next: Record<string, unknown> = { ...(current ?? {}) }
+  next.$schema ??= 'holi-theme/v1'
+
+  for (const mode of ['light', 'dark'] as const) {
+    const edits = patch[mode]
+    if (edits === undefined) continue
+    const existing = next[mode]
+    const block: Record<string, string> =
+      existing !== null && typeof existing === 'object' && !Array.isArray(existing)
+        ? { ...(existing as Record<string, string>) }
+        : {}
+    for (const [slug, value] of Object.entries(edits)) {
+      if (value === null) delete block[slug]
+      else block[slug] = value
+    }
+    next[mode] = block
+  }
+
+  // Both blocks always present, even when empty: the seeded skeleton has them,
+  // the schema implies them, and a file that loses one reads as half-written.
+  next.light ??= {}
+  next.dark ??= {}
+  return `${JSON.stringify(next, null, 2)}\n`
+}
