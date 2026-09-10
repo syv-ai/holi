@@ -4,6 +4,7 @@ import {
   EDITOR_FONT_STACKS,
   RITUAL_SETTING_DESCRIPTORS,
   TRANSFORM_NAMES,
+  VAULT_SETTINGS,
   VAULT_SETTING_DEFAULTS,
   VAULT_SETTING_DESCRIPTORS,
   parseLandingTarget,
@@ -656,5 +657,70 @@ describe('editorFont', () => {
   it('is not seeded into either file', () => {
     expect(seedSettings('committed')).not.toHaveProperty('editorFont')
     expect(seedSettings('local')).not.toHaveProperty('editorFont')
+  })
+})
+
+
+describe('the schema is the only declaration', () => {
+  // The whole point of collapsing four hand-written lists into one. Before this,
+  // the reader and the writer were separate passes per key that had already
+  // drifted into wording the same refusal two different ways — so a value the
+  // file could hold and the pane could not write was one edit away at any time.
+
+  it('accepts every value it offers, on both the read and the write', () => {
+    for (const setting of VAULT_SETTINGS) {
+      if (setting.type.kind === 'boolean' || setting.type.kind === 'flags') continue
+      for (const option of setting.type.options) {
+        const file = committed({ [setting.key]: option.value })
+
+        const write = parseSettingsPatch(file)
+        expect(write.warnings, `${setting.key} = ${JSON.stringify(option.value)}`).toEqual([])
+        expect(write.patch[setting.key]).toEqual(option.value)
+
+        const read = resolveVaultSettings(file, null)
+        expect(read.warnings, `${setting.key} = ${JSON.stringify(option.value)}`).toEqual([])
+        expect(read[setting.key as keyof typeof read]).toEqual(option.value)
+      }
+    }
+  })
+
+  it('refuses on write whatever it drops on read', () => {
+    // Values chosen to be wrong for every kind at once, so this stays true of a
+    // setting added later without the test naming it.
+    for (const bad of [null, [], 'nonsense', 42.5, { kind: 'nowhere' }]) {
+      for (const setting of VAULT_SETTINGS) {
+        const file = committed({ [setting.key]: bad })
+        const dropped = resolveVaultSettings(file, null).warnings.length > 0
+        const refused = parseSettingsPatch(file).warnings.length > 0
+        expect(refused, `${setting.key} = ${JSON.stringify(bad)}`).toBe(dropped)
+      }
+    }
+  })
+
+  it('gives every setting a row, and every row the control its type implies', () => {
+    expect(VAULT_SETTING_DESCRIPTORS.map((d) => d.key)).toEqual(VAULT_SETTINGS.map((s) => s.key))
+    for (const setting of VAULT_SETTINGS) {
+      const control = VAULT_SETTING_DESCRIPTORS.find((d) => d.key === setting.key)!.control
+      if (setting.type.kind === 'boolean') expect(control.kind).toBe('toggle')
+      else if (setting.type.kind === 'flags') expect(control.kind).toBe('group')
+      else expect(control.kind).toBe('choice')
+    }
+  })
+
+  it('defaults are the schema’s defaults, not a second list', () => {
+    for (const setting of VAULT_SETTINGS) {
+      expect(VAULT_SETTING_DEFAULTS[setting.key as keyof typeof VAULT_SETTING_DEFAULTS]).toEqual(
+        setting.default,
+      )
+    }
+  })
+
+  it('hands out a default nobody can mutate for the next reader', () => {
+    // The defaults object is frozen and shared; `landing` and `hooks` are
+    // objects, so a caller that edited what it was handed would change every
+    // later read of a vault that says nothing.
+    const first = resolveVaultSettings(null, null)
+    ;(first.hooks as Record<string, boolean>).relink = false
+    expect(resolveVaultSettings(null, null).hooks.relink).toBe(true)
   })
 })

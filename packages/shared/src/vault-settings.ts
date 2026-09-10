@@ -123,36 +123,6 @@ export interface ResolvedVaultSettings {
   warnings: string[]
 }
 
-/**
- * What a vault does when it says nothing.
- *
- * One object, read by the resolver, by the onboarding descriptors and by the
- * seed — so "what a vault defaults to" is stated once. Deep-frozen because it is
- * shared; the resolver always builds fresh objects from it.
- *
- * `archive-done` is off: it moves task files, which changes what the board
- * shows, and a transform that rearranges someone's work is opt-in (D76).
- * `memory-index` is on, with `relink` and `normalize-md`, for their reason: it
- * only ever rewrites `memory/index.md`, a file it generated and that says so on
- * its first line, so it cannot make a change the author would notice making.
- * The 10 MB cap mirrors `main/vault/large-files.ts` — notes-vault assets sit
- * well under it, and GitHub warns at 50.
- */
-export const VAULT_SETTING_DEFAULTS = Object.freeze({
-  landing: Object.freeze({ kind: 'daily' }) as LandingTarget,
-  dailyNotes: true,
-  colorScheme: 'system' as ColorScheme,
-  editorFont: 'mono' as EditorFont,
-  hooks: Object.freeze({
-    relink: true,
-    'archive-done': false,
-    'normalize-md': true,
-    'scaffold-md': true,
-    'memory-index': true,
-  }) as VaultHooks,
-  maxCommittedFileBytes: 10 * 1024 * 1024,
-})
-
 /** Parse one file. Anything that is not a JSON object reads as "no settings" —
  *  a half-written file must not stop a vault opening. */
 function parseFile(json: string | null): Record<string, unknown> {
@@ -202,109 +172,16 @@ function pick(files: Record<string, unknown>[], key: string): unknown {
   return value
 }
 
-function resolveBoolean(
-  files: Record<string, unknown>[],
-  key: string,
-  fallback: boolean,
-  warnings: string[],
-): boolean {
-  const value = pick(files, key)
-  if (value === undefined) return fallback
-  if (typeof value !== 'boolean') {
-    warnings.push(`dropped "${key}": expected true or false, got ${JSON.stringify(value)}`)
-    return fallback
-  }
-  return value
-}
-
-function resolveColorScheme(files: Record<string, unknown>[], warnings: string[]): ColorScheme {
-  const value = pick(files, 'colorScheme')
-  if (value === undefined) return VAULT_SETTING_DEFAULTS.colorScheme
-  if (typeof value !== 'string' || !COLOR_SCHEMES.includes(value as ColorScheme)) {
-    warnings.push(
-      `dropped "colorScheme": expected one of ${COLOR_SCHEMES.join(', ')}, got ${JSON.stringify(value)}`,
-    )
-    return VAULT_SETTING_DEFAULTS.colorScheme
-  }
-  return value as ColorScheme
-}
-
-function resolveEditorFont(files: Record<string, unknown>[], warnings: string[]): EditorFont {
-  const value = pick(files, 'editorFont')
-  if (value === undefined) return VAULT_SETTING_DEFAULTS.editorFont
-  if (typeof value !== 'string' || !EDITOR_FONTS.includes(value as EditorFont)) {
-    warnings.push(
-      `dropped "editorFont": expected one of ${EDITOR_FONTS.join(', ')}, got ${JSON.stringify(value)}`,
-    )
-    return VAULT_SETTING_DEFAULTS.editorFont
-  }
-  return value as EditorFont
-}
-
-function resolveLandingSetting(
-  files: Record<string, unknown>[],
-  warnings: string[],
-): LandingTarget {
-  const value = pick(files, 'landing')
-  if (value === undefined) return { ...VAULT_SETTING_DEFAULTS.landing }
-  const parsed = parseLandingTarget(value)
-  if (parsed === null) {
-    warnings.push(`dropped "landing": not a usable target, ${JSON.stringify(value)}`)
-    return { ...VAULT_SETTING_DEFAULTS.landing }
-  }
-  return parsed
-}
-
-/**
- * Merge the hooks block **per transform**, not wholesale.
- *
- * A local file naming one transform must not silently disable the other two —
- * which is what a whole-block override would do, and the failure would look like
- * "link rewriting randomly stopped working on my laptop".
- */
-function resolveHooks(files: Record<string, unknown>[], warnings: string[]): VaultHooks {
-  const hooks: VaultHooks = { ...VAULT_SETTING_DEFAULTS.hooks }
-  for (const file of files) {
-    if (!('hooks' in file)) continue
-    const block = file.hooks
-    if (typeof block !== 'object' || block === null || Array.isArray(block)) {
-      warnings.push(`dropped "hooks": expected an object, got ${JSON.stringify(block)}`)
-      continue
-    }
-    for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
-      if (!TRANSFORM_NAMES.includes(name as TransformName)) {
-        warnings.push(`dropped unknown transform "${name}"`)
-        continue
-      }
-      if (typeof value !== 'boolean') {
-        warnings.push(
-          `dropped "hooks.${name}": expected true or false, got ${JSON.stringify(value)}`,
-        )
-        continue
-      }
-      hooks[name as TransformName] = value
-    }
-  }
-  return hooks
-}
-
-function resolveMaxBytes(files: Record<string, unknown>[], warnings: string[]): number {
-  const value = pick(files, 'maxCommittedFileBytes')
-  if (value === undefined) return VAULT_SETTING_DEFAULTS.maxCommittedFileBytes
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    warnings.push(
-      `dropped "maxCommittedFileBytes": expected a positive number, got ${JSON.stringify(value)}`,
-    )
-    return VAULT_SETTING_DEFAULTS.maxCommittedFileBytes
-  }
-  return value
-}
-
 /**
  * Resolve the committed + local settings files into one validated shape.
  *
  * Either argument may be `null` (file absent). Local is applied last so it wins
  * key by key. Never throws; every field is answered.
+ *
+ * **One loop over the schema**, where this was six hand-written readers. A
+ * setting added to the list is read here without this function being touched,
+ * and — the part that actually mattered — it is read by exactly the check that
+ * a write to the same key has to pass.
  */
 export function resolveVaultSettings(
   committedJson: string | null,
@@ -313,16 +190,39 @@ export function resolveVaultSettings(
   // Order is the precedence: committed first, local last.
   const files = [parseFile(committedJson), parseFile(localJson)]
   const warnings: string[] = []
+  const out: Record<string, unknown> = {}
 
-  return {
-    landing: resolveLandingSetting(files, warnings),
-    dailyNotes: resolveBoolean(files, 'dailyNotes', VAULT_SETTING_DEFAULTS.dailyNotes, warnings),
-    colorScheme: resolveColorScheme(files, warnings),
-    editorFont: resolveEditorFont(files, warnings),
-    hooks: resolveHooks(files, warnings),
-    maxCommittedFileBytes: resolveMaxBytes(files, warnings),
-    warnings,
+  for (const setting of VAULT_SETTINGS) {
+    if (setting.type.kind === 'flags') {
+      out[setting.key] = mergeFlags(setting, files, warnings)
+      continue
+    }
+    const raw = pick(files, setting.key)
+    if (raw === undefined) {
+      // A fresh object per read: the defaults are frozen and shared, and a
+      // caller that mutated what it was handed would change every later read.
+      out[setting.key] = clone(setting.default)
+      continue
+    }
+    const read = readValue(setting, raw)
+    if (read.ok) {
+      out[setting.key] = read.value
+    } else {
+      warnings.push(
+        `dropped "${setting.key}": expected ${read.expected}, got ${JSON.stringify(raw)}`,
+      )
+      out[setting.key] = clone(setting.default)
+    }
   }
+
+  return { ...(out as Omit<ResolvedVaultSettings, 'warnings'>), warnings }
+}
+
+/** A default, detached from the frozen shared object. Only `landing` and the
+ *  flags blocks are objects, so a shallow copy is enough and a deep clone would
+ *  be claiming a depth these values do not have. */
+function clone(value: unknown): unknown {
+  return typeof value === 'object' && value !== null ? { ...(value as object) } : value
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -431,6 +331,96 @@ export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.json'
 const SETTINGS_FILE_HINT = `Change it any time in ${SETTINGS_FILE}`
 const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which stays on this machine`
 
+
+/**
+ * What a setting's value IS — its validation and, because the two are the same
+ * question, the options a control needs.
+ *
+ * **One field, not two.** A `type` and a separate `control` could disagree: a
+ * boolean with a pick-one control, or a choice offering a value the validator
+ * refuses. Here the kind decides the control (`toggle`, `choice`, `group`) and
+ * the entry supplies only the labels, so that class of bug cannot be written.
+ *
+ * Five kinds cover six settings, and the fifth exists for exactly one of them.
+ */
+export type SettingType =
+  | { kind: 'boolean' }
+  /** Pick one of these values, and these are also the only legal ones. */
+  | { kind: 'enum'; options: readonly VaultSettingOption[] }
+  /**
+   * A positive number. `options` are what the pane OFFERS, not the whole legal
+   * range — a hand-edited file naming a size the pane does not list is a good
+   * answer, and refusing it would make the pane the only way in.
+   */
+  | { kind: 'number'; options: readonly VaultSettingOption[] }
+  /**
+   * A fixed set of named switches, merged **per flag** across the two files
+   * rather than wholesale, so a local file naming one flag cannot silently
+   * answer for the others.
+   */
+  | {
+      kind: 'flags'
+      flags: readonly { key: TransformName; label: string; explanation: string }[]
+    }
+  /**
+   * Anything with its own parser. The escape hatch, used once: a `landing`
+   * value is an object, and two of its four shapes are not offered in the UI.
+   */
+  | {
+      kind: 'parsed'
+      parse: (value: unknown) => unknown | null
+      /** How the refusal reads: `expected <this>`. */
+      expected: string
+      options: readonly VaultSettingOption[]
+    }
+
+/**
+ * One setting, declared once.
+ *
+ * Everything about a setting lives here and everything else is derived: the
+ * defaults object, the reader, the writer's validator, and the row the settings
+ * tab renders. Before this, each key was written out four separate times in
+ * this file — six to nine mentions apiece — and the reader and the writer had
+ * already drifted into wording the same refusal two different ways.
+ */
+export interface VaultSetting {
+  key: VaultSettingKey
+  label: string
+  explanation: string
+  /** Validation and control in one, see `SettingType`. */
+  type: SettingType
+  /** The value this key holds when no file mentions it. */
+  default: unknown
+  target: SettingTarget
+  /**
+   * Whether the onboarding ritual asks this at a vault's birth, and the seed
+   * therefore writes it.
+   *
+   * **Not every setting is a question for a stranger.** The ritual is four acts
+   * long and every row in it is one more thing between somebody and their first
+   * note, so a preference with a good default and no consequence at birth stays
+   * out of it — `editorFont` is the case that forced the flag (D87 deliberately
+   * gave it no row). The settings pane renders the whole list regardless, which
+   * is the difference between "every setting" and "every question".
+   */
+  askedAtBirth: boolean
+  /** Where this lives once the ritual is over. Carried as **data** so a row
+   *  structurally cannot ship without one: a step that changes something and
+   *  does not say where to change it later is a dead end for anyone who wants
+   *  to change their mind. */
+  whereToChange: string
+  /**
+   * Which section of the settings tab this row appears under.
+   *
+   * A plain string, not a union of the section ids: the ids live in the
+   * renderer and this package is browser-safe domain rules with no knowledge of
+   * a tab. A renderer test asserts every value here names a real section, which
+   * is the check a union would have given for free but in the layer that
+   * actually owns the list.
+   */
+  section: string
+}
+
 /**
  * The four rows the onboarding step renders, in order — and the source the seed
  * writes `.holi/settings/app.json` from.
@@ -442,7 +432,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
  * `maxCommittedFileBytes` is the one that needs that and the reason the
  * distinction exists.
  */
-export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
+export const VAULT_SETTINGS: readonly VaultSetting[] = [
   {
     key: 'dailyNotes',
     label: 'Keep a daily note',
@@ -450,8 +440,8 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // exists: Holi used to guess the answer from the GitHub collaborator count.
     explanation:
       'A fresh note each morning, with yesterday’s filed away automatically. In a vault you share, everyone writes the same file, which gets messy fast.',
-    control: { kind: 'toggle' },
-    default: VAULT_SETTING_DEFAULTS.dailyNotes,
+    type: { kind: 'boolean' },
+    default: true,
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
@@ -461,8 +451,13 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     key: 'landing',
     label: 'Open on',
     explanation: 'What you see when you open this vault.',
-    control: {
-      kind: 'choice',
+    type: {
+      // The one escape hatch. A landing target is an OBJECT, and two of its four
+      // shapes (`note`, `app`) are deliberately not offered here at all — see
+      // the options below — so no generic kind can validate it.
+      kind: 'parsed',
+      parse: parseLandingTarget,
+      expected: 'a usable landing target',
       // Only what a brand-new vault can express: it holds no notes and no apps
       // yet. Pointing `landing` at either stays a file edit, which is where
       // authoring belongs.
@@ -480,7 +475,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
         { value: { kind: 'mail' }, label: 'Mail' },
       ],
     },
-    default: VAULT_SETTING_DEFAULTS.landing,
+    default: { kind: 'daily' } as LandingTarget,
     target: 'committed',
     askedAtBirth: true,
     whereToChange: `${SETTINGS_FILE_HINT}, including pointing it at a note or an app`,
@@ -490,9 +485,12 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     key: 'hooks',
     label: 'Tidy up on every commit',
     explanation: 'Small fixes Holi makes for you when your work is saved.',
-    control: {
-      kind: 'group',
-      toggles: [
+    type: {
+      kind: 'flags',
+      // **Merged per flag across the two files, not wholesale.** A local file
+      // naming one transform must not silently disable the others, and that is
+      // a property of this setting rather than a special case in the resolver.
+      flags: [
         {
           key: 'relink',
           label: 'Fix links when a file moves',
@@ -521,7 +519,13 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
         },
       ],
     },
-    default: VAULT_SETTING_DEFAULTS.hooks,
+    default: {
+      relink: true,
+      'archive-done': false,
+      'normalize-md': true,
+      'scaffold-md': true,
+      'memory-index': true,
+    } as VaultHooks,
     target: 'committed',
     askedAtBirth: true,
     whereToChange: SETTINGS_FILE_HINT,
@@ -536,8 +540,11 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     // automatic, so an oversized blob committed once is published forever.
     explanation:
       'Anything bigger is left out of the commit and reported, rather than pushed to everyone. GitHub itself warns at 50 MB and refuses at 100.',
-    control: {
-      kind: 'choice',
+    type: {
+      // **Any positive number is legal; the options are only what is OFFERED.**
+      // A hand-edited file saying 7 MB is a perfectly good answer, and refusing
+      // it would make the pane the only way to set a number it does not list.
+      kind: 'number',
       options: [
         { value: 5 * 1024 * 1024, label: '5 MB' },
         { value: 10 * 1024 * 1024, label: '10 MB' },
@@ -545,7 +552,7 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
         { value: 100 * 1024 * 1024, label: '100 MB', hint: 'GitHub’s own hard limit' },
       ],
     },
-    default: VAULT_SETTING_DEFAULTS.maxCommittedFileBytes,
+    default: 10 * 1024 * 1024,
     target: 'committed',
     // **Not asked at birth, and that is the whole of D85's argument surviving.**
     // The ritual asks what a vault must decide to exist; a size cap is not that,
@@ -559,15 +566,15 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     key: 'colorScheme',
     label: 'Appearance',
     explanation: 'Light, dark, or whatever your Mac is set to.',
-    control: {
-      kind: 'choice',
+    type: {
+      kind: 'enum',
       options: [
         { value: 'system', label: 'Match my system' },
         { value: 'light', label: 'Light' },
         { value: 'dark', label: 'Dark' },
       ],
     },
-    default: VAULT_SETTING_DEFAULTS.colorScheme,
+    default: 'system' as ColorScheme,
     // Machine-local, and the only row that is: a teammate's committed choice
     // flipping your app to light mode is exactly the failure the `.local` layer
     // exists to prevent.
@@ -581,15 +588,15 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     label: 'Notes are set in',
     explanation:
       'Prose only. Code, frontmatter and the plain editor stay monospaced whatever this says.',
-    control: {
-      kind: 'choice',
+    type: {
+      kind: 'enum',
       options: [
         { value: 'mono', label: 'Monospace' },
         { value: 'sans', label: 'Sans' },
         { value: 'serif', label: 'Serif' },
       ],
     },
-    default: VAULT_SETTING_DEFAULTS.editorFont,
+    default: 'mono' as EditorFont,
     target: 'committed',
     // Not asked at birth, deliberately (D87): it has a good default, no
     // consequence at a vault's first moment, and the ritual is already four acts
@@ -599,6 +606,148 @@ export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = [
     section: 'editor',
   },
 ]
+
+/**
+ * What a vault does when it says nothing.
+ *
+ * **Derived from `VAULT_SETTINGS`, not written out.** It used to be the literal
+ * and the schema pointed at it; the direction flipped so that a setting is one
+ * entry rather than an entry plus a value somewhere else. Typed by
+ * `ResolvedVaultSettings` rather than by inference, so consumers still get
+ * `ColorScheme` and not `unknown`.
+ *
+ * `archive-done` is off: it moves task files, which changes what the board
+ * shows, and a transform that rearranges someone's work is opt-in (D76).
+ * `memory-index` is on, with `relink` and `normalize-md`, for their reason: it
+ * only ever rewrites `memory/index.md`, a file it generated and that says so on
+ * its first line, so it cannot make a change the author would notice making.
+ * The 10 MB cap mirrors `main/vault/large-files.ts` — notes-vault assets sit
+ * well under it, and GitHub warns at 50.
+ */
+export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = Object.freeze(
+  Object.fromEntries(VAULT_SETTINGS.map((s) => [s.key, s.default])),
+) as Omit<ResolvedVaultSettings, 'warnings'>
+
+/**
+ * The schema and the resolved shape must name exactly the same keys.
+ *
+ * A compile-time check in **both** directions, because each miss is silent in
+ * its own way: a key in the interface that no entry declares resolves to
+ * `undefined` at runtime, and an entry for a key the interface lacks is a
+ * setting nothing can ever read.
+ */
+type _SchemaCoversSettings = Exclude<keyof ResolvedVaultSettings, 'warnings'> extends VaultSettingKey
+  ? VaultSettingKey extends Exclude<keyof ResolvedVaultSettings, 'warnings'>
+    ? true
+    : ['schema declares a key ResolvedVaultSettings does not have']
+  : ['ResolvedVaultSettings has a key no schema entry declares']
+const _keysAgree: _SchemaCoversSettings = true
+void _keysAgree
+
+/**
+ * The rows the settings tab and the onboarding act render.
+ *
+ * A **view** of the schema now rather than a second list: `control` is computed
+ * from `type`, so a control cannot offer a value its validator refuses. Kept
+ * under the old name and the old shape because the renderer and the onboarding
+ * act read it, and neither needed to change for any of this.
+ */
+export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = VAULT_SETTINGS.map(
+  (s) => ({ ...s, control: controlFor(s.type) }),
+)
+
+function controlFor(type: SettingType): VaultSettingControl {
+  switch (type.kind) {
+    case 'boolean':
+      return { kind: 'toggle' }
+    case 'flags':
+      return { kind: 'group', toggles: type.flags }
+    // enum, number and parsed are all "pick one of these", and differ only in
+    // what ELSE is legal — which is the validator's business, not the control's.
+    default:
+      return { kind: 'choice', options: type.options }
+  }
+}
+
+/**
+ * Read one untrusted value for one setting.
+ *
+ * **The single check the reader and the writer share.** They used to be two
+ * hand-written passes per key that had already drifted into different wording
+ * for the same refusal; a value the file could hold and the pane could not
+ * write was one edit away at any time.
+ *
+ * `flags` is absent here on purpose: it is the one kind whose answer depends on
+ * the layers below it, so it is merged rather than validated in isolation. See
+ * `mergeFlags`.
+ */
+function readValue(
+  setting: VaultSetting,
+  value: unknown,
+): { ok: true; value: unknown } | { ok: false; expected: string } {
+  const type = setting.type
+  switch (type.kind) {
+    case 'boolean':
+      return typeof value === 'boolean'
+        ? { ok: true, value }
+        : { ok: false, expected: 'true or false' }
+    case 'enum':
+      return type.options.some((o) => o.value === value)
+        ? { ok: true, value }
+        : { ok: false, expected: `one of ${type.options.map((o) => String(o.value)).join(', ')}` }
+    case 'number':
+      return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? { ok: true, value }
+        : { ok: false, expected: 'a positive number' }
+    case 'parsed': {
+      const parsed = type.parse(value)
+      return parsed === null ? { ok: false, expected: type.expected } : { ok: true, value: parsed }
+    }
+    case 'flags':
+      return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? { ok: true, value }
+        : { ok: false, expected: 'an object' }
+  }
+}
+
+/**
+ * Merge a flags block across the layers, one flag at a time.
+ *
+ * A local file naming one transform must not silently disable the other four —
+ * which is what a whole-block override would do, and the failure would look
+ * like "link rewriting randomly stopped working on my laptop".
+ */
+function mergeFlags(
+  setting: VaultSetting,
+  files: Record<string, unknown>[],
+  warnings: string[],
+): Record<string, boolean> {
+  const type = setting.type
+  if (type.kind !== 'flags') return {}
+  const out: Record<string, boolean> = { ...(setting.default as Record<string, boolean>) }
+  const names = type.flags.map((f) => f.key as string)
+  for (const file of files) {
+    if (!(setting.key in file)) continue
+    const block = file[setting.key]
+    if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+      warnings.push(`dropped "${setting.key}": expected an object, got ${JSON.stringify(block)}`)
+      continue
+    }
+    for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
+      if (!names.includes(name)) {
+        warnings.push(`dropped unknown transform "${name}"`)
+      } else if (typeof value !== 'boolean') {
+        warnings.push(
+          `dropped "${setting.key}.${name}": expected true or false, got ${JSON.stringify(value)}`,
+        )
+      } else {
+        out[name] = value
+      }
+    }
+  }
+  return out
+}
+
 
 /** The subset the ritual asks and the seed writes — see `askedAtBirth`. */
 export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =
@@ -648,56 +797,35 @@ export function parseSettingsPatch(json: string | null): {
   const patch: Record<string, unknown> = {}
   const warnings: string[] = []
 
-  if ('landing' in raw) {
-    const landing = parseLandingTarget(raw.landing)
-    if (landing === null) warnings.push(`refused "landing": ${JSON.stringify(raw.landing)}`)
-    else patch.landing = landing
-  }
+  for (const setting of VAULT_SETTINGS) {
+    if (!(setting.key in raw)) continue
+    const value = raw[setting.key]
 
-  if ('dailyNotes' in raw) {
-    if (typeof raw.dailyNotes === 'boolean') patch.dailyNotes = raw.dailyNotes
-    else warnings.push(`refused "dailyNotes": ${JSON.stringify(raw.dailyNotes)}`)
-  }
-
-  if ('colorScheme' in raw) {
-    if (
-      typeof raw.colorScheme === 'string' &&
-      COLOR_SCHEMES.includes(raw.colorScheme as ColorScheme)
-    ) {
-      patch.colorScheme = raw.colorScheme
-    } else {
-      warnings.push(`refused "colorScheme": ${JSON.stringify(raw.colorScheme)}`)
-    }
-  }
-
-  if ('maxCommittedFileBytes' in raw) {
-    const value = raw.maxCommittedFileBytes
-    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-      patch.maxCommittedFileBytes = value
-    } else {
-      warnings.push(`refused "maxCommittedFileBytes": ${JSON.stringify(value)}`)
-    }
-  }
-
-  if ('hooks' in raw) {
-    const block = raw.hooks
-    if (typeof block !== 'object' || block === null || Array.isArray(block)) {
-      warnings.push(`refused "hooks": ${JSON.stringify(block)}`)
-    } else {
-      const hooks: Partial<VaultHooks> = {}
-      for (const [name, value] of Object.entries(block as Record<string, unknown>)) {
-        if (!TRANSFORM_NAMES.includes(name as TransformName)) {
-          warnings.push(`refused unknown transform "${name}"`)
-        } else if (typeof value !== 'boolean') {
-          warnings.push(`refused "hooks.${name}": ${JSON.stringify(value)}`)
-        } else {
-          hooks[name as TransformName] = value
-        }
+    if (setting.type.kind === 'flags') {
+      // Validated flag by flag, like the read, but NOT merged with anything: a
+      // patch says only what it was told, and the caller merges it into the
+      // file it read.
+      const names = setting.type.flags.map((f) => f.key as string)
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        warnings.push(`refused "${setting.key}": ${JSON.stringify(value)}`)
+        continue
+      }
+      const block: Record<string, boolean> = {}
+      for (const [name, flag] of Object.entries(value as Record<string, unknown>)) {
+        if (!names.includes(name)) warnings.push(`refused unknown transform "${name}"`)
+        else if (typeof flag !== 'boolean')
+          warnings.push(`refused "${setting.key}.${name}": ${JSON.stringify(flag)}`)
+        else block[name] = flag
       }
       // A block that survived nothing is not a block: writing `{}` would be a
       // change to the file that says nothing.
-      if (Object.keys(hooks).length > 0) patch.hooks = hooks
+      if (Object.keys(block).length > 0) patch[setting.key] = block
+      continue
     }
+
+    const read = readValue(setting, value)
+    if (read.ok) patch[setting.key] = read.value
+    else warnings.push(`refused "${setting.key}": ${JSON.stringify(value)}`)
   }
 
   return { patch, warnings }
