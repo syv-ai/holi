@@ -158,6 +158,13 @@ export function languageForPath(path: string): Extension[] {
   // HAVE that grammar and nowhere else. `html()` mounts CSS inside `<style>`
   // and `style=`, which the extension walks through its `Styles` overlay, so a
   // vault app's inline colours get a swatch too.
+  //
+  // **The swatch sits to the LEFT of the value, and that is a decision.** The
+  // extension places it with `.range(from)`, and that same `from` is the range
+  // a pick replaces, so moving it would mean owning the tree walk. Left is also
+  // what VS Code and every CodeMirror colour extension do, and it is why a
+  // column of declarations gets a column of swatches instead of a ragged edge
+  // following each value's width. Asked and answered; do not re-litigate.
   if (id === 'html') return [html(), colorPicker, colorSwatchLook]
   if (id === 'css') return [css(), colorPicker, colorSwatchLook]
   return [LEGACY[id]]
