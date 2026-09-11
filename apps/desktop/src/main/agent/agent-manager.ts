@@ -73,6 +73,11 @@ export interface AgentManagerDeps {
   spawnPty?: SpawnPty
   resolveBin?: () => string | null
   killGraceMs?: number
+  /** Cap on waiting for the exit event after SIGKILL. Forwarded to
+   *  `AgentRuntime`, which is the whole reason it is here: `killGraceMs` was
+   *  threaded and this was not, so a test that set the grace to 20ms still
+   *  waited out the 5s backstop on every kill. */
+  killBackstopMs?: number
   /** The live hook-server port/token, injected into the child so its seeded
    *  curl hooks can reach us. Read per-spawn (the server outlives sessions). */
   hookPort?: () => number | null
@@ -356,7 +361,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
 
     const bin = resolveBin()
     if (!bin) {
-      throw new Error('Claude CLI not found on PATH — install it (https://claude.com/claude-code) and restart Holi')
+      throw new Error(
+        'Claude CLI not found on PATH — install it (https://claude.com/claude-code) and restart Holi',
+      )
     }
 
     const workRoot = vault.root
@@ -370,12 +377,12 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // The vault's own config directory (D86), resolved here rather than at launch
     // because the active vault moves under this manager. A failure must not cost
     // the user their agent — the same treatment `resolveTypstBin` gets.
-    const config = await (deps.resolveConfigDir?.({ remote: vault.remote, root: workRoot }) ?? Promise.resolve(null)).catch(
-      (err: unknown) => {
-        log(`config directory unresolved, running on the machine config: ${String(err)}`)
-        return null
-      },
-    )
+    const config = await (
+      deps.resolveConfigDir?.({ remote: vault.remote, root: workRoot }) ?? Promise.resolve(null)
+    ).catch((err: unknown) => {
+      log(`config directory unresolved, running on the machine config: ${String(err)}`)
+      return null
+    })
     // Born at the caller's geometry: the mirror and the PTY share it, so the
     // replayed state and Claude's own TUI both match the pane.
     const terminal = new TerminalMirror(cols, rows)
@@ -385,7 +392,11 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     // yet; the renderer takes this line from `attach()`'s replay, once.
     if (config?.firstSpawn) terminal.write(SIGN_IN_NOTICE)
     const snapshot = new ContextSnapshot({ workRoot })
-    const runtime = new AgentRuntime({ spawnPty: deps.spawnPty, killGraceMs: deps.killGraceMs })
+    const runtime = new AgentRuntime({
+      spawnPty: deps.spawnPty,
+      killGraceMs: deps.killGraceMs,
+      killBackstopMs: deps.killBackstopMs,
+    })
     runtime.onData((data) => {
       terminal.write(data) // the mirror is the record; the renderer is a view
       if (attached) send('agent-pty:data', data)
@@ -423,7 +434,15 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       throw err
     }
 
-    session = { vaultId, googleToken, hookToken, root: workRoot, runtime, mirror: terminal, snapshot }
+    session = {
+      vaultId,
+      googleToken,
+      hookToken,
+      root: workRoot,
+      runtime,
+      mirror: terminal,
+      snapshot,
+    }
     // Baseline the config the child just loaded, so a later change reads as stale.
     // `teardown` (run at the head of every start) already cleared the old flag.
     configBaseline = await fingerprintAgentConfig(workRoot)

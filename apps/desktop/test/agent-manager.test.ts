@@ -47,7 +47,11 @@ interface Rig {
   manager: AgentManager
   workRoot: string
   sent: Array<{ channel: string; payload: any }>
-  spawns: Array<{ file: string; args: string[]; opts: { cwd: string; env: Record<string, string> } }>
+  spawns: Array<{
+    file: string
+    args: string[]
+    opts: { cwd: string; env: Record<string, string> }
+  }>
   host: { setActive(v: string | null): void }
   pty(): FakePty
   paused: string[]
@@ -108,7 +112,11 @@ async function rig(
   const manager = createAgentManager({
     host,
     getWindow: () =>
-      ({ webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } }) as never,
+      ({
+        webContents: {
+          send: (channel: string, payload: unknown) => sent.push({ channel, payload }),
+        },
+      }) as never,
     spawnPty: (file, args, o) => {
       const pty = new FakePty()
       ptys.push(pty)
@@ -117,6 +125,10 @@ async function rig(
     },
     resolveBin: () => (opts.bin === undefined ? '/bin/fake-claude' : opts.bin),
     killGraceMs: 20,
+    // Both, not just the grace. The backstop is what a kill actually WAITS on
+    // when the fake PTY never emits an exit, and at its 5s default it was 53%
+    // of the whole node suite.
+    killBackstopMs: 20,
     hookPort: () => 4242,
     turnSafetyMs: opts.turnSafetyMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
@@ -267,7 +279,9 @@ describe('AgentManager', () => {
 
   it('fails readably when the CLI is missing', async () => {
     const r = await rig({ bin: null })
-    await expect(r.manager.start({ vaultId: VAULT })).rejects.toThrow(/Claude CLI not found on PATH/)
+    await expect(r.manager.start({ vaultId: VAULT })).rejects.toThrow(
+      /Claude CLI not found on PATH/,
+    )
     expect(r.manager.status().running).toBe(false)
   })
 
@@ -356,7 +370,10 @@ describe('AgentManager', () => {
     // vault opened afterwards ran on the first one's config.
     const r = await rig({
       resolveConfigDir: ({ remote }) =>
-        Promise.resolve({ dir: `/data/agent-config/${remote.replace('/', '-')}`, firstSpawn: false }),
+        Promise.resolve({
+          dir: `/data/agent-config/${remote.replace('/', '-')}`,
+          firstSpawn: false,
+        }),
     })
     await r.manager.start({ vaultId: VAULT })
     r.host.setActive('owner/second')
@@ -434,7 +451,9 @@ describe('AgentManager', () => {
     await r.manager.notifyVaultChanged()
 
     expect(r.manager.status().configStale).toBe(true)
-    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.configStale).toBe(true)
+    expect(r.sent.filter((s) => s.channel === 'agent:status').at(-1)!.payload.configStale).toBe(
+      true,
+    )
   })
 
   it('leaves configStale false when an ordinary note changes', async () => {

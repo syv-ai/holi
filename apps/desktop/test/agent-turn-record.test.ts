@@ -82,6 +82,7 @@ async function rig(
       }) as never,
     resolveBin: () => '/bin/fake-claude',
     killGraceMs: 20,
+    killBackstopMs: 20,
     turnSafetyMs: opts.turnSafetyMs,
     ...(opts.withLog === false
       ? {}
