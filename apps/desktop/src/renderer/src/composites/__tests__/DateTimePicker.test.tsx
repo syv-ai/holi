@@ -128,6 +128,40 @@ test('paging from December lands in January of the next year', async () => {
   expect(screen.getByText('January 2027')).toBeInTheDocument()
 })
 
+test('opening again after the value changed shows the new value, not the old', async () => {
+  // The detail panel is not remounted when you select another task, so a picker
+  // that seeded its month once at mount would open on the PREVIOUS task's due
+  // date — and would only look right while the two happened to share a month.
+  const { rerender } = render(
+    <DateTimePicker value="2026-03-10" onChange={() => {}} placeholder="due" />,
+  )
+  const user = await open('due')
+  expect(screen.getByText('March 2026')).toBeInTheDocument()
+  await user.keyboard('{Escape}')
+
+  rerender(<DateTimePicker value="2026-11-04" onChange={() => {}} placeholder="due" />)
+  await user.click(screen.getByRole('button', { name: /due/i }))
+  expect(screen.getByText('November 2026')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Wednesday, 4 November 2026' })).toBeInTheDocument()
+})
+
+test('paging survives a re-render that does not change the value', async () => {
+  // The other half of the rule: within one open popover the month is the user's
+  // to move. Following the value on every render would snap the grid back to the
+  // selection whenever anything above it re-rendered.
+  const { rerender } = render(
+    <DateTimePicker value="2026-08-25" onChange={() => {}} placeholder="due" />,
+  )
+  const user = await open('due')
+  await user.click(screen.getByRole('button', { name: 'next month' }))
+  expect(screen.getByText('September 2026')).toBeInTheDocument()
+
+  rerender(
+    <DateTimePicker value="2026-08-25" onChange={() => {}} presets={PRESETS} placeholder="due" />,
+  )
+  expect(screen.getByText('September 2026')).toBeInTheDocument()
+})
+
 test('arrow keys walk the grid, and the walk can leave the month', async () => {
   // Thirty tab stops to cross a month is not navigation. The grid is one tab
   // stop with a roving focus inside it, the way a date grid is supposed to

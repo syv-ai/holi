@@ -60,15 +60,7 @@ const MONTHS = [
   'December',
 ]
 const MONTHS_SHORT = MONTHS.map((m) => m.slice(0, 3))
-const WEEKDAYS_LONG = [
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-  'Sunday',
-]
+const WEEKDAYS_LONG = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 /** Today, as `YYYY-MM-DD`, local. The only clock read in the file. */
 function todayLocal(): string {
@@ -130,9 +122,12 @@ export function DateTimePicker({
   const time = value === null ? null : stampTime(value)
   const today = todayLocal()
 
-  // The visible month is state, seeded once from the value: derived-per-render
-  // would snap back to the selection the moment anything else re-rendered, and
-  // paging is the thing you do most in a calendar.
+  // The visible month is state rather than derived: derived-per-render would
+  // snap back to the selection the moment anything else re-rendered, and paging
+  // is the thing you do most in a calendar. It is seeded when the popover OPENS
+  // (see `startAt`), not once at mount — the picker outlives the value it was
+  // mounted with, because selecting another task swaps `value` under a detail
+  // panel that is never remounted.
   const [view, setView] = useState(() => partsOf(selected ?? today))
   const grid = monthGrid(view.year, view.month)
 
@@ -191,8 +186,26 @@ export function DateTimePicker({
   // what you just chose — so the calendar and the time row leave it open.
   const [open, setOpen] = useState(false)
 
+  /**
+   * Opening starts a fresh navigation from the value: the month on show and the
+   * cell the arrows start from both begin where the value is.
+   *
+   * This is what keeps paging and a changing value from fighting. Inside one
+   * session the two are left alone — the chevrons page freely, and clicking a
+   * trailing day does not yank the grid into the next month under the cursor —
+   * while the next open answers to whatever the value is by then, whether that
+   * is another task's due date or an agent's rewrite.
+   */
+  const startAt = (next: boolean) => {
+    if (next) {
+      setView(partsOf(selected ?? today))
+      setFocusDate(selected ?? today)
+    }
+    setOpen(next)
+  }
+
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={startAt}>
       <Tooltip content={placeholder ?? 'pick a date'}>
         <PopoverTrigger asChild>
           <Button
