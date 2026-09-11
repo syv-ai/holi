@@ -42,10 +42,14 @@ const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat',
 export function RecurrenceField({
   value,
   onChange,
+  warnNoDue,
   'data-testid': testId,
 }: {
   value: Recurrence | undefined
   onChange: (next: Recurrence | undefined) => void
+  /** The task this rule belongs to has no `due` date (prd/tasks.md §Recurrence).
+   *  Worth saying, because the rule looks set and simply would not fire. */
+  warnNoDue?: boolean
   'data-testid'?: string
 }): React.JSX.Element {
   /** Patch the rule as a whole — the frontmatter holds one map, so a partial
@@ -110,9 +114,11 @@ export function RecurrenceField({
                 onChange={(e) => set({ interval: Math.max(1, Number(e.target.value) || 1) })}
               />
               <span className="shrink-0 text-xs text-muted-foreground">
-                {{ daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[
-                  value.frequency
-                ]}
+                {
+                  { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[
+                    value.frequency
+                  ]
+                }
               </span>
             </FieldRow>
 
@@ -162,6 +168,14 @@ export function RecurrenceField({
                 onChange={(next) => set({ endDate: next ?? undefined })}
               />
             </FieldRow>
+
+            {/* A recurring task with no due date never rolls: `nextDue` needs
+                one to advance from. */}
+            {warnNoDue === true && (
+              <p className="px-1 text-[10px] text-amber-400/80">
+                Set a due date — a repeat has nothing to advance from without one.
+              </p>
+            )}
           </>
         )}
       </PopoverContent>

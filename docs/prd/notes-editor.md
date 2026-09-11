@@ -304,20 +304,42 @@ structured header, not prose, and a caret wandering into it is as likely to be a
 intent.
 
 **"By default" is per-file, not global** (`frontmatterStartsRevealed`). FR-2's reason is about
-*notes*: there, frontmatter is metadata over prose someone came to read. Under `.claude/` it is the
-opposite — a skill's `name` and `description` are what the agent matches on when it decides whether
+*notes*: there, frontmatter is metadata over prose someone came to read. Under `.claude/` and in a
+`task.*.md` it is the opposite — a skill's `name` and `description` are what the agent matches on when it decides whether
 to load the thing at all, an agent definition is little else, and the body is the elaboration.
 Opening `.claude/skills/theme/SKILL.md` used to show `▸ 5051 chars · Last updated 20/08/26` and then
 the prose: the half of the file you came to edit was behind a chevron, and the pill summarised the
 *body*, so nothing on screen even said there was frontmatter to find. Those files now open revealed.
-Nothing else moves — same widget, same nested plain-YAML editor, same chevron, and the chevron still
-collapses a revealed file.
+A **task** joins them for the same reason read the other way round: its `status` and `due` are not
+metadata over the file, they are half of what the file is, and collapsing them behind
+"0 chars · Last updated" hides the task. Nothing else moves — same widget, same chevron, and the
+chevron still collapses a revealed file.
 
 **A markdown file with NO frontmatter still gets the bar** (2026-09-09, [`#17`](https://github.com/syv-ai/holi/issues/17)). "N chars · Last updated DD/MM/YY, Name" is a fact about a markdown file, not a fact about having metadata, and it used to disappear when a file had none purely as a side effect of there being nothing to collapse: the summary was only ever built to label a collapsed block. The widget is now inserted **above the first line** rather than replacing a region — `Decoration.widget` with `side: -1`, so a caret at position 0 is in the body and not against the bar — and it carries no chevron, because there is no block to open. It offers no way to add one either: the pre-commit scaffold does that on the next commit, and two ways to write the same four lines is one too many. Nothing else changes: the char count already came from `doc.slice(bodyStart(doc))` and `bodyStart` is 0 with no block, so the number was correct before it had anywhere to appear. It reaches markdown only, and by construction rather than by a check — a non-markdown text file opens in the plain stack, which has no frontmatter extension in it.
 
-**What it is: one in-editor widget with two states** (`editor/frontmatter.ts`), plus that third bare one. The region is
+**Revealed, a file with a schema shows typed rows rather than YAML.** `frontmatterSchema` (in
+`packages/shared`) says what a key *is* — a task's `status` is one of three words, its `due` is a
+moment, its `tags` a list — and the block draws the matching control per row: a `Select`, the
+`DateTimePicker`, a chip field. Every key the schema names is drawn whether the file carries it or
+not, so a field can be set without knowing its name, and **nothing is written until a value is
+given**. A key the schema has never heard of is still drawn, still editable, and written back
+verbatim; `order` is the one key hidden, being a sort rank that means nothing to a human.
+
+The rows are the widget's own DOM, like the table widget it is modelled on, with the value area left
+empty and filled by the app's **single React root through a portal**
+(`editor/frontmatter-portals.ts` plus `FrontmatterFieldsHost`). That is what lets a row use the real
+primitives instead of a second date picker built inside the editor layer. Writes go back through
+`editYamlMapping`, which preserves comments, key order and any nested structure this app does not
+understand.
+
+**The nested plain-YAML editor is the fallback, not a separate feature.** A file with **no schema**
+gets it — `.claude/` and the agent surface carry a contract of their own, and this app drawing rows
+for it would be inventing their shape — and so does any file whose frontmatter **will not parse as a
+mapping**, because a document with no rows to draw has exactly one honest surface and it is the text.
+
+**What it is: one in-editor widget with three states** (`editor/frontmatter.ts`), plus that fourth bare one. The region is
 *always* replaced by an atomic block decoration — collapsed, it is a **pill** carrying a summary and
-a validity dot; revealed, it hosts a **nested `EditorView`** — no markdown stack, no live preview, no formatting
+a validity dot; revealed, it is either the typed rows above or a **nested `EditorView`** — no markdown stack, no live preview, no formatting
 keymap, but the **YAML grammar and the same highlighting a `.yaml` file opens with**. Plain does not
 mean colourless: this is the only editor in the app whose language is settled before the document is
 read, and a key that looks like its value is what made a task's whole record read as one grey block. Both the pill

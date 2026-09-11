@@ -4,7 +4,7 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**D80 and D81 are agreed and not built** (2026-08-22); their rows are below and they are the only entries left in this inbox. **Next free is D96.** D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
+**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. **D96 is agreed and built** (2026-09-12) and sits below them. **Next free is D97.** D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
 
 ---
 
@@ -43,7 +43,57 @@ The living docs are the truth; this file is only the staging area.
 
 ---
 
-## Number allocation — **next free is D96**
+## D96 — a task's detail view is the task file, and frontmatter is typed rows
+
+**Context.** A task is a `task.<name>.md` file, and the two surfaces that edited one had drifted a
+long way from saying so. `TaskDetail` (a 20rem board sidebar) and `TaskFileEditor` (a pane) both drew
+a title in a text field, the metadata in a bordered card of hand-built rows, and the body under a
+"description" label — each of them a second place stating what the file already stated, and each
+writing through `tasks.update` patches rather than through the document. Meanwhile the editor's own
+frontmatter block, revealed, was a nested plain-YAML editor: the right surface for a contract nobody
+here owns, and a poor one for six fields with a vocabulary.
+
+**Decision.** The detail view *is* the file, opened in the ordinary editor, and the frontmatter block
+grows a third face.
+
+- **Typed rows.** `frontmatterSchema(path)` (browser-safe, in `packages/shared`) says what a key is —
+  `enum`, `stamp`, `date`, `list`, `recurrence`, `text` — per file kind: a task schema, a note schema,
+  and `null` for the agent surface and hidden paths. The block draws the matching control per row.
+  **Every schema key is drawn whether the file carries it or not**, so a field is settable without
+  knowing its name, and nothing is written until a value is given. An unknown key is still drawn,
+  still editable, written back verbatim. `order` is hidden, being a rank that means nothing to a human.
+- **The rows are the widget's own DOM**, as the table widget's are, with the value area published to
+  a portal registry and filled by the app's **single React root**. That is what lets a row use the
+  real `DateTimePicker` and `Select` rather than a second copy built in the editor layer.
+- **The raw YAML editor is the fallback**, not a separate feature: no schema, or frontmatter that will
+  not parse as a mapping, gets the text.
+- **The title is the body's first heading**, at any level, and `title:` leaves the format.
+- **Writes go through the document**, with one exception: `done` on a recurring task calls
+  `tasks.complete`, because rolling forward is a different operation spelled as a status.
+- **The board's detail panel is deleted.** A card click opens the file beside the board as a preview,
+  reusing the pane to the right (`openBeside`) rather than splitting again.
+
+**Why the panel went rather than being ported.** Making it a real editor would have put a second
+buffer on a path a pane can also hold, which is exactly the bug `findTab`'s one-buffer rule exists to
+prevent: two `base`s, two autosaves, each seeing the other's write as a foreign edit. The old panel
+dodged that only by not being a document at all. Deleting it is smaller than sharing a buffer between
+two views, and it leaves one way to edit a task instead of three.
+
+**Why no migration.** Nobody uses Holi yet, so a leftover `title:` is simply an unknown key: it
+appears as a row, and deleting it is one click. The alternative was rewriting every task file in a
+vault on open, which on a Holi clone means an autosave commit touching all of them at once.
+
+**Rejected.** *Plain-text values* — one mechanism and no schema, but typing `2026-11-04T09:00` by hand
+replaces the picker and the status enum becomes a word you can misspell. *Hand-built DOM controls in
+the widget* — matches the table widget exactly and rebuilds a date picker that already exists, in a
+layer the component-hierarchy rules say may not own form controls. *A React block above the editor* —
+simplest of all, and the frontmatter stops being part of the document you are looking at. *Sharing one
+buffer between the sidebar and a pane* — architecturally the right answer to the panel problem, and it
+rewrites the external-reload story everything else rests on.
+
+---
+
+## Number allocation — **next free is D97**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 

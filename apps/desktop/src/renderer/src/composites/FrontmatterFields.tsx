@@ -258,6 +258,7 @@ export function FrontmatterFields({
         return (
           <RecurrenceField
             value={asRecurrence(value)}
+            warnNoDue={isTask && due === undefined}
             data-testid="fm-recurrence"
             onChange={(next) => set(field.key, next)}
           />

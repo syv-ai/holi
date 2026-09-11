@@ -67,7 +67,7 @@ type Priority   = 'low' | 'medium' | 'high'
 
 type Task = {
   path: string           // vault-relative, e.g. projects/q2/task.fix-login.md — the identity
-  title: string          // frontmatter, falling back to the filename
+  title: string          // the body's first heading, falling back to the filename
   status: TaskStatus
   due?: string           // a stamp: YYYY-MM-DD, or YYYY-MM-DDTHH:MM
   priority?: Priority
@@ -95,7 +95,6 @@ type Weekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
 
 ```markdown
 ---
-title: Review the Q2 doc
 status: todo            # todo | doing | done
 due: 2026-07-20
 priority: high
@@ -104,11 +103,22 @@ reminder: 2026-07-19T09:00
 recurrence: { frequency: weekly, interval: 1, weekdays: [mon] }
 ---
 
+# Review the Q2 doc
+
 Free-form description, with ordinary `[[wiki-link]]` semantics —
 including [[meetings/2026-07-13.md]], which is how a task links to a note.
 ```
 
-- **`title` is optional.** Absent, it derives from the filename (`task.fix-login.md` → "Fix login"), so a task Claude creates with one `Write` and no frontmatter still reads correctly on the board.
+- **The title is the body's first heading**, at any level, and there is **no `title:` key**. A name in
+  frontmatter is a second place for a fact the document already states, and the two drift the moment
+  anyone edits the heading. Fenced code is skipped, so a body opening with a shell block is not named
+  after a comment in it.
+- **Both are optional.** A body with no heading falls back to the filename (`task.fix-login.md` → "Fix
+  login"), so a task Claude creates with one `Write` and no frontmatter at all still reads correctly on
+  the board.
+- **A leftover `title:` is an unknown key**, carried through untouched like every other key this version
+  does not know, and shown as a row in the frontmatter editor where deleting it is one click. Nothing
+  migrates a vault behind your back.
 - **An unparseable file is shown, not swallowed.** The model will occasionally write malformed frontmatter. A `task.*.md` that fails to parse renders as a card in an error state linking to the file — never silently dropped from the board, which would look like data loss, and never rewritten from somewhere else, because there is nowhere else.
 - **Nothing is machine-owned.** Every key in the frontmatter is one a human or the agent may write by hand. There is no token, no id, and no field the board maintains behind your back.
 
@@ -128,7 +138,7 @@ Default and only board layout in v1.
 - **Filter bar:** exactly three controls — **text search**, **tag filter**, **done/hide toggle**. Nothing else. The bar is a search-and-narrow aid, not a second configuration surface.
 - **Virtual labels.** `overdue` and `p1`/`p2`/`p3` render as chips beside a task's real tags, and the filter's tag control matches them identically — so "show me the overdue p1s" is a tag query, not a bespoke control. They are **computed at render, never stored** (`packages/shared/src/labels.ts`): `overdue` from `due` + `status` + the current minute, `pN` from `priority`. Overdue is **two rules**, because the time on `due` is optional: a timed due is late past its minute, a timeless one is late once the day has passed — so an all-day task due today is not late at 00:01. **Why not store them:** something would have to write `overdue` onto a task the moment it tipped over at midnight — and now every such write is a file rewrite and an autosave commit. A hundred tasks going overdue at midnight is a hundred commits on an idle vault. It would also make `tags` half machine-owned, so an agent deleting `overdue` would have it silently re-added.
 - **A link to an email or a calendar event is an ordinary markdown link in the body** — `[Q2 review](https://calendar.google.com/…)` — and the board renders a chip for it by **detecting the link at render time**, computed and never stored, exactly like `overdue` and `pN`. Not a frontmatter field (that is the `related[]` this design deleted on purpose) and not a `[[wiki-link]]`: those resolve to vault files, and a URL target would render as a permanent tombstone. Backrefs stay a grep for the URL. `tasks.create` takes an optional `description` so a task can be seeded with the link at creation ([`google-mail-calendar.md`](google-mail-calendar.md)).
-- **The card carries exactly one affordance:** the **complete checkbox**. Title, `due`, labels and tags are display; every other edit opens the detail view. The checkbox goes through the **complete** path, never a bare `status: done` write, so a recurring task rolls forward instead of persisting `done`.
+- **The card carries exactly one affordance:** the **complete checkbox**. Title, `due`, labels and tags are display; clicking the card opens the task's file beside the board. The checkbox goes through the **complete** path, never a bare `status: done` write, so a recurring task rolls forward instead of persisting `done`.
 - **Drag semantics (both axes are real writes):**
   - **Vertical (between columns):** rewrites `status`. Dropping into Done triggers completion (recurrence roll-forward).
   - **Horizontal (between lanes):** **moves the file** into the target folder, and rewrites inbound wiki-links to it — the same rename path the file tree uses.
@@ -144,13 +154,18 @@ Default and only board layout in v1.
 - **From the agent:** it writes the file with `Write`. No op, no id to mint.
 - **By hand, or from anywhere:** create a file matching `task.*.md`. It is a task because of its name.
 
-**Edit:** any field via the detail view, or by editing the file. Both are the same write.
+**Edit:** open the file. There is no separate detail view any more: a task's fields are its
+frontmatter, drawn as typed rows by the editor's frontmatter block, and its description is the body.
+The board opens a card's file beside itself rather than in a panel of its own — a second editor over
+one task file would be two buffers racing over one path, which is the rule `findTab` exists to keep.
 
 **Complete:** setting `status = done`. If the task is recurring, Holi rolls it forward instead of persisting `done` (see below) and it returns to Todo at its next occurrence.
 
 **Delete:** `rm` the file, or delete from the board. A deleted task leaves any inbound wiki-link dangling, rendered as a tombstone — no cascade.
 
-**A title edit does not rename the file.** The filename is the identity, so silently moving a file on a title edit would rewrite every inbound link on a typo fix. The title and the filename are allowed to disagree, and a task whose slug no longer matches its title is a cosmetic mismatch rather than a broken link — which is the cheaper failure of the two.
+**A title edit does not rename the file.** The title is a heading in the body now, so editing it is
+editing prose; the filename remains the identity, and silently moving a file on a heading edit would
+rewrite every inbound link on a typo fix. The title and the filename are allowed to disagree, and a task whose slug no longer matches its title is a cosmetic mismatch rather than a broken link — which is the cheaper failure of the two.
 
 **Rename/move:** moving the file changes its identity, so inbound wiki-links are rewritten in the same pass. This is the one place tasks are not simpler than before: path-as-identity buys a link rewrite that stable ids did not need. It is the same machinery notes require anyway.
 
@@ -165,7 +180,7 @@ The **pure rule functions were ported verbatim** from the old repo's Rust into `
 - `nextDue(currentDue, rule)` → the next stamp, keeping the hour `currentDue` named (or its absence), or `null` (bad date / past `endDate`; `endDate` is compared on the date half, being a boundary on the rule rather than an appointment). Handles daily/weekly/monthly/yearly with `interval`, weekly-with-weekdays (same-week scan for interval 1; jump-to-target-week for interval > 1), month/year day-clamping (Jan 31 + 1mo → Feb 28; Feb 29 → Feb 28), and `endDate` cutoff.
 - `nextDueCatchup(currentDue, rule, today)` → advances until on-or-after `today` for a stale completion, using the closed-form leap + bounded iteration (so a decade-stale daily task doesn't silently vanish). Port both, and the leap/clamp edge cases the old tests pin.
 - **Roll-forward** runs **locally on completion**: advance `due` via `nextDueCatchup`, shift the reminder by the same day-delta (keeping its own time of day, and its timelessness), set status back to `todo`, rewrite the file. This is the *single* roll-forward path. The date arithmetic runs on whole days and re-attaches the time, because the month/year helpers clamp on calendar days.
-- **A recurring task with no `due` says so** in the detail view: `nextDue` has nothing to advance from, so the rule would look set and simply never fire.
+- **A recurring task with no `due` says so** in the recurrence editor: `nextDue` has nothing to advance from, so the rule would look set and simply never fire.
 
 **Reminders:**
 
@@ -180,7 +195,7 @@ The **pure rule functions were ported verbatim** from the old repo's Rust into `
 
 ## Concurrency
 
-**Within one machine**, the file is the single writer target: the board, the detail view, the editor, and the agent all write the same bytes, and the last write wins. The board watches the filesystem, so it never renders a stale card for long.
+**Within one machine**, the file is the single writer target: the board, the editor, and the agent all write the same bytes, and the last write wins. The board watches the filesystem, so it never renders a stale card for long.
 
 **Between machines**, tasks get the vault's ordinary sync semantics and nothing bespoke:
 
