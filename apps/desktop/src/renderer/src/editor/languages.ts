@@ -20,7 +20,7 @@
  * the thin glue from that id to CodeMirror extensions.
  */
 import { css } from '@codemirror/lang-css'
-import { colorPicker } from '@replit/codemirror-css-color-picker'
+import { colorPicker, wrapperClassName } from '@replit/codemirror-css-color-picker'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
@@ -129,6 +129,18 @@ function yamlLinter(): Extension {
 }
 
 /**
+ * The swatch, without the extension's own outline.
+ *
+ * `@replit/codemirror-css-color-picker` paints `outline: 1px solid #eee` on its
+ * wrapper — a light-mode hairline that reads as a bright ring on a near-black
+ * editor. `EditorView.theme` beats the extension's `baseTheme`, which is the
+ * documented way to restyle it and the reason `wrapperClassName` is exported.
+ */
+const colorSwatchLook = EditorView.theme({
+  [`.${wrapperClassName}`]: { outline: 'none', borderRadius: '2px' },
+})
+
+/**
  * The CodeMirror extensions that highlight (and, for JSON/YAML, lint) a given
  * path. Empty when the path has no known language — the plain stack then renders
  * it as undecorated text.
@@ -146,8 +158,8 @@ export function languageForPath(path: string): Extension[] {
   // HAVE that grammar and nowhere else. `html()` mounts CSS inside `<style>`
   // and `style=`, which the extension walks through its `Styles` overlay, so a
   // vault app's inline colours get a swatch too.
-  if (id === 'html') return [html(), colorPicker]
-  if (id === 'css') return [css(), colorPicker]
+  if (id === 'html') return [html(), colorPicker, colorSwatchLook]
+  if (id === 'css') return [css(), colorPicker, colorSwatchLook]
   return [LEGACY[id]]
 }
 

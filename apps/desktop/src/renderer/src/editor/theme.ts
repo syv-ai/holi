@@ -480,7 +480,9 @@ export const editorTheme = EditorView.baseTheme({
   '.cm-tooltip-autocomplete > ul > li[aria-selected]': { background: '#2563eb', color: '#ffffff' },
   '.cm-completionDetail': { color: '#a3a3a3', fontStyle: 'normal', marginLeft: '0.6em' },
   '.cm-completionMatchedText': { color: '#7dd3fc', textDecoration: 'none' },
-  '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText': { color: '#e0f2fe' },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText': {
+    color: '#e0f2fe',
+  },
 
   // Wiki-link hover preview (FR-6). The card owns its chrome, so strip the base
   // tooltip wrapper. Colours are D64 tokens, so a vault theme recolours the card.
@@ -557,6 +559,11 @@ const codeHighlightStyle = HighlightStyle.define([
   { tag: [t.propertyName, t.attributeName], color: 'var(--syntax-property)' },
   { tag: [t.string, t.special(t.string)], color: 'var(--syntax-string)' },
   { tag: [t.number, t.bool, t.null, t.atom, t.literal], color: 'var(--syntax-number)' },
+  // **After `literal`, and it has to be.** `tags.color` descends from `literal`
+  // in @lezer/highlight, so a CSS hex picks up the number colour unless it is
+  // named explicitly — which made `theme.css`, a file that is almost entirely
+  // colour literals, read as a wall of one hue.
+  { tag: t.color, color: 'var(--syntax-color)' },
   { tag: [t.typeName, t.className, t.tagName], color: 'var(--syntax-type)' },
   { tag: [t.variableName, t.definition(t.variableName)], color: 'var(--syntax-variable)' },
   {
