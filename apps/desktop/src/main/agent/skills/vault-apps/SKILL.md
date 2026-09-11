@@ -102,8 +102,12 @@ These are not oversights — build within them rather than around them.
   nothing: derive the view from the vault every time rather than keeping state.
   In-memory state within one session (a selected filter, a sort order) is fine.
 - **It cannot read the agent's files.** `AGENTS.md`, `CLAUDE.md`, `MEMORY.md`,
-  `USER.local.md` and everything under `.claude/` are refused — `holi.docs.read`
-  rejects, and they are absent from `holi.docs.list()`.
+  `USER.local.md` and everything under `.claude/` **and `memory/`** are refused —
+  `holi.docs.read` rejects, and they are absent from `holi.docs.list()`. The
+  vault's memory is on that list for the same reason as the rest of it (D89):
+  what the user told the assistant does not become readable to untrusted code by
+  being spread over more files. An app that wants to show what the vault knows
+  has to be told it, not read it.
 - **It cannot reach the rest of the vault directly.** No `fetch` of vault files,
   no access to Holi's own window. The bridge is the only route.
 

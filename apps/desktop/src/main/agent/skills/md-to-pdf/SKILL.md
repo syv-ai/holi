@@ -16,7 +16,8 @@ A template is a folder under `.holi/document-templates/<slug>/`:
 - `template.typ` — exports `doc(notePath, meta, assets)`.
 - `template.json` — a manifest declaring the fields the template accepts.
 
-List them with `ls .holi/document-templates/`. Every vault ships three:
+List them with `ls .holi/document-templates/`, and read a template's
+`template.json` for the fields it takes. Every vault ships six:
 
 - `plain` — a clean, unbranded layout.
 - `proposal` — the branded syv.ai proposal (tilbud): Raleway, numbered sections, logo + date
