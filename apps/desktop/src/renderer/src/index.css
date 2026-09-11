@@ -65,11 +65,6 @@
      rgb() channel, every length. The result was a wall of yellow. Violet keeps
      them distinct from the sky keys and green strings without shouting. */
   --syntax-number: var(--color-violet-300);
-  /* A CSS colour literal. Muted on purpose: the swatch beside it already says
-     what colour it is, so the text only has to be readable. Without this rule a
-     hex inherits the number colour, because `tags.color` descends from
-     `literal` in @lezer/highlight. */
-  --syntax-color: var(--color-neutral-300);
   --syntax-type: var(--color-blue-300);
   --syntax-variable: var(--color-neutral-200);
   --syntax-function: var(--color-sky-300);
@@ -249,7 +244,6 @@
   --syntax-property: var(--color-sky-700);
   --syntax-string: var(--color-green-700);
   --syntax-number: var(--color-violet-700);
-  --syntax-color: var(--color-neutral-600);
   --syntax-type: var(--color-blue-700);
   --syntax-variable: var(--color-neutral-800);
   --syntax-function: var(--color-sky-700);

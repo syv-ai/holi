@@ -558,12 +558,12 @@ const codeHighlightStyle = HighlightStyle.define([
   { tag: [t.keyword, t.moduleKeyword, t.operatorKeyword], color: 'var(--syntax-keyword)' },
   { tag: [t.propertyName, t.attributeName], color: 'var(--syntax-property)' },
   { tag: [t.string, t.special(t.string)], color: 'var(--syntax-string)' },
+  // `tags.color` descends from `literal`, so a CSS hex lands here too — which
+  // is right: a colour literal IS a literal, and the swatch beside it already
+  // carries the hue. It had its own muted token for one commit and that was
+  // worse, because a custom property name is `variableName` (near-white) and a
+  // muted value beside it read as the same colour twice.
   { tag: [t.number, t.bool, t.null, t.atom, t.literal], color: 'var(--syntax-number)' },
-  // **After `literal`, and it has to be.** `tags.color` descends from `literal`
-  // in @lezer/highlight, so a CSS hex picks up the number colour unless it is
-  // named explicitly — which made `theme.css`, a file that is almost entirely
-  // colour literals, read as a wall of one hue.
-  { tag: t.color, color: 'var(--syntax-color)' },
   { tag: [t.typeName, t.className, t.tagName], color: 'var(--syntax-type)' },
   { tag: [t.variableName, t.definition(t.variableName)], color: 'var(--syntax-variable)' },
   {

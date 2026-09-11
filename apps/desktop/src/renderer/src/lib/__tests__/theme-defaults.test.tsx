@@ -11,21 +11,8 @@
  * What belongs here is what is ours: turning painted bytes into a value the
  * validator accepts, the literal tokens, and the probe not leaking.
  */
-import { afterEach, expect, test } from 'vitest'
+import { expect, test } from 'vitest'
 import { resolveThemeDefaults, themeValueFromPixel } from '../theme-defaults'
-
-const sheets: HTMLStyleElement[] = []
-afterEach(() => {
-  sheets.splice(0).forEach((s) => s.remove())
-  document.documentElement.removeAttribute('style')
-})
-
-function declare(css: string): void {
-  const el = document.createElement('style')
-  el.textContent = css
-  document.head.appendChild(el)
-  sheets.push(el)
-}
 
 test('an opaque pixel becomes a hex', () => {
   // The bytes are what `oklch(0.145 0 0)` actually paints, measured in the
@@ -51,24 +38,17 @@ test('an incomplete pixel is left out rather than guessed at', () => {
   expect(themeValueFromPixel([1, 2])).toBeNull()
 })
 
-test('reads a length and a shadow as the literal they are', () => {
-  // No resolution to ask for: a `color` round trip would turn these into
-  // nonsense, so they come off the custom property directly.
-  declare(`
-    :root, [data-theme='dark'] {
-      --radius: 0.75rem;
-      --shadow-popover: 0 2px 8px rgb(0 0 0 / 0.4);
-    }
-  `)
-  const out = resolveThemeDefaults('dark')
-  expect(out.radius).toBe('0.75rem')
-  expect(out['shadow-popover']).toBe('0 2px 8px rgb(0 0 0 / 0.4)')
+test('returns null where colours cannot be resolved, rather than a partial answer', () => {
+  // jsdom has no 2D canvas, which is the same shape of failure as a stylesheet
+  // that has not landed: nothing trustworthy to write, so write nothing.
+  expect(resolveThemeDefaults('dark')).toBeNull()
 })
 
-test('leaves no probe behind', () => {
+test('leaves no probe behind, even on the path that gives up', () => {
   // It attaches to `document.body` to resolve at all, so a leak would be one
-  // stray node per vault open, forever.
+  // stray node per vault open, forever — and the early return is the path most
+  // likely to skip the cleanup.
   const before = document.body.childElementCount
-  resolveThemeDefaults('dark')
+  expect(resolveThemeDefaults('dark')).toBeNull()
   expect(document.body.childElementCount).toBe(before)
 })

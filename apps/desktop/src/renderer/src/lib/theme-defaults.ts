@@ -79,13 +79,50 @@ function paint(ctx: CanvasRenderingContext2D, value: string): string | null {
  * vault's DARK override as light's default. `useVaultTheme` clears, reads, then
  * applies.
  */
-export function resolveThemeDefaults(mode: ThemeMode): Record<string, string> {
+/**
+ * A colour no palette will ever hold, used to catch a token that did not
+ * resolve.
+ *
+ * **An unresolved `var()` does not read as empty — it reads as a valid colour.**
+ * `color: var(--nope)` is invalid at computed-value time, and `color` inherits,
+ * so the probe quietly reports whatever its parent is. There is no error and no
+ * blank to test for. Painting the parent an absurd colour turns that silent
+ * fallback into a value we can recognise.
+ */
+const UNRESOLVED = 'rgb(1, 2, 3)'
+
+/**
+ * Every themeable token's current value for one colour scheme, or `null` if any
+ * of them could not be read.
+ *
+ * **All or nothing, and that is the whole point of the return type.** These
+ * values get written into a committed file. A moment when the stylesheet is not
+ * in force — a hot reload swapping `index.css`, a cold start before styles
+ * land — makes every token fall back to an inherited colour, and writing that
+ * is how `--background: #380000` ended up committed to a real vault. A partial
+ * read is not a smaller version of the answer; it is a wrong one.
+ *
+ * **Read inside a `[data-theme]` subtree, so the other mode can be read too.**
+ * `index.css` declares both schemes as attribute-scoped blocks, and a custom
+ * property declared on an element beats one inherited from its parent — so a
+ * probe carrying the attribute resolves that scheme's palette even while the app
+ * is showing the other one.
+ *
+ * **The caller must clear any applied vault theme first.** Those land as inline
+ * custom properties on `document.documentElement`, and a token the light block
+ * does not re-declare would inherit straight through this probe, recording the
+ * vault's DARK override as light's value. `useVaultTheme` clears, reads, then
+ * applies.
+ */
+export function resolveThemeDefaults(mode: ThemeMode): Record<string, string> | null {
   const scope = document.createElement('div')
   scope.setAttribute('data-theme', mode)
   scope.setAttribute('aria-hidden', 'true')
   scope.style.position = 'absolute'
   scope.style.visibility = 'hidden'
   scope.style.pointerEvents = 'none'
+  // What an unresolved token will inherit, and nothing else.
+  scope.style.color = UNRESOLVED
 
   const probe = document.createElement('span')
   scope.appendChild(probe)
@@ -94,31 +131,33 @@ export function resolveThemeDefaults(mode: ThemeMode): Record<string, string> {
   const canvas = document.createElement('canvas')
   canvas.width = 1
   canvas.height = 1
-  // `null` wherever there is no 2D canvas — jsdom, notably. The colours are
-  // then simply not offered, which is the same answer this module gives for a
-  // value it cannot resolve: leave the token out rather than name it wrongly.
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
 
   const out: Record<string, string> = {}
   try {
-    if (ctx !== null) {
-      for (const slug of THEME_COLOR_TOKENS) {
-        // Two steps, and both are needed: the probe resolves `var()` in this
-        // scheme's scope, the canvas converts whatever space that lands in.
-        probe.style.color = ''
-        probe.style.color = `var(--${slug})`
-        const computed = getComputedStyle(probe).color
-        if (computed === '') continue
-        const value = paint(ctx, computed)
-        if (value !== null) out[slug] = value
-      }
+    // No 2D canvas — jsdom, notably — means no conversion, so there is nothing
+    // honest to write.
+    if (ctx === null) return null
+    const sentinel = paint(ctx, UNRESOLVED)
+    for (const slug of THEME_COLOR_TOKENS) {
+      probe.style.color = ''
+      probe.style.color = `var(--${slug})`
+      const computed = getComputedStyle(probe).color
+      if (computed === '') return null
+      const value = paint(ctx, computed)
+      // Equal to the sentinel means the `var()` fell through to the parent, so
+      // the stylesheet is not in force and NOTHING here can be trusted.
+      if (value === null || value === sentinel) return null
+      out[slug] = value
     }
     // A length and a shadow are literals in `index.css`, so the custom property
-    // itself is the answer — there is no colour to rasterise.
+    // itself is the answer — there is no colour to rasterise, and an empty one
+    // is the same "styles are not loaded" signal.
     const scopeStyle = getComputedStyle(scope)
     for (const slug of [...THEME_LENGTH_TOKENS, ...THEME_SHADOW_TOKENS]) {
       const raw = scopeStyle.getPropertyValue(`--${slug}`).trim()
-      if (raw !== '') out[slug] = raw
+      if (raw === '') return null
+      out[slug] = raw
     }
   } finally {
     scope.remove()

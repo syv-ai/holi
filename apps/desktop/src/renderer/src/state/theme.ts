@@ -43,6 +43,10 @@ function missingTokens(theme: ResolvedTheme): Record<ThemeModeKey, Record<string
   for (const mode of ['dark', 'light'] as const) {
     const have = theme[mode]
     const defaults = resolveThemeDefaults(mode)
+    // **One unreadable scheme abandons the whole write.** A half-filled palette
+    // committed to a shared file is worse than an unfilled one, and the next
+    // open will try again against a document whose styles have landed.
+    if (defaults === null) return null
     const block: Record<string, string> = {}
     for (const slug of THEME_TOKENS) {
       if (have[slug] !== undefined) continue
