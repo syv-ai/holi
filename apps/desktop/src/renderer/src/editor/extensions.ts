@@ -13,6 +13,7 @@ import { askAgentTooltip } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
+import { settingsControls } from './settings-controls'
 import { headingSlide } from './heading-slide'
 import {
   docExistsFacet,
@@ -237,6 +238,10 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),
     ...languageForPath(path),
+    // A swatch and a menu for `.holi/settings/*.yaml`, because the file is the
+    // source of truth and the settings tab is a window onto it — so editing it
+    // by hand should not be the one place you have to type a hex by eye.
+    ...settingsControls(path),
     validityStatus(path),
     codeHighlighting,
     history(),
