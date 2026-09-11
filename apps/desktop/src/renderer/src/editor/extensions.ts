@@ -13,7 +13,7 @@ import { askAgentTooltip } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
-import { settingsControls } from './settings-controls'
+import { settingsCompletion } from './settings-completion'
 import { headingSlide } from './heading-slide'
 import {
   docExistsFacet,
@@ -238,10 +238,11 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),
     ...languageForPath(path),
-    // A menu of the words a settings key accepts — the part an editor cannot
-    // know without the schema. Colours are not here: a theme is CSS now, so the
-    // swatch comes from `languageForPath` with the rest of the CSS support.
-    ...settingsControls(path),
+    // Suggestions for a settings key and the values it accepts — the part an
+    // editor cannot know without the schema. Colours are not here: a theme is
+    // CSS now, so the swatch comes from `languageForPath` with the rest of the
+    // CSS support.
+    ...settingsCompletion(path),
     validityStatus(path),
     codeHighlighting,
     history(),
@@ -253,6 +254,11 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     EditorView.lineWrapping,
     EditorState.allowMultipleSelections.of(true),
     keymap.of([
+      // **Before `indentWithTab` and the defaults.** A completion popup is
+      // driven by Enter, Tab and the arrows, and every one of those is bound
+      // further down this list — so without this first, the list appears and
+      // cannot be used: Enter opens a new line underneath it and Tab indents.
+      ...completionKeymap,
       { key: 'Mod-d', run: selectNextOccurrence, preventDefault: true },
       indentWithTab,
       ...historyKeymap,
