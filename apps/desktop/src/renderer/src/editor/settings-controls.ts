@@ -1,12 +1,15 @@
 /**
- * Controls in the margin of a settings file: a swatch for a colour, a menu for
- * a fixed set of values.
+ * A menu of the values a setting accepts, in the settings files themselves.
  *
  * **Because the file is the source of truth and the settings tab is a window
  * onto it.** Editing `.holi/settings/*.yaml` by hand — or having the agent edit
- * it — is a first-class way to change this vault, so the editor should not be
- * the one place that makes you type a hex by eye. These are the same two
- * affordances the settings tab offers, put where the authoritative copy lives.
+ * it — is a first-class way to change this vault, so the file should not be the
+ * least comfortable place to do it.
+ *
+ * **Colours are not here.** A hex gets its swatch from `color-swatches.ts`,
+ * which decorates any hex in any file because that is an editor feature, not a
+ * settings one. This module is only for the thing an editor cannot know: which
+ * words a particular key will accept.
  *
  * **Line matching, not the YAML syntax tree.** These four files are generated
  * by `writeSettingsText`/`writeThemeText`, so their shape is known: one
@@ -28,7 +31,6 @@ import {
   THEME_FILE,
   THEME_LOCAL_FILE,
   VAULT_SETTINGS,
-  themeTokenKind,
 } from '@holi/shared'
 import { cssColorToHex } from '@/lib/css-color'
 
@@ -76,57 +78,6 @@ function readLine(text: string, lineStart: number): Entry | null {
     from: lineStart + valueStart,
     to: lineStart + valueStart + value.length,
     value,
-  }
-}
-
-/** A hex the picker can open on. A set value wins; otherwise the colour
- *  actually in force, which is the point of showing it at all — an unset token
- *  is not "no colour", it is Holi's colour. */
-function swatchColor(entry: Entry): { shown: string; hex: string } {
-  const unquoted = entry.value.replace(/^["']|["']$/g, '')
-  if (unquoted !== '') return { shown: unquoted, hex: cssColorToHex(unquoted) }
-  const live = `var(--${entry.key})`
-  return { shown: live, hex: cssColorToHex(live) }
-}
-
-/**
- * A colour square that opens the OS picker.
- *
- * The DOM is `ColorSwatch`'s, for the reasons in that file: the square is
- * painted with the RAW value so the browser resolves `oklch(...)` and
- * `color-mix(...)` itself, and the native input is stretched invisibly over it
- * rather than hidden, because a hidden input cannot be clicked open.
- */
-class SwatchWidget extends WidgetType {
-  constructor(
-    readonly shown: string,
-    readonly hex: string,
-    readonly onPick: (hex: string) => void,
-    readonly label: string,
-  ) {
-    super()
-  }
-
-  override eq(other: SwatchWidget): boolean {
-    return other.shown === this.shown && other.hex === this.hex
-  }
-
-  override toDOM(): HTMLElement {
-    const wrap = document.createElement('span')
-    wrap.className = 'cm-settings-swatch'
-    wrap.style.background = this.shown
-    const input = document.createElement('input')
-    input.type = 'color'
-    input.value = this.hex
-    input.setAttribute('aria-label', this.label)
-    input.addEventListener('input', () => this.onPick(input.value))
-    wrap.appendChild(input)
-    return wrap
-  }
-
-  /** The picker is the whole point, so clicks belong to the widget. */
-  override ignoreEvent(): boolean {
-    return false
   }
 }
 
@@ -209,7 +160,6 @@ export interface SettingsControl {
   /** 1-based, as an editor counts them. */
   line: number
   key: string
-  kind: 'color' | 'choice'
   /** Whether the entry is currently a comment, i.e. Holi is choosing. */
   commented: boolean
 }
@@ -228,14 +178,8 @@ export function controlsIn(path: string, text: string): SettingsControl[] {
   text.split('\n').forEach((lineText, i) => {
     const entry = readLine(lineText, 0)
     if (entry === null) return
-    const kind =
-      themeTokenKind(entry.key) === 'color'
-        ? 'color'
-        : choicesFor(entry.key) !== null
-          ? 'choice'
-          : null
-    if (kind === null) return
-    out.push({ line: i + 1, key: entry.key, kind, commented: entry.commented })
+    if (choicesFor(entry.key) === null) return
+    out.push({ line: i + 1, key: entry.key, commented: entry.commented })
   })
   return out
 }
@@ -267,16 +211,6 @@ function build(view: EditorView): DecorationSet {
 }
 
 function widgetFor(view: EditorView, entry: Entry, lineFrom: number): WidgetType | null {
-  if (themeTokenKind(entry.key) === 'color') {
-    const { shown, hex } = swatchColor(entry)
-    return new SwatchWidget(
-      shown,
-      hex,
-      // Quoted, always: a bare `#8b5cf6` is a YAML comment.
-      (picked) => applyValue(view, entry, lineFrom, `"${picked}"`),
-      `${entry.key} colour`,
-    )
-  }
   const choices = choicesFor(entry.key)
   if (choices === null) return null
   return new ChoiceWidget(
@@ -288,28 +222,6 @@ function widgetFor(view: EditorView, entry: Entry, lineFrom: number): WidgetType
 }
 
 const theme = EditorView.baseTheme({
-  '.cm-settings-swatch': {
-    position: 'relative',
-    display: 'inline-block',
-    width: '0.85em',
-    height: '0.85em',
-    marginLeft: '0.5em',
-    verticalAlign: '-0.1em',
-    borderRadius: '3px',
-    border: '1px solid var(--border)',
-    overflow: 'hidden',
-    cursor: 'pointer',
-  },
-  '.cm-settings-swatch input': {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    opacity: '0',
-    cursor: 'pointer',
-    padding: '0',
-    border: 'none',
-  },
   '.cm-settings-choice': {
     marginLeft: '0.5em',
     font: 'inherit',

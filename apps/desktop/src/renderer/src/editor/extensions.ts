@@ -13,6 +13,7 @@ import { askAgentTooltip } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
+import { hexColorSwatches } from './color-swatches'
 import { settingsControls } from './settings-controls'
 import { headingSlide } from './heading-slide'
 import {
@@ -86,6 +87,9 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     // as text: without it the body has no tokens to colour and the block renders
     // as one flat grey slab (fence-languages.ts).
     markdown({ base: markdownLanguage, codeLanguages: fenceLanguage }),
+    // A note is a file like any other, and a hex in one is still a colour —
+    // the swatch is an editor affordance, so it does not stop at `.yaml`.
+    hexColorSwatches,
     // …and this is what colours those tokens. It used to be in the plain stack
     // only, on the reasoning that the markdown editor paints itself with
     // live-preview decorations rather than through the highlight pipeline —
@@ -238,9 +242,10 @@ export function plainTextExtensions(path: string, readOnly = false): Extension[]
     EditorState.readOnly.of(readOnly),
     EditorView.editable.of(!readOnly),
     ...languageForPath(path),
-    // A swatch and a menu for `.holi/settings/*.yaml`, because the file is the
-    // source of truth and the settings tab is a window onto it — so editing it
-    // by hand should not be the one place you have to type a hex by eye.
+    // A square beside every hex, the way any code editor does it.
+    hexColorSwatches,
+    // And, for the settings files only, a menu of the words a key accepts —
+    // the part an editor cannot know without the schema.
     ...settingsControls(path),
     validityStatus(path),
     codeHighlighting,
