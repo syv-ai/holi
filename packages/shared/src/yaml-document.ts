@@ -123,6 +123,13 @@ export function editYamlMapping(existing: string, changes: Record<string, unknow
     if (value === undefined) doc.delete(key)
     else doc.set(key, doc.createNode(value))
   }
+
+  // **An emptied mapping is empty, not `{}`.** Clearing the last field would
+  // otherwise write a literal `{}` between the fences — valid YAML, parsed back
+  // as the same empty map, and a thing nobody typed sitting at the top of their
+  // file forever. `yaml` has to spell "a map with no pairs" somehow; the file
+  // does not.
+  if (doc.contents.items.length === 0) return ''
   return doc.toString({ lineWidth: 0 })
 }
 

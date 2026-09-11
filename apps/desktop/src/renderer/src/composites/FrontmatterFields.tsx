@@ -264,17 +264,19 @@ export function FrontmatterFields({
         )
       case 'text':
         return (
-          <TextField
-            value={value}
-            label={field.key}
-            onChange={(next) => set(field.key, next)}
-          />
+          <TextField value={value} label={field.key} onChange={(next) => set(field.key, next)} />
         )
     }
   }
 
   return (
-    <div className="flex flex-col" data-frontmatter-fields={path}>
+    <div
+      // A panel, lightly. The rows are a header band over the document rather
+      // than part of its prose, and without an edge they read as a stack of
+      // loose controls floating above the first line.
+      className="flex flex-col rounded-md border border-divider bg-muted/30 px-1 py-1.5"
+      data-frontmatter-fields={path}
+    >
       {/* Derived, never written: the folder a file sits in is a fact about the
           vault, and for a task it is also its lane. Editing it would be a move,
           which has to rewrite inbound links and so belongs to the file tree. */}

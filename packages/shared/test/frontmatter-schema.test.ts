@@ -80,6 +80,12 @@ describe('editYamlMapping', () => {
     )
   })
 
+  test('clearing the last key leaves nothing, not a literal {}', () => {
+    // `yaml` has to spell "a map with no pairs" somehow. The file does not, and
+    // `{}` between the fences is a thing nobody typed, kept forever.
+    expect(editYamlMapping('status: todo\n', { status: undefined })).toBe('')
+  })
+
   test('keeps comments and key order through a write', () => {
     const before = '# what this task is for\nstatus: todo\n\n# when\ndue: 2026-08-25\n'
     const after = editYamlMapping(before, { status: 'doing' })
