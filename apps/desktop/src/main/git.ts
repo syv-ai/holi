@@ -582,7 +582,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     const names = await tryGit(root, ['diff', '--name-status', '-z', '--no-color', '-M', range], opts)
     if (!stat.ok || !names.ok) return []
 
-    // `--numstat -z` is `added	removed	path `, and for a RENAME it spends
+    // `--numstat -z` is `added\tremoved\tpath\0`, and for a RENAME it spends
     // three NUL-separated fields: the counts line ends after the tab, then old
     // and new arrive as their own records.
     const counts = new Map<string, { added: number; removed: number }>()
