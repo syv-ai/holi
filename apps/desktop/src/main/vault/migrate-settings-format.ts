@@ -48,11 +48,15 @@ const CONVERSIONS: readonly (readonly [string, string, Convert])[] = [
   // Settings: parsed to values and written fresh, so every key gains its
   // explanation. Siblings this app does not own (`reminders` in the local file)
   // ride along because the whole parsed object is handed back.
-  ['.holi/settings/app.json', SETTINGS_FILE, (t) => writeSettingsText(null, parseSettingsText(t))],
+  [
+    '.holi/settings/app.json',
+    SETTINGS_FILE,
+    (t) => writeSettingsText(parseSettingsText(t), 'committed'),
+  ],
   [
     '.holi/settings/app.local.json',
     SETTINGS_LOCAL_FILE,
-    (t) => writeSettingsText(null, parseSettingsText(t)),
+    (t) => writeSettingsText(parseSettingsText(t), 'local'),
   ],
   // Theme: an empty patch, which is the existing "read, merge, write" path with
   // nothing to merge. It applies the D64 whitelist on the way through, so a

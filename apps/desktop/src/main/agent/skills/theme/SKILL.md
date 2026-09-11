@@ -12,85 +12,68 @@ break the layout.
 
 ## The files
 
-- **`.holi/settings/theme.yaml`** — the vault's theme. Committed, so it travels with the
-  vault and everyone who clones it sees it. This is the one to edit for a shared
-  look.
+- **`.holi/settings/theme.yaml`** — the vault's theme. Committed, so it travels
+  with the vault and everyone who clones it sees it. This is the one to edit for
+  a shared look.
 - **`.holi/settings/theme.local.yaml`** — a personal override, gitignored (never
   committed). If it exists, its keys win over `theme.yaml` **per key**, so a
   one-line local file can recolour just `primary` and inherit the rest.
 
-Both files already exist in every vault, seeded with empty `dark:` and `light:`
-blocks — edit them, no need to create. Malformed YAML, unknown keys, and invalid
-values are ignored (the app falls back to defaults) — so a typo is safe, but
-check your work: a dropped key just won't take effect.
+Both already exist in every vault. Edit them; never create them.
 
-Each file carries a comment above every token saying what it paints. **Leave
-those in place** — Holi regenerates a missing one, but a note you add yourself is
-kept, so the file is a good place to record why a colour was chosen.
+## Read the file — it lists every token
 
-## Shape
-
-Two blocks, `light` and `dark`. The app is dark today, so put your values under
-`dark` (fill `light` too if you want to be ready for a future light mode). Every
-value is a plain CSS value.
+**The file is the vocabulary, so do not work from memory and do not guess a token
+name.** Every token this vault can set is already in both files, grouped, with a
+note on the ones whose name is not enough. A token this vault has not set is a
+commented line:
 
 ```yaml
 # The dark palette.
 dark:
-  # A hex value has to be quoted: a bare `#` starts a YAML comment.
+
+  # ── Brand and action: The colour this vault is, and the things you can press.
+  #   The brand as a FILL, with primary-foreground on top of it.
   primary: "#8b5cf6"
-  primary-foreground: "#ffffff"
-  background: oklch(0.15 0.01 285)
-  ring: "#8b5cf6"
-  radius: 0.75rem
-  selection: "#8b5cf6"
-  shadow-popover: 0 8px 24px rgb(0 0 0 / 0.5)
-# The light palette.
-light: {}
+  # primary-foreground:
+  #   The same brand as TEXT. A fill dark enough to carry pale text is too dark to be text.
+  # brand:
+  # ring:
 ```
 
-## The tokens you can set
+**Setting a token is deleting its `# `.** `primary` above is set; the three below
+it are not, and Holi's own value is in force for them. Clearing one is putting
+the `# ` back, or just deleting the line — the next write restores it as a
+comment either way.
 
-**Colours** (any CSS colour — hex `#3b82f6`, `rgb(...)`, `hsl(...)`, `oklch(...)`,
-or a named colour like `transparent`):
+Two blocks, `light` and `dark`, both listing the same tokens. The app is dark
+today, so put your values under `dark` unless you are asked otherwise.
 
-| token | what it colours |
-|-------|-----------------|
-| `background` / `foreground` | app canvas + its text |
-| `card` / `card-foreground` | raised card surfaces + text |
-| `popover` / `popover-foreground` | menus, dropdowns, tooltips + text |
-| `primary` / `primary-foreground` | the brand action colour (buttons, active states) + text on it |
-| `secondary` / `secondary-foreground` | secondary surfaces + text |
-| `muted` / `muted-foreground` | muted surfaces + de-emphasised text |
-| `accent` / `accent-foreground` | subtle hover surface + text |
-| `destructive` / `destructive-foreground` | danger actions + text |
-| `border` | the edge of an object — cards, chips, popovers, menu separators |
-| `divider` | the seam between two pieces of chrome — pane splits, the sidebar's edge, panel-header rules, the footer. Defaults to `border` faded toward `background`, so recolouring those two carries it along; set it only to override that outright, and with a flat colour (`color-mix` is not accepted here) |
-| `input` | form field borders |
-| `ring` | focus rings |
-| `scrollbar-thumb` / `scrollbar-thumb-hover` | the scrollbar handle |
-| `selection` | highlighted (selected) text background |
-| `link` | wiki-link + markdown-link chips in the editor (the tint is derived from it) |
-| `link-missing` | a wiki-link chip whose target does not exist |
-| `task` | a task-link chip's accent (the “this is a task” hue) |
-| `task-todo` / `task-doing` / `task-done` | the status orb on a task-link chip |
+A **hex value has to be quoted** — a bare `#` starts a YAML comment. Any CSS
+colour works: `"#3b82f6"`, `rgb(...)`, `hsl(...)`, `oklch(...)`, or a name like
+`transparent`. `radius` is a length (`0.75rem`, `10px`, `0`) and the two
+`shadow-*` tokens are box-shadow values.
 
-**Chrome:**
+Malformed YAML, unknown keys and invalid values are ignored — the app falls back
+to its default — so a typo is safe, but check your work: a dropped key simply
+does not take effect. `divider` and `selection` are derived from other tokens by
+default and want a flat colour if you set them; `color-mix(...)` is not accepted.
 
-| token | value | effect |
-|-------|-------|--------|
-| `radius` | a length (`0.5rem`, `10px`, `0`) | corner roundness everywhere |
-| `shadow-popover` | a box-shadow value | elevation of menus/dropdowns/tooltips |
-| `shadow-dialog` | a box-shadow value | elevation of modal dialogs |
+## The comments are generated
 
-That's the whole vocabulary. Anything else (widths, padding, positions, fonts) is
-**not** themeable — by design, so the layout stays intact.
+Holi rewrites this file whenever a setting changes, and **regenerates the group
+headings, the token notes and every commented line** as it goes. That is what
+keeps the list complete when Holi adds a token.
+
+It also means **a note of your own inside a palette does not survive**. If a
+colour choice needs explaining, put it in a note in the vault, not in this file.
 
 ## Tips
 
-- Change just `primary` for the biggest visual shift with the least effort:
-  buttons, focus rings, active states, and (by default) the text selection all
-  follow it.
+- Change just `primary` for the biggest shift with the least effort: buttons,
+  focus rings, active states and (by default) text selection all follow it.
+- Set `brand` whenever you set `primary`. They are the same colour in two roles,
+  and a fill dark enough to carry pale text is too dark to BE text.
 - Keep enough contrast between `background` and `foreground` to stay readable.
 - After saving, glance at the app — the change applies within a moment. If it
-  didn't, the value was probably invalid and got dropped; fix and re-save.
+  did not, the value was probably invalid and got dropped; fix and re-save.

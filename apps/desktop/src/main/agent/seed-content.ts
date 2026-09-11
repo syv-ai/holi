@@ -271,7 +271,7 @@ const SETTINGS_JSON =
  * `archive-done` is off because it moves task files, which changes what the
  * board shows; a transform that rearranges someone's work is opt-in.
  */
-const HOLI_SETTINGS = seedSettingsText(seedSettings('committed'))
+const HOLI_SETTINGS = seedSettingsText(seedSettings('committed'), 'committed')
 
 /**
  * The machine-local half — today, which appearance this machine follows.
@@ -279,7 +279,7 @@ const HOLI_SETTINGS = seedSettingsText(seedSettings('committed'))
  * Gitignored by the seeded `*.local.*` rule, exactly like `theme.local.yaml`
  * beside it, so a personal choice is never pushed to anyone.
  */
-const HOLI_SETTINGS_LOCAL = seedSettingsText(seedSettings('local'))
+const HOLI_SETTINGS_LOCAL = seedSettingsText(seedSettings('local'), 'local')
 
 /** One line: the vault format version. Not JSON, because nothing ever parsed
  *  it — `isVaultClone` asks only whether the file can be read. See
@@ -306,11 +306,16 @@ const PLAIN_MANIFEST =
   ) + '\n'
 
 /**
- * The vault's colour/chrome theme, seeded empty (D64). Both files ship in every
- * vault so theming is discoverable — a member opens the vault, finds them under
+ * The vault's colour/chrome theme (D64). Both files ship in every vault so
+ * theming is discoverable — a member opens the vault, finds them under
  * show-hidden, and knows where shared (`theme.yaml`, committed) vs personal
- * (`theme.local.yaml`, gitignored) overrides go. Empty blocks = the standard
- * look until edited; the token vocabulary lives in the seeded `theme` skill.
+ * (`theme.local.yaml`, gitignored) overrides go.
+ *
+ * **Seeded with the whole vocabulary commented out, not empty.** Two empty
+ * blocks were discoverable only in the sense that the FILES were: they named
+ * none of the forty tokens, so knowing what could go in one meant leaving for
+ * the settings pane or the `theme` skill. Every token is now a commented line
+ * in its group, and setting one is deleting its `# `.
  */
 const THEME_SKELETON = applyThemePatch(null, {})
 

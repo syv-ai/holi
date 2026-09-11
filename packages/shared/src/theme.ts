@@ -21,7 +21,6 @@
  */
 
 import { parse as parseYaml } from 'yaml'
-import { mergeYamlDocument } from './yaml-document'
 
 /**
  * The two files a theme lives in, beside the settings they belong with.
@@ -418,28 +417,82 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
  * by the agent as by these controls.
  */
 /**
- * The note a theme key carries: which palette a block is, and what a token
- * paints. Straight from `THEME_TOKEN_GROUPS` and `THEME_TOKEN_NOTES`, so the
- * file explains a token in exactly the words the settings tab does.
+ * The theme file's text, written out in full every time.
+ *
+ * **The file lists every token, whether or not this vault sets one.** An empty
+ * `dark: {}` was honest and useless: the vocabulary is forty tokens and the
+ * file named none of them, so knowing what you could write meant opening the
+ * Appearance pane or the `theme` skill. Now the file is the reference — a token
+ * this vault has not set is a commented line, in the group the pane puts it in.
+ *
+ * **Generated, not merged, and that is a deliberate reversal.** Every other
+ * settings write goes through `mergeYamlDocument` so a hand-written note
+ * survives. That cannot hold here: `doc.set('dark', …)` replaces the whole
+ * node, so a comment INSIDE a palette is destroyed by the next swatch anybody
+ * touches — which is every commented token this file exists to list. The two
+ * ways out were teaching the merge to reconcile a nested map in place, or
+ * re-emitting the block. Re-emitting is the one that cannot rot: the vocabulary
+ * is always complete and always current, including tokens added to the
+ * whitelist after this vault was created.
+ *
+ * The cost is that a note written inside a palette does not survive a write.
+ * Notes ABOVE a token are regenerated from `THEME_TOKEN_NOTES`, so the ones
+ * that carry meaning come back; a personal one does not. That is the trade this
+ * file makes and the reason `app.yaml` still merges.
+ *
+ * A key that is not a known token is kept rather than dropped — the resolver
+ * already warns about it, and silently deleting somebody's line because we do
+ * not recognise it is a worse answer than leaving it where they put it.
  */
-function themeComment(path: readonly string[]): string | undefined {
-  if (path.length === 1) {
-    if (path[0] === 'light') return 'The light palette.'
-    if (path[0] === 'dark') return 'The dark palette.'
-    return undefined
+function writeThemeText(values: Record<string, unknown>): string {
+  const lines: string[] = [`$schema: ${String(values.$schema ?? 'holi-theme/v1')}`, '']
+  lines.push(...PREAMBLE.map((line) => (line === '' ? '#' : `# ${line}`)))
+
+  for (const mode of ['dark', 'light'] as const) {
+    const block = (values[mode] ?? {}) as Record<string, string>
+    lines.push('', `# The ${mode} palette.`, `${mode}:`)
+    for (const group of THEME_TOKEN_GROUPS) {
+      // **A key line is the only thing at `# ` depth.** A group heading and a
+      // token's note are both comments too, so without a second level of indent
+      // the whole block is one undifferentiated column of `#` and you cannot
+      // find the line you came to uncomment.
+      lines.push('', `  # ── ${group.title}: ${group.blurb}`)
+      for (const slug of group.tokens) {
+        const note = THEME_TOKEN_NOTES[slug]
+        if (note !== undefined) lines.push(`  #   ${note}`)
+        const value = block[slug]
+        // The one difference between "set" and "not set" is the `# `. Uncomment
+        // a line and it is an override; the swatch beside it opens on whatever
+        // Holi is using today.
+        lines.push(value === undefined ? `  # ${slug}:` : `  ${slug}: ${quote(value)}`)
+      }
+    }
+    const unknown = Object.keys(block).filter((slug) => !THEME_TOKENS.includes(slug))
+    if (unknown.length > 0) {
+      lines.push('', '  # ── Not tokens Holi knows. Kept as you wrote them; see the warnings.')
+      for (const slug of unknown) lines.push(`  ${slug}: ${quote(block[slug]!)}`)
+    }
   }
-  if (path.length !== 2) return undefined
-  const slug = path[1]!
-  const group = THEME_TOKEN_GROUPS.find((g) => g.tokens.includes(slug))
-  if (group === undefined) return undefined
-  const note = THEME_TOKEN_NOTES[slug]
-  return note === undefined ? group.title : `${group.title} — ${note}`
+  return lines.join('\n') + '\n'
 }
 
-/** Serialise a theme, keeping the document and its notes. See
- *  `yaml-document.ts` for why this is never a stringify. */
-function writeThemeText(existing: string | null, values: Record<string, unknown>): string {
-  return mergeYamlDocument(existing, values, themeComment)
+/** What the file says about itself, above the palettes. */
+const PREAMBLE = [
+  'Every colour and chrome token this vault can set, grouped the way the',
+  'Appearance pane groups them. A COMMENTED line is not set: Holi\u2019s own value',
+  'is in force. Uncomment one and give it a value to override just that token.',
+  '',
+  'A hex value has to be quoted — a bare # starts a YAML comment.',
+  '',
+  'Colours and chrome only. There is deliberately no token for spacing, size or',
+  'position, so a theme cannot move or resize anything.',
+]
+
+/** Double-quoted, always. A hex starts with `#`, which is a comment unquoted,
+ *  and `isSafeCssValue` has already refused newlines and backslashes — so JSON
+ *  string syntax is exactly YAML double-quoted syntax for every value we emit. */
+function quote(value: string): string {
+  return JSON.stringify(value)
 }
 
 export function applyThemePatch(json: string | null, patch: ThemePatch): string {
@@ -470,5 +523,5 @@ export function applyThemePatch(json: string | null, patch: ThemePatch): string 
   // what each token paints, and a person or the agent may have added their own;
   // stringifying `next` would delete every one of them on the first swatch
   // anybody touched.
-  return writeThemeText(json, next)
+  return writeThemeText(next)
 }

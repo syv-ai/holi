@@ -19,6 +19,7 @@ import {
   parseSettingsText,
   resolveVaultSettings,
   writeSettingsText,
+  type SettingTarget,
   type ResolvedVaultSettings,
   type TransformName,
   SETTINGS_FILE,
@@ -60,13 +61,21 @@ export interface VaultSettingsWrite {
 
 /** Merge one patch over one file's existing contents and write it atomically.
  *  `hooks` merges per transform; every other key replaces. */
-async function mergeInto(abs: string, patch: Record<string, unknown>): Promise<void> {
+async function mergeInto(
+  abs: string,
+  patch: Record<string, unknown>,
+  target: SettingTarget,
+): Promise<void> {
   const text = await readFile(abs, 'utf8').catch(() => null)
   // Read twice, for two different things: the VALUES, to merge `hooks` against,
   // and the TEXT, so the write can keep the document. A file that is unusable
   // reads as `{}` rather than refusing the write forever.
   const existing = parseSettingsText(text)
-  const next: Record<string, unknown> = { ...patch }
+  // **The whole file, not the patch.** `writeSettingsText` generates the
+  // document rather than merging into it (see its docstring), so a key it is
+  // not handed is a key that disappears — including `reminders`, which is
+  // machine state this module knows nothing about.
+  const next: Record<string, unknown> = { ...existing, ...patch }
 
   // Per transform, so a patch answering one does not silently disable the rest.
   if (patch.hooks !== undefined) {
@@ -93,7 +102,7 @@ async function mergeInto(abs: string, patch: Record<string, unknown>): Promise<v
   // and so does anything the user or the agent added. Stringifying `next` would
   // delete all of it, once, permanently.
   const tmp = `${abs}.tmp`
-  await writeFile(tmp, writeSettingsText(text, next), 'utf8')
+  await writeFile(tmp, writeSettingsText(next, target), 'utf8')
   await rename(tmp, abs)
 }
 
@@ -109,10 +118,10 @@ async function mergeInto(abs: string, patch: Record<string, unknown>): Promise<v
 export async function writeVaultSettings(root: string, write: VaultSettingsWrite): Promise<void> {
   const jobs: Promise<void>[] = []
   if (write.committed !== undefined && Object.keys(write.committed).length > 0) {
-    jobs.push(mergeInto(join(root, SETTINGS_FILE), write.committed))
+    jobs.push(mergeInto(join(root, SETTINGS_FILE), write.committed, 'committed'))
   }
   if (write.local !== undefined && Object.keys(write.local).length > 0) {
-    jobs.push(mergeInto(join(root, SETTINGS_LOCAL_FILE), write.local))
+    jobs.push(mergeInto(join(root, SETTINGS_LOCAL_FILE), write.local, 'local'))
   }
   await Promise.all(jobs)
 }

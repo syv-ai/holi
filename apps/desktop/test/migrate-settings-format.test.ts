@@ -46,8 +46,8 @@ describe('migrateSettingsFormat', () => {
 
     const yaml = await read(root, SETTINGS_FILE)
     expect(parseYaml(yaml)).toEqual({ dailyNotes: false, editorFont: 'serif' })
-    expect(yaml).toContain('# Keep a daily note')
-    expect(yaml).toContain('# Notes are set in')
+    expect(yaml).toContain('# ── Keep a daily note')
+    expect(yaml).toContain('# ── Notes are set in')
     expect(yaml.startsWith('{')).toBe(false)
     expect(await gone(root, '.holi/settings/app.json')).toBe(true)
   })

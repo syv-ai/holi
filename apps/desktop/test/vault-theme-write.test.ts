@@ -41,7 +41,10 @@ describe('writeVaultTheme', () => {
     expect(await read(root, THEME_FILE)).toEqual({
       $schema: 'holi-theme/v1',
       dark: { primary: '#ff0000' },
-      light: {},
+      // A palette with nothing set is the key followed by its tokens commented
+      // out, which YAML reads as `null`. It cannot be `{}`: uncommenting a
+      // token under an empty flow map is a parse error.
+      light: null,
     })
   })
 

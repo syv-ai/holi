@@ -68,7 +68,16 @@ describe('resolveTheme — whitelist', () => {
   })
 
   it('has no layout tokens in the whitelist at all', () => {
-    for (const banned of ['width', 'height', 'padding', 'margin', 'position', 'top', 'display', 'gap']) {
+    for (const banned of [
+      'width',
+      'height',
+      'padding',
+      'margin',
+      'position',
+      'top',
+      'display',
+      'gap',
+    ]) {
       expect(THEME_TOKENS).not.toContain(banned)
     }
   })
@@ -106,13 +115,23 @@ describe('resolveTheme — validation', () => {
   })
 
   it('validates radius as a length, rejecting a bare color', () => {
-    expect(resolveTheme(stringify({ dark: { radius: '0.75rem' } }), null).dark.radius).toBe('0.75rem')
+    expect(resolveTheme(stringify({ dark: { radius: '0.75rem' } }), null).dark.radius).toBe(
+      '0.75rem',
+    )
     expect(resolveTheme(stringify({ dark: { radius: '#fff' } }), null).dark.radius).toBeUndefined()
   })
 
   it('rejects a shadow value with injection but keeps an ordinary one', () => {
-    expect(resolveTheme(stringify({ dark: { 'shadow-popover': '0 2px 8px #0006' } }), null).dark['shadow-popover']).toBe('0 2px 8px #0006')
-    expect(resolveTheme(stringify({ dark: { 'shadow-popover': 'url(evil)' } }), null).dark['shadow-popover']).toBeUndefined()
+    expect(
+      resolveTheme(stringify({ dark: { 'shadow-popover': '0 2px 8px #0006' } }), null).dark[
+        'shadow-popover'
+      ],
+    ).toBe('0 2px 8px #0006')
+    expect(
+      resolveTheme(stringify({ dark: { 'shadow-popover': 'url(evil)' } }), null).dark[
+        'shadow-popover'
+      ],
+    ).toBeUndefined()
   })
 })
 
@@ -149,7 +168,9 @@ describe('resolveTheme — fallback', () => {
 
 describe('themeBlockToVars', () => {
   it('maps token slugs to their -- custom-property names', () => {
-    expect(themeBlockToVars({ primary: '#f00', radius: '1rem', 'shadow-popover': '0 1px 2px #000' })).toEqual({
+    expect(
+      themeBlockToVars({ primary: '#f00', radius: '1rem', 'shadow-popover': '0 1px 2px #000' }),
+    ).toEqual({
       '--primary': '#f00',
       '--radius': '1rem',
       '--shadow-popover': '0 1px 2px #000',
@@ -229,9 +250,13 @@ describe('applyThemePatch', () => {
   const seeded = stringify({ $schema: 'holi-theme/v1', dark: {}, light: {} })
 
   it('sets a token in one mode and leaves the other alone', () => {
-    const next = parse(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }))
-    expect(next.dark).toEqual({ primary: '#ff0000' })
-    expect(next.light).toEqual({})
+    const written = applyThemePatch(seeded, { dark: { primary: '#ff0000' } })
+    expect(parse(written).dark).toEqual({ primary: '#ff0000' })
+    // **Through the resolver, not the raw parse.** A palette with nothing set
+    // is now the key followed by its tokens commented out, which YAML reads as
+    // `null` — and it has to be, because `light: {}` with commented tokens
+    // under it is a parse error the moment somebody uncomments one.
+    expect(resolveTheme(written, null).light).toEqual({})
   })
 
   it('merges per key, keeping tokens the pane never touched', () => {
@@ -249,10 +274,36 @@ describe('applyThemePatch', () => {
   })
 
   it('keeps both blocks and the schema, even starting from nothing', () => {
-    const next = parse(applyThemePatch(null, { light: { primary: '#ff0000' } }))
-    expect(next.$schema).toBe('holi-theme/v1')
-    expect(next.dark).toEqual({})
-    expect(next.light).toEqual({ primary: '#ff0000' })
+    const written = applyThemePatch(null, { light: { primary: '#ff0000' } })
+    expect(parse(written).$schema).toBe('holi-theme/v1')
+    expect(written).toContain('dark:')
+    expect(resolveTheme(written, null).dark).toEqual({})
+    expect(parse(written).light).toEqual({ primary: '#ff0000' })
+  })
+
+  it('lists every token it did not set, so the file is the reference', () => {
+    // The point of the shape: an empty `dark: {}` named none of forty tokens,
+    // so knowing what you could write meant leaving the file.
+    const written = applyThemePatch(null, { dark: { primary: '#ff0000' } })
+    for (const slug of THEME_TOKENS) {
+      expect(written, slug).toMatch(new RegExp(`^ {2}(# )?${slug}:`, 'm'))
+    }
+    expect(written).toContain('  primary: "#ff0000"')
+    expect(written).toContain('  # brand:')
+  })
+
+  it('brings a cleared token back as a commented line', () => {
+    const set = applyThemePatch(null, { dark: { primary: '#ff0000' } })
+    const cleared = applyThemePatch(set, { dark: { primary: null } })
+    expect(cleared).toContain('  # primary:')
+    expect(resolveTheme(cleared, null).dark).toEqual({})
+  })
+
+  it('keeps a key it does not recognise rather than deleting somebody’s line', () => {
+    // The resolver already warns about it. Silently dropping a line because we
+    // do not know the token is a worse answer than leaving it where they put it.
+    const written = applyThemePatch('dark:\n  not-a-token: "#ff0000"\n', {})
+    expect(written).toContain('not-a-token: "#ff0000"')
   })
 
   it('round-trips through resolveTheme, so the pane cannot write a dead value', () => {
@@ -263,6 +314,8 @@ describe('applyThemePatch', () => {
   })
 
   it('ends with one newline, like every other file Holi writes', () => {
-    expect(applyThemePatch(seeded, { dark: { primary: '#ff0000' } }).endsWith('}\n')).toBe(true)
+    const written = applyThemePatch(seeded, { dark: { primary: '#ff0000' } })
+    expect(written.endsWith('\n')).toBe(true)
+    expect(written.endsWith('\n\n')).toBe(false)
   })
 })

@@ -1,14 +1,17 @@
 /**
- * A settings file that explains itself, and survives being written to.
+ * A settings file that lists every setting, not just the answered ones.
  *
- * The format change is only worth anything if two things hold: the file carries
- * the explanations, and writing to it does not throw them away. The second is
- * the one that would fail silently and permanently — a stringify-based writer
- * looks perfect until the first time somebody changes a setting, and by then
- * the comments are gone from disk.
+ * Two properties, and the second is the one that would rot silently. The file
+ * has to carry the whole vocabulary — a setting you cannot see is a setting you
+ * cannot use, which is what `editorFont` and `maxCommittedFileBytes` were for
+ * as long as the file held only the birth ritual's four answers. And an unset
+ * setting has to stay a COMMENT: the moment it is written as a value, D85's
+ * argument is lost and this vault has frozen a default that can never be
+ * raised for it again.
  */
 import { describe, expect, it } from 'vitest'
 import {
+  VAULT_SETTING_DEFAULTS,
   VAULT_SETTINGS,
   parseSettingsText,
   resolveVaultSettings,
@@ -17,69 +20,91 @@ import {
   writeSettingsText,
 } from '../src/index'
 
-describe('a seeded settings file', () => {
-  const seeded = seedSettingsText(seedSettings('committed'))
+const seeded = seedSettingsText(seedSettings('committed'), 'committed')
+const seededLocal = seedSettingsText(seedSettings('local'), 'local')
 
-  it('explains every key it carries, in the tab’s own words', () => {
+describe('a seeded settings file', () => {
+  it('names every setting filed under its layer, answered or not', () => {
+    // Against the list, never a count. The gap this closes is exactly the two
+    // settings the ritual does not ask about, which appeared in no file at all.
     for (const setting of VAULT_SETTINGS) {
-      if (!(setting.key in seedSettings('committed'))) continue
-      expect(seeded, setting.key).toContain(`# ${setting.label}`)
-      expect(seeded, setting.key).toContain(`# ${setting.explanation}`)
+      const text = setting.target === 'committed' ? seeded : seededLocal
+      expect(text, setting.key).toContain(`${setting.key}:`)
+      expect(text, setting.key).toContain(setting.label)
     }
   })
 
-  it('is block YAML, not a single flow mapping', () => {
-    // `parseDocument('{}')` preserves the flow style it was given, which put
-    // every key on one line and stacked the comments at the top.
-    expect(seeded.startsWith('{')).toBe(false)
-    expect(seeded).toMatch(/^hooks:\n {2}relink: true$/m)
+  it('says what a setting will accept, in the values a file uses', () => {
+    // The options as VALUES, not as the labels the pane shows: this line is
+    // read at the moment somebody is typing one.
+    expect(seeded).toContain('One of: true, false')
+    expect(seededLocal).toContain('One of: system (Match my system)')
+    expect(seeded).toContain('{ kind: board }')
   })
 
-  it('resolves to exactly the defaults, like the JSON it replaces', () => {
-    const resolved = resolveVaultSettings(seeded, null)
+  it('comments out a setting the ritual does not ask, so no default is frozen', () => {
+    // D85: a number written into every vault at birth is a default that can
+    // never be raised for the vaults that already have one. Visible in the
+    // file, absent from the resolved values, is the whole point.
+    expect(seeded).toContain('# maxCommittedFileBytes:')
+    expect(seeded).not.toMatch(/^maxCommittedFileBytes:/m)
+    expect(parseSettingsText(seeded).maxCommittedFileBytes).toBeUndefined()
+    expect(parseSettingsText(seeded).editorFont).toBeUndefined()
+  })
+
+  it('resolves to exactly the defaults, like the file it replaces', () => {
+    const resolved = resolveVaultSettings(seeded, seededLocal)
     expect(resolved.warnings).toEqual([])
     expect(resolved.dailyNotes).toBe(true)
     expect(resolved.landing).toEqual({ kind: 'daily' })
+    // The commented ones fall through to the default rather than being absent.
+    expect(resolved.editorFont).toBe(VAULT_SETTING_DEFAULTS.editorFont)
+  })
+
+  it('is block YAML, and a map beside its key is flow', () => {
+    expect(seeded.startsWith('{')).toBe(false)
+    expect(seeded).toMatch(/^hooks:\n {2}relink: true$/m)
+    // `stringify` hands a one-entry map back as `kind: daily`, which becomes
+    // `landing: kind: daily` after a key — a parse error, not a value.
+    expect(seeded).toContain('landing: { kind: daily }')
   })
 })
 
 describe('writing to a settings file', () => {
-  it('keeps a comment somebody wrote by hand', () => {
-    // The property the whole module exists for. A writer that stringified the
-    // values would delete this on the first click of any control, once, with no
-    // way back.
-    const mine = '# my own note, do not lose this\ndailyNotes: true\n'
-    expect(writeSettingsText(mine, { dailyNotes: false })).toContain(
-      '# my own note, do not lose this',
+  it('keeps the vocabulary, so a write cannot shrink the file', () => {
+    const written = writeSettingsText(
+      { ...seedSettings('committed'), dailyNotes: false },
+      'committed',
     )
+    expect(written).toContain('# editorFont:')
+    expect(written).toContain('dailyNotes: false')
   })
 
-  it('does not add a second copy of an explanation it already wrote', () => {
-    const seeded = seedSettingsText(seedSettings('committed'))
-    const written = writeSettingsText(seeded, { dailyNotes: false })
-    const label = VAULT_SETTINGS.find((s) => s.key === 'dailyNotes')!.label
-    expect(written.split(`# ${label}`)).toHaveLength(2)
+  it('turns an answer back into a comment when it is unset', () => {
+    const answered = writeSettingsText({ editorFont: 'serif' }, 'committed')
+    expect(answered).toContain('editorFont: serif')
+    expect(writeSettingsText({}, 'committed')).toContain('# editorFont:')
   })
 
-  it('explains a key it adds for the first time', () => {
-    const written = writeSettingsText('dailyNotes: true\n', { editorFont: 'serif' })
-    expect(written).toContain('# Notes are set in')
-    expect(written).toContain('editorFont: serif')
-  })
-
-  it('leaves alone a key no setting describes', () => {
+  it('keeps a key no setting describes', () => {
     // `reminders` is the delivery watermark, written into the local file by
-    // main. It is machine state and has nothing to explain.
-    const written = writeSettingsText('reminders:\n  seen: 3\n', { colorScheme: 'dark' })
-    expect(written).toContain('seen: 3')
+    // main. It is machine state, it has nothing to explain, and a writer that
+    // dropped it would lose a vault's reminder history on the next click.
+    const written = writeSettingsText({ reminders: { seen: 3 }, colorScheme: 'dark' }, 'local')
     expect(parseSettingsText(written).reminders).toEqual({ seen: 3 })
   })
 
-  it('replaces a file whose top level is not a mapping', () => {
-    // Refusing forever would leave the pane unable to fix a file somebody broke.
-    expect(parseSettingsText(writeSettingsText('- a\n- b\n', { dailyNotes: false }))).toEqual({
-      dailyNotes: false,
-    })
+  it('does NOT keep a comment somebody wrote by hand', () => {
+    // Pinned as the cost, not as a feature. The writer generates the document
+    // rather than merging into it, which is what keeps the vocabulary complete
+    // when a setting is added later — and the price is that a personal note in
+    // this file does not survive the next write. `writeThemeText` makes the
+    // same trade and says why.
+    const written = writeSettingsText(
+      parseSettingsText('# my own note\ndailyNotes: true\n'),
+      'committed',
+    )
+    expect(written).not.toContain('my own note')
   })
 })
 
