@@ -1,4 +1,5 @@
 import { parse as parseYaml } from 'yaml'
+import { THEME_TOKENS, resolveTheme } from '@holi/shared'
 import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -90,8 +91,8 @@ describe('SEED_FILES', () => {
       '.holi/settings/app.local.yaml',
       '.holi/settings/app.yaml',
       '.holi/settings/icons.yaml',
-      '.holi/settings/theme.local.yaml',
-      '.holi/settings/theme.yaml',
+      '.holi/settings/theme.css',
+      '.holi/settings/theme.local.css',
       '.holi/vault',
       'AGENTS.md',
       'CLAUDE.md',
@@ -114,9 +115,17 @@ describe('SEED_FILES', () => {
     ])
   })
 
-  it('seeds an empty, valid theme.yaml and a blank theme.local.yaml', () => {
-    for (const key of ['.holi/settings/theme.yaml', '.holi/settings/theme.local.yaml'] as const) {
-      expect(parseYaml(SEED_FILES[key]!)).toMatchObject({ dark: {}, light: {} })
+  it('seeds a theme.css pair that parses, sets nothing, and names every token', () => {
+    for (const key of ['.holi/settings/theme.css', '.holi/settings/theme.local.css'] as const) {
+      const text = SEED_FILES[key]!
+      // Parsed by the reader that reads it for real, not by a second opinion.
+      expect(resolveTheme(text, null)).toEqual({ dark: {}, light: {}, warnings: [] })
+      expect(text).toContain("[data-theme='dark'] {")
+      // The vocabulary is the point of the file: a token Holi knows and this
+      // vault has not set is a commented-out declaration, not an absence.
+      for (const slug of THEME_TOKENS) {
+        expect(text, slug).toContain(`/* --${slug}: ; */`)
+      }
     }
   })
 
@@ -159,7 +168,7 @@ describe('SEED_FILES', () => {
   it('seeds the theme skill documenting the colour/chrome vocabulary', () => {
     const skill = SEED_FILES['.claude/skills/theme/SKILL.md']!
     expect(skill).toContain('name: theme')
-    expect(skill).toContain('.holi/settings/theme.yaml') // the file it authors
+    expect(skill).toContain('.holi/settings/theme.css') // the file it authors
     expect(skill).toContain('primary') // a token from the whitelist
   })
 
@@ -421,10 +430,10 @@ describe('ensureSeeded — the .gitignore', () => {
     expect(committed).toContain('shared.md')
     expect(committed).toContain('AGENTS.md')
     expect(committed).toContain('USER.md') // no longer special-cased — it travels
-    expect(committed).toContain('.holi/settings/theme.yaml') // seeded + committed (shared theme)
+    expect(committed).toContain('.holi/settings/theme.css') // seeded + committed (shared theme)
     expect(committed).not.toContain('USER.local.md')
     expect(committed).not.toContain('.holi/settings/app.local.yaml')
-    expect(committed).not.toContain('.holi/settings/theme.local.yaml') // seeded but gitignored
+    expect(committed).not.toContain('.holi/settings/theme.local.css') // seeded but gitignored
   })
 })
 
@@ -703,7 +712,7 @@ describe('the managed / once split (D75)', () => {
     // commit that touches a memory. Seeding runs on every vault OPEN, so the two
     // would fight and the vault's real index would be replaced by the empty stub
     // roughly once a session.
-    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.yaml']) {
+    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.css']) {
       expect(ONCE_FILES[rel]).toBeDefined()
       expect(MANAGED_FILES[rel]).toBeUndefined()
     }

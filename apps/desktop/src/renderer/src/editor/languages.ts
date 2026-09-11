@@ -20,6 +20,7 @@
  * the thin glue from that id to CodeMirror extensions.
  */
 import { css } from '@codemirror/lang-css'
+import { colorPicker } from '@replit/codemirror-css-color-picker'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
 import { json, jsonParseLinter } from '@codemirror/lang-json'
@@ -140,8 +141,13 @@ export function languageForPath(path: string): Extension[] {
   if (id === 'javascript') return [javascript()]
   // `html()` already nests JS and CSS for `<script>`/`<style>` blocks, which is
   // most of what an app's `index.html` contains.
-  if (id === 'html') return [html()]
-  if (id === 'css') return [css()]
+  // `colorPicker` finds colours through the CSS grammar — `ColorLiteral`,
+  // `CallExpression`, `ValueName` — so it belongs with the two languages that
+  // HAVE that grammar and nowhere else. `html()` mounts CSS inside `<style>`
+  // and `style=`, which the extension walks through its `Styles` overlay, so a
+  // vault app's inline colours get a swatch too.
+  if (id === 'html') return [html(), colorPicker]
+  if (id === 'css') return [css(), colorPicker]
   return [LEGACY[id]]
 }
 

@@ -238,11 +238,9 @@ test('offers the files the section on screen is a view of', async () => {
   // is saying WHICH file backs what you are looking at.
   setup()
   expect(await screen.findByRole('button', { name: '.holi/settings/app.yaml' })).toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: '.holi/settings/theme.yaml' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '.holi/settings/theme.css' })).not.toBeInTheDocument()
 
   await go('Appearance')
-  expect(screen.getByRole('button', { name: '.holi/settings/theme.yaml' })).toBeInTheDocument()
-  expect(
-    screen.getByRole('button', { name: '.holi/settings/theme.local.yaml' }),
-  ).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '.holi/settings/theme.css' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '.holi/settings/theme.local.css' })).toBeInTheDocument()
 })

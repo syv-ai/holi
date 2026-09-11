@@ -22,7 +22,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import {
-  applyThemePatch,
+  themeFromLegacy,
   ICONS_FILE,
   ICONS_LOCAL_FILE,
   parseSettingsText,
@@ -58,11 +58,18 @@ const CONVERSIONS: readonly (readonly [string, string, Convert])[] = [
     SETTINGS_LOCAL_FILE,
     (t) => writeSettingsText(parseSettingsText(t), 'local'),
   ],
-  // Theme: an empty patch, which is the existing "read, merge, write" path with
-  // nothing to merge. It applies the D64 whitelist on the way through, so a
-  // token that was never valid is dropped here rather than surviving the move.
-  ['.holi/settings/theme.json', THEME_FILE, (t) => applyThemePatch(t, {})],
-  ['.holi/settings/theme.local.json', THEME_LOCAL_FILE, (t) => applyThemePatch(t, {})],
+  // Theme: read in the OLD shape and written as CSS, because a theme is a set
+  // of custom properties and the file now says so. `themeFromLegacy`, never
+  // `applyThemePatch` — the live reader speaks CSS, so handing it a YAML theme
+  // would read as empty and quietly replace a vault's colours with defaults.
+  //
+  // Both hops are listed. A vault may sit at `.json` (never opened since the
+  // YAML change) or at `.yaml` (opened once in between), and a table that knew
+  // only the older one would strand every vault caught in the middle.
+  ['.holi/settings/theme.json', THEME_FILE, themeFromLegacy],
+  ['.holi/settings/theme.local.json', THEME_LOCAL_FILE, themeFromLegacy],
+  ['.holi/settings/theme.yaml', THEME_FILE, themeFromLegacy],
+  ['.holi/settings/theme.local.yaml', THEME_LOCAL_FILE, themeFromLegacy],
   // Icons: no metadata to add, so this is only a reformat. One entry per path,
   // and a path explains itself.
   ['.holi/settings/icons.json', ICONS_FILE, (t) => stringifyYaml(parseYaml(t) ?? {})],

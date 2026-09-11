@@ -34,6 +34,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@radix-ui/react-dialog": "^1.1.23",
+    "@replit/codemirror-css-color-picker": "^6.3.0",
     "@trpc/client": "^11.18.0",
     "@trpc/server": "^11.18.0",
     "@xterm/addon-fit": "^0.10.0",

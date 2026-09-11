@@ -25,19 +25,14 @@
 import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view'
 import type { DecorationSet, ViewUpdate } from '@codemirror/view'
 import type { Extension, Range } from '@codemirror/state'
-import {
-  SETTINGS_FILE,
-  SETTINGS_LOCAL_FILE,
-  THEME_FILE,
-  THEME_LOCAL_FILE,
-  VAULT_SETTINGS,
-} from '@holi/shared'
+import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, VAULT_SETTINGS } from '@holi/shared'
 import { cssColorToHex } from '@/lib/css-color'
 
-/** The four files this applies to. Deliberately not "any YAML": the controls
- *  are derived from a schema, and a key called `primary` in somebody's own note
- *  is not a theme token. */
-const FILES: readonly string[] = [SETTINGS_FILE, SETTINGS_LOCAL_FILE, THEME_FILE, THEME_LOCAL_FILE]
+/** The two files this applies to. Deliberately not "any YAML": the menu is
+ *  derived from a schema, and a key called `landing` in somebody's own note is
+ *  not a setting. The theme pair is absent because it is CSS and holds no
+ *  fixed-set values — its colours are the editor's business, not this one's. */
+const FILES: readonly string[] = [SETTINGS_FILE, SETTINGS_LOCAL_FILE]
 
 export function isSettingsFilePath(path: string): boolean {
   return FILES.includes(path)

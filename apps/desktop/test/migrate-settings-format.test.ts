@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { parse as parseYaml } from 'yaml'
+import { resolveTheme } from '@holi/shared'
 import { ICONS_FILE, SETTINGS_FILE, SETTINGS_LOCAL_FILE, THEME_FILE } from '@holi/shared'
 import { migrateSettingsFormat } from '../src/main/vault/migrate-settings-format'
 
@@ -65,14 +66,29 @@ describe('migrateSettingsFormat', () => {
     })
   })
 
-  it('converts the theme, and names its palettes', async () => {
+  it('converts a theme to CSS, keeping what the vault had set', async () => {
+    // **The hop that matters.** The live reader speaks CSS, so a migration that
+    // used it to READ the old file would have seen nothing and replaced the
+    // vault's colours with defaults — silently, with no error anywhere.
     const root = await vault({
       '.holi/settings/theme.json': '{"dark": {"primary": "#112233"}, "light": {}}',
     })
     await migrateSettingsFormat(root)
-    const yaml = await read(root, THEME_FILE)
-    expect(parseYaml(yaml).dark).toEqual({ primary: '#112233' })
-    expect(yaml).toContain('# The dark palette.')
+    const css = await read(root, THEME_FILE)
+    expect(resolveTheme(css, null).dark).toEqual({ primary: '#112233' })
+    expect(css).toContain("[data-theme='dark'] {")
+  })
+
+  it('converts a theme that already reached YAML, not only the original JSON', async () => {
+    // A vault may sit at `.json` (never opened since) or at `.yaml` (opened
+    // once in between). A table that knew only the older hop would strand every
+    // vault caught in the middle — which is every vault opened this week.
+    const root = await vault({
+      '.holi/settings/theme.yaml': 'dark:\n  primary: "#445566"\nlight: {}\n',
+    })
+    await migrateSettingsFormat(root)
+    expect(resolveTheme(await read(root, THEME_FILE), null).dark).toEqual({ primary: '#445566' })
+    expect(await gone(root, '.holi/settings/theme.yaml')).toBe(true)
   })
 
   it('converts the icon map without pretending it has anything to explain', async () => {

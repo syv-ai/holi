@@ -5,10 +5,10 @@
  * worth testing here is that a write lands in the right FILE, keeps what it did
  * not touch, and survives arriving at a vault that has no theme file yet.
  */
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { resolveTheme } from '@holi/shared'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   THEME_FILE,
@@ -30,7 +30,22 @@ async function vault(files: Record<string, string> = {}): Promise<string> {
   return root
 }
 
-const read = (root: string, rel: string) => readFile(join(root, rel), 'utf8').then(parseYaml)
+/** What a theme file SAYS, read through the parser that reads it for real. */
+const read = (root: string, rel: string) =>
+  readFile(join(root, rel), 'utf8').then((t) => resolveTheme(t, null))
+
+/** A theme file, as CSS. */
+const themeCss = (body: Record<string, Record<string, string>>): string =>
+  Object.entries(body)
+    .map(
+      ([mode, block]) =>
+        `[data-theme='${mode}'] {\n` +
+        Object.entries(block)
+          .map(([slug, value]) => `  --${slug}: ${value};`)
+          .join('\n') +
+        '\n}',
+    )
+    .join('\n\n')
 
 describe('writeVaultTheme', () => {
   it('creates the committed file when the vault has no theme yet', async () => {
@@ -38,18 +53,17 @@ describe('writeVaultTheme', () => {
 
     await writeVaultTheme(root, 'committed', { dark: { primary: '#ff0000' } })
 
+    // Through the resolver, which is what the app reads the file with. There
+    // is no `$schema` any more: a CSS file says what it is by being CSS.
     expect(await read(root, THEME_FILE)).toEqual({
-      $schema: 'holi-theme/v1',
       dark: { primary: '#ff0000' },
-      // A palette with nothing set is the key followed by its tokens commented
-      // out, which YAML reads as `null`. It cannot be `{}`: uncommenting a
-      // token under an empty flow map is a parse error.
-      light: null,
+      light: {},
+      warnings: [],
     })
   })
 
   it('puts a local write in the local file and leaves the committed one alone', async () => {
-    const root = await vault({ [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111' } }) })
+    const root = await vault({ [THEME_FILE]: themeCss({ dark: { primary: '#111111' } }) })
 
     await writeVaultTheme(root, 'local', { dark: { primary: '#ff0000' } })
 
@@ -61,7 +75,7 @@ describe('writeVaultTheme', () => {
     // A vault's theme is as likely to have been written by hand or by the agent
     // as by these controls, so a whole-file replace would eat their work.
     const root = await vault({
-      [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111', brand: '#222222' } }),
+      [THEME_FILE]: themeCss({ dark: { primary: '#111111', brand: '#222222' } }),
     })
 
     await writeVaultTheme(root, 'committed', { dark: { primary: '#ff0000' } })
@@ -71,7 +85,7 @@ describe('writeVaultTheme', () => {
 
   it('clears a token on null, which is what a reset does', async () => {
     const root = await vault({
-      [THEME_FILE]: stringifyYaml({ dark: { primary: '#111111', brand: '#222222' } }),
+      [THEME_FILE]: themeCss({ dark: { primary: '#111111', brand: '#222222' } }),
     })
 
     await writeVaultTheme(root, 'committed', { dark: { primary: null } })

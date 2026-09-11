@@ -29,8 +29,8 @@ import { parse as parseYaml } from 'yaml'
  * settings pane offers both as an escape hatch) and main writes them. Three
  * copies of a path is three chances to move two of them.
  */
-export const THEME_FILE = '.holi/settings/theme.yaml'
-export const THEME_LOCAL_FILE = '.holi/settings/theme.local.yaml'
+export const THEME_FILE = '.holi/settings/theme.css'
+export const THEME_LOCAL_FILE = '.holi/settings/theme.local.css'
 
 /** The light/dark scheme a block applies to. */
 export type ThemeMode = 'light' | 'dark'
@@ -167,19 +167,69 @@ function isValidTokenValue(slug: string, value: string): boolean {
 }
 
 /**
- * Parse a theme file's text into a `VaultTheme`, or `null` if it is not a
- * JSON object. Never throws — a broken file must degrade to "no theme", not
- * crash the read.
+ * The two selectors a theme file may use, and the mode each names.
+ *
+ * **Exactly two, matched whole.** The file is real CSS and would behave as a
+ * stylesheet if you pasted it into one, but this is a parser, not a cascade: it
+ * has no business resolving specificity, so a block it does not recognise is
+ * dropped with a warning rather than guessed at.
  */
-export function parseVaultTheme(json: string): VaultTheme | null {
-  let parsed: unknown
-  try {
-    parsed = parseYaml(json)
-  } catch {
-    return null
+const SELECTORS: Readonly<Record<string, ThemeMode>> = Object.freeze({
+  "[data-theme='dark']": 'dark',
+  '[data-theme="dark"]': 'dark',
+  "[data-theme='light']": 'light',
+  '[data-theme="light"]': 'light',
+})
+
+/** `/* … *\/` anywhere, including the generated vocabulary. Stripped before the
+ *  blocks are read so a commented-out declaration stays commented out. */
+const COMMENTS = /\/\*[\s\S]*?\*\//g
+
+/** One `selector { … }`. Braces do not nest in a file this shape, and a nested
+ *  one (`@media`, a nested rule) simply fails to match — which is the right
+ *  answer, because the whitelist would refuse whatever was inside it anyway. */
+const BLOCK = /([^{}]+)\{([^{}]*)\}/g
+
+/** `--slug: value` — the only declaration shape a theme may carry. A plain
+ *  property (`color: red`) does not match, which is the structural half of
+ *  D64's promise surviving the move from YAML to CSS. */
+const DECLARATION = /^\s*--([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.+?)\s*$/
+
+/**
+ * Parse a theme file's text into a `VaultTheme`, or `null` if it holds no
+ * recognisable block. Never throws — a broken file must degrade to "no theme",
+ * not crash the read.
+ *
+ * **CSS, because a theme is a set of custom properties and always was.**
+ * `themeBlockToVars` has always produced `--primary: #8b5cf6`; the file now says
+ * the same thing in the same words. It also means the editor's colour picker —
+ * `@replit/codemirror-css-color-picker`, which finds colours through the CSS
+ * grammar and only the CSS grammar — works here without anything of ours.
+ *
+ * **This is a parser and NOT a stylesheet loader. The file is never injected.**
+ * Every declaration is read, whitelisted and validated exactly as the YAML keys
+ * were, and only the survivors reach the DOM. That was structurally obvious
+ * when the file was data; in a file that looks like CSS it is a rule, so it is
+ * written here in capitals: nothing in this module ever hands this text to the
+ * document.
+ */
+export function parseVaultTheme(text: string): VaultTheme | null {
+  const out: VaultTheme = {}
+  let found = false
+  const withoutComments = text.replace(COMMENTS, '')
+  for (const [, selector, body] of withoutComments.matchAll(BLOCK)) {
+    const mode = SELECTORS[selector!.trim()]
+    if (mode === undefined) continue
+    found = true
+    const block: ThemeBlock = { ...(out[mode] ?? {}) }
+    for (const line of body!.split(';')) {
+      const m = DECLARATION.exec(line)
+      if (m === null) continue
+      block[m[1]!] = m[2]!
+    }
+    out[mode] = block
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-  return parsed as VaultTheme
+  return found ? out : null
 }
 
 function blockOf(theme: VaultTheme | null, mode: ThemeMode): ThemeBlock {
@@ -370,12 +420,30 @@ export interface ThemePatch {
  * Holi's default is deleting the key, not writing an empty string, which would
  * be dropped as invalid and leave the old value in place.
  */
+/** The renderer's patch object, or `null` if it is not one. Never throws. */
+function parsePatchJson(json: string): VaultTheme | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(json)
+  } catch {
+    return null
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+  return parsed as VaultTheme
+}
+
 export function parseThemePatch(json: string | null): { patch: ThemePatch; warnings: string[] } {
   const warnings: string[] = []
   const patch: ThemePatch = {}
   if (json === null || json.trim() === '') return { patch, warnings }
 
-  const parsed = parseVaultTheme(json)
+  // **JSON, not the file's own format.** This reads the patch the RENDERER
+  // sends over IPC — `{dark: {primary: '#fff'}}` — which has nothing to do with
+  // how the theme is stored. When the file became CSS, `parseVaultTheme` became
+  // a CSS parser, and leaving this pointed at it would have made every write
+  // from the settings pane parse as nothing: a pane whose controls silently did
+  // nothing at all.
+  const parsed = parsePatchJson(json)
   if (parsed === null) {
     warnings.push('refused a theme patch that is not a JSON object')
     return { patch, warnings }
@@ -410,6 +478,48 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
 }
 
 /**
+ * Read a theme written in the OLD shape — `{light: {...}, dark: {...}}` as JSON
+ * or YAML — and return it as `theme.css`.
+ *
+ * **Only the migration calls this, and it exists because the reader moved.**
+ * `parseVaultTheme` speaks CSS now, so pointing the migration at it would have
+ * read every pre-existing theme as empty and written a file full of commented
+ * defaults — a vault silently losing its colours, with no error anywhere. The
+ * old parse is nine lines; keeping them is cheaper than the bug.
+ *
+ * Whitelisting happens on the way through, so a token that was never valid is
+ * dropped here rather than surviving the move.
+ */
+export function themeFromLegacy(text: string): string {
+  let parsed: unknown
+  try {
+    parsed = parseYaml(text)
+  } catch {
+    parsed = null
+  }
+  const values: Record<string, unknown> = { $schema: undefined }
+  for (const mode of ['light', 'dark'] as const) {
+    const block =
+      parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)[mode]
+        : null
+    const out: ThemeBlock = {}
+    if (block !== null && typeof block === 'object' && !Array.isArray(block)) {
+      for (const [slug, value] of Object.entries(block as Record<string, unknown>)) {
+        if (
+          typeof value === 'string' &&
+          THEME_TOKENS.includes(slug) &&
+          isValidTokenValue(slug, value)
+        )
+          out[slug] = value.trim()
+      }
+    }
+    values[mode] = out
+  }
+  return writeThemeText(values)
+}
+
+/**
  * Apply a patch to a theme file's text, returning the new text.
  *
  * Per key per mode, never a replace: the file may carry tokens this pane did
@@ -420,80 +530,74 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
  * The theme file's text, written out in full every time.
  *
  * **The file lists every token, whether or not this vault sets one.** An empty
- * `dark: {}` was honest and useless: the vocabulary is forty tokens and the
- * file named none of them, so knowing what you could write meant opening the
- * Appearance pane or the `theme` skill. Now the file is the reference — a token
- * this vault has not set is a commented line, in the group the pane puts it in.
+ * file was honest and useless: the vocabulary is forty tokens and the file named
+ * none of them, so knowing what you could write meant opening the Appearance
+ * pane or the `theme` skill. A token this vault has not set is a commented-out
+ * declaration, in the group the pane puts it in.
  *
- * **Generated, not merged, and that is a deliberate reversal.** Every other
- * settings write goes through `mergeYamlDocument` so a hand-written note
- * survives. That cannot hold here: `doc.set('dark', …)` replaces the whole
- * node, so a comment INSIDE a palette is destroyed by the next swatch anybody
- * touches — which is every commented token this file exists to list. The two
- * ways out were teaching the merge to reconcile a nested map in place, or
- * re-emitting the block. Re-emitting is the one that cannot rot: the vocabulary
- * is always complete and always current, including tokens added to the
- * whitelist after this vault was created.
+ * **Generated, not merged, and that is a deliberate reversal** of the rule
+ * `app.yaml` still follows. A comment inside a block cannot survive a
+ * round trip through a writer that rebuilds the block, and the commented
+ * vocabulary IS comments — so re-emitting is what keeps the list complete and
+ * current, including tokens added to the whitelist after this vault was made.
+ * The cost is that a note written inside this file does not survive a write.
  *
- * The cost is that a note written inside a palette does not survive a write.
- * Notes ABOVE a token are regenerated from `THEME_TOKEN_NOTES`, so the ones
- * that carry meaning come back; a personal one does not. That is the trade this
- * file makes and the reason `app.yaml` still merges.
- *
- * A key that is not a known token is kept rather than dropped — the resolver
- * already warns about it, and silently deleting somebody's line because we do
- * not recognise it is a worse answer than leaving it where they put it.
+ * A declaration that is not a known token is kept rather than dropped: the
+ * resolver already warns about it, and silently deleting somebody's line
+ * because we do not recognise it is a worse answer than leaving it alone.
  */
 function writeThemeText(values: Record<string, unknown>): string {
-  const lines: string[] = [`$schema: ${String(values.$schema ?? 'holi-theme/v1')}`, '']
-  lines.push(...PREAMBLE.map((line) => (line === '' ? '#' : `# ${line}`)))
+  const lines: string[] = [
+    '/*',
+    ...PREAMBLE.map((line) => (line === '' ? ' *' : ` * ${line}`)),
+    ' */',
+  ]
 
   for (const mode of ['dark', 'light'] as const) {
     const block = (values[mode] ?? {}) as Record<string, string>
-    lines.push('', `# The ${mode} palette.`, `${mode}:`)
+    lines.push('', `[data-theme='${mode}'] {`)
     for (const group of THEME_TOKEN_GROUPS) {
-      // **A key line is the only thing at `# ` depth.** A group heading and a
-      // token's note are both comments too, so without a second level of indent
-      // the whole block is one undifferentiated column of `#` and you cannot
-      // find the line you came to uncomment.
-      lines.push('', `  # ── ${group.title}: ${group.blurb}`)
+      lines.push('', `  /* ${group.title} — ${group.blurb} */`)
       for (const slug of group.tokens) {
         const note = THEME_TOKEN_NOTES[slug]
-        if (note !== undefined) lines.push(`  #   ${note}`)
+        if (note !== undefined) lines.push(`  /* ${note} */`)
         const value = block[slug]
-        // The one difference between "set" and "not set" is the `# `. Uncomment
-        // a line and it is an override; the swatch beside it opens on whatever
-        // Holi is using today.
-        lines.push(value === undefined ? `  # ${slug}:` : `  ${slug}: ${quote(value)}`)
+        // Set and unset differ by the comment wrapper and nothing else, so
+        // taking a token over is uncommenting the line.
+        //
+        // **Nothing written into a comment may contain a comment marker.**
+        // The preamble first said "delete the slash-star and the star-slash"
+        // using the characters themselves, which closed the comment early and
+        // left the rest of the paragraph sitting in the file as CSS.
+        lines.push(value === undefined ? `  /* --${slug}: ; */` : `  --${slug}: ${value};`)
       }
     }
     const unknown = Object.keys(block).filter((slug) => !THEME_TOKENS.includes(slug))
     if (unknown.length > 0) {
-      lines.push('', '  # ── Not tokens Holi knows. Kept as you wrote them; see the warnings.')
-      for (const slug of unknown) lines.push(`  ${slug}: ${quote(block[slug]!)}`)
+      lines.push('', '  /* Not tokens Holi knows. Kept as you wrote them; see the warnings. */')
+      for (const slug of unknown) lines.push(`  --${slug}: ${block[slug]!};`)
     }
+    lines.push('}')
   }
   return lines.join('\n') + '\n'
 }
 
-/** What the file says about itself, above the palettes. */
+/** What the file says about itself, above the blocks. */
 const PREAMBLE = [
-  'Every colour and chrome token this vault can set, grouped the way the',
-  'Appearance pane groups them. A COMMENTED line is not set: Holi\u2019s own value',
-  'is in force. Uncomment one and give it a value to override just that token.',
+  'This vault\u2019s theme.',
   '',
-  'A hex value has to be quoted — a bare # starts a YAML comment.',
+  'Every colour and chrome token it can set, grouped the way the Appearance',
+  'pane groups them. A COMMENTED-OUT declaration is not set: Holi\u2019s own value',
+  'is in force. Uncomment one to take it over.',
   '',
-  'Colours and chrome only. There is deliberately no token for spacing, size or',
-  'position, so a theme cannot move or resize anything.',
+  'Real CSS, and the app reads it as DATA: every declaration is checked against',
+  'a fixed whitelist before anything reaches the screen. That is why there is no',
+  'token for spacing, size or position, and why a rule you add here for anything',
+  'else has no effect \u2014 a theme cannot move or resize anything, by construction.',
+  '',
+  'Two blocks, one per colour scheme. Holi rewrites this file when a setting',
+  'changes and regenerates these notes, so a comment of your own will not last.',
 ]
-
-/** Double-quoted, always. A hex starts with `#`, which is a comment unquoted,
- *  and `isSafeCssValue` has already refused newlines and backslashes — so JSON
- *  string syntax is exactly YAML double-quoted syntax for every value we emit. */
-function quote(value: string): string {
-  return JSON.stringify(value)
-}
 
 export function applyThemePatch(json: string | null, patch: ThemePatch): string {
   const current = json === null ? null : parseVaultTheme(json)
