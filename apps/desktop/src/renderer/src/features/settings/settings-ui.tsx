@@ -92,12 +92,32 @@ export function SettingsList({ children }: { children: ReactNode }): React.JSX.E
 }
 
 /**
- * One row: a label, an optional description, an optional control on the right,
- * and anything that needs the row's full width underneath.
+ * One row: a label, an optional description, a control on the right, and
+ * anything that needs the row's full width underneath.
  *
  * Every section's rows go through this, so the vertical rhythm and the
- * label/description pairing are decided once. A control that cannot sit on the
- * label's line (a wrapping radio group, a list of toggles) goes in `children`.
+ * label/description pairing are decided once.
+ *
+ * **The control belongs on the right, and `children` is the exception.** A
+ * settings row is a question and an answer, and the answer reads as one when it
+ * is pinned to the right edge of every row in the list. `children` is for a
+ * control that is not one answer at all: the commit transforms are five
+ * labelled switches, each with its own sentence, and a stack of those is a list
+ * that happens to live in a row.
+ *
+ * **Wrapping decides when a wide control drops below, not a breakpoint.** The
+ * top line is a wrap container: the label column has a real flex-basis, so when
+ * the label minimum plus the control natural width exceed the row, the control
+ * moves to a second line and `justify-end` keeps it right. The switch is then a
+ * property of the control own width, so a four-option radio group drops below
+ * far earlier than a checkbox does, where one container-query breakpoint would
+ * have had to be wrong for one of them. It also holds at every pane width,
+ * including the 240px minimum, with no new class to verify in a running window.
+ *
+ * `basis-48` is that minimum: a label column narrower than 192px stops being a
+ * column and starts being a hyphenation exercise. It only decides where the
+ * wrap happens; `grow` hands the label everything left over once the control
+ * fits.
  */
 export function SettingsRow({
   label,
@@ -119,8 +139,8 @@ export function SettingsRow({
 } & Omit<React.HTMLAttributes<HTMLDivElement>, 'children'>): React.JSX.Element {
   return (
     <div className={cn('flex flex-col gap-2 py-3', className)} {...rest}>
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-start justify-end gap-x-3 gap-y-2">
+        <div className="min-w-0 grow basis-48">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-medium">{label}</span>
             {meta}
@@ -129,7 +149,9 @@ export function SettingsRow({
             <p className="mt-0.5 text-[11px] text-muted-foreground">{description}</p>
           )}
         </div>
-        {control !== undefined && <div className="shrink-0">{control}</div>}
+        {/* Shrinkable, not `shrink-0`: once it is alone on the second line and
+            still too wide, its own wrapping is the last thing left. */}
+        {control !== undefined && <div className="min-w-0">{control}</div>}
       </div>
       {children}
     </div>

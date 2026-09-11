@@ -23,11 +23,7 @@ import { SettingsRow } from './settings-ui'
  *  happened by the time you can change it. Everything else applies as you go. */
 const APPLIES_ON_NEXT_OPEN = new Set<string>(['landing'])
 
-export function Layer({
-  target,
-}: {
-  target: VaultSettingDescriptor['target']
-}): React.JSX.Element {
+export function Layer({ target }: { target: VaultSettingDescriptor['target'] }): React.JSX.Element {
   const committed = target === 'committed'
   return (
     <Tooltip
@@ -77,6 +73,9 @@ export function SettingRow({
           )}
         </>
       }
+      // A switch and a pick-one are both one answer to the row's question, so
+      // both sit on the label's line, right-aligned. Only the flag group is
+      // below, in `children`.
       control={
         control.kind === 'toggle' ? (
           <Checkbox
@@ -84,33 +83,33 @@ export function SettingRow({
             onCheckedChange={(next) => onChange(key, next === true)}
             aria-label={label}
           />
+        ) : control.kind === 'choice' ? (
+          // `justify-end` so a group that has wrapped onto its own line stays
+          // against the right edge, and so does a second row of options.
+          <div role="radiogroup" aria-label={label} className="flex flex-wrap justify-end gap-1.5">
+            {/* Filtered, not disabled — the same call the ritual makes. A greyed
+                out choice invites "why not?" and the answer is another row. */}
+            {availableOptions(descriptor, settings).map((option) => (
+              <Button
+                key={option.label}
+                type="button"
+                variant={
+                  JSON.stringify(option.value) === JSON.stringify(value) ? 'secondary' : 'ghost'
+                }
+                size="xs"
+                role="radio"
+                // Structural equality: a `landing` option's value is an object, and
+                // the answer is a different object with the same shape.
+                aria-checked={JSON.stringify(option.value) === JSON.stringify(value)}
+                onClick={() => onChange(key, option.value)}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
         ) : undefined
       }
     >
-      {control.kind === 'choice' && (
-        <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-1.5">
-          {/* Filtered, not disabled — the same call the ritual makes. A greyed
-              out choice invites "why not?" and the answer is another row. */}
-          {availableOptions(descriptor, settings).map((option) => (
-            <Button
-              key={option.label}
-              type="button"
-              variant={
-                JSON.stringify(option.value) === JSON.stringify(value) ? 'secondary' : 'ghost'
-              }
-              size="xs"
-              role="radio"
-              // Structural equality: a `landing` option's value is an object, and
-              // the answer is a different object with the same shape.
-              aria-checked={JSON.stringify(option.value) === JSON.stringify(value)}
-              onClick={() => onChange(key, option.value)}
-            >
-              {option.label}
-            </Button>
-          ))}
-        </div>
-      )}
-
       {control.kind === 'group' && (
         <div className="flex flex-col gap-2">
           {control.toggles.map((toggle) => {
