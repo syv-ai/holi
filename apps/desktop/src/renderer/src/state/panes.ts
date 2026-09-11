@@ -28,6 +28,11 @@ export const openNoteTabAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openPreview(w, path))
 })
 
+/** Open a note beside the active pane — the board's card click (`openBeside`). */
+export const openBesideAtom = atom(null, (_get, set, path: string) => {
+  set(workspaceAtom, (w) => openBeside(w, w.active, path))
+})
+
 /**
  * A tab is not a note (architecture.md). The `preview` flag ports VS Code's
  * two-state model: a preview tab (italic) is the single one that a single-click
@@ -449,6 +454,41 @@ export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
     panes: [
       ...workspace.panes.slice(0, at),
       { tabs: [tab], active: 0 },
+      ...workspace.panes.slice(at),
+    ],
+    active: at,
+  }
+}
+
+/**
+ * Open a note **beside** the pane it was asked from, as a preview.
+ *
+ * The board's card click. `openInNewPane` is the wrong tool for it: that always
+ * makes a pane, so clicking five cards would leave you with five panes and one
+ * board squeezed against the edge. This reuses the pane to the right if there is
+ * one and splits only when there is not, which is what "open it next to what I
+ * am looking at" actually means when you do it repeatedly.
+ *
+ * Preview rather than pinned, for the same reason the file tree's single click
+ * is: browsing the board costs one tab, and the first edit pins it.
+ *
+ * Already open anywhere? Focus it there. That is the one-buffer rule (`findTab`)
+ * and it is the whole reason the board no longer holds a detail panel of its
+ * own: two editors over one task file is two autosaves racing over one path.
+ */
+export function openBeside(workspace: Workspace, from: number, path: string): Workspace {
+  const existing = findTab(workspace, { kind: 'note', path })
+  if (existing !== null) return focusExisting(workspace, existing)
+
+  const at = from + 1
+  if (at < workspace.panes.length) {
+    const focused = { ...workspace, active: at }
+    return openPreview(focused, path)
+  }
+  return {
+    panes: [
+      ...workspace.panes.slice(0, at),
+      { tabs: [{ kind: 'note', path, preview: true }], active: 0 },
       ...workspace.panes.slice(at),
     ],
     active: at,

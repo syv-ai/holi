@@ -4,10 +4,9 @@ import { expect, test, vi } from 'vitest'
 import { Dialog } from '@/primitives'
 import { CreateTask } from '../CreateTask'
 
-// The task-domain widgets pull the whole CodeMirror editor chain at import time;
-// quick mode renders neither, and this unit test asserts only the footer contract.
-vi.mock('@/features/tasks/TaskDetail', () => ({
-  RecurrenceRows: () => null,
+// The body editor pulls the whole CodeMirror chain at import time; quick mode
+// renders none of it, and this unit test asserts only the footer contract.
+vi.mock('@/features/tasks/TaskBodyEditor', () => ({
   TaskDescriptionEditor: () => null,
 }))
 

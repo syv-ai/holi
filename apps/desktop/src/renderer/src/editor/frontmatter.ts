@@ -34,13 +34,23 @@ import {
   WidgetType,
   type DecorationSet,
 } from '@codemirror/view'
-import { splitFrontmatter } from '@holi/shared'
+import {
+  frontmatterSchema,
+  isTaskFilePath,
+  readYamlMapping,
+  splitFrontmatter,
+} from '@holi/shared'
 import {
   frontmatterBlockRange,
   frontmatterRegion,
   frontmatterYamlValid,
 } from './frontmatter-region'
 import { yaml } from '@codemirror/lang-yaml'
+import {
+  closeFrontmatterPortal,
+  openFrontmatterPortal,
+  updateFrontmatterPortal,
+} from './frontmatter-portals'
 import { notePathFacet } from './livePreview'
 import { codeHighlighting } from './theme'
 
@@ -69,7 +79,11 @@ const frontmatterEdit = Annotation.define<boolean>()
  * still opens to its prose.
  */
 export function frontmatterStartsRevealed(path: string): boolean {
-  return path.startsWith('.claude/')
+  // A task joins `.claude/` as the second case, and for the same reason read the
+  // other way round: its frontmatter is not metadata over prose someone came to
+  // read, it is half of what the file IS. Collapsing a task's status and due
+  // date behind "0 chars · Last updated" hides the task.
+  return path.startsWith('.claude/') || isTaskFilePath(path)
 }
 
 /** Revealed or collapsed. A note starts collapsed (FR-2); a file whose
@@ -173,6 +187,16 @@ function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boo
 
 class FrontmatterWidget extends WidgetType {
   private nested: EditorView | null = null
+  /** The live portal id while this widget is drawing fields, else null. */
+  private portal: number | null = null
+  /**
+   * What the region holds *now*, which is not always what this widget was built
+   * with: our own write-back maps the decoration rather than rebuilding it, so
+   * the instance outlives the text it was constructed from. `eq` compares
+   * against this, or the next unrelated edit to the body would look like an
+   * external change and tear the block down mid-interaction.
+   */
+  private live: string | null
   /** The revealed chevron, kept so a nested edit can recolour it in place — the
    *  widget maps rather than rebuilds on its own write (to keep the nested caret),
    *  so nothing else would refresh the invalid-YAML cue live. */
@@ -188,8 +212,11 @@ class FrontmatterWidget extends WidgetType {
     readonly chars: number,
     /** The file's last commit, for the collapsed summary (null until fetched). */
     readonly commit: FrontmatterCommit | null,
+    /** The file, which is what decides whether this block has a schema. */
+    readonly path: string,
   ) {
     super()
+    this.live = body
   }
 
   /** Reuse the DOM (and the live nested editor) when nothing relevant changed.
@@ -201,7 +228,8 @@ class FrontmatterWidget extends WidgetType {
    *  keystroke (which changes the char count) would tear down the nested editor
    *  and drop its caret. */
   override eq(other: FrontmatterWidget): boolean {
-    if (other.expanded !== this.expanded || other.body !== this.body) return false
+    if (other.path !== this.path) return false
+    if (other.expanded !== this.expanded || other.body !== this.live) return false
     if (this.expanded) return true
     return other.chars === this.chars && commitEq(other.commit, this.commit)
   }
@@ -276,6 +304,29 @@ class FrontmatterWidget extends WidgetType {
     row.appendChild(host)
     wrap.appendChild(row)
 
+    // Rows, when this file has a schema and its frontmatter is a mapping. Both
+    // halves matter: `.claude/` and `AGENTS.md` have no schema because their
+    // frontmatter is somebody else's contract, and a document that will not
+    // parse has no rows to draw. Either way the answer is the same one, the
+    // YAML itself, which is why the editor below is the fallback rather than a
+    // separate feature.
+    if (frontmatterSchema(this.path) !== null && readYamlMapping(this.body) !== null) {
+      wrap.setAttribute('data-frontmatter', 'fields')
+      const slot = document.createElement('div')
+      slot.className = 'cm-fm-fields'
+      host.appendChild(slot)
+      this.portal = openFrontmatterPortal({
+        el: slot,
+        path: this.path,
+        yaml: this.body,
+        write: (next) => {
+          this.writeBack(view, next.replace(/\n$/, ''))
+          if (this.chevron !== null) paintChevron(this.chevron, next)
+        },
+      })
+      return wrap
+    }
+
     // A PLAIN editor over the YAML body: basic editing + history only. No
     // markdown, no live-preview, no formatting keymap — that is the whole point
     // of a separate surface (notes-editor.md §Frontmatter reveal control).
@@ -316,6 +367,8 @@ class FrontmatterWidget extends WidgetType {
   private writeBack(view: EditorView, body: string): void {
     const region = frontmatterRegion(view.state.doc.toString())
     if (region === null) return
+    this.live = body
+    if (this.portal !== null) updateFrontmatterPortal(this.portal, body)
     view.dispatch({
       changes: { from: region.from, to: region.to, insert: regionTextFrom(body) },
       annotations: frontmatterEdit.of(true),
@@ -326,6 +379,8 @@ class FrontmatterWidget extends WidgetType {
     this.nested?.destroy()
     this.nested = null
     this.chevron = null
+    if (this.portal !== null) closeFrontmatterPortal(this.portal)
+    this.portal = null
   }
 
   override ignoreEvent(): boolean {
@@ -354,15 +409,20 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   // here so the widget stays a pure render of what it is handed.
   const chars = doc.slice(bodyStart(doc)).trim().length
   const commit = state.field(frontmatterCommitField, false) ?? null
+  const path = state.facet(notePathFacet)
   if (block === null) {
     // A markdown file with no frontmatter still gets the bar (#17) — inserted
     // above the first line rather than replacing anything, since there is
     // nothing here to replace. `side: -1` puts it before the line's own content
     // so the caret at position 0 lands in the body, not against the widget.
-    const bare = Decoration.widget({ widget: new FrontmatterWidget(false, null, chars, commit), block: true, side: -1 })
+    const bare = Decoration.widget({
+      widget: new FrontmatterWidget(false, null, chars, commit, path),
+      block: true,
+      side: -1,
+    })
     return Decoration.set([bare.range(0)])
   }
-  const widget = new FrontmatterWidget(expanded, frontmatterBody(doc), chars, commit)
+  const widget = new FrontmatterWidget(expanded, frontmatterBody(doc), chars, commit, path)
   const range: Range<Decoration> = Decoration.replace({ widget, block: true }).range(
     block.from,
     block.to,

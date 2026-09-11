@@ -146,13 +146,22 @@ describe('task files', () => {
   it('canonicalizes frontmatter key order through the task round-trip', async () => {
     await file(
       'task.fix-login.md',
-      '---\nstatus: todo\ntitle: Fix login\npriority: high\n---\n\nbody\n',
+      '---\npriority: high\nstatus: todo\n---\n\nbody\n',
     )
     const result = await normalizeMd(root, staging(['task.fix-login.md']))
     expect(result.changed).toEqual(['task.fix-login.md'])
     const text = await read('task.fix-login.md')
-    expect(text.indexOf('title:')).toBeLessThan(text.indexOf('status:'))
-    expect(text).toContain('priority: high')
+    expect(text.indexOf('status:')).toBeLessThan(text.indexOf('priority:'))
+  })
+
+  it('sorts a leftover `title:` to the end, where the unknown keys live', async () => {
+    // The title is the body's first heading now, so a key left over from an
+    // older file is an unknown one — carried through untouched, and after the
+    // keys the format does know.
+    await file('task.fix-login.md', '---\ntitle: Fix login\nstatus: todo\n---\n\nbody\n')
+    await normalizeMd(root, staging(['task.fix-login.md']))
+    const text = await read('task.fix-login.md')
+    expect(text.indexOf('status:')).toBeLessThan(text.indexOf('title:'))
   })
 
   it('leaves an already-canonical task file alone', async () => {

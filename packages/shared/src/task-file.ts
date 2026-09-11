@@ -2,6 +2,14 @@
  * The task file format — `task.<name>.md`, YAML frontmatter + a markdown body
  * that *is* the task's description (prd/tasks.md).
  *
+ * **The title is the body's first heading**, at any level, and there is no
+ * `title:` key. A name written in frontmatter is a second place for the same
+ * fact, and two places drift: the file said one thing and the card another the
+ * moment anyone edited the document. `firstHeading` is the whole rule, the
+ * filename is the fallback for a body that has none, and a `title:` left over
+ * in an older file is carried through as an unknown key — visible in the
+ * frontmatter editor, where deleting it is one click.
+ *
  * The file is the task. There is no record behind it, so this module is not a
  * projection edge any more: it is simply how a `Task` is spelled on disk, and
  * both directions are total.
@@ -28,6 +36,7 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { parseStamp } from './dates'
+import { firstHeading } from './headings'
 import type {
   Priority,
   Recurrence,
@@ -58,16 +67,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** The keys this version understands. Everything else in the frontmatter lands in
  * `Task.extra` and is written back verbatim — see the field's own comment. */
-const KNOWN_KEYS = new Set([
-  'title',
-  'status',
-  'due',
-  'priority',
-  'tags',
-  'reminder',
-  'recurrence',
-  'order',
-])
+const KNOWN_KEYS = new Set(['status', 'due', 'priority', 'tags', 'reminder', 'recurrence', 'order'])
 
 const SLUG_MAX = 60
 const SLUG_FALLBACK = 'task'
@@ -107,7 +107,7 @@ export function isTaskFilePath(rel: string): boolean {
 /**
  * `projects/q2/task.fix-login.md` -> `Fix login`.
  *
- * The fallback title, and the reason a task needs no frontmatter at all. Only
+ * The fallback title, for a body that carries no heading. Only
  * the first character is capitalised: the slug has already lost the original
  * casing, and title-casing every word would turn `task.fix-the-ci.md` into
  * "Fix The Ci", which reads worse than the sentence case it replaced.
@@ -119,11 +119,16 @@ export function titleFromTaskPath(rel: string): string {
   return words === '' ? SLUG_FALLBACK : words.charAt(0).toUpperCase() + words.slice(1)
 }
 
-export function serializeTaskFile(task: Omit<Task, 'path'> & { path?: string }): string {
+export function serializeTaskFile(
+  // `title` is accepted and ignored: it is the body's first heading, so there is
+  // nothing to write. Optional rather than required so a caller building a file
+  // from scratch is not made to invent a field the format does not have.
+  task: Omit<Task, 'path' | 'title'> & { path?: string; title?: string },
+): string {
   // Key order is fixed so an unchanged task always serializes byte-identically.
   // The editor's watcher tells its own save from a foreign write by comparing
   // text, so an unstable serializer would make every rewrite look foreign.
-  const front: Record<string, unknown> = { title: task.title, status: task.status }
+  const front: Record<string, unknown> = { status: task.status }
 
   if (task.due !== undefined) front.due = task.due
   if (task.priority !== undefined) front.priority = task.priority
@@ -165,7 +170,7 @@ export function parseTaskFile(text: string, path: string): Task {
 
   const task: Task = {
     path,
-    title: titleOf(front.title, path),
+    title: firstHeading(body) ?? titleFromTaskPath(path),
     status: front.status === undefined ? 'todo' : enumOf(front.status, STATUSES, 'status'),
     tags: [],
     description: body,
@@ -195,15 +200,7 @@ export function parseTaskFile(text: string, path: string): Task {
 export type TaskPatch = Partial<
   Pick<
     Task,
-    | 'title'
-    | 'status'
-    | 'due'
-    | 'priority'
-    | 'tags'
-    | 'reminder'
-    | 'recurrence'
-    | 'order'
-    | 'description'
+    'status' | 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence' | 'order' | 'description'
   >
 >
 
@@ -211,12 +208,6 @@ export type TaskPatch = Partial<
  * with `parseTaskFile` is the point: an edit and a hand-written file are held to
  * the same vocabulary, so the board cannot write a file it would then refuse. */
 const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
-  title: (v) => {
-    if (typeof v !== 'string' || v.trim() === '') {
-      throw new TaskFileError(`title must be a non-empty string, got: ${JSON.stringify(v)}`)
-    }
-    return v.trim()
-  },
   status: (v) => enumOf(v, STATUSES, 'status'),
   // A stamp (D79): the time is optional, and its absence is meaningful — a task
   // due `2026-08-25` is due that day, not at midnight on it. `parseStamp` rather
@@ -289,17 +280,6 @@ export function parseTaskPatch(raw: unknown): TaskPatch {
     patch[key] = read(value)
   }
   return patch as TaskPatch
-}
-
-function titleOf(value: unknown, path: string): string {
-  if (value === undefined || value === null) return titleFromTaskPath(path)
-  if (typeof value !== 'string') {
-    throw new TaskFileError(`title must be a string, got: ${JSON.stringify(value)}`)
-  }
-  const trimmed = value.trim()
-  // An empty title is a filled-in-then-emptied field, not an assertion that the
-  // task is nameless — fall back rather than render a blank card.
-  return trimmed === '' ? titleFromTaskPath(path) : trimmed
 }
 
 /** `yaml: null` means the file had no frontmatter fence at all — a valid task

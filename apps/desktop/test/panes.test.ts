@@ -16,6 +16,7 @@ import {
   emptyWorkspace,
   openApp,
   openBoard,
+  openBeside,
   openInNewPane,
   openPinned,
   openPreview,
@@ -310,6 +311,40 @@ describe('splitPane', () => {
     expect(w.panes).toHaveLength(3)
     expect(layout(w)).toEqual([['a.md', 'b.md'], [], ['c.md']])
     expect(w.active).toBe(1)
+  })
+})
+
+describe('openBeside', () => {
+  it('splits and opens when there is no pane to the right yet', () => {
+    const w = openBeside(openPreview(emptyWorkspace(), 'board.md'), 0, 'task.a.md')
+
+    expect(layout(w)).toEqual([['board.md'], ['task.a.md']])
+    expect(w.active).toBe(1)
+  })
+
+  it('reuses the pane to the right instead of making another', () => {
+    // The whole point. `openInNewPane` would leave five panes after five card
+    // clicks, with the board squeezed against the edge.
+    const first = openBeside(openPreview(emptyWorkspace(), 'board.md'), 0, 'task.a.md')
+    const second = openBeside(first, 0, 'task.b.md')
+
+    expect(second.panes).toHaveLength(2)
+    expect(layout(second)).toEqual([['board.md'], ['task.b.md']])
+  })
+
+  it('opens as a preview, so browsing the board costs one tab', () => {
+    const w = openBeside(openPreview(emptyWorkspace(), 'board.md'), 0, 'task.a.md')
+
+    expect(w.panes[1]!.tabs[0]).toEqual({ kind: 'note', path: 'task.a.md', preview: true })
+  })
+
+  it('focuses a task that is already open rather than opening a second copy', () => {
+    // The one-buffer rule, and the reason the board has no detail panel: two
+    // editors over one task file is two autosaves racing over one path.
+    const w = openBeside(openPreview(emptyWorkspace(), 'task.a.md'), 0, 'task.a.md')
+
+    expect(layout(w)).toEqual([['task.a.md']])
+    expect(w.active).toBe(0)
   })
 })
 

@@ -86,7 +86,8 @@ export interface Recurrence {
 export interface Task {
   /** Vault-relative, '/'-separated, e.g. `projects/q2/task.fix-login.md`. */
   path: string
-  /** From frontmatter, falling back to the filename. Never empty. */
+  /** The body's first heading at any level, falling back to the filename.
+   *  Never empty, and never stored — `serializeTaskFile` writes no `title`. */
   title: string
   status: TaskStatus
   /** A stamp: `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when the task is due at a

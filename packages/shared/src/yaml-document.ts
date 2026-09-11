@@ -80,6 +80,52 @@ function annotate(map: YAMLMap, commentFor: CommentFor, path: readonly string[])
  * into: there is nothing to merge with, and refusing forever would leave the
  * app unable to fix a file somebody broke.
  */
+/**
+ * The top-level mapping a YAML document holds, or `null` when it does not hold
+ * one.
+ *
+ * The frontmatter editor's read half. `null` is the signal to fall back to
+ * editing the text: a document that will not parse, or one whose root is a list
+ * or a scalar, has no rows to draw and the honest surface for it is the YAML
+ * itself.
+ */
+export function readYamlMapping(text: string): Record<string, unknown> | null {
+  const doc = parseDocument(text)
+  if (doc.errors.length > 0 || !isMap(doc.contents)) return null
+  const value: unknown = doc.toJS()
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+/**
+ * Set and delete keys in a mapping, keeping everything else exactly as written.
+ *
+ * The frontmatter editor's write-back. It is `mergeYamlDocument`'s sibling
+ * rather than a flag on it, for one reason: **`undefined` deletes here**, and
+ * on the settings path it must keep meaning "write nothing special". A control
+ * that clears a field has to remove the key rather than leave `due: null`
+ * behind, and a settings writer that passed an accidental `undefined` must
+ * never silently drop a setting.
+ *
+ * Comments, key order, and anything nested this app does not understand survive
+ * the round trip, which is what lets a hand-written frontmatter block be edited
+ * through a form without punishing whoever wrote it.
+ */
+export function editYamlMapping(existing: string, changes: Record<string, unknown>): string {
+  const doc: Document<Node, false> = parseDocument(existing)
+  // Same two failure shapes `mergeYamlDocument` guards: a document that failed
+  // to parse can still hand back a map whose `toString` throws. There is
+  // nothing here to edit into, so the caller keeps what it had.
+  if (doc.errors.length > 0 || !isMap(doc.contents)) return existing
+  doc.contents.flow = false
+
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === undefined) doc.delete(key)
+    else doc.set(key, doc.createNode(value))
+  }
+  return doc.toString({ lineWidth: 0 })
+}
+
 export function mergeYamlDocument(
   existing: string | null,
   values: Record<string, unknown>,

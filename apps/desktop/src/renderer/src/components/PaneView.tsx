@@ -24,7 +24,6 @@ import { HistoryView } from '@/features/history/HistoryView'
 import { BoardView } from '@/features/tasks/BoardView'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
-import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import type { Pane, Tab } from '@/state/panes'
 import { TabStrip } from './TabStrip'
 
@@ -177,15 +176,6 @@ export function PaneView({
           // per-type viewer replaces it later (spec §Arbitrary files). Text
           // files (json/yaml/…) fall through to the plain editor below.
           <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
-        ) : tab?.kind === 'note' && isTaskFilePath(tab.path) ? (
-          // A task file renders as a task — a structured header over the body —
-          // instead of raw frontmatter (prd/tasks.md; the file is still the truth).
-          <TaskFileEditor
-            path={tab.path}
-            onOpenNote={onOpenNote}
-            onEdit={onEdit}
-            onConflict={onConflict}
-          />
         ) : (
           <EditorPane
             path={tab?.kind === 'note' ? tab.path : null}

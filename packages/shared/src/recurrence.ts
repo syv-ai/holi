@@ -13,7 +13,7 @@ import {
   stampTime,
   withTime,
 } from './dates'
-import type { Recurrence, RecurrenceWeekday } from './types'
+import type { Recurrence, RecurrenceFrequency, RecurrenceWeekday } from './types'
 
 /**
  * Given a task's current due date and recurrence rule, return the next due
@@ -26,6 +26,44 @@ import type { Recurrence, RecurrenceWeekday } from './types'
  * 1 month → Feb 28), so a time component would only be along for the ride and
  * would round-trip through the clamp badly. Split it off, step, put it back.
  */
+/** Weekday order, so a summary reads Mon-first however the list was written. */
+const WEEKDAY_ORDER: readonly RecurrenceWeekday[] = [
+  'mon',
+  'tue',
+  'wed',
+  'thu',
+  'fri',
+  'sat',
+  'sun',
+]
+
+const FREQUENCY_NOUN: Record<RecurrenceFrequency, string> = {
+  daily: 'day',
+  weekly: 'week',
+  monthly: 'month',
+  yearly: 'year',
+}
+
+/**
+ * A rule, in words: `every week on Mon, Wed`, `every 3 days until 2026-12-01`.
+ *
+ * For the one row that stands in for the whole nested map. A summary rather
+ * than four rows because `recurrence` is one key, and a block that draws a row
+ * per key cannot have one key quietly occupying four of them.
+ */
+export function describeRecurrence(rule: Recurrence): string {
+  const noun = FREQUENCY_NOUN[rule.frequency]
+  const every = rule.interval === 1 ? `every ${noun}` : `every ${rule.interval} ${noun}s`
+  const days =
+    rule.frequency === 'weekly' && rule.weekdays !== undefined && rule.weekdays.length > 0
+      ? ` on ${WEEKDAY_ORDER.filter((d) => rule.weekdays!.includes(d))
+          .map((d) => d.charAt(0).toUpperCase() + d.slice(1))
+          .join(', ')}`
+      : ''
+  const until = rule.endDate === undefined ? '' : ` until ${rule.endDate}`
+  return `${every}${days}${until}`
+}
+
 export function nextDue(currentDue: string, rule: Recurrence): string | null {
   const time = stampTime(currentDue)
   const date = stampDate(currentDue)

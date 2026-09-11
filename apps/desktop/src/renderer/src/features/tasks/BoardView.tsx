@@ -17,17 +17,28 @@ import { virtualLabels } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
-import { Button, Checkbox, Input, Tooltip } from '@/primitives'
+import {
+  Button,
+  Checkbox,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+  Input,
+  Tooltip,
+} from '@/primitives'
+import { openBesideAtom } from '@/state/panes'
 import { shortStamp } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
 import { reorderRank, sortCell } from '@/lib/board-order'
 import { FilterBar } from './FilterBar'
-import { TaskDetailPanel } from './TaskDetail'
 import {
   ROOT_LANE,
   brokenTasksAtom,
   completeTaskAtom,
   createTaskAtom,
+  deleteTaskAtom,
   dropIntent,
   filterAtom,
   laneLabel,
@@ -37,7 +48,6 @@ import {
   moveTaskAtom,
   nowAtom,
   patchTaskAtom,
-  selectedTaskPathAtom,
   setTaskStatusAtom,
   tasksAtom,
 } from '@/state/tasks'
@@ -68,11 +78,12 @@ function Card({
 }): React.JSX.Element {
   const now = useAtomValue(nowAtom)
   const complete = useSetAtom(completeTaskAtom)
-  const select = useSetAtom(selectedTaskPathAtom)
+  const open = useSetAtom(openBesideAtom)
+  const del = useSetAtom(deleteTaskAtom)
 
   const labels = virtualLabels(task, now)
 
-  return (
+  const card = (
     <div
       draggable
       data-task={task.path}
@@ -82,7 +93,12 @@ function Card({
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', task.path)
       }}
-      onClick={() => select(task.path)}
+      // A task IS its file, so opening one opens the file — beside the board,
+      // as a preview, which is the file tree's single-click rule. The detail
+      // panel that used to live on the right is gone with the view it drew:
+      // the same editor in a pane says everything it said, and two editors over
+      // one task file would be two autosaves racing over one path.
+      onClick={() => open(task.path)}
       // No border, no fill. A board of forty tasks was forty drawn boxes inside
       // twelve more; the text and its checkbox are enough to say where one task
       // ends. The hover tint stays — it is the only thing left that says this
@@ -131,6 +147,25 @@ function Card({
         </div>
       )}
     </div>
+  )
+
+  // The row menu the card never had. `delete` lived only in the detail panel,
+  // so removing that would have left the board with no way to delete a task —
+  // and "go and find the file in the tree" is not one.
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onSelect={() => open(task.path)}>Open</ContextMenuItem>
+        <ContextMenuItem onSelect={() => void complete(task.path)}>
+          {task.status === 'done' ? 'Reopen' : 'Complete'}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem variant="destructive" onSelect={() => void del(task.path)}>
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 
@@ -227,7 +262,6 @@ export function BoardView(): React.JSX.Element {
       <BrokenStrip />
       <div className="flex min-h-0 flex-1">
         <Grid />
-        <TaskDetailPanel />
       </div>
     </div>
   )

@@ -82,7 +82,8 @@ describe('decideReload', () => {
     })
 
     it('recognises the tidy on a task file, where the rule also reorders keys', () => {
-      const messy = '---\nstatus: doing\ntitle: Fix login\n---\n'
+      // Messy under the current rule, which puts `status` before `priority`.
+      const messy = '---\npriority: high\nstatus: doing\n---\n'
       expect(decideReload(messy, `${messy}\nmine\n`, normalizeText(messy, 'task.a.md'), 'task.a.md')).toEqual({
         kind: 'rebase',
         text: normalizeText(messy, 'task.a.md'),

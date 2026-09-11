@@ -106,6 +106,7 @@ export function DateTimePicker({
   presets,
   dateOnly,
   placeholder,
+  emptyText,
   'data-testid': testId,
 }: {
   /** A stamp, or null for empty. */
@@ -116,6 +117,15 @@ export function DateTimePicker({
   /** Hide the time row — `until` is a boundary on a rule, not an appointment. */
   dateOnly?: boolean
   placeholder?: string
+  /**
+   * What an empty field SHOWS, when that is not what it should be CALLED.
+   *
+   * `placeholder` is both by default, which is right for a field standing on
+   * its own. In a labelled row it is not: the row already says `due`, so a
+   * trigger that also says `due` says it twice, and naming the control `none`
+   * instead would leave every date field in the block with the same name.
+   */
+  emptyText?: string
   'data-testid'?: string
 }): React.JSX.Element {
   const selected = value === null ? null : stampDate(value)
@@ -235,7 +245,7 @@ export function DateTimePicker({
             {/* The value truncates rather than pushing the icon out: a long
                 stamp in a narrow panel is a layout problem, not a reason to
                 lose the affordance that says this opens a calendar. */}
-            <span className="truncate">{humanise(value) ?? placeholder ?? ''}</span>
+            <span className="truncate">{humanise(value) ?? emptyText ?? placeholder ?? ''}</span>
             <CalendarDays className="size-3.5 shrink-0 opacity-60" />
           </Button>
         </PopoverTrigger>

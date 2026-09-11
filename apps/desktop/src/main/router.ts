@@ -20,6 +20,7 @@ import {
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
+  setFirstHeading,
   shiftForRollover,
   taskFilePath,
   taskSlug,
@@ -926,14 +927,18 @@ export function createRouter(deps: RouterDeps) {
           root,
           rel,
           serializeTaskFile({
-            title: input.title,
             status: patch.status ?? 'todo',
             tags: [],
-            // Optional, and empty for every existing caller. The agenda's
-            // create-from-event uses it to seed the body with the event's
-            // markdown link — which under D67 *is* the whole representation of
-            // the link, so dropping it would defeat the feature silently.
-            description: input.description ?? '',
+            // The title goes in as the body's first heading, because that is
+            // where the format keeps it — `create` is the only writer that has
+            // a title and no document to have written it in.
+            //
+            // `description` is optional and empty for every existing caller. The
+            // agenda's create-from-event uses it to seed the body with the
+            // event's markdown link — which under D67 *is* the whole
+            // representation of the link, so dropping it would defeat the
+            // feature silently. The heading lands above it.
+            description: setFirstHeading(input.description ?? '', input.title),
           }),
         )
         return { path: rel }

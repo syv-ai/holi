@@ -34,9 +34,9 @@ import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
 import { MailView } from '@/features/google/MailView'
 import { DialogHost } from './DialogHost'
+import { FrontmatterFieldsHost } from '@/composites/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
 import { EditorPane } from '@/composites'
-import { TaskFileEditor } from '@/features/tasks/TaskFileEditor'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { AppFrame } from '@/features/apps/AppFrame'
 import { AppsSection } from '@/features/apps/AppsSection'
@@ -692,6 +692,13 @@ export function Shell() {
         </ResizablePanelGroup>
 
         <DialogHost />
+
+        {/* Every open frontmatter block's controls, portalled into the
+            CodeMirror widgets that asked for them. Mounted here rather than in
+            EditorPane because a widget does not know which pane it is in, and
+            because one host means one subscription however many editors are
+            open. */}
+        <FrontmatterFieldsHost />
       </div>
 
       {/* A config conflict outranks everything else in the footer region: it is

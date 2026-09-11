@@ -16,6 +16,7 @@ import type { Task, TaskStatus } from '@holi/shared'
 import { allLabels, dailyNoteFilename, parseWikiLinks, stampDate, taskArea } from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
+import { closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
@@ -90,9 +91,6 @@ export const tickNowAtom = atom(null, (get, set) => {
   const next = localNow()
   if (next !== get(nowAtom)) set(nowAtom, next)
 })
-
-/** The task open in the detail view, by path. */
-export const selectedTaskPathAtom = atom<string | null>(null)
 
 /** The create-task dialog's mode, or `null` when closed. `quick` (⌘T) captures a
  * task and stays where you are; `full` (⌘⇧T) captures it and drops you into the
@@ -274,7 +272,10 @@ export const moveTaskAtom = atom(
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  set(selectedTaskPathAtom, null)
   await trpc.tasks.delete.mutate({ remote, path })
+  // Same order `deleteNotes` uses: the file goes, then its tab. A task is an
+  // ordinary document now, so an open one leaves a tab pointing at bytes that
+  // are gone — and a live buffer that would write the file back.
+  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))
   await set(loadSnapshotAtom)
 })

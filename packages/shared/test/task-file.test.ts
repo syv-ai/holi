@@ -74,7 +74,6 @@ describe('parseTaskFile', () => {
     const parsed = parse(
       [
         '---',
-        'title: Review the Q2 doc',
         'status: doing',
         'due: 2026-07-20',
         'priority: high',
@@ -82,6 +81,8 @@ describe('parseTaskFile', () => {
         'reminder: 1d',
         'recurrence: { frequency: weekly, interval: 2, weekdays: [mon, wed] }',
         '---',
+        '',
+        '# Review the Q2 doc',
         '',
         'Body text with [[a.md]].',
         '',
@@ -97,17 +98,30 @@ describe('parseTaskFile', () => {
       tags: ['finance', 'q2'],
       reminder: '1d',
       recurrence: { frequency: 'weekly', interval: 2, weekdays: ['mon', 'wed'] },
-      description: 'Body text with [[a.md]].',
+      description: '# Review the Q2 doc\n\nBody text with [[a.md]].',
     })
   })
 
-  it('falls back to the filename when there is no title', () => {
-    const parsed = parse('---\nstatus: todo\n---\n', 'projects/task.fix-login.md')
+  it('falls back to the filename when the body carries no heading', () => {
+    const parsed = parse('---\nstatus: todo\n---\n\njust prose\n', 'projects/task.fix-login.md')
     expect(parsed.title).toBe('Fix login')
   })
 
+  it('takes the title from the first heading, at any level', () => {
+    expect(parse('---\nstatus: todo\n---\n\n### Fix the tap\n').title).toBe('Fix the tap')
+  })
+
+  it('ignores a leftover `title:` key, and carries it as an unknown one', () => {
+    // No migration: an older file keeps working, its title comes from the body
+    // if there is a heading and from the filename otherwise, and the stale key
+    // shows up in the frontmatter editor where it can be deleted.
+    const parsed = parse('---\ntitle: Stale\nstatus: todo\n---\n\n# Real\n', 'task.x.md')
+    expect(parsed.title).toBe('Real')
+    expect(parsed.extra).toEqual({ title: 'Stale' })
+  })
+
   it('defaults status to todo and tags to empty', () => {
-    const parsed = parse('---\ntitle: Bare\n---\n')
+    const parsed = parse('---\n---\n')
     expect(parsed.status).toBe('todo')
     expect(parsed.tags).toEqual([])
     expect(parsed.description).toBe('')
@@ -148,27 +162,27 @@ describe('parseTaskFile', () => {
         '---',
         'id: 3f2504e0-4f89-11d3-9a0c-0305e82c3301',
         'version: 7',
-        'title: Legacy',
+        'zzz: 1',
         'area: projects/q2',
         'related:',
         '  - { kind: note, path: a.md }',
         '---',
       ].join('\n'),
     )
-    expect(parsed.title).toBe('Legacy')
+    expect(parsed.title).toBe('A')
     expect(parsed).not.toHaveProperty('id')
     expect(parsed).not.toHaveProperty('area')
   })
 
   it('keeps unknown keys aside rather than forgetting them', () => {
-    const parsed = parse('---\ntitle: Legacy\nid: abc\narea: projects/q2\n---\n')
+    const parsed = parse('---\nid: abc\narea: projects/q2\n---\n')
     expect(parsed.extra).toEqual({ id: 'abc', area: 'projects/q2' })
   })
 
   it('has no `extra` at all when every key was understood', () => {
     // Absent, not `{}` — an empty map would serialize a task differently from
     // one that never had unknown keys, and byte-stability is the whole point.
-    expect(parse('---\ntitle: Plain\n---\n')).not.toHaveProperty('extra')
+    expect(parse('---\nstatus: todo\n---\n')).not.toHaveProperty('extra')
   })
 })
 
@@ -195,7 +209,7 @@ describe('serializeTaskFile', () => {
   })
 
   it('omits absent fields instead of writing nulls', () => {
-    expect(serializeTaskFile(task)).toBe('---\ntitle: Review\nstatus: todo\n---\n')
+    expect(serializeTaskFile(task)).toBe('---\nstatus: todo\n---\n')
   })
 
   it('writes no id and no version — nothing in the file is machine-owned', () => {
@@ -214,7 +228,7 @@ describe('serializeTaskFile', () => {
 
   it('keeps the known keys first, so an unknown one cannot reorder the file', () => {
     const text = serializeTaskFile({ ...task, extra: { zzz: 1 } })
-    expect(text).toBe('---\ntitle: Review\nstatus: todo\nzzz: 1\n---\n')
+    expect(text).toBe('---\nstatus: todo\nzzz: 1\n---\n')
   })
 
   it('is byte-stable for an unchanged task', () => {
@@ -228,7 +242,6 @@ describe('parseTaskPatch', () => {
   it('reads the fields a detail-view edit can send', () => {
     expect(
       parseTaskPatch({
-        title: 'Renamed',
         status: 'doing',
         due: '2026-08-01',
         priority: 'low',
@@ -238,7 +251,6 @@ describe('parseTaskPatch', () => {
         description: 'New body.',
       }),
     ).toEqual({
-      title: 'Renamed',
       status: 'doing',
       due: '2026-08-01',
       priority: 'low',
@@ -263,7 +275,7 @@ describe('parseTaskPatch', () => {
 
   it('refuses to clear a field that has no empty state', () => {
     expect(() => parseTaskPatch({ status: null })).toThrow(/status cannot be cleared/)
-    expect(() => parseTaskPatch({ title: null })).toThrow(/title cannot be cleared/)
+    expect(() => parseTaskPatch({ title: 'Renamed' })).toThrow(/unknown field: title/)
   })
 
   it('rejects a value outside the vocabulary, exactly as the parser does', () => {

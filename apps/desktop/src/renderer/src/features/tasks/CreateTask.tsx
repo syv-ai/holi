@@ -1,9 +1,9 @@
 import type { Priority, Recurrence, Task, TaskStatus } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useMemo, useRef, useState } from 'react'
-import { DateTimePicker, FormField } from '@/composites'
+import { DateTimePicker, FormField, RecurrenceField } from '@/composites'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { RecurrenceRows, TaskDescriptionEditor } from '@/features/tasks/TaskDetail'
+import { TaskDescriptionEditor } from '@/features/tasks/TaskBodyEditor'
 import {
   Button,
   Dialog,
@@ -255,7 +255,13 @@ export function CreateTask({
               />
             </FormField>
 
-            <RecurrenceRows task={draftTask} save={draftSave} />
+            <FormField label="Repeats">
+              <RecurrenceField
+                value={draft.recurrence}
+                data-testid="create-task-recurrence"
+                onChange={(next) => draftSave({ recurrence: next })}
+              />
+            </FormField>
 
             <div>
               <span className="mb-1 block text-xs text-muted-foreground">description</span>
