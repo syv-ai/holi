@@ -36,7 +36,15 @@ export function SidePanel({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <aside data-slot="side-panel" className={cn('flex h-full min-w-0 flex-col', className)}>
+    <aside
+      data-slot="side-panel"
+      // Every side panel in the app arrives from the edge it lives on, which is
+      // the right-hand one for all three of them (history, the last turn, the
+      // agent). On the panel's CONTENT rather than on the `ResizablePanel`
+      // around it: animating the panel itself fights the group's sizing maths
+      // and the persisted layout, because the group is what decides its width.
+      className={cn('motion-in-right flex h-full min-w-0 flex-col', className)}
+    >
       <PanelHeader
         actions={actions}
         close={onClose ? { icon: <X />, label: 'Close panel', onSelect: onClose } : undefined}

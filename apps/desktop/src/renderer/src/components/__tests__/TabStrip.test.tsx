@@ -205,8 +205,10 @@ function withFakeLayout(): () => void {
 
   return () => {
     HTMLElement.prototype.getBoundingClientRect = rect
-    if (clientWidth !== undefined) Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
-    if (offsetLeft !== undefined) Object.defineProperty(HTMLElement.prototype, 'offsetLeft', offsetLeft)
+    if (clientWidth !== undefined)
+      Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
+    if (offsetLeft !== undefined)
+      Object.defineProperty(HTMLElement.prototype, 'offsetLeft', offsetLeft)
     if (offsetWidth !== undefined)
       Object.defineProperty(HTMLElement.prototype, 'offsetWidth', offsetWidth)
   }
@@ -475,7 +477,10 @@ test('a drop takes the preview away WITH its transition, so the move is not repl
     act(() => void fireEvent(host, dragEvent('drop', dataTransfer)))
 
     expect(styleOf('a.md').transform).toBe('')
-    expect(styleOf('a.md').transition).toBe('')
+    // Only the PROPERTY LIST is conditional now (duration and easing come from
+    // `motion-respond`), so the assertion is that transform has dropped OUT of
+    // it. Asserting `style.transition` is empty would pass whatever happened.
+    expect(styleOf('a.md').transitionProperty).not.toContain('transform')
     expect(pillFor('a.md')).not.toHaveClass('opacity-40')
   } finally {
     vi.useRealTimers()
@@ -498,7 +503,7 @@ test('a drag that ends without a drop glides home instead of snapping', () => {
     act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
 
     expect(styleOf('a.md').transform).toBe('translateX(0px)')
-    expect(styleOf('a.md').transition).toContain('transform')
+    expect(styleOf('a.md').transitionProperty).toContain('transform')
     expect(pillFor('a.md')).not.toHaveClass('opacity-40')
   } finally {
     vi.useRealTimers()

@@ -208,7 +208,7 @@ function OverflowMenu({
     <div
       className={`pointer-events-none absolute inset-y-0 z-10 flex items-center ${
         side === 'left' ? 'left-0 bg-linear-to-r pr-6 pl-0' : 'right-0 bg-linear-to-l pr-0 pl-6'
-      } from-background from-60% to-transparent transition-opacity duration-(--motion-respond) ease-settle ${
+      } motion-respond from-background from-60% to-transparent ${
         visible ? 'opacity-100' : 'opacity-0'
       }`}
     >
@@ -675,19 +675,22 @@ export function TabStrip({
                 }}
                 onDragEnd={endDrag}
                 // The preview, and the only place it touches a pill: a
-                // transform, never layout. The transition lives here rather than
-                // in a class because its *absence* is meaningful — see `shift`.
-                // A dragged pill dims to 40%, the reading the tree already gives
-                // a cut row: you can see what you are moving and where it would
-                // go, while the drag image under the cursor is the solid one.
+                // transform, never layout. A dragged pill dims to 40%, the
+                // reading the tree already gives a cut row: you can see what you
+                // are moving and where it would go, while the drag image under
+                // the cursor is the solid one.
+                //
+                // **Only the PROPERTY LIST is conditional**, and its absence is
+                // what matters (see `shift`): a drop has to clear the transition
+                // as well as the transform, or the pill eases back from a
+                // position it no longer has. Duration and easing still come from
+                // `motion-respond` on the class below, so no number is stated
+                // here — this says WHICH properties respond, not how fast.
                 style={{
                   transform: shift === null ? undefined : `translateX(${shift[i] ?? 0}px)`,
-                  transition:
-                    shift === null
-                      ? undefined
-                      : 'transform var(--motion-respond) var(--ease-settle)',
+                  transitionProperty: shift === null ? 'opacity' : 'opacity, transform',
                 }}
-                className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs transition-opacity duration-(--motion-respond) ${
+                className={`motion-respond group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs ${
                   dragFromKey === key ? 'opacity-40' : ''
                 } ${
                   i === active
@@ -713,7 +716,7 @@ export function TabStrip({
                     // pill after it, and with it the midpoints a drop is decided
                     // against. Hovering hands the space back, so the ✕ arrives
                     // into a gap rather than up against the pill's edge.
-                    className={`h-auto translate-x-[7px] gap-1.5 p-0 transition-transform duration-(--motion-respond) ease-settle group-hover:translate-x-0 hover:bg-transparent ${
+                    className={`motion-respond h-auto translate-x-[7px] gap-1.5 p-0 group-hover:translate-x-0 hover:bg-transparent ${
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() => onSelect(i)}
@@ -731,7 +734,7 @@ export function TabStrip({
                 <Tooltip content="close tab">
                   <Button
                     variant="ghost"
-                    className="h-auto p-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:opacity-100"
+                    className="motion-respond h-auto p-0 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-transparent hover:text-foreground focus-visible:opacity-100"
                     onClick={() => onClose(i)}
                   >
                     ✕
