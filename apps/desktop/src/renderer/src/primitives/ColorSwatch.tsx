@@ -38,7 +38,7 @@ export function ColorSwatch({
   return (
     <span
       className={cn(
-        'relative inline-block size-5 shrink-0 overflow-hidden rounded border border-border',
+        'motion-respond relative inline-block size-5 shrink-0 overflow-hidden rounded border border-border hover:border-ring',
         className,
       )}
       style={{ background: shown }}

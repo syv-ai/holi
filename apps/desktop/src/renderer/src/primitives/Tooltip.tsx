@@ -1,6 +1,6 @@
-import { Tooltip as TooltipPrimitive } from "radix-ui"
+import { Tooltip as TooltipPrimitive } from 'radix-ui'
 
-import { cn } from "@/lib/cn"
+import { cn } from '@/lib/cn'
 
 /**
  * The one tooltip provider, mounted once at the app root (main.tsx). It owns the
@@ -14,7 +14,11 @@ export function TooltipProvider({
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>): React.JSX.Element {
   return (
-    <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />
+    <TooltipPrimitive.Provider
+      data-slot="tooltip-provider"
+      delayDuration={delayDuration}
+      {...props}
+    />
   )
 }
 
@@ -31,16 +35,16 @@ export function TooltipProvider({
  */
 export function Tooltip({
   content,
-  side = "bottom",
+  side = 'bottom',
   children,
   className,
 }: {
   content: React.ReactNode
-  side?: "top" | "right" | "bottom" | "left"
+  side?: 'top' | 'right' | 'bottom' | 'left'
   children: React.ReactNode
   className?: string
 }): React.JSX.Element {
-  if (content === null || content === undefined || content === "") {
+  if (content === null || content === undefined || content === '') {
     return <>{children}</>
   }
   return (
@@ -57,7 +61,7 @@ export function Tooltip({
             // which reads light-on-dark in dark mode. Arrowless, like the menus,
             // and borderless: `--shadow-popover` is what separates it from the
             // page, so a hairline on top of it would be a second edge.
-            "z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-scale-in rounded-md bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:animate-scale-out",
+            'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-scale-in rounded-md bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:animate-scale-out',
             className,
           )}
         >

@@ -5,7 +5,7 @@ import { Slot } from 'radix-ui'
 import { cn } from '@/lib/cn'
 
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap motion-respond outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap motion-respond outline-none active:scale-[0.97] focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     // `size` is declared before `variant` so, on the rare property both touch
     // (the ceremony variant carries its own height/padding/radius), the variant
@@ -34,7 +34,7 @@ const buttonVariants = cva(
         // height/padding, inverse text on --primary. A first-class variant so
         // the look lives in the primitive, not scattered across the feature.
         ceremony:
-          'h-[38px] gap-2 rounded-full bg-primary px-5 text-[13px] font-medium tracking-[0.005em] text-background shadow-sm transition-[transform,filter,box-shadow] hover:brightness-110 active:scale-[0.98]',
+          'h-[38px] gap-2 rounded-full bg-primary px-5 text-[13px] font-medium tracking-[0.005em] text-background shadow-sm hover:brightness-110',
       },
     },
     defaultVariants: {

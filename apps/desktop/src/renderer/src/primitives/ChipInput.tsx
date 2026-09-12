@@ -175,7 +175,7 @@ export function ChipInput({
           <button
             type="button"
             aria-label={`Remove ${address.name}`}
-            className="text-muted-foreground hover:text-foreground"
+            className="motion-respond text-muted-foreground hover:text-foreground"
             onClick={() => onChange(value.filter((a) => a.email !== address.email))}
           >
             ×

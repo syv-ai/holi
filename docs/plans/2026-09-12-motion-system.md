@@ -437,7 +437,13 @@ The line is **"is it a thing you can click"**, not "is it in the editor". Prose,
 
 **Files:** modify `apps/desktop/eslint.config.mjs`; `docs/decisions.md`; `docs/prd/notes-editor.md`; `docs/architecture.md`; `docs/upcoming.md`
 
-- [ ] **Step 1:** If Task 5 step 5 left the motion rules at `warn`, promote them to `error` now and confirm a clean tree.
+- [ ] **Step 1: Widen the motion rule to ban raw `transition-*`.**
+
+Task 5 shipped the rule catching arbitrary values and `transition-all`, but **not** `transition-[…]`, `transition-colors`, `transition-opacity` or `transition-transform` — all of which are still a component choosing its own property list and inheriting Tailwind's default duration rather than the vocabulary's. It was left narrow on purpose: at Task 5 there were 11 such sites and widening then would have turned the tree red for four tiers.
+
+By the end of Tier 3 every one of them is gone except `Checkbox.tsx:22`'s `transition-none`, which is legitimate (it says "do not transition", which states no number). So widen `MOTION_BODY` to match `transition-` followed by anything other than `none`, re-run `pnpm lint`, and confirm 0 errors.
+
+- [ ] **Step 1b:** If Task 5 step 5 left the motion rules at `warn`, promote them to `error` now and confirm a clean tree. (It did not: the tree had exactly two violations, both cleared in Task 5, so the rule went in at `error`.)
 
 Run: `pnpm lint`
 Expected: 0 errors (4 pre-existing warnings are the known baseline).

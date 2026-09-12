@@ -436,7 +436,7 @@
  * it runs on the compositor and cannot reflow its siblings. */
 @utility motion-respond {
   transition-property:
-    color, background-color, border-color, box-shadow, opacity, transform, fill, stroke,
+    color, background-color, border-color, box-shadow, opacity, transform, filter, fill, stroke,
     text-decoration-color, outline-color;
   transition-duration: var(--motion-respond);
   transition-timing-function: var(--ease-settle);

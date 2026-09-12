@@ -9,7 +9,10 @@ import { cn } from '@/lib/cn'
  * horizontal group across the whole workspace row so the nav, editor and side
  * panels all resize against each other.
  */
-function ResizablePanelGroup({ className, ...props }: ResizablePrimitive.GroupProps): React.JSX.Element {
+function ResizablePanelGroup({
+  className,
+  ...props
+}: ResizablePrimitive.GroupProps): React.JSX.Element {
   return (
     <ResizablePrimitive.Group
       data-slot="resizable-panel-group"
