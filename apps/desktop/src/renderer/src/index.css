@@ -431,13 +431,26 @@
 
 /* ── R · respond ──────────────────────────────────────────────────────
  * A transition, never an animation, so leaving reverses it.
- * The property list is paint plus `transform` ON PURPOSE: a row that steps
- * aside on hover does it with a transform, never with padding or margin, so
- * it runs on the compositor and cannot reflow its siblings. */
+ * The property list is paint plus movement ON PURPOSE: a row that steps aside
+ * on hover does it with a transform, never with padding or margin, so it runs
+ * on the compositor and cannot reflow its siblings.
+ *
+ * **`translate`, `scale` and `rotate` are listed alongside `transform`, and
+ * they are not redundant.** Tailwind v4 emits its transform utilities as the
+ * INDEPENDENT properties — `active:scale-[0.97]` is `scale: .97`, not
+ * `transform: scale(.97)` — so a list naming only `transform` transitions none
+ * of them and every one snaps. Tailwind's own `transition-transform` lists all
+ * four for exactly this reason. (Measured: `.active\:scale-\[0\.97\]:active
+ * { scale: .97 }` in the built stylesheet.)
+ *
+ * The KEYFRAMES below go the other way and use `transform`, also on purpose: a
+ * keyframe setting `translate` would override an element's own Tailwind
+ * `translate-*`, whereas one setting `transform` composes with it. That is what
+ * lets a dialog centred with `-translate-x-1/2` also arrive. */
 @utility motion-respond {
   transition-property:
-    color, background-color, border-color, box-shadow, opacity, transform, filter, fill, stroke,
-    text-decoration-color, outline-color;
+    color, background-color, border-color, box-shadow, opacity, filter, fill, stroke,
+    text-decoration-color, outline-color, transform, translate, scale, rotate;
   transition-duration: var(--motion-respond);
   transition-timing-function: var(--ease-settle);
 }
