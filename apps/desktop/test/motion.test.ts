@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
-import { MOTION_STAGGER_CAP, staggerDelay } from '@/lib/motion'
+import { arrivalIndex, MOTION_STAGGER_CAP, staggerDelay } from '@/lib/motion'
 
 describe('staggerDelay', () => {
   test('the first item has no delay', () => {
@@ -39,6 +39,43 @@ describe('staggerDelay', () => {
     expect(staggerDelay(-3)).toBe('0ms')
     expect(staggerDelay(2.7)).toBe('calc(var(--motion-stagger) * 2)')
     expect(staggerDelay(Number.NaN)).toBe('0ms')
+  })
+})
+
+/**
+ * Which rows are actually NEW, which is the gate an arrival needs.
+ *
+ * An `animation` declared on a list's children replays on every re-render —
+ * that is D92's file-open bug in a new costume, and it is why this is computed
+ * from what changed rather than declared on the element.
+ */
+describe('arrivalIndex', () => {
+  test('the first render animates nothing', () => {
+    // The tree appearing because the app started, or because the vault
+    // switched, is the shell's business. Two hundred rows arriving one after
+    // another on every mount is noise, not life.
+    expect(arrivalIndex(null, ['a', 'b', 'c']).size).toBe(0)
+  })
+
+  test('only the added ids arrive, numbered in the order they appear', () => {
+    const got = arrivalIndex(['a', 'd'], ['a', 'b', 'c', 'd', 'e'])
+    expect([...got]).toEqual([
+      ['b', 0],
+      ['c', 1],
+      ['e', 2],
+    ])
+  })
+
+  test('an unchanged list arrives nothing, however often it re-renders', () => {
+    expect(arrivalIndex(['a', 'b'], ['a', 'b']).size).toBe(0)
+  })
+
+  test('reordering is not arriving', () => {
+    expect(arrivalIndex(['a', 'b'], ['b', 'a']).size).toBe(0)
+  })
+
+  test('removals do not shift the numbering of what stayed', () => {
+    expect([...arrivalIndex(['a', 'b', 'c'], ['a', 'z'])]).toEqual([['z', 0]])
   })
 })
 

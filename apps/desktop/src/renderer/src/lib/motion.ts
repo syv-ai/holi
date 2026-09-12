@@ -65,3 +65,34 @@ export function prefersReducedMotion(): boolean {
     window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
   )
 }
+
+/**
+ * Which ids in a keyed list have just appeared, and in what order.
+ *
+ * **An arrival needs a gate, and this is it.** An `animation` declared on a
+ * list's children replays every time the list re-renders, for any reason — the
+ * same shape as the bug D92 hit, where every heading in a file animated its
+ * marks shut the moment the file opened. So a row animates because it is new,
+ * which is a fact about two renders, rather than because it exists, which is a
+ * fact about one.
+ *
+ * The first render returns nothing on purpose. A tree appearing because the app
+ * started, or because the vault switched, is the shell's arrival to make; two
+ * hundred rows coming in one after another on every mount is noise rather than
+ * life.
+ *
+ * Reordering is not arriving, and neither is removal: only ids absent before
+ * and present now count. Pair the returned ordinal with `staggerDelay`.
+ */
+export function arrivalIndex(
+  prev: readonly string[] | null,
+  next: readonly string[],
+): Map<string, number> {
+  const arrived = new Map<string, number>()
+  if (prev === null) return arrived
+  const before = new Set(prev)
+  for (const id of next) {
+    if (!before.has(id)) arrived.set(id, arrived.size)
+  }
+  return arrived
+}

@@ -166,7 +166,9 @@ export function AppsSection(): React.JSX.Element | null {
         Edit Source
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem onSelect={() => setRenaming({ appId, error: null })}>Rename…</ContextMenuItem>
+      <ContextMenuItem onSelect={() => setRenaming({ appId, error: null })}>
+        Rename…
+      </ContextMenuItem>
       <ContextMenuItem variant="destructive" onSelect={() => startDelete(appId)}>
         Delete
       </ContextMenuItem>
@@ -256,7 +258,7 @@ export function AppsSection(): React.JSX.Element | null {
         onClick={() => setOpen((v) => !v)}
       >
         <ChevronRight
-          className="size-3.5 transition-transform"
+          className="size-3.5 motion-respond"
           style={{ transform: open ? 'rotate(90deg)' : 'none' }}
           aria-hidden="true"
         />
@@ -307,19 +309,19 @@ function RenameRow({
       <div className="flex h-[22px] items-center gap-1 px-2">
         <IconColumns appId={appId} />
         <Input
-        autoFocus
-        aria-label={`rename ${appId}`}
-        className="h-[22px] min-w-0 flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onFocus={(e) => e.target.select()}
-        onKeyDown={(e) => {
-          if (e.key === 'Escape') onCancel()
-          if (e.key === 'Enter' && value.trim()) onCommit(value)
-        }}
-        // No blur-to-cancel while a refusal is showing: the click that dismissed
-        // it would also throw away the reason it was refused.
-        onBlur={error === null ? onCancel : undefined}
+          autoFocus
+          aria-label={`rename ${appId}`}
+          className="h-[22px] min-w-0 flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onCancel()
+            if (e.key === 'Enter' && value.trim()) onCommit(value)
+          }}
+          // No blur-to-cancel while a refusal is showing: the click that dismissed
+          // it would also throw away the reason it was refused.
+          onBlur={error === null ? onCancel : undefined}
         />
       </div>
       {error !== null && <p className="pb-0.5 pl-10 pr-2 text-[10px] text-destructive">{error}</p>}

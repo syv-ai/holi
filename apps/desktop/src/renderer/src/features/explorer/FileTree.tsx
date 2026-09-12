@@ -21,6 +21,7 @@ import {
 import { useTree } from '@headless-tree/react'
 import { fileKind, ICONS_FILE, isAppRootPath, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useArrivals } from '@/lib/use-arrivals'
 import { cn } from '@/lib/cn'
 import { pendingSlot } from '@/lib/pending-slot'
 import { todayDailyPathAtom } from '@/state/daily'
@@ -590,6 +591,11 @@ export function FileTree({
     .getItems()
     .filter((item) => item.getId() !== ROOT_ID)
     .map((item) => ({ id: item.getId(), level: item.getItemMeta().level }))
+  // Rows that have just appeared — a folder expanding, a file created, a pull
+  // bringing one in — arrive rather than blinking into place. Computed from what
+  // CHANGED rather than declared on the row, or every unrelated re-render of the
+  // tree would replay the whole list (see lib/use-arrivals.ts).
+  const { arrivalProps } = useArrivals(rows.map((r) => r.id))
   const slot = pending === null ? null : pendingSlot(rows, pending.parent)
   const pendingRow = (level: number) => (
     <PendingRow
@@ -691,6 +697,7 @@ export function FileTree({
             const level = item.getItemMeta().level
             const isCut = actions.clipboard?.mode === 'cut' && actions.clipboard.paths.includes(id)
             const task = taskByPath.get(id)
+            const arrival = arrivalProps(id)
             /**
              * Gitignored, dimmed — VS Code's treatment, and every IDE's.
              *
@@ -729,9 +736,10 @@ export function FileTree({
                     onDoubleClick={() => {
                       if (!isFolder) onOpenPinned(id)
                     }}
-                    style={{ paddingLeft: `${level * 12 + 8}px` }}
+                    style={{ paddingLeft: `${level * 12 + 8}px`, ...arrival.style }}
                     className={[
-                      'flex h-[22px] items-center gap-1 rounded pr-2 outline-none transition-colors',
+                      'motion-respond flex h-[22px] items-center gap-1 rounded pr-2 outline-none',
+                      arrival.className ?? '',
                       item.isSelected()
                         ? 'bg-accent text-accent-foreground'
                         : 'text-muted-foreground hover:bg-accent/60',
