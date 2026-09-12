@@ -12,6 +12,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
+import { useAck } from '@/lib/use-ack'
 import { Button, Tooltip } from '@/primitives'
 import { agentStatusAtom } from '@/state/agent'
 import {
@@ -35,6 +36,8 @@ export function TurnChip(): React.JSX.Element | null {
   const remote = useAtomValue(activeRemoteAtom)
   const wasWorking = useRef(working)
   const lastRemote = useRef(remote)
+  const { ref: chipRef, ack } = useAck<HTMLButtonElement>()
+  const acked = useRef<string | null>(null)
 
   /**
    * A vault SWITCH clears the review and closes it.
@@ -64,6 +67,21 @@ export function TurnChip(): React.JSX.Element | null {
     if (ended || turn === null) void loadLatest()
   }, [working, turn, loadLatest])
 
+  /**
+   * Acknowledge: a turn that has just landed gets one beat.
+   *
+   * Keyed on the turn's end sha rather than on `working` going false, because
+   * the record loads asynchronously AFTER the turn ends — at the moment of that
+   * edge this chip may still be rendering `null`, and there would be no node to
+   * acknowledge on. The first record seen is deliberately silent: opening a
+   * vault that already has a turn behind it is not an event.
+   */
+  useEffect(() => {
+    if (turn === null) return
+    if (acked.current !== null && acked.current !== turn.end) ack('bloom')
+    acked.current = turn.end
+  }, [turn, ack])
+
   // The count comes from the range, so the files follow the record.
   useEffect(() => {
     if (turn !== null) void loadFiles()
@@ -77,6 +95,7 @@ export function TurnChip(): React.JSX.Element | null {
   return (
     <Tooltip content="See what the assistant's last turn changed, and take any of it back">
       <Button
+        ref={chipRef}
         variant="link"
         // The footer is `text-xs`; Button's own `text-sm font-medium` would put
         // this a size and a weight above everything around it.

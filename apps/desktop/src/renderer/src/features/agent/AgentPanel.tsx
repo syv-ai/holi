@@ -346,34 +346,46 @@ export function AgentPanel() {
       <aside
         className={cn('flex h-full min-w-0 flex-col border-l border-divider', !open && 'hidden')}
       >
-      {/* The shared panel bar. The agent's leading region is richer than a title —
+        {/* The shared panel bar. The agent's leading region is richer than a title —
           a status dot + state + config/auth notices — so it composes PanelHeader
           directly rather than via SidePanel. ⌘J lives on the close action here
           (bound while mounted), so it toggles the drawer from anywhere. */}
-      <PanelHeader
-        actions={[
-          { icon: <History />, label: 'Resume a past session', onSelect: () => void history() },
-          { icon: <RotateCw />, label: 'Restart session', onSelect: () => void restart() },
-        ]}
-        close={{
-          icon: <X />,
-          label: 'Hide agent panel',
-          hotkey: '⌘J',
-          onSelect: () => setOpen((o) => !o),
-        }}
-      >
-        <Tooltip content={indicator.title}>
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', indicator.dot)} />
-        </Tooltip>
-        <span className="text-foreground">Claude</span>
-        {/* Spell out what the dot means: green alone is ambiguous. The restart
+        <PanelHeader
+          actions={[
+            { icon: <History />, label: 'Resume a past session', onSelect: () => void history() },
+            { icon: <RotateCw />, label: 'Restart session', onSelect: () => void restart() },
+          ]}
+          close={{
+            icon: <X />,
+            label: 'Hide agent panel',
+            hotkey: '⌘J',
+            onSelect: () => setOpen((o) => !o),
+          }}
+        >
+          <Tooltip content={indicator.title}>
+            {/* In flight: the dot breathes while the agent is actually working,
+              and stops the moment it is not. Bound to `status.working`, which
+              the seeded UserPromptSubmit/Stop hooks push — never inferred from
+              the PTY stream, which is a known dead end in this repo. Nothing in
+              the app loops decoratively, so a still dot means nothing is
+              happening. */}
+            <span
+              className={cn(
+                'h-2 w-2 shrink-0 rounded-full',
+                indicator.dot,
+                status.working && 'motion-pulse',
+              )}
+            />
+          </Tooltip>
+          <span className="text-foreground">Claude</span>
+          {/* Spell out what the dot means: green alone is ambiguous. The restart
             nudges used to be amber sentences alongside this word; they are the
             amber dot and this word now (`agentIndicator`), which keeps the bar
             glanceable and says the same thing on hover. */}
-        <Tooltip content={indicator.title}>
-          <span className="text-muted-foreground">{indicator.state}</span>
-        </Tooltip>
-        {/* No login notice here, deliberately (D72), and D86 did not change that.
+          <Tooltip content={indicator.title}>
+            <span className="text-muted-foreground">{indicator.state}</span>
+          </Tooltip>
+          {/* No login notice here, deliberately (D72), and D86 did not change that.
             A vault now needs its own `/login`, which is a genuinely new thing to
             say — but it is said in the SCROLLBACK, printed by main at spawn
             (`SIGN_IN_NOTICE`), for exactly the reason this comment already gave:
@@ -382,8 +394,8 @@ export function AgentPanel() {
             log entry and stays true about that spawn. The theme note above is
             different in kind — it is derived from two values the renderer already
             holds, so it cannot go stale. */}
-      </PanelHeader>
-      <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
+        </PanelHeader>
+        <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
       </aside>
     </ResizablePanel>
   )

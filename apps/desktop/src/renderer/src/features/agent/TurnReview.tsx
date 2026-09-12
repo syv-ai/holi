@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react'
 import { DiffView, SidePanel } from '@/composites'
 import { Button } from '@/primitives'
 import { cn } from '@/lib/cn'
+import { useAck } from '@/lib/use-ack'
 import {
   latestTurnAtom,
   loadTurnDiffAtom,
@@ -67,6 +68,9 @@ export function TurnReview(): React.JSX.Element | null {
     setResolved(null)
   }, [selected])
 
+  // Above the early return, because every hook must run on every render.
+  const { ref: keepRef, ack } = useAck<HTMLButtonElement>()
+
   if (!open || turn === null) return null
 
   // The house busy/error wrapper (HistoryPanel, VaultSection) — reused.
@@ -107,11 +111,7 @@ export function TurnReview(): React.JSX.Element | null {
   )
 
   return (
-    <SidePanel
-      title="Last turn"
-      subtitle={when(turn.at)}
-      onClose={() => setOpen(false)}
-    >
+    <SidePanel title="Last turn" subtitle={when(turn.at)} onClose={() => setOpen(false)}>
       <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
         {files.length === 0 ? (
           // Not "it changed nothing": a turn that changed nothing is never
@@ -138,11 +138,19 @@ export function TurnReview(): React.JSX.Element | null {
 
       {error !== null && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
       <div className="border-t border-divider p-2">
+        {/* Acknowledge: keeping a resolution writes a revert COMMIT, so it
+            gets a beat. Fired on the way in rather than after the await — the
+            ack is feedback that the act was taken, and an 800ms bloom must not
+            wait on git. */}
         <Button
+          ref={keepRef}
           variant="secondary"
           size="sm"
           disabled={busy || resolved === null}
-          onClick={() => void onKeep()}
+          onClick={() => {
+            ack('bloom')
+            void onKeep()
+          }}
           className="w-full"
         >
           Keep this resolution
