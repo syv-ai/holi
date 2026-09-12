@@ -12,7 +12,8 @@ export function ChevronIcon({ open }: { open: boolean }) {
     <ChevronRight
       size={12}
       aria-hidden="true"
-      style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}
+      className="motion-respond"
+      style={{ transform: open ? 'rotate(90deg)' : 'none' }}
     />
   )
 }
