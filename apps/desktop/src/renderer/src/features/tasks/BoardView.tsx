@@ -31,6 +31,8 @@ import {
 import { openBesideAtom } from '@/state/panes'
 import { shortStamp } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
+import { useAck } from '@/lib/use-ack'
+import { useArrivals } from '@/lib/use-arrivals'
 import { reorderRank, sortCell } from '@/lib/board-order'
 import { FilterBar } from './FilterBar'
 import {
@@ -71,12 +73,16 @@ const CHIP: Record<string, string> = {
 function Card({
   task,
   cue,
+  arrival,
 }: {
   task: Task
   /** A same-cell drag is aimed here: draw the rule it would land on. */
   cue?: 'before' | 'after' | null
+  /** Set only while this card is new to the board — see `useArrivals`. */
+  arrival?: { className?: string; style?: { animationDelay: string } }
 }): React.JSX.Element {
   const now = useAtomValue(nowAtom)
+  const { ref: cardRef, ack } = useAck<HTMLDivElement>()
   const complete = useSetAtom(completeTaskAtom)
   const open = useSetAtom(openBesideAtom)
   const del = useSetAtom(deleteTaskAtom)
@@ -85,6 +91,7 @@ function Card({
 
   const card = (
     <div
+      ref={cardRef}
       draggable
       data-task={task.path}
       // The dragged path rides the drag itself, not React state: the drop handler
@@ -104,17 +111,25 @@ function Card({
       // ends. The hover tint stays — it is the only thing left that says this
       // row is a target you can pick up.
       className={cn(
-        'cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing',
+        'motion-respond cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing',
         cue === 'before' && 'border-t-2 border-t-primary',
         cue === 'after' && 'border-b-2 border-b-primary',
+        arrival?.className,
       )}
+      style={arrival?.style}
     >
       <div className="flex items-start gap-2">
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
             recurring task ROLLS FORWARD rather than persisting `done`. */}
         <Checkbox
           checked={task.status === 'done'}
-          onCheckedChange={() => void complete(task.path)}
+          // Acknowledge before the write, not after it. The beat says the click
+          // landed; making it wait on the file write and the commit would put
+          // the feedback after the thing it is feedback for.
+          onCheckedChange={() => {
+            ack('tick')
+            void complete(task.path)
+          }}
           onClick={(e) => e.stopPropagation()}
           className="mt-0.5 shrink-0"
           aria-label={`Complete ${task.title}`}
@@ -299,6 +314,15 @@ function Grid(): React.JSX.Element {
   const cell = (lane: string, status: TaskStatus) =>
     sortCell(all.filter((t) => t.status === status && laneOf(t) === lane))
 
+  /**
+   * Cards new to the board arrive: one created, one pulled in, one revealed by
+   * a filter widening. Keyed by PATH and computed board-wide rather than per
+   * cell, which gets the distinction right for free — a card dragged from Todo
+   * to Doing keeps its path, so it has moved rather than arrived, and does not
+   * replay an entrance in its new column.
+   */
+  const { arrivalProps } = useArrivals(all.map((t) => t.path))
+
   // Both axes are live now: a same-lane drop rewrites status, a cross-lane drop
   // moves the file (+ link rewrite), and a diagonal does both in one call. The
   // dragged task is looked up by path, so the drop knows its current lane/status.
@@ -395,6 +419,7 @@ function Grid(): React.JSX.Element {
                   <Card
                     key={t.path}
                     task={t}
+                    arrival={arrivalProps(t.path)}
                     cue={
                       overCard === `${t.path}:before`
                         ? 'before'

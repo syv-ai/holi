@@ -379,6 +379,8 @@ Keep the existing `origin-(--radix-*-content-transform-origin)` classes. They ar
 
 - [ ] **Step 3:** The column `+` input arrives. A filter change animates the set in and out, with survivors moving at A.
 
+> **NOT DONE, deliberately, and recorded rather than quietly dropped.** The cross-cell FLIP is not built. A card dropped into another column re-renders into its new place instantly; nothing eases. `lib/tab-reorder.ts` is a 1-D strip where a shift is one `offsetLeft` delta, and the board is a 2-D grid of `(column, lane)` cells whose cards change both axes at once, so the same pattern is materially more work than the plan's one line implied. Everything else in this task is done: cards respond, completion ticks, and cards NEW to the board arrive. Left as the one outstanding row of the inventory.
+
 - [ ] **Step 4:** Verify in the running app. **Use a scratch vault, not `~/Holi/nthomsencph/privat`** — Holi autosaves and pushes, so exercising the board writes real commits.
 
 - [ ] **Step 5: Commit.** `feat(motion): a completed task acknowledges before it leaves`
