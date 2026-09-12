@@ -40,7 +40,7 @@ Tier 0 must land whole. Tiers 1 to 4 are independent of each other and may be re
 | `apps/desktop/src/renderer/src/lib/use-reduced-motion.ts`                 | create                          | The React subscription around the media query.                                                        |
 | `apps/desktop/src/renderer/src/lib/use-ack.ts`                            | create                          | The K mechanism: one-shot class, restart-on-retrigger, reduced-motion suppression per variant.        |
 | `apps/desktop/eslint.config.mjs`                                          | modify                          | `motionRules`, added to **all four** `no-restricted-syntax` arrays.                                   |
-| `apps/desktop/test/fixtures/gate/features/a/motion.tsx`                   | create                          | Deliberate violations, one per selector.                                                              |
+| `apps/desktop/test/fixtures/gate/features/b/motion.tsx`                   | create                          | Deliberate violations, one per selector.                                                              |
 | `apps/desktop/test/gate.test.ts`                                          | modify                          | Assert the motion messages fire.                                                                      |
 | `apps/desktop/test/motion.test.ts`                                        | create                          | Pure helpers + the two CSS text guards. `node` project.                                               |
 | `apps/desktop/src/renderer/src/lib/__tests__/use-ack.test.tsx`            | create                          | `dom` project.                                                                                        |
@@ -206,7 +206,7 @@ Test intent:
 
 ## Task 5: The lint gate
 
-**Files:** modify `apps/desktop/eslint.config.mjs`; create `apps/desktop/test/fixtures/gate/features/a/motion.tsx`; modify `apps/desktop/test/gate.test.ts`
+**Files:** modify `apps/desktop/eslint.config.mjs`; create `apps/desktop/test/fixtures/gate/features/b/motion.tsx`; modify `apps/desktop/test/gate.test.ts`
 
 - [ ] **Step 1: Write the fixture**
 
