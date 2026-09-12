@@ -18,6 +18,13 @@
   --surface-2: 0 0% 15%;
   --destructive: 8 50% 58%;
 
+  /* The overshoot curve, and the ONE place in Holi it survives. The app's
+     motion vocabulary (index.css) is weight without bounce; a one-time
+     ceremony is allowed a spring, the daily app is not. Moved here from
+     `@theme` with the two keyframes it drives, because this file is their
+     only consumer. */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
   /* Bridge to the app's semantic tokens (full-colour form) so the shared
    * primitives — Button/Input/Select — render in the ritual's own palette
    * instead of the app's sky/neutral. The ritual keeps its HSL-triplet tokens
@@ -140,7 +147,7 @@
   box-shadow:
     0 1px 2px hsl(0 0% 0% / 0.04),
     0 1px 6px hsl(0 0% 0% / 0.04);
-  animation: pop 800ms var(--ease-spring) both;
+  animation: obrit-pop 800ms var(--ease-spring) both;
 }
 
 .onboarding-ritual .obrit-head-right {
@@ -919,4 +926,47 @@
   font-size: 11px;
   line-height: 1.45;
   color: hsl(var(--muted-foreground));
+}
+
+/* ── The ritual's own keyframes ───────────────────────────────────────
+ * Moved out of index.css with `--ease-spring` above, and prefixed, so a
+ * keyframe named `pop` or `wake` can never again be reached by anything
+ * outside this ceremony. `obrit-wake` replaces the deleted `animate-wake`
+ * Tailwind utility and is applied by OnboardingRitual.tsx.
+ *
+ * `wake` is moved VERBATIM, `var(--primary)` and all. Note that inside
+ * `.onboarding-ritual` that token is an HSL TRIPLET rather than a colour
+ * (see the token block above), which is not what `color-mix` wants; the
+ * full-colour alias is `--color-primary`. Left exactly as it was rather
+ * than changed in passing, because altering how the ritual looks is not
+ * what this move is for. */
+@keyframes obrit-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  70% {
+    transform: scale(1.05);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes obrit-wake {
+  0% {
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  45% {
+    transform: scale(1.04);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 16px transparent;
+  }
+}
+.onboarding-ritual .obrit-wake {
+  animation: obrit-wake 1.1s var(--ease-settle);
 }

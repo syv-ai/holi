@@ -306,75 +306,74 @@
   --radius: 0.5rem;
 
   /* ── Motion tier ─────────────────────────────────────────────────────
-   * The app's shared motion vocabulary. Every moving part draws from THESE —
-   * dialogs, panels, menus, the onboarding ritual — so timing and feel are one
-   * system, not per-surface guesses. Extracted from the ritual's inventory:
-   * `--ease-settle` is the signature ease-out (26 uses); `--ease-spring` the
-   * overshoot for pops. Durations are a three-step scale. Named animations are
-   * built from the tokens and surface as `animate-*` utilities. */
+   * The app's ONE motion vocabulary. Two curves, five durations and a stagger
+   * step, and every moving part in the app draws from exactly these.
+   *
+   * **Named for what they are FOR, not for how big they are.** The tier this
+   * replaced was `--duration-micro/base/enter`, which tells a reader nothing
+   * about when to reach for one; that is how the app ended up with
+   * `transition-all` on a button, `transition-colors` on a tree row, Radix
+   * defaults on the overlays and a spin on the mailbox refresh, none of which
+   * were chosen. Every animation now names which of four behaviours it is:
+   *
+   *   R  respond      it notices you. Under your pointer or caret, nowhere else.
+   *                   Always a TRANSITION, never an animation, so it reverses
+   *                   the moment you leave and can never be in your way.
+   *   A  arrive       it has weight. Something enters or leaves the layout, from
+   *                   the direction it belongs to. Leaving is faster than
+   *                   arriving, because a thing on its way out is in your way.
+   *   K  acknowledge  it answers back. One beat, once, for an act you committed.
+   *   F  in flight    it breathes. The ONLY looping motion, and bound to a real
+   *                   in-flight state, so when the state ends the motion ends.
+   *
+   * Anything that cannot name one of the four does not animate.
+   *
+   * **No overshoot.** Weight comes from direction and easing, not from a bounce.
+   * `--ease-spring` and the `pop` keyframe it drove now live in
+   * `features/onboarding/onboarding-ritual.css`, their only consumer: a
+   * one-time ceremony is allowed one spring, the daily app is not.
+   *
+   * 300ms was chosen against 160 and 220 side by side, and every other duration
+   * is scaled off it. Re-pacing the app is an edit to THIS block and nothing
+   * else — see `lib/motion.ts` for why the stagger is a calc() string.
+   * Design of record: docs/specs/2026-09-12-motion-system-design.md (D97). */
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Symmetric, for F only. A loop eased like an entrance reads as a stutter. */
+  --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
 
-  --duration-micro: 160ms;
-  --duration-base: 240ms;
-  --duration-enter: 700ms;
+  --motion-respond: 150ms;
+  --motion-arrive: 300ms;
+  --motion-leave: 190ms;
+  --motion-ack: 800ms;
+  --motion-inflight: 2400ms;
+  /* --motion-stagger is NOT here. See the :root block below. */
 
-  /* Entrance workhorse: fade + a short lift. Stagger children with delay-* . */
-  --animate-rise: rise var(--duration-enter) var(--ease-settle) both;
-  /* Spring scale-in for a mark/badge that should feel like it wakes up. */
-  --animate-pop: pop 800ms var(--ease-spring) both;
-  /* One-time attention pulse — a ring bloom on --primary — the first time a
-   * control becomes actionable (e.g. a submit that just went enabled). */
-  --animate-wake: wake 1.1s var(--ease-settle);
-  /* Overlay-panel in/out (dialogs, popovers): fade + a slight zoom. */
-  --animate-scale-in: scale-in var(--duration-base) var(--ease-settle) both;
-  --animate-scale-out: scale-out var(--duration-base) var(--ease-settle) both;
-  /* Bare fade for scrims/overlays. */
-  --animate-fade-in: fade-in var(--duration-base) var(--ease-settle) both;
-  --animate-fade-out: fade-out var(--duration-base) var(--ease-settle) both;
+  /* DEPRECATED, and deleted with their last consumer in the overlay pass. The
+     six overlay primitives still wear `animate-scale-in`/`animate-fade-out`;
+     re-pointed at the new tokens so they are already on the new pace. */
+  --animate-scale-in: scale-in var(--motion-arrive) var(--ease-settle) both;
+  --animate-scale-out: scale-out var(--motion-leave) var(--ease-settle) both;
+  --animate-fade-in: fade-in var(--motion-arrive) var(--ease-settle) both;
+  --animate-fade-out: fade-out var(--motion-leave) var(--ease-settle) both;
 }
 
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+/* The stagger step, deliberately NOT in `@theme` — a plain `:root` rule, which
+ * always emits.
+ *
+ * **Measured, not assumed.** Tailwind v4 tree-shakes `@theme` variables: it
+ * emits the ones the CSS references and drops the rest. Every other motion
+ * token survives because a `@utility` body above names it. This one's only
+ * consumer is `lib/motion.ts`, which builds a `calc(var(--motion-stagger) * n)`
+ * string at RUNTIME — a string Tailwind can never see. Declared in `@theme` it
+ * was absent from the built stylesheet entirely, and the stagger silently
+ * resolved to nothing.
+ *
+ * Any future motion token whose only consumer is JavaScript belongs here too,
+ * for the same reason. `test/motion.test.ts` guards it. */
+:root {
+  --motion-stagger: 45ms;
 }
-@keyframes pop {
-  0% {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-  70% {
-    transform: scale(1.05);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-@keyframes wake {
-  /* color-mix, not hsl(var(--primary) / a): --primary holds a full colour
-     (var(--color-sky-700)), so hsl() around it is invalid and the ring never
-     drew. color-mix applies alpha to any colour form — and keeps working when a
-     vault theme swaps --primary for an arbitrary colour. */
-  0% {
-    transform: scale(0.94);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
-  }
-  45% {
-    transform: scale(1.04);
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
-  }
-  100% {
-    transform: scale(1);
-    box-shadow: 0 0 0 16px transparent;
-  }
-}
+
 @keyframes scale-in {
   from {
     opacity: 0;
@@ -409,6 +408,367 @@
   }
   to {
     opacity: 0;
+  }
+}
+
+/* ════ The four behaviours, as utilities ═══════════════════════════════
+ *
+ * These are the ONLY way a component gets motion. The renderer lint gate
+ * rejects `duration-[…]`, `ease-[…]`, `animate-[…]`, `transition-all` and a
+ * literal transition/animation in a style object, so a number written at a
+ * call site is an error rather than a matter of taste. `features/onboarding/`
+ * is the one exemption: it owns its ceremony.
+ *
+ * What stays STILL is as load-bearing as what moves, and is not expressible
+ * here, so it is stated: prose, headings and code inside a document never
+ * move; direct manipulation (a resize handle, a dragged tab or card, a
+ * scroll) tracks the pointer 1:1 and is never eased, so motion applies to
+ * the RELEASE and not the drag; nothing is ever on the critical path of an
+ * action, so a dialog takes typing the instant it starts arriving; and
+ * inside CodeMirror it is PAINT ONLY — never width, height, font-size or
+ * margin, because that is what pegs CM's measure loop (prd/notes-editor.md).
+ */
+
+/* ── R · respond ──────────────────────────────────────────────────────
+ * A transition, never an animation, so leaving reverses it.
+ * The property list is paint plus `transform` ON PURPOSE: a row that steps
+ * aside on hover does it with a transform, never with padding or margin, so
+ * it runs on the compositor and cannot reflow its siblings. */
+@utility motion-respond {
+  transition-property:
+    color, background-color, border-color, box-shadow, opacity, transform, fill, stroke,
+    text-decoration-color, outline-color;
+  transition-duration: var(--motion-respond);
+  transition-timing-function: var(--ease-settle);
+}
+
+/* ── A · arrive and leave ─────────────────────────────────────────────
+ * ANIMATIONS, not transitions, and that is load-bearing: Radix's `Presence`
+ * keeps an exiting node mounted by waiting for `animationend`. An exit
+ * written as a transition unmounts immediately and is never seen.
+ *
+ * Direction is mandatory — a thing arrives from where it belongs — and the
+ * travel is deliberately short (0.75rem). A panel that genuinely slides its
+ * full width is a bespoke case, not this.
+ *
+ * `-origin` scales from `transform-origin`, for menus that should grow out
+ * of their trigger; pair it with Radix's `origin-(--radix-*-transform-origin)`.
+ * It goes 0.96 → 1 and NEVER above 1: undershoot is fine, overshoot is the
+ * thing that was ruled out. */
+@utility motion-in-right {
+  animation: motion-in-right var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-left {
+  animation: motion-in-left var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-top {
+  animation: motion-in-top var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-bottom {
+  animation: motion-in-bottom var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-origin {
+  animation: motion-in-origin var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-in-fade {
+  animation: motion-in-fade var(--motion-arrive) var(--ease-settle) both;
+}
+@utility motion-out-right {
+  animation: motion-out-right var(--motion-leave) var(--ease-settle) both;
+}
+@utility motion-out-left {
+  animation: motion-out-left var(--motion-leave) var(--ease-settle) both;
+}
+@utility motion-out-top {
+  animation: motion-out-top var(--motion-leave) var(--ease-settle) both;
+}
+@utility motion-out-bottom {
+  animation: motion-out-bottom var(--motion-leave) var(--ease-settle) both;
+}
+@utility motion-out-origin {
+  animation: motion-out-origin var(--motion-leave) var(--ease-settle) both;
+}
+@utility motion-out-fade {
+  animation: motion-out-fade var(--motion-leave) var(--ease-settle) both;
+}
+
+@keyframes motion-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-in-top {
+  from {
+    opacity: 0;
+    transform: translateY(-0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-in-bottom {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-in-origin {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-in-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes motion-out-right {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(0.75rem);
+  }
+}
+@keyframes motion-out-left {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-0.75rem);
+  }
+}
+@keyframes motion-out-top {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-0.75rem);
+  }
+}
+@keyframes motion-out-bottom {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(0.75rem);
+  }
+}
+@keyframes motion-out-origin {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes motion-out-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* ── K · acknowledge ──────────────────────────────────────────────────
+ * One beat, once, for a discrete act the reader committed. Applied and
+ * cleaned up by `lib/use-ack.ts`, which also handles the replay-on-retrigger
+ * that a bare class toggle cannot do.
+ *
+ * The split matters for reduced motion below: `bloom` and `flash` PAINT and
+ * survive it; `tick` and `nudge` MOVE and do not.
+ *
+ * color-mix, never `hsl(var(--primary) / a)`: `--primary` holds a full colour,
+ * so hsl() around it is invalid and the ring silently never draws. That cost
+ * a debugging session once already. */
+@utility motion-ack-bloom {
+  animation: motion-ack-bloom var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-tick {
+  animation: motion-ack-tick var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-flash {
+  animation: motion-ack-flash var(--motion-ack) var(--ease-settle) both;
+}
+@utility motion-ack-nudge {
+  animation: motion-ack-nudge var(--motion-ack) var(--ease-settle) both;
+}
+
+@keyframes motion-ack-bloom {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+@keyframes motion-ack-tick {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-ack-flash {
+  from {
+    background-color: color-mix(in srgb, var(--primary) 28%, transparent);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+@keyframes motion-ack-nudge {
+  0%,
+  100% {
+    transform: none;
+  }
+  15% {
+    transform: translateX(-5px);
+  }
+  30% {
+    transform: translateX(5px);
+  }
+  45% {
+    transform: translateX(-3px);
+  }
+  60% {
+    transform: translateX(2px);
+  }
+  75% {
+    transform: translateX(-1px);
+  }
+}
+
+/* ── F · in flight ────────────────────────────────────────────────────
+ * The only looping motion in the app, and every use must be bound to a real
+ * in-flight state so that when the state ends the motion ends. Nothing here
+ * may loop decoratively; that is the rule that stops this from nagging.
+ *
+ * `pulse` eases with `--ease-loop` because a loop eased like an entrance
+ * reads as a stutter. `shimmer` and `orbit` are LINEAR on purpose: an eased
+ * spinner looks broken rather than considered.
+ *
+ * `orbit` supplies rotation only — the caller supplies the ring (or the icon),
+ * which is what lets it replace `animate-spin` on a lucide glyph unchanged. */
+@utility motion-pulse {
+  animation: motion-pulse var(--motion-inflight) var(--ease-loop) infinite;
+}
+@utility motion-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--muted) 32%,
+    color-mix(in srgb, var(--foreground) 12%, var(--muted)) 50%,
+    var(--muted) 68%
+  );
+  background-size: 280% 100%;
+  animation: motion-shimmer calc(var(--motion-inflight) * 1.2) linear infinite;
+}
+@utility motion-orbit {
+  animation: motion-orbit calc(var(--motion-inflight) * 1.4) linear infinite;
+}
+
+@keyframes motion-pulse {
+  0%,
+  100% {
+    opacity: 0.32;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes motion-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+@keyframes motion-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────
+ * Reduce, not remove, because that is what the setting is actually for: the
+ * problem is vestibular, not aesthetic, and blanking colour and opacity makes
+ * the app worse for someone who did not ask for that.
+ *
+ *   F  stops dead        — a loop is exactly what the setting suppresses
+ *   A  becomes instant   — travel is the vestibular half
+ *   K  paint survives    — bloom and flash stay, tick and nudge do not
+ *   R  survives          — it is paint plus a compositor transform
+ *
+ * Kept physically beside the definitions. Split apart, this drifts.
+ * Classes are listed rather than matched with `[class*=…]`, so adding a
+ * utility above without deciding what it does here is visible rather than
+ * silently swept up. The JS half is `lib/motion.ts` + `lib/use-reduced-motion.ts`. */
+@media (prefers-reduced-motion: reduce) {
+  .motion-pulse,
+  .motion-shimmer,
+  .motion-orbit,
+  .motion-ack-tick,
+  .motion-ack-nudge {
+    animation: none;
+  }
+  .motion-in-right,
+  .motion-in-left,
+  .motion-in-top,
+  .motion-in-bottom,
+  .motion-in-origin,
+  .motion-in-fade,
+  .motion-out-right,
+  .motion-out-left,
+  .motion-out-top,
+  .motion-out-bottom,
+  .motion-out-origin,
+  .motion-out-fade {
+    animation-duration: 1ms;
   }
 }
 

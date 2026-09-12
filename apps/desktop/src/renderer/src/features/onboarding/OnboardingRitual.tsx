@@ -417,8 +417,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                     />
                     <div className="obrit-input-underline" />
                     <div className="obrit-path-caption">
-                      github.com/{s.owner || '…'}/<span className="obrit-slug-out">{slug || '…'}</span>{' '}
-                      · private
+                      github.com/{s.owner || '…'}/
+                      <span className="obrit-slug-out">{slug || '…'}</span> · private
                     </div>
                   </div>
 
@@ -612,7 +612,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                 )}
                 <Button
                   variant="ceremony"
-                  className={continueWaking ? 'animate-wake' : ''}
+                  className={continueWaking ? 'obrit-wake' : ''}
                   onClick={() => void submit()}
                   disabled={continueDisabled || s.submitting}
                 >
