@@ -31,15 +31,12 @@ import {
   drawSelection,
   EditorView,
   keymap,
+  ViewPlugin,
   WidgetType,
   type DecorationSet,
+  type ViewUpdate,
 } from '@codemirror/view'
-import {
-  frontmatterSchema,
-  isTaskFilePath,
-  readYamlMapping,
-  splitFrontmatter,
-} from '@holi/shared'
+import { frontmatterSchema, isTaskFilePath, readYamlMapping, splitFrontmatter } from '@holi/shared'
 import {
   frontmatterBlockRange,
   frontmatterRegion,
@@ -78,6 +75,19 @@ const frontmatterEdit = Annotation.define<boolean>()
  * widget, the same nested plain-YAML editor, the same collapse chevron. A note
  * still opens to its prose.
  */
+/**
+ * Whether a file's frontmatter block has a collapsed state at all.
+ *
+ * A task's does not. FR-2's pill answers "what is in this file?" with a body
+ * char count and a last-edited line, which for a task is a summary of the half
+ * that is *not* the point: the fields are. There is nothing worth showing in
+ * place of them, so there is no reason to offer the swap — a chevron that only
+ * ever makes the view worse is a control with one wrong setting.
+ */
+export function frontmatterAlwaysOpen(path: string): boolean {
+  return isTaskFilePath(path)
+}
+
 export function frontmatterStartsRevealed(path: string): boolean {
   // A task joins `.claude/` as the second case, and for the same reason read the
   // other way round: its frontmatter is not metadata over prose someone came to
@@ -94,6 +104,10 @@ export function frontmatterStartsRevealed(path: string): boolean {
 export const frontmatterExpandedField = StateField.define<boolean>({
   create: (state) => frontmatterStartsRevealed(state.facet(notePathFacet)),
   update(value, tr) {
+    // A file with no collapsed state cannot be toggled into one, whatever
+    // dispatches the effect. Enforced here rather than by hiding the chevron
+    // alone: the rule is about the file, not about one control.
+    if (frontmatterAlwaysOpen(tr.state.facet(notePathFacet))) return true
     for (const e of tr.effects) if (e.is(toggleFrontmatter)) return e.value
     return value
   },
@@ -173,9 +187,7 @@ function paintChevron(el: HTMLElement, body: string): void {
   const valid = frontmatterYamlValid(regionTextFrom(body))
   el.classList.toggle('cm-fm-invalid', !valid)
   const n = keyCount(body)
-  el.title = valid
-    ? `frontmatter · ${n} field${n === 1 ? '' : 's'}`
-    : 'frontmatter — invalid YAML'
+  el.title = valid ? `frontmatter · ${n} field${n === 1 ? '' : 's'}` : 'frontmatter — invalid YAML'
 }
 
 /** Two commits are the same for the summary if both are null or share both
@@ -286,18 +298,20 @@ class FrontmatterWidget extends WidgetType {
     const row = document.createElement('div')
     row.className = 'cm-fm-reveal'
 
-    const chevron = document.createElement('button')
-    chevron.type = 'button'
-    chevron.className = 'cm-fm-chevron'
-    chevron.setAttribute('data-frontmatter-header', '')
-    chevron.textContent = '▾'
-    paintChevron(chevron, this.body)
-    this.chevron = chevron
-    chevron.onmousedown = (e) => {
-      e.preventDefault()
-      view.dispatch({ effects: toggleFrontmatter.of(false) })
+    if (!frontmatterAlwaysOpen(this.path)) {
+      const chevron = document.createElement('button')
+      chevron.type = 'button'
+      chevron.className = 'cm-fm-chevron'
+      chevron.setAttribute('data-frontmatter-header', '')
+      chevron.textContent = '▾'
+      paintChevron(chevron, this.body)
+      this.chevron = chevron
+      chevron.onmousedown = (e) => {
+        e.preventDefault()
+        view.dispatch({ effects: toggleFrontmatter.of(false) })
+      }
+      row.appendChild(chevron)
     }
-    row.appendChild(chevron)
 
     const host = document.createElement('div')
     host.className = 'cm-fm-body'
@@ -356,7 +370,10 @@ class FrontmatterWidget extends WidgetType {
           // frozen — the invalid-YAML feedback has to be live while you type.
           if (this.chevron !== null) paintChevron(this.chevron, body)
         }),
-        EditorView.theme({ '&': { backgroundColor: 'transparent' }, '.cm-content': { padding: 0 } }),
+        EditorView.theme({
+          '&': { backgroundColor: 'transparent' },
+          '.cm-content': { padding: 0 },
+        }),
       ],
     })
     return wrap
@@ -503,6 +520,9 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
   '.cm-fm-body': { flex: '1', minWidth: '0' },
+  // See `caretInBlock`: a caret whose head is inside the replaced region would
+  // render as tall as the whole block.
+  '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },
   // Invalid YAML reddens the chevron mark — the only status cue, and it wins on
   // hover (an explicit colour on the mark overrides the inherited hover colour).
   '.cm-fm-mark.cm-fm-invalid, .cm-fm-chevron.cm-fm-invalid': { color: '#f87171' },
@@ -531,7 +551,8 @@ export function bodyStart(doc: string): number {
 const protectFrontmatter = EditorState.changeFilter.of((tr) => {
   const region = frontmatterRegion(tr.startState.doc.toString())
   if (region === null) return true
-  if (tr.annotation(frontmatterEdit) || tr.annotation(Transaction.userEvent) === undefined) return true
+  if (tr.annotation(frontmatterEdit) || tr.annotation(Transaction.userEvent) === undefined)
+    return true
   return [region.from, region.to]
 })
 
@@ -549,6 +570,42 @@ const caretBelowFrontmatter = EditorState.transactionFilter.of((tr) => {
   return [tr, { selection: EditorSelection.cursor(region.to, 1) }]
 })
 
+/**
+ * No caret against the block.
+ *
+ * `caretBelowFrontmatter` keeps a bare cursor out, and deliberately lets a
+ * *range* through so select-all and a drag still take the frontmatter with
+ * them. That leaves one case: a range whose head is inside the block. The block
+ * is a single element as tall as all its rows, so `drawSelection` draws the
+ * caret from those coordinates and you get a 230px bar blinking against its
+ * edge, which reads as a broken text cursor rather than as the end of a
+ * selection.
+ *
+ * So the caret is hidden while its head is in there. It is not a workaround for
+ * the geometry: the region is atomic and cannot be typed into, so a caret
+ * claiming an insertion point inside it was never telling the truth. The
+ * selection itself is untouched — the highlight still covers the block, and
+ * copy still takes it.
+ */
+const caretInBlock = ViewPlugin.fromClass(
+  class {
+    constructor(view: EditorView) {
+      this.sync(view)
+    }
+    update(u: ViewUpdate): void {
+      if (u.selectionSet || u.docChanged) this.sync(u.view)
+    }
+    sync(view: EditorView): void {
+      const block = frontmatterBlockRange(view.state.doc.toString())
+      const main = view.state.selection.main
+      view.dom.classList.toggle(
+        'cm-fm-caret-hidden',
+        block !== null && !main.empty && main.head <= block.to,
+      )
+    }
+  },
+)
+
 /** The whole frontmatter feature, one extension. Register AFTER livePreview so
  *  the block-replace owns the region's rendering. */
 export const frontmatterExtension: Extension = [
@@ -558,4 +615,5 @@ export const frontmatterExtension: Extension = [
   frontmatterTheme,
   protectFrontmatter,
   caretBelowFrontmatter,
+  caretInBlock,
 ]

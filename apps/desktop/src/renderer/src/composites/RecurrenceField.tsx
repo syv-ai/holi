@@ -34,7 +34,7 @@ import {
   SelectValue,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FieldRow } from './FieldRow'
+import { FIELD_CONTROL, FieldRow } from './FieldRow'
 import { cn } from '@/lib/cn'
 
 const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -68,8 +68,8 @@ export function RecurrenceField({
           className={cn(
             // The field treatment every control in a row wears, so a picker, a
             // Select and this read as the same kind of thing.
-            'h-8 w-full min-w-0 shrink justify-end rounded-md border border-input px-3',
-            'text-xs font-normal hover:bg-transparent focus-visible:border-ring',
+            FIELD_CONTROL,
+            'shrink justify-end hover:bg-transparent focus-visible:border-ring',
             value === undefined && 'text-muted-foreground',
           )}
         >

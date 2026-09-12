@@ -29,6 +29,7 @@ import {
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from '@/primitives'
+import { FIELD_CONTROL } from './FieldRow'
 import { cn } from '@/lib/cn'
 
 /** The selected day's treatment. A const because the hover half repeats the
@@ -228,7 +229,12 @@ export function DateTimePicker({
             aria-label={placeholder}
             className={cn(
               // The field treatment the rows beside it wear, so a picker and a
-              // Select read as the same kind of control.
+              // Select read as the same kind of control. It comes from
+              // `FIELD_CONTROL` rather than being spelled out here, because
+              // "the same as the others" is a fact about the set, not about
+              // this control.
+              FIELD_CONTROL,
+              'justify-end gap-2',
               //
               // `min-w-0 shrink` is load-bearing, not tidiness. The Button
               // primitive's base is `shrink-0`, so `w-full` inside the label+
@@ -237,8 +243,7 @@ export function DateTimePicker({
               // width of its own label. The Selects beside it were fine because
               // they are not Buttons. Measured in the app: 285px wide ending
               // 66px past the panel, against the Select's 197px.
-              'h-8 w-full min-w-0 shrink justify-end gap-2 rounded-md border border-input px-3',
-              'text-xs font-normal hover:bg-transparent focus-visible:border-ring',
+              'shrink hover:bg-transparent focus-visible:border-ring',
               value === null && 'text-muted-foreground',
             )}
           >

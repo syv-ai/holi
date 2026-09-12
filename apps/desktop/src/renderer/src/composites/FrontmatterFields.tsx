@@ -40,7 +40,7 @@ import {
   SelectValue,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FieldRow } from './FieldRow'
+import { FIELD_CONTROL, FIELD_READONLY, FieldRow } from './FieldRow'
 import { RecurrenceField } from './RecurrenceField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
@@ -68,7 +68,15 @@ function TagsField({
     if (next.length > 0) onChange([...value, ...next])
   }
   return (
-    <div className="flex flex-wrap items-center justify-end gap-1">
+    <div
+      className={cn(
+        FIELD_CONTROL,
+        // `h-auto min-h-8` rather than a fixed height: this is the one control
+        // whose content grows, and six tags must wrap inside its box rather
+        // than out of it.
+        'flex h-auto min-h-8 flex-wrap items-center justify-end gap-1 px-2 py-1',
+      )}
+    >
       {value.map((tag) => (
         <span
           key={tag}
@@ -90,7 +98,10 @@ function TagsField({
         value={draft}
         aria-label="add a tag"
         placeholder={value.length === 0 ? 'none' : '+'}
-        className="h-6 w-20 border-transparent bg-transparent px-1 text-xs shadow-none hover:border-input focus-visible:border-ring"
+        // `dark:bg-transparent` as well as the bare one: the Input primitive
+        // carries `dark:bg-input/30`, which is a variant and so outranks an
+        // unprefixed override — the empty field read as a filled chip.
+        className="h-5 w-16 border-transparent bg-transparent px-1 text-xs shadow-none focus-visible:border-ring dark:bg-transparent"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -132,7 +143,7 @@ function TextField({
       value={draft ?? shown}
       aria-label={label}
       placeholder="none"
-      className="h-7 w-full min-w-0 border-input bg-transparent px-2 text-right text-xs"
+      className={cn(FIELD_CONTROL, 'text-right')}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={(e) => commit(e.target.value)}
       onKeyDown={(e) => {
@@ -183,7 +194,11 @@ export function FrontmatterFields({
   }
 
   const isTask = isTaskFilePath(path)
-  const folder = path.slice(0, path.lastIndexOf('/'))
+  // **`lastIndexOf` returns -1 for a file at the vault root**, and `slice(0, -1)`
+  // is then the path minus its last character — so a root-level task showed a
+  // row labelled `folder` whose value was its own filename, one letter short.
+  const slash = path.lastIndexOf('/')
+  const folder = slash === -1 ? '' : path.slice(0, slash)
   const due = typeof values.due === 'string' ? values.due : undefined
 
   const control = (field: FieldSpec): React.JSX.Element => {
@@ -210,7 +225,7 @@ export function FrontmatterFields({
             <SelectTrigger
               size="sm"
               aria-label={field.key}
-              className="w-full justify-end"
+              className={cn(FIELD_CONTROL, 'justify-end gap-2')}
               data-fm-field={field.key}
             >
               <SelectValue placeholder={UNSET} />
@@ -283,7 +298,7 @@ export function FrontmatterFields({
           which has to rewrite inbound links and so belongs to the file tree. */}
       {folder !== '' && (
         <FieldRow label="folder" title={path}>
-          <span className="truncate px-2 text-xs text-muted-foreground">{folder}</span>
+          <span className={FIELD_READONLY}>{folder}</span>
         </FieldRow>
       )}
       {frontmatterRows(schema, Object.keys(values)).map((field) => (

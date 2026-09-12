@@ -48,12 +48,19 @@ test('a note gets the note schema, not the task one', () => {
   expect(screen.queryByText('status')).not.toBeInTheDocument()
 })
 
-test('the folder is a row, derived and read-only', () => {
+test('the folder row shows the parents, not the file', () => {
   // The one fact about a task that is not in its file. Editing it would be a
   // move, which has to rewrite inbound links, so it is not editable here.
-  fields('status: todo\n')
+  fields('status: todo\n', 'work/projects/task.a.md')
   expect(screen.getByText('folder')).toBeInTheDocument()
-  expect(screen.getByText('projects')).toBeInTheDocument()
+  expect(screen.getByText('work/projects')).toBeInTheDocument()
+})
+
+test('a file at the vault root has no folder row at all', () => {
+  // `lastIndexOf('/')` is -1 there, and `slice(0, -1)` is the path minus its
+  // last character — the row showed the task's own filename, one letter short.
+  fields('status: todo\n', 'task.a.md')
+  expect(screen.queryByText('folder')).not.toBeInTheDocument()
 })
 
 test('a key the schema never heard of renders as text and survives a write', async () => {
