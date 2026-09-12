@@ -15,6 +15,7 @@
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
+import { prefersReducedMotion } from '@/lib/motion'
 
 /**
  * The seeded turn for a selection. `from`/`to` are 1-based inclusive line
@@ -66,8 +67,7 @@ const EXIT_MS = 220
 /** Nothing to fade for someone who asked not to be moved, so nothing to wait for
  *  either. Read at use rather than cached: the OS setting can change while the
  *  app runs. */
-const exitMs = (): number =>
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true ? 0 : EXIT_MS
+const exitMs = (): number => (prefersReducedMotion() ? 0 : EXIT_MS)
 
 /**
  * The tooltip's two states: a button, and the popover it opens into.

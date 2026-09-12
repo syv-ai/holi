@@ -407,6 +407,8 @@ Keep the existing `origin-(--radix-*-content-transform-origin)` classes. They ar
 
 **Files:** modify `apps/desktop/src/renderer/src/editor/theme.ts`; `editor/{wikiLinkChips,imageWidget}.ts`; `composites/FrontmatterFields.tsx`
 
+> **Found during Task 3, recorded so it is not lost.** `editor/askAgent.ts` carries `const EXIT_MS = 220`, a duration it sets as a custom property for its stylesheet to read. It is a motion number outside the vocabulary, and the lint rule cannot see it: it is a plain JS const, not a class name or a style literal. The ask-agent popover leaving is A, so it should read `--motion-leave`. Fold it into this task.
+
 The line is **"is it a thing you can click"**, not "is it in the editor". Prose, headings and code never move.
 
 - [ ] **Step 1:** Wiki-link chips, task status orbs, note checkboxes and table cells respond on hover. A chip going from missing to existing, and a status change, fire K.
