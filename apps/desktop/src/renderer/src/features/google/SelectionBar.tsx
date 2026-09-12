@@ -36,9 +36,7 @@ export function SelectionBar({
 }): React.JSX.Element {
   return (
     <div className="flex h-11 shrink-0 items-center gap-1 bg-secondary px-2">
-      <span className="shrink-0 text-xs font-medium tabular-nums">
-        {count} selected
-      </span>
+      <span className="shrink-0 text-xs font-medium tabular-nums">{count} selected</span>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
         {/* Both directions of both toggles, spelled out rather than derived from

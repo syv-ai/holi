@@ -28,7 +28,12 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 /** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
-  new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
 export function HistoryPanel() {
   const open = useAtomValue(historyOpenAtom)
@@ -89,7 +94,7 @@ export function HistoryPanel() {
     <div
       key={v.sha}
       className={cn(
-        'flex items-center gap-1 rounded',
+        'motion-respond flex items-center gap-1 rounded',
         selectedSha === v.sha ? 'bg-accent' : 'hover:bg-accent/50',
       )}
     >
@@ -136,7 +141,9 @@ export function HistoryPanel() {
         ) : diff === null ? (
           <p className="p-3 text-xs text-muted-foreground">Loading…</p>
         ) : diff.before === '' && diff.after === '' ? (
-          <p className="p-3 text-xs text-muted-foreground italic">This commit did not change this file.</p>
+          <p className="p-3 text-xs text-muted-foreground italic">
+            This commit did not change this file.
+          </p>
         ) : (
           <DiffView before={diff.before} after={diff.after} />
         )}

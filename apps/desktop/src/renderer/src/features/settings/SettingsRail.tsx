@@ -17,14 +17,7 @@
 import { Fragment } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/cn'
-import {
-  Button,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/primitives'
+import { Button, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/primitives'
 import type { SettingsSection } from './sections'
 
 export function SettingsRail({
@@ -69,7 +62,7 @@ export function SettingsRail({
                 size={12}
                 aria-hidden="true"
                 className={cn(
-                  'shrink-0 transition-transform',
+                  'motion-respond shrink-0',
                   section.headings.length === 0 && 'invisible',
                   active && 'rotate-90',
                 )}

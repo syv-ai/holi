@@ -99,11 +99,7 @@ import {
 import type { ComposeIntent } from '../../lib/compose-intent'
 import { matchHotkey } from '../../lib/hotkey'
 import { listStamp, messageStamp } from '../../lib/mail-stamp'
-import type {
-  MailAddress,
-  MailAttachment as Attachment,
-  ThreadMessage,
-} from '../../lib/mail-types'
+import type { MailAddress, MailAttachment as Attachment, ThreadMessage } from '../../lib/mail-types'
 import { trpc } from '../../lib/trpc'
 import { activeRemoteAtom } from '../../state/vaults'
 import { openNoteTabAtom } from '../../state/panes'
@@ -565,7 +561,10 @@ export function MailView() {
    * restoring a removed row means putting it back at its index, and "unarchive"
    * is not a thing this app can express.
    */
-  const write = async (mutate: () => Promise<unknown>, next: (threads: ThreadSummary[]) => ThreadSummary[]) => {
+  const write = async (
+    mutate: () => Promise<unknown>,
+    next: (threads: ThreadSummary[]) => ThreadSummary[],
+  ) => {
     if (list.kind !== 'ready') return
     const snapshot = list.threads
     const at = ++listGeneration.current
@@ -814,32 +813,32 @@ export function MailView() {
               onClear={clearSelection}
             />
           ) : (
-          <MailToolbar
-            query={query}
-            onQueryChange={setQuery}
-            onSubmit={setSubmitted}
-            searchOpen={searchOpen}
-            onSearchOpenChange={setSearchOpen}
-            people={threads}
-            contacts={contacts}
-            view={view}
-            onViewChange={setView}
-            searching={searching}
-            unreadOnly={unreadOnly}
-            onUnreadChange={setUnreadOnly}
-            unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
-            inboxUnread={counts?.unread ?? null}
-            categoryCounts={categoryCounts}
-            onCategoryMenuOpen={loadCategoryCounts}
-            onCompose={() => openDialog({ id: 'compose-mail', size: 'lg' })}
-            onRefresh={() => {
-              load()
-              loadCounts()
-              // Only if they are on screen already — refresh must not be the
-              // thing that first spends five requests on a dropdown.
-              if (categoryCounts !== null) loadCategoryCounts()
-            }}
-          />
+            <MailToolbar
+              query={query}
+              onQueryChange={setQuery}
+              onSubmit={setSubmitted}
+              searchOpen={searchOpen}
+              onSearchOpenChange={setSearchOpen}
+              people={threads}
+              contacts={contacts}
+              view={view}
+              onViewChange={setView}
+              searching={searching}
+              unreadOnly={unreadOnly}
+              onUnreadChange={setUnreadOnly}
+              unreadCount={viewUnread(view, counts?.unread ?? null, categoryCounts)}
+              inboxUnread={counts?.unread ?? null}
+              categoryCounts={categoryCounts}
+              onCategoryMenuOpen={loadCategoryCounts}
+              onCompose={() => openDialog({ id: 'compose-mail', size: 'lg' })}
+              onRefresh={() => {
+                load()
+                loadCounts()
+                // Only if they are on screen already — refresh must not be the
+                // thing that first spends five requests on a dropdown.
+                if (categoryCounts !== null) loadCategoryCounts()
+              }}
+            />
           )}
 
           {/* Above the list rather than beside the button that failed: archive
@@ -860,9 +859,7 @@ export function MailView() {
           )}
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {showDrafts && (
-              <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />
-            )}
+            {showDrafts && <DraftsList reloadKey={draftsGeneration} onOpen={continueDraft} />}
             {!showDrafts && list.kind === 'loading' && <Note>Loading…</Note>}
             {!showDrafts && list.kind === 'disconnected' && (
               <Note>Google isn&rsquo;t connected. Connect it in vault settings.</Note>
@@ -976,9 +973,7 @@ export function MailView() {
                           : 'open this meeting in Google Calendar'
                       }
                       onClick={() =>
-                        void window.holi.openExternal(
-                          meeting.conferenceUrl ?? meeting.htmlLink,
-                        )
+                        void window.holi.openExternal(meeting.conferenceUrl ?? meeting.htmlLink)
                       }
                     >
                       {meeting.conferenceUrl !== null ? (
@@ -1693,7 +1688,7 @@ function ListFooter({
   return (
     <div className="flex h-7 shrink-0 items-center justify-between gap-2 border-t border-divider px-2 text-[10px] text-muted-foreground">
       <span className="flex min-w-0 items-center gap-1 truncate">
-        <RefreshCw size={10} className={`shrink-0 ${syncing ? 'animate-spin' : ''}`} />
+        <RefreshCw size={10} className={`shrink-0 ${syncing ? 'motion-orbit' : ''}`} />
         {syncing ? 'Syncing…' : syncedAt === null ? 'Not synced' : `Synced ${ago(syncedAt)}`}
       </span>
       <span className="shrink-0">
@@ -1756,7 +1751,7 @@ function ThreadRow({
 
   return (
     <div
-      className={`group/row flex items-stretch border-b border-divider ${
+      className={`motion-respond group/row flex items-stretch border-b border-divider ${
         active
           ? 'bg-secondary'
           : selected
@@ -1912,7 +1907,6 @@ function ThreadRow({
     </div>
   )
 }
-
 
 /**
  * One message in a thread, collapsible.

@@ -389,7 +389,7 @@ export function AgendaView() {
                         // An event that does not block time is on the calendar
                         // without claiming any: an FYI, a webinar someone forwarded.
                         // Dimming says "this is not why your day is full".
-                        className={`group relative rounded ${event.busy ? '' : 'opacity-60'} ${
+                        className={`motion-respond group relative rounded ${event.busy ? '' : 'opacity-60'} ${
                           selected === eventKey(event) ? 'bg-secondary' : 'hover:bg-secondary/60'
                         }`}
                       >

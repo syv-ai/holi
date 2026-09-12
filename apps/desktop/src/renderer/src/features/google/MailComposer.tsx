@@ -413,8 +413,8 @@ export function MailComposer({
           className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground"
           data-testid="foreign-notice"
         >
-          This draft was written outside Holi and has been converted to markdown.
-          Saving will replace the original formatting.
+          This draft was written outside Holi and has been converted to markdown. Saving will
+          replace the original formatting.
         </p>
       )}
 

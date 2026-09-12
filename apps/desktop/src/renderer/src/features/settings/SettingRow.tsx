@@ -17,6 +17,7 @@ import {
   type VaultSettingDescriptor,
 } from '@holi/shared'
 import { Button, Checkbox, Tooltip } from '@/primitives'
+import { useAck } from '@/lib/use-ack'
 import { SettingsRow } from './settings-ui'
 
 /** The one setting whose value is a statement about an event that has already
@@ -56,8 +57,19 @@ export function SettingRow({
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
 
+  // Acknowledge: changing a setting WRITES A FILE in the vault, which is a
+  // different weight of act from picking a tab. The row flashes once so the
+  // write is visible where it happened, rather than being silent or needing a
+  // toast somewhere else on screen.
+  const { ref: rowRef, ack } = useAck<HTMLDivElement>()
+  const change = (k: string, v: unknown) => {
+    ack('flash')
+    onChange(k, v)
+  }
+
   return (
     <SettingsRow
+      ref={rowRef}
       role="group"
       aria-label={label}
       data-setting={key}
@@ -80,7 +92,7 @@ export function SettingRow({
         control.kind === 'toggle' ? (
           <Checkbox
             checked={value === true}
-            onCheckedChange={(next) => onChange(key, next === true)}
+            onCheckedChange={(next) => change(key, next === true)}
             aria-label={label}
           />
         ) : control.kind === 'choice' ? (
@@ -101,7 +113,7 @@ export function SettingRow({
                 // Structural equality: a `landing` option's value is an object, and
                 // the answer is a different object with the same shape.
                 aria-checked={JSON.stringify(option.value) === JSON.stringify(value)}
-                onClick={() => onChange(key, option.value)}
+                onClick={() => change(key, option.value)}
               >
                 {option.label}
               </Button>
@@ -122,9 +134,7 @@ export function SettingRow({
                   // The whole block, not just the switch that moved: a patch
                   // naming one transform must not read as an answer about the
                   // others.
-                  onCheckedChange={(next) =>
-                    onChange(key, { ...block, [toggle.key]: next === true })
-                  }
+                  onCheckedChange={(next) => change(key, { ...block, [toggle.key]: next === true })}
                   aria-label={`${toggle.label}. ${toggle.explanation}`}
                 />
                 <span className="min-w-0">

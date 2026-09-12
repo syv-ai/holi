@@ -121,7 +121,7 @@ export function HistoryView(): React.JSX.Element {
     <div
       key={c.sha}
       className={cn(
-        'flex items-center gap-1 rounded',
+        'motion-respond flex items-center gap-1 rounded',
         selectedSha === c.sha ? 'bg-accent' : 'hover:bg-accent/50',
       )}
     >

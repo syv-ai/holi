@@ -126,8 +126,12 @@ export function SettingsRow({
   control,
   children,
   className,
+  ref,
   ...rest
 }: {
+  /** React 19 takes `ref` as an ordinary prop; it is not in HTMLAttributes, so
+   *  it has to be declared to be passed through. */
+  ref?: React.Ref<HTMLDivElement>
   label: ReactNode
   description?: ReactNode
   /** Badges and notes beside the label. */
@@ -138,7 +142,7 @@ export function SettingsRow({
   className?: string
 } & Omit<React.HTMLAttributes<HTMLDivElement>, 'children'>): React.JSX.Element {
   return (
-    <div className={cn('flex flex-col gap-2 py-3', className)} {...rest}>
+    <div ref={ref} className={cn('flex flex-col gap-2 py-3', className)} {...rest}>
       <div className="flex flex-wrap items-start justify-end gap-x-3 gap-y-2">
         <div className="min-w-0 grow basis-48">
           <div className="flex flex-wrap items-center gap-2">

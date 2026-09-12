@@ -257,8 +257,7 @@ function HtmlFrame({
 
     // Published last: the document is written and wired by this point, so a
     // searcher that reads the registry never gets a half-built page.
-    const unregister =
-      registerAs === null ? undefined : registerMailFrame(registerAs, document_)
+    const unregister = registerAs === null ? undefined : registerMailFrame(registerAs, document_)
 
     return () => {
       document_.removeEventListener('click', onClick)

@@ -48,9 +48,7 @@ export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'fo
  * code had to keep remembering that one of the two won.
  */
 export type MailboxView =
-  | { kind: 'category'; category: MailCategory | null }
-  | { kind: 'sent' }
-  | { kind: 'drafts' }
+  { kind: 'category'; category: MailCategory | null } | { kind: 'sent' } | { kind: 'drafts' }
 
 /**
  * Gmail's tabs, plus the default: no tab at all.

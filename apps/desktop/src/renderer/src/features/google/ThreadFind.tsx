@@ -165,11 +165,7 @@ export function ThreadFind({
       {term !== '' && (
         <span
           role="status"
-          aria-label={
-            marks.length === 0
-              ? 'no matches'
-              : `match ${active + 1} of ${marks.length}`
-          }
+          aria-label={marks.length === 0 ? 'no matches' : `match ${active + 1} of ${marks.length}`}
           className="shrink-0 text-[10px] text-muted-foreground tabular-nums"
         >
           {marks.length === 0 ? 'no matches' : `${active + 1}/${marks.length}`}
