@@ -31,3 +31,9 @@ export const InlineTransition = (): React.JSX.Element => (
 export const InlineAnimationDelay = (): React.JSX.Element => (
   <div style={{ animationDelay: '90ms' }}>x</div>
 )
+
+// A raw Tailwind transition utility is still a component choosing its own
+// property list and Tailwind's default duration.
+export const RawTransitionUtility = (): React.JSX.Element => (
+  <div className="transition-colors hover:bg-accent">x</div>
+)

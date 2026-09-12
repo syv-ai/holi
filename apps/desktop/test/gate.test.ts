@@ -37,9 +37,10 @@ test('gate flags a motion number stated at the call site', async () => {
   const motion = result.messages.filter((m) => /motion/i.test(m.message))
 
   // One per violation in the fixture: arbitrary duration, ease, delay and
-  // animation; `transition-all`; the same reached through a template quasi;
-  // and a literal transition and animationDelay in a style object.
-  expect(motion).toHaveLength(8)
+  // animation; `transition-all`; the same reached through a template quasi; a
+  // literal transition and animationDelay in a style object; and a raw
+  // `transition-colors`.
+  expect(motion).toHaveLength(9)
   expect(motion.every((m) => m.ruleId === 'no-restricted-syntax')).toBe(true)
 })
 

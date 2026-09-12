@@ -56,7 +56,13 @@ const colourRules = [
 // `duration-(--motion-respond)` — Tailwind v4's CSS-variable shorthand, which
 // uses PARENTHESES — is deliberately not matched: that is reading the token,
 // which is the point. Only bracketed arbitrary values are.
-const MOTION_BODY = '(duration|ease|delay|animate)-\\[|transition-all'
+// `transition-none` is the one form that survives: it says "do not transition",
+// which states no number and is a real answer (the checkbox indicator uses it).
+// Every other `transition-*` — `transition-all`, `transition-colors`,
+// `transition-opacity`, `transition-[a,b]` — is a component picking its own
+// property list AND inheriting Tailwind's default duration rather than the
+// vocabulary's, which is the whole failure this replaces.
+const MOTION_BODY = '(duration|ease|delay|animate)-\\[|transition-(?!none\\b)[a-z\\[]'
 // A literal transition/animation in a style object. Constrained to `> Literal`
 // (and the template form) ON PURPOSE: the rule bans STATING a number, not
 // touching the property, so `animationDelay: staggerDelay(i)` — a CallExpression

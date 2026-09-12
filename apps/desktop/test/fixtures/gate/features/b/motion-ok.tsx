@@ -18,3 +18,8 @@ export const UtilitiesAreFine = (): React.JSX.Element => (
     <span className="motion-ack-bloom motion-pulse" />
   </div>
 )
+
+// `transition-none` states no number: it is a real answer, not a guess.
+export const TransitionNoneIsFine = (): React.JSX.Element => (
+  <div className="transition-none">x</div>
+)
