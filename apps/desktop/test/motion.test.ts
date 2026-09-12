@@ -89,3 +89,26 @@ describe('index.css is the one motion vocabulary', () => {
     expect(css).toMatch(/--motion-stagger\s*:/)
   })
 })
+
+/**
+ * The ritual keeps its own motion, and its own trap.
+ *
+ * `.onboarding-ritual` redefines `--primary`, `--background`, `--border` and
+ * the rest as bare HSL TRIPLETS, because that stylesheet applies alpha with
+ * `hsl(var(--x) / a)`. `color-mix()` wants a <color>, so mixing from one of
+ * those is invalid and the whole declaration is silently dropped — which is
+ * exactly what had happened to the wake ring: it never drew, and only the
+ * `scale()` halves of its keyframe ever ran. The full-colour aliases are the
+ * `--color-*` pair the same block defines.
+ */
+test('the ritual mixes only from its full-colour aliases', () => {
+  const css = readFileSync(
+    fileURLToPath(
+      new URL('../src/renderer/src/features/onboarding/onboarding-ritual.css', import.meta.url),
+    ),
+    'utf8',
+  )
+  const mixedTokens = [...css.matchAll(/color-mix\([^)]*?var\((--[\w-]+)\)/g)].map((m) => m[1])
+  expect(mixedTokens.length).toBeGreaterThan(0)
+  expect(mixedTokens.filter((t) => !t.startsWith('--color-'))).toEqual([])
+})

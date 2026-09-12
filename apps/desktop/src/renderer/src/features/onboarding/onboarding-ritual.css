@@ -934,12 +934,15 @@
  * outside this ceremony. `obrit-wake` replaces the deleted `animate-wake`
  * Tailwind utility and is applied by OnboardingRitual.tsx.
  *
- * `wake` is moved VERBATIM, `var(--primary)` and all. Note that inside
- * `.onboarding-ritual` that token is an HSL TRIPLET rather than a colour
- * (see the token block above), which is not what `color-mix` wants; the
- * full-colour alias is `--color-primary`. Left exactly as it was rather
- * than changed in passing, because altering how the ritual looks is not
- * what this move is for. */
+ * `obrit-wake` mixes from `--color-primary`, NOT from `--primary`, and that
+ * is a fix rather than a preference. Inside `.onboarding-ritual` the token
+ * `--primary` is an HSL TRIPLET (`152 32% 52%`, see the token block above)
+ * rather than a colour, because this stylesheet applies alpha with
+ * `hsl(var(--x) / a)`. `color-mix()` wants a <color>, so
+ * `color-mix(in srgb, 152 32% 52% 45%, transparent)` is invalid, the whole
+ * `box-shadow` was dropped, and the ring this keyframe exists to draw has
+ * never drawn — only its `scale()` halves ever ran. `--color-primary` is the
+ * full-colour alias the ritual already defines for exactly this. */
 @keyframes obrit-pop {
   0% {
     opacity: 0;
@@ -956,11 +959,11 @@
 @keyframes obrit-wake {
   0% {
     transform: scale(0.94);
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent);
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-primary) 45%, transparent);
   }
   45% {
     transform: scale(1.04);
-    box-shadow: 0 0 0 6px color-mix(in srgb, var(--primary) 18%, transparent);
+    box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-primary) 18%, transparent);
   }
   100% {
     transform: scale(1);
