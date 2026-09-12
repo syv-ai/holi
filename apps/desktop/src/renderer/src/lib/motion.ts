@@ -96,3 +96,23 @@ export function arrivalIndex(
   }
   return arrived
 }
+
+/**
+ * A duration token, in the milliseconds a `setTimeout` or the Web Animations
+ * API takes.
+ *
+ * Code that must WAIT for an animation needs the number, and CSS cannot hand it
+ * over — so it is read off the document rather than restated, and the token
+ * stays the single place the value lives. Read per use rather than cached: a
+ * theme that ever moves these must not leave a stale copy behind.
+ *
+ * The fallback is only for the environments with no computed style at all
+ * (jsdom, plain Node). Keep it equal to the token's value in index.css, or a
+ * missing token silently reinstates a pace nobody chose.
+ */
+export function motionDurationMs(token: string, fallback: number): number {
+  if (typeof document === 'undefined') return fallback
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(token)
+  const ms = Number.parseFloat(raw)
+  return Number.isFinite(ms) ? ms : fallback
+}

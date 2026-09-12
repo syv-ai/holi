@@ -278,6 +278,29 @@ export const editorTheme = EditorView.baseTheme({
   // Ordered markers are never swapped and keep their natural width.
   '.cm-list-bullet': { display: 'inline-block', width: 'var(--list-bullet, 0.6em)' },
   // A task's checkbox stands in for the marker, so it wears the marker's gap.
+  /**
+   * Respond, inside a document.
+   *
+   * The line is "is it a thing you can click", not "is it in the editor": the
+   * objects react, the prose never does. **Paint only** — colour, background,
+   * border and shadow. Never width, height, font-size, padding or margin, which
+   * is what pegs CodeMirror's measure loop (see the callout in
+   * prd/notes-editor.md). A hover that resized a chip would relayout the line
+   * under the pointer, which is the cost that rule exists to refuse.
+   *
+   * The duration comes from the app's vocabulary, so no number is stated here.
+   */
+  '.cm-wikilink, .cm-task-check': {
+    transition:
+      'background-color var(--motion-respond, 150ms) var(--ease-settle, ease-out), color var(--motion-respond, 150ms) var(--ease-settle, ease-out), border-color var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-wikilink:hover': { background: 'color-mix(in srgb, var(--link) 22%, transparent)' },
+  '.cm-wikilink-task:hover': { background: 'color-mix(in srgb, var(--task) 22%, transparent)' },
+  '.cm-wikilink-missing:hover': {
+    background: 'color-mix(in srgb, var(--link-missing) 20%, transparent)',
+  },
+  '.cm-task-check:hover': { borderColor: 'var(--foreground)' },
+
   '.cm-task-check': {
     display: 'inline-block',
     width: 'var(--list-check, 1.15em)',
@@ -381,8 +404,10 @@ export const editorTheme = EditorView.baseTheme({
    * measure loop into every frame — the cost the editor's no-animation rule
    * exists to refuse.
    *
-   * `--ask-exit` is written onto the element by `askAgent.ts`, so the fade and
-   * the timer that waits for it are one number rather than two that can drift.
+   * The fade and the timer that waits for it both read `--motion-leave`, so they
+   * are one number rather than two that can drift. `askAgent.ts` reads it off
+   * the document; this used to be an `--ask-exit` property the plugin wrote onto
+   * the element to say what its own local constant was.
    */
   '.cm-tooltip.cm-ask-agent': {
     padding: '0',
@@ -444,13 +469,16 @@ export const editorTheme = EditorView.baseTheme({
    * change and a mount-time animation would replay on every frame of a drag.
    */
   '.cm-ask-agent-open': {
-    // Slower than the app's own micro/base durations, and deliberately: at 160ms
-    // this read as nothing happening at all. A popover opening is a thing to
-    // notice, not a thing to catch.
-    animation: 'cm-ask-in 320ms var(--ease-settle, ease-out) both',
+    // Arrive, at the vocabulary's pace. This carried a local 320ms, chosen
+    // because at the old tier's 160ms it read as nothing happening at all; the
+    // app's arrive duration is 300ms, so that concern is answered by the
+    // vocabulary rather than by a number kept here.
+    animation: 'cm-ask-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out) both',
   },
   '.cm-ask-agent-leaving': {
-    animation: 'cm-ask-out var(--ask-exit, 140ms) var(--ease-settle, ease-out) both',
+    // Leaving is faster than arriving, and `askAgent.ts` waits for exactly this
+    // token, so the two cannot drift.
+    animation: 'cm-ask-out var(--motion-leave, 190ms) var(--ease-settle, ease-out) both',
     // The message is already gone; nothing here is worth a click on the way out.
     pointerEvents: 'none',
   },

@@ -15,7 +15,7 @@
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
-import { prefersReducedMotion } from '@/lib/motion'
+import { motionDurationMs, prefersReducedMotion } from '@/lib/motion'
 
 /**
  * The seeded turn for a selection. `from`/`to` are 1-based inclusive line
@@ -58,16 +58,19 @@ export function promptForSelection(state: EditorState, notePath: string): string
 }
 
 /**
- * How long the popover takes to leave. Set as a custom property on the element
- * so the stylesheet animates for exactly this long: the number lives once, here,
- * and the CSS reads it.
+ * How long the popover takes to leave, in the milliseconds a `setTimeout` takes.
+ *
+ * Read off `--motion-leave` rather than stated here. The popover leaving is the
+ * app's Arrive behaviour like any other overlay's, and the number it waits for
+ * has to be the number the stylesheet animates for — two copies is how they
+ * drift. This used to be a local `EXIT_MS = 220` mirrored into an `--ask-exit`
+ * custom property; the vocabulary is that single place now.
+ *
+ * Nothing to fade for someone who asked not to be moved, so nothing to wait for
+ * either. Read at use rather than cached: the OS setting can change while the
+ * app runs.
  */
-const EXIT_MS = 220
-
-/** Nothing to fade for someone who asked not to be moved, so nothing to wait for
- *  either. Read at use rather than cached: the OS setting can change while the
- *  app runs. */
-const exitMs = (): number => (prefersReducedMotion() ? 0 : EXIT_MS)
+const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--motion-leave', 190))
 
 /**
  * The tooltip's two states: a button, and the popover it opens into.
@@ -96,10 +99,13 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : EXIT_MS)
  * before the animation, so nothing waits on it; the collapse follows the fade so
  * there is something to fade.
  */
-function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) => void): TooltipView {
+function askAgentView(
+  view: EditorView,
+  quote: string,
+  onAsk: (prompt: string) => void,
+): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
-  dom.style.setProperty('--ask-exit', `${EXIT_MS}ms`)
 
   let leaving: ReturnType<typeof setTimeout> | null = null
 
@@ -247,7 +253,11 @@ function askAgentView(view: EditorView, quote: string, onAsk: (prompt: string) =
   }
 }
 
-function tooltipFor(state: EditorState, notePath: string, onAsk: (prompt: string) => void): Tooltip[] {
+function tooltipFor(
+  state: EditorState,
+  notePath: string,
+  onAsk: (prompt: string) => void,
+): Tooltip[] {
   // A locked file is one a reconcile is resolving (`vaults-sync.md` FR-19).
   // Handing it to a second conversation mid-merge is the one case this must not
   // offer. `state.readOnly` and not the `editable` facet: only the former is a
