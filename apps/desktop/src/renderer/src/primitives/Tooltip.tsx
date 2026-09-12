@@ -61,7 +61,7 @@ export function Tooltip({
             // which reads light-on-dark in dark mode. Arrowless, like the menus,
             // and borderless: `--shadow-popover` is what separates it from the
             // page, so a hairline on top of it would be a second edge.
-            'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) animate-scale-in rounded-md bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:animate-scale-out',
+            'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) motion-in-origin rounded-md bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:motion-out-origin',
             className,
           )}
         >

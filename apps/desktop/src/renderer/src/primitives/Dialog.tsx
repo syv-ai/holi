@@ -72,7 +72,7 @@ export function Dialog({
           className={cn(
             'fixed inset-0 z-50 bg-black/50',
             // Motion from the shared tier (index.css), not tw-animate defaults.
-            'data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out',
+            'data-[state=open]:motion-in-fade data-[state=closed]:motion-out-fade',
           )}
         />
         <DialogPrimitive.Content
@@ -92,7 +92,7 @@ export function Dialog({
             'rounded-lg bg-popover',
             'text-sm text-popover-foreground shadow-popover outline-none',
             // Motion from the shared tier (index.css): fade + slight zoom on the token easing.
-            'data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out',
+            'data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
             panel[size],
           )}
         >
@@ -100,7 +100,7 @@ export function Dialog({
           {closable && (
             <DialogPrimitive.Close
               className={cn(
-                'absolute right-4 top-4 rounded-xs opacity-70 transition-opacity',
+                'absolute right-4 top-4 rounded-xs opacity-70 motion-respond',
                 'hover:opacity-100 focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none',
                 'disabled:pointer-events-none',
               )}

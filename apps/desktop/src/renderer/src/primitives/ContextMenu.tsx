@@ -45,7 +45,7 @@ function ContextMenuSubTrigger({
       data-slot="context-menu-sub-trigger"
       data-inset={inset}
       className={cn(
-        "flex cursor-default items-center rounded px-2 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "motion-respond flex cursor-default items-center rounded px-2 py-1 outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}
       {...props}
@@ -64,7 +64,7 @@ function ContextMenuSubContent({
     <ContextMenuPrimitive.SubContent
       data-slot="context-menu-sub-content"
       className={cn(
-        'z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out',
+        'z-50 min-w-32 origin-(--radix-context-menu-content-transform-origin) overflow-hidden rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
         className,
       )}
       {...props}
@@ -90,7 +90,7 @@ function ContextMenuContent({
       <ContextMenuPrimitive.Content
         data-slot="context-menu-content"
         className={cn(
-          'z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out',
+          'z-50 max-h-(--radix-context-menu-content-available-height) w-56 origin-(--radix-context-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-xs text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
           className,
         )}
         {...props}

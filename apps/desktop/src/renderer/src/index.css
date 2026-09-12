@@ -347,14 +347,6 @@
   --motion-ack: 800ms;
   --motion-inflight: 2400ms;
   /* --motion-stagger is NOT here. See the :root block below. */
-
-  /* DEPRECATED, and deleted with their last consumer in the overlay pass. The
-     six overlay primitives still wear `animate-scale-in`/`animate-fade-out`;
-     re-pointed at the new tokens so they are already on the new pace. */
-  --animate-scale-in: scale-in var(--motion-arrive) var(--ease-settle) both;
-  --animate-scale-out: scale-out var(--motion-leave) var(--ease-settle) both;
-  --animate-fade-in: fade-in var(--motion-arrive) var(--ease-settle) both;
-  --animate-fade-out: fade-out var(--motion-leave) var(--ease-settle) both;
 }
 
 /* The stagger step, deliberately NOT in `@theme` — a plain `:root` rule, which
@@ -372,43 +364,6 @@
  * for the same reason. `test/motion.test.ts` guards it. */
 :root {
   --motion-stagger: 45ms;
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-@keyframes scale-out {
-  from {
-    opacity: 1;
-    transform: scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-}
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-@keyframes fade-out {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
 }
 
 /* ════ The four behaviours, as utilities ═══════════════════════════════

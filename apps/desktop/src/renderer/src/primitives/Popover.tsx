@@ -37,7 +37,7 @@ function PopoverContent({
           // 2026-08-14. `shadow-md` was Tailwind's baked utility, which is not
           // themeable — the whole reason `.shadow-popover` exists (see index.css).
           'z-50 w-72 rounded-md bg-popover p-3 text-popover-foreground shadow-popover outline-hidden',
-          'data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+          'origin-(--radix-popover-content-transform-origin) data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
           className,
         )}
         {...props}
