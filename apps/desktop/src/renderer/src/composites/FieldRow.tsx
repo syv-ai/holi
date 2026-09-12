@@ -28,7 +28,21 @@ import { Tooltip } from '@/primitives'
  * so the shared thing is the treatment, not a box to put them in.
  */
 export const FIELD_CONTROL =
-  'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-xs font-normal'
+  // `md:text-xs` as well as the bare one: the `Input` primitive's base carries
+  // `md:text-sm`, and a responsive variant outranks an unprefixed override — so
+  // the one control in the block that is an input rendered its text at 14px
+  // while every button beside it rendered at 12.
+  'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-xs font-normal md:text-xs'
+
+/**
+ * A value that is not set.
+ *
+ * Muted is how this app says "empty", and it has to mean that everywhere in the
+ * block or it means nothing: the date pickers muted themselves when empty and
+ * the `Select` did not, so an unset `reminder` was grey while an unset
+ * `priority` sat there in full-strength white looking like an answer.
+ */
+export const FIELD_UNSET = 'text-muted-foreground'
 
 /** The same, for a value that is read rather than edited: no edge, no height of
  *  its own, but the same inset so it lines up with the fields above and below. */

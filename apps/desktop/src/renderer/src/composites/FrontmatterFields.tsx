@@ -40,7 +40,7 @@ import {
   SelectValue,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FIELD_CONTROL, FIELD_READONLY, FieldRow } from './FieldRow'
+import { FIELD_CONTROL, FIELD_READONLY, FIELD_UNSET, FieldRow } from './FieldRow'
 import { RecurrenceField } from './RecurrenceField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
@@ -101,7 +101,7 @@ function TagsField({
         // `dark:bg-transparent` as well as the bare one: the Input primitive
         // carries `dark:bg-input/30`, which is a variant and so outranks an
         // unprefixed override — the empty field read as a filled chip.
-        className="h-5 w-16 border-transparent bg-transparent px-1 text-xs shadow-none focus-visible:border-ring dark:bg-transparent"
+        className="h-5 w-16 border-transparent bg-transparent px-1 text-xs shadow-none focus-visible:border-ring md:text-xs dark:bg-transparent"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
@@ -206,9 +206,10 @@ export function FrontmatterFields({
     switch (field.kind.kind) {
       case 'enum': {
         const options = field.kind.options
+        const chosen = typeof value === 'string' && options.includes(value) ? value : UNSET
         return (
           <Select
-            value={typeof value === 'string' && options.includes(value) ? value : UNSET}
+            value={chosen}
             onValueChange={(v) => {
               if (v === UNSET) return set(field.key, undefined)
               // The one thing a field edit cannot do by writing text. `done` on
@@ -225,7 +226,7 @@ export function FrontmatterFields({
             <SelectTrigger
               size="sm"
               aria-label={field.key}
-              className={cn(FIELD_CONTROL, 'justify-end gap-2')}
+              className={cn(FIELD_CONTROL, 'justify-end gap-2', chosen === UNSET && FIELD_UNSET)}
               data-fm-field={field.key}
             >
               <SelectValue placeholder={UNSET} />
