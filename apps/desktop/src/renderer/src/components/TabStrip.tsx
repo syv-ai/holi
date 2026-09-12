@@ -96,18 +96,28 @@ const sameSides = (a: Offscreen, b: Offscreen): boolean =>
 /**
  * The motion tier, in the numbers the Web Animations API takes.
  *
- * Read off the document rather than restated: `--duration-micro` and
- * `--ease-settle` are the app's one motion vocabulary (index.css), and a
- * keyframe cannot carry a `var()` — WAAPI wants a number of milliseconds and a
- * literal easing function. Read per use, not cached, so a theme that ever moves
- * these cannot leave a stale copy behind.
+ * Read off the document rather than restated, because a keyframe cannot carry a
+ * `var()`: WAAPI wants a number of milliseconds and a literal easing function.
+ * Read per use rather than cached, so a theme that ever moves these cannot
+ * leave a stale copy behind.
+ *
+ * **Which behaviour this is.** The reorder preview is RESPOND — it tracks where
+ * the pointer is and reverses when it moves back — so it takes
+ * `--motion-respond`, not the arrive duration. The drop that follows is the
+ * arrive half, and it settles rather than tracking.
+ *
+ * **This reads the token BY NAME in JavaScript**, which no CSS rename can
+ * follow. Rename it in index.css without changing this string and
+ * `Number.parseFloat` yields NaN, the fallback below quietly takes over, and
+ * the FLIP keeps working at a pace nobody chose. Keep the fallback equal to the
+ * token.
  */
 function settleMotion(): { duration: number; easing: string } {
   const style = getComputedStyle(document.documentElement)
-  const ms = Number.parseFloat(style.getPropertyValue('--duration-micro'))
+  const ms = Number.parseFloat(style.getPropertyValue('--motion-respond'))
   const easing = style.getPropertyValue('--ease-settle').trim()
   return {
-    duration: Number.isFinite(ms) ? ms : 160,
+    duration: Number.isFinite(ms) ? ms : 150,
     easing: easing === '' ? 'ease-out' : easing,
   }
 }
@@ -198,7 +208,7 @@ function OverflowMenu({
     <div
       className={`pointer-events-none absolute inset-y-0 z-10 flex items-center ${
         side === 'left' ? 'left-0 bg-linear-to-r pr-6 pl-0' : 'right-0 bg-linear-to-l pr-0 pl-6'
-      } from-background from-60% to-transparent transition-opacity duration-(--duration-micro) ease-settle ${
+      } from-background from-60% to-transparent transition-opacity duration-(--motion-respond) ease-settle ${
         visible ? 'opacity-100' : 'opacity-0'
       }`}
     >
@@ -675,9 +685,9 @@ export function TabStrip({
                   transition:
                     shift === null
                       ? undefined
-                      : 'transform var(--duration-micro) var(--ease-settle)',
+                      : 'transform var(--motion-respond) var(--ease-settle)',
                 }}
-                className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs transition-opacity duration-(--duration-micro) ${
+                className={`group flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-xs transition-opacity duration-(--motion-respond) ${
                   dragFromKey === key ? 'opacity-40' : ''
                 } ${
                   i === active
@@ -703,7 +713,7 @@ export function TabStrip({
                     // pill after it, and with it the midpoints a drop is decided
                     // against. Hovering hands the space back, so the ✕ arrives
                     // into a gap rather than up against the pill's edge.
-                    className={`h-auto translate-x-[7px] gap-1.5 p-0 transition-transform duration-(--duration-micro) ease-settle group-hover:translate-x-0 hover:bg-transparent ${
+                    className={`h-auto translate-x-[7px] gap-1.5 p-0 transition-transform duration-(--motion-respond) ease-settle group-hover:translate-x-0 hover:bg-transparent ${
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() => onSelect(i)}

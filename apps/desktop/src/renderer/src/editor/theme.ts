@@ -173,7 +173,7 @@ export const editorTheme = EditorView.baseTheme({
    */
   '&.cm-heading-sliding .cm-heading-mark': {
     transition:
-      'width var(--duration-base, 240ms) var(--ease-settle, ease-out), opacity var(--duration-base, 240ms) var(--ease-settle, ease-out)',
+      'width var(--motion-respond, 150ms) var(--ease-settle, ease-out), opacity var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
   /**
    * The OS switch, for both of the editor's two animations. The heading's marks
