@@ -7,11 +7,11 @@ describe('frontmatterSchema', () => {
     const schema = frontmatterSchema('projects/task.fix-login.md')!
     expect(schema.map((f) => f.key)).toEqual([
       'status',
-      'due',
       'priority',
+      'due',
       'reminder',
-      'tags',
       'recurrence',
+      'tags',
       'order',
     ])
     expect(schema.find((f) => f.key === 'status')!.kind).toEqual({
@@ -47,11 +47,11 @@ describe('frontmatterRows', () => {
     // A field you can fill in without knowing its name.
     expect(frontmatterRows(schema, ['status']).map((f) => f.key)).toEqual([
       'status',
-      'due',
       'priority',
+      'due',
       'reminder',
-      'tags',
       'recurrence',
+      'tags',
     ])
   })
 

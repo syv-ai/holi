@@ -52,12 +52,19 @@ export interface FieldSpec {
  *  nothing: `task-file.ts` holds the same lists as runtime validators, and these
  *  are the same words in the shape a control needs. */
 const TASK_FIELDS: readonly FieldSpec[] = [
+  // Order is what the widget renders, and it reads top to bottom as the
+  // questions you ask about a task: what state is it in, how much does it
+  // matter, when is it due, when should I hear about it, does it come back, and
+  // finally how is it filed. `folder` is rendered above these by the widget
+  // itself, being derived rather than written. This order is DISPLAY only:
+  // `serializeTaskFile` builds its own object, so changing it here rewrites no
+  // task file.
   { key: 'status', kind: { kind: 'enum', options: ['todo', 'doing', 'done'] } },
-  { key: 'due', kind: { kind: 'stamp' } },
   { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
+  { key: 'due', kind: { kind: 'stamp' } },
   { key: 'reminder', kind: { kind: 'stamp' } },
-  { key: 'tags', kind: { kind: 'list' } },
   { key: 'recurrence', kind: { kind: 'recurrence' } },
+  { key: 'tags', kind: { kind: 'list' } },
   { key: 'order', kind: { kind: 'text' }, hidden: true },
 ]
 

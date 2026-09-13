@@ -47,7 +47,14 @@ import { cn } from '@/lib/cn'
 import { completeTaskAtom, nowAtom } from '@/state/tasks'
 
 /** The sentinel for "not set" in a Radix Select, which forbids an empty value. */
+/** The VALUE that means "unset" in a Radix Select, which forbids ''. It is a
+ *  real option in the list so a set field can be cleared, but an unset field
+ *  shows nothing at all — see `UNSET_LABEL`. */
 const UNSET = '—'
+
+/** What an unset field READS as: nothing. A field with no value should look
+ *  empty rather than say a word about being empty. */
+const UNSET_LABEL = ''
 
 /** A list value as chips, with a field to add to it. The one control here that
  *  no primitive covers, because `ChipInput` is a mail-address field. */
@@ -97,7 +104,9 @@ function TagsField({
       <Input
         value={draft}
         aria-label="add a tag"
-        placeholder={value.length === 0 ? 'none' : '+'}
+        // Empty when empty. It used to say "none", which is a word occupying
+        // the space the absence already says.
+        placeholder={value.length === 0 ? '' : '+'}
         // `dark:bg-transparent` as well as the bare one: the Input primitive
         // carries `dark:bg-input/30`, which is a variant and so outranks an
         // unprefixed override — the empty field read as a filled chip.
@@ -142,7 +151,7 @@ function TextField({
     <Input
       value={draft ?? shown}
       aria-label={label}
-      placeholder="none"
+      placeholder=""
       className={cn(FIELD_CONTROL, 'text-right')}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={(e) => commit(e.target.value)}
@@ -208,8 +217,13 @@ export function FrontmatterFields({
         const options = field.kind.options
         const chosen = typeof value === 'string' && options.includes(value) ? value : UNSET
         return (
+          // **Undefined, not the sentinel, when nothing is set.** Radix renders
+          // the SELECTED ITEM's text, so passing `UNSET` here would print the
+          // `—` from its option row however empty the placeholder is. Leaving
+          // the value undefined is what lets the trigger render as blank, while
+          // the `—` option stays in the list as the way to clear a set field.
           <Select
-            value={chosen}
+            value={chosen === UNSET ? undefined : chosen}
             onValueChange={(v) => {
               if (v === UNSET) return set(field.key, undefined)
               // The one thing a field edit cannot do by writing text. `done` on
@@ -229,7 +243,7 @@ export function FrontmatterFields({
               className={cn(FIELD_CONTROL, 'justify-end gap-2', chosen === UNSET && FIELD_UNSET)}
               data-fm-field={field.key}
             >
-              <SelectValue placeholder={UNSET} />
+              <SelectValue placeholder={UNSET_LABEL} />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={UNSET}>{UNSET}</SelectItem>
@@ -248,7 +262,7 @@ export function FrontmatterFields({
           <DateTimePicker
             value={typeof value === 'string' ? value : null}
             placeholder={field.key}
-            emptyText="none"
+            emptyText=""
             dateOnly={field.kind.kind === 'date'}
             data-testid={`fm-${field.key}`}
             presets={
@@ -288,10 +302,12 @@ export function FrontmatterFields({
 
   return (
     <div
-      // A panel, lightly. The rows are a header band over the document rather
-      // than part of its prose, and without an edge they read as a stack of
-      // loose controls floating above the first line.
-      className="flex flex-col rounded-md border border-divider bg-muted/30 px-1 py-1.5"
+      // NOT a panel. It used to carry a border and a `bg-muted/30` fill, which
+      // made the top of every note a grey card sitting on the page. These rows
+      // are the note's own metadata, so they read in the note's own colour on
+      // the note's own ground, and the space around them is what separates them
+      // from the prose.
+      className="flex flex-col bg-transparent px-1 py-1.5 text-foreground"
       data-frontmatter-fields={path}
     >
       {/* Derived, never written: the folder a file sits in is a fact about the

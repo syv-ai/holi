@@ -74,7 +74,10 @@ export function RecurrenceField({
           )}
         >
           <span className="truncate">
-            {value === undefined ? 'never' : describeRecurrence(value)}
+            {/* Empty when there is no recurrence. "never" is the SENTINEL the
+                Select below needs (Radix forbids ''), not a thing to read: a
+                task that does not repeat should say nothing about repeating. */}
+            {value === undefined ? '' : describeRecurrence(value)}
           </span>
         </Button>
       </PopoverTrigger>
