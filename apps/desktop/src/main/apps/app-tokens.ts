@@ -54,7 +54,7 @@ export const APP_BASE_TOKENS: ThemeBlock = {
   'link-missing': '#f0abfc',
   task: '#fbbf24',
   'task-todo': '#6e7681',
-  'task-doing': '#d29922',
+  'task-doing': '#388bfd',
   'task-done': '#3fb950',
   radius: '0.5rem',
   'shadow-popover': '0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2)',

@@ -127,7 +127,13 @@ export const completionChrome = {
     flex: 'none',
     color: 'var(--muted-foreground)',
   },
-  [`${POPUP} > ul > li[aria-selected] .cm-holi-icon`]: { color: 'inherit' },
+  // A task's status colour is information, so it survives selection — which is
+  // why there is no blanket `color: inherit` for a selected row's glyph here.
+  // Same `--task-*` tokens the editor's task orbs and the file tree use, so one
+  // status has one colour everywhere and a vault theme recolours all of it.
+  [`${POPUP} .cm-holi-icon-holi-task-todo`]: { color: 'var(--task-todo)' },
+  [`${POPUP} .cm-holi-icon-holi-task-doing`]: { color: 'var(--task-doing)' },
+  [`${POPUP} .cm-holi-icon-holi-task-done`]: { color: 'var(--task-done)' },
   [`${POPUP} .cm-holi-emoji`]: {
     fontSize: '13px',
     lineHeight: '1',

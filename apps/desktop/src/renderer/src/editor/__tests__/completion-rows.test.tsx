@@ -9,7 +9,7 @@
  */
 import { expect, test } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { FileText, ListTodo, Settings2, Square, SquareCheck, SquareDot, Table } from 'lucide-react'
+import { Circle, CircleCheck, CircleDot, FileText, ListTodo, Settings2, Table } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { GLYPHS } from '../completion-icons'
 import { holiIcon, holiMeta, holiEnterHint, type HoliCompletion } from '../completion'
@@ -35,9 +35,9 @@ function shapes(fragment: string): string[] {
 
 const PAIRS: [string, ComponentType][] = [
   ['holi-note', FileText],
-  ['holi-task-todo', Square],
-  ['holi-task-doing', SquareDot],
-  ['holi-task-done', SquareCheck],
+  ['holi-task-todo', Circle],
+  ['holi-task-doing', CircleDot],
+  ['holi-task-done', CircleCheck],
   ['holi-list-todo', ListTodo],
   ['holi-table', Table],
   ['holi-setting', Settings2],

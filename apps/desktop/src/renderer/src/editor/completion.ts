@@ -74,7 +74,9 @@ export function holiIcon(completion: Completion): Node | null {
   )
   const svg = document.createElementNS(SVG_NS, 'svg')
   for (const [name, value] of Object.entries(SVG_ATTRS)) svg.setAttribute(name, value)
-  svg.setAttribute('class', 'cm-holi-icon')
+  // The type rides on the element so the chrome can colour a task's glyph by
+  // its status without the renderer knowing what a status looks like.
+  svg.setAttribute('class', `cm-holi-icon cm-holi-icon-${completion.type}`)
   for (const child of [...parsed.documentElement.children]) svg.appendChild(child)
   return svg
 }

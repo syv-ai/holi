@@ -30,11 +30,10 @@ export const GLYPHS: Record<string, string> = {
   'holi-note':
     '<path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/>' +
     '<path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/>',
-  // Square / SquareDot / SquareCheck — the explorer's `TaskIcon` vocabulary.
-  'holi-task-todo': '<rect width="18" height="18" x="3" y="3" rx="2"/>',
-  'holi-task-doing':
-    '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="12" cy="12" r="1"/>',
-  'holi-task-done': '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>',
+  // Circle / CircleDot / CircleCheck — the explorer's `TaskIcon` vocabulary.
+  'holi-task-todo': '<circle cx="12" cy="12" r="10"/>',
+  'holi-task-doing': '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="1"/>',
+  'holi-task-done': '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   // ListTodo
   'holi-list-todo':
     '<path d="M13 5h8"/><path d="M13 12h8"/><path d="M13 19h8"/><path d="m3 17 2 2 4-4"/>' +

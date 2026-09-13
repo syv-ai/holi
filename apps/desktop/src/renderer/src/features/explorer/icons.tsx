@@ -5,7 +5,7 @@
  */
 import type { TaskStatus } from '@holi/shared'
 import { SiMarkdown } from '@icons-pack/react-simple-icons'
-import { AppWindow, ChevronRight, Folder, Square, SquareCheck, SquareDot } from 'lucide-react'
+import { AppWindow, ChevronRight, Circle, CircleCheck, CircleDot, Folder } from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -35,10 +35,18 @@ export function MarkdownIcon() {
 }
 
 /** A task file's leaf glyph, keyed to its status so the tree shows progress at a
- * glance: an empty box for todo, a dotted box for doing, a checked box for done —
- * tinted apart from the markdown/file icons so a `task.*.md` reads as a task. */
+ * glance: an empty circle for todo, a dotted one for doing, a checked one for
+ * done — tinted apart from the markdown/file icons so a `task.*.md` reads as a
+ * task.
+ *
+ * **The colours are the `--task-*` tokens, not hex.** Those tokens already
+ * existed and already painted the editor's task orbs, so a task's status had
+ * one colour in a note and a different one in the tree. Now it has one
+ * everywhere, and a vault theme can recolour all of it at once (D64). */
 export function TaskIcon({ status }: { status: TaskStatus }) {
-  if (status === 'done') return <SquareCheck size={14} color="#34d399" aria-hidden="true" />
-  if (status === 'doing') return <SquareDot size={14} color="#fbbf24" aria-hidden="true" />
-  return <Square size={14} color="#90a4ae" aria-hidden="true" />
+  if (status === 'done')
+    return <CircleCheck size={14} color="var(--task-done)" aria-hidden="true" />
+  if (status === 'doing')
+    return <CircleDot size={14} color="var(--task-doing)" aria-hidden="true" />
+  return <Circle size={14} color="var(--task-todo)" aria-hidden="true" />
 }
