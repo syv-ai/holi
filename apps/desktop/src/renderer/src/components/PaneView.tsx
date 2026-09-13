@@ -25,7 +25,8 @@ import { BoardView } from '@/features/tasks/BoardView'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import type { Pane, Tab } from '@/state/panes'
-import { TabStrip } from './TabStrip'
+import { useArrivalOnChange } from '@/lib/use-arrivals'
+import { TabStrip, tabKey } from './TabStrip'
 
 /** What every drop target shares: a plain wash, positioned out of flow.
  *
@@ -128,6 +129,10 @@ export function PaneView({
   const zoneAt = (e: React.DragEvent) =>
     paneDropZone(e.currentTarget.getBoundingClientRect(), e.clientX)
 
+  // The pane's body fades when the tab it is showing changes identity. `tabKey`
+  // rather than the index: moving a tab must not read as navigating to it.
+  const bodyRef = useArrivalOnChange<HTMLDivElement>(tab == null ? 'empty' : tabKey(tab))
+
   return (
     // `onFocusCapture` as well as the pointer: tabbing into a pane, or a
     // CodeMirror instance taking focus, has to move the workspace's idea of
@@ -155,7 +160,13 @@ export function PaneView({
           Wrapped rather than handled in place because the overlay needs
           somewhere to be absolutely positioned, and it must cover the content
           WITHOUT covering the strip, which has drop handling of its own. */}
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Arrive on a swap. Opening a different note, or moving between a note
+          and the board, used to be an instant replacement — the pane simply
+          contained something else on the next frame. A short fade gives the
+          navigation somewhere to land. Opacity only, because this wraps a
+          CodeMirror instance and anything that changes the layout box drags its
+          measure loop into every frame. */}
+      <div ref={bodyRef} className="relative flex min-h-0 flex-1 flex-col">
         {tab?.kind === 'app' ? (
           <AppFrame appId={tab.appId} />
         ) : tab?.kind === 'board' ? (
