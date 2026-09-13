@@ -23,14 +23,39 @@ fix at the time was to force dark. **That makes the completion popup the one
 overlay in the app that ignores D64 theming and light mode.** Two rules below it,
 `.cm-wiki-preview` already uses `var(--popover)` and gets both for free.
 
-Rows are CodeMirror's defaults: its unicode type-glyph, the label, `detail`, 2px
-padding. No grouping, no second level.
+Rows are CodeMirror's defaults: its unicode type-glyph, the label, `detail`. No
+grouping, no second level.
 
-**The font is already right, and deliberately.** The tooltip is a child of
-`.cm-editor` rather than of `.cm-scroller`, so it inherits the app's UI font, not
-the vault's prose font. `notesFontTheme`'s closing line says so: "The menu font
-is left alone: that is UI." Item 12's mention of "font" is answered; the chrome
-and the rows are the real gap.
+### Measured against the running app, 2026-09-13
+
+Read out of `document.styleSheets` over CDP, because reasoning from the file was
+wrong twice. **Most of that theme block is dead code**, and the reason is
+specificity, not order.
+
+Every base theme is emitted under the same generated `.ͼ1` prefix, so a rule
+wins on its own weight. CodeMirror writes `.cm-tooltip.cm-tooltip-autocomplete >
+ul` (0,3,1); `theme.ts` writes `.cm-tooltip-autocomplete > ul` (0,2,1) and
+loses. Consequences, all of them live right now:
+
+1. **The popup is in browser-default `monospace`.** Our `fontFamily: 'inherit'`
+   never applied. So item 12's complaint about the font is literally correct,
+   and the earlier reading of this spec, that `notesFontTheme`'s "the menu font
+   is left alone: that is UI" already settled it, was wrong: nothing ever
+   reached the menu to leave alone.
+2. **`maxHeight: '18em'` never applied either.** The list is capped at CM's
+   10em, with CM's `1px 3px` padding and 1.2 line-height rather than our `2px
+8px` / 1.5.
+3. **The selected row is not ours.** CM emits its `&light` / `&dark` arms as
+   separate generated classes (`.ͼ2` / `.ͼ3`) at (0,3,2), tying our (0,3,2) and
+   coming later, so the selection paints CM's `#17c` / `#347`, not the `#2563eb`
+   in our file.
+4. **`codemirror-markdown-tables` has a second look inside the same popup.**
+   Roughly twenty rules keyed on `:has(.cm-completionIcon-table)` give the table
+   menu its own font, padding, background and a `::before` hover layer. They
+   outrank everything above because `:has()` carries its argument's specificity.
+
+What survives from our block: the panel's background, border, radius and shadow,
+and the row text colour, which CM does not set.
 
 ## Decisions taken
 
@@ -49,16 +74,25 @@ and the rows are the real gap.
 4. **Row shape:** one line, with real trailing meta rather than grey words.
 
 Verified against the installed `@codemirror/autocomplete@6.20.3` typings:
-`Completion.section`, `optionClass`, `icons: false` and `addToOptions` (default
-positions: icons 20, label 50, detail 80) all exist. Only the second level does
-not.
+`Completion.section`, `optionClass`, `icons` and `addToOptions` (default
+positions: icons 20, label 50, detail 80) all exist. Section headers render as a
+`<completion-section>` element inside the `<ul>`, which CM already styles
+`display: list-item`. Only the second level does not exist.
 
 ## 1. One config, three call sites
 
 A new `editor/completion.ts` exports `holiCompletion(sources)`, wrapping
-`autocompletion()` with our `icons: false`, `optionClass` and `addToOptions`. All
-three call sites use it. That is what makes "every popup" true by construction
-rather than by remembering to.
+`autocompletion()` with our `optionClass` and `addToOptions`. All three call
+sites use it. That is what makes "every popup" true by construction rather than
+by remembering to.
+
+**`icons` stays ON, which finding 4 forces.** The obvious move is `icons: false`
+plus our own glyph, and it would silently un-style the markdown-table menu:
+every one of that library's rules is keyed on `.cm-completionIcon-table`, and
+turning icons off deletes the element they hang from. So CM keeps rendering its
+icon element, `optionClass` marks the rows we author with `cm-holi-option`, and
+one CSS rule hides CM's glyph on those rows only. The table menu keeps the look
+its library gives it, and we do not fight a `:has()` selector we cannot outrank.
 
 ## 2. The chrome
 
@@ -78,12 +112,32 @@ a second arm was added.
 It stays in `editorTheme` (a `baseTheme`), so every stack inherits it, including
 the mail composer and the plain/code editor.
 
+**Every selector has to be written to win, which is the measured half of this
+section.** Matching CM's shape is not enough, because a tie goes to whichever
+sheet registered later and that is not ours:
+
+- Prefix with `.cm-tooltip` as CM does, and add one more class than CM uses, so
+  the weight is strictly higher rather than equal.
+- The selected row needs both `&light` and `&dark` arms, since CM's live in
+  separate generated classes that a single unprefixed rule cannot outrank. Both
+  arms carry the same token values, so this is duplication for the cascade, not
+  two designs.
+- Nothing here may use `:has(.cm-completionIcon-table)` or try to beat it. The
+  table menu is the library's, deliberately.
+
+A guard test reads `theme.ts` as text and fails if the autocomplete block
+contains a hex literal, in the manner of `test/motion.test.ts`'s guards over
+`index.css`. A dead rule is silent in a browser, which is exactly how this block
+came to be dead.
+
 ## 3. A row
 
 Left icon, label with CM's own match highlighting kept, trailing meta.
 
-- **The icon comes from `type`**, which CM accepts as any string, mapped through
-  our own table. A task reuses the explorer's glyph vocabulary from
+- **The icon is ours, rendered at `addToOptions` position 20**, keyed off
+  `type`, which CM accepts as any string. CM's own glyph element stays in the
+  DOM (finding 4) and is hidden by CSS on `.cm-holi-option` rows. A task reuses
+  the explorer's glyph vocabulary from
   `features/explorer/icons.tsx` (`SquareCheck` done, `SquareDot` doing, `Square`
   todo), so a task in the list looks like the same task in the tree. A note uses
   its emoji from `snapshot.icons` when it has one, the markdown glyph otherwise.
