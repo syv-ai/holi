@@ -10,6 +10,7 @@
  */
 import { autocompletion, type Completion, type CompletionSource } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
+import { GLYPHS, SVG_ATTRS } from './completion-icons'
 
 /**
  * Stamped on the popup element by `tooltipClass`, and the whole reason the
@@ -47,6 +48,64 @@ export function holiOptionClass(completion: Completion): string {
   return (completion.type?.startsWith(HOLI_TYPE_PREFIX) ?? false) ? OPTION_CLASS : ''
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg'
+
+/**
+ * The row's left glyph: the note's own emoji when its vault gave it one,
+ * otherwise the glyph its `type` names. `null` for any row we do not author,
+ * which leaves CodeMirror's icon showing — the table menu needs it.
+ *
+ * Built through `DOMParser` rather than `innerHTML`, so nothing here ever
+ * parses a string as HTML into the live document.
+ */
+export function holiIcon(completion: Completion): Node | null {
+  const { emoji } = completion as HoliCompletion
+  if (emoji !== undefined && emoji !== '') {
+    const span = document.createElement('span')
+    span.className = 'cm-holi-icon cm-holi-emoji'
+    span.textContent = emoji
+    return span
+  }
+  const glyph = completion.type === undefined ? undefined : GLYPHS[completion.type]
+  if (glyph === undefined) return null
+  const parsed = new DOMParser().parseFromString(
+    `<svg xmlns="${SVG_NS}">${glyph}</svg>`,
+    'image/svg+xml',
+  )
+  const svg = document.createElementNS(SVG_NS, 'svg')
+  for (const [name, value] of Object.entries(SVG_ATTRS)) svg.setAttribute(name, value)
+  svg.setAttribute('class', 'cm-holi-icon')
+  for (const child of [...parsed.documentElement.children]) svg.appendChild(child)
+  return svg
+}
+
+/** The trailing pill. Only what the glyph does not already say: a task's status
+ *  is drawn on the left, so this carries its due date or nothing. */
+export function holiMeta(completion: Completion): Node | null {
+  const { meta } = completion as HoliCompletion
+  if (meta === undefined || meta === '') return null
+  const span = document.createElement('span')
+  span.className = 'cm-holi-meta'
+  span.textContent = meta
+  return span
+}
+
+/**
+ * The `↵` on the selected row.
+ *
+ * Rendered on every row of ours and revealed by CSS, because CodeMirror moves
+ * the selection by toggling `aria-selected` WITHOUT re-rendering the rows: a
+ * hint rendered for the selected option only would be drawn once and then go
+ * stale on the first arrow key.
+ */
+export function holiEnterHint(completion: Completion): Node | null {
+  if (holiOptionClass(completion) === '') return null
+  const span = document.createElement('span')
+  span.className = 'cm-holi-enter'
+  span.textContent = '↵'
+  return span
+}
+
 /**
  * **`icons` stays on, and that is not an oversight.** Turning it off deletes
  * `.cm-completionIcon`, which is the element every one of
@@ -59,5 +118,11 @@ export function holiCompletion(sources: CompletionSource[]): Extension {
     override: sources,
     tooltipClass: () => COMPLETION_CLASS,
     optionClass: holiOptionClass,
+    // CodeMirror's own positions: icons 20, label 50, detail 80.
+    addToOptions: [
+      { render: holiIcon, position: 20 },
+      { render: holiMeta, position: 90 },
+      { render: holiEnterHint, position: 95 },
+    ],
   })
 }

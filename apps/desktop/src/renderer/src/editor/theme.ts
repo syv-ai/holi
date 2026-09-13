@@ -106,6 +106,38 @@ export const completionChrome = {
   // to stay in the DOM: `codemirror-markdown-tables` hangs its whole menu off a
   // `:has()` over it.
   [`${POPUP} > ul > li.${OPTION_CLASS} .cm-completionIcon`]: { display: 'none' },
+  [`${POPUP} .cm-holi-icon`]: {
+    width: '14px',
+    height: '14px',
+    flex: 'none',
+    color: 'var(--muted-foreground)',
+  },
+  [`${POPUP} > ul > li[aria-selected] .cm-holi-icon`]: { color: 'inherit' },
+  [`${POPUP} .cm-holi-emoji`]: {
+    fontSize: '13px',
+    lineHeight: '1',
+    textAlign: 'center',
+    display: 'inline-block',
+  },
+  [`${POPUP} .cm-holi-meta`]: {
+    flex: 'none',
+    fontSize: '10.5px',
+    padding: '1px 6px',
+    borderRadius: '9999px',
+    background: 'var(--muted)',
+    color: 'var(--muted-foreground)',
+  },
+  [`${POPUP} > ul > li[aria-selected] .cm-holi-meta`]: { color: 'inherit' },
+  // Hidden until the row is selected, which is why it is rendered on every row
+  // rather than on one: CodeMirror does not re-render rows when the selection
+  // moves. `opacity`, not `display`, so the row's width does not jump.
+  [`${POPUP} .cm-holi-enter`]: {
+    flex: 'none',
+    fontSize: '11px',
+    color: 'var(--muted-foreground)',
+    opacity: '0',
+  },
+  [`${POPUP} > ul > li[aria-selected] .cm-holi-enter`]: { opacity: '1', color: 'inherit' },
 }
 
 export const editorTheme = EditorView.baseTheme({
