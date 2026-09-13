@@ -140,12 +140,11 @@ export const completionChrome = {
     textAlign: 'center',
     display: 'inline-block',
   },
+  // Text, not a pill. It carried `--muted-foreground` on a `--muted` fill, which
+  // is the same "brighter shade of its own ground" this app does not do.
   [`${POPUP} .cm-holi-meta`]: {
     flex: 'none',
-    fontSize: '10.5px',
-    padding: '1px 6px',
-    borderRadius: '9999px',
-    background: 'var(--muted)',
+    fontSize: '11px',
     color: 'var(--muted-foreground)',
   },
   [`${POPUP} > ul > li[aria-selected] .cm-holi-meta`]: { color: 'inherit' },
@@ -455,10 +454,7 @@ export const editorTheme = EditorView.baseTheme({
     transition:
       'background-color var(--motion-respond, 150ms) var(--ease-settle, ease-out), color var(--motion-respond, 150ms) var(--ease-settle, ease-out), border-color var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
-  '.cm-wikilink:hover': { background: 'color-mix(in srgb, var(--link) 22%, transparent)' },
-  '.cm-wikilink-missing:hover': {
-    background: 'color-mix(in srgb, var(--link-missing) 20%, transparent)',
-  },
+  '.cm-wikilink:hover': { background: 'var(--accent)' },
   '.cm-task-check:hover': { borderColor: 'var(--foreground)' },
 
   '.cm-task-check': {
@@ -495,8 +491,17 @@ export const editorTheme = EditorView.baseTheme({
     height: '1px',
   },
 
+  /**
+   * A chip is COLOURED TEXT, and it has no background of its own.
+   *
+   * Every one of these used to be its own colour painted twice: `--link` words
+   * on a 12% `--link` wash, `--link-missing` on a 10% `--link-missing` wash. In
+   * a paragraph that reads as a highlighter stain rather than as a link, and it
+   * is a house rule that text is never a brighter shade of the ground it sits
+   * on. The hover tint is NEUTRAL for the same reason — it says "you can click
+   * this" without saying it in the link's own hue.
+   */
   '.cm-wikilink': {
-    background: 'color-mix(in srgb, var(--link) 12%, transparent)',
     color: 'var(--link)',
     borderRadius: '4px',
     padding: '0 4px',
@@ -535,10 +540,8 @@ export const editorTheme = EditorView.baseTheme({
   // A done task strikes its title, matching the board card (muted-foreground).
   '.cm-wikilink-done': { textDecoration: 'line-through', color: 'var(--muted-foreground)' },
   // Last: a missing target outranks the kind tint, for a note and a task alike.
-  '.cm-wikilink-missing': {
-    color: 'var(--link-missing)',
-    background: 'color-mix(in srgb, var(--link-missing) 10%, transparent)',
-  },
+  // Colour only — see `.cm-wikilink`.
+  '.cm-wikilink-missing': { color: 'var(--link-missing)' },
 
   /**
    * "Ask agent", over a selection (#5).
