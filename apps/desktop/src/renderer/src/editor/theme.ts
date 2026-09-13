@@ -456,7 +456,6 @@ export const editorTheme = EditorView.baseTheme({
       'background-color var(--motion-respond, 150ms) var(--ease-settle, ease-out), color var(--motion-respond, 150ms) var(--ease-settle, ease-out), border-color var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
   },
   '.cm-wikilink:hover': { background: 'color-mix(in srgb, var(--link) 22%, transparent)' },
-  '.cm-wikilink-task:hover': { background: 'color-mix(in srgb, var(--task) 22%, transparent)' },
   '.cm-wikilink-missing:hover': {
     background: 'color-mix(in srgb, var(--link-missing) 20%, transparent)',
   },
@@ -503,11 +502,22 @@ export const editorTheme = EditorView.baseTheme({
     padding: '0 4px',
     cursor: 'pointer',
   },
-  // A task chip reads as a task, not a note: same shape, its own accent tint, and a
-  // status orb before the title. `inline-flex` so the orb and title share a baseline row.
+  /**
+   * A task chip reads as a task through its ORB, not through its colour.
+   *
+   * It used to paint `--task` (amber) as both the text colour and a 12% wash
+   * behind it, which in a paragraph of prose was a block of yellow words on a
+   * yellow ground — reported as horrible, and it was. The chip now inherits
+   * `.cm-wikilink`'s link treatment, like the note chip it sits beside, and the
+   * only colour is the status orb: blue for doing, green for done, grey for
+   * todo. Same principle as the file tree and the `@`-mention list, where the
+   * status glyph carries the colour and the words are words.
+   *
+   * `--task` is still the token a vault themes to bring the tint back (it is in
+   * D64's whitelist); the difference is that nothing is painted with it by
+   * default. `inline-flex` so the orb and title share a baseline row.
+   */
   '.cm-wikilink-task': {
-    background: 'color-mix(in srgb, var(--task) 12%, transparent)',
-    color: 'var(--task)',
     display: 'inline-flex',
     alignItems: 'baseline',
     gap: '4px',
