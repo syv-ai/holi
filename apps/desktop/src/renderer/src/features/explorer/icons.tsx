@@ -4,8 +4,15 @@
  * in `file-icons.tsx`. All inherit `currentColor` so they follow the row's tint.
  */
 import type { TaskStatus } from '@holi/shared'
-import { SiMarkdown } from '@icons-pack/react-simple-icons'
-import { AppWindow, ChevronRight, Circle, CircleCheck, CircleDot, Folder } from 'lucide-react'
+import {
+  AppWindow,
+  ChevronRight,
+  Circle,
+  CircleCheck,
+  CircleDot,
+  FileText,
+  Folder,
+} from 'lucide-react'
 
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -31,7 +38,7 @@ export function AppFolderIcon() {
 }
 
 export function MarkdownIcon() {
-  return <SiMarkdown size={14} color="currentColor" aria-hidden="true" />
+  return <FileText size={14} color="currentColor" aria-hidden="true" />
 }
 
 /** A task file's leaf glyph, keyed to its status so the tree shows progress at a

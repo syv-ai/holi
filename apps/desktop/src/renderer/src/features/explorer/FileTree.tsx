@@ -587,10 +587,8 @@ export function FileTree({
    * disagreed with what the command was about to do. Now it opens as a child of
    * that folder, at the indent its contents will have.
    */
-  const rows = tree
-    .getItems()
-    .filter((item) => item.getId() !== ROOT_ID)
-    .map((item) => ({ id: item.getId(), level: item.getItemMeta().level }))
+  const items = tree.getItems().filter((item) => item.getId() !== ROOT_ID)
+  const rows = items.map((item) => ({ id: item.getId(), level: item.getItemMeta().level }))
   // Rows that have just appeared — a folder expanding, a file created, a pull
   // bringing one in — arrive rather than blinking into place. Computed from what
   // CHANGED rather than declared on the row, or every unrelated re-render of the
@@ -687,147 +685,160 @@ export function FileTree({
           </Button>
         )}
         {slot?.afterId === null && pendingRow(slot.level)}
-        {tree
-          .getItems()
-          .filter((item) => item.getId() !== ROOT_ID)
-          .map((item) => {
-            const id = item.getId()
-            const isFolder = item.isFolder()
-            const isOpen = activePath === id
-            const level = item.getItemMeta().level
-            const isCut = actions.clipboard?.mode === 'cut' && actions.clipboard.paths.includes(id)
-            const task = taskByPath.get(id)
-            const arrival = arrivalProps(id)
-            /**
-             * Gitignored, dimmed — VS Code's treatment, and every IDE's.
-             *
-             * On the row's CONTENTS rather than on the row, so a dimmed file
-             * still gets a solid selection highlight when you click it. `isCut`
-             * above does dim the whole row, and means something different: that
-             * is a pending move, a state the row is briefly in, where this is
-             * a standing fact about the file.
-             */
-            const dim = ignoredSet.has(id) ? 'opacity-50' : ''
-            const rowProps = item.getProps()
-            const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
-            const row = (
-              <ContextMenu key={id}>
-                <ContextMenuTrigger asChild>
-                  <div
-                    {...rowProps}
-                    data-path={id}
-                    // One drag, both directions (FR-13). A web drag cannot tell
-                    // the OS a file is involved, so the row hands the gesture to
-                    // `startDrag` — dropped in Finder the file lands there, and
-                    // dropped back on this window it arrives as a file drop,
-                    // which is where the in-tree move now happens. A folder has
-                    // no single file to hand over, so it keeps the web drag.
-                    onDragStart={(e) => {
-                      if (isFolder) return
-                      e.preventDefault()
-                      window.holi.startDrag(rowTargets(id).map(absPathFor))
-                    }}
-                    onClick={(e) => {
-                      origClick?.(e)
-                      // A plain click opens a preview; a modified click is a
-                      // selection gesture (⌘/⇧) and must not open anything.
-                      if (!isFolder && !e.metaKey && !e.shiftKey && !e.ctrlKey) onOpenPreview(id)
-                    }}
-                    onDoubleClick={() => {
-                      if (!isFolder) onOpenPinned(id)
-                    }}
-                    style={{ paddingLeft: `${level * 12 + 8}px`, ...arrival.style }}
-                    className={[
-                      'motion-respond flex h-[22px] items-center gap-1 rounded pr-2 outline-none',
-                      arrival.className ?? '',
-                      item.isSelected()
-                        ? 'bg-accent text-accent-foreground'
-                        : 'text-muted-foreground hover:bg-accent/60',
-                      isOpen ? 'text-brand' : '',
-                      item.isDragTarget() ? 'bg-primary/20 ring-1 ring-inset ring-primary/60' : '',
-                      isCut ? 'opacity-40' : '',
-                    ].join(' ')}
-                  >
-                    {/* The chevron column exists only where there is a chevron.
+        {items.map((item, i) => {
+          const id = item.getId()
+          const isFolder = item.isFolder()
+          const isOpen = activePath === id
+          const level = item.getItemMeta().level
+          const isCut = actions.clipboard?.mode === 'cut' && actions.clipboard.paths.includes(id)
+          const task = taskByPath.get(id)
+          const arrival = arrivalProps(id)
+          /**
+           * A breath between the root's folders and its loose files.
+           *
+           * Only at the root, and only on the FIRST file after the last
+           * folder: inside a folder the indent already says where you are, so
+           * a gap there would just be a hole. The tree sorts folders before
+           * files, so one row carries the whole separation.
+           */
+          const prev = i > 0 ? items[i - 1] : undefined
+          const startsRootFiles =
+            level === 0 &&
+            !isFolder &&
+            prev !== undefined &&
+            prev.getItemMeta().level === 0 &&
+            prev.isFolder()
+          /**
+           * Gitignored, dimmed — VS Code's treatment, and every IDE's.
+           *
+           * On the row's CONTENTS rather than on the row, so a dimmed file
+           * still gets a solid selection highlight when you click it. `isCut`
+           * above does dim the whole row, and means something different: that
+           * is a pending move, a state the row is briefly in, where this is
+           * a standing fact about the file.
+           */
+          const dim = ignoredSet.has(id) ? 'opacity-50' : ''
+          const rowProps = item.getProps()
+          const origClick = rowProps.onClick as ((e: unknown) => void) | undefined
+          const row = (
+            <ContextMenu key={id}>
+              <ContextMenuTrigger asChild>
+                <div
+                  {...rowProps}
+                  data-path={id}
+                  // One drag, both directions (FR-13). A web drag cannot tell
+                  // the OS a file is involved, so the row hands the gesture to
+                  // `startDrag` — dropped in Finder the file lands there, and
+                  // dropped back on this window it arrives as a file drop,
+                  // which is where the in-tree move now happens. A folder has
+                  // no single file to hand over, so it keeps the web drag.
+                  onDragStart={(e) => {
+                    if (isFolder) return
+                    e.preventDefault()
+                    window.holi.startDrag(rowTargets(id).map(absPathFor))
+                  }}
+                  onClick={(e) => {
+                    origClick?.(e)
+                    // A plain click opens a preview; a modified click is a
+                    // selection gesture (⌘/⇧) and must not open anything.
+                    if (!isFolder && !e.metaKey && !e.shiftKey && !e.ctrlKey) onOpenPreview(id)
+                  }}
+                  onDoubleClick={() => {
+                    if (!isFolder) onOpenPinned(id)
+                  }}
+                  style={{ paddingLeft: `${level * 12 + 8}px`, ...arrival.style }}
+                  className={[
+                    'motion-respond flex h-[22px] items-center gap-1 rounded pr-2 outline-none',
+                    startsRootFiles ? 'mt-2' : '',
+                    arrival.className ?? '',
+                    item.isSelected()
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground hover:bg-accent/60',
+                    isOpen ? 'text-brand' : '',
+                    item.isDragTarget() ? 'bg-primary/20 ring-1 ring-inset ring-primary/60' : '',
+                    isCut ? 'opacity-40' : '',
+                  ].join(' ')}
+                >
+                  {/* The chevron column exists only where there is a chevron.
                         A file used to reserve it and start one slot in, which at
                         the vault root left every file indented past a folder
                         that was its sibling, for a control it does not have.
                         Nesting is already said by the row's indent, and it is
                         measured from the row's start — so a file inside a folder
                         still sits one level right of it. */}
-                    {isFolder && (
-                      <span
-                        className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
-                      >
-                        <ChevronIcon open={item.isExpanded()} />
-                      </span>
-                    )}
+                  {isFolder && (
                     <span
-                      data-slot="row-icon"
-                      className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'} ${dim}`}
+                      className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
                     >
-                      {iconByPath.has(id) ? (
-                        fileIconFor(id, iconByPath.get(id))
-                      ) : isFolder ? (
-                        isAppRootPath(id) ? (
-                          <AppFolderIcon />
-                        ) : (
-                          <FolderIcon />
-                        )
-                      ) : task ? (
-                        <TaskIcon status={task.status} />
-                      ) : (
-                        fileIconFor(id)
-                      )}
+                      <ChevronIcon open={item.isExpanded()} />
                     </span>
-                    {item.isRenaming() ? (
-                      <Input
-                        {...item.getRenameInputProps()}
-                        autoFocus
-                        className="h-[22px] flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
-                        onFocus={(e) => {
-                          const el = e.currentTarget
-                          const [s, end] = renameBasenameRange(el.value)
-                          setTimeout(() => el.setSelectionRange(s, end), 0)
-                        }}
-                      />
+                  )}
+                  <span
+                    data-slot="row-icon"
+                    className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'} ${dim}`}
+                  >
+                    {iconByPath.has(id) ? (
+                      fileIconFor(id, iconByPath.get(id))
+                    ) : isFolder ? (
+                      isAppRootPath(id) ? (
+                        <AppFolderIcon />
+                      ) : (
+                        <FolderIcon />
+                      )
+                    ) : task ? (
+                      <TaskIcon status={task.status} />
                     ) : (
-                      <>
-                        <span
-                          className={`min-w-0 flex-1 truncate ${dim} ${
-                            task?.status === 'done' ? 'text-muted-foreground line-through' : ''
-                          }`}
-                        >
-                          {item.getItemName()}
-                        </span>
-                        {/* Today's daily, marked where it lives rather than behind a
+                      fileIconFor(id)
+                    )}
+                  </span>
+                  {item.isRenaming() ? (
+                    <Input
+                      {...item.getRenameInputProps()}
+                      autoFocus
+                      className="h-[22px] flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
+                      onFocus={(e) => {
+                        const el = e.currentTarget
+                        const [s, end] = renameBasenameRange(el.value)
+                        setTimeout(() => el.setSelectionRange(s, end), 0)
+                      }}
+                    />
+                  ) : (
+                    <>
+                      <span
+                        className={`min-w-0 flex-1 truncate ${dim} ${
+                          task?.status === 'done' ? 'text-muted-foreground line-through' : ''
+                        }`}
+                      >
+                        {item.getItemName()}
+                      </span>
+                      {/* Today's daily, marked where it lives rather than behind a
                             chip that named a file you could not see (daily-notes §UX).
                             Absent in a shared vault, because there is no daily there —
                             the chip claimed otherwise and no-oped when pressed. */}
-                        {id === todayDailyPath && (
-                          <span className="shrink-0 rounded-full bg-brand/15 px-1.5 text-[10px] leading-4 text-brand">
-                            today
-                            {todayLinkCount > 0 && ` · ${todayLinkCount}`}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </ContextMenuTrigger>
-                {rowMenu(id, isFolder, rowTargets(id))}
-              </ContextMenu>
-            )
-            // The input opens where the file will land, so the tree agrees with
-            // what the command is about to do (§New file / new folder).
-            return slot?.afterId === id ? (
-              <Fragment key={id}>
-                {row}
-                {pendingRow(slot.level)}
-              </Fragment>
-            ) : (
-              row
-            )
-          })}
+                      {id === todayDailyPath && (
+                        <span className="shrink-0 rounded-full bg-brand/15 px-1.5 text-[10px] leading-4 text-brand">
+                          today
+                          {todayLinkCount > 0 && ` · ${todayLinkCount}`}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              {rowMenu(id, isFolder, rowTargets(id))}
+            </ContextMenu>
+          )
+          // The input opens where the file will land, so the tree agrees with
+          // what the command is about to do (§New file / new folder).
+          return slot?.afterId === id ? (
+            <Fragment key={id}>
+              {row}
+              {pendingRow(slot.level)}
+            </Fragment>
+          ) : (
+            row
+          )
+        })}
         {tree.getItems().filter((item) => item.getId() !== ROOT_ID).length === 0 && (
           <p className="px-2 text-xs text-muted-foreground">no notes yet</p>
         )}

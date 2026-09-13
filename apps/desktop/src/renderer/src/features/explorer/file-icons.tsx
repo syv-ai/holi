@@ -34,7 +34,6 @@ import {
   SiJavascript,
   SiJupyter,
   SiLess,
-  SiMarkdown,
   SiMdx,
   SiPython,
   SiReact,
@@ -57,8 +56,13 @@ type IconCmp = ComponentType<any>
 /** [glyph, colour] per extension. Colours are dark-friendly, loosely tracking
  *  each type's identity (JS yellow, TS/CSS blue, Rust orange, …). */
 const BY_EXT: Record<string, [IconCmp, string]> = {
-  md: [SiMarkdown, '#6b9fff'],
-  markdown: [SiMarkdown, '#6b9fff'],
+  // `FileText`, not simple-icons' Markdown mark: that mark is the wide "M↓"
+  // logo, and at a shared height it is nearly twice the width of every square
+  // glyph beside it, so the column of icons went ragged on the one extension
+  // this app is mostly made of. It is also the glyph the `@`-mention list
+  // already draws a note with.
+  md: [FileText, '#6b9fff'],
+  markdown: [FileText, '#6b9fff'],
   mdx: [SiMdx, '#f9ac00'],
   json: [Braces, '#f5c542'],
   jsonc: [Braces, '#f5c542'],
