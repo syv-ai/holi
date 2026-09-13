@@ -19,7 +19,7 @@
  * valid YAML anyway — which is the moment completion has to work.
  */
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
-import { autocompletion } from '@codemirror/autocomplete'
+import { holiCompletion } from './completion'
 import type { Extension } from '@codemirror/state'
 import { SETTINGS_FILE, SETTINGS_LOCAL_FILE, VAULT_SETTINGS } from '@holi/shared'
 import type { SettingTarget, VaultSetting } from '@holi/shared'
@@ -137,7 +137,7 @@ function source(target: SettingTarget) {
 export function settingsCompletion(path: string): Extension[] {
   const target = targetFor(path)
   if (target === null) return []
-  return [autocompletion({ override: [source(target)] })]
+  return [holiCompletion([source(target)])]
 }
 
 /** The source alone, for tests — a `CompletionContext` is cheaper to build than

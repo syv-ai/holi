@@ -1,4 +1,4 @@
-import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
+import { completionKeymap } from '@codemirror/autocomplete'
 import { markdownTableAutocompleter, markdownTables } from 'codemirror-markdown-tables'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { bracketMatching, indentOnInput, indentUnit } from '@codemirror/language'
@@ -6,6 +6,7 @@ import { selectNextOccurrence } from '@codemirror/search'
 import { drawSelection, dropCursor, EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { EditorState, type Extension } from '@codemirror/state'
+import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
@@ -67,7 +68,9 @@ export interface EditorDeps {
  * dispatches a reload with `addToHistory:false`, so ⌘Z unwinds your keystrokes
  * rather than backing out a co-author's text (`notes-editor.md` §Undo).
  *
- * One shared `autocompletion` instance hosts every completion source.
+ * Every completion source in this stack is hosted by one `holiCompletion`,
+ * which is the renderer's only caller of `autocompletion()` — see
+ * `editor/completion.ts`.
  */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
   return [
@@ -140,9 +143,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
         livePreview,
       ],
     }),
-    autocompletion({
-      override: [mentionSource(deps.mentionData), slashCommands, markdownTableAutocompleter()],
-    }),
+    holiCompletion([mentionSource(deps.mentionData), slashCommands, markdownTableAutocompleter()]),
     // Code-editor keys. Multi-cursor is off by default — enable it so ⌘D's
     // next-occurrence selections actually stack instead of collapsing to one.
     EditorState.allowMultipleSelections.of(true),
@@ -204,7 +205,7 @@ export function mailComposerExtensions(): Extension[] {
     markdownTables(),
     // Table completion only. No `mentionSource` — `@` is how you type an email
     // address — and no `slashCommands`, whose commands are all vault actions.
-    autocompletion({ override: [markdownTableAutocompleter()] }),
+    holiCompletion([markdownTableAutocompleter()]),
     EditorState.allowMultipleSelections.of(true),
     formattingKeymap,
     keymap.of([
