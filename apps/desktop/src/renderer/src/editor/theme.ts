@@ -1,12 +1,115 @@
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { EditorView } from '@codemirror/view'
+import { COMPLETION_CLASS, OPTION_CLASS } from './completion'
 
 /** The one mono stack, named once so the places that must *stay* mono when the
  *  notes editor goes proportional cannot drift from the base they restore. */
 const MONO = 'ui-monospace, SF Mono, monospace'
 
+/** Every rule in `completionChrome` is prefixed with this, and it is three
+ *  classes on purpose. See `COMPLETION_CLASS`. */
+const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
+
+/**
+ * The completion popup: mentions, slash commands, settings keys, and the
+ * markdown-table menu, which is the one thing here deliberately left alone.
+ *
+ * **Exported so the guards can read it.** `test/completion.test.ts` asserts
+ * three things the block this replaced got wrong: that every selector carries
+ * `COMPLETION_CLASS`, without which CodeMirror's own rules outrank it and the
+ * whole block is silently dead; that nothing here is a hex literal, because the
+ * popup was the one overlay in the app that ignored D64 theming and light mode;
+ * and that nothing contests `:has(.cm-completionIcon-table)`.
+ *
+ * The radius tokens carry fallbacks because they live in Tailwind's `@theme`,
+ * which tree-shakes what it cannot see referenced, and Tailwind never scans
+ * this file — the same reason `lib/motion.ts` writes `var(--motion-arrive,
+ * 300ms)`.
+ */
+export const completionChrome = {
+  [POPUP]: {
+    background: 'var(--popover)',
+    color: 'var(--popover-foreground)',
+    // Borderless on the popover shadow, like every overlay in the app since
+    // 2026-08-14 — see `primitives/Popover.tsx`.
+    border: 'none',
+    borderRadius: 'var(--radius-md, 6px)',
+    boxShadow: 'var(--shadow-popover)',
+    padding: '4px',
+  },
+  // The app's UI font, which is the point of item 12: CodeMirror's own rule
+  // here is `fontFamily: monospace`, and it was winning.
+  [`${POPUP} > ul`]: {
+    fontFamily: 'inherit',
+    fontSize: '13px',
+    maxHeight: '18em',
+    minWidth: '220px',
+    padding: '0',
+  },
+  [`${POPUP} > ul > li`]: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '5px 8px',
+    borderRadius: 'var(--radius-sm, 4px)',
+    lineHeight: '1.4',
+    color: 'var(--popover-foreground)',
+  },
+  // The same pair `DropdownMenuItem` uses for `focus:`. A keyboard-selected row
+  // here and a focused menu item there are the same gesture.
+  [`${POPUP} > ul > li[aria-selected]`]: {
+    background: 'var(--accent)',
+    color: 'var(--accent-foreground)',
+  },
+  // CodeMirror's own default for a section header is `border-bottom: 1px solid
+  // silver` at 0.7 opacity, which belongs to no theme at all.
+  [`${POPUP} > ul > completion-section`]: {
+    borderBottom: 'none',
+    borderTop: '1px solid var(--divider)',
+    marginTop: '3px',
+    padding: '7px 8px 4px',
+    fontSize: '10.5px',
+    fontWeight: '600',
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    color: 'var(--muted-foreground)',
+    opacity: '1',
+  },
+  [`${POPUP} > ul > completion-section:first-child`]: {
+    borderTop: 'none',
+    marginTop: '0',
+  },
+  [`${POPUP} .cm-completionLabel`]: {
+    flex: '1',
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  [`${POPUP} .cm-completionDetail`]: {
+    color: 'var(--muted-foreground)',
+    fontStyle: 'normal',
+    fontSize: '12px',
+    flex: 'none',
+  },
+  [`${POPUP} > ul > li[aria-selected] .cm-completionDetail`]: { color: 'inherit' },
+  // `--brand`, never `--primary`: `index.css`'s role note says the fill is not
+  // a text colour.
+  [`${POPUP} .cm-completionMatchedText`]: {
+    color: 'var(--brand)',
+    textDecoration: 'none',
+    fontWeight: '600',
+  },
+  [`${POPUP} > ul > li[aria-selected] .cm-completionMatchedText`]: { color: 'inherit' },
+  // CodeMirror's type glyph, hidden on our rows and only ours. The element has
+  // to stay in the DOM: `codemirror-markdown-tables` hangs its whole menu off a
+  // `:has()` over it.
+  [`${POPUP} > ul > li.${OPTION_CLASS} .cm-completionIcon`]: { display: 'none' },
+}
+
 export const editorTheme = EditorView.baseTheme({
+  ...completionChrome,
   // The table widget reads its own `--tbl-style-font-family` (it defaults to
   // `system-ui`, which belonged to no editor here). Declared on the editor
   // element rather than `:root` so it can be scoped: every stack that borrows
@@ -494,23 +597,6 @@ export const editorTheme = EditorView.baseTheme({
   },
   // remote cursors (y-codemirror.next)
   '.cm-ySelectionInfo': { fontSize: '10px', padding: '0 3px', borderRadius: '3px' },
-
-  // autocomplete popover (mentions / slash / table) — dark, or CM's default light
-  // tooltip renders our inherited light text white-on-white.
-  '.cm-tooltip.cm-tooltip-autocomplete': {
-    background: '#1f1f1f',
-    border: '1px solid #404040',
-    borderRadius: '6px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-  },
-  '.cm-tooltip-autocomplete > ul': { fontFamily: 'inherit', maxHeight: '18em' },
-  '.cm-tooltip-autocomplete > ul > li': { color: '#e5e5e5', padding: '2px 8px', lineHeight: '1.5' },
-  '.cm-tooltip-autocomplete > ul > li[aria-selected]': { background: '#2563eb', color: '#ffffff' },
-  '.cm-completionDetail': { color: '#a3a3a3', fontStyle: 'normal', marginLeft: '0.6em' },
-  '.cm-completionMatchedText': { color: '#7dd3fc', textDecoration: 'none' },
-  '.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionMatchedText': {
-    color: '#e0f2fe',
-  },
 
   // Wiki-link hover preview (FR-6). The card owns its chrome, so strip the base
   // tooltip wrapper. Colours are D64 tokens, so a vault theme recolours the card.

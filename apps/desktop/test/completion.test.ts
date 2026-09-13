@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, test } from 'vitest'
 import { COMPLETION_CLASS, OPTION_CLASS, holiOptionClass } from '@/editor/completion'
+import { completionChrome } from '@/editor/theme'
 
 describe('a row we author is marked, and nothing else is', () => {
   test('our own sources name a `holi-` type, and get the class the chrome needs', () => {
@@ -34,4 +35,27 @@ describe('every completion popup goes through holiCompletion', () => {
 
 test('the popup class is the one the chrome will look for', () => {
   expect(COMPLETION_CLASS).toBe('cm-holi-completion')
+})
+
+describe('the chrome cannot go quietly dead again', () => {
+  // The failure this catches is the one that was live for months: a selector
+  // CodeMirror's own rule outranks applies nothing and reports nothing.
+  test('every selector carries the class that wins the cascade', () => {
+    for (const selector of Object.keys(completionChrome)) {
+      if (selector.startsWith('@')) continue // keyframes have no selector
+      expect(selector).toContain(COMPLETION_CLASS)
+    }
+  })
+
+  // The popup was the one overlay in the app that ignored D64 theming and
+  // light mode, because this block was written in hex.
+  test('nothing here is a colour literal', () => {
+    expect(JSON.stringify(completionChrome)).not.toMatch(/#[0-9a-fA-F]{3}/)
+  })
+
+  // `:has()` carries its argument's specificity, so the table menu outranks
+  // anything here. Contesting it would only produce another dead rule.
+  test('the markdown-table menu is left to its library', () => {
+    expect(JSON.stringify(completionChrome)).not.toContain('cm-completionIcon-table')
+  })
 })

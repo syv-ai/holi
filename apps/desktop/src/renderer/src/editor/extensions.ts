@@ -69,8 +69,9 @@ export interface EditorDeps {
  * rather than backing out a co-author's text (`notes-editor.md` §Undo).
  *
  * Every completion source in this stack is hosted by one `holiCompletion`,
- * which is the renderer's only caller of `autocompletion()` — see
- * `editor/completion.ts`.
+ * which is the renderer's only caller of CodeMirror's autocompletion extension.
+ * See `editor/completion.ts`, and the guard in `test/completion.test.ts` that
+ * fails if a call site reaches past it.
  */
 export function baseEditorExtensions(deps: EditorDeps): Extension[] {
   return [
