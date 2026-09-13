@@ -748,12 +748,22 @@ export function FileTree({
                       isCut ? 'opacity-40' : '',
                     ].join(' ')}
                   >
+                    {/* The chevron column exists only where there is a chevron.
+                        A file used to reserve it and start one slot in, which at
+                        the vault root left every file indented past a folder
+                        that was its sibling, for a control it does not have.
+                        Nesting is already said by the row's indent, and it is
+                        measured from the row's start — so a file inside a folder
+                        still sits one level right of it. */}
+                    {isFolder && (
+                      <span
+                        className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
+                      >
+                        <ChevronIcon open={item.isExpanded()} />
+                      </span>
+                    )}
                     <span
-                      className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
-                    >
-                      {isFolder ? <ChevronIcon open={item.isExpanded()} /> : null}
-                    </span>
-                    <span
+                      data-slot="row-icon"
                       className={`flex w-4 shrink-0 justify-center ${isOpen ? 'text-brand' : 'text-muted-foreground'} ${dim}`}
                     >
                       {iconByPath.has(id) ? (

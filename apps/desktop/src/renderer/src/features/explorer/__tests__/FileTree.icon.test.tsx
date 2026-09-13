@@ -48,7 +48,10 @@ const rowFor = (path: string) => document.querySelector(`[data-path="${path}"]`)
 /** The row's icon slot. The first `w-4` span is the expand chevron — a folder
  *  keeps that whatever its icon — so asserting on the row as a whole would test
  *  the chevron instead of the thing under test. */
-const iconSlotOf = (path: string) => rowFor(path).querySelectorAll('span.flex.w-4')[1]!
+// By its own marker, not by position. This indexed `span.flex.w-4`[1] — the
+// second such span — which was the icon only while EVERY row reserved a chevron
+// column before it. Files no longer do, so position stopped meaning icon.
+const iconSlotOf = (path: string) => rowFor(path).querySelector('[data-slot="row-icon"]')!
 
 beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
