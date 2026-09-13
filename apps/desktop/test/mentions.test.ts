@@ -1,6 +1,6 @@
 import { CompletionContext } from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { mentionCompletions } from '../src/renderer/src/editor/mentions'
 
 function ctx(doc: string, pos = doc.length, explicit = false) {
@@ -54,4 +54,44 @@ describe('mentionCompletions (FR-8)', () => {
     // labels and drop everything — our manual filter must be authoritative.
     expect(mentionCompletions(ctx('see @read'), DATA)!.filter).toBe(false)
   })
+})
+
+// `DATA` is already taken at module scope in this file; this is the richer one.
+const RICH = {
+  notes: [{ path: 'work/retro.md', icon: '📓' }, { path: 'work/plan.md' }],
+  tasks: [
+    { path: 'task.a.md', title: 'Write the retro', status: 'doing' as const, due: '2026-09-18' },
+    { path: 'task.b.md', title: 'Book the room', status: 'todo' as const },
+  ],
+}
+
+test('notes and tasks are two sections, notes first', () => {
+  const options = mentionCompletions(ctx('@'), RICH)!.options
+  const sections = options.map((o) => (typeof o.section === 'string' ? o.section : o.section?.name))
+  expect(sections.filter((s) => s === 'Notes')).toHaveLength(2)
+  expect(sections.filter((s) => s === 'Tasks')).toHaveLength(2)
+})
+
+test("a task's glyph carries its status, so the row does not say it twice", () => {
+  const options = mentionCompletions(ctx('@'), RICH)!.options
+  expect(options.find((o) => o.label === 'Write the retro')?.type).toBe('holi-task-doing')
+  expect(options.find((o) => o.label === 'Book the room')?.type).toBe('holi-task-todo')
+  // The status used to be repeated in `detail`. The glyph says it now.
+  expect(options.find((o) => o.label === 'Write the retro')?.detail).toBeUndefined()
+})
+
+test('a due date is the trailing pill, humanised the way the board writes it', () => {
+  const options = mentionCompletions(ctx('@'), RICH)!.options
+  const withDue = options.find((o) => o.label === 'Write the retro')
+  expect((withDue as { meta?: string }).meta).toBe('due 18 Sep')
+  const without = options.find((o) => o.label === 'Book the room')
+  expect((without as { meta?: string }).meta).toBeUndefined()
+})
+
+test("a note wears the vault's own emoji when it has one", () => {
+  const options = mentionCompletions(ctx('@'), RICH)!.options
+  expect((options.find((o) => o.label === 'work/retro.md') as { emoji?: string }).emoji).toBe('📓')
+  expect(
+    (options.find((o) => o.label === 'work/plan.md') as { emoji?: string }).emoji,
+  ).toBeUndefined()
 })

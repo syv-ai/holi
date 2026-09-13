@@ -84,8 +84,16 @@ export function EditorPane({
   tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
-    notes: snapshot.docs.map((d) => ({ path: d.path })),
-    tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
+    notes: snapshot.docs.map((d) => ({
+      path: d.path,
+      ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
+    })),
+    tasks: snapshot.tasks.map((t) => ({
+      path: t.path,
+      title: t.title,
+      status: t.status,
+      ...(t.due === undefined ? {} : { due: t.due }),
+    })),
   }
   const setAgentSeed = useSetAtom(agentSeedPromptAtom)
   const setAgentOpen = useSetAtom(agentPanelOpenAtom)

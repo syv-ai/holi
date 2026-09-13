@@ -61,8 +61,16 @@ export function TaskDescriptionEditor({
   tasksByPath.current = new Map(snapshot.tasks.map((t) => [t.path, t]))
   const mentionRef = useRef<MentionData>({ notes: [], tasks: [] })
   mentionRef.current = {
-    notes: snapshot.docs.map((d) => ({ path: d.path })),
-    tasks: snapshot.tasks.map((t) => ({ path: t.path, title: t.title, status: t.status })),
+    notes: snapshot.docs.map((d) => ({
+      path: d.path,
+      ...(snapshot.icons[d.path] === undefined ? {} : { icon: snapshot.icons[d.path] }),
+    })),
+    tasks: snapshot.tasks.map((t) => ({
+      path: t.path,
+      title: t.title,
+      status: t.status,
+      ...(t.due === undefined ? {} : { due: t.due }),
+    })),
   }
   /** Same seam the notes editor has (#5): a task's description is prose in the
    *  notes stack, so a passage of it is as askable as a passage of a note. */
@@ -117,7 +125,6 @@ export function TaskDescriptionEditor({
     return () => view.destroy()
     // Mount once; the call site keys this component by task.path so a task
     // switch remounts it with fresh text.
-
   }, [])
 
   return (
