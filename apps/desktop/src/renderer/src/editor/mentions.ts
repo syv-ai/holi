@@ -12,7 +12,7 @@ import type {
   CompletionResult,
   CompletionSource,
 } from '@codemirror/autocomplete'
-import { formatWikiLink, type TaskStatus } from '@holi/shared'
+import { formatWikiLink, isHiddenPath, type TaskStatus } from '@holi/shared'
 import { shortStamp } from '@/lib/date-presets'
 import type { HoliCompletion } from './completion'
 
@@ -60,8 +60,10 @@ export function mentionCompletions(
   // `from` sits at the `@`, so CM's own fuzzy filter would match the `@`-prefixed
   // text against the labels and drop everything.
   const query = match.text.slice(1).toLowerCase()
+  // `isHiddenPath` is the file tree's own rule — any `/`-segment starting with a
+  // dot. Without it `@c` offered `.claude/settings.json` beside your notes.
   const noteOptions: HoliCompletion[] = data.notes
-    .filter((n) => n.path.toLowerCase().includes(query))
+    .filter((n) => !isHiddenPath(n.path) && n.path.toLowerCase().includes(query))
     .map((n) => ({
       label: n.path,
       type: 'holi-note',
@@ -69,8 +71,11 @@ export function mentionCompletions(
       ...(n.icon === undefined ? {} : { emoji: n.icon }),
       apply: formatWikiLink(n.path),
     }))
+  // A finished task is not something you are still linking to. It stays
+  // reachable by typing its path as an ordinary `[[link]]`; it just does not
+  // crowd the list.
   const taskOptions: HoliCompletion[] = data.tasks
-    .filter((t) => t.title.toLowerCase().includes(query))
+    .filter((t) => t.status !== 'done' && t.title.toLowerCase().includes(query))
     .map((t) => ({
       label: t.title,
       // No `detail: t.status` any more: the glyph on the left says the status,

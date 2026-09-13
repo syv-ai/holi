@@ -114,3 +114,31 @@ test('a mention survives letters outside ASCII', () => {
   expect(mentionCompletions(ctx('see @å'), data)!.from).toBe(4)
 })
 
+test('a finished task is not offered', () => {
+  const data = {
+    notes: [],
+    tasks: [
+      { path: 'task.a.md', title: 'Ship it', status: 'done' as const },
+      { path: 'task.b.md', title: 'Ship the other', status: 'doing' as const },
+    ],
+  }
+  expect(mentionCompletions(ctx('@ship'), data)!.options.map((o) => o.label)).toEqual([
+    'Ship the other',
+  ])
+})
+
+// The tree hides dot-prefixed paths and the mention list never did, so `@c`
+// offered `.claude/settings.json` alongside your notes.
+test('a hidden path is not offered, the way the tree hides it', () => {
+  const data = {
+    notes: [
+      { path: '.claude/settings.json' },
+      { path: '.holi/theme.css' },
+      { path: 'work/claude-notes.md' },
+    ],
+    tasks: [],
+  }
+  expect(mentionCompletions(ctx('@'), data)!.options.map((o) => o.label)).toEqual([
+    'work/claude-notes.md',
+  ])
+})
