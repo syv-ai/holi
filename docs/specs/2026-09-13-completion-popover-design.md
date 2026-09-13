@@ -192,7 +192,7 @@ table, since `2 × 1` is the first option.
 
 ## 6. Motion
 
-Per D97's vocabulary, and nothing that cannot name one of the four behaviours:
+Per D98's vocabulary, and nothing that cannot name one of the four behaviours:
 
 - **Panel open is `arrive`**: a keyframe in `editorTheme`, the way `cm-ask-in`
   already is, with its origin following whether CM placed the tooltip above or

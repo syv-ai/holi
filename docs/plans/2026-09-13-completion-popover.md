@@ -1086,7 +1086,7 @@ Add to `apps/desktop/test/completion.test.ts`:
 describe('the popup moves in the app’s vocabulary and no other', () => {
   const chrome = JSON.stringify(completionChrome)
 
-  // D97: anything that cannot name one of the four behaviours does not animate.
+  // D98: anything that cannot name one of the four behaviours does not animate.
   // Opening is `arrive`; the selection is `respond`. Nothing here loops.
   test('every duration comes from the motion tier', () => {
     expect(chrome).toContain('var(--motion-arrive')
@@ -1175,7 +1175,7 @@ git commit -m "feat(editor): the completion popup arrives, and its rows respond"
 **Files:**
 
 - Modify: `docs/upcoming.md:149-150`
-- Modify: `docs/decisions.md` (the D98 row and the inbox sentence at line 7)
+- Modify: `docs/decisions.md` (the D99 row and the inbox sentence at line 7)
 - Modify: `docs/prd/notes-editor.md` (FR-8 and FR-9)
 
 - [ ] **Step 1: Close item 12 in `docs/upcoming.md`**
@@ -1184,7 +1184,7 @@ Replace lines 149-150 with a `[x]` and the record of what was built, following t
 
 ```markdown
 12. [x] The UI for the slash command popover (and the "@" popover) use the standard codemirror layout, font etc. We should make it our own, ideally a full shadcn ui component with proper hover and focus states, and sub menus if possible.
-        — **BUILT 2026-09-13** (D98). Design: `docs/specs/2026-09-13-completion-popover-design.md`.
+        — **BUILT 2026-09-13** (D99). Design: `docs/specs/2026-09-13-completion-popover-design.md`.
         — **Most of the old chrome was dead**, and measuring is what found it: base themes share one
         generated prefix, so a rule wins on specificity, and CodeMirror's `.cm-tooltip.cm-tooltip-autocomplete > ul`
         outranked ours. The popup was in browser-default monospace at CM's 10em cap, and its selected
@@ -1196,22 +1196,19 @@ Replace lines 149-150 with a `[x]` and the record of what was built, following t
         `:has(.cm-completionIcon-table)`, so turning them off would have un-styled it silently.
 ```
 
-- [ ] **Step 2: Settle the D-number collision, then add the row**
+- [ ] **Step 2: Add the D99 row to `docs/decisions.md`**
 
-**`docs/decisions.md` has two decisions numbered D97**, found while writing this
-plan: line 104 is the motion system and line 157 is "a setting is declared
-once". Its own section heading at line 96 still reads "next free is D97" while
-the inbox sentence at line 7 reads "next free is D98", which is how the second
-one was handed a number that was already spent. Resolve it the way the log
-already resolved D90 ("cheaper to lose a number than to risk two decisions
-wearing one") **according to the answer Nicolai gave when this was raised**, then
-bump both the line 7 sentence and the line 96 heading so they agree.
+The number is D99, not D98. **D97 had been spent twice** (the motion system and
+"a setting is declared once"), found while writing this plan, and `48cb4cb`
+resolved it at Nicolai's call: the older settings decision keeps D97, the motion
+system moved to D98, and the stale section heading now agrees with the inbox
+sentence. So update line 7 to say **next free is D100** when adding this row.
 
 Add this item's row to the table in the same shape as its neighbours, using
 whichever number the answer leaves free:
 
 ```markdown
-| D9X — the completion popup is ours, and there is only one of it | [`prd/notes-editor.md`](prd/notes-editor.md) items 8 and 9. Design of record: [`specs/2026-09-13-completion-popover-design.md`](specs/2026-09-13-completion-popover-design.md); plan: [`plans/2026-09-13-completion-popover.md`](plans/2026-09-13-completion-popover.md). Agreed and built 2026-09-13 for [`upcoming.md`](upcoming.md) item 12, so it never sat in this inbox. **What measuring found is the decision's substance**: base themes all land under one generated prefix, so a rule here wins on specificity rather than order, and CodeMirror's own `.cm-tooltip.cm-tooltip-autocomplete > ul` outranked the block that was supposed to style the popup. Read out of the running app's stylesheets: the popup was in browser-default `monospace` at CodeMirror's 10em cap and `1px 3px` padding, and its selected row painted CodeMirror's `#347` — every one of our declarations for those was dead, and silently, which is how a popup that ignored D64 theming and light mode survived. Settles that **`tooltipClass` stamps `cm-holi-completion` on the popup** so every chrome rule wins outright, and that a guard test fails on a selector that does not carry it and on any hex literal in the block. **One config, three call sites**: `holiCompletion` in `editor/completion.ts` is the only caller of `autocompletion()` in the renderer, guarded by a test over the files, so "the popup is ours" is true by construction rather than by remembering to style a fourth one. **`icons` stays ON**, which is the opposite of the obvious move: `codemirror-markdown-tables` styles its own menu from roughly twenty rules keyed on `:has(.cm-completionIcon-table)`, so `icons: false` would have deleted the element they hang from and un-styled that menu with no error — CodeMirror keeps rendering the glyph and CSS hides it on our rows only, and nothing here contests a `:has()` it cannot outrank. **A row is an icon, a label and what the icon does not say**: a task's status is the explorer's own `TaskIcon` glyph, so the trailing pill carries its due date instead of repeating the status, and a note wears the vault's emoji when it has one. The glyphs are hand-copied from `lucide-react` because a CodeMirror option is plain DOM and no React lives inside CodeMirror anywhere in this app; a test renders the real component and fails on drift. **The `↵` hint is CSS on `li[aria-selected]`, never a conditional render**, because CodeMirror moves the selection by toggling that attribute without re-rendering rows. **`/table` asks what size** rather than guessing, and the second level is a chained completion rather than a flyout: picking it types `/table ` and re-opens the same panel on an argument source, with the trail as a section header and backspace as the way back, which needs no back-navigation code because `/table` matches the first level again. Sizes are columns × body rows with the header implied, since there is no GFM table without one. **Deliberately not built**: a cross-fade between the two levels, because CodeMirror rebuilds the option list on every keystroke and the animation would replay on each character; the side preview panel; and any new slash command, which is [D81](#d81--a-slash-command-is-a-small-program-in-the-apps-sandbox-not-a-shell)'s |
+| D99 — the completion popup is ours, and there is only one of it | [`prd/notes-editor.md`](prd/notes-editor.md) items 8 and 9. Design of record: [`specs/2026-09-13-completion-popover-design.md`](specs/2026-09-13-completion-popover-design.md); plan: [`plans/2026-09-13-completion-popover.md`](plans/2026-09-13-completion-popover.md). Agreed and built 2026-09-13 for [`upcoming.md`](upcoming.md) item 12, so it never sat in this inbox. **What measuring found is the decision's substance**: base themes all land under one generated prefix, so a rule here wins on specificity rather than order, and CodeMirror's own `.cm-tooltip.cm-tooltip-autocomplete > ul` outranked the block that was supposed to style the popup. Read out of the running app's stylesheets: the popup was in browser-default `monospace` at CodeMirror's 10em cap and `1px 3px` padding, and its selected row painted CodeMirror's `#347` — every one of our declarations for those was dead, and silently, which is how a popup that ignored D64 theming and light mode survived. Settles that **`tooltipClass` stamps `cm-holi-completion` on the popup** so every chrome rule wins outright, and that a guard test fails on a selector that does not carry it and on any hex literal in the block. **One config, three call sites**: `holiCompletion` in `editor/completion.ts` is the only caller of `autocompletion()` in the renderer, guarded by a test over the files, so "the popup is ours" is true by construction rather than by remembering to style a fourth one. **`icons` stays ON**, which is the opposite of the obvious move: `codemirror-markdown-tables` styles its own menu from roughly twenty rules keyed on `:has(.cm-completionIcon-table)`, so `icons: false` would have deleted the element they hang from and un-styled that menu with no error — CodeMirror keeps rendering the glyph and CSS hides it on our rows only, and nothing here contests a `:has()` it cannot outrank. **A row is an icon, a label and what the icon does not say**: a task's status is the explorer's own `TaskIcon` glyph, so the trailing pill carries its due date instead of repeating the status, and a note wears the vault's emoji when it has one. The glyphs are hand-copied from `lucide-react` because a CodeMirror option is plain DOM and no React lives inside CodeMirror anywhere in this app; a test renders the real component and fails on drift. **The `↵` hint is CSS on `li[aria-selected]`, never a conditional render**, because CodeMirror moves the selection by toggling that attribute without re-rendering rows. **`/table` asks what size** rather than guessing, and the second level is a chained completion rather than a flyout: picking it types `/table ` and re-opens the same panel on an argument source, with the trail as a section header and backspace as the way back, which needs no back-navigation code because `/table` matches the first level again. Sizes are columns × body rows with the header implied, since there is no GFM table without one. **Deliberately not built**: a cross-fade between the two levels, because CodeMirror rebuilds the option list on every keystroke and the animation would replay on each character; the side preview panel; and any new slash command, which is [D81](#d81--a-slash-command-is-a-small-program-in-the-apps-sandbox-not-a-shell)'s |
 ```
 
 - [ ] **Step 3: Update the PRD**
@@ -1260,9 +1257,12 @@ hundreds of unrelated lines.
 
 - [ ] **Step 4: Commit**
 
+**`docs/upcoming.md` is gitignored** (`.gitignore:11`) and untracked, so it is
+edited but never committed: `git add` on it is a silent no-op, not an error.
+
 ```bash
-git add docs/upcoming.md docs/decisions.md docs/prd/notes-editor.md
-git commit -m "docs: item 12 is built, and D98 records what measuring found"
+git add docs/decisions.md docs/prd/notes-editor.md
+git commit -m "docs: item 12 is built, and D99 records what measuring found"
 ```
 
 ---
