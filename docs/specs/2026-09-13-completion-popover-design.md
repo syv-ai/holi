@@ -32,10 +32,11 @@ Read out of `document.styleSheets` over CDP, because reasoning from the file was
 wrong twice. **Most of that theme block is dead code**, and the reason is
 specificity, not order.
 
-Every base theme is emitted under the same generated `.ͼ1` prefix, so a rule
-wins on its own weight. CodeMirror writes `.cm-tooltip.cm-tooltip-autocomplete >
-ul` (0,3,1); `theme.ts` writes `.cm-tooltip-autocomplete > ul` (0,2,1) and
-loses. Consequences, all of them live right now:
+Every base theme is emitted under the same generated `.ͼ1` prefix, which cancels
+out, so a rule wins on its own weight. CodeMirror writes
+`.cm-tooltip.cm-tooltip-autocomplete > ul` (0,2,1); `theme.ts` writes
+`.cm-tooltip-autocomplete > ul` (0,1,1) and loses. Consequences, all of them
+live right now:
 
 1. **The popup is in browser-default `monospace`.** Our `fontFamily: 'inherit'`
    never applied. So item 12's complaint about the font is literally correct,
@@ -46,9 +47,10 @@ loses. Consequences, all of them live right now:
    10em, with CM's `1px 3px` padding and 1.2 line-height rather than our `2px
 8px` / 1.5.
 3. **The selected row is not ours.** CM emits its `&light` / `&dark` arms as
-   separate generated classes (`.ͼ2` / `.ͼ3`) at (0,3,2), tying our (0,3,2) and
-   coming later, so the selection paints CM's `#17c` / `#347`, not the `#2563eb`
-   in our file.
+   separate generated classes (`.ͼ2` / `.ͼ3`), whose prefix does not cancel:
+   `.ͼ2 .cm-tooltip-autocomplete ul li[aria-selected]` is (0,3,2) against our
+   (0,2,2), so the selection paints CM's `#17c` / `#347`, not the `#2563eb` in
+   our file.
 4. **`codemirror-markdown-tables` has a second look inside the same popup.**
    Roughly twenty rules keyed on `:has(.cm-completionIcon-table)` give the table
    menu its own font, padding, background and a `::before` hover layer. They
@@ -82,7 +84,7 @@ positions: icons 20, label 50, detail 80) all exist. Section headers render as a
 ## 1. One config, three call sites
 
 A new `editor/completion.ts` exports `holiCompletion(sources)`, wrapping
-`autocompletion()` with our `optionClass` and `addToOptions`. All three call
+`autocompletion()` with our `tooltipClass`, `optionClass` and `addToOptions`. All three call
 sites use it. That is what makes "every popup" true by construction rather than
 by remembering to.
 
@@ -114,16 +116,18 @@ the mail composer and the plain/code editor.
 
 **Every selector has to be written to win, which is the measured half of this
 section.** Matching CM's shape is not enough, because a tie goes to whichever
-sheet registered later and that is not ours:
+sheet registered later and that is not ours.
 
-- Prefix with `.cm-tooltip` as CM does, and add one more class than CM uses, so
-  the weight is strictly higher rather than equal.
-- The selected row needs both `&light` and `&dark` arms, since CM's live in
-  separate generated classes that a single unprefixed rule cannot outrank. Both
-  arms carry the same token values, so this is duplication for the cascade, not
-  two designs.
-- Nothing here may use `:has(.cm-completionIcon-table)` or try to beat it. The
-  table menu is the library's, deliberately.
+The lever is `tooltipClass`, a config option that stamps a class of our choosing
+on the popup element. With `cm-holi-completion` on it, every rule here reads
+`.cm-tooltip.cm-tooltip-autocomplete.cm-holi-completion > …` at (0,3,n), which
+beats CM's list rules (0,2,n) and its selected-row arms (0,3,2) outright once
+the `[aria-selected]` attribute is counted. One rule per thing, no duplicated
+`&light` / `&dark` arms, and the chrome cannot apply anywhere the shared config
+was not used, which is the property we want.
+
+Nothing here may use `:has(.cm-completionIcon-table)` or try to beat it. The
+table menu is the library's, deliberately.
 
 A guard test reads `theme.ts` as text and fails if the autocomplete block
 contains a hex literal, in the manner of `test/motion.test.ts`'s guards over
