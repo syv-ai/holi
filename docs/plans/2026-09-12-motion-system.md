@@ -28,6 +28,8 @@ Tier 0 must land whole. Tiers 1 to 4 are independent of each other and may be re
 
 **The decision number is D97.** `docs/decisions.md`'s header says "Next free is D97"; D96 is the last allocated row.
 
+> **Corrected 2026-09-13: it is D98.** The header this step trusted was stale, and D97 had already been spent by "a setting is declared once". Left in place rather than rewritten, because a dated plan is history.
+
 ---
 
 ## File structure

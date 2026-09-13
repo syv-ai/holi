@@ -336,7 +336,7 @@
    * 300ms was chosen against 160 and 220 side by side, and every other duration
    * is scaled off it. Re-pacing the app is an edit to THIS block and nothing
    * else — see `lib/motion.ts` for why the stagger is a calc() string.
-   * Design of record: docs/specs/2026-09-12-motion-system-design.md (D97). */
+   * Design of record: docs/specs/2026-09-12-motion-system-design.md (D98). */
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
   /* Symmetric, for F only. A loop eased like an entrance reads as a stutter. */
   --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);

@@ -6,7 +6,7 @@
  * Nothing here restates a duration or a curve; this module exists only for the
  * two things CSS cannot express on its own.
  *
- * Design of record: `docs/specs/2026-09-12-motion-system-design.md` (D97).
+ * Design of record: `docs/specs/2026-09-12-motion-system-design.md` (D98).
  */
 
 /**
