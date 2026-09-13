@@ -26,7 +26,7 @@ import {
 } from './livePreview'
 import { mentionSource, type MentionData } from './mentions'
 import { alphaListKeymap } from './lists'
-import { slashCommands } from './slash'
+import { slashCommands, tableSizes } from './slash'
 import { wikiHoverPreview, type ReadNote } from './wikiHover'
 import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
@@ -144,7 +144,12 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
         livePreview,
       ],
     }),
-    holiCompletion([mentionSource(deps.mentionData), slashCommands, markdownTableAutocompleter()]),
+    holiCompletion([
+      mentionSource(deps.mentionData),
+      slashCommands,
+      tableSizes,
+      markdownTableAutocompleter(),
+    ]),
     // Code-editor keys. Multi-cursor is off by default — enable it so ⌘D's
     // next-occurrence selections actually stack instead of collapsing to one.
     EditorState.allowMultipleSelections.of(true),

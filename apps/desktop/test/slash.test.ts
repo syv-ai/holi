@@ -1,7 +1,12 @@
 import { CompletionContext } from '@codemirror/autocomplete'
 import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
-import { slashCommands } from '../src/renderer/src/editor/slash'
+import {
+  slashCommands,
+  tableSizes,
+  TABLE_SIZES,
+  buildTable,
+} from '../src/renderer/src/editor/slash'
 
 function ctx(doc: string, pos = doc.length, explicit = false) {
   return new CompletionContext(EditorState.create({ doc }), pos, explicit)
@@ -30,10 +35,10 @@ describe('slashCommands (FR-9)', () => {
     expect(labels).not.toContain('/subtask')
   })
 
-  it('/table inserts a valid markdown table skeleton (header + delimiter + row)', () => {
-    const apply = slashCommands(ctx('/'))!.options.find((o) => o.label === '/table')!
-      .apply as string
-    const lines = apply.split('\n')
+  // `/table` no longer inserts anything directly — it opens the sizes, and the
+  // skeleton moved to `buildTable`. The shape it produces is still the contract.
+  it('the default size is a valid markdown table skeleton (header + delimiter + row)', () => {
+    const lines = buildTable(TABLE_SIZES[0]!).split('\n')
     expect(lines.length).toBeGreaterThanOrEqual(3)
     expect(lines[1]).toMatch(/^\|\s*-+\s*\|/) // the --- delimiter row
   })
@@ -52,5 +57,46 @@ describe('slashCommands (FR-9)', () => {
     const labels = result!.options.map((o) => o.label)
     expect(labels).toEqual(['/todo'])
     expect(result!.filter).toBe(false)
+  })
+})
+
+describe('/table asks what size, instead of guessing', () => {
+  it('picking /table does not insert a table, it opens the sizes', () => {
+    const opt = slashCommands(ctx('/'))!.options.find((o) => o.label === '/table')!
+    // An `apply` function, not a string: it types the argument and re-opens.
+    expect(typeof opt.apply).toBe('function')
+  })
+
+  it('the sizes source only fires once the command has an argument slot', () => {
+    expect(tableSizes(ctx('/table'))).toBeNull()
+    expect(tableSizes(ctx('/table '))).not.toBeNull()
+  })
+
+  it('the sizes replace the whole command, not just the argument', () => {
+    // `from` at the `/`, so picking a size leaves no `/table ` behind.
+    expect(tableSizes(ctx('/table '))!.from).toBe(0)
+  })
+
+  it('every size is a valid GFM table: header, delimiter, then body rows', () => {
+    for (const size of TABLE_SIZES) {
+      const lines = buildTable(size).split('\n')
+      expect(lines).toHaveLength(2 + size.rows)
+      expect(lines[1]).toMatch(/^\|(\s*-+\s*\|)+$/)
+      expect(lines[0]!.split('|').length - 2).toBe(size.cols)
+    }
+  })
+
+  it("today's table is the first size offered, so Enter Enter is the old behaviour", () => {
+    expect(TABLE_SIZES[0]).toEqual({ cols: 2, rows: 1 })
+  })
+
+  it('the sizes carry a trail header saying where you are', () => {
+    const section = tableSizes(ctx('/table '))!.options[0]!.section
+    expect(typeof section === 'string' ? section : section?.name).toBe('table')
+  })
+
+  it('backspacing out of the argument returns to the command list', () => {
+    // No back-navigation code: `/table` matches the first level again.
+    expect(slashCommands(ctx('/table'))!.options.map((o) => o.label)).toContain('/table')
   })
 })
