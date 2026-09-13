@@ -30,17 +30,17 @@ import { FrontmatterFields } from './FrontmatterFields'
  * nothing for a frame and then snapped it back to full height once the rows
  * mounted, which is the blink.
  *
- * `motion-in-row` covers that gap by construction: the layout effect runs after
- * the rows are in the DOM but BEFORE the browser paints, so the block opens from
- * zero to whatever height it turned out to be instead of jumping there. The
- * keyframe has no `to`, so the height comes from the element itself and no
- * number is stated; `backwards` means it goes back to being sized by its own
- * content as soon as the animation is done.
+ * A fade covers that gap: the layout effect runs after the rows are in the DOM
+ * but BEFORE the browser paints, so the block comes up from nothing rather than
+ * snapping in. It opened its HEIGHT too at first, which removed the last of the
+ * jump and was too much motion for what this is — his call, and the reason the
+ * height-opening variant is gone from the vocabulary entirely rather than left
+ * lying around unused.
  *
  * A component per portal rather than a loop body, because this needs a hook.
  */
 function FrontmatterBlock({ portal }: { portal: FrontmatterPortal }): React.JSX.Element {
-  useLayoutEffect(() => playOnce(portal.el, 'motion-in-row'), [portal.el])
+  useLayoutEffect(() => playOnce(portal.el, 'motion-in-fade'), [portal.el])
 
   return createPortal(
     <FrontmatterFields path={portal.path} yaml={portal.yaml} onWrite={portal.write} />,

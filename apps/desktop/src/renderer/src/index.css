@@ -441,30 +441,6 @@
 @utility motion-in-fade {
   animation: motion-in-fade var(--motion-arrive) var(--ease-settle) both;
 }
-/* A row in a list, arriving by OPENING THE SPACE IT NEEDS.
- *
- * The directional utilities above move a thing that already has its place. A row
- * inserted into a list does not have one yet, so fading it in while the layout
- * jumps aside for it instantly is the worst of both: the row eases and
- * everything below it snaps. This animates the height too, so the list opens at
- * the same rate the row appears.
- *
- * **No `to` keyframe, on purpose.** A missing property in `to` is synthesised
- * from the element's own computed style, so this ends at whatever height the row
- * really is — no number here, and no `interpolate-size`/`auto` dance that would
- * land 4px short of a row with a declared height and snap at the end.
- *
- * **`backwards`, not `both`**, for the same reason: `both` would persist the
- * final height as an animated value, and the row must go back to being sized by
- * its own rule. `backwards` still covers the stagger delay, which is what stops
- * a queued row flashing at full height before its turn.
- *
- * `overflow: hidden` so the content is clipped by the opening box rather than
- * spilling out of it. */
-@utility motion-in-row {
-  animation: motion-in-row var(--motion-arrive) var(--ease-settle) backwards;
-  overflow: hidden;
-}
 @utility motion-out-right {
   animation: motion-out-right var(--motion-leave) var(--ease-settle) both;
 }
@@ -540,12 +516,6 @@
   }
   to {
     opacity: 1;
-  }
-}
-@keyframes motion-in-row {
-  from {
-    height: 0;
-    opacity: 0;
   }
 }
 @keyframes motion-out-right {
@@ -754,7 +724,6 @@
   .motion-ack-nudge {
     animation: none;
   }
-  .motion-in-row,
   .motion-in-right,
   .motion-in-left,
   .motion-in-top,

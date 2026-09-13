@@ -10,6 +10,7 @@
  */
 import { fileKind, isTaskFilePath } from '@holi/shared'
 import { useAtomValue } from 'jotai'
+import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { syncStateAtom } from '@/state/vaults'
@@ -64,6 +65,8 @@ export interface PaneViewProps {
   /** Whether this is the pane that "open" means. Drives the strip's focus cue;
    *  with a single pane it is always true and the cue never shows. */
   focused: boolean
+  /** Closing: play the exit, and stop taking input while it runs. */
+  leaving?: boolean
   /** Clicking anywhere in the pane focuses it — including in its content, so
    *  putting a caret in an editor moves the focus with it. */
   onFocus: () => void
@@ -99,6 +102,7 @@ export interface PaneViewProps {
 export function PaneView({
   pane,
   focused,
+  leaving = false,
   onFocus,
   onSelect,
   onPin,
@@ -138,7 +142,13 @@ export function PaneView({
     // CodeMirror instance taking focus, has to move the workspace's idea of
     // "here" too, or the next file opened from the tree lands somewhere else.
     <main
-      className="flex h-full min-w-0 flex-col"
+      className={cn(
+        'flex h-full min-w-0 flex-col',
+        // On its way out of a split. `pointer-events-none` because a pane you
+        // have already closed must not accept a click during the 190ms it
+        // spends leaving.
+        leaving && 'motion-out-origin pointer-events-none',
+      )}
       onPointerDownCapture={onFocus}
       onFocusCapture={onFocus}
     >

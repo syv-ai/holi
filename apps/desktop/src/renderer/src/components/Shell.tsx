@@ -45,6 +45,7 @@ import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { syncLabel } from '../lib/sync-label'
 import { saveAllBuffers } from '../lib/buffer-registry'
+import { motionDurationMs, prefersReducedMotion } from '../lib/motion'
 import { trpc } from '../lib/trpc'
 import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
@@ -141,6 +142,32 @@ export function Shell() {
   const reconcile = useSetAtom(reconcileAtom)
   const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
+  /**
+   * The pane on its way out of a split.
+   *
+   * React unmounts the instant state says the pane is gone, so an exit written
+   * as a class on a pane that has already been removed never runs. The close is
+   * held for exactly as long as the animation takes, read off `--motion-leave`
+   * so the wait and the CSS cannot drift, and the pane is marked `leaving`
+   * meanwhile. Under reduced motion there is nothing to wait for, so it closes
+   * at once.
+   */
+  const [leavingPane, setLeavingPane] = useState<number | null>(null)
+  const closePaneWithExit = (index: number): void => {
+    if (prefersReducedMotion()) {
+      setWorkspace((w) => closePane(w, index))
+      return
+    }
+    setLeavingPane(index)
+    window.setTimeout(
+      () => {
+        setWorkspace((w) => closePane(w, index))
+        setLeavingPane(null)
+      },
+      motionDurationMs('--motion-leave', 190),
+    )
+  }
+
   const [agentOpen, setAgentOpen] = useAtom(agentPanelOpenAtom)
   // The footer's Claude control (#15) is the drawer's only affordance outside the
   // drawer, so it needs the same inputs the panel header derives its dot from.
@@ -569,6 +596,7 @@ export function Shell() {
                     <PaneView
                       pane={p}
                       focused={i === workspace.active}
+                      leaving={leavingPane === i}
                       onFocus={() => setWorkspace((w) => focusPane(w, i))}
                       // Every action focuses this pane first, and then acts on
                       // "the active pane" — so the existing single-pane
@@ -645,7 +673,7 @@ export function Shell() {
                                 size="icon-xs"
                                 className="ml-1 shrink-0 text-muted-foreground"
                                 aria-label="close this pane"
-                                onClick={() => setWorkspace((w) => closePane(w, i))}
+                                onClick={() => closePaneWithExit(i)}
                               >
                                 <PanelRight size={16} />
                               </Button>
@@ -681,7 +709,6 @@ export function Shell() {
               </ResizablePanel>
             </>
           )}
-
 
           {/* The agent drawer is now a first-class member of the row: always
               mounted (its PTY + scrollback survive), collapsed to nothing when

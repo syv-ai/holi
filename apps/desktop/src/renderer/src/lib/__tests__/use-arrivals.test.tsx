@@ -30,8 +30,8 @@ test('only the rows that appeared arrive, and they stagger in order', () => {
   view.rerender(<List ids={['a', 'b', 'c']} />)
 
   expect(row(view, 'a').className).toBe('')
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
-  expect(row(view, 'c')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
+  expect(row(view, 'c')).toHaveClass('motion-in-fade')
   expect(row(view, 'b').style.animationDelay).toBe('0ms')
   expect(row(view, 'c').style.animationDelay).toBe('calc(var(--motion-stagger) * 1)')
 })
@@ -50,7 +50,7 @@ test('a re-render with the same rows does not replay the arrival', async () => {
   const view = render(<List ids={['a']} />)
   view.rerender(<List ids={['a', 'b']} />)
   const b = row(view, 'b')
-  expect(b).toHaveClass('motion-in-row')
+  expect(b).toHaveClass('motion-in-fade')
 
   const mutations: string[] = []
   const observer = new MutationObserver((records) => {
@@ -66,7 +66,7 @@ test('a re-render with the same rows does not replay the arrival', async () => {
   observer.disconnect()
 
   expect(mutations).toEqual([])
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
 })
 
 test('reordering is not arriving', () => {
@@ -90,7 +90,7 @@ test('under reduced motion rows still arrive, but all at once', () => {
   view.rerender(<List ids={['a', 'b', 'c']} />)
   // The class stays — index.css shortens the arrival itself to 1ms — but the
   // ramp flattens, so nothing is queued behind anything.
-  expect(row(view, 'c')).toHaveClass('motion-in-row')
+  expect(row(view, 'c')).toHaveClass('motion-in-fade')
   expect(row(view, 'c').style.animationDelay).toBe('0ms')
 })
 
@@ -112,7 +112,7 @@ test('arrivals survive StrictMode double rendering', () => {
       <List ids={['a', 'b']} />
     </StrictMode>,
   )
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
   expect(row(view, 'a').className).toBe('')
 })
 
@@ -129,19 +129,19 @@ test('arrivals survive StrictMode double rendering', () => {
 test('an unrelated re-render does not cut a running arrival short', () => {
   const view = render(<List ids={['a']} />)
   view.rerender(<List ids={['a', 'b']} />)
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
 
   // Same ids, new array — which is what React hands a component on most renders.
   view.rerender(<List ids={['a', 'b']} />)
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
 
   view.rerender(<List ids={['a', 'b']} />)
-  expect(row(view, 'b')).toHaveClass('motion-in-row')
+  expect(row(view, 'b')).toHaveClass('motion-in-fade')
 })
 
 test('a caller can choose a different arrive variant', () => {
   function FadeList({ ids }: { ids: string[] }) {
-    const { arrivalProps } = useArrivals(ids, 'motion-in-fade')
+    const { arrivalProps } = useArrivals(ids, 'motion-in-top')
     return (
       <ul>
         {ids.map((id) => (
@@ -152,7 +152,7 @@ test('a caller can choose a different arrive variant', () => {
   }
   const view = render(<FadeList ids={['a']} />)
   view.rerender(<FadeList ids={['a', 'b']} />)
-  expect(row(view, 'b')).toHaveClass('motion-in-fade')
+  expect(row(view, 'b')).toHaveClass('motion-in-top')
 })
 
 // ── useArrivalOnChange ────────────────────────────────────────────────

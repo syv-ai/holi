@@ -29,7 +29,7 @@ function sameIds(a: readonly string[], b: readonly string[]): boolean {
   return true
 }
 
-export function useArrivals(ids: readonly string[], variant = 'motion-in-row') {
+export function useArrivals(ids: readonly string[], variant = 'motion-in-fade') {
   const previous = useRef<readonly string[] | null>(null)
   const arrived = useRef<ReadonlyMap<string, number>>(EMPTY)
 

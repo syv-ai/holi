@@ -86,7 +86,6 @@ test('a dragover carrying something other than a tab is refused', () => {
   expect(over.defaultPrevented).toBe(false)
 })
 
-
 test('a pane offers nothing when it is handed no zones', () => {
   // `dropZones` decides this — a sole tab's own pane, and the facing edge of the
   // pane next door, are all no-ops. The component's job is to believe it.
@@ -148,4 +147,29 @@ test('a drag starting in this strip reports the tab it picked up', () => {
   dragFromOwnStrip()
 
   expect(onDragBegin).toHaveBeenCalledWith({ kind: 'note', path: 'notes/a.pdf' })
+})
+
+/**
+ * Leaving a split.
+ *
+ * React unmounts a pane the instant state says it is gone, so the exit cannot
+ * live on the removal — the shell holds the close for `--motion-leave` and marks
+ * the pane `leaving` meanwhile. What this file can check is the half that lives
+ * here: the class goes on, and the pane stops taking input while it runs. A pane
+ * you have already closed accepting a click would be worse than no animation.
+ */
+test('a pane on its way out plays the exit and stops taking input', () => {
+  pane({ leaving: true })
+
+  const main = screen.getByTestId('tab-strip').closest('main')!
+  expect(main).toHaveClass('motion-out-origin')
+  expect(main).toHaveClass('pointer-events-none')
+})
+
+test('a pane that is staying is untouched', () => {
+  pane()
+
+  const main = screen.getByTestId('tab-strip').closest('main')!
+  expect(main).not.toHaveClass('motion-out-origin')
+  expect(main).not.toHaveClass('pointer-events-none')
 })

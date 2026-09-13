@@ -40,7 +40,7 @@ test('a block opens rather than appearing at full height', () => {
   render(<FrontmatterFieldsHost />)
   const { el } = publish()
 
-  expect(el).toHaveClass('motion-in-row')
+  expect(el).toHaveClass('motion-in-fade')
   expect(el.childElementCount).toBeGreaterThan(0)
 })
 
@@ -56,10 +56,10 @@ test('editing a field does not re-open the block', () => {
   act(() => {
     el.dispatchEvent(new Event('animationend', { bubbles: true }))
   })
-  expect(el).not.toHaveClass('motion-in-row')
+  expect(el).not.toHaveClass('motion-in-fade')
 
   act(() => updateFrontmatterPortal(id, 'status: doing\n'))
-  expect(el).not.toHaveClass('motion-in-row')
+  expect(el).not.toHaveClass('motion-in-fade')
 })
 
 test('a different block gets its own opening', () => {
@@ -70,6 +70,6 @@ test('a different block gets its own opening', () => {
   })
 
   const second = publish('status: done\n')
-  expect(second.el).toHaveClass('motion-in-row')
-  expect(first.el).not.toHaveClass('motion-in-row')
+  expect(second.el).toHaveClass('motion-in-fade')
+  expect(first.el).not.toHaveClass('motion-in-fade')
 })
