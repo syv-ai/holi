@@ -102,7 +102,7 @@ Left icon, label with CM's own match highlighting kept, trailing meta.
 
 ## 4. Sections
 
-`@` gets shared section objects — Notes rank 1, Tasks rank 2 — created once and
+`@` gets shared section objects (Notes rank 1, Tasks rank 2), created once and
 referenced by every option, as CM recommends.
 
 `/` ships **unsectioned**. One header over two commands is noise; item 11 is what
@@ -136,10 +136,10 @@ table, since `2 × 1` is the first option.
 
 Per D97's vocabulary, and nothing that cannot name one of the four behaviours:
 
-- **Panel open is `arrive`** — a keyframe in `editorTheme`, the way `cm-ask-in`
+- **Panel open is `arrive`**: a keyframe in `editorTheme`, the way `cm-ask-in`
   already is, with its origin following whether CM placed the tooltip above or
   below the caret.
-- **Selection and hover are `respond`** — a background transition at
+- **Selection and hover are `respond`**: a background transition at
   `--motion-respond`, reversing when you leave.
 - Nothing loops.
 
