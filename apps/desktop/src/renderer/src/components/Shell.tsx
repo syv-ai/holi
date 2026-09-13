@@ -53,6 +53,7 @@ import {
   activeTab,
   closePane,
   closeTab,
+  closingTabRemovesPane,
   dropZones,
   focusPane,
   moveTab,
@@ -70,6 +71,7 @@ import {
   pinTab,
   workspaceAtom,
   type Tab,
+  type Workspace,
 } from '../state/panes'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
@@ -146,26 +148,59 @@ export function Shell() {
    * The pane on its way out of a split.
    *
    * React unmounts the instant state says the pane is gone, so an exit written
-   * as a class on a pane that has already been removed never runs. The close is
+   * as a class on a pane that has already been removed never runs. The change is
    * held for exactly as long as the animation takes, read off `--motion-leave`
    * so the wait and the CSS cannot drift, and the pane is marked `leaving`
-   * meanwhile. Under reduced motion there is nothing to wait for, so it closes
-   * at once.
+   * meanwhile. Under reduced motion there is nothing to wait for.
+   *
+   * **Both ways out of a split come through here.** The close-pane button is the
+   * obvious one; closing the LAST TAB of a pane also unsplits, and that is the
+   * one people actually do — an exit only the button played would look broken
+   * more often than it looked right.
    */
   const [leavingPane, setLeavingPane] = useState<number | null>(null)
-  const closePaneWithExit = (index: number): void => {
+  const leaveTimer = useRef<number | null>(null)
+
+  useEffect(
+    () => () => {
+      if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
+    },
+    [],
+  )
+
+  const leaveThenApply = (index: number, apply: (w: Workspace) => Workspace): void => {
     if (prefersReducedMotion()) {
-      setWorkspace((w) => closePane(w, index))
+      setWorkspace(apply)
       return
     }
+    // A second close before the first has landed: drop the outstanding timer
+    // rather than letting two of them fire, which would take two panes for one
+    // deliberate gesture.
+    if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
     setLeavingPane(index)
-    window.setTimeout(
+    leaveTimer.current = window.setTimeout(
       () => {
-        setWorkspace((w) => closePane(w, index))
+        leaveTimer.current = null
+        setWorkspace(apply)
         setLeavingPane(null)
       },
       motionDurationMs('--motion-leave', 190),
     )
+  }
+
+  const closePaneWithExit = (index: number): void =>
+    leaveThenApply(index, (w) => closePane(w, index))
+
+  const closeTabWithExit = (paneIndex: number, tabIndex: number): void => {
+    const apply = (w: Workspace): Workspace => closeTab(focusPane(w, paneIndex), tabIndex)
+    // Only the close that EMPTIES a pane is an exit. Every other tab close is
+    // just a tab going, and holding those back by 190ms would make the strip
+    // feel slow for the common case.
+    if (closingTabRemovesPane(focusPane(workspace, paneIndex), tabIndex)) {
+      leaveThenApply(paneIndex, apply)
+      return
+    }
+    setWorkspace(apply)
   }
 
   const [agentOpen, setAgentOpen] = useAtom(agentPanelOpenAtom)
@@ -615,7 +650,7 @@ export function Shell() {
                         })
                       }
                       onPin={(t) => setWorkspace((w) => pinTab(focusPane(w, i), t))}
-                      onCloseTab={(t) => setWorkspace((w) => closeTab(focusPane(w, i), t))}
+                      onCloseTab={(t) => closeTabWithExit(i, t)}
                       onEdit={() => setWorkspace((w) => pinActive(focusPane(w, i)))}
                       onOpenNote={open}
                       onConflict={(path, resolve) => setBanner({ path, resolve })}

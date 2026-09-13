@@ -12,6 +12,7 @@ import {
   activeTab,
   closePane,
   closeTab,
+  closingTabRemovesPane,
   closeTabsForPaths,
   emptyWorkspace,
   openApp,
@@ -278,7 +279,13 @@ describe('retargetAppTab', () => {
 function split(): Workspace {
   return {
     panes: [
-      { tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md' }], active: 1 },
+      {
+        tabs: [
+          { kind: 'note', path: 'a.md' },
+          { kind: 'note', path: 'b.md' },
+        ],
+        active: 1,
+      },
       { tabs: [{ kind: 'note', path: 'c.md' }], active: 0 },
     ],
     active: 0,
@@ -302,7 +309,11 @@ describe('splitPane', () => {
     // autosaving over it. VS Code can copy; this cannot.
     const w = splitPane(openPreview(emptyWorkspace(), 'a.md'))
 
-    expect(layout(w).flat().filter((p) => p === 'a.md')).toHaveLength(1)
+    expect(
+      layout(w)
+        .flat()
+        .filter((p) => p === 'a.md'),
+    ).toHaveLength(1)
   })
 
   it('inserts beside the active pane, not at the end', () => {
@@ -377,7 +388,13 @@ describe('one buffer per file, across panes', () => {
 
   it('openPinned pins it where it already is', () => {
     const w = openPinned(
-      { panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'note', path: 'c.md', preview: true }], active: 0 }], active: 0 },
+      {
+        panes: [
+          { tabs: [], active: -1 },
+          { tabs: [{ kind: 'note', path: 'c.md', preview: true }], active: 0 },
+        ],
+        active: 0,
+      },
       'c.md',
     )
 
@@ -387,7 +404,13 @@ describe('one buffer per file, across panes', () => {
 
   it('openApp focuses an app already open in another pane', () => {
     const w = openApp(
-      { panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'app', appId: 'dash' }], active: 0 }], active: 0 },
+      {
+        panes: [
+          { tabs: [], active: -1 },
+          { tabs: [{ kind: 'app', appId: 'dash' }], active: 0 },
+        ],
+        active: 0,
+      },
       'dash',
     )
 
@@ -396,7 +419,13 @@ describe('one buffer per file, across panes', () => {
   })
 
   it('a singleton surface is one for the whole workspace', () => {
-    const w = openBoard({ panes: [{ tabs: [], active: -1 }, { tabs: [{ kind: 'board' }], active: 0 }], active: 0 })
+    const w = openBoard({
+      panes: [
+        { tabs: [], active: -1 },
+        { tabs: [{ kind: 'board' }], active: 0 },
+      ],
+      active: 0,
+    })
 
     expect(w.panes.flatMap((p) => p.tabs)).toEqual([{ kind: 'board' }])
     expect(w.active).toBe(1)
@@ -516,7 +545,11 @@ describe('moveTab', () => {
     // is safe where a copy is not, and this is the line between them.
     const w = moveTab(split(), { kind: 'note', path: 'a.md' }, { pane: 1, index: 1 })
 
-    expect(layout(w).flat().filter((p) => p === 'a.md')).toHaveLength(1)
+    expect(
+      layout(w)
+        .flat()
+        .filter((p) => p === 'a.md'),
+    ).toHaveLength(1)
   })
 
   it('rearranges without navigating — a reorder is not a way to change file', () => {
@@ -563,7 +596,10 @@ describe('moveTab', () => {
     const start: Workspace = {
       panes: [
         {
-          tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md', preview: true }],
+          tabs: [
+            { kind: 'note', path: 'a.md' },
+            { kind: 'note', path: 'b.md', preview: true },
+          ],
           active: 1,
         },
       ],
@@ -680,7 +716,10 @@ describe('moveTabToNewPane', () => {
     const start: Workspace = {
       panes: [
         {
-          tabs: [{ kind: 'note', path: 'a.md' }, { kind: 'note', path: 'b.md', preview: true }],
+          tabs: [
+            { kind: 'note', path: 'a.md' },
+            { kind: 'note', path: 'b.md', preview: true },
+          ],
           active: 1,
         },
       ],
@@ -746,5 +785,70 @@ describe('dropZones', () => {
   it('is empty for a tab that is open nowhere, and for a pane that is not there', () => {
     expect(dropZones(two(), { kind: 'note', path: 'nope.md' }, 0)).toEqual([])
     expect(dropZones(two(), { kind: 'note', path: 'a.md' }, 9)).toEqual([])
+  })
+})
+
+/**
+ * The shell has to know BEFORE it closes, because a pane that is going plays an
+ * exit first and React unmounts it the instant state says it is gone.
+ *
+ * Every case asserts the predicate against what `closeTab` ACTUALLY does rather
+ * than against a restatement of the rule. That agreement is the whole property,
+ * and a copied rule is the thing that would rot.
+ */
+describe('closingTabRemovesPane', () => {
+  const agrees = (w: Workspace, index: number) =>
+    expect(closingTabRemovesPane(w, index)).toBe(closeTab(w, index).panes.length < w.panes.length)
+
+  /** Two panes, the active one holding exactly one tab. Note `splitPane` alone
+   *  gives an EMPTY active pane, which is a different case entirely (below). */
+  const split = () =>
+    openInNewPane(openPreview(emptyWorkspace(), 'a.md'), { kind: 'note', path: 'b.md' })
+
+  it('says yes for the last tab of a split pane — that is how you unsplit', () => {
+    const w = split()
+    expect(w.panes.length).toBe(2)
+    expect(w.panes[w.active]!.tabs.length).toBe(1)
+    expect(closingTabRemovesPane(w, 0)).toBe(true)
+    agrees(w, 0)
+  })
+
+  it('says no when the pane still has tabs left', () => {
+    const w = openPinned(split(), 'c.md')
+    expect(w.panes[w.active]!.tabs.length).toBe(2)
+    expect(closingTabRemovesPane(w, 0)).toBe(false)
+    agrees(w, 0)
+  })
+
+  // An empty pane IS the empty-editor state, and a workspace with no panes has
+  // nothing to render into, so the last one never goes.
+  it('says no for the last tab of the only pane', () => {
+    const w = openPreview(emptyWorkspace(), 'a.md')
+    expect(w.panes.length).toBe(1)
+    expect(closingTabRemovesPane(w, 0)).toBe(false)
+    agrees(w, 0)
+  })
+
+  it('says no for an index that closes nothing', () => {
+    const w = split()
+    expect(closingTabRemovesPane(w, 9)).toBe(false)
+    expect(closingTabRemovesPane(w, -1)).toBe(false)
+    agrees(w, 9)
+    agrees(w, -1)
+  })
+
+  /**
+   * Found by this test rather than assumed: an ALREADY-empty active pane in a
+   * split is taken by any `closeTab`, whatever index it is given, because the
+   * emptied-pane check runs on the result and does not care whether this call is
+   * what emptied it. `splitPane` produces exactly that state. Asserted so the
+   * shell's exit plays for it too rather than being surprised by it.
+   */
+  it('says yes for an already-empty pane in a split, whatever the index', () => {
+    const w = splitPane(openPreview(emptyWorkspace(), 'a.md'))
+    expect(w.panes[w.active]!.tabs).toEqual([])
+    expect(closingTabRemovesPane(w, 0)).toBe(true)
+    agrees(w, 0)
+    agrees(w, 9)
   })
 })

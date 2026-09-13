@@ -234,6 +234,22 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
 }
 
 /**
+ * Would closing this tab take its pane with it?
+ *
+ * Derived by RUNNING `closeTab` rather than by restating its rule — "the pane
+ * had one tab and it is not the last pane" is easy to write down and easy to let
+ * drift from the thing it describes. Running it means the answer is always
+ * exactly what the close is about to do.
+ *
+ * The caller is the shell, which has to know BEFORE it closes: a pane that is
+ * going needs to play its exit first, and React unmounts it the instant state
+ * says it is gone.
+ */
+export function closingTabRemovesPane(workspace: Workspace, index: number): boolean {
+  return closeTab(workspace, index).panes.length < workspace.panes.length
+}
+
+/**
  * Single-click open: reuse the one preview tab (FR-15).
  *
  * If the note is already open, just focus it — clicking it again does not change
