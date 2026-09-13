@@ -100,3 +100,13 @@ describe('/table asks what size, instead of guessing', () => {
     expect(slashCommands(ctx('/table'))!.options.map((o) => o.label)).toContain('/table')
   })
 })
+
+describe('the command trigger is not ASCII-only', () => {
+  // Same `\w` bug as `@`: a non-ASCII letter after the `/` returned null and
+  // closed the popup rather than simply matching nothing.
+  it('a non-ASCII letter filters to nothing without dismissing the menu', () => {
+    const result = slashCommands(ctx('/æ'))
+    expect(result).not.toBeNull()
+    expect(result!.options).toEqual([])
+  })
+})

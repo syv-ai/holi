@@ -76,7 +76,9 @@ const COMMANDS: HoliCompletion[] = [
 ]
 
 export function slashCommands(context: CompletionContext): CompletionResult | null {
-  const match = context.matchBefore(/\/[\w-]*/)
+  // `\p{L}` with the `u` flag rather than `\w`, which is ASCII-only: `/æ` used
+  // to return null and dismiss the menu instead of simply matching nothing.
+  const match = context.matchBefore(/\/[\p{L}\p{N}_-]*/u)
   if (!match) return null
   // Only a `/` that starts a line or follows whitespace is a command — otherwise
   // it's a path (`foo/bar`), a URL (`http://`) or a date, and must not trigger.
@@ -95,7 +97,7 @@ export function slashCommands(context: CompletionContext): CompletionResult | nu
  *  without it `slashCommands` still owns the text, which is what makes
  *  backspacing out of the argument return you to the command list with no
  *  back-navigation code at all. */
-const TABLE_ARGS = /\/table\s+[\w× x]*/
+const TABLE_ARGS = /\/table\s+[\p{L}\p{N}× x]*/u
 
 export function tableSizes(context: CompletionContext): CompletionResult | null {
   const match = context.matchBefore(TABLE_ARGS)

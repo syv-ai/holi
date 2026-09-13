@@ -95,3 +95,22 @@ test("a note wears the vault's own emoji when it has one", () => {
     (options.find((o) => o.label === 'work/plan.md') as { emoji?: string }).emoji,
   ).toBeUndefined()
 })
+
+// `\w` is ASCII-only in JavaScript, so a mention regex built from it stops
+// matching at the first non-ASCII letter, the source returns null, and
+// CodeMirror closes the popup. Reported in the running app: typing `@` then a
+// Danish letter dismissed the list.
+test('a mention survives letters outside ASCII', () => {
+  const data = {
+    notes: [{ path: 'møder/ørred.md' }, { path: 'work/plan.md' }],
+    tasks: [{ path: 'task.a.md', title: 'Købe blæk', status: 'todo' as const }],
+  }
+  expect(mentionCompletions(ctx('@mø'), data)).not.toBeNull()
+  expect(mentionCompletions(ctx('@mø'), data)!.options.map((o) => o.label)).toEqual([
+    'møder/ørred.md',
+  ])
+  expect(mentionCompletions(ctx('@kø'), data)!.options.map((o) => o.label)).toEqual(['Købe blæk'])
+  // The anchor still sits at the `@`, whatever the query is made of.
+  expect(mentionCompletions(ctx('see @å'), data)!.from).toBe(4)
+})
+

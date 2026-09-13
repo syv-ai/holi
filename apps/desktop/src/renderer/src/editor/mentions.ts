@@ -34,8 +34,17 @@ const TASK_TYPE: Record<TaskStatus, string> = {
   done: 'holi-task-done',
 }
 
-/** Trigger: `@` and any following path/word chars, anchored at the `@`. */
-const MENTION_RE = /@[\w.\-/]*/
+/**
+ * Trigger: `@` and any following path/word chars, anchored at the `@`.
+ *
+ * **`\p{L}` and the `u` flag, not `\w`.** `\w` is ASCII-only in JavaScript, so
+ * `@mø` stopped matching at the `ø`, this source returned null, and CodeMirror
+ * closed the popup — reported in the running app, where a Danish note name
+ * dismissed the list as you typed it. CodeMirror's `matchBefore` rebuilds the
+ * expression through `ensureAnchor`, which carries the flags over, so `u`
+ * survives.
+ */
+const MENTION_RE = /@[\p{L}\p{N}_.\-/]*/u
 
 export function mentionCompletions(
   context: CompletionContext,
