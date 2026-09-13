@@ -59,3 +59,22 @@ describe('the chrome cannot go quietly dead again', () => {
     expect(JSON.stringify(completionChrome)).not.toContain('cm-completionIcon-table')
   })
 })
+
+describe('the popup moves in the app’s vocabulary and no other', () => {
+  const chrome = JSON.stringify(completionChrome)
+
+  // D98: anything that cannot name one of the four behaviours does not animate.
+  // Opening is `arrive`; the selection is `respond`. Nothing here loops.
+  test('every duration comes from the motion tier', () => {
+    expect(chrome).toContain('var(--motion-arrive')
+    expect(chrome).toContain('var(--motion-respond')
+    expect(chrome).not.toContain('var(--motion-inflight')
+  })
+
+  // The stated numbers the renderer lint gate exists to stop. A fallback inside
+  // a `var()` is the one exception the app already makes, for tokens Tailwind
+  // cannot see referenced from CSS-in-JS.
+  test('no duration is stated at the call site', () => {
+    expect(chrome.replace(/var\(--[a-z-]+, ?\d+m?s\)/g, '')).not.toMatch(/\d+ms/)
+  })
+})

@@ -29,6 +29,15 @@ const POPUP = `.cm-tooltip.cm-tooltip-autocomplete.${COMPLETION_CLASS}`
  */
 export const completionChrome = {
   [POPUP]: {
+    // **Arrive.** The panel has weight and enters from the caret it belongs to.
+    // An animation rather than a transition because the element is created
+    // already in place, so there is no "from" for a transition to run. It plays
+    // once, on open: CodeMirror keeps this element and rebuilds only the `<ul>`
+    // inside it as you keep typing, which is also why the list itself has no
+    // animation — one there would replay on every keystroke, and is why the
+    // cross-fade between `/table`'s two levels is deliberately not built.
+    animation: 'cm-completion-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out) both',
+    transformOrigin: 'top left',
     background: 'var(--popover)',
     color: 'var(--popover-foreground)',
     // Borderless on the popover shadow, like every overlay in the app since
@@ -55,6 +64,12 @@ export const completionChrome = {
     borderRadius: 'var(--radius-sm, 4px)',
     lineHeight: '1.4',
     color: 'var(--popover-foreground)',
+    // **Respond.** It notices the row under your pointer or caret, and reverses
+    // the moment you leave. A transition, never an animation.
+    transition: 'background var(--motion-respond, 150ms) var(--ease-settle, ease-out)',
+  },
+  [`${POPUP} > ul > li:hover:not([aria-selected])`]: {
+    background: 'color-mix(in srgb, var(--accent) 55%, transparent)',
   },
   // The same pair `DropdownMenuItem` uses for `focus:`. A keyboard-selected row
   // here and a focused menu item there are the same gesture.
@@ -138,6 +153,11 @@ export const completionChrome = {
     opacity: '0',
   },
   [`${POPUP} > ul > li[aria-selected] .cm-holi-enter`]: { opacity: '1', color: 'inherit' },
+  [`${POPUP}.cm-tooltip-above`]: { transformOrigin: 'bottom left' },
+  '@keyframes cm-completion-in': {
+    from: { opacity: '0', transform: 'translateY(-4px) scale(0.97)' },
+    to: { opacity: '1', transform: 'none' },
+  },
 }
 
 export const editorTheme = EditorView.baseTheme({
