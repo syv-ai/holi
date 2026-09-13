@@ -122,6 +122,8 @@ function Card({
         {/* The card's ONE affordance. Completion goes through tasks.complete, so a
             recurring task ROLLS FORWARD rather than persisting `done`. */}
         <Checkbox
+          // A circle, like every other place this app draws a task's status.
+          shape="circle"
           checked={task.status === 'done'}
           // Acknowledge before the write, not after it. The beat says the click
           // landed; making it wait on the file write and the commit would put
