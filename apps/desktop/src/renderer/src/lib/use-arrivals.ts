@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react'
-import { arrivalIndex, prefersReducedMotion, staggerDelay } from './motion'
+import { arrivalIndex, playOnce, prefersReducedMotion, staggerDelay } from './motion'
 
 /**
  * The arrive half of a keyed list: which rows are new, and how long each waits.
@@ -97,19 +97,7 @@ export function useArrivalOnChange<T extends HTMLElement>(
     last.current = key
     if (node === null || previousKey === null || previousKey === key) return
 
-    node.classList.remove(variant)
-    // Same reason as `useAck`: without a forced reflow the browser coalesces the
-    // removal and the add into no change, and nothing plays.
-    void node.offsetWidth
-    node.classList.add(variant)
-
-    const done = (e: AnimationEvent): void => {
-      if (e.target !== node) return
-      node.classList.remove(variant)
-      node.removeEventListener('animationend', done)
-    }
-    node.addEventListener('animationend', done)
-    return () => node.removeEventListener('animationend', done)
+    return playOnce(node, variant)
   }, [key, variant])
 
   return ref

@@ -116,3 +116,31 @@ export function motionDurationMs(token: string, fallback: number): number {
   const ms = Number.parseFloat(raw)
   return Number.isFinite(ms) ? ms : fallback
 }
+
+/**
+ * Play a one-shot animation class on an element, now, restarting it if it is
+ * already running. Returns a cleanup for the listener.
+ *
+ * The remove / force-reflow / add dance is the whole of it, and it is not
+ * decoration: removing and re-adding a class in one tick does NOT restart a CSS
+ * animation, because the browser coalesces the two mutations into no change at
+ * all. Reading a layout property in the gap is what separates them. It looks
+ * like a no-op and is not; do not replace it with a `setTimeout`, which would
+ * put the replay a frame late instead of now.
+ *
+ * The listener checks its target because `animationend` bubbles, and these
+ * classes land on containers full of other animating things.
+ */
+export function playOnce(el: HTMLElement, className: string): () => void {
+  el.classList.remove(className)
+  void el.offsetWidth
+  el.classList.add(className)
+
+  const done = (e: AnimationEvent): void => {
+    if (e.target !== el) return
+    el.classList.remove(className)
+    el.removeEventListener('animationend', done)
+  }
+  el.addEventListener('animationend', done)
+  return () => el.removeEventListener('animationend', done)
+}

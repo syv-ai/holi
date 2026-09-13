@@ -27,6 +27,7 @@ import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/fron
 import { syntaxValid } from '@/editor/languages'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
+import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
@@ -198,6 +199,16 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
+      // Arrive when the DOCUMENT does, not when the tab changed.
+      //
+      // The pane's own fade fires the moment you pick a different tab, but this
+      // editor is built after an IPC read — so on a file that was not already
+      // open, the fade played out over an empty container and the text appeared
+      // afterwards, at full opacity, with nothing to see. Switching between
+      // notes already open looked right only because their buffers were warm.
+      // Opacity only: this wraps CodeMirror, and anything that changes the
+      // layout box drags its measure loop into every frame.
+      playOnce(host, 'motion-in-fade')
       view.focus()
 
       // The collapsed frontmatter summary needs the file's last commit (author +
