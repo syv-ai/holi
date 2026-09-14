@@ -4,7 +4,7 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. **D96 is agreed and built** (2026-09-12) and sits below them. **D98 — the motion system — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **Next free is D100.** **D99 — the completion popup — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D97 was spent twice and the motion system gave it up**: the settings-schema row below had already taken it, and the motion work read this file's section heading, which still said "next free is D97", rather than this sentence. The motion system is D98; the heading is corrected below so the two cannot disagree again. D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
+**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. **D96 is agreed and built** (2026-09-12) and sits below them. **D98 — the motion system — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D100, several agent sessions per vault, is agreed and not built** (2026-09-14); its row is below D81. **Next free is D101.** **D99 — the completion popup — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D97 was spent twice and the motion system gave it up**: the settings-schema row below had already taken it, and the motion work read this file's section heading, which still said "next free is D97", rather than this sentence. The motion system is D98; the heading is corrected below so the two cannot disagree again. D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
 
 ---
 
@@ -40,6 +40,18 @@ The living docs are the truth; this file is only the staging area.
 **Rejected.** *Real programs, machine-local only* (`.holi/commands.local/`) — full power and safe because nothing another person wrote can arrive there, but then a command is not vault content: the agent cannot write one for the team and it does not travel with the vault, which is most of the point. *Real programs, committed, enabled per vault like hooks* — the most powerful and the closest reading of "literally any command", and it puts executable code one commit away from running on a teammate's machine. *Reusing `.claude/commands/`* — already in every vault and already known to the agent, but those are prompts for an agent, not editor insertions, and a single list mixing the two would mean two different things by one gesture.
 
 **Still open:** whether an inline agent query is a command's own call or the drawer's seeded prompt, and whether an embedded app is a widget in the note or a link that opens a tab. The second one touches [`prd/vault-apps.md`](prd/vault-apps.md) §Note-embedded widgets, which is currently deferred.
+
+**2026-09-14, the first one is answered by something larger.** An agent query is neither the command's own call nor a seed that restarts the drawer: the user picks where it goes, a live session or a new one. That needs several sessions per vault, which is D100, and this question now waits on it. The second question is still open.
+
+---
+
+## D100 — a vault runs several agent sessions, and a session is a terminal
+
+**Context.** `prd/agent.md` §Runtime says one live session per vault, and starting one kills the last. Nicolai wants parallel work, parked conversations and fire-and-forget asks inside one vault, never across vaults; D81's agent query is the ask that surfaced it. Today "Ask agent" on a selection kills the conversation you were having.
+
+**Decision.** Design of record: [`specs/2026-09-14-agent-sessions-design.md`](specs/2026-09-14-agent-sessions-design.md). A session is keyed by **its terminal**, with a hook token per spawn, not by Claude Code's session id, which changes inside one terminal on `/clear`. Sessions share **one working tree**; sync pauses while any session works, and a turn that overlapped another is marked rather than split. A **vault switch ends every session**. An ask is **pasted, never submitted**, into a live or new session the user picks, and a session showing a permission prompt is not offered. The drawer gets tabs, the sidebar a card per session (name and state), and the turn chip moves under each tab's terminal.
+
+**Rejected.** A worktree per session (exact attribution; edits invisible until merged, and `.local.` files absent). One turn at a time across sessions (exact; not parallel). Sessions as pane tabs (the drawer was chosen; nothing prevents it later).
 
 ---
 
@@ -93,7 +105,7 @@ rewrites the external-reload story everything else rests on.
 
 ---
 
-## Number allocation — **next free is D100**
+## Number allocation — **next free is D101**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
