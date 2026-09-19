@@ -125,7 +125,10 @@ export interface AgentEnvOpts {
   configDir?: string | null
 }
 
-export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}): Record<string, string> {
+export function buildAgentEnv(
+  base: NodeJS.ProcessEnv,
+  opts: AgentEnvOpts = {},
+): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(base)) {
     if (value !== undefined) env[key] = value
@@ -199,6 +202,20 @@ export function buildAgentEnv(base: NodeJS.ProcessEnv, opts: AgentEnvOpts = {}):
 }
 
 export interface AgentArgs {
+  /**
+   * What to call this session (D100).
+   *
+   * **Claude Code's own name, not a label Holi keeps beside one.** It shows in
+   * the prompt box, the `/resume` picker and the terminal title, and it comes
+   * back in `claude agents --json`, which is where Holi's tabs and cards read
+   * it from. A session started with no name carries a placeholder built from
+   * the cwd, identical for every session in one vault, so Holi says "New
+   * session" instead of showing it.
+   *
+   * Normalised here rather than at the call sites: this goes into argv, and the
+   * natural source is the first line of whatever the user asked for.
+   */
+  name?: string
   /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
   resume?: boolean
   /** A first message to seed the interactive session with (the reconcile flow).
@@ -216,8 +233,31 @@ export interface AgentArgs {
  * `--strict-mcp-config` would additionally suppress any the *vault* configures
  * natively in `.claude/`, which it is entitled to do.
  */
-export function buildAgentArgs({ resume, prompt }: AgentArgs = {}): string[] {
-  return [...(resume ? ['--resume'] : []), ...(prompt ? [prompt] : [])]
+/** The longest a session name is worth being: a tab is narrow, and the source is
+ *  usually the first line of a sentence someone typed at an editor selection. */
+const MAX_NAME = 60
+
+/**
+ * A name fit for argv, or null.
+ *
+ * First line only, whitespace collapsed, capped. A newline would split the
+ * argument and everything after it would arrive as a second one; the rest is
+ * about a tab being narrow rather than about safety.
+ */
+export function sessionName(raw: string | undefined): string | null {
+  if (raw === undefined) return null
+  const line = raw.split('\n')[0] ?? ''
+  const clean = line.replace(/\s+/g, ' ').trim().slice(0, MAX_NAME).trim()
+  return clean === '' ? null : clean
+}
+
+export function buildAgentArgs({ name, resume, prompt }: AgentArgs = {}): string[] {
+  const label = sessionName(name)
+  return [
+    ...(label === null ? [] : ['--name', label]),
+    ...(resume ? ['--resume'] : []),
+    ...(prompt ? [prompt] : []),
+  ]
 }
 
 /** GUI apps don't inherit a login shell's PATH — check the usual install dirs. */
@@ -309,6 +349,19 @@ export class AgentRuntime {
 
   get isRunning(): boolean {
     return this.pty !== null
+  }
+
+  /**
+   * The child's pid while it runs, null otherwise.
+   *
+   * **The join key to Claude Code's own session listing** (D100): a row there is
+   * keyed by pid, and this is how Holi says which of its sessions a row is
+   * about. Derived from `this.pty` rather than held separately, because `onExit`
+   * already clears that before it emits — so a dead session reports null without
+   * a second piece of state to keep in step.
+   */
+  get pid(): number | null {
+    return this.pty?.pid ?? null
   }
 
   onData(cb: (data: string) => void): void {

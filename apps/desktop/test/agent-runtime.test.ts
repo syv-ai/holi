@@ -7,6 +7,7 @@ import {
   AgentRuntime,
   buildAgentArgs,
   buildAgentEnv,
+  sessionName,
   defaultProbePid,
   resolveClaudeBin,
   type PidState,
@@ -162,8 +163,7 @@ describe('buildAgentEnv', () => {
     // It disables the same renderer, and that is the point: a screen-reader user
     // asking for flat output outranks our preference about flicker.
     expect(
-      buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_ACCESSIBILITY: '1' })
-        .CLAUDE_CODE_ACCESSIBILITY,
+      buildAgentEnv({ PATH: '/usr/bin', CLAUDE_CODE_ACCESSIBILITY: '1' }).CLAUDE_CODE_ACCESSIBILITY,
     ).toBe('1')
   })
 
@@ -191,7 +191,9 @@ describe('buildAgentEnv', () => {
   })
 
   it('sets TYPST_BIN when the typst path is given, omits it otherwise', () => {
-    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: '/opt/typst' }).TYPST_BIN).toBe('/opt/typst')
+    expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: '/opt/typst' }).TYPST_BIN).toBe(
+      '/opt/typst',
+    )
     expect(buildAgentEnv({ PATH: '/usr/bin' }).TYPST_BIN).toBeUndefined()
     expect(buildAgentEnv({ PATH: '/usr/bin' }, { typstBin: null }).TYPST_BIN).toBeUndefined()
   })
@@ -229,9 +231,7 @@ describe('buildAgentEnv', () => {
 
   it('leaves PATH alone when there is no google bin dir', () => {
     expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }).PATH).toBe('/usr/bin:/bin')
-    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe(
-      '/usr/bin:/bin',
-    )
+    expect(buildAgentEnv({ PATH: '/usr/bin:/bin' }, { binDir: null }).PATH).toBe('/usr/bin:/bin')
   })
 
   it('still sets a usable PATH when the parent had none', () => {
@@ -323,6 +323,56 @@ describe('buildAgentArgs', () => {
     for (const resume of [true, false]) {
       expect(buildAgentArgs({ resume })).not.toContain('--dangerously-skip-permissions')
     }
+  })
+
+  it('names the session, before --resume and before the prompt (D100)', () => {
+    expect(buildAgentArgs({ name: 'Fix the CSV import', resume: true, prompt: 'go' })).toEqual([
+      '--name',
+      'Fix the CSV import',
+      '--resume',
+      'go',
+    ])
+  })
+
+  it('omits --name when there is nothing to call it', () => {
+    expect(buildAgentArgs({})).toEqual([])
+    expect(buildAgentArgs({ name: '' })).toEqual([])
+    expect(buildAgentArgs({ name: '   \n  ' })).toEqual([])
+  })
+})
+
+describe('sessionName', () => {
+  it('takes the first line only', () => {
+    // A newline in argv splits the argument, and the natural source is the first
+    // line of something the user typed at an editor selection.
+    expect(sessionName('Rewrite this bit\n\n> the quoted passage')).toBe('Rewrite this bit')
+  })
+
+  it('collapses whitespace and caps the length', () => {
+    expect(sessionName('  two   spaces  ')).toBe('two spaces')
+    const long = 'x'.repeat(200)
+    expect(sessionName(long)).toHaveLength(60)
+  })
+
+  it('answers null for nothing worth showing', () => {
+    expect(sessionName(undefined)).toBeNull()
+    expect(sessionName('')).toBeNull()
+    expect(sessionName('\n\n')).toBeNull()
+  })
+})
+
+describe('AgentRuntime.pid', () => {
+  it('is the child pid while running, and null once it has exited', () => {
+    // The join key to `claude agents --json` (D100): a row there is keyed by pid.
+    const { spawn, spawns } = fakeSpawn(31337)
+    const runtime = new AgentRuntime({ spawnPty: spawn })
+
+    expect(runtime.pid).toBeNull()
+    runtime.start({ bin: '/bin/claude', args: [], cwd: '/tmp', env: {} })
+    expect(runtime.pid).toBe(31337)
+
+    spawns[0]!.pty.exit(0)
+    expect(runtime.pid).toBeNull()
   })
 })
 
