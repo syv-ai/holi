@@ -33,6 +33,13 @@ export interface TurnRecord {
   end: string
   /** ISO timestamp of the turn's end. */
   at: string
+  /** Which of the vault's agent sessions ran it (D100). Absent on every record
+   *  written before a vault could run more than one. */
+  sessionId?: string
+  /** Another session's turn was open at the same instant, so this range contains
+   *  work this turn did not do — they shared a settle commit and therefore an
+   *  `end` sha. Absent reads as false, which is what every older record is. */
+  overlapped?: boolean
 }
 
 export interface TurnLog {
@@ -48,6 +55,8 @@ export interface TurnLog {
  *  is read and rewritten on each append without anyone noticing. */
 const CAP = 50
 
+/** The three original fields and nothing else: a record written before D100
+ *  carries no session and no overlap, and must keep reading. */
 function isRecord(value: unknown): value is TurnRecord {
   if (value === null || typeof value !== 'object') return false
   const r = value as Record<string, unknown>

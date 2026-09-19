@@ -43,6 +43,25 @@ describe('reading', () => {
     expect(await openTurnLog(root).list()).toEqual([])
   })
 
+  it('reads a record written before a vault could run two sessions', async () => {
+    // `sessionId` and `overlapped` arrived with D100. Every record already on
+    // disk has neither, and must keep reading as one session and no overlap —
+    // which is exactly what those turns were.
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    await writeFile(file(), JSON.stringify([record(1)]), 'utf8')
+    const [read] = await openTurnLog(root).list()
+    expect(read).toEqual(record(1))
+    expect(read?.sessionId).toBeUndefined()
+    expect(read?.overlapped).toBeUndefined()
+  })
+
+  it('keeps the session and the overlap flag it was given', async () => {
+    await mkdir(join(root, '.holi/state'), { recursive: true })
+    const full = { ...record(1), sessionId: 'sess-a', overlapped: true }
+    await writeFile(file(), JSON.stringify([full]), 'utf8')
+    expect(await openTurnLog(root).list()).toEqual([full])
+  })
+
   it('drops one hand-edited record rather than the whole day', async () => {
     await mkdir(join(root, '.holi/state'), { recursive: true })
     await writeFile(file(), JSON.stringify([record(1), { base: 'x' }, record(2)]), 'utf8')
