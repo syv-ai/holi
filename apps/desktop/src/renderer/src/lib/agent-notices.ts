@@ -42,53 +42,112 @@ export interface AgentIndicator {
 }
 
 /**
- * The single derivation of the assistant's state, so the footer control (#15) and
- * the panel header cannot drift into saying different things about one session.
+ * The single derivation of ONE session's state, so a tab, a sidebar card and the
+ * footer door cannot drift into saying different things about it.
  *
  * The restart nudges used to be amber sentences spelled out in the header, which
  * was noise in the one strip that is meant to be glanceable. They are a *dot*
  * now: steady amber says "this session wants restarting", the reason is on hover,
  * and the Restart button is already an inch away. An open turn outranks a nudge
- * because it is the transient thing; the nudge is still true when the turn ends.
+ * because it is the transient thing; the nudge is still true when the turn ends,
+ * and a session waiting on YOU outranks both.
  */
 export function agentIndicator(args: {
-  running: boolean
-  working: boolean
+  /** Claude Code's own answer for this session. */
+  state: 'needs-you' | 'working' | 'idle'
+  /** Only for 'needs-you': what it is waiting for. */
+  waitingFor?: string
   configStale: boolean
+  /** Its PTY is gone. Nothing about being out of date means anything then. */
+  exited?: boolean
   /** `agentThemeNote`'s output, threaded through so there is one amber rule. */
   themeNote: string | null
 }): AgentIndicator {
-  const { running, working, configStale, themeNote } = args
+  const { state, waitingFor, configStale, exited = false, themeNote } = args
 
-  if (working) {
+  if (exited) {
+    return { dot: 'bg-muted-foreground', state: 'ended', title: 'this session has ended' }
+  }
+
+  // The loudest state, and the only one that is about YOU rather than about
+  // Claude: it is blocked on a dialog and nothing moves until it is answered.
+  if (state === 'needs-you') {
     return {
-      dot: 'animate-pulse bg-amber-400',
+      dot: 'bg-orange-500',
+      state: 'needs you',
+      title:
+        waitingFor === undefined
+          ? 'Claude is waiting for you'
+          : `Claude is waiting for you: ${waitingFor}`,
+    }
+  }
+
+  if (state === 'working') {
+    return {
+      dot: 'motion-pulse bg-amber-400',
       state: 'working…',
       title: 'Claude is working on your turn',
     }
   }
 
-  // Both are about a session that is now out of date, so neither means anything
-  // when there is no session to be out of date.
-  const reasons = running
-    ? [configStale ? 'shared config changed; restart to pick it up' : null, themeNote].filter(
-        (r): r is string => r !== null,
-      )
-    : []
+  // Both are about a session that is now out of date.
+  const reasons = [
+    configStale ? 'shared config changed; restart to pick it up' : null,
+    themeNote,
+  ].filter((r): r is string => r !== null)
   if (reasons.length > 0) {
     return { dot: 'bg-amber-400', state: 'needs restart', title: reasons.join(' · ') }
   }
 
-  if (running) {
+  return {
+    dot: 'bg-green-500',
+    state: 'running',
+    title: 'session running, the vault assistant is live',
+  }
+}
+
+/** The shape `fleetIndicator` reduces. A session's summary, plus whatever theme
+ *  note the renderer derived for it. */
+export interface FleetSession {
+  state: 'needs-you' | 'working' | 'idle'
+  waitingFor?: string
+  configStale: boolean
+  exited: boolean
+}
+
+/**
+ * Every session of the vault, as one dot for the footer door.
+ *
+ * **Needs-you outranks working outranks a restart nudge**, which is the same
+ * ordering one session already uses, applied across the set: the footer is a
+ * door, and it should be painted by whichever session most wants you to open
+ * it. An exited session contributes nothing — its tab says so, and the door is
+ * about what is live.
+ */
+export function fleetIndicator(
+  sessions: FleetSession[],
+  /** True when any LIVE session was spawned under a different colour mode. */
+  themeNote: string | null = null,
+): AgentIndicator {
+  const live = sessions.filter((s) => !s.exited)
+  if (live.length === 0) {
     return {
-      dot: 'bg-green-500',
-      state: 'running',
-      title: 'session running, the vault assistant is live',
+      dot: 'bg-muted-foreground',
+      state: 'idle',
+      title: 'no session, opens when you show the drawer',
     }
   }
-  return {
-    dot: 'bg-muted-foreground',
-    state: 'idle',
-    title: 'no session, opens when you show the drawer',
+
+  const waiting = live.find((s) => s.state === 'needs-you')
+  if (waiting !== undefined) {
+    return agentIndicator({ ...waiting, themeNote: null })
   }
+  if (live.some((s) => s.state === 'working')) {
+    return agentIndicator({ state: 'working', configStale: false, themeNote: null })
+  }
+  return agentIndicator({
+    state: 'idle',
+    configStale: live.some((s) => s.configStale),
+    themeNote,
+  })
 }

@@ -2,7 +2,7 @@ import type { VaultSnapshot } from '@holi/shared'
 import type { SyncState } from '../../main/vault/active-vault'
 import type { HeldBackFile } from '../../main/vault/large-files'
 import type { TrpcEnvelope, TrpcOpWire } from './lib/ipc-link'
-import type { AgentStatus } from './state/agent'
+import type { AgentSession } from './state/agent'
 
 declare global {
   interface Window {
@@ -66,19 +66,30 @@ declare global {
       /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
       chooseFolder(): Promise<string | null>
       /**
-       * The vault agent — a live Claude Code session in the drawer. A byte
-       * stream, not tRPC: PTY output and status are pushed (`onData`/`onExit`/
-       * `onStatus`, each returning its unsubscribe), keystrokes/resize/focus are
-       * fire-and-forget, and start/kill/attach/status are request/response.
+       * The vault agent — the vault's live Claude Code sessions, one drawer tab
+       * each (D100). A byte stream, not tRPC: PTY output and the session list
+       * are pushed (`onData`/`onExit`/`onSessions`, each returning its
+       * unsubscribe), keystrokes/resize/focus are fire-and-forget, and
+       * start/kill/attach/sessions are request/response.
+       *
+       * **Every route but `setFocus` names a session.** A vault runs several, so
+       * "write to the agent" is not an address. Focus is the exception because
+       * the focus file is the vault's, one path in the clone, read by whichever
+       * session takes the next turn.
        */
       agent: {
-        onData(cb: (data: Uint8Array | string) => void): () => void
-        onExit(cb: (e: { code: number }) => void): () => void
-        onStatus(cb: (status: AgentStatus) => void): () => void
-        attach(): Promise<string>
-        status(): Promise<AgentStatus>
+        onData(cb: (e: { id: string; data: Uint8Array | string }) => void): () => void
+        onExit(cb: (e: { id: string; code: number }) => void): () => void
+        /** The whole list, whenever any derived field changes. */
+        onSessions(cb: (sessions: AgentSession[]) => void): () => void
+        sessions(): Promise<AgentSession[]>
+        /** Replayable terminal state for one session, and open its data tap. */
+        attach(id: string): Promise<string>
         start(args: {
           vaultId: string
+          /** Claude Code's own `--name`, so the tab is named from the moment it
+           *  exists. Normalised in main: first line, collapsed, capped. */
+          name?: string
           resume?: boolean
           /** Spawn the PTY at this geometry — the drawer's fitted size — so
            *  Claude's TUI fills the pane from the first paint. */
@@ -86,10 +97,11 @@ declare global {
           rows?: number
           /** Seed the interactive session's first turn (the reconcile flow). */
           prompt?: string
-        }): Promise<{ ok: boolean; message?: string }>
-        kill(): Promise<{ ok: true }>
-        write(data: string): void
-        resize(cols: number, rows: number): void
+        }): Promise<{ ok: boolean; id?: string; message?: string }>
+        /** End one session and drop it from the list. */
+        kill(id: string): Promise<{ ok: true }>
+        write(id: string, data: string): void
+        resize(id: string, cols: number, rows: number): void
         setFocus(focus: { focusedPath: string | null; openPaths: string[] }): void
       }
     }

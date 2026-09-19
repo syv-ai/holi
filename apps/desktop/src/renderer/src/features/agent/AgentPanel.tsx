@@ -1,297 +1,132 @@
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
-import '@xterm/xterm/css/xterm.css'
-import { History, RotateCw, X } from 'lucide-react'
-import { useAtom, useAtomValue } from 'jotai'
+/**
+ * The agent drawer: a tab per live session (D100), and the one showing.
+ *
+ * What used to be one terminal in a panel is now a strip and N `SessionTerminal`s,
+ * all mounted, one visible. The panel owns everything that is about the SET —
+ * which tab is active, starting one, ending one — and nothing about what is
+ * inside a terminal, which is `SessionTerminal`'s.
+ *
+ * **The session list is main's**, pushed on `agent:sessions`. The panel never
+ * derives it: a tab exists because a session does, an exited session keeps its
+ * tab until someone closes it, and the name on a tab is Claude Code's own.
+ */
+import { History, Plus, RotateCw, X } from 'lucide-react'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitives'
+import { Button, Dialog, ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitives'
 import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
 import { agentIndicator, agentThemeNote, type ColorMode } from '@/lib/agent-notices'
 import {
+  activeSessionAtom,
+  activeSessionIdAtom,
   agentModeAtSpawnAtom,
   agentPanelOpenAtom,
   agentSeedPromptAtom,
-  agentStatusAtom,
+  agentSessionsAtom,
+  type AgentSession,
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom } from '@/state/vaults'
-import { terminalKeyAction } from '@/lib/agent-terminal-keys'
+import { SessionTerminal } from './SessionTerminal'
 
-/** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
- * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
- * the re-apply after the first output. `?1004l` kills focus reporting, whose
- * `\x1b[I` would otherwise land in Claude's input box as stray characters. */
-const HIDE_CURSOR = '\x1b[?25l'
-const DISABLE_FOCUS_REPORTING = '\x1b[?1004l'
-
-/** A hidden container measures 0×0, and FitAddon clamps that to its 2×1 minimum
- * instead of bailing — fitting there would SIGWINCH the PTY into a 2-column
- * sliver. (Today `display:none` doesn't even fire the observer, but that's one
- * CSS change away from being untrue.) */
-const MIN_FITTABLE_PX = 10
-
-/** Dim, italic line — session lifecycle notices printed into the scrollback. */
-function notice(term: Terminal, text: string) {
-  term.write(`\r\n\x1b[2;3m${text}\x1b[0m\r\n`)
-}
+/** What a session is spawned at before any tab has been measured. xterm's own
+ *  native default, so the first paint is never a resize-to-catch-up. */
+const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
 
 export function AgentPanel() {
   const [open, setOpen] = useAtom(agentPanelOpenAtom)
-  const [status, setStatus] = useAtom(agentStatusAtom)
+  const [sessions, setSessions] = useAtom(agentSessionsAtom)
+  const active = useAtomValue(activeSessionAtom)
+  const setActiveId = useSetAtom(activeSessionIdAtom)
   // A vault's identity is its remote (D60); it is the id the manager matches
   // against `host.active().remote`.
   const activeRemote = useAtomValue(activeRemoteAtom)
   const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
-  /** The colour mode in force. Holi stamps it into the vault's Claude Code config
-   *  on every spawn (D86), and Claude reads settings at start — so a flip while a
-   *  session is live is a real divergence the panel has to say out loud. State,
-   *  not a ref, because the note must re-render when the mode changes. */
   const mode = useAtomValue(activeModeAtom)
   const [modeAtSpawn, setModeAtSpawn] = useAtom(agentModeAtSpawnAtom)
   /** …and a mirror of it for `startSession`, which must not take `mode` as a
-   *  dependency: rebuilding that callback on a theme flip re-runs the open-effect
-   *  that owns auto-start. */
+   *  dependency: rebuilding that callback on a theme flip re-runs the effects
+   *  that own auto-start. */
   const modeRef = useRef<ColorMode>(mode)
   modeRef.current = mode
   /** Imperative handle on the collapsible group panel — driven by `open` (below),
    *  so ⌘J and the reconcile trigger expand/collapse the panel instead of a bespoke
-   *  width. The panel stays mounted while collapsed, so the PTY + scrollback live on. */
+   *  width. The panel stays mounted while collapsed, so the PTYs + scrollback live on. */
   const panelRef = useRef<PanelImperativeHandle | null>(null)
-  /** True once the xterm is built and painted, so the reconcile-seed effect knows
-   *  it can (re)start a session. A ref is not reactive — this state is. */
-  const [terminalReady, setTerminalReady] = useState(false)
-  /** Read by the open-effect's rAF so it skips its own auto-start when a reconcile
-   *  seed is pending (the seed effect owns that start). */
-  const seedPromptRef = useRef<string | null>(null)
+  /** The last geometry any visible tab measured. A session started for a tab
+   *  that has never been shown has none of its own. */
+  const geometryRef = useRef(FALLBACK_GEOMETRY)
+  /** The session a close is waiting on confirmation for. */
+  const [confirming, setConfirming] = useState<AgentSession | null>(null)
+
+  const sessionsRef = useRef(sessions)
+  sessionsRef.current = sessions
+  const seedPromptRef = useRef<string | null>(seedPrompt)
   seedPromptRef.current = seedPrompt
 
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  const termRef = useRef<Terminal | null>(null)
-  const fitRef = useRef<FitAddon | null>(null)
-  const disposeRef = useRef<(() => void) | null>(null)
-  const runningRef = useRef(false)
-  /** Has THIS terminal taken main's mirror for the CURRENT session? Main only
-   * streams to an attached renderer, so an unattached panel would sit dead. */
-  const attachedRef = useRef(false)
-  /** Claude's TUI rewrites cells constantly and drops xterm's live selection
-   * before the user can reach for copy — keep the last one. */
-  const selectionRef = useRef('')
-  const lastSizeRef = useRef({ cols: 0, rows: 0 })
-
-  runningRef.current = status.running
-
-  /** Refit and tell the PTY the new geometry — xterm's cols/rows are the truth. */
-  const syncSize = useCallback(() => {
-    const term = termRef.current
-    const fit = fitRef.current
-    const host = hostRef.current
-    if (!term || !fit || !host?.isConnected) return
-    if (host.clientWidth < MIN_FITTABLE_PX || host.clientHeight < MIN_FITTABLE_PX) return
-    try {
-      fit.fit()
-    } catch {
-      return // not laid out yet
-    }
-    const { cols, rows } = term
-    if (cols === lastSizeRef.current.cols && rows === lastSizeRef.current.rows) return // a redundant resize is a SIGWINCH → full TUI redraw
-    lastSizeRef.current = { cols, rows }
-    if (runningRef.current) void window.holi.agent.resize(cols, rows)
-  }, [])
-
-  /**
-   * Build the terminal on FIRST SHOW, not on mount.
-   *
-   * `term.open()` against a `display:none` host leaves xterm's renderer with
-   * no measurements, and everything written afterwards silently fails to
-   * paint — a live session in a blank panel. Main's mirror is what makes
-   * deferring safe: whatever the PTY printed before this terminal existed is
-   * replayed by `attach()`.
-   *
-   * Once built it lives for the panel's lifetime, so scrollback survives
-   * hide/show.
-   */
-  const initTerminal = useCallback(() => {
-    const host = hostRef.current
-    if (!host || termRef.current) return
-    const term = new Terminal({
-      fontSize: 13,
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
-      scrollback: 10_000,
-      cursorBlink: false, // Ink owns the cursor
-      theme: { background: '#0a0a0a', foreground: '#e5e5e5' },
-    })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(host)
-    termRef.current = term
-    fitRef.current = fit
-    setTerminalReady(true) // the reconcile-seed effect waits on this
-
-    const selection = term.onSelectionChange(() => {
-      const selected = term.getSelection()
-      if (selected) selectionRef.current = selected
-    })
-
-    /**
-     * The panel's one key hook — see `terminal-keys.ts` for which chords it
-     * claims and why.
-     *
-     * `preventDefault()` is load-bearing, not decoration: xterm returns early
-     * from its own keydown when this handler answers `false`, WITHOUT
-     * preventing the default, so the browser would go on to raise `keypress`
-     * on the hidden textarea and the key would be sent a second time.
-     */
-    term.attachCustomKeyEventHandler((e) => {
-      const selected = term.getSelection() || selectionRef.current
-      const action = terminalKeyAction(e, Boolean(selected))
-      if (!action) return true
-      e.preventDefault()
-      switch (action.kind) {
-        case 'write':
-          void window.holi.agent.write(action.seq)
-          break
-        case 'scroll':
-          if (action.to === 'top') term.scrollToTop()
-          else term.scrollToBottom()
-          break
-        case 'copy':
-          void navigator.clipboard.writeText(selected)
-          break
-        case 'paste':
-          void navigator.clipboard.readText().then((text) => {
-            if (text) void window.holi.agent.write(text)
-          })
-          break
-      }
-      return false
-    })
-
-    const offData = window.holi.agent.onData((data) => term.write(data))
-    const offExit = window.holi.agent.onExit(({ code }) => {
-      notice(term, `[session ended (code ${code})]`)
-      setModeAtSpawn(null) // a dead session's theme is nobody's problem
-    })
-    const offStatus = window.holi.agent.onStatus((next) => setStatus(next))
-    const typed = term.onData((data) => void window.holi.agent.write(data))
-
-    // Replay what main's mirror recorded (a live session from before this
-    // mount — e.g. across a renderer reload), THEN start taking live data.
-    void (async () => {
-      const state = await window.holi.agent.attach()
-      if (state) {
-        term.write(state + HIDE_CURSOR)
-        attachedRef.current = true
-      }
-      setStatus(await window.holi.agent.status())
-    })()
-
-    const observer = new ResizeObserver(() => syncSize())
-    observer.observe(host)
-
-    disposeRef.current = () => {
-      offData()
-      offExit()
-      offStatus()
-      typed.dispose()
-      selection.dispose()
-      observer.disconnect()
-      term.dispose()
-      termRef.current = null
-      fitRef.current = null
-      disposeRef.current = null
-    }
-  }, [setModeAtSpawn, setStatus, syncSize])
-
-  // status still tracks without a terminal (the header dot works before the
-  // drawer has ever been opened); the terminal itself is torn down on unmount.
+  // The list is pushed, and asked for once on mount: the drawer's dot has to be
+  // right before the drawer has ever been opened, and a renderer reload lands
+  // after every push this vault's sessions have made.
   useEffect(() => {
-    const offStatus = window.holi.agent.onStatus(setStatus)
-    void window.holi.agent.status().then(setStatus)
-    return () => {
-      offStatus()
-      disposeRef.current?.()
-    }
-  }, [setStatus])
+    const off = window.holi.agent.onSessions(setSessions)
+    void window.holi.agent.sessions().then(setSessions)
+    return off
+  }, [setSessions])
 
   const startSession = useCallback(
-    async (resume: boolean, prompt?: string) => {
-      const term = termRef.current
-      if (!activeRemote || !term) return
-      attachedRef.current = false
-      // Spawn at the terminal's current (already-fitted) geometry, not a seed
-      // size — Claude's TUI is then drawn at the pane's dimensions immediately,
-      // with no gutter and no resize-to-catch-up. `prompt` seeds turn one (reconcile).
+    async (opts: { resume?: boolean; prompt?: string } = {}): Promise<string | null> => {
+      if (!activeRemote) return null
+      const { cols, rows } = geometryRef.current
       const res = await window.holi.agent.start({
         vaultId: activeRemote,
-        resume,
-        cols: term.cols,
-        rows: term.rows,
-        prompt,
+        cols,
+        rows,
+        ...(opts.resume === undefined ? {} : { resume: opts.resume }),
+        ...(opts.prompt === undefined ? {} : { prompt: opts.prompt }),
       })
-      if (!res.ok) {
-        term.write(`\r\n\x1b[31m${res.message}\x1b[0m\r\n`)
-        return
-      }
-      await window.holi.agent.attach() // open the data tap for the new PTY
-      attachedRef.current = true
-      setModeAtSpawn(modeRef.current) // what Claude just read out of its settings
-      // Ink's startup re-enables the cursor; hide it again once it has drawn.
-      setTimeout(() => term.write(HIDE_CURSOR), 500)
-      setStatus(await window.holi.agent.status())
+      if (!res.ok || res.id === undefined) return null
+      // Show it: someone who pressed + is asking to look at the new session, and
+      // a reconcile's seeded turn is the thing they want to watch.
+      setActiveId(res.id)
+      // What Claude just read out of its settings, for this session alone.
+      setModeAtSpawn((m) => ({ ...m, [res.id as string]: modeRef.current }))
+      return res.id
     },
-    [activeRemote, setModeAtSpawn, setStatus],
+    [activeRemote, setActiveId, setModeAtSpawn],
   )
 
-  // opening the drawer builds the terminal (first time) and starts a session
+  /**
+   * Opening the drawer starts a session when there is none.
+   *
+   * Keyed to the drawer OPENING, not to "the list is empty while it is open":
+   * the second reading respawns instantly when you close the last tab, which
+   * makes the close button look broken.
+   */
+  const wasOpen = useRef(open)
   useEffect(() => {
-    if (!open) return
-    initTerminal() // no-op after the first show
-    const term = termRef.current
-    term?.write(DISABLE_FOCUS_REPORTING)
-    term?.focus()
-    // The aside just flipped hidden→flex, so the host has no final size this
-    // tick. Wait for flex layout to resolve (two rAFs), fit the terminal to the
-    // real box, THEN start — so the PTY is born at the pane's geometry and fills
-    // it from the first paint, rather than spawning small and resizing to catch up.
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => {
-        syncSize()
-        if (seedPromptRef.current !== null) {
-          // A reconcile seed is pending — the seed effect owns the (re)start so
-          // the prompt lands on turn one. Don't race it with a bare session.
-        } else if (!runningRef.current) {
-          void startSession(false)
-        } else if (!attachedRef.current) {
-          // a session that outlived this terminal (renderer reload) or was
-          // started while the drawer was shut — replay it from main's mirror
-          void (async () => {
-            const state = await window.holi.agent.attach()
-            if (state && term) term.write(state + HIDE_CURSOR)
-            attachedRef.current = true
-          })()
-        }
-      }),
-    )
-  }, [open, initTerminal, startSession, syncSize])
+    const opening = open && !wasOpen.current
+    wasOpen.current = open
+    if (!opening) return
+    // A reconcile seed is pending — the seed effect owns that start so the
+    // prompt lands on turn one. Don't race it with a bare session.
+    if (seedPromptRef.current !== null) return
+    if (sessionsRef.current.some((s) => !s.exited)) return
+    void startSession()
+  }, [open, startSession])
 
   // Reconcile: the "Ask Claude to reconcile" button set a seed prompt (and opened
-  // the drawer). Once the terminal is built, (re)start the session so the merge
-  // instruction is turn one — restarting even if one is already running, because
-  // the seed cannot be injected into a session mid-conversation. Then clear it.
+  // the drawer). It gets its OWN session rather than restarting one — the seed
+  // cannot be injected into a conversation mid-flight, and with tabs there is no
+  // longer a single slot it would have to displace. Then clear it.
   useEffect(() => {
-    if (seedPrompt === null || !terminalReady) return
-    const term = termRef.current
-    if (!term) return
+    if (seedPrompt === null) return
     void (async () => {
-      if (runningRef.current) await window.holi.agent.kill()
-      term.reset()
-      attachedRef.current = false
-      await startSession(false, seedPrompt)
+      await startSession({ prompt: seedPrompt })
       setSeedPrompt(null)
     })()
-  }, [seedPrompt, terminalReady, startSession, setSeedPrompt])
+  }, [seedPrompt, startSession, setSeedPrompt])
 
   // `open` is the source of truth; drive the panel to match. Deferred a frame:
   // the panel's imperative API throws "Group not found" if touched during the
@@ -316,19 +151,29 @@ export function AgentPanel() {
   // mounted. `open` stays the single source of truth; the effect above drives
   // the panel to match it.
 
-  const themeNote = agentThemeNote({ running: status.running, modeAtSpawn, mode })
-  const indicator = agentIndicator({ ...status, themeNote })
+  const noteFor = (session: AgentSession): string | null =>
+    agentThemeNote({
+      running: !session.exited,
+      modeAtSpawn: modeAtSpawn[session.id] ?? null,
+      mode,
+    })
 
-  const restart = async () => {
-    await window.holi.agent.kill()
-    termRef.current?.reset()
-    await startSession(false)
+  const close = async (session: AgentSession) => {
+    setConfirming(null)
+    await window.holi.agent.kill(session.id)
   }
 
-  const history = async () => {
-    await window.holi.agent.kill()
-    termRef.current?.reset()
-    await startSession(true) // bare --resume: the CLI shows its own picker
+  /**
+   * Restart, and resume, act on the tab you are looking at.
+   *
+   * Both end that session and start another, which with ids is genuinely a NEW
+   * session rather than the same one reborn — so its tab is a new tab, at the
+   * end of the strip. Saying otherwise would mean pretending a conversation
+   * survived that did not. `--resume` is bare: the CLI shows its own picker.
+   */
+  const replace = async (resume: boolean) => {
+    if (active !== null) await window.holi.agent.kill(active.id)
+    await startSession({ resume })
   }
 
   return (
@@ -340,20 +185,29 @@ export function AgentPanel() {
       minSize={MIN_AGENT_PANEL_WIDTH}
       panelRef={panelRef}
     >
-      {/* Kept `hidden` when closed so the terminal is never built against a
+      {/* Kept `hidden` when closed so no terminal is ever built against a
           display:none host, and no stray content shows while the panel is a
           0-width sliver. The panel stays mounted either way. */}
       <aside
         className={cn('flex h-full min-w-0 flex-col border-l border-divider', !open && 'hidden')}
       >
-        {/* The shared panel bar. The agent's leading region is richer than a title —
-          a status dot + state + config/auth notices — so it composes PanelHeader
-          directly rather than via SidePanel. ⌘J lives on the close action here
-          (bound while mounted), so it toggles the drawer from anywhere. */}
+        {/* The shared panel bar. It no longer carries a dot and a state word:
+            with a tab per session those belong on the tabs, and one header
+            reading "running" over three tabs in three different states was the
+            duplicate-state problem D72 already named. What is left is the word
+            and the actions, which act on the tab you are looking at. */}
         <PanelHeader
           actions={[
-            { icon: <History />, label: 'Resume a past session', onSelect: () => void history() },
-            { icon: <RotateCw />, label: 'Restart session', onSelect: () => void restart() },
+            {
+              icon: <History />,
+              label: 'Resume a past session in this tab',
+              onSelect: () => void replace(true),
+            },
+            {
+              icon: <RotateCw />,
+              label: 'Restart this session',
+              onSelect: () => void replace(false),
+            },
           ]}
           close={{
             icon: <X />,
@@ -362,41 +216,125 @@ export function AgentPanel() {
             onSelect: () => setOpen((o) => !o),
           }}
         >
-          <Tooltip content={indicator.title}>
-            {/* In flight: the dot breathes while the agent is actually working,
-              and stops the moment it is not. Bound to `status.working`, which
-              the seeded UserPromptSubmit/Stop hooks push — never inferred from
-              the PTY stream, which is a known dead end in this repo. Nothing in
-              the app loops decoratively, so a still dot means nothing is
-              happening. */}
-            <span
-              className={cn(
-                'h-2 w-2 shrink-0 rounded-full',
-                indicator.dot,
-                status.working && 'motion-pulse',
-              )}
-            />
-          </Tooltip>
           <span className="text-foreground">Claude</span>
-          {/* Spell out what the dot means: green alone is ambiguous. The restart
-            nudges used to be amber sentences alongside this word; they are the
-            amber dot and this word now (`agentIndicator`), which keeps the bar
-            glanceable and says the same thing on hover. */}
-          <Tooltip content={indicator.title}>
-            <span className="text-muted-foreground">{indicator.state}</span>
-          </Tooltip>
           {/* No login notice here, deliberately (D72), and D86 did not change that.
             A vault now needs its own `/login`, which is a genuinely new thing to
             say — but it is said in the SCROLLBACK, printed by main at spawn
             (`SIGN_IN_NOTICE`), for exactly the reason this comment already gave:
-            `/login` fires none of the events that push status, so a copy in the
-            header goes stale the moment it matters. A line printed at spawn is a
-            log entry and stays true about that spawn. The theme note above is
-            different in kind — it is derived from two values the renderer already
-            holds, so it cannot go stale. */}
+            `/login` fires none of the events that push state, so a copy in the
+            header goes stale the moment it matters. */}
         </PanelHeader>
-        <div ref={hostRef} className="min-h-0 flex-1 bg-background px-2 py-1" />
+
+        {/* The strip. Scrolls sideways rather than wrapping: the drawer is
+            narrow and a second row of tabs would eat the terminal. */}
+        <div
+          role="tablist"
+          aria-label="agent sessions"
+          className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-divider px-1 py-1"
+        >
+          {sessions.map((session) => {
+            const indicator = agentIndicator({
+              ...session,
+              themeNote: noteFor(session),
+            })
+            const isActive = session.id === active?.id
+            return (
+              <span
+                key={session.id}
+                data-session-tab={session.id}
+                className={cn(
+                  'group flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs',
+                  isActive
+                    ? 'bg-secondary text-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Tooltip content={indicator.title}>
+                  <Button
+                    variant="ghost"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={cn(
+                      'h-auto max-w-40 gap-1.5 p-0 text-xs font-normal hover:bg-transparent',
+                      session.exited && 'opacity-60',
+                    )}
+                    onClick={() => setActiveId(session.id)}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn('h-2 w-2 shrink-0 rounded-full', indicator.dot)}
+                    />
+                    <span className="truncate">{session.name}</span>
+                  </Button>
+                </Tooltip>
+                {/* Hidden with `opacity`, never `hidden`: a control that came and
+                    went with the pointer would change the tab's width and shift
+                    every tab after it under the pointer that hovered it. */}
+                <Tooltip content="end this session">
+                  <Button
+                    variant="ghost"
+                    aria-label={`end ${session.name}`}
+                    className="motion-respond h-auto p-0 opacity-0 group-hover:opacity-100 hover:bg-transparent focus-visible:opacity-100"
+                    onClick={() => {
+                      // Only a session that is doing something gets a question.
+                      // An idle or exited one is a click, not a decision.
+                      if (session.state === 'idle' || session.exited) void close(session)
+                      else setConfirming(session)
+                    }}
+                  >
+                    ✕
+                  </Button>
+                </Tooltip>
+              </span>
+            )
+          })}
+          <Tooltip content="start another session">
+            <Button
+              variant="ghost"
+              aria-label="start another session"
+              className="h-auto shrink-0 p-1 text-muted-foreground hover:text-foreground"
+              onClick={() => void startSession()}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          </Tooltip>
+        </div>
+
+        {/* All of them, one visible. See `SessionTerminal` for why they stay
+            mounted. */}
+        {sessions.map((session) => (
+          <SessionTerminal
+            key={session.id}
+            sessionId={session.id}
+            visible={open && session.id === active?.id}
+            onGeometry={(cols, rows) => (geometryRef.current = { cols, rows })}
+          />
+        ))}
+        {sessions.length === 0 && <div className="min-h-0 flex-1 bg-background" />}
       </aside>
+
+      {confirming !== null && (
+        <Dialog open onClose={() => setConfirming(null)} size="sm">
+          <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
+            <Dialog.Header>End {confirming.name}?</Dialog.Header>
+            <Dialog.Body>
+              <p className="text-xs text-muted-foreground">
+                {confirming.state === 'needs-you'
+                  ? 'It is waiting for you to answer something. Ending it now drops the question and whatever it was about to do.'
+                  : 'It is mid-turn. Ending it now stops the work part-way; what it has already written stays in the vault.'}
+              </p>
+            </Dialog.Body>
+            <Dialog.Footer>
+              <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={() => void close(confirming)}>
+                End session
+              </Button>
+            </Dialog.Footer>
+          </div>
+        </Dialog>
+      )}
     </ResizablePanel>
   )
 }

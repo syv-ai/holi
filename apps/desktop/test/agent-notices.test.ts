@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { agentIndicator, agentThemeNote } from '../src/renderer/src/lib/agent-notices'
+import {
+  agentIndicator,
+  agentThemeNote,
+  fleetIndicator,
+} from '../src/renderer/src/lib/agent-notices'
 
 describe('agentThemeNote', () => {
   it('says nothing when there is no session to be stale', () => {
@@ -24,38 +28,49 @@ describe('agentThemeNote', () => {
 })
 
 describe('agentIndicator', () => {
-  const idle = { running: false, working: false, configStale: false, themeNote: null }
-
-  it('is muted and says how to get a session when there is none', () => {
-    const it_ = agentIndicator(idle)
-    expect(it_.dot).toContain('bg-muted-foreground')
-    expect(it_.state).toBe('idle')
-    expect(it_.title).toContain('no session')
-  })
+  const idle = { state: 'idle' as const, configStale: false, themeNote: null }
 
   it('is green while a session is live and nothing is happening', () => {
-    const live = agentIndicator({ ...idle, running: true })
+    const live = agentIndicator(idle)
     expect(live.dot).toContain('bg-green-500')
     expect(live.state).toBe('running')
   })
 
   it('pulses amber while a turn is open', () => {
-    const working = agentIndicator({ ...idle, running: true, working: true })
-    expect(working.dot).toContain('animate-pulse')
+    const working = agentIndicator({ ...idle, state: 'working' })
+    expect(working.dot).toContain('motion-pulse')
     expect(working.dot).toContain('bg-amber-400')
     expect(working.state).toBe('working…')
   })
 
+  it('says what a session is waiting for, because the reason is the whole point', () => {
+    // 'needs you' without a reason is a dot that sends you to the terminal to
+    // find out. The listing carries it, so the card can print it.
+    const waiting = agentIndicator({
+      ...idle,
+      state: 'needs-you',
+      waitingFor: 'permission prompt',
+    })
+    expect(waiting.state).toBe('needs you')
+    expect(waiting.title).toContain('permission prompt')
+  })
+
+  it('still says needs you when the listing gives no reason', () => {
+    const waiting = agentIndicator({ ...idle, state: 'needs-you' })
+    expect(waiting.state).toBe('needs you')
+    expect(waiting.title).toContain('waiting for you')
+  })
+
   it('turns amber without pulsing when a live session needs a restart', () => {
-    const stale = agentIndicator({ ...idle, running: true, configStale: true })
+    const stale = agentIndicator({ ...idle, configStale: true })
     expect(stale.dot).toContain('bg-amber-400')
-    expect(stale.dot).not.toContain('animate-pulse')
+    expect(stale.dot).not.toContain('motion-pulse')
     expect(stale.state).toBe('needs restart')
     expect(stale.title).toContain('shared config changed')
   })
 
   it('carries the theme note as a restart reason too', () => {
-    const themed = agentIndicator({ ...idle, running: true, themeNote: "restart to change Claude's theme" })
+    const themed = agentIndicator({ ...idle, themeNote: "restart to change Claude's theme" })
     expect(themed.state).toBe('needs restart')
     expect(themed.title).toContain("Claude's theme")
   })
@@ -63,7 +78,6 @@ describe('agentIndicator', () => {
   it('says both reasons when both apply', () => {
     const both = agentIndicator({
       ...idle,
-      running: true,
       configStale: true,
       themeNote: "restart to change Claude's theme",
     })
@@ -72,21 +86,91 @@ describe('agentIndicator', () => {
   })
 
   // An open turn is the louder, more transient thing; the restart nudge is still
-  // true when it ends, and comes back then.
+  // true when it ends, and comes back then. A session waiting on YOU outranks
+  // both, because nothing moves at all until it is answered.
   it('lets an open turn outrank a restart nudge', () => {
-    const busy = agentIndicator({ ...idle, running: true, working: true, configStale: true })
-    expect(busy.state).toBe('working…')
+    expect(agentIndicator({ ...idle, state: 'working', configStale: true }).state).toBe('working…')
   })
 
-  // configStale only means anything under a live session (it is about a session
-  // that is now out of date), so it must not paint a dead one amber.
-  it('ignores a stale config when no session is running', () => {
-    expect(agentIndicator({ ...idle, configStale: true }).state).toBe('idle')
+  it('lets needs-you outrank an open turn', () => {
+    expect(agentIndicator({ ...idle, state: 'needs-you', configStale: true }).state).toBe(
+      'needs you',
+    )
+  })
+
+  // Nothing about being out of date means anything once the PTY is gone: the
+  // tab is a record of a session that ended, not a thing to restart.
+  it('says only that an exited session ended', () => {
+    const dead = agentIndicator({ ...idle, exited: true, configStale: true, state: 'working' })
+    expect(dead.state).toBe('ended')
+    expect(dead.dot).toContain('bg-muted-foreground')
   })
 
   it('never uses an em dash, which is barred from UI copy', () => {
-    for (const args of [idle, { ...idle, running: true }, { ...idle, running: true, working: true }]) {
-      expect(agentIndicator(args).title).not.toContain('—')
-    }
+    const cases = [
+      idle,
+      { ...idle, state: 'working' as const },
+      { ...idle, state: 'needs-you' as const, waitingFor: 'permission prompt' },
+      { ...idle, configStale: true },
+      { ...idle, exited: true },
+    ]
+    for (const args of cases) expect(agentIndicator(args).title).not.toContain('—')
+  })
+})
+
+describe('fleetIndicator', () => {
+  const live = (state: 'needs-you' | 'working' | 'idle', configStale = false) => ({
+    state,
+    configStale,
+    exited: false,
+  })
+
+  it('says there is no session when the list is empty', () => {
+    const none = fleetIndicator([])
+    expect(none.state).toBe('idle')
+    expect(none.title).toContain('no session')
+  })
+
+  it('says the same when every session in it has ended', () => {
+    // The door is about what is LIVE. Three dead tabs are three records of
+    // sessions that ended, and the tabs themselves say so.
+    expect(fleetIndicator([{ ...live('idle'), exited: true }]).state).toBe('idle')
+  })
+
+  it('puts needs-you above working', () => {
+    const fleet = fleetIndicator([live('working'), live('needs-you')])
+    expect(fleet.state).toBe('needs you')
+  })
+
+  it('carries the waiting session’s reason up to the door', () => {
+    const fleet = fleetIndicator([
+      live('working'),
+      { ...live('needs-you'), waitingFor: 'input needed' },
+    ])
+    expect(fleet.title).toContain('input needed')
+  })
+
+  it('puts working above a restart nudge', () => {
+    expect(fleetIndicator([live('idle', true), live('working')]).state).toBe('working…')
+  })
+
+  it('reports a restart nudge when a live session has stale config', () => {
+    expect(fleetIndicator([live('idle'), live('idle', true)]).state).toBe('needs restart')
+  })
+
+  it('ignores an exited session’s stale config', () => {
+    // It cannot be restarted into anything; its tab is a record, not a nudge.
+    const fleet = fleetIndicator([live('idle'), { ...live('idle', true), exited: true }])
+    expect(fleet.state).toBe('running')
+  })
+
+  it('takes the vault-wide theme note as a restart reason', () => {
+    const fleet = fleetIndicator([live('idle')], "restart to change Claude's theme")
+    expect(fleet.state).toBe('needs restart')
+    expect(fleet.title).toContain("Claude's theme")
+  })
+
+  it('is green when every live session is idle and up to date', () => {
+    expect(fleetIndicator([live('idle'), live('idle')]).state).toBe('running')
   })
 })

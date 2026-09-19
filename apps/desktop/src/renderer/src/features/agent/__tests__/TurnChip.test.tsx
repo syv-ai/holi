@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { TurnChip } from '../TurnChip'
-import { AGENT_STATUS_IDLE, agentStatusAtom } from '@/state/agent'
+import { agentSessionsAtom, type AgentSession } from '@/state/agent'
 import { latestTurnAtom, turnFilesAtom, turnReviewOpenAtom, type Turn } from '@/state/turns'
 import { activeRemoteAtom } from '@/state/vaults'
 
@@ -31,6 +31,13 @@ vi.mock('@/lib/trpc', () => ({
 }))
 
 const TURN: Turn = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z' }
+const session = (state: 'working' | 'idle'): AgentSession => ({
+  id: 'sess-a',
+  name: 'New session',
+  state,
+  configStale: false,
+  exited: false,
+})
 const file = (path: string) => ({ path, status: 'M', added: 1, removed: 0 })
 
 beforeEach(() => {
@@ -97,12 +104,12 @@ test('re-asks when a turn ends, not while one is running', async () => {
   // Each flip has to reach React before the next one, or the component never
   // observes `working` as true and there is no edge left to detect.
   await act(async () => {
-    store.set(agentStatusAtom, { ...AGENT_STATUS_IDLE, running: true, working: true })
+    store.set(agentSessionsAtom, [session('working')])
   })
   expect(list).not.toHaveBeenCalled()
 
   await act(async () => {
-    store.set(agentStatusAtom, { ...AGENT_STATUS_IDLE, running: true, working: false })
+    store.set(agentSessionsAtom, [session('idle')])
   })
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
 })

@@ -80,8 +80,8 @@ import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
-import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentStatusAtom } from '@/state/agent'
-import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
+import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentSessionsAtom } from '@/state/agent'
+import { agentThemeNote, fleetIndicator } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
@@ -205,18 +205,27 @@ export function Shell() {
 
   const [agentOpen, setAgentOpen] = useAtom(agentPanelOpenAtom)
   // The footer's Claude control (#15) is the drawer's only affordance outside the
-  // drawer, so it needs the same inputs the panel header derives its dot from.
-  const agentStatus = useAtomValue(agentStatusAtom)
+  // drawer. It reduces EVERY session to one dot (D100): needs-you outranks
+  // working outranks a restart nudge, so the door is painted by whichever
+  // session most wants you to open it.
+  const agentSessions = useAtomValue(agentSessionsAtom)
   const agentModeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const colorMode = useAtomValue(activeModeAtom)
-  const agentState = agentIndicator({
-    ...agentStatus,
-    themeNote: agentThemeNote({
-      running: agentStatus.running,
-      modeAtSpawn: agentModeAtSpawn,
-      mode: colorMode,
-    }),
-  })
+  // One note for the set: the nudge is worth showing if ANY live session was
+  // spawned under the mode the app has since moved off, and it says the same
+  // sentence however many of them there are.
+  const agentThemeNudge =
+    agentSessions
+      .filter((session) => !session.exited)
+      .map((session) =>
+        agentThemeNote({
+          running: true,
+          modeAtSpawn: agentModeAtSpawn[session.id] ?? null,
+          mode: colorMode,
+        }),
+      )
+      .find((note) => note !== null) ?? null
+  const agentState = fleetIndicator(agentSessions, agentThemeNudge)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
   // The sidebar's own vertical split: the tree above, the apps section below.
   const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')

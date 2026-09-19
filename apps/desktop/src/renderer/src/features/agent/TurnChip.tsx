@@ -14,7 +14,7 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { useAck } from '@/lib/use-ack'
 import { Button, Tooltip } from '@/primitives'
-import { agentStatusAtom } from '@/state/agent'
+import { agentSessionsAtom } from '@/state/agent'
 import {
   latestTurnAtom,
   loadLatestTurnAtom,
@@ -26,7 +26,9 @@ import {
 import { activeRemoteAtom } from '@/state/vaults'
 
 export function TurnChip(): React.JSX.Element | null {
-  const { working } = useAtomValue(agentStatusAtom)
+  // Any session working. Task 2.4 makes the chip per session; until then the
+  // footer's one chip follows the set, which is what it has always shown.
+  const working = useAtomValue(agentSessionsAtom).some((s) => s.state === 'working')
   const turn = useAtomValue(latestTurnAtom)
   const files = useAtomValue(turnFilesAtom)
   const loadLatest = useSetAtom(loadLatestTurnAtom)

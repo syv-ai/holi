@@ -1,35 +1,61 @@
 import { atom } from 'jotai'
 import type { ColorMode } from '@/lib/agent-notices'
 
-/**
- * The drawer's one-session view of the agent.
- *
- * Main pushes `agent:sessions`, a list of `SessionSummary` (D100), and preload
- * folds it back to this until slice 2 gives the drawer a tab per session.
- */
-export interface AgentStatus {
-  running: boolean
-  /** A turn is open — Claude is mid-edit somewhere in the vault. */
-  working: boolean
-  /** Synced agent config changed under a live session; restart to pick it up. */
-  configStale: boolean
-}
+/** What a session is doing. Claude Code's own answer, joined by main (D100). */
+export type SessionState = 'needs-you' | 'working' | 'idle'
 
-export const AGENT_STATUS_IDLE: AgentStatus = {
-  running: false,
-  working: false,
-  configStale: false,
+/** One of the vault's agent sessions. Mirrors `SessionSummary` in
+ *  main/agent/agent-manager.ts, pushed as a list on `agent:sessions`. */
+export interface AgentSession {
+  id: string
+  /** Claude Code's own name for it, or 'New session' when it has none. There is
+   *  no rename here: the name is set with `--name` at spawn or `/name` inside. */
+  name: string
+  state: SessionState
+  /** Only for 'needs-you': why, e.g. 'permission prompt'. */
+  waitingFor?: string
+  configStale: boolean
+  /** Its PTY is gone. The tab stays, with its scrollback, until it is closed. */
+  exited: boolean
 }
 
 export const agentPanelOpenAtom = atom(false)
-export const agentStatusAtom = atom<AgentStatus>(AGENT_STATUS_IDLE)
 
-/** The colour mode resolved when the live session spawned, null when none has.
- *  An atom rather than AgentPanel's own state because the footer control (#15)
- *  shows the same restart nudge, and one derivation needs one input. */
-export const agentModeAtSpawnAtom = atom<ColorMode | null>(null)
+/** Every session of the open vault, in spawn order, which is tab order. */
+export const agentSessionsAtom = atom<AgentSession[]>([])
+
+/** The tab the user picked, or null before they picked one. Not the answer to
+ *  "which tab is showing" — `activeSessionAtom` is, because a picked session can
+ *  be closed out from under this. */
+export const activeSessionIdAtom = atom<string | null>(null)
+
+/**
+ * The session the drawer is showing.
+ *
+ * The pick while it is still in the list, then the first live one, then the
+ * first one at all — so closing the active tab lands on a neighbour rather than
+ * on nothing, and a list of only exited sessions still shows one.
+ */
+export const activeSessionAtom = atom<AgentSession | null>((get) => {
+  const sessions = get(agentSessionsAtom)
+  const picked = sessions.find((s) => s.id === get(activeSessionIdAtom))
+  return picked ?? sessions.find((s) => !s.exited) ?? sessions[0] ?? null
+})
+
+/** Is anything live? The footer and the drawer's auto-start both ask this. */
+export const hasLiveSessionAtom = atom((get) => get(agentSessionsAtom).some((s) => !s.exited))
+
+/**
+ * The colour mode resolved when each session spawned, keyed by session id.
+ *
+ * Per session, not per vault: Holi stamps the mode into the vault's Claude Code
+ * config at every spawn (D86) and Claude reads settings at start, so two
+ * sessions spawned either side of a theme flip really are on different themes
+ * and only one of them needs restarting.
+ */
+export const agentModeAtSpawnAtom = atom<Record<string, ColorMode>>({})
 
 /** A pending reconcile seed: set by the "Ask Claude to reconcile" button, it asks
- *  AgentPanel to (re)start the session with this as its first message, then clears
+ *  AgentPanel to start a session with this as its first message, then clears
  *  itself. Null when there is no reconcile in flight. */
 export const agentSeedPromptAtom = atom<string | null>(null)
