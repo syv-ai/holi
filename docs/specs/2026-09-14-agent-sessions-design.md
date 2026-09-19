@@ -93,13 +93,20 @@ seconds** after the prompt appears and not at all if you answer inside six secon
 hook, which does fire at the instant of the prompt and only on the ask path. Both are
 Holi rebuilding a fact it can read.
 
-**Names come from the same place.** Holi passes `-n, --name` at spawn when it has
-something to call the session, and the row comes back with `nameSource: "user"`. A
-`/name` typed inside the session does the same. A session Holi spawned with no name
-carries a cwd-derived placeholder (`nameSource: "derived"`), which is the same string
-for every session in one vault, so Holi shows **"New session"** for those rather than
-the placeholder. There is no Rename in Holi: the name is Claude Code's, set at spawn or
-with `/name`.
+**Names come from the same place, with one thing Holi has to know itself.** Holi passes
+`-n, --name` at spawn when it has something to call the session, and `/name` inside the
+session does the same job. A session spawned with no name carries a cwd-derived
+placeholder, which is the same string for every session in one vault and so is not a
+label.
+
+The listing does not say which of the two a name is. The underlying file carries
+`nameSource`; the supported command does not (verified, 2.1.278). So Holi answers it
+from what it already knows rather than from the file: **a name is real if Holi passed
+`--name` at spawn, or if the row's name has changed since the first read after that
+spawn** (which is what a `/name` looks like from outside). Otherwise the tab says
+**"New session"**.
+
+There is no Rename in Holi: the name is Claude Code's, set at spawn or with `/name`.
 
 ### A session is a terminal, and the join key is its pid
 

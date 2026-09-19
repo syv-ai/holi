@@ -85,9 +85,12 @@ an empty map rather than throwing.
 ```ts
 export interface SessionRow {
   pid: number
+  /** Either a chosen name (`--name`, `/name`) or Claude Code's cwd placeholder,
+   *  which is identical for every session in one vault. The listing does not say
+   *  which; `AgentManager` decides, see Task 1.5. */
   name: string
-  /** 'user' when someone named it (`--name`, `/name`); absent/'derived' is Claude
-   *  Code's cwd placeholder, which is identical for every session in one vault. */
+  /** Never present today: the file carries it, the command does not (2.1.278).
+   *  Parsed so the day it appears is the day the inference goes away. */
   nameSource?: string
   status: 'busy' | 'waiting' | 'idle' | 'shell'
   waitingFor?: string
@@ -239,7 +242,12 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 
 export interface SessionSummary {
   id: string
-  /** The registry's name when someone set one, else 'New session'. */
+  /**
+   * The registry's name when it is a real one, else 'New session'. It is real if
+   * Holi passed `--name` at spawn, or if the row's name has changed since the
+   * first read after that spawn, which is what a `/name` looks like from outside.
+   * The listing does not carry `nameSource`, so this is the discriminator.
+   */
   name: string
   state: SessionState
   /** Present only for 'needs-you': the registry's reason, e.g. 'permission prompt'. */
@@ -280,8 +288,9 @@ missing or failing `claude agents --json` still reports working.
 - [ ] Test: two sessions run at once and `kill` ends only the named one
 - [ ] Test: `write`/`resize` reach only the named session's runtime
 - [ ] Test: data and exit events carry the session id
-- [ ] Test: `sessions()` takes the name from a `nameSource: 'user'` row and shows
-      'New session' for a derived one
+- [ ] Test: a session spawned with `--name` takes the row's name
+- [ ] Test: a session spawned without one says 'New session' until the row's name
+      changes, then takes it
 - [ ] Test: a `waiting` row outranks an open hook bracket
 - [ ] Test: with the registry returning nothing, an open bracket still reports working
 - [ ] Test: two concurrent `start` calls do not overlap inside `resolveConfigDir`
@@ -409,7 +418,7 @@ export function fleetIndicator(sessions: SessionSummary[]): AgentIndicator
   literals and native `title=` tooltips.
 
 - [ ] Test: hidden with no sessions, shown with one
-- [ ] Test: a card shows the registry name, or 'New session' for a derived one
+- [ ] Test: a card shows the summary's name, 'New session' included
 - [ ] Test: `fleetIndicator` puts needs-you above working
 - [ ] Verify: `pnpm -C apps/desktop exec vitest run --project dom SessionsSection agent-notices`
 
