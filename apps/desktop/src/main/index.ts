@@ -67,6 +67,7 @@ import {
 import { createAgentManager, type AgentManager } from './agent/agent-manager'
 import { openTurnLog } from './agent/turn-log'
 import { createHookServer } from './agent/hook-server'
+import { createSessionRegistry } from './agent/session-registry'
 import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
@@ -286,6 +287,12 @@ async function main(): Promise<void> {
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
+    // A switch ends the vault's agent sessions, and this is the only place that
+    // still holds the vault they ran in. The conversations stay reachable
+    // through `claude --resume`.
+    onLeave: async () => {
+      await agent?.dispose().catch((err) => console.error('[vault] agent dispose failed:', err))
+    },
   })
 
   // Serve `holi-vault://vault/<vaultRelPath>` from the active vault, read-only.
@@ -376,7 +383,8 @@ async function main(): Promise<void> {
 
   registerIpc({ router })
 
-  // The vault agent: one live `claude` per user, in the active vault's clone.
+  // The vault agent: any number of live `claude` sessions (D100), all in the
+  // active vault's clone, all ended when that vault closes.
   // `getWindow` is lazy — the window is created just below and is up long before
   // the agent streams anything, so registering the seam here is safe.
   //
@@ -577,6 +585,9 @@ async function main(): Promise<void> {
     getWindow: () => mainWindow,
     // What each turn changed, as a commit range, in the vault it ran in (D88).
     turnLogFor: openTurnLog,
+    // Claude Code's own session listing (D100): what each session is doing and
+    // what it is called, read from the CLI rather than derived from the PTY.
+    sessionRegistry: createSessionRegistry(),
     hookPort: () => hookServer.port(),
     // The id is what a turn signal reports back, so the vault's several sessions
     // stay apart.

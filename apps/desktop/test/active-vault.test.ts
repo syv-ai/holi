@@ -1283,6 +1283,53 @@ describe('VaultHost', () => {
     expect(h.active()?.remote).toBe('syv-ai/b')
   })
 
+  it('lets go of what was running against a vault BEFORE it closes', async () => {
+    // The agent's sessions (D100). A session teardown resumes the vault's sync
+    // loop and may take a settle commit, so it has to run while the vault it
+    // ran in is still the active one — not after the switch has moved on.
+    const { registry } = await twoVaults()
+    const leftFrom: Array<string | null> = []
+    const h = createVaultHost({
+      registry,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onLeave: async () => {
+        leftFrom.push(h.active()?.remote ?? null)
+      },
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    await h.open('syv-ai/a')
+    expect(leftFrom).toEqual([]) // nothing to leave yet
+    await h.open('syv-ai/b')
+    expect(leftFrom).toEqual(['syv-ai/a'])
+
+    // Re-opening the vault that is already open is the renderer asking for a
+    // fresh picture, not a switch: a session must survive it.
+    await h.open('syv-ai/b')
+    expect(leftFrom).toEqual(['syv-ai/a'])
+
+    await h.close()
+    expect(leftFrom).toEqual(['syv-ai/a', 'syv-ai/b'])
+  })
+
+  it('switches vaults even when the leave hook throws', async () => {
+    const { registry } = await twoVaults()
+    const h = createVaultHost({
+      registry,
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onLeave: () => Promise.reject(new Error('the PTY would not die')),
+      timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000 },
+    })
+    hosts.push(h)
+
+    await h.open('syv-ai/a')
+    await h.open('syv-ai/b')
+    expect(h.active()?.remote).toBe('syv-ai/b')
+  })
+
   it('commits a dirty vault before switching away from it', async () => {
     // FR-6: work is flushed and committed on a vault switch. A tree left dirty
     // is one the next pull cannot merge — and nothing is watching it any more

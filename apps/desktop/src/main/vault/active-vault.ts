@@ -795,6 +795,20 @@ export function createVaultHost(args: {
    *  clone's `.git/hooks`, and a shared token let a commit here run the staged
    *  transforms against whichever vault happened to be on screen. */
   hookEndpoint?: (remote: string) => { port: number; token: string } | null
+  /**
+   * Let go of whatever is running against this vault, before it closes.
+   *
+   * The agent's sessions (D100) are the reason it exists. `VaultHost` holds
+   * exactly one `ActiveVault`, so a session left running in the vault being
+   * closed has no repo, no watcher and no sync loop behind it; and its teardown
+   * resumes the sync loop and may take a settle commit, both of which have to
+   * land in the vault it actually ran in. So this is awaited while that vault is
+   * still `active()`, ahead of the flush.
+   *
+   * Not called on a re-open of the vault that is already open — that is the
+   * renderer asking for a fresh picture, not a switch.
+   */
+  onLeave?: () => Promise<void>
   timings?: Partial<SyncTimings>
 }): VaultHost {
   let current: ActiveVault | null = null
@@ -820,6 +834,8 @@ export function createVaultHost(args: {
 
   async function closeCurrent(): Promise<void> {
     if (current === null) return
+    // First, and while this vault is still the active one: see `onLeave`.
+    await args.onLeave?.().catch((err) => console.error('[vault] leave hook failed:', err))
     const vault = current
     current = null
     // FR-6: flush before letting go. Nothing is watching this tree once the

@@ -1,7 +1,12 @@
 import { atom } from 'jotai'
 import type { ColorMode } from '@/lib/agent-notices'
 
-/** Mirrors AgentStatus in main/agent/agent-manager.ts (pushed on 'agent:status'). */
+/**
+ * The drawer's one-session view of the agent.
+ *
+ * Main pushes `agent:sessions`, a list of `SessionSummary` (D100), and preload
+ * folds it back to this until slice 2 gives the drawer a tab per session.
+ */
 export interface AgentStatus {
   running: boolean
   /** A turn is open — Claude is mid-edit somewhere in the vault. */
