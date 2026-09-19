@@ -12,7 +12,7 @@ import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { TurnReview } from '../TurnReview'
 import {
-  latestTurnAtom,
+  reviewTurnAtom,
   turnFilesAtom,
   turnReviewOpenAtom,
   type Turn,
@@ -56,7 +56,7 @@ function setup(over: { turn?: Turn | null; files?: TurnFile[] } = {}) {
   const store = createStore()
   store.set(activeRemoteAtom, 'git@github.com:syv-ai/vault.git')
   store.set(turnReviewOpenAtom, true)
-  store.set(latestTurnAtom, over.turn === undefined ? TURN : over.turn)
+  store.set(reviewTurnAtom, over.turn === undefined ? TURN : over.turn)
   store.set(turnFilesAtom, over.files ?? TWO)
   return {
     store,

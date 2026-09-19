@@ -30,6 +30,7 @@ import {
 import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom } from '@/state/vaults'
 import { SessionTerminal } from './SessionTerminal'
+import { TurnChip } from './TurnChip'
 
 /** What a session is spawned at before any tab has been measured. xterm's own
  *  native default, so the first paint is never a resize-to-catch-up. */
@@ -311,6 +312,15 @@ export function AgentPanel() {
           />
         ))}
         {sessions.length === 0 && <div className="min-h-0 flex-1 bg-background" />}
+
+        {/* Under the terminal it belongs to, not in the footer. A turn belongs
+            to a session, and one chip in the corner could not say which of
+            three sessions had just finished one. */}
+        {active !== null && (
+          <div className="shrink-0 border-t border-divider px-2 py-1">
+            <TurnChip sessionId={active.id} />
+          </div>
+        )}
       </aside>
 
       {confirming !== null && (

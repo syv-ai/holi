@@ -180,6 +180,9 @@ test('an exited session keeps its tab, and ends without a question', async () =>
   // An exit is something to read, not a tab that vanishes from under the reader.
   setup({ sessions: [session({ id: 'a', name: 'One', exited: true, state: 'working' })] })
   expect(tabs()).toEqual(['One'])
+  // And it reads as ended rather than as whatever it was doing when it died.
+  const dot = document.querySelector('[data-session-tab="a"] span[aria-hidden="true"]')
+  expect(dot?.className).toContain('bg-muted-foreground')
 
   await userEvent.click(await screen.findByLabelText('end One'))
   await waitFor(() => expect(kill).toHaveBeenCalledWith('a'))

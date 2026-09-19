@@ -26,7 +26,6 @@ import {
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { AgentPanel } from '@/features/agent/AgentPanel'
-import { TurnChip } from '@/features/agent/TurnChip'
 import { TurnReview } from '@/features/agent/TurnReview'
 import { turnReviewOpenAtom } from '@/state/turns'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
@@ -911,9 +910,6 @@ export function Shell() {
               </Button>
             </Tooltip>
           )}
-          {/* Last, so a conflict still owns this corner when there is one: a
-              turn's file count is news, and a conflict is a thing to act on. */}
-          <TurnChip />
         </div>
         {/* The vault assistant's only door outside itself (#15). ⌘J used to be
             the sole way in, and a live session was invisible once the drawer was

@@ -21,7 +21,18 @@ export interface Turn {
   end: string
   /** ISO 8601. */
   at: string
+  /** Which session ran it (D100). Absent on every record written before a vault
+   *  could run more than one, which is why those records have no chip: there is
+   *  no tab for them to sit under. One turn from any session fixes that. */
+  sessionId?: string
+  /** Another session's turn was open at the same instant, so this range contains
+   *  work this turn did not do. Absent reads as false. */
+  overlapped?: boolean
 }
+
+/** A turn IS its range, so that is what identifies one. Two sessions that shared
+ *  a settle commit share an `end` and differ only in `base`. */
+export const rangeKey = (turn: Turn): string => `${turn.base}..${turn.end}`
 
 /** One file's change across the turn. */
 export interface TurnFile {
@@ -39,7 +50,23 @@ export interface TurnDiff {
 }
 
 export const turnReviewOpenAtom = atom(false)
-export const latestTurnAtom = atom<Turn | null>(null)
+
+/**
+ * The newest turn per session, keyed by session id (D100).
+ *
+ * The log is per vault and newest-first, so this is a fold over it rather than N
+ * queries. A chip belongs to a tab, so a record that names no session has
+ * nowhere to go and is skipped.
+ */
+export const latestTurnsAtom = atom<Record<string, Turn>>({})
+
+/** How many files each turn's range touched, keyed by `rangeKey`. Each chip
+ *  needs its own count, and two chips can name the same range. */
+export const turnCountsAtom = atom<Record<string, number>>({})
+
+/** The turn the review panel is showing: whichever chip was clicked. */
+export const reviewTurnAtom = atom<Turn | null>(null)
+
 export const turnFilesAtom = atom<TurnFile[]>([])
 export const selectedTurnPathAtom = atom<string | null>(null)
 /** The selected file's diff, or null while none is picked or one is loading. */
@@ -47,11 +74,32 @@ export const turnDiffAtom = atom<TurnDiff | null>(null)
 
 // ------------------------------------------------------------------- write atoms
 
-/** The newest record, which is the turn worth reviewing. The log is already
- *  newest-first and is never re-sorted here. */
-export const loadLatestTurnAtom = atom(null, async (_get, set) => {
+/** The newest record for each session. The log is already newest-first and is
+ *  never re-sorted here, so the first record naming a session is that session's
+ *  latest. */
+export const loadLatestTurnsAtom = atom(null, async (_get, set) => {
   const turns = await trpc.turns.list.query()
-  set(latestTurnAtom, turns[0] ?? null)
+  const latest: Record<string, Turn> = {}
+  for (const turn of turns) {
+    if (turn.sessionId === undefined) continue
+    latest[turn.sessionId] ??= turn
+  }
+  set(latestTurnsAtom, latest)
+})
+
+/**
+ * How many files one turn's range touched.
+ *
+ * Cached by range rather than by session: two sessions whose turns shared a
+ * settle commit ask about two different ranges, and the same range asked twice
+ * is one query. Empty is a real answer — a range whose shas are gone is a turn
+ * whose history is gone — and the router already turns that into `[]`.
+ */
+export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
+  const key = rangeKey(turn)
+  if (get(turnCountsAtom)[key] !== undefined) return
+  const files = await trpc.turns.files.query({ base: turn.base, end: turn.end })
+  set(turnCountsAtom, (counts) => ({ ...counts, [key]: files.length }))
 })
 
 /**
@@ -60,23 +108,23 @@ export const loadLatestTurnAtom = atom(null, async (_get, set) => {
  * router already turns that into `[]` rather than an error.
  */
 export const loadTurnFilesAtom = atom(null, async (get, set) => {
-  const turn = get(latestTurnAtom)
+  const turn = get(reviewTurnAtom)
   if (turn === null) return
   const files = await trpc.turns.files.query({ base: turn.base, end: turn.end })
   // The turn may have been replaced by a newer one while this was in flight.
-  if (get(latestTurnAtom) === turn) set(turnFilesAtom, files)
+  if (get(reviewTurnAtom) === turn) set(turnFilesAtom, files)
 })
 
 /** One file's diff across the turn. */
 export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
-  const turn = get(latestTurnAtom)
+  const turn = get(reviewTurnAtom)
   if (turn === null) return
   set(selectedTurnPathAtom, path)
   set(turnDiffAtom, null)
   const diff = await trpc.turns.fileDiff.query({ base: turn.base, end: turn.end, path })
   // Two rows clicked in quick succession: the slower answer must not land on the
   // faster one's row. Same guard `history.ts` puts on its own diff load.
-  if (get(selectedTurnPathAtom) === path && get(latestTurnAtom) === turn) set(turnDiffAtom, diff)
+  if (get(selectedTurnPathAtom) === path && get(reviewTurnAtom) === turn) set(turnDiffAtom, diff)
 })
 
 /**
@@ -109,9 +157,12 @@ export const revertFileAtom = atom(
   },
 )
 
-/** Switching vault must not leave the previous one's turn under review. */
+/** Switching vault must not leave the previous one's turns on screen, nor its
+ *  counts: a range from another vault is one this git has never heard of. */
 export const resetTurnReviewAtom = atom(null, (_get, set) => {
-  set(latestTurnAtom, null)
+  set(latestTurnsAtom, {})
+  set(turnCountsAtom, {})
+  set(reviewTurnAtom, null)
   set(turnFilesAtom, [])
   set(selectedTurnPathAtom, null)
   set(turnDiffAtom, null)

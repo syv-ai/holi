@@ -17,7 +17,7 @@ import { Button } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useAck } from '@/lib/use-ack'
 import {
-  latestTurnAtom,
+  reviewTurnAtom,
   loadTurnDiffAtom,
   loadTurnFilesAtom,
   revertFileAtom,
@@ -39,7 +39,7 @@ const when = (iso: string) =>
 
 export function TurnReview(): React.JSX.Element | null {
   const open = useAtomValue(turnReviewOpenAtom)
-  const turn = useAtomValue(latestTurnAtom)
+  const turn = useAtomValue(reviewTurnAtom)
   const files = useAtomValue(turnFilesAtom)
   const diff = useAtomValue(turnDiffAtom)
   const selected = useAtomValue(selectedTurnPathAtom)

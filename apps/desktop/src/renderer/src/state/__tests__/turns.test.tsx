@@ -9,13 +9,16 @@
 import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
-  latestTurnAtom,
-  loadLatestTurnAtom,
+  latestTurnsAtom,
+  loadLatestTurnsAtom,
+  loadTurnCountAtom,
   loadTurnDiffAtom,
   loadTurnFilesAtom,
   resetTurnReviewAtom,
+  reviewTurnAtom,
   revertFileAtom,
   selectedTurnPathAtom,
+  turnCountsAtom,
   turnDiffAtom,
   turnFilesAtom,
 } from '../turns'
@@ -40,7 +43,7 @@ vi.mock('@/lib/trpc', () => ({
 const flushAllBuffers = vi.fn(() => Promise.resolve())
 vi.mock('@/lib/buffer-registry', () => ({ flushAllBuffers: () => flushAllBuffers() }))
 
-const TURN = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z' }
+const TURN = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z', sessionId: 'sess-a' }
 const REMOTE = 'git@github.com:syv-ai/vault.git'
 
 beforeEach(() => {
@@ -58,23 +61,45 @@ function store() {
   return s
 }
 
-test('takes the newest turn, which is the one worth reviewing', async () => {
+test('takes the newest turn PER SESSION, which is the one each tab shows', async () => {
   const s = store()
-  list.mockResolvedValue([TURN, { base: 'x', end: 'y', at: '2026-09-08T10:00:00Z' }])
-  await s.set(loadLatestTurnAtom)
-  expect(s.get(latestTurnAtom)).toEqual(TURN)
+  const older = { base: 'x', end: 'y', at: '2026-09-08T10:00:00Z', sessionId: 'sess-a' }
+  const other = { base: 'p', end: 'q', at: '2026-09-08T11:00:00Z', sessionId: 'sess-b' }
+  list.mockResolvedValue([TURN, other, older])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({ 'sess-a': TURN, 'sess-b': other })
 })
 
-test('leaves the latest turn null for a vault that has never run one', async () => {
+test('skips a record from before a vault could run two sessions', async () => {
+  // It names no session, so there is no tab for its chip to sit under. One turn
+  // from any session puts that right.
+  const s = store()
+  list.mockResolvedValue([{ base: 'x', end: 'y', at: '2026-09-08T10:00:00Z' }])
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({})
+})
+
+test('leaves the map empty for a vault that has never run a turn', async () => {
   const s = store()
   list.mockResolvedValue([])
-  await s.set(loadLatestTurnAtom)
-  expect(s.get(latestTurnAtom)).toBeNull()
+  await s.set(loadLatestTurnsAtom)
+  expect(s.get(latestTurnsAtom)).toEqual({})
+})
+
+test('counts a turn’s files once per range, however often it is asked', async () => {
+  // Two sessions that shared a settle commit share an `end` and differ only in
+  // `base`, so the range is the identity and the same range asked twice is one
+  // query.
+  const s = store()
+  await s.set(loadTurnCountAtom, TURN)
+  await s.set(loadTurnCountAtom, TURN)
+  expect(files).toHaveBeenCalledTimes(1)
+  expect(s.get(turnCountsAtom)).toEqual({ 'aaa..bbb': 1 })
 })
 
 test('lists what the turn changed', async () => {
   const s = store()
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   expect(files).toHaveBeenCalledWith({ base: 'aaa', end: 'bbb' })
   expect(s.get(turnFilesAtom)).toHaveLength(1)
@@ -92,14 +117,14 @@ test('an unreachable range is an empty file list, not a throw', async () => {
   // be handed an error.
   const s = store()
   files.mockResolvedValue([])
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   expect(s.get(turnFilesAtom)).toEqual([])
 })
 
 test('loads the diff for the file that was picked', async () => {
   const s = store()
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnDiffAtom, 'a.md')
   expect(fileDiff).toHaveBeenCalledWith({ base: 'aaa', end: 'bbb', path: 'a.md' })
   expect(s.get(selectedTurnPathAtom)).toBe('a.md')
@@ -109,7 +134,7 @@ test('loads the diff for the file that was picked', async () => {
 test('does not stamp one file’s diff over another’s', async () => {
   // Two rows clicked in quick succession: the slower answer must not win.
   const s = store()
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   let releaseSlow: (v: unknown) => void = () => {}
   fileDiff.mockImplementationOnce(() => new Promise((r) => (releaseSlow = r)))
   const slow = s.set(loadTurnDiffAtom, 'slow.md')
@@ -123,7 +148,7 @@ test('does not stamp one file’s diff over another’s', async () => {
 
 test('reverting writes the resolved text and re-asks what is left', async () => {
   const s = store()
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   files.mockClear()
   await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
@@ -142,11 +167,17 @@ test('reverting does nothing without a vault', async () => {
 test('a reset clears the last turn off the screen', async () => {
   // Switching vault must not leave the previous one's turn under review.
   const s = store()
-  await s.set(loadLatestTurnAtom)
+  s.set(reviewTurnAtom, TURN)
   await s.set(loadTurnFilesAtom)
   await s.set(loadTurnDiffAtom, 'a.md')
+  await s.set(loadLatestTurnsAtom)
+  await s.set(loadTurnCountAtom, TURN)
   s.set(resetTurnReviewAtom)
-  expect(s.get(latestTurnAtom)).toBeNull()
+  expect(s.get(reviewTurnAtom)).toBeNull()
+  expect(s.get(latestTurnsAtom)).toEqual({})
+  // The counts go too: a range from the vault you just left is one this git has
+  // never heard of.
+  expect(s.get(turnCountsAtom)).toEqual({})
   expect(s.get(turnFilesAtom)).toEqual([])
   expect(s.get(selectedTurnPathAtom)).toBeNull()
   expect(s.get(turnDiffAtom)).toBeNull()

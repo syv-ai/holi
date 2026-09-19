@@ -1,14 +1,18 @@
 /**
- * The footer's word on what the agent's last turn changed (D88, #4).
+ * What one session's last turn changed (D88, #4).
  *
- * Once the drawer is closed this is the only thing that says a turn happened at
- * all, which is the same gap #15 closed for a running session. It is a count and
- * a door, nothing more: what changed is the panel's job.
+ * It sits under its own tab's terminal, because a turn belongs to a session and
+ * a vault runs several (D100). It used to be in the footer, where it was the
+ * only thing that said a turn had happened at all once the drawer was shut — a
+ * job the sidebar's Sessions section now does better, and one a single chip
+ * could not do honestly for three sessions anyway.
  *
- * **A turn ENDING is the event.** `agent:status` already pushes on every
- * `setTurnActive`, so this watches `working` go true → false rather than polling
- * for a record. Reloading while it is still true would read the previous turn,
- * because the record for this one is written in that same handler.
+ * It is a count and a door, nothing more: what changed is `TurnReview`'s job.
+ *
+ * **A turn ENDING is the event.** `agent:sessions` pushes on every bracket, so
+ * this watches its own session's state leave `working` rather than polling for a
+ * record. Reloading while it is still working would read the previous turn,
+ * because the record for this one is written as the bracket closes.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
@@ -16,52 +20,31 @@ import { useAck } from '@/lib/use-ack'
 import { Button, Tooltip } from '@/primitives'
 import { agentSessionsAtom } from '@/state/agent'
 import {
-  latestTurnAtom,
-  loadLatestTurnAtom,
-  loadTurnFilesAtom,
-  resetTurnReviewAtom,
-  turnFilesAtom,
+  latestTurnsAtom,
+  loadLatestTurnsAtom,
+  loadTurnCountAtom,
+  rangeKey,
+  reviewTurnAtom,
+  turnCountsAtom,
   turnReviewOpenAtom,
 } from '@/state/turns'
-import { activeRemoteAtom } from '@/state/vaults'
 
-export function TurnChip(): React.JSX.Element | null {
-  // Any session working. Task 2.4 makes the chip per session; until then the
-  // footer's one chip follows the set, which is what it has always shown.
-  const working = useAtomValue(agentSessionsAtom).some((s) => s.state === 'working')
-  const turn = useAtomValue(latestTurnAtom)
-  const files = useAtomValue(turnFilesAtom)
-  const loadLatest = useSetAtom(loadLatestTurnAtom)
-  const loadFiles = useSetAtom(loadTurnFilesAtom)
+export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Element | null {
+  const working =
+    useAtomValue(agentSessionsAtom).find((s) => s.id === sessionId)?.state === 'working'
+  const turn = useAtomValue(latestTurnsAtom)[sessionId] ?? null
+  const counts = useAtomValue(turnCountsAtom)
+  const loadLatest = useSetAtom(loadLatestTurnsAtom)
+  const loadCount = useSetAtom(loadTurnCountAtom)
+  const setReviewTurn = useSetAtom(reviewTurnAtom)
   const setOpen = useSetAtom(turnReviewOpenAtom)
-  const reset = useSetAtom(resetTurnReviewAtom)
-  const remote = useAtomValue(activeRemoteAtom)
   const wasWorking = useRef(working)
-  const lastRemote = useRef(remote)
   const { ref: chipRef, ack } = useAck<HTMLButtonElement>()
   const acked = useRef<string | null>(null)
 
-  /**
-   * A vault SWITCH clears the review and closes it.
-   *
-   * The record is per vault and this component outlives the switch, so without
-   * this the footer would offer the previous vault's turn — and opening it would
-   * ask the NEW vault's git for a range it has never heard of. The chip is the
-   * always-mounted owner of this lifecycle; the panel only renders what it finds.
-   *
-   * The edge and not the level, like the turn flag below: on mount there is
-   * nothing to clear, and clearing anyway would throw away a record that has
-   * just been loaded.
-   */
-  useEffect(() => {
-    if (lastRemote.current === remote) return
-    lastRemote.current = remote
-    reset()
-    setOpen(false)
-  }, [remote, reset, setOpen])
-
-  // On mount, and on each turn that ends. The edge, not the level: `working`
-  // stays false between turns and this must not re-ask on every unrelated push.
+  // On mount, and on each turn this session ends. The edge, not the level:
+  // `working` stays false between turns and this must not re-ask on every
+  // unrelated push.
   useEffect(() => {
     const ended = wasWorking.current && !working
     wasWorking.current = working
@@ -72,39 +55,53 @@ export function TurnChip(): React.JSX.Element | null {
   /**
    * Acknowledge: a turn that has just landed gets one beat.
    *
-   * Keyed on the turn's end sha rather than on `working` going false, because
-   * the record loads asynchronously AFTER the turn ends — at the moment of that
-   * edge this chip may still be rendering `null`, and there would be no node to
+   * Keyed on the turn's range rather than on `working` going false, because the
+   * record loads asynchronously AFTER the turn ends — at the moment of that edge
+   * this chip may still be rendering `null`, and there would be no node to
    * acknowledge on. The first record seen is deliberately silent: opening a
    * vault that already has a turn behind it is not an event.
    */
   useEffect(() => {
     if (turn === null) return
-    if (acked.current !== null && acked.current !== turn.end) ack('bloom')
-    acked.current = turn.end
+    const key = rangeKey(turn)
+    if (acked.current !== null && acked.current !== key) ack('bloom')
+    acked.current = key
   }, [turn, ack])
 
-  // The count comes from the range, so the files follow the record.
+  // The count comes from the range, so it follows the record.
   useEffect(() => {
-    if (turn !== null) void loadFiles()
-  }, [turn, loadFiles])
+    if (turn !== null) void loadCount(turn)
+  }, [turn, loadCount])
 
-  // A turn with no reachable files has nothing to open onto. The panel has
-  // something to say about that state; the footer does not.
-  if (turn === null || files.length === 0) return null
+  const count = turn === null ? undefined : counts[rangeKey(turn)]
+  // A turn with no reachable files has nothing to open onto, and a count that
+  // has not arrived yet has nothing to say. `TurnReview` has something to say
+  // about the first state; a chip does not.
+  if (turn === null || count === undefined || count === 0) return null
 
-  const count = `${files.length} ${files.length === 1 ? 'file' : 'files'}`
+  const files = `${count} ${count === 1 ? 'file' : 'files'}`
   return (
-    <Tooltip content="See what the assistant's last turn changed, and take any of it back">
+    <Tooltip
+      content={
+        turn.overlapped === true
+          ? 'See what this turn changed. Another session was working at the same time, so the range holds its edits too — they shared one settle commit and cannot be told apart by git.'
+          : "See what this session's last turn changed, and take any of it back"
+      }
+    >
       <Button
         ref={chipRef}
         variant="link"
-        // The footer is `text-xs`; Button's own `text-sm font-medium` would put
-        // this a size and a weight above everything around it.
-        className="h-auto shrink-0 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-        onClick={() => setOpen(true)}
+        data-turn-chip={sessionId}
+        className="h-auto shrink-0 justify-start p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
+        onClick={() => {
+          setReviewTurn(turn)
+          setOpen(true)
+        }}
       >
-        Claude changed {count}
+        Claude changed {files}
+        {turn.overlapped === true && (
+          <span className="text-muted-foreground"> · overlapped another session</span>
+        )}
       </Button>
     </Tooltip>
   )
