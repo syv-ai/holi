@@ -1,34 +1,48 @@
 /**
- * Session orchestration: owns the one live `claude` session — its PTY, its
- * terminal mirror, and the focus file the per-turn hook reads — and ties it to
- * the active vault.
+ * Session orchestration: owns the vault's live `claude` sessions — each one's
+ * PTY, its terminal mirror, its bearers — and ties them to the active vault.
+ *
+ * **A vault runs any number of them (D100).** What used to be one session and a
+ * restart is now a map: `start` adds, `kill` removes the one it is given, and
+ * every route in and out carries the session's id. The three things that stay
+ * singular are the ones that belong to the *vault* rather than to a session: the
+ * focus file the per-turn hook reads, the sync pause (which the turn coordinator
+ * owns), and the Claude Code config directory D86 gave each vault.
+ *
+ * **Holi does not decide what a session is doing.** Whether one is working,
+ * waiting for you, or idle, and what it is called, are facts Claude Code
+ * maintains and publishes; `session-registry.ts` reads them and this module
+ * joins them to its own sessions by pid. The hook bracket stays as the floor
+ * under that join, because a missing or slow CLI must still report a live turn —
+ * and because the sync pause has a deadline a watcher cannot meet.
  *
  * Pure Claude Code (prd/agent.md): no MCP surface, no built system prompt, no
  * turn protocol, no presence. The agent's whole surface is its native tools on
  * the vault's files; Holi's only per-turn injection is the focused-note line,
- * written by the focus writer. The vault coupling is a single `VaultHost.active()`
- * read — the clone dir is the cwd, and its being a real git repo is why the
- * agent can run git against it directly.
+ * written by the focus writer.
  *
  * NOTE: no runtime `electron` import (types only). The window arrives through
  * `getWindow()`, so this module loads under vitest.
  */
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { BrowserWindow } from 'electron'
 import { AGENT_CONFIG_FILES } from '@holi/shared'
-import type { ActiveVault, VaultHost } from '../vault/active-vault'
+import type { VaultHost } from '../vault/active-vault'
 import type { TurnLog } from './turn-log'
 import {
   AgentRuntime,
   buildAgentArgs,
   buildAgentEnv,
   resolveClaudeBin,
+  sessionName,
   type SpawnPty,
 } from './agent-runtime'
 import type { AgentConfigResolution } from './agent-config-dir'
 import { ContextSnapshot, type FocusInput } from './context-snapshot'
+import type { SessionRegistry, SessionRow } from './session-registry'
+import { createTurnCoordinator, type TurnCoordinator } from './turn-coordinator'
 import { TerminalMirror } from './terminal-mirror'
 
 /**
@@ -54,17 +68,43 @@ const SIGN_IN_NOTICE =
   'Each vault keeps its own Claude Code config, so signing in here\r\n' +
   'does not touch your other vaults.\x1b[0m\r\n\r\n'
 
-export interface AgentStatus {
-  running: boolean
-  /** A turn is open — Claude is mid-turn. Driven by the hook server's turn
-   *  bracket (UserPromptSubmit → true, Stop → false), NOT by parsing PTY output. */
-  working: boolean
-  /** A synced agent-config file (`AGENT_CONFIG_FILES`) changed on disk since this
-   *  session launched, so the live agent is running against stale config until it
-   *  restarts. Detected by fingerprinting those files at spawn and re-checking on
-   *  each vault change; sticky until a restart, which is what actually re-reads
-   *  config. Drives the AgentPanel's "shared config changed; restart" nudge. */
+/**
+ * What a session is called before it has a name of its own.
+ *
+ * Claude Code gives an unnamed session a placeholder built from its cwd, which
+ * is the **same string for every session in one vault** — so showing it would
+ * label three tabs identically. See `deriveName` for how the two are told apart.
+ */
+const NEW_SESSION = 'New session'
+
+/** How long after an `idle` reading to take the second one that confirms it.
+ *  A quiet session produces no watcher edge, so nothing else would. */
+const IDLE_RECHECK_MS = 1_100
+
+export type SessionState = 'needs-you' | 'working' | 'idle'
+
+export interface SessionSummary {
+  id: string
+  /**
+   * The registry's name when it is a real one, else 'New session'. It is real if
+   * Holi passed `--name` at spawn, or if the row's name has changed since the
+   * first read after that spawn, which is what a `/name` looks like from
+   * outside. The listing does not carry `nameSource` (2.1.278), so that
+   * inference is the discriminator until it does.
+   */
+  name: string
+  state: SessionState
+  /** Present only for 'needs-you': the registry's reason, e.g. 'permission
+   *  prompt'. Absent when the listing says `waiting` without saying why. */
+  waitingFor?: string
+  /** A synced agent-config file (`AGENT_CONFIG_FILES`) changed on disk since
+   *  this session launched, so it is running against stale config until it
+   *  restarts. Sticky until then, which is what actually re-reads config. */
   configStale: boolean
+  /** Its PTY is gone. The session stays in the list — and keeps its scrollback —
+   *  until someone closes it, so an exit is something you can read rather than a
+   *  tab that vanishes. */
+  exited: boolean
 }
 
 export interface AgentManagerDeps {
@@ -83,8 +123,9 @@ export interface AgentManagerDeps {
   hookPort?: () => number | null
   /** Mint the hook bearer for **this vault, this session**, and revoke it on
    *  teardown — the same reason as the Google one: the ops behind it act on a
-   *  vault's files, and a session outlives a vault switch. */
-  mintHookToken?: (remote: string) => string | null
+   *  vault's files, and a session outlives a vault switch. The session id is
+   *  what a turn signal on that token reports back. */
+  mintHookToken?: (remote: string, sessionId: string) => string | null
   revokeHookToken?: (token: string) => void
   /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
    *  Default 600000 (10 min). */
@@ -95,6 +136,10 @@ export interface AgentManagerDeps {
    *  tests that do not care, and absent means no recording rather than a broken
    *  one. */
   turnLogFor?: (vaultRoot: string) => TurnLog
+  /** Claude Code's own session listing (D100), joined to these sessions by pid.
+   *  Absent leaves every session's state to the hook bracket alone, which is the
+   *  floor this join sits on rather than a fallback bolted beside it. */
+  sessionRegistry?: SessionRegistry
   /** Find-only typst path for the child's `$TYPST_BIN` (the md-to-pdf skill).
    *  No download — the resolver only looks. Null when typst isn't installed. */
   resolveTypstBin?: () => Promise<string | null>
@@ -137,32 +182,41 @@ export interface AgentManagerDeps {
 }
 
 export interface AgentManager {
+  /** Add a session. Serialised against every other `start`, see `spawnChain`. */
   start(args: {
     vaultId: string
+    /** What to call it — Claude Code's own `--name`, normalised into argv. */
+    name?: string
     resume?: boolean
     cols?: number
     rows?: number
     /** Seed the interactive session's first turn (the reconcile flow). */
     prompt?: string
-  }): Promise<{ ok: true }>
-  write(data: string): void
-  resize(cols: number, rows: number): void
-  kill(): Promise<{ ok: true }>
-  /** Renderer (re)attach: replayable terminal state, and open the data tap. */
-  attach(): Promise<string>
+  }): Promise<{ ok: true; id: string }>
+  write(id: string, data: string): void
+  resize(id: string, cols: number, rows: number): void
+  /** End one session and drop it from the list. Unknown ids are a no-op. */
+  kill(id: string): Promise<{ ok: true }>
+  /** Renderer (re)attach to one session: replayable terminal state, and open
+   *  that session's data tap. */
+  attach(id: string): Promise<string>
+  /** The focus file is the VAULT's, so this takes no session. No-op before a
+   *  vault has had one. */
   setFocus(focus: FocusInput): void
-  /** Turn bracket from the hook server: true on UserPromptSubmit, false on Stop.
-   *  Drives the vault pause/resume and status().working. No-op with no session. */
-  setTurnActive(active: boolean): void
+  /** Turn bracket from the hook server for one session (UserPromptSubmit → true,
+   *  Stop → false). Handed to the coordinator, which owns the vault's pause. */
+  setTurnActive(sessionId: string, active: boolean): void
   /** The vault's files changed on disk (wired to the host's snapshot signal).
-   *  Re-fingerprints the agent-config files and flips `configStale` if a synced
-   *  one changed under the live session. No-op with no session, or once stale. */
+   *  Re-fingerprints each live session's agent-config files against its own
+   *  root and flips its `configStale`. */
   notifyVaultChanged(): Promise<void>
-  status(): AgentStatus
+  /** Every session, in the order they were started. */
+  sessions(): SessionSummary[]
   dispose(): Promise<void>
 }
 
 interface Session {
+  id: string
   vaultId: string
   /** The bearers minted for this session, revoked when it ends. */
   googleToken: string | null
@@ -170,9 +224,28 @@ interface Session {
   /** The clone dir the session launched in — the root its config fingerprint is
    *  read from. Held so a vault switch can't point the check at the wrong tree. */
   root: string
+  /** The Claude Code config directory it runs on, which is also the directory
+   *  its row is listed in. Null when the resolver was absent or failed. */
+  configDir: string | null
   runtime: AgentRuntime
   mirror: TerminalMirror
-  snapshot: ContextSnapshot
+  /** False until a renderer has taken this session's terminal state: PTY output
+   *  goes to the mirror only, so nothing is streamed to a window that can't show
+   *  it — and nothing arrives twice on attach. */
+  attached: boolean
+  /** The normalised `--name` Holi passed, or null. Half of `deriveName`. */
+  nameAtSpawn: string | null
+  /** The row's name at the first listing that saw this session. A later change
+   *  to it is what a `/name` looks like from outside. */
+  firstSeenName: string | null
+  /** The last name derived from a row. Held so a session keeps its label when
+   *  the listing stops carrying it — after it exits, or across a read that
+   *  failed — rather than flapping back to 'New session'. */
+  lastName: string | null
+  /** A content fingerprint of the agent-config files this session loaded. */
+  configBaseline: string | null
+  configStale: boolean
+  exited: boolean
 }
 
 /**
@@ -196,168 +269,227 @@ async function fingerprintAgentConfig(root: string): Promise<string> {
   return h.digest('hex')
 }
 
+/**
+ * Which of the two names a row is carrying.
+ *
+ * The listing gives one `name` field and does not say where it came from, so the
+ * caller has to know another way. It knows two things the listing does not: it
+ * spawned the session, so it knows whether it passed `--name`; and it has seen
+ * the row before, so a name that has since changed can only be a `/name` typed
+ * inside the session. Anything else is the cwd placeholder, which is identical
+ * across the vault's sessions and therefore not a label.
+ */
+function deriveName(session: Session, row: SessionRow | undefined): string {
+  if (row === undefined || row.name === '') {
+    return session.lastName ?? session.nameAtSpawn ?? NEW_SESSION
+  }
+  // The day the command starts emitting `nameSource`, the inference below stops
+  // being needed and this line is the whole answer.
+  if (row.nameSource !== undefined) return row.nameSource === 'user' ? row.name : NEW_SESSION
+  if (session.nameAtSpawn !== null) return row.name
+  if (session.firstSeenName !== null && row.name !== session.firstSeenName) return row.name
+  return NEW_SESSION
+}
+
 export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   const log = deps.log ?? ((msg: string) => console.log(`[agent] ${msg}`))
   const resolveBin = deps.resolveBin ?? (() => resolveClaudeBin())
 
-  let session: Session | null = null
-  /** False until a renderer has taken the terminal state: PTY output goes to
-   * the mirror only, so nothing is streamed to a window that can't show it —
-   * and nothing arrives twice on attach. */
-  let attached = false
-
-  const turnSafetyMs = deps.turnSafetyMs ?? 600_000
-  let working = false
-  /** Set once a synced config file changes under the live session; sticky until
-   *  a restart clears it. `configBaseline` is the fingerprint captured at spawn. */
-  let configStale = false
-  let configBaseline: string | null = null
-  let safetyTimer: ReturnType<typeof setTimeout> | null = null
-  const clearSafety = () => {
-    if (safetyTimer) {
-      clearTimeout(safetyTimer)
-      safetyTimer = null
-    }
-  }
+  /** Insertion-ordered, which is spawn order, which is tab order. */
+  const sessions = new Map<string, Session>()
+  /** The latest listing, keyed by pid. Empty until the first read, and empty
+   *  for as long as the CLI cannot answer. */
+  let rows = new Map<number, SessionRow>()
+  /** One watcher per config directory, re-established on each spawn: a vault
+   *  that has never run an agent has no `sessions/` to watch until it does. */
+  const watchers = new Map<string, () => void>()
+  let idleRecheck: ReturnType<typeof setTimeout> | null = null
+  /** The last list pushed, so a heartbeat that moves no derived field is not a
+   *  render. The rows carry fields that move on their own. */
+  let lastPushed = ''
 
   const send = (channel: string, payload: unknown) => {
     deps.getWindow()?.webContents.send(channel, payload)
   }
 
-  const status = (): AgentStatus => ({
-    running: session !== null,
-    working,
-    configStale,
+  const summarise = (session: Session): SessionSummary => {
+    const pid = session.runtime.pid
+    const row = pid === null ? undefined : rows.get(pid)
+    // In this order, and the hook bracket is the FLOOR: a listing that is
+    // missing, slow or too old to answer must still show a live turn as working.
+    let state: SessionState = 'idle'
+    if (row !== undefined && (row.status === 'waiting' || row.waitingFor !== undefined)) {
+      state = 'needs-you'
+    } else if (row?.status === 'busy' || row?.status === 'shell') {
+      state = 'working'
+    } else if (coordinator.working.has(session.id)) {
+      state = 'working'
+    }
+    return {
+      id: session.id,
+      name: deriveName(session, row),
+      state,
+      ...(state === 'needs-you' && row?.waitingFor !== undefined
+        ? { waitingFor: row.waitingFor }
+        : {}),
+      configStale: session.configStale,
+      exited: session.exited,
+    }
+  }
+
+  const list = (): SessionSummary[] => [...sessions.values()].map(summarise)
+
+  /** Push only when the derived list actually changed. */
+  const pushSessions = () => {
+    const next = list()
+    const encoded = JSON.stringify(next)
+    if (encoded === lastPushed) return
+    lastPushed = encoded
+    send('agent:sessions', next)
+  }
+
+  const coordinator: TurnCoordinator = createTurnCoordinator({
+    activeVault: () => deps.host.active(),
+    ...(deps.turnLogFor === undefined ? {} : { turnLogFor: deps.turnLogFor }),
+    ...(deps.turnSafetyMs === undefined ? {} : { turnSafetyMs: deps.turnSafetyMs }),
+    onChange: () => pushSessions(),
+    log,
   })
 
-  const pushStatus = () => send('agent:status', status())
+  /**
+   * Re-read Claude Code's listing for every directory a live session runs in,
+   * and re-derive from it.
+   *
+   * Never rejects and never blocks anything: the registry answers an empty map
+   * for every failure, and the worst case is a card that keeps saying what the
+   * hook bracket says.
+   */
+  async function refreshRows(): Promise<void> {
+    const registry = deps.sessionRegistry
+    if (registry === undefined) return
+    // One read per (directory, root) pair rather than per session: D86 gives a
+    // vault one config directory, so its sessions are all in the same listing.
+    const groups = new Map<string, { configDir: string; vaultRoot: string }>()
+    for (const session of sessions.values()) {
+      if (session.exited || session.configDir === null) continue
+      groups.set(`${session.configDir}\u0000${session.root}`, {
+        configDir: session.configDir,
+        vaultRoot: session.root,
+      })
+    }
+    const next = new Map<number, SessionRow>()
+    for (const group of groups.values()) {
+      for (const [pid, row] of await registry.readRows(group)) next.set(pid, row)
+    }
+    rows = next
+
+    let wantsRecheck = false
+    for (const session of sessions.values()) {
+      const pid = session.runtime.pid
+      const row = pid === null ? undefined : rows.get(pid)
+      if (row === undefined) continue
+      // The baseline for the `/name` inference: the name this session was listed
+      // under the first time we saw it.
+      if (session.firstSeenName === null) session.firstSeenName = row.name
+      session.lastName = deriveName(session, row)
+      if (row.status !== 'idle') continue
+      // Claude Code says this session has no turn. The coordinator wants that
+      // confirmed by a second reading, and a quiet session produces no watcher
+      // edge, so the second reading has to be asked for.
+      if (!coordinator.working.has(session.id)) continue
+      coordinator.noteIdle(session.id)
+      // Still mid-turn: that was the first of the two readings, so ask for the
+      // second. One session wanting it is enough for all of them.
+      if (coordinator.working.has(session.id)) wantsRecheck = true
+    }
+    if (wantsRecheck && idleRecheck === null) {
+      idleRecheck = setTimeout(() => {
+        idleRecheck = null
+        void refreshRows()
+      }, IDLE_RECHECK_MS)
+    }
+    pushSessions()
+  }
+
+  /** Watch a config directory's session state, replacing any earlier watch on
+   *  it — the directory may not have existed when we last tried. */
+  function watchConfigDir(configDir: string): void {
+    const registry = deps.sessionRegistry
+    if (registry === undefined) return
+    watchers.get(configDir)?.()
+    watchers.set(
+      configDir,
+      registry.watch(configDir, () => {
+        void refreshRows()
+      }),
+    )
+  }
 
   /**
-   * Turn bracket from the hook server (UserPromptSubmit → true, Stop → false).
-   * Suspends the vault's sync loop for the turn so the two git actors never
-   * contend on `.git/index.lock`, and resumes it (a catch-up commit + pull) when
-   * the turn ends. This is the hook-driven signal that replaced slice 2's
-   * reverted PTY-activity heuristic — see the git-coexistence plan.
+   * The focus file is one path in the clone, so it has one writer per VAULT.
+   * N sessions writing the same line would be N debounced writers racing to say
+   * the same thing.
    */
-  function setTurnActive(active: boolean): void {
-    if (session === null) return // a stray/late hook must not pause an agent-less vault
-    if (active === working) return
-    working = active
-    if (active) {
-      const vault = deps.host.active()
-      // Captured BEFORE the pause. It is the same sha either way today; the
-      // ordering states the intent, which is that the base is the tree the turn
-      // started against rather than the tree it was allowed to touch.
-      captureTurnBase(vault)
-      vault?.pause('the assistant is working')
-      // Stop is not guaranteed (interrupt/crash) — cap the pause so a turn that
-      // never signals its end can't strand the vault paused.
-      clearSafety()
-      safetyTimer = setTimeout(() => setTurnActive(false), turnSafetyMs)
-    } else {
-      clearSafety()
-      // Resume BEFORE the commit: `commitAll` refuses to run while the vault
-      // reads as paused, and a turn that never resumed the vault is the failure
-      // the safety cap exists to prevent.
-      deps.host.active()?.resume()
-      // Fire and forget, and every rejection swallowed. This function answers a
-      // hook request that must return an empty body immediately, and a failed
-      // turn record must never disturb the sync resume it shares a body with.
-      void recordTurnEnd().catch((err: unknown) => log(`turn record failed: ${String(err)}`))
-    }
-    pushStatus()
+  let focusWriter: { root: string; snapshot: ContextSnapshot } | null = null
+  function ensureFocusWriter(workRoot: string): void {
+    if (focusWriter?.root === workRoot) return
+    focusWriter?.snapshot.stop()
+    focusWriter = { root: workRoot, snapshot: new ContextSnapshot({ workRoot }) }
   }
 
-  /** The turn's starting sha, and the vault it belongs to. Null between turns,
-   *  and null for a turn nobody is recording. */
-  let turnBase: { remote: string; base: string } | null = null
-  /** `head()` is async and `setTurnActive` is not, so the end of the turn waits
-   *  on the start of it rather than racing it. */
-  let turnBasePending: Promise<void> = Promise.resolve()
-
-  function captureTurnBase(vault: ActiveVault | null): void {
-    turnBase = null
-    if (vault === null || deps.turnLogFor === undefined) return
-    const remote = vault.remote
-    turnBasePending = vault.repo
-      .head()
-      .then((sha) => {
-        if (sha !== null) turnBase = { remote, base: sha }
-      })
-      .catch(() => {})
-  }
-
-  async function recordTurnEnd(): Promise<void> {
-    const turnLogFor = deps.turnLogFor
-    if (turnLogFor === undefined) return
-    await turnBasePending
-    const started = turnBase
-    turnBase = null
-    if (started === null) return
-
-    const vault = deps.host.active()
-    // The vault can be switched or closed mid-turn. Recording against whichever
-    // one is open now would attribute this turn's work to a different vault,
-    // which is the same mistake D87 caught in D86's migration.
-    if (vault === null || vault.remote !== started.remote) return
-
-    // Taken explicitly rather than observed. Waiting for the idle committer to
-    // fire on its own would make the end sha race a 3-second timer that the
-    // safety-cap path does not respect; `commitNow` returns null on a clean
-    // tree, which is the ordinary outcome of a turn that only read.
-    const end = (await vault.commitNow()) ?? (await vault.repo.head())
-    if (end === null) return
-    await turnLogFor(vault.root).append({
-      base: started.base,
-      end,
-      at: new Date().toISOString(),
-    })
-  }
-
-  async function teardown(): Promise<void> {
-    const current = session
-    if (!current) return
-    session = null // guard the double-stop: the PTY exit path tears down too
-    attached = false
-    // The next session captures its own baseline; a dead session is never stale.
-    configStale = false
-    configBaseline = null
-    clearSafety()
-    if (working) {
-      working = false
-      deps.host.active()?.resume() // never leave the vault paused behind a dead session
-    }
-    // Before the next spawn mints its own: a dead session's bearer must stop
+  /**
+   * End one session: stop its PTY, hand back its bearers, and drop it.
+   *
+   * The coordinator hears about it first, so a session that died mid-turn leaves
+   * the working set at once rather than holding the vault paused behind a
+   * process that is gone.
+   */
+  async function teardown(session: Session): Promise<void> {
+    if (!sessions.delete(session.id)) return // guard the double-stop
+    coordinator.forget(session.id)
+    // Before anything else mints its own: a dead session's bearer must stop
     // opening the door.
-    if (current.googleToken !== null) deps.revokeGoogleToken?.(current.googleToken)
-    if (current.hookToken !== null) deps.revokeHookToken?.(current.hookToken)
-    current.snapshot.stop()
-    await current.runtime.kill()
-    current.mirror.dispose()
+    if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
+    if (session.hookToken !== null) deps.revokeHookToken?.(session.hookToken)
+    await session.runtime.kill()
+    session.mirror.dispose()
+    // The last session out takes the focus writer with it, the way the vault's
+    // pause goes with the last turn.
+    if (sessions.size === 0) {
+      focusWriter?.snapshot.stop()
+      focusWriter = null
+      for (const unwatch of watchers.values()) unwatch()
+      watchers.clear()
+      if (idleRecheck !== null) {
+        clearTimeout(idleRecheck)
+        idleRecheck = null
+      }
+      rows = new Map()
+    }
   }
 
-  async function start({
-    vaultId,
-    resume,
-    cols,
-    rows,
-    prompt,
-  }: {
+  /**
+   * Spawns are serialised, one chain for the whole manager.
+   *
+   * Two concurrent ones race two unlocked read-modify-writes inside
+   * `ensureAgentConfigDir` — `settings.json` (`agent-config-dir.ts:143-146`) and
+   * the stat-then-write `takeFirstSpawn` (`:172-177`) — which loses one session's
+   * settings and prints the sign-in notice twice.
+   */
+  let spawnChain: Promise<unknown> = Promise.resolve()
+
+  async function spawn(args: {
     vaultId: string
+    name?: string
     resume?: boolean
-    /** The drawer's fitted geometry. Absent (e.g. a reconcile-seeded start with
-     *  no renderer) → node-pty and xterm use their own native 80×24. */
     cols?: number
     rows?: number
-    /** Seed the interactive session's first turn (the reconcile flow). */
     prompt?: string
-  }): Promise<{ ok: true }> {
+  }): Promise<{ ok: true; id: string }> {
     const vault = deps.host.active()
-    if (!vault || vault.remote !== vaultId) {
+    if (!vault || vault.remote !== args.vaultId) {
       throw new Error('vault is not active — open it first')
     }
-
-    await teardown() // restart semantics: one session at a time
 
     const bin = resolveBin()
     if (!bin) {
@@ -366,6 +498,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       )
     }
 
+    const id = randomUUID()
     const workRoot = vault.root
     // Find-only ($TYPST_BIN for the md-to-pdf skill) — a fast `which`, never a
     // download. Then warm the cache fire-and-forget so a machine that has never
@@ -373,7 +506,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     const typstBin = (await deps.resolveTypstBin?.()) ?? null
     deps.warmTypst?.()
     const googleToken = deps.mintGoogleToken?.(vault.remote) ?? null
-    const hookToken = deps.mintHookToken?.(vault.remote) ?? null
+    const hookToken = deps.mintHookToken?.(vault.remote, id) ?? null
     // The vault's own config directory (D86), resolved here rather than at launch
     // because the active vault moves under this manager. A failure must not cost
     // the user their agent — the same treatment `resolveTypstBin` gets.
@@ -385,32 +518,65 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     })
     // Born at the caller's geometry: the mirror and the PTY share it, so the
     // replayed state and Claude's own TUI both match the pane.
-    const terminal = new TerminalMirror(cols, rows)
+    const terminal = new TerminalMirror(args.cols ?? 80, args.rows ?? 24)
     // Into the MIRROR only, and before the PTY writes a byte, so the instruction
-    // sits above Claude's own output rather than under an Ink redraw. `teardown`
-    // ran at the head of this call and cleared `attached`, so nothing is listening
-    // yet; the renderer takes this line from `attach()`'s replay, once.
+    // sits above Claude's own output rather than under an Ink redraw. Nothing is
+    // attached to this session yet; the renderer takes this line from its
+    // `attach()` replay, once. Spawns being serialised is what keeps this to the
+    // first session in a fresh directory rather than to all of them.
     if (config?.firstSpawn) terminal.write(SIGN_IN_NOTICE)
-    const snapshot = new ContextSnapshot({ workRoot })
     const runtime = new AgentRuntime({
       spawnPty: deps.spawnPty,
       killGraceMs: deps.killGraceMs,
       killBackstopMs: deps.killBackstopMs,
     })
+    const session: Session = {
+      id,
+      vaultId: args.vaultId,
+      googleToken,
+      hookToken,
+      root: workRoot,
+      configDir: config?.dir ?? null,
+      runtime,
+      mirror: terminal,
+      attached: false,
+      nameAtSpawn: sessionName(args.name),
+      firstSeenName: null,
+      lastName: null,
+      configBaseline: null,
+      configStale: false,
+      exited: false,
+    }
     runtime.onData((data) => {
       terminal.write(data) // the mirror is the record; the renderer is a view
-      if (attached) send('agent-pty:data', data)
+      if (session.attached) send('agent-pty:data', { id, data })
     })
     runtime.onExit((e) => {
-      log(`session exited (code ${e.exitCode})`)
-      send('agent-pty:exit', { code: e.exitCode })
-      void teardown().then(pushStatus)
+      log(`session ${id} exited (code ${e.exitCode})`)
+      // The session stays in the list with its scrollback: an exit is something
+      // to read, not a tab that disappears from under the reader. It leaves the
+      // working set at once, though — nothing is going to end that turn now.
+      session.exited = true
+      session.attached = false
+      coordinator.forget(id)
+      if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
+      if (session.hookToken !== null) deps.revokeHookToken?.(session.hookToken)
+      session.googleToken = null
+      session.hookToken = null
+      send('agent-pty:exit', { id, code: e.exitCode })
+      pushSessions()
     })
 
     try {
       runtime.start({
         bin,
-        args: buildAgentArgs({ resume, prompt }), // prompt seeds the reconcile turn; no systemPrompt
+        // No systemPrompt; `prompt` seeds the reconcile turn, `name` is Claude
+        // Code's own session name and the one the tabs read back.
+        args: buildAgentArgs({
+          ...(args.name === undefined ? {} : { name: args.name }),
+          ...(args.resume === undefined ? {} : { resume: args.resume }),
+          ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
+        }),
         cwd: workRoot,
         env: buildAgentEnv(process.env, {
           hookPort: deps.hookPort?.() ?? null,
@@ -423,86 +589,118 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           binDir: deps.binDir?.() ?? null,
           configDir: config?.dir ?? null,
         }),
-        cols,
-        rows,
+        ...(args.cols === undefined ? {} : { cols: args.cols }),
+        ...(args.rows === undefined ? {} : { rows: args.rows }),
       })
     } catch (err) {
       if (googleToken !== null) deps.revokeGoogleToken?.(googleToken)
       if (hookToken !== null) deps.revokeHookToken?.(hookToken)
-      snapshot.stop()
       terminal.dispose()
       throw err
     }
 
-    session = {
-      vaultId,
-      googleToken,
-      hookToken,
-      root: workRoot,
-      runtime,
-      mirror: terminal,
-      snapshot,
-    }
+    sessions.set(id, session)
+    // After the spawn took, so a failed one cannot retire a writer that another
+    // vault's sessions are still using.
+    ensureFocusWriter(workRoot)
     // Baseline the config the child just loaded, so a later change reads as stale.
-    // `teardown` (run at the head of every start) already cleared the old flag.
-    configBaseline = await fingerprintAgentConfig(workRoot)
-    pushStatus()
-    return { ok: true }
+    session.configBaseline = await fingerprintAgentConfig(workRoot)
+    // The directory exists now even if it did not a moment ago, so this is where
+    // a watch that failed for a never-used vault finally takes.
+    if (session.configDir !== null) watchConfigDir(session.configDir)
+    pushSessions()
+    void refreshRows()
+    return { ok: true, id }
   }
 
   /**
    * A vault file changed on disk (wired to the host's snapshot signal). Re-check
-   * the config fingerprint; if a synced agent-config file moved since spawn, the
-   * live agent is stale until it restarts. Cheap and skipped once already stale
-   * (sticky) or with no session — a handful of small reads on a change that is
-   * already debounced upstream by the watcher.
+   * each live session's config fingerprint against **its own root**; if a synced
+   * agent-config file moved since that session launched, it is running stale
+   * until it restarts. Cheap and skipped once already stale (sticky).
    */
   async function notifyVaultChanged(): Promise<void> {
-    if (session === null || configStale || configBaseline === null) return
-    const current = await fingerprintAgentConfig(session.root)
-    // The session may have died during the await; only a still-live, still-fresh
-    // one flips.
-    if (session === null || configStale) return
-    if (current !== configBaseline) {
-      configStale = true
-      pushStatus()
+    const candidates = [...sessions.values()].filter(
+      (s) => !s.exited && !s.configStale && s.configBaseline !== null,
+    )
+    if (candidates.length === 0) return
+    // One read per distinct root, not per session: they are usually all the same
+    // vault, and the fingerprint is a handful of small file reads.
+    const prints = new Map<string, string>()
+    for (const root of new Set(candidates.map((s) => s.root))) {
+      prints.set(root, await fingerprintAgentConfig(root))
     }
-  }
-
-  /**
-   * A renderer is taking over the terminal. Serialize BEFORE opening the tap:
-   * a chunk that lands mid-serialize goes to the mirror only and repaints on
-   * the next output — it is never both replayed and streamed.
-   */
-  async function attach(): Promise<string> {
-    if (!session) return ''
-    const state = await session.mirror.serialize()
-    attached = true
-    return state
+    let changed = false
+    for (const session of candidates) {
+      // A session may have died during the await; only a still-live, still-fresh
+      // one flips.
+      if (!sessions.has(session.id) || session.exited || session.configStale) continue
+      if (prints.get(session.root) !== session.configBaseline) {
+        session.configStale = true
+        changed = true
+      }
+    }
+    if (changed) pushSessions()
   }
 
   return {
-    start,
-    attach,
-    write: (data) => session?.runtime.write(data),
-    resize: (cols, rows) => {
-      if (!session) return
+    start(args) {
+      // Every start queues behind every other one, failures included: the chain
+      // is about the config directory's unlocked writes, not about success.
+      const run = spawnChain.then(
+        () => spawn(args),
+        () => spawn(args),
+      )
+      spawnChain = run.catch(() => {})
+      return run
+    },
+
+    /**
+     * A renderer is taking over one session's terminal. Serialize BEFORE opening
+     * the tap: a chunk that lands mid-serialize goes to the mirror only and
+     * repaints on the next output — it is never both replayed and streamed.
+     */
+    async attach(id) {
+      const session = sessions.get(id)
+      if (session === undefined) return ''
+      const state = await session.mirror.serialize()
+      if (!session.exited) session.attached = true
+      return state
+    },
+
+    write: (id, data) => sessions.get(id)?.runtime.write(data),
+
+    resize: (id, cols, rows) => {
+      const session = sessions.get(id)
+      if (session === undefined) return
       session.runtime.resize(cols, rows)
       session.mirror.resize(cols, rows) // the record reflows with the view
     },
-    kill: async () => {
-      await teardown()
-      pushStatus()
+
+    kill: async (id) => {
+      const session = sessions.get(id)
+      if (session !== undefined) await teardown(session)
+      pushSessions()
       return { ok: true }
     },
-    // Focus is session-bound: the hook only matters while a session runs, and the
-    // writer targets the session's clone. Before a session starts this no-ops.
-    setFocus: (focus) => session?.snapshot.setFocus(focus),
-    setTurnActive,
+
+    // The focus file is the vault's, so this takes no session. Before any
+    // session has run in a vault there is no writer, and this no-ops.
+    setFocus: (focus) => focusWriter?.snapshot.setFocus(focus),
+
+    setTurnActive: (sessionId, active) => {
+      // A stray or late hook must not pause a vault on behalf of a session that
+      // is gone — the token is revoked with the session, so this is belt only.
+      if (!sessions.has(sessionId)) return
+      if (active) coordinator.begin(sessionId)
+      else coordinator.end(sessionId)
+    },
+
     notifyVaultChanged,
-    status,
+    sessions: list,
+
     dispose: async () => {
-      await teardown()
+      for (const session of [...sessions.values()]) await teardown(session)
     },
   }
 }

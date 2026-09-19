@@ -46,12 +46,53 @@ const onHeldBack = pushChannel<unknown>('vault:heldback')
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
-/** PTY bytes for the drawer's xterm to decode. */
-const onAgentData = pushChannel<Uint8Array | string>('agent-pty:data')
-/** The session ended. */
-const onAgentExit = pushChannel<{ code: number }>('agent-pty:exit')
-/** running / working / configStale — the header dot + the stale-config hint. */
-const onAgentStatus = pushChannel<unknown>('agent:status')
+/** PTY bytes for the drawer's xterm to decode, and which session produced them. */
+const onAgentData = pushChannel<{ id: string; data: Uint8Array | string }>('agent-pty:data')
+/** One session ended. */
+const onAgentExit = pushChannel<{ id: string; code: number }>('agent-pty:exit')
+/** Every session of the open vault, whenever the derived list changes. */
+const onAgentSessions = pushChannel<AgentSessionSummary[]>('agent:sessions')
+
+/** Mirrors `SessionSummary` in main/agent/agent-manager.ts. */
+interface AgentSessionSummary {
+  id: string
+  name: string
+  state: 'needs-you' | 'working' | 'idle'
+  waitingFor?: string
+  configStale: boolean
+  exited: boolean
+}
+
+/**
+ * **The one-session adapter, and the whole of what D100's slice 1 costs the
+ * renderer.**
+ *
+ * Main now speaks in session ids on every agent route. The drawer still shows
+ * one session and calls `write(data)`, `kill()`, `attach()` with no address,
+ * because the tab strip that would give it one is slice 2. So this remembers
+ * which session the drawer is looking at — the one it started, or the first one
+ * running when it reattaches after a reload — and addresses main's routes with
+ * it. Slice 2 deletes every line of this and lets the renderer name its own tab.
+ */
+let currentSessionId: string | null = null
+
+const listSessions = (): Promise<AgentSessionSummary[]> =>
+  ipcRenderer.invoke('agent:sessions') as Promise<AgentSessionSummary[]>
+
+const currentSession = async (): Promise<string | null> => {
+  if (currentSessionId !== null) return currentSessionId
+  currentSessionId = (await listSessions())[0]?.id ?? null
+  return currentSessionId
+}
+
+/** The list, folded back into the single status the drawer still renders.
+ *  `working` is anything that is not idle: a session waiting on a permission
+ *  prompt held the turn bracket open before the listing could say why. */
+const foldStatus = (list: AgentSessionSummary[]) => ({
+  running: list.some((s) => !s.exited),
+  working: list.some((s) => !s.exited && s.state !== 'idle'),
+  configStale: list.some((s) => !s.exited && s.configStale),
+})
 
 /** A reminder fired and its notification was clicked — open this task, switching
  * vaults first if it lives in another one. Carries `remote` so the renderer's
@@ -107,16 +148,53 @@ contextBridge.exposeInMainWorld('holi', {
   /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
   chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('holi:chooseFolder'),
   agent: {
-    onData: onAgentData,
-    onExit: onAgentExit,
-    onStatus: onAgentStatus,
-    attach: (): Promise<string> => ipcRenderer.invoke('agent:attach'),
-    status: () => ipcRenderer.invoke('agent:status'),
-    start: (args: { vaultId: string; resume?: boolean; cols?: number; rows?: number; prompt?: string }) =>
-      ipcRenderer.invoke('agent-pty:start', args),
-    kill: () => ipcRenderer.invoke('agent-pty:kill'),
-    write: (data: string) => ipcRenderer.send('agent-pty:write', data),
-    resize: (cols: number, rows: number) => ipcRenderer.send('agent-pty:resize', { cols, rows }),
+    onData: (cb: (data: Uint8Array | string) => void) =>
+      onAgentData((p) => {
+        if (currentSessionId === null || p.id === currentSessionId) cb(p.data)
+      }),
+    onExit: (cb: (e: { code: number }) => void) =>
+      onAgentExit((p) => {
+        if (currentSessionId === null || p.id === currentSessionId) cb({ code: p.code })
+      }),
+    onStatus: (cb: (status: ReturnType<typeof foldStatus>) => void) =>
+      onAgentSessions((list) => cb(foldStatus(list))),
+    attach: async (): Promise<string> => {
+      const id = await currentSession()
+      return id === null ? '' : ((await ipcRenderer.invoke('agent:attach', id)) as string)
+    },
+    status: async () => foldStatus(await listSessions()),
+    start: async (args: {
+      vaultId: string
+      resume?: boolean
+      cols?: number
+      rows?: number
+      prompt?: string
+    }) => {
+      const res = (await ipcRenderer.invoke('agent-pty:start', args)) as {
+        ok: boolean
+        id?: string
+        message?: string
+      }
+      // The drawer's session from here on, including for the data tap's filter.
+      if (res.ok && res.id !== undefined) currentSessionId = res.id
+      return res
+    },
+    kill: async (): Promise<{ ok: true }> => {
+      const id = await currentSession()
+      currentSessionId = null
+      if (id === null) return { ok: true }
+      return (await ipcRenderer.invoke('agent-pty:kill', id)) as { ok: true }
+    },
+    // Synchronous on purpose: awaiting here would put two keystrokes on the
+    // microtask queue and could land them out of order.
+    write: (data: string) => {
+      if (currentSessionId !== null)
+        ipcRenderer.send('agent-pty:write', { id: currentSessionId, data })
+    },
+    resize: (cols: number, rows: number) => {
+      if (currentSessionId !== null)
+        ipcRenderer.send('agent-pty:resize', { id: currentSessionId, cols, rows })
+    },
     setFocus: (focus: { focusedPath: string | null; openPaths: string[] }) =>
       ipcRenderer.send('agent:focus', focus),
   },

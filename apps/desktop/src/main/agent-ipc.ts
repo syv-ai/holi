@@ -1,12 +1,17 @@
 /**
- * The agent's IPC seam — distinct from the tRPC seam in `ipc.ts`. The session is
- * a live byte stream: PTY data/exit and status are pushed out to the renderer by
- * the manager (`agent-pty:data`, `agent-pty:exit`, `agent:status`); keystrokes,
- * resize and focus are pushed in; start/kill/attach/status are request/response.
- * Channel names mirror prd/agent.md's wire shape.
+ * The agent's IPC seam — distinct from the tRPC seam in `ipc.ts`. A session is a
+ * live byte stream: PTY data/exit and the session list are pushed out to the
+ * renderer by the manager (`agent-pty:data`, `agent-pty:exit`, `agent:sessions`);
+ * keystrokes, resize and focus are pushed in; start/kill/attach/sessions are
+ * request/response. Channel names mirror prd/agent.md's wire shape.
+ *
+ * **Every route but focus names a session (D100).** A vault runs several, so
+ * "write to the agent" is not an address. Focus is the exception because the
+ * focus file is the vault's, one path in the clone, read by whichever session
+ * takes the next turn.
  */
 import { ipcMain } from 'electron'
-import type { AgentManager, AgentStatus } from './agent/agent-manager'
+import type { AgentManager, SessionSummary } from './agent/agent-manager'
 import type { FocusInput } from './agent/context-snapshot'
 
 export function registerAgentIpc(deps: { agent: AgentManager }): void {
@@ -18,8 +23,15 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
     'agent-pty:start',
     async (
       _e,
-      args: { vaultId: string; resume?: boolean; cols?: number; rows?: number; prompt?: string },
-    ): Promise<{ ok: boolean; message?: string }> => {
+      args: {
+        vaultId: string
+        name?: string
+        resume?: boolean
+        cols?: number
+        rows?: number
+        prompt?: string
+      },
+    ): Promise<{ ok: boolean; id?: string; message?: string }> => {
       try {
         return await agent.start(args)
       } catch (err) {
@@ -28,13 +40,15 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
     },
   )
 
-  ipcMain.handle('agent-pty:kill', () => agent.kill())
-  ipcMain.handle('agent:attach', () => agent.attach())
-  ipcMain.handle('agent:status', (): AgentStatus => agent.status())
+  ipcMain.handle('agent-pty:kill', (_e, id: string) => agent.kill(id))
+  ipcMain.handle('agent:attach', (_e, id: string) => agent.attach(id))
+  ipcMain.handle('agent:sessions', (): SessionSummary[] => agent.sessions())
 
-  ipcMain.on('agent-pty:write', (_e, data: string) => agent.write(data))
-  ipcMain.on('agent-pty:resize', (_e, size: { cols: number; rows: number }) =>
-    agent.resize(size.cols, size.rows),
+  ipcMain.on('agent-pty:write', (_e, msg: { id: string; data: string }) =>
+    agent.write(msg.id, msg.data),
+  )
+  ipcMain.on('agent-pty:resize', (_e, size: { id: string; cols: number; rows: number }) =>
+    agent.resize(size.id, size.cols, size.rows),
   )
   ipcMain.on('agent:focus', (_e, focus: FocusInput) => agent.setFocus(focus))
 }

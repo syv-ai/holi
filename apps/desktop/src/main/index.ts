@@ -497,8 +497,8 @@ async function main(): Promise<void> {
   }
 
   const hookServer = createHookServer({
-    onTurnStart: () => agent.setTurnActive(true),
-    onTurnEnd: () => agent.setTurnActive(false),
+    onTurnStart: (sessionId) => agent.setTurnActive(sessionId, true),
+    onTurnEnd: (sessionId) => agent.setTurnActive(sessionId, false),
     opsFor: (remote) =>
       createAgentOps({
       openApp: async (appId) => {
@@ -578,10 +578,9 @@ async function main(): Promise<void> {
     // What each turn changed, as a commit range, in the vault it ran in (D88).
     turnLogFor: openTurnLog,
     hookPort: () => hookServer.port(),
-    // The id is what a turn signal reports back, so several sessions in one vault
-    // stay apart. The manager still runs exactly one, and Task 1.5 is what gives
-    // it real ids to pass through here.
-    mintHookToken: (remote) => hookServer.mintSessionToken(remote, 'the-session'),
+    // The id is what a turn signal reports back, so the vault's several sessions
+    // stay apart.
+    mintHookToken: (remote, sessionId) => hookServer.mintSessionToken(remote, sessionId),
     revokeHookToken: (token) => hookServer.revoke(token),
     // $TYPST_BIN for the md-to-pdf skill: find-only for the env, download-warm
     // fire-and-forget so a machine that never rendered has typst next time.

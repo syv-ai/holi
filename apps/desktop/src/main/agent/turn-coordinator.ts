@@ -193,8 +193,9 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
       }
       // Captured BEFORE the pause. It is the same sha either way today; the
       // ordering states the intent, which is that the base is the tree the turn
-      // started against rather than the tree it was allowed to touch.
-      if (vault !== null) {
+      // started against rather than the tree it was allowed to touch. Skipped
+      // entirely with no log to record into: nothing would ever read it.
+      if (vault !== null && deps.turnLogFor !== undefined) {
         turn.basePending = vault.repo
           .head()
           .then((sha) => {
