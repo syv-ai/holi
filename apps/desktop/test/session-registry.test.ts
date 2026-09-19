@@ -192,4 +192,46 @@ describe('watch', () => {
     expect(stop).toBeTypeOf('function')
     expect(() => stop()).not.toThrow()
   })
+
+  it('keeps trying until Claude Code creates sessions/, then reports it', async () => {
+    // The directory that matters most is the one that does not exist yet: Holi
+    // deliberately does not create it, and Claude Code makes it about a second
+    // into the first spawn. A watch attempted once, at the spawn, is attempted
+    // at exactly the moment it cannot take — and never again.
+    const configDir = await tempDir()
+    const registry = registryWith(async () => listing([]))
+
+    let fired = 0
+    const stop = registry.watch(configDir, () => {
+      fired += 1
+    })
+    await sleep(QUIESCE)
+    expect(fired).toBe(0)
+
+    await mkdir(join(configDir, SESSIONS_DIR), { recursive: true })
+    // The directory appearing is itself the news: the rows it now holds are
+    // ones nothing has read.
+    await waitFor('the retried watch to take', () => fired > 0)
+
+    await sleep(QUIESCE)
+    await writeFile(join(configDir, SESSIONS_DIR, '1.json'), '{}')
+    await waitFor('an edge from the watcher that finally attached', () => fired > 1)
+
+    stop()
+  })
+
+  it('stops retrying when unsubscribed before the directory ever appears', async () => {
+    const configDir = await tempDir()
+    const registry = registryWith(async () => listing([]))
+
+    let fired = 0
+    const stop = registry.watch(configDir, () => {
+      fired += 1
+    })
+    stop()
+
+    await mkdir(join(configDir, SESSIONS_DIR), { recursive: true })
+    await sleep(QUIESCE * 6) // several retry intervals
+    expect(fired).toBe(0)
+  })
 })

@@ -42,6 +42,16 @@ const READ_TIMEOUT_MS = 3_000
 /** The rows carry heartbeat fields that move without any state change, so a
  *  burst is the normal case rather than the exception. */
 const WATCH_DEBOUNCE_MS = 150
+/**
+ * How often to try again for a `sessions/` directory that does not exist yet.
+ *
+ * Holi deliberately does not create it (`agent-config-dir.ts`: Claude Code owns
+ * that schema), and Claude Code creates it at `SessionStart`, measured at 0.94 s
+ * after the spawn. So the **first** watch in a vault always fails, and a watch
+ * attempted "lazily on the first spawn" is attempted at the one moment the
+ * directory is still missing. Retrying is the only thing that actually takes.
+ */
+const WATCH_RETRY_MS = 500
 
 /** The states Claude Code reports for a live session. `waiting` is the one Holi
  *  shows as needs-you; `shell` is a shell command running, which is working. */
@@ -82,8 +92,10 @@ export interface SessionRegistry {
   readRows(args: { configDir: string; vaultRoot: string }): Promise<Map<number, SessionRow>>
   /**
    * Call `onChange` when the config directory's session state moves. Debounced,
-   * and a no-op for a directory that has never run an agent — that directory
-   * appears on the first spawn, so the caller re-watches then.
+   * and retried until `sessions/` exists — it is created by Claude Code shortly
+   * after the first spawn, not by Holi, so the first watch in a vault is always
+   * one the directory is not ready for. The returned unsubscribe stops the
+   * retries too.
    */
   watch(configDir: string, onChange: () => void): () => void
 }
@@ -173,26 +185,46 @@ export function createSessionRegistry(deps: SessionRegistryDeps = {}): SessionRe
 
     watch(configDir, onChange) {
       let watcher: FSWatcher | null = null
-      let timer: ReturnType<typeof setTimeout> | null = null
-      try {
-        watcher = watch(join(configDir, SESSIONS_DIR), () => {
-          if (timer !== null) clearTimeout(timer)
-          timer = setTimeout(() => {
-            timer = null
-            onChange()
-          }, WATCH_DEBOUNCE_MS)
-        })
-        // A watcher on a directory that goes away throws on some platforms, and
-        // losing the edge is a stale card rather than a broken app.
-        watcher.on('error', (err) => log(`watch failed: ${String(err)}`))
-      } catch {
-        // No `sessions/` yet — this vault has never run an agent. The directory
-        // is created by the first spawn, and the caller re-watches from there.
-        watcher = null
+      let debounce: ReturnType<typeof setTimeout> | null = null
+      let retry: ReturnType<typeof setTimeout> | null = null
+      let stopped = false
+
+      /** True once a first attempt has failed, so a later success is news. */
+      let retried = false
+
+      const attach = (): void => {
+        if (stopped || watcher !== null) return
+        try {
+          watcher = watch(join(configDir, SESSIONS_DIR), () => {
+            if (debounce !== null) clearTimeout(debounce)
+            debounce = setTimeout(() => {
+              debounce = null
+              onChange()
+            }, WATCH_DEBOUNCE_MS)
+          })
+          // A watcher on a directory that goes away throws on some platforms, and
+          // losing the edge is a stale card rather than a broken app.
+          watcher.on('error', (err) => log(`watch failed: ${String(err)}`))
+          // The directory appearing is itself the news, and it appeared between
+          // the failed attempt and this one, so nothing else will report it. On
+          // a first-attempt success the caller has just read anyway.
+          if (retried) onChange()
+        } catch {
+          // No `sessions/` yet. Claude Code makes it about a second into the
+          // first spawn, and nothing else is going to tell us when.
+          retried = true
+          watcher = null
+          retry = setTimeout(attach, WATCH_RETRY_MS)
+        }
       }
+      attach()
+
       return () => {
-        if (timer !== null) clearTimeout(timer)
-        timer = null
+        stopped = true
+        if (debounce !== null) clearTimeout(debounce)
+        if (retry !== null) clearTimeout(retry)
+        debounce = null
+        retry = null
         watcher?.close()
         watcher = null
       }

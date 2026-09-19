@@ -64,6 +64,15 @@ export interface TurnCoordinator {
    * session will never produce.
    */
   noteIdle(sessionId: string): void
+  /**
+   * The listing reports this session as anything but `idle`.
+   *
+   * This is what makes the confirmation two **consecutive** readings rather
+   * than any two: without it, one spurious `idle` would sit as half a pair for
+   * the rest of the turn, and the next one — however many `busy` readings
+   * later — would resume the vault and take a settle commit mid-turn.
+   */
+  noteBusy(sessionId: string): void
   /** The session died. It leaves the set at once, and records nothing: a turn
    *  killed part-way has no end of its own, and the teardown path has always
    *  resumed the vault without writing one. */
@@ -215,6 +224,11 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
 
     end(sessionId) {
       leave(sessionId, true)
+    },
+
+    noteBusy(sessionId) {
+      const turn = turns.get(sessionId)
+      if (turn !== undefined) turn.idleSince = null
     },
 
     noteIdle(sessionId) {

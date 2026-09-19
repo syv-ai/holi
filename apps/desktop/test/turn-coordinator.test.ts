@@ -211,6 +211,28 @@ describe('a confirmed idle', () => {
     expect([...r.coordinator.working]).toEqual(['a'])
   })
 
+  it('needs the two readings CONSECUTIVE, so a busy one in between resets it', () => {
+    // Without this, one spurious idle sits as half a pair for the rest of the
+    // turn, and the next idle — however many busy readings later — resumes the
+    // vault and takes a settle commit while the agent is still working.
+    const r = rig({ idleConfirmMs: 1000 })
+    r.coordinator.begin('a')
+    r.coordinator.noteIdle('a')
+    r.tick(5000)
+    r.coordinator.noteBusy('a')
+    r.coordinator.noteIdle('a')
+    expect([...r.coordinator.working]).toEqual(['a'])
+
+    r.tick(1000)
+    r.coordinator.noteIdle('a')
+    expect(r.coordinator.working.size).toBe(0)
+  })
+
+  it('is a no-op to note a session that is not mid-turn busy', () => {
+    const r = rig()
+    expect(() => r.coordinator.noteBusy('ghost')).not.toThrow()
+  })
+
   it('starts a new turn with no idle candidacy carried over', () => {
     const r = rig({ idleConfirmMs: 1000 })
     r.coordinator.begin('a')

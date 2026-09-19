@@ -81,7 +81,10 @@ const listSessions = (): Promise<AgentSessionSummary[]> =>
 
 const currentSession = async (): Promise<string | null> => {
   if (currentSessionId !== null) return currentSessionId
-  currentSessionId = (await listSessions())[0]?.id ?? null
+  // The first RUNNING one: main keeps an exited session in the list until it is
+  // closed, and adopting a tombstone would replay a dead session's scrollback
+  // and drop every keystroke while the live one ran unseen.
+  currentSessionId = (await listSessions()).find((s) => !s.exited)?.id ?? null
   return currentSessionId
 }
 

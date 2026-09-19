@@ -666,16 +666,27 @@ describe('the focus file', () => {
     expect(raw).not.toContain('backrefPaths')
   })
 
-  it('is a no-op before any session has run in the vault', async () => {
+  it('is written before the vault has ever had a session', async () => {
+    // It belongs to the vault, not to a session: focus set while the drawer is
+    // shut is focus the first turn should still see.
     const r = await rig()
+    r.manager.setFocus({ focusedPath: NOTE_PATH, openPaths: [] })
+    await new Promise((res) => setTimeout(res, 300))
+    const ctx = JSON.parse(await readFile(join(r.workRoot, CONTEXT_FILE), 'utf8'))
+    expect(ctx.focusedPath).toBe(NOTE_PATH)
+  })
+
+  it('is a no-op with no vault open', async () => {
+    const r = await rig({ active: null })
     r.manager.setFocus({ focusedPath: NOTE_PATH, openPaths: [] })
     await new Promise((res) => setTimeout(res, 200))
     await expect(readFile(join(r.workRoot, CONTEXT_FILE), 'utf8')).rejects.toThrow()
   })
 
-  it('has ONE writer however many sessions are running', async () => {
-    // The file is a single path in the clone. N sessions would be N debounced
-    // writers racing to say the same thing.
+  it('takes any number of sessions without changing what it writes', async () => {
+    // One writer per vault (`ensureFocusWriter`), because the file is a single
+    // path in the clone and N sessions would be N debounced writers racing to
+    // say the same thing.
     const r = await rig()
     await r.start()
     await r.start()

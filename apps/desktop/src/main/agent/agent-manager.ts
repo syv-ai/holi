@@ -392,7 +392,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       // under the first time we saw it.
       if (session.firstSeenName === null) session.firstSeenName = row.name
       session.lastName = deriveName(session, row)
-      if (row.status !== 'idle') continue
+      if (row.status !== 'idle') {
+        // Whatever it is doing, it is not between turns. That cancels any idle
+        // candidacy, which is what makes the confirmation two CONSECUTIVE
+        // readings rather than any two a whole turn apart.
+        coordinator.noteBusy(session.id)
+        continue
+      }
       // Claude Code says this session has no turn. The coordinator wants that
       // confirmed by a second reading, and a quiet session produces no watcher
       // edge, so the second reading has to be asked for.
@@ -663,6 +669,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     async attach(id) {
       const session = sessions.get(id)
       if (session === undefined) return ''
+      // The drawer is opening on this session, which is one of the moments the
+      // design says to re-read the listing: a watcher edge is not guaranteed to
+      // have fired since anything last looked.
+      void refreshRows()
       const state = await session.mirror.serialize()
       if (!session.exited) session.attached = true
       return state
@@ -684,9 +694,15 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       return { ok: true }
     },
 
-    // The focus file is the vault's, so this takes no session. Before any
-    // session has run in a vault there is no writer, and this no-ops.
-    setFocus: (focus) => focusWriter?.snapshot.setFocus(focus),
+    // The focus file is the vault's, so this takes no session and does not wait
+    // for one: focus set before the first spawn is focus the first turn should
+    // still see. No vault open is the only case that no-ops.
+    setFocus: (focus) => {
+      const vault = deps.host.active()
+      if (vault === null) return
+      ensureFocusWriter(vault.root)
+      focusWriter?.snapshot.setFocus(focus)
+    },
 
     setTurnActive: (sessionId, active) => {
       // A stray or late hook must not pause a vault on behalf of a session that
@@ -694,6 +710,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       if (!sessions.has(sessionId)) return
       if (active) coordinator.begin(sessionId)
       else coordinator.end(sessionId)
+      // A turn boundary moves every derived field, and it is a moment Holi knows
+      // about without waiting for a watcher edge.
+      void refreshRows()
     },
 
     notifyVaultChanged,
