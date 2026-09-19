@@ -20,8 +20,10 @@ import { randomBytes } from 'node:crypto'
 import type { AgentOps } from './ops'
 
 export interface HookServerDeps {
-  onTurnStart(): void
-  onTurnEnd(): void
+  /** A turn began in this session. Only ever a session's own token, never the
+   *  vault's standing one — see `TokenBearer`. */
+  onTurnStart(sessionId: string): void
+  onTurnEnd(sessionId: string): void
   log?: (msg: string) => void
   /**
    * The agent-ops routes for **one vault**, if this instance has them. Absent —
@@ -49,8 +51,10 @@ export interface HookServer {
    * across agent sessions and vault switches. Never revoked.
    */
   tokenForVault(remote: string): string
-  /** A token for one agent session in one vault, revoked when it ends. */
-  mintSessionToken(remote: string): string
+  /** A token for one agent session in one vault, revoked when it ends. The id
+   *  is what a turn signal on this token reports, so several sessions in one
+   *  vault stay apart. */
+  mintSessionToken(remote: string, sessionId: string): string
   revoke(token: string): void
 }
 
@@ -58,10 +62,21 @@ export interface HookServer {
  *  purely a guard against a runaway sender holding the socket open. */
 const MAX_BODY_BYTES = 64 * 1024
 
+/**
+ * What a token speaks for. Always a vault, because that is how an ops route
+ * finds the repository to act on. A session id as well **only** when the token
+ * was minted for one session: the vault's standing token is written into
+ * `.git/hooks` and outlives every session, so it cannot name one.
+ */
+interface TokenBearer {
+  remote: string
+  sessionId?: string
+}
+
 export function createHookServer(deps: HookServerDeps): HookServer {
   const log = deps.log ?? ((msg: string) => console.log(`[hook-server] ${msg}`))
-  /** token → the vault it speaks for. */
-  const tokens = new Map<string, string>()
+  /** token → what it speaks for. */
+  const tokens = new Map<string, TokenBearer>()
   /** remote → its standing token, so a vault's `.git/hooks` file stays valid. */
   const vaultTokens = new Map<string, string>()
   let server: Server | null = null
@@ -78,8 +93,8 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     // **The token is checked on the headers, before a byte of body is read.**
     // Draining first would mean an unauthenticated local process could make us
     // buffer up to the cap on every request just by being wrong about the token.
-    const remote = tokens.get(url.searchParams.get('t') ?? '')
-    if (remote === undefined) {
+    const bearer = tokens.get(url.searchParams.get('t') ?? '')
+    if (bearer === undefined) {
       req.resume()
       res.writeHead(403).end()
       return
@@ -103,8 +118,14 @@ export function createHookServer(deps: HookServerDeps): HookServer {
 
     req.on('end', () => {
       if (isTurn) {
-        if (url.pathname === '/turn/start') deps.onTurnStart()
-        else deps.onTurnEnd()
+        // A turn signal on the vault's standing token names no session, and with
+        // several running there is no honest guess: applying it to an arbitrary
+        // one would pause and resume the vault under a session that never ran.
+        // Dropped, but still answered empty — a body enters Claude's context.
+        if (bearer.sessionId !== undefined) {
+          if (url.pathname === '/turn/start') deps.onTurnStart(bearer.sessionId)
+          else deps.onTurnEnd(bearer.sessionId)
+        }
         res.writeHead(204).end() // empty body — never inject text into Claude's context
         return
       }
@@ -114,7 +135,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       const params = new URLSearchParams(url.search)
       for (const [key, value] of new URLSearchParams(body)) params.set(key, value)
 
-      void Promise.resolve(deps.opsFor?.(remote)(url.pathname, params) ?? null)
+      void Promise.resolve(deps.opsFor?.(bearer.remote)(url.pathname, params) ?? null)
         .then((reply) => {
           if (reply === null) {
             res.writeHead(404).end()
@@ -137,19 +158,19 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       if (token === undefined) {
         token = randomBytes(16).toString('hex')
         vaultTokens.set(remote, token)
-        tokens.set(token, remote)
+        tokens.set(token, { remote })
       }
       return token
     },
-    mintSessionToken(remote) {
+    mintSessionToken(remote, sessionId) {
       const token = randomBytes(16).toString('hex')
-      tokens.set(token, remote)
+      tokens.set(token, { remote, sessionId })
       return token
     },
     revoke(token) {
       // A vault's standing token is not revocable through here: it lives in a
       // file on disk and must outlast the session that happened to be open.
-      if (vaultTokens.get(tokens.get(token) ?? '') === token) return
+      if (vaultTokens.get(tokens.get(token)?.remote ?? '') === token) return
       tokens.delete(token)
     },
     port: () => boundPort,

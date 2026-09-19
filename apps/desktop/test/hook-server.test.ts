@@ -27,11 +27,13 @@ afterEach(async () => {
 const VAULT = 'nthomsencph/privat'
 
 async function rig(opsFor?: (remote: string) => AgentOps) {
-  let starts = 0
-  let ends = 0
+  // The session ids the callbacks were handed, in order: a turn signal is only
+  // useful if it says WHICH session turned.
+  const starts: string[] = []
+  const ends: string[] = []
   const server = createHookServer({
-    onTurnStart: () => (starts += 1),
-    onTurnEnd: () => (ends += 1),
+    onTurnStart: (sessionId) => starts.push(sessionId),
+    onTurnEnd: (sessionId) => ends.push(sessionId),
     log: () => {},
     opsFor,
   })
@@ -73,18 +75,22 @@ describe('createHookServer', () => {
     })
     const mine = r.server.tokenForVault('me/personal')
     const theirs = r.server.tokenForVault('syv/work')
+    // A session token resolves its vault the same way: an ops route is answered
+    // for the repository, and carrying a session id changes nothing about that.
+    const session = r.server.mintSessionToken('me/personal', 'sess-a')
 
     await post(r.port(), `/hooks/pre-commit?t=${mine}`)
     await post(r.port(), `/hooks/pre-commit?t=${theirs}`)
+    await post(r.port(), `/hooks/pre-commit?t=${session}`)
 
-    expect(asked).toEqual(['me/personal', 'syv/work'])
+    expect(asked).toEqual(['me/personal', 'syv/work', 'me/personal'])
   })
 
   it('mints a session token that can be revoked, unlike a vault one', async () => {
     // Two lifetimes, deliberately. The vault's token lives in a file on disk and
     // must outlast any session; an agent's dies with its session.
     const r = await rig()
-    const session = r.server.mintSessionToken(VAULT)
+    const session = r.server.mintSessionToken(VAULT, 's1')
     expect(session).not.toBe(r.token())
 
     expect((await post(r.port(), `/turn/start?t=${session}`)).status).toBe(204)
@@ -106,20 +112,46 @@ describe('createHookServer', () => {
     expect(asked).toEqual([])
   })
 
-  it('POST /turn/start with the token fires onTurnStart and returns an empty 204', async () => {
+  it('POST /turn/start on a session token names that session and returns an empty 204', async () => {
+    const r = await rig()
+    const session = r.server.mintSessionToken(VAULT, 'sess-a')
+    const res = await post(r.port(), `/turn/start?t=${session}`)
+    expect(res.status).toBe(204)
+    expect(res.body).toBe('')
+    expect(r.starts()).toEqual(['sess-a'])
+    expect(r.ends()).toEqual([])
+  })
+
+  it('POST /turn/end on a session token names that session', async () => {
+    const r = await rig()
+    const session = r.server.mintSessionToken(VAULT, 'sess-a')
+    await post(r.port(), `/turn/end?t=${session}`)
+    expect(r.ends()).toEqual(['sess-a'])
+    expect(r.starts()).toEqual([])
+  })
+
+  it('tells two sessions in one vault apart', async () => {
+    const r = await rig()
+    const a = r.server.mintSessionToken(VAULT, 'sess-a')
+    const b = r.server.mintSessionToken(VAULT, 'sess-b')
+    await post(r.port(), `/turn/start?t=${a}`)
+    await post(r.port(), `/turn/start?t=${b}`)
+    await post(r.port(), `/turn/end?t=${b}`)
+    expect(r.starts()).toEqual(['sess-a', 'sess-b'])
+    expect(r.ends()).toEqual(['sess-b'])
+  })
+
+  it('drops a turn signal arriving on the vault\'s standing token', async () => {
+    // The standing token lives in `.git/hooks` and speaks for the vault, not for
+    // any session. With several sessions running there is no honest answer to
+    // "which one turned", and guessing would pause and resume the vault under a
+    // session that never ran. Still a 204: a body would enter Claude's context.
     const r = await rig()
     const res = await post(r.port(), `/turn/start?t=${r.token()}`)
     expect(res.status).toBe(204)
     expect(res.body).toBe('')
-    expect(r.starts()).toBe(1)
-    expect(r.ends()).toBe(0)
-  })
-
-  it('POST /turn/end with the token fires onTurnEnd', async () => {
-    const r = await rig()
-    await post(r.port(), `/turn/end?t=${r.token()}`)
-    expect(r.ends()).toBe(1)
-    expect(r.starts()).toBe(0)
+    expect(r.starts()).toEqual([])
+    expect(r.ends()).toEqual([])
   })
 
   it('rejects a wrong or missing token with 403 and fires no callback', async () => {
@@ -128,15 +160,15 @@ describe('createHookServer', () => {
     const missing = await post(r.port(), '/turn/start')
     expect(wrong.status).toBe(403)
     expect(missing.status).toBe(403)
-    expect(r.starts()).toBe(0)
+    expect(r.starts()).toEqual([])
   })
 
   it('returns 404 for an unknown path even with a valid token', async () => {
     const r = await rig()
     const res = await post(r.port(), `/nope?t=${r.token()}`)
     expect(res.status).toBe(404)
-    expect(r.starts()).toBe(0)
-    expect(r.ends()).toBe(0)
+    expect(r.starts()).toEqual([])
+    expect(r.ends()).toEqual([])
   })
 
   it('stop() closes the listener so further requests cannot connect', async () => {

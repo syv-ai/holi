@@ -45,6 +45,7 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
   return {
     port: () => server.port()!,
     token: () => server.tokenForVault('owner/repo'),
+    sessionToken: () => server.mintSessionToken('owner/repo', 'sess-a'),
     openApp,
     initApp,
     refreshSeed,
@@ -56,8 +57,11 @@ async function rig(overrides: Partial<AgentOpsDeps> = {}) {
 describe('the turn signals keep their contract', () => {
   it('still answers with an EMPTY body — a body is injected into Claude\'s context', async () => {
     const r = await rig()
+    // A session's own token: the vault's standing one names no session, so its
+    // turn signals are dropped (hook-server.test.ts covers that).
+    const token = r.sessionToken()
     for (const route of ['/turn/start', '/turn/end']) {
-      const res = await post(r.port(), `${route}?t=${r.token()}`)
+      const res = await post(r.port(), `${route}?t=${token}`)
       expect(res.status).toBe(204)
       expect(res.body).toBe('')
     }
