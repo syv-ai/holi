@@ -1,4 +1,5 @@
 import { atom } from 'jotai'
+import { atomWithStorage } from 'jotai/utils'
 import type { ColorMode } from '@/lib/agent-notices'
 
 /** What a session is doing. Claude Code's own answer, joined by main (D100). */
@@ -54,6 +55,17 @@ export const hasLiveSessionAtom = atom((get) => get(agentSessionsAtom).some((s) 
  * and only one of them needs restarting.
  */
 export const agentModeAtSpawnAtom = atom<Record<string, ColorMode>>({})
+
+/**
+ * Is the sidebar's Sessions section expanded?
+ *
+ * Persisted and global rather than per vault, like the apps section's: it is a
+ * statement about how you like the sidebar, not about this vault's contents.
+ */
+export const agentSessionsSectionOpenAtom = atomWithStorage<boolean>(
+  'holi:agentSessionsSectionOpen',
+  true,
+)
 
 /** A pending reconcile seed: set by the "Ask Claude to reconcile" button, it asks
  *  AgentPanel to start a session with this as its first message, then clears

@@ -80,6 +80,7 @@ import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
+import { SessionsSection } from '@/features/agent/SessionsSection'
 import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentSessionsAtom } from '@/state/agent'
 import { agentThemeNote, fleetIndicator } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
@@ -542,6 +543,12 @@ export function Shell() {
                   </>
                 )}
               </ResizablePanelGroup>
+
+              {/* Below the resizable group, not inside it: a session list is a
+                  handful of rows, so it sizes to its contents and does not earn
+                  a third handle in a column that already has one. It hides
+                  itself when the vault has no sessions. */}
+              <SessionsSection />
 
               {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
               horizontally — and `flex-1` alone could not fix that, since a flex
