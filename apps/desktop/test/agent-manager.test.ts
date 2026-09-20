@@ -87,7 +87,12 @@ interface Rig {
   resumes(): number
   warmed(): number
   /** Start a session in the active vault and hand back its id. */
-  start(args?: { vaultId?: string; name?: string; prompt?: string }): Promise<string>
+  start(args?: {
+    vaultId?: string
+    name?: string
+    prompt?: string
+    paste?: string
+  }): Promise<string>
   /** Its summary now. */
   session(id: string): SessionSummary
   /** The last `agent:sessions` push. */
@@ -107,6 +112,7 @@ async function rig(
     bin?: string | null
     active?: string | null
     turnSafetyMs?: number
+    pasteBackstopMs?: number
     /** Per spawn now (D86). Returns the vault's own directory + sign-in state. */
     resolveConfigDir?: AgentManagerDeps['resolveConfigDir']
     sessionRegistry?: SessionRegistry
@@ -174,6 +180,7 @@ async function rig(
     killBackstopMs: 20,
     hookPort: () => 4242,
     turnSafetyMs: opts.turnSafetyMs,
+    pasteBackstopMs: opts.pasteBackstopMs,
     resolveTypstBin: () => Promise.resolve('/fake/typst'),
     resolveConfigDir: opts.resolveConfigDir,
     sessionRegistry: opts.sessionRegistry,
@@ -209,6 +216,7 @@ async function rig(
           vaultId: args.vaultId ?? VAULT,
           ...(args.name === undefined ? {} : { name: args.name }),
           ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
+          ...(args.paste === undefined ? {} : { paste: args.paste }),
         })
       ).id,
     session: (id) => manager.sessions().find((s) => s.id === id)!,
@@ -816,6 +824,83 @@ describe('starting', () => {
     await r.start()
     expect(r.spawns[0]!.opts.env.TYPST_BIN).toBe('/fake/typst')
     expect(r.warmed()).toBe(1)
+  })
+})
+
+describe('pasting an ask', () => {
+  /** The framing, spelled out here rather than imported: a test that took the
+   *  constant from the code under test would pass if the code pasted nothing. */
+  const paste = (text: string) => `\x1b[200~${text}\x1b[201~`
+
+  it('puts text in a live session unsent, as one bracketed paste', async () => {
+    const r = await rig()
+    const id = await r.start()
+
+    expect(r.manager.paste(id, 'summarise this thread')).toEqual({ ok: true })
+    // Exactly one write, and no `\r`: an ask lands in the composer and the
+    // person sends it. Appending a submit could send a half-typed draft with it.
+    expect(r.pty().writes).toEqual([paste('summarise this thread')])
+  })
+
+  it('refuses a session that has ended, rather than dropping the text', async () => {
+    const r = await rig()
+    const id = await r.start()
+    r.pty().exit(0)
+    await tick()
+
+    const res = r.manager.paste(id, 'summarise this thread')
+    expect(res.ok).toBe(false)
+    expect(res.message).toBeTruthy()
+    expect(r.pty().writes).toEqual([])
+  })
+
+  it('refuses an id it has never heard of', async () => {
+    const r = await rig()
+    expect(r.manager.paste('nobody', 'hello').ok).toBe(false)
+  })
+
+  it("holds a new session's paste until the listing has seen it", async () => {
+    // The listing carries a session because Claude Code wrote its file at
+    // SessionStart, measured 0.94 s after the spawn — so the first sighting is
+    // the moment its TUI is up and a paste lands in the composer.
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+      pasteBackstopMs: 60_000,
+    })
+    await r.start({ paste: 'look at this' })
+    await tick()
+    expect(r.pty().writes).toEqual([])
+
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle' }])
+    fake.fire()
+    await tick()
+    expect(r.pty().writes).toEqual([paste('look at this')])
+
+    // A later reading is not a second sighting.
+    fake.fire()
+    await tick()
+    expect(r.pty().writes).toEqual([paste('look at this')])
+  })
+
+  it('delivers it anyway when the listing never answers', async () => {
+    // The registry degrades honestly everywhere else; text the user has already
+    // written is not the thing to lose to a CLI that cannot list.
+    const r = await rig({ pasteBackstopMs: 20 })
+    await r.start({ paste: 'look at this' })
+
+    await new Promise((res) => setTimeout(res, 60))
+    expect(r.pty().writes).toEqual([paste('look at this')])
+  })
+
+  it('drops a pending paste when the session exits before it lands', async () => {
+    const r = await rig({ pasteBackstopMs: 20 })
+    await r.start({ paste: 'look at this' })
+    r.pty().exit(0)
+
+    await new Promise((res) => setTimeout(res, 60))
+    expect(r.pty().writes).toEqual([])
   })
 })
 

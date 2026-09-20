@@ -97,7 +97,14 @@ declare global {
           rows?: number
           /** Seed the interactive session's first turn (the reconcile flow). */
           prompt?: string
+          /** Put this in its input box, unsent, once it is up. Main holds it
+           *  until Claude Code's TUI is reading; written at spawn it would go
+           *  nowhere. */
+          paste?: string
         }): Promise<{ ok: boolean; id?: string; message?: string }>
+        /** Put text in a live session's input box, unsent. Refused if that
+         *  session ended between picking it and sending. */
+        paste(id: string, text: string): Promise<{ ok: boolean; message?: string }>
         /** End one session and drop it from the list. */
         kill(id: string): Promise<{ ok: true }>
         write(id: string, data: string): void

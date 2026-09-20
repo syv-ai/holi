@@ -81,6 +81,29 @@ const NEW_SESSION = 'New session'
  *  A quiet session produces no watcher edge, so nothing else would. */
 const IDLE_RECHECK_MS = 1_100
 
+/**
+ * Text pasted into a session's input box, unsent (D100).
+ *
+ * The framing is the terminal's own: everything between the two escapes is
+ * pasted content rather than keystrokes, which is why a multi-line ask arrives
+ * as one thing. **There is no `\r`.** An ask lands in the composer and the
+ * person sends it, so nothing Holi writes can submit a draft they were still
+ * typing.
+ */
+const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
+
+/**
+ * How long a brand-new session's paste waits for a delivery address.
+ *
+ * The address is the registry's first sighting of the session, which exists
+ * because Claude Code writes its session file at `SessionStart` — measured 0.94 s
+ * after the spawn, and measured as the point where a paste lands in the composer
+ * rather than into a TUI that is not reading yet. This is the backstop for a
+ * listing that never answers at all: the registry degrades honestly everywhere
+ * else, and text the user has already written is not the thing to lose to it.
+ */
+const PASTE_BACKSTOP_MS = 5_000
+
 export type SessionState = 'needs-you' | 'working' | 'idle'
 
 export interface SessionSummary {
@@ -130,6 +153,9 @@ export interface AgentManagerDeps {
   /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
    *  Default 600000 (10 min). */
   turnSafetyMs?: number
+  /** Cap on holding a new session's paste when the listing never sights it.
+   *  Default `PASTE_BACKSTOP_MS`. */
+  pasteBackstopMs?: number
   /** Records what a turn changed, as a commit range (D88). Keyed by vault ROOT
    *  rather than by remote: the caller already holds the vault it verified, and
    *  a second remote-to-root lookup could resolve to a different one. Absent in
@@ -192,7 +218,14 @@ export interface AgentManager {
     rows?: number
     /** Seed the interactive session's first turn (the reconcile flow). */
     prompt?: string
+    /** Text to put in its input box, unsent, once it is up. Held by the manager
+     *  rather than written at spawn: a paste written before Claude Code's TUI
+     *  reads stdin goes nowhere. */
+    paste?: string
   }): Promise<{ ok: true; id: string }>
+  /** Put text in one live session's input box, unsent. Refuses a session that
+   *  has ended rather than writing into a PTY nobody is reading. */
+  paste(id: string, text: string): { ok: boolean; message?: string }
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
   /** End one session and drop it from the list. Unknown ids are a no-op. */
@@ -242,6 +275,10 @@ interface Session {
    *  the listing stops carrying it — after it exits, or across a read that
    *  failed — rather than flapping back to 'New session'. */
   lastName: string | null
+  /** Text waiting for this session to be up, and the timer that gives up
+   *  waiting. Both null once it has been delivered or dropped. */
+  pendingPaste: string | null
+  pasteTimer: ReturnType<typeof setTimeout> | null
   /** A content fingerprint of the agent-config files this session loaded. */
   configBaseline: string | null
   configStale: boolean
@@ -390,7 +427,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       if (row === undefined) continue
       // The baseline for the `/name` inference: the name this session was listed
       // under the first time we saw it.
-      if (session.firstSeenName === null) session.firstSeenName = row.name
+      if (session.firstSeenName === null) {
+        session.firstSeenName = row.name
+        // …and the first sighting is also the address a held paste was waiting
+        // for: a session is in this listing because Claude Code wrote its file
+        // at `SessionStart`, so its TUI is up and reading.
+        releasePaste(session, true)
+      }
       session.lastName = deriveName(session, row)
       if (row.status !== 'idle') {
         // Whatever it is doing, it is not between turns. That cancels any idle
@@ -444,6 +487,25 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   }
 
   /**
+   * Deliver a held paste, or stop holding it.
+   *
+   * Called on the session's first sighting in the listing, on the backstop, and
+   * on its death. It is one-shot either way: the text is taken out of the
+   * session before anything is written, so a second sighting has nothing left
+   * to deliver.
+   */
+  function releasePaste(session: Session, deliver: boolean): void {
+    if (session.pasteTimer !== null) {
+      clearTimeout(session.pasteTimer)
+      session.pasteTimer = null
+    }
+    const text = session.pendingPaste
+    session.pendingPaste = null
+    if (text === null || !deliver || session.exited) return
+    session.runtime.write(bracketedPaste(text))
+  }
+
+  /**
    * End one session: stop its PTY, hand back its bearers, and drop it.
    *
    * The coordinator hears about it first, so a session that died mid-turn leaves
@@ -453,6 +515,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   async function teardown(session: Session): Promise<void> {
     if (!sessions.delete(session.id)) return // guard the double-stop
     coordinator.forget(session.id)
+    releasePaste(session, false)
     // Before anything else mints its own: a dead session's bearer must stop
     // opening the door.
     if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
@@ -491,6 +554,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     cols?: number
     rows?: number
     prompt?: string
+    paste?: string
   }): Promise<{ ok: true; id: string }> {
     const vault = deps.host.active()
     if (!vault || vault.remote !== args.vaultId) {
@@ -549,6 +613,8 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       nameAtSpawn: sessionName(args.name),
       firstSeenName: null,
       lastName: null,
+      pendingPaste: args.paste !== undefined && args.paste !== '' ? args.paste : null,
+      pasteTimer: null,
       configBaseline: null,
       configStale: false,
       exited: false,
@@ -565,6 +631,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       session.exited = true
       session.attached = false
       coordinator.forget(id)
+      releasePaste(session, false)
       if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
       if (session.hookToken !== null) deps.revokeHookToken?.(session.hookToken)
       session.googleToken = null
@@ -606,6 +673,14 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     }
 
     sessions.set(id, session)
+    // Armed only once the PTY is alive: a spawn that threw has nothing to paste
+    // into, and its `catch` above has already torn the mirror down.
+    if (session.pendingPaste !== null) {
+      session.pasteTimer = setTimeout(
+        () => releasePaste(session, true),
+        deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS,
+      )
+    }
     // After the spawn took, so a failed one cannot retire a writer that another
     // vault's sessions are still using.
     ensureFocusWriter(workRoot)
@@ -676,6 +751,20 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       const state = await session.mirror.serialize()
       if (!session.exited) session.attached = true
       return state
+    },
+
+    /**
+     * A session that has gone is a refusal, not a silent drop: the text is in a
+     * box the user typed it into, and the honest answer is to leave it there and
+     * say why.
+     */
+    paste: (id, text) => {
+      const session = sessions.get(id)
+      if (session === undefined || session.exited) {
+        return { ok: false, message: 'That session has ended. Pick another one.' }
+      }
+      session.runtime.write(bracketedPaste(text))
+      return { ok: true }
     },
 
     write: (id, data) => sessions.get(id)?.runtime.write(data),

@@ -120,7 +120,9 @@ contextBridge.exposeInMainWorld('holi', {
       cols?: number
       rows?: number
       prompt?: string
+      paste?: string
     }) => ipcRenderer.invoke('agent-pty:start', args),
+    paste: (id: string, text: string) => ipcRenderer.invoke('agent:paste', { id, text }),
     kill: (id: string) => ipcRenderer.invoke('agent-pty:kill', id),
     write: (id: string, data: string) => ipcRenderer.send('agent-pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>

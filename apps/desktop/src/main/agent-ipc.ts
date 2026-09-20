@@ -30,6 +30,7 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
         cols?: number
         rows?: number
         prompt?: string
+        paste?: string
       },
     ): Promise<{ ok: boolean; id?: string; message?: string }> => {
       try {
@@ -38,6 +39,13 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
         return { ok: false, message: err instanceof Error ? err.message : String(err) }
       }
     },
+  )
+
+  // Request/response, unlike `write`: an ask sent to a session that has just
+  // ended has to be refused back to the sender, which a fire-and-forget send
+  // could not do.
+  ipcMain.handle('agent:paste', (_e, msg: { id: string; text: string }) =>
+    agent.paste(msg.id, msg.text),
   )
 
   ipcMain.handle('agent-pty:kill', (_e, id: string) => agent.kill(id))
