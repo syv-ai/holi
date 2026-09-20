@@ -70,11 +70,11 @@ function setup(sessions: AgentSession[], open = true) {
 
 test('offers a way to start the first one when the vault has none', async () => {
   // It used to hide itself when empty, which it could while the footer carried a
-  // Claude control. With that gone (D101) this is the only place a first session
-  // can be started with the mouse.
+  // Claude control. With that gone (D101) the `+` beside the heading is the only
+  // place a first session can be started with the mouse.
   const { store } = setup([])
   store.set(activeRemoteAtom, REMOTE)
-  await userEvent.click(screen.getByText('start a session'))
+  await userEvent.click(screen.getByLabelText('start another session'))
 
   await waitFor(() =>
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
@@ -142,7 +142,7 @@ test('collapses to its heading, which is the control that expands it again', asy
   setup([session({ id: 'a', name: 'One' })], false)
   expect(screen.queryByText('One')).not.toBeInTheDocument()
 
-  await userEvent.click(screen.getByRole('button', { name: /sessions/ }))
+  await userEvent.click(screen.getByRole('button', { name: /chats/ }))
   expect(await screen.findByText('One')).toBeInTheDocument()
 })
 

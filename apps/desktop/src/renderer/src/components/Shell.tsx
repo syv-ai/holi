@@ -617,16 +617,16 @@ export function Shell() {
                     header like the apps list — but present whether or not the
                     vault has sessions, because since D101 removed the footer's
                     Claude control this is the only place a first one can be
-                    started with the mouse. Its resting height follows that: room
-                    for a list when there is one, room for the one row that
-                    starts a session when there is not. */}
+                    started with the mouse — the `+` beside its heading. Its
+                    resting height follows what it holds: room for a list when
+                    there is one, the heading alone when there is not. */}
                 <ResizableHandle />
                 <ResizablePanel
                   id="sessions"
                   collapsible
                   collapsedSize={SECTION_HEADER_HEIGHT}
-                  defaultSize={hasSessions ? 140 : 44}
-                  minSize={44}
+                  defaultSize={hasSessions ? 140 : SECTION_HEADER_HEIGHT}
+                  minSize={SECTION_HEADER_HEIGHT}
                   maxSize="60"
                   panelRef={sessionsPanelRef}
                 >

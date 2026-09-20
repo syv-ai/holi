@@ -10,8 +10,13 @@
  * **Always present, unlike the apps section**, which hides itself when the vault
  * has none. It used to follow that rule, and could while the footer carried a
  * Claude control: with that gone (D101), a vault whose sessions have all ended
- * would have no way to start one but ⌘J. So an empty list is a row that starts
- * one, and the section is the agent's home whether or not anything is running.
+ * would have no way to start one but ⌘J. So the heading stays whatever the vault
+ * holds, and the `+` beside it is the way to the first one.
+ *
+ * **It is headed "chats"**, not "sessions", which is the word everywhere else —
+ * the glossary, the docs, Claude Code's own CLI. The heading is the one place
+ * the jargon is not worth it: what the rows are, to the person reading the
+ * sidebar, is conversations.
  *
  * **It fills a resizable panel**, exactly as the apps section does: a header
  * that never scrolls and a list that does. It used to size to its contents
@@ -150,22 +155,8 @@ export function SessionsSection(): React.JSX.Element {
           style={{ transform: open ? 'rotate(90deg)' : 'none' }}
           aria-hidden="true"
         />
-        sessions
+        chats
       </Button>
-      {open && sessions.length === 0 && (
-        // The empty state is a row, not a paragraph: it sits where the first
-        // session will, and it is the thing you click to put one there.
-        <Button
-          variant="ghost"
-          size="xs"
-          className="h-[22px] w-full shrink-0 justify-start gap-1 rounded px-2 text-sm font-normal text-muted-foreground hover:bg-accent/60 hover:text-foreground"
-          onClick={() => void startSession()}
-        >
-          <span className="w-4 shrink-0" aria-hidden="true" />
-          <Plus className="size-3.5 shrink-0" aria-hidden="true" />
-          start a session
-        </Button>
-      )}
       {open && sessions.length > 0 && (
         // No horizontal padding on the list: each row carries its own `px-2`,
         // the way a tree row does, so a hover highlight spans the sidebar.
