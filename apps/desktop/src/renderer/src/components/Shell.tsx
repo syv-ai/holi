@@ -80,9 +80,10 @@ import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
+import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentSessionsAtom } from '@/state/agent'
 import { reconcileAtom, showAgentPanelAtom } from '@/state/agent-send'
-import { agentThemeNote, fleetIndicator } from '@/lib/agent-notices'
+import { agentThemeNote, fleetIndicator, sessionsWorthAsking } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
@@ -288,6 +289,9 @@ export function Shell() {
    */
   const [overStrip, setOverStrip] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+  /** The vault a switch is waiting on an answer about, because sessions are
+   *  running in the one being left (D100). */
+  const [pendingVault, setPendingVault] = useState<string | null>(null)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
   const [banner, setBanner] = useState<{
@@ -435,11 +439,29 @@ export function Shell() {
    *  so the tabs over the old vault have to go with it. Setting the active
    *  remote is all that is needed: the open effect above picks it up and runs
    *  the same open → daily → sweep sequence as cold start. */
-  const switchVault = (remote: string) => {
-    if (remote === activeRemote) return
+  const applySwitch = (remote: string) => {
+    setPendingVault(null)
     setWorkspace(() => ({ panes: [{ tabs: [], active: -1 }], active: 0 }))
     setBanner(null)
     setActiveRemote(remote)
+  }
+
+  /**
+   * …and it ends every session in the vault, which is worth asking about first
+   * (D100).
+   *
+   * The question has to be asked HERE, before `activeRemoteAtom` moves: the
+   * effect above reacts to that atom by opening the new vault, which is what
+   * closes the old one and takes its sessions with it. By the time the atom has
+   * changed there is nothing left to confirm.
+   */
+  const switchVault = (remote: string) => {
+    if (remote === activeRemote) return
+    if (sessionsWorthAsking(agentSessions).length > 0) {
+      setPendingVault(remote)
+      return
+    }
+    applySwitch(remote)
   }
 
   // A conflict in the shared config files can leave the vault misconfigured while
@@ -488,6 +510,12 @@ export function Shell() {
                 />
               </div>
               {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
+              {pendingVault !== null && (
+                <VaultSwitchConfirm
+                  onConfirm={() => applySwitch(pendingVault)}
+                  onCancel={() => setPendingVault(null)}
+                />
+              )}
 
               {/* The tree and the apps list are two sections of one column with a
               draggable boundary between them — the sidebar's own vertical

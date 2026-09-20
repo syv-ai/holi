@@ -3,6 +3,7 @@ import {
   agentIndicator,
   agentThemeNote,
   fleetIndicator,
+  sessionsWorthAsking,
 } from '../src/renderer/src/lib/agent-notices'
 
 describe('agentThemeNote', () => {
@@ -172,5 +173,31 @@ describe('fleetIndicator', () => {
 
   it('is green when every live session is idle and up to date', () => {
     expect(fleetIndicator([live('idle'), live('idle')]).state).toBe('running')
+  })
+})
+
+describe('sessionsWorthAsking', () => {
+  const live = (state: 'needs-you' | 'working' | 'idle', exited = false) => ({
+    state,
+    configStale: false,
+    exited,
+  })
+
+  it('is empty when every session is idle', () => {
+    // A switch still ends them. An idle conversation ends quietly and comes
+    // back with Resume, so there is nothing to stop for.
+    expect(sessionsWorthAsking([live('idle'), live('idle')])).toEqual([])
+  })
+
+  it('keeps a session that is mid-turn', () => {
+    expect(sessionsWorthAsking([live('idle'), live('working')])).toHaveLength(1)
+  })
+
+  it('keeps a session that is waiting on you', () => {
+    expect(sessionsWorthAsking([live('needs-you')])).toHaveLength(1)
+  })
+
+  it('ignores one that has already exited, whatever it was doing', () => {
+    expect(sessionsWorthAsking([live('working', true)])).toEqual([])
   })
 })

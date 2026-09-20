@@ -151,3 +151,18 @@ export function fleetIndicator(
     themeNote,
   })
 }
+
+/**
+ * The sessions that make a vault switch worth stopping for: live, and either
+ * mid-turn or waiting on an answer (D100).
+ *
+ * **Every live session ends on a switch**, idle ones included — a session left
+ * running in the vault you walked away from has no repo, no watcher and no sync
+ * loop behind it. Only these are worth a question, for the same reason the
+ * drawer's close button only asks about these: ending an idle session costs a
+ * conversation you can resume, and ending one of these costs work part way
+ * through or a question nobody answered.
+ */
+export function sessionsWorthAsking<T extends FleetSession>(sessions: T[]): T[] {
+  return sessions.filter((s) => !s.exited && (s.state === 'working' || s.state === 'needs-you'))
+}
