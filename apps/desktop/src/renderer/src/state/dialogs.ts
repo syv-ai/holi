@@ -23,12 +23,6 @@ export type ActiveDialog = { closable?: boolean } & (
    */
   | { id: 'compose-mail'; size: 'lg' }
   /**
-   * Rename an agent session (D101). Carries the name it has now, so the field
-   * opens filled in, and the session id rather than the session: the list is
-   * pushed from main and the entry must not hold a stale copy of a row.
-   */
-  | { id: 'rename-session'; size: 'sm'; sessionId: string; current: string }
-  /**
    * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82). Carries the map's
    * current entry, which the tree already has, so the dialog opens filled in
    * rather than fetching it back.

@@ -106,50 +106,13 @@ export function agentIndicator(args: {
   }
 }
 
-/** The shape `fleetIndicator` reduces. A session's summary, plus whatever theme
- *  note the renderer derived for it. */
+/** One session as the helpers below read it: its state, and whether it is still
+ *  alive. A summary, minus the fields only a card shows. */
 export interface FleetSession {
   state: 'needs-you' | 'working' | 'idle'
   waitingFor?: string
   configStale: boolean
   exited: boolean
-}
-
-/**
- * Every session of the vault, as one dot for the footer door.
- *
- * **Needs-you outranks working outranks a restart nudge**, which is the same
- * ordering one session already uses, applied across the set: the footer is a
- * door, and it should be painted by whichever session most wants you to open
- * it. An exited session contributes nothing — its tab says so, and the door is
- * about what is live.
- */
-export function fleetIndicator(
-  sessions: FleetSession[],
-  /** True when any LIVE session was spawned under a different colour mode. */
-  themeNote: string | null = null,
-): AgentIndicator {
-  const live = sessions.filter((s) => !s.exited)
-  if (live.length === 0) {
-    return {
-      dot: 'bg-muted-foreground',
-      state: 'idle',
-      title: 'no session, opens when you show the drawer',
-    }
-  }
-
-  const waiting = live.find((s) => s.state === 'needs-you')
-  if (waiting !== undefined) {
-    return agentIndicator({ ...waiting, themeNote: null })
-  }
-  if (live.some((s) => s.state === 'working')) {
-    return agentIndicator({ state: 'working', configStale: false, themeNote: null })
-  }
-  return agentIndicator({
-    state: 'idle',
-    configStale: live.some((s) => s.configStale),
-    themeNote,
-  })
 }
 
 /**

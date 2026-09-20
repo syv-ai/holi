@@ -82,15 +82,13 @@ import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import {
-  agentModeAtSpawnAtom,
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
   useAgentSessions,
   useSessionTabs,
 } from '@/state/agent'
 import { reconcileAtom, showAgentAtom } from '@/state/agent-send'
-import { agentThemeNote, fleetIndicator, sessionsWorthAsking } from '@/lib/agent-notices'
-import { activeModeAtom } from '@/state/color-scheme'
+import { sessionsWorthAsking } from '@/lib/agent-notices'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
@@ -215,28 +213,10 @@ export function Shell() {
   /** Not a plain setter: going to the agent in a vault with no live session
    *  starts one, and that rule lives with the sessions (`showAgentAtom`). */
   const showAgent = useSetAtom(showAgentAtom)
-  // The footer's Claude control (#15) is the drawer's only affordance outside the
-  // drawer. It reduces EVERY session to one dot (D100): needs-you outranks
-  // working outranks a restart nudge, so the door is painted by whichever
-  // session most wants you to open it.
+  // Only for the vault-switch confirm and the sessions panel's presence now that
+  // the footer no longer reduces the set to a dot. What each session is doing is
+  // the sidebar's to say, per card.
   const agentSessions = useAtomValue(agentSessionsAtom)
-  const agentModeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
-  const colorMode = useAtomValue(activeModeAtom)
-  // One note for the set: the nudge is worth showing if ANY live session was
-  // spawned under the mode the app has since moved off, and it says the same
-  // sentence however many of them there are.
-  const agentThemeNudge =
-    agentSessions
-      .filter((session) => !session.exited)
-      .map((session) =>
-        agentThemeNote({
-          running: true,
-          modeAtSpawn: agentModeAtSpawn[session.id] ?? null,
-          mode: colorMode,
-        }),
-      )
-      .find((note) => note !== null) ?? null
-  const agentState = fleetIndicator(agentSessions, agentThemeNudge)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
   // The sidebar's own vertical split: the tree, then the apps and sessions
   // sections under it.
@@ -632,28 +612,25 @@ export function Shell() {
                     </ResizablePanel>
                   </>
                 )}
-                {/* A third section of the same column, on the same terms as the
-                    apps list: present only when the vault has sessions, and
-                    collapsible to its own header. It sized to its contents below
-                    this group until the day a vault could hold six sessions, at
-                    which point the tree lost its height to a list nobody could
-                    shrink. */}
-                {hasSessions && (
-                  <>
-                    <ResizableHandle />
-                    <ResizablePanel
-                      id="sessions"
-                      collapsible
-                      collapsedSize={SECTION_HEADER_HEIGHT}
-                      defaultSize={140}
-                      minSize={66}
-                      maxSize="60"
-                      panelRef={sessionsPanelRef}
-                    >
-                      <SessionsSection />
-                    </ResizablePanel>
-                  </>
-                )}
+                {/* A third section of the same column, collapsible to its own
+                    header like the apps list — but present whether or not the
+                    vault has sessions, because since D101 removed the footer's
+                    Claude control this is the only place a first one can be
+                    started with the mouse. Its resting height follows that: room
+                    for a list when there is one, room for the one row that
+                    starts a session when there is not. */}
+                <ResizableHandle />
+                <ResizablePanel
+                  id="sessions"
+                  collapsible
+                  collapsedSize={SECTION_HEADER_HEIGHT}
+                  defaultSize={hasSessions ? 140 : 44}
+                  minSize={44}
+                  maxSize="60"
+                  panelRef={sessionsPanelRef}
+                >
+                  <SessionsSection />
+                </ResizablePanel>
               </ResizablePanelGroup>
 
               {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
@@ -1011,28 +988,13 @@ export function Shell() {
             </Tooltip>
           )}
         </div>
-        {/* The vault assistant's door, and its light. Every session reduced to
-            one dot, from the same derivation the tabs and the sidebar cards use,
-            so the three cannot say different things.
-
-            It matters more now than it did, not less: with the drawer gone, a
-            session with no tab open is a session with nothing on screen at all,
-            and this is what says it is there.
-
-            It has this corner to itself. The vault's remote and the signed-in
-            login used to sit here, and neither was worth a permanent line: the
-            vault is named in the sidebar header you are already looking at, and
-            the login is in settings, where you go to change it. */}
-        <Tooltip content={`${agentState.title} (⌘J)`}>
-          <Button
-            variant="link"
-            className="h-auto shrink-0 gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            onClick={() => showAgent()}
-          >
-            <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
-            Claude
-          </Button>
-        </Tooltip>
+        {/* The footer's Claude control is gone (D101). It was one dot standing
+            for every session, and it was worth a permanent corner while a
+            session's state had nowhere else to live — the drawer hid them and
+            the sidebar had no list. The sidebar lists them now, by name, with
+            the same dot and the state in words beside it, so the footer's
+            version was a second copy of a fuller answer three feet away. ⌘J
+            still goes to the agent. */}
       </footer>
     </div>
   )

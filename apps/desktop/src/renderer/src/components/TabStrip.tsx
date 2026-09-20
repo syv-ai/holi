@@ -61,7 +61,7 @@ import {
 } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
 import { agentSessionsAtom, type AgentSession } from '@/state/agent'
-import { openDialogAtom } from '@/state/dialogs'
+import { renameSessionAtom } from '@/state/agent-send'
 import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
@@ -332,11 +332,11 @@ export function TabStrip({
   // …and for the same reason: a session tab's name and dot are main's, pushed
   // to one atom, and every strip wants the same answer.
   const sessions = useAtomValue(agentSessionsAtom)
-  const openDialog = useSetAtom(openDialogAtom)
+  const rename = useSetAtom(renameSessionAtom)
   const renameSession = (id: string) => {
-    const session = sessions.find((s) => s.id === id)
-    if (session === undefined || session.exited) return
-    openDialog({ id: 'rename-session', size: 'sm', sessionId: id, current: session.name })
+    // An exited session has no box to type into.
+    if (sessions.find((s) => s.id === id)?.exited !== false) return
+    void rename(id)
   }
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())

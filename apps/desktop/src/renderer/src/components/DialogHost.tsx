@@ -3,7 +3,6 @@ import { ComposeMailDialog } from '@/features/google/ComposeMailDialog'
 import { EditIcon } from '@/features/explorer/EditIcon'
 import { ConvertToPdf } from '@/features/pdf/ConvertToPdf'
 import { CreateTask } from '@/features/tasks/CreateTask'
-import { RenameSession } from '@/features/agent/RenameSession'
 import { Dialog } from '@/primitives'
 import { activeDialogAtom, closeDialogAtom } from '@/state/dialogs'
 
@@ -23,13 +22,6 @@ export function DialogHost(): React.JSX.Element | null {
         <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
       )}
       {active.id === 'compose-mail' && <ComposeMailDialog onClose={() => close()} />}
-      {active.id === 'rename-session' && (
-        <RenameSession
-          sessionId={active.sessionId}
-          current={active.current}
-          onClose={() => close()}
-        />
-      )}
       {active.id === 'edit-icon' && (
         <EditIcon
           remote={active.remote}

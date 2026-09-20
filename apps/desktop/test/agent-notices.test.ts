@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   agentIndicator,
   agentThemeNote,
-  fleetIndicator,
   sessionsWorthAsking,
 } from '../src/renderer/src/lib/agent-notices'
 
@@ -116,63 +115,6 @@ describe('agentIndicator', () => {
       { ...idle, exited: true },
     ]
     for (const args of cases) expect(agentIndicator(args).title).not.toContain('—')
-  })
-})
-
-describe('fleetIndicator', () => {
-  const live = (state: 'needs-you' | 'working' | 'idle', configStale = false) => ({
-    state,
-    configStale,
-    exited: false,
-  })
-
-  it('says there is no session when the list is empty', () => {
-    const none = fleetIndicator([])
-    expect(none.state).toBe('idle')
-    expect(none.title).toContain('no session')
-  })
-
-  it('says the same when every session in it has ended', () => {
-    // The door is about what is LIVE. Three dead tabs are three records of
-    // sessions that ended, and the tabs themselves say so.
-    expect(fleetIndicator([{ ...live('idle'), exited: true }]).state).toBe('idle')
-  })
-
-  it('puts needs-you above working', () => {
-    const fleet = fleetIndicator([live('working'), live('needs-you')])
-    expect(fleet.state).toBe('needs you')
-  })
-
-  it('carries the waiting session’s reason up to the door', () => {
-    const fleet = fleetIndicator([
-      live('working'),
-      { ...live('needs-you'), waitingFor: 'input needed' },
-    ])
-    expect(fleet.title).toContain('input needed')
-  })
-
-  it('puts working above a restart nudge', () => {
-    expect(fleetIndicator([live('idle', true), live('working')]).state).toBe('working…')
-  })
-
-  it('reports a restart nudge when a live session has stale config', () => {
-    expect(fleetIndicator([live('idle'), live('idle', true)]).state).toBe('needs restart')
-  })
-
-  it('ignores an exited session’s stale config', () => {
-    // It cannot be restarted into anything; its tab is a record, not a nudge.
-    const fleet = fleetIndicator([live('idle'), { ...live('idle', true), exited: true }])
-    expect(fleet.state).toBe('running')
-  })
-
-  it('takes the vault-wide theme note as a restart reason', () => {
-    const fleet = fleetIndicator([live('idle')], "restart to change Claude's theme")
-    expect(fleet.state).toBe('needs restart')
-    expect(fleet.title).toContain("Claude's theme")
-  })
-
-  it('is green when every live session is idle and up to date', () => {
-    expect(fleetIndicator([live('idle'), live('idle')]).state).toBe('running')
   })
 })
 

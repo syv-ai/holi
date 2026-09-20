@@ -81,6 +81,27 @@ export const startSessionAtom = atom(
 )
 
 /**
+ * Rename a session: put Claude Code's own command in its box and get out of the
+ * way (D101).
+ *
+ * **There is no dialog and no name field.** Holi cannot rename a session by
+ * itself — `/rename` is the only route Claude Code offers, there is no shell
+ * equivalent, and the command has to be typed into the session. So Holi types
+ * the half it knows, focuses the tab, and the name is typed where it is going to
+ * be read. A field in Holi would have collected a name only to paste it into a
+ * box the user is now looking at anyway.
+ *
+ * Unsent, like everything Holi writes: appending the Enter would submit whatever
+ * draft was already sitting in that composer, as a prompt nobody meant to send.
+ */
+export const renameSessionAtom = atom(
+  null,
+  async (_get, set, id: string): Promise<{ ok: boolean; message?: string }> =>
+    // The trailing space is the point: the caret lands where the name goes.
+    set(sendToAgentAtom, { text: '/rename ', target: id }),
+)
+
+/**
  * Copy a session's conversation into one of its own (D101).
  *
  * Main resolves which conversation that is — Claude Code's session id, read out

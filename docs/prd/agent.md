@@ -97,7 +97,7 @@ the **vault's**, one path in the clone, read by whichever session takes the next
 - A **reader loop** on the PTY master forwards each chunk to the renderer; **EOF/EIO** ends the session (the template treats `EIO`/errno 5 as normal remote-hangup).
 - A **child-wait** task parks on the child, clears session state, then emits `exit` — clearing before emitting so a renderer that kills-on-exit doesn't race a dead child.
 - **Any number of live sessions per vault (D100)**, an ordinary tab each (D101); see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you; so does adding a vault, which opens the one it creates.
-- Lifecycle: **⌘J and the footer door go to the agent** — the current session's tab, or a new session when the vault has none. They do not toggle: a drawer was a thing to open and shut, a tab is a place to go. The sessions list's **resume affordance** opens **bare `--resume`** in a new tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
+- Lifecycle: **⌘J goes to the agent** — the current session's tab, or a new session when the vault has none. It does not toggle: a drawer was a thing to open and shut, a tab is a place to go. The sidebar's sessions list is the other way in, and the only one with a mouse. The sessions list's **resume affordance** opens **bare `--resume`** in a new tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
   - **No `--resume <id>` shortcuts for recent sessions**, which was the obvious next affordance and is deliberately absent: the CLI's picker is the surface the user already knows, and a Holi-drawn list of recent sessions would be a second index over another program's session store — the same bet §Config layering declines when it refuses to migrate transcripts.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it. It is a positional argv, so Claude Code **submits** it as turn one, and reconcile is the only sender that does (D100).
 - **The `paste` field on `start` is every other ask.** Main holds the text until Claude Code's own listing first carries that session — which it does because Claude Code writes the session file at `SessionStart`, measured 0.94 s after the spawn — and then writes it as a bracketed paste, with a backstop for a listing that never answers. A paste written at spawn would go into a TUI that is not reading stdin yet.
@@ -128,16 +128,24 @@ session tab in a pane keeps its terminal **mounted** while another tab is showin
 a terminal that unmounts throws away its scrollback and has to replay main's mirror to get
 it back. **Closing a tab does not end the session**: a tab is a view, the PTY keeps
 running, and the sidebar's sessions list is how you get back to it. That list is also
-where a session is started, resumed, renamed, duplicated, restarted and ended, and the
-footer door reduces the whole set to one dot — painted by whichever session most wants you
-to open it, and more important than it was, because a session with no tab open has nothing
-else on screen.
+where a session is started, resumed, renamed, duplicated, restarted and ended. **It is
+always present**, unlike the apps section, and shows a row that starts one when the vault
+has none: it is the only place a first session can be started with the mouse.
+
+**There is no Claude control in the footer.** There was, and it reduced every session to
+one dot while a session's state had nowhere else to live — the drawer hid them and the
+sidebar had no list. The list is there now, by name, with the same dot and the state in
+words beside it, so the footer's version had become a second copy of a fuller answer three
+feet away.
 
 **Renaming goes through Claude Code, and stops short of sending.** There is no shell route
 to a rename (`claude agents`, `attach`, `logs`, `stop`, `respawn`, `rm`, and nothing for a
-name), so Holi writes `/rename <name>` into the session's box as a paste and leaves it for
-you to send. Appending the Enter was the alternative and is not safe: Holi cannot see the
-composer, so a half-written draft would be submitted along with the command.
+name), so Holi writes `/rename ` into the session's box as a paste, brings that tab
+forward, and leaves the name to be typed where it is going to be read. **No dialog and no
+name field**: one would have collected a name only to paste it into a box the user is now
+looking at anyway. Appending the Enter was the other alternative and is not safe either —
+Holi cannot see the composer, so a half-written draft would be submitted along with the
+command.
 
 **Duplicating one forks the conversation**, `--resume <id> --fork-session`, where the id is
 Claude Code's own — read out of the listing at the moment of the fork and never stored,

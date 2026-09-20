@@ -19,13 +19,13 @@ import {
 } from '@/state/agent'
 import { activeTab, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
-import { activeDialogAtom } from '@/state/dialogs'
 
 const REMOTE = 'owner/repo'
 
 const kill = vi.fn()
 const start = vi.fn()
 const duplicate = vi.fn()
+const paste = vi.fn()
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -42,11 +42,14 @@ beforeEach(() => {
   start.mockResolvedValue({ ok: true, id: 'spawned' })
   duplicate.mockReset()
   duplicate.mockResolvedValue({ ok: true, id: 'copy' })
+  paste.mockReset()
+  paste.mockResolvedValue({ ok: true })
   window.holi = {
     agent: {
       kill: (id: string) => kill(id),
       start: (args: unknown) => start(args),
       duplicate: (id: string) => duplicate(id),
+      paste: (id: string, text: string) => paste(id, text),
     },
   } as never
 })
@@ -65,9 +68,17 @@ function setup(sessions: AgentSession[], open = true) {
   }
 }
 
-test('is hidden entirely when the vault has no sessions', () => {
-  const { container } = setup([])
-  expect(container).toBeEmptyDOMElement()
+test('offers a way to start the first one when the vault has none', async () => {
+  // It used to hide itself when empty, which it could while the footer carried a
+  // Claude control. With that gone (D101) this is the only place a first session
+  // can be started with the mouse.
+  const { store } = setup([])
+  store.set(activeRemoteAtom, REMOTE)
+  await userEvent.click(screen.getByText('start a session'))
+
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
+  )
 })
 
 test('is shown for a single session', () => {
@@ -161,10 +172,9 @@ test('keeps no name of its own, even now that it offers a rename', async () => {
   // command rather than storing anything here.
   const { store } = setup([session({ id: 'a', name: 'One' })])
   fireEvent.contextMenu(screen.getByText('One'))
-  await userEvent.click(await screen.findByText('Rename…'))
+  await userEvent.click(await screen.findByText('Rename'))
 
-  expect(store.get(activeDialogAtom)).toMatchObject({ sessionId: 'a', current: 'One' })
-  // Nothing was written anywhere in Holi by opening it.
+  await waitFor(() => expect(paste).toHaveBeenCalledWith('a', '/rename '))
   expect(store.get(agentSessionsAtom)[0]!.name).toBe('One')
 })
 
@@ -201,19 +211,15 @@ test('duplicating a session forks it, and shows the copy', async () => {
   )
 })
 
-test('renaming asks the dialog, which is where the /rename goes', async () => {
-  // Holi cannot rename a session by itself: there is no shell route, so the
-  // command has to be typed into the session and the dialog says so.
+test('renaming puts the command in the session and nothing in a dialog', async () => {
+  // No field, no dialog: the half Holi knows goes in the box, its tab comes
+  // forward, and the name is typed where it is going to be read.
   const { store } = setup([session({ id: 'a', name: 'Fix the merge' })])
   fireEvent.contextMenu(screen.getByText('Fix the merge'))
-  await userEvent.click(await screen.findByText('Rename…'))
+  await userEvent.click(await screen.findByText('Rename'))
 
-  expect(store.get(activeDialogAtom)).toEqual({
-    id: 'rename-session',
-    size: 'sm',
-    sessionId: 'a',
-    current: 'Fix the merge',
-  })
+  await waitFor(() => expect(paste).toHaveBeenCalledWith('a', '/rename '))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'session', id: 'a' })
 })
 
 test('an exited session cannot be renamed or restarted, but can be copied', async () => {
@@ -222,7 +228,7 @@ test('an exited session cannot be renamed or restarted, but can be copied', asyn
   setup([session({ id: 'a', name: 'Fix the merge', exited: true })])
   fireEvent.contextMenu(screen.getByText('Fix the merge'))
 
-  expect(await screen.findByText('Rename…')).toHaveAttribute('aria-disabled', 'true')
+  expect(await screen.findByText('Rename')).toHaveAttribute('aria-disabled', 'true')
   expect(screen.getByText('Restart')).toHaveAttribute('aria-disabled', 'true')
   expect(screen.getByText('Duplicate')).not.toHaveAttribute('aria-disabled', 'true')
 })

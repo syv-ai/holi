@@ -18,6 +18,7 @@ import {
 } from '../agent'
 import {
   duplicateSessionAtom,
+  renameSessionAtom,
   sendToAgentAtom,
   showAgentAtom,
   startSessionAtom,
@@ -244,15 +245,27 @@ test('a duplicate that main refuses says why, and shows nothing', async () => {
   expect(shown(store)).toBeNull()
 })
 
-test('a rename is the /rename command, pasted and not submitted', async () => {
+test('a rename is the command, pasted, with the name left to type', async () => {
   // The whole of Holi's rename: there is no shell route, so the command goes
-  // into the session's box the way every other thing Holi sends does.
+  // into the session's box the way every other thing Holi sends does — and only
+  // the half Holi knows, because the name is typed where it will be read.
   const store = storeWith([session({ id: 'a', name: 'One' })])
 
-  await store.set(sendToAgentAtom, { text: '/rename fix the merge', target: 'a' })
+  const res = await store.set(renameSessionAtom, 'a')
 
-  expect(paste).toHaveBeenCalledWith('a', '/rename fix the merge')
-  // …and the tab it went to is the one showing, because the Enter that finishes
-  // the rename is one the user has to press there.
+  expect(res).toEqual({ ok: true })
+  // The trailing space is the point: the caret lands where the name goes.
+  expect(paste).toHaveBeenCalledWith('a', '/rename ')
+  // …and its tab is the one showing, because the typing happens there.
   expect(shown(store)).toBe('a')
+})
+
+test('a rename refused by main says so, and takes you nowhere', async () => {
+  paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
+  const store = storeWith([session({ id: 'a', name: 'One' })])
+
+  const res = await store.set(renameSessionAtom, 'a')
+
+  expect(res.ok).toBe(false)
+  expect(shown(store)).toBeNull()
 })

@@ -1,17 +1,17 @@
 /**
- * The sidebar's list of the vault's agent sessions (D100).
+ * The sidebar's list of the vault's agent sessions (D100), and since D101 the
+ * whole of what the app says about them outside their own tabs.
  *
- * **The drawer is one place to look, and it is the place you have to open.**
- * The footer door reduces every session to one dot, which is the right amount
- * for a corner but cannot say which of three sessions is the one waiting on you.
- * This is that, expanded: a card per session, its name and its state, always
- * visible while the sidebar is.
+ * **A session with no tab open has nothing else on screen.** The drawer used to
+ * hold them all and the footer reduced them to one dot; both are gone, and what
+ * replaced them is this: a card per session, its name, its state in words, and
+ * everything you can do to one, always visible while the sidebar is.
  *
- * **Hidden entirely when there are none**, heading included — the rule the apps
- * section and the agenda and mail chips already follow. Shown for a single
- * session, though, which is where it parts company with a tab strip: one tab is
- * redundant with the drawer's own header, one card is the only thing on screen
- * that says a session exists while the drawer is shut.
+ * **Always present, unlike the apps section**, which hides itself when the vault
+ * has none. It used to follow that rule, and could while the footer carried a
+ * Claude control: with that gone (D101), a vault whose sessions have all ended
+ * would have no way to start one but ⌘J. So an empty list is a row that starts
+ * one, and the section is the agent's home whether or not anything is running.
  *
  * **It fills a resizable panel**, exactly as the apps section does: a header
  * that never scrolls and a list that does. It used to size to its contents
@@ -54,23 +54,20 @@ import {
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { openSession, workspaceAtom } from '@/state/panes'
-import { duplicateSessionAtom, startSessionAtom } from '@/state/agent-send'
-import { openDialogAtom } from '@/state/dialogs'
+import { duplicateSessionAtom, renameSessionAtom, startSessionAtom } from '@/state/agent-send'
 
-export function SessionsSection(): React.JSX.Element | null {
+export function SessionsSection(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
   const active = useAtomValue(activeSessionAtom)
   const setActiveId = useSetAtom(activeSessionIdAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const startSession = useSetAtom(startSessionAtom)
   const duplicateSession = useSetAtom(duplicateSessionAtom)
-  const openDialog = useSetAtom(openDialogAtom)
+  const renameSession = useSetAtom(renameSessionAtom)
   const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const mode = useAtomValue(activeModeAtom)
   const [open, setOpen] = useAtom(agentSessionsSectionOpenAtom)
   const [confirming, setConfirming] = useState<AgentSession | null>(null)
-
-  if (sessions.length === 0) return null
 
   const indicatorFor = (session: AgentSession) =>
     agentIndicator({
@@ -155,7 +152,21 @@ export function SessionsSection(): React.JSX.Element | null {
         />
         sessions
       </Button>
-      {open && (
+      {open && sessions.length === 0 && (
+        // The empty state is a row, not a paragraph: it sits where the first
+        // session will, and it is the thing you click to put one there.
+        <Button
+          variant="ghost"
+          size="xs"
+          className="h-[22px] w-full shrink-0 justify-start gap-1 rounded px-2 text-sm font-normal text-muted-foreground hover:bg-accent/60 hover:text-foreground"
+          onClick={() => void startSession()}
+        >
+          <span className="w-4 shrink-0" aria-hidden="true" />
+          <Plus className="size-3.5 shrink-0" aria-hidden="true" />
+          start a session
+        </Button>
+      )}
+      {open && sessions.length > 0 && (
         // No horizontal padding on the list: each row carries its own `px-2`,
         // the way a tree row does, so a hover highlight spans the sidebar.
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
@@ -208,18 +219,13 @@ export function SessionsSection(): React.JSX.Element | null {
                   </ContextMenuTrigger>
                 </Tooltip>
                 <ContextMenuContent>
+                  {/* No dialog: the command goes in the session's box and the
+                      name is typed where it is going to be read. */}
                   <ContextMenuItem
                     disabled={session.exited}
-                    onSelect={() =>
-                      openDialog({
-                        id: 'rename-session',
-                        size: 'sm',
-                        sessionId: session.id,
-                        current: session.name,
-                      })
-                    }
+                    onSelect={() => void renameSession(session.id)}
                   >
-                    Rename…
+                    Rename
                   </ContextMenuItem>
                   {/* A copy of the conversation, in a session of its own: the
                       original keeps running and neither sees the other's turns.
