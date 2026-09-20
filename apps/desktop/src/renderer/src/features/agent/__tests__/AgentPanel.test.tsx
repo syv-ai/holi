@@ -17,12 +17,16 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { AgentPanel } from '../AgentPanel'
 import {
   activeSessionIdAtom,
+  agentModeAtSpawnAtom,
   agentPanelOpenAtom,
+  agentSeedPromptAtom,
   agentSessionsAtom,
   type AgentSession,
 } from '@/state/agent'
 import { activeRemoteAtom } from '@/state/vaults'
+import { reviewTurnAtom, turnReviewOpenAtom, type Turn } from '@/state/turns'
 import { ResizablePanelGroup } from '@/primitives'
+import { StrictMode } from 'react'
 
 vi.mock('../SessionTerminal', () => ({
   SessionTerminal: ({ sessionId, visible }: { sessionId: string; visible: boolean }) => (
@@ -74,7 +78,9 @@ beforeEach(() => {
   } as never
 })
 
-function setup(seed: { sessions?: AgentSession[]; open?: boolean; activeId?: string } = {}) {
+function setup(
+  seed: { sessions?: AgentSession[]; open?: boolean; activeId?: string; strict?: boolean } = {},
+) {
   const store = createStore()
   current = seed.sessions ?? []
   store.set(activeRemoteAtom, REMOTE)
@@ -85,11 +91,21 @@ function setup(seed: { sessions?: AgentSession[]; open?: boolean; activeId?: str
     store,
     // `ResizablePanel` throws outside a group, exactly as it would in the app.
     ...render(
-      <Provider store={store}>
-        <ResizablePanelGroup orientation="horizontal">
-          <AgentPanel />
-        </ResizablePanelGroup>
-      </Provider>,
+      seed.strict === true ? (
+        <StrictMode>
+          <Provider store={store}>
+            <ResizablePanelGroup orientation="horizontal">
+              <AgentPanel />
+            </ResizablePanelGroup>
+          </Provider>
+        </StrictMode>
+      ) : (
+        <Provider store={store}>
+          <ResizablePanelGroup orientation="horizontal">
+            <AgentPanel />
+          </ResizablePanelGroup>
+        </Provider>
+      ),
     ),
   }
 }
@@ -227,4 +243,85 @@ test('opening the drawer with only an exited session starts one', async () => {
     store.set(agentPanelOpenAtom, true)
   })
   await waitFor(() => expect(start).toHaveBeenCalled())
+})
+
+test('Resume opens a new tab and kills nothing', async () => {
+  // It used to kill first because there was one slot to resume into. There is
+  // not any more, and ending a live conversation to go and look at an old one
+  // is a cost the design does not ask anybody to pay.
+  setup({ sessions: [session({ id: 'a', name: 'One' })] })
+  await userEvent.click(await screen.findByLabelText(/Resume a past session/))
+
+  await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ resume: true })))
+  expect(kill).not.toHaveBeenCalled()
+})
+
+test('Restart ends the tab you are looking at, and only that one', async () => {
+  setup({
+    sessions: [session({ id: 'a', name: 'One' }), session({ id: 'b', name: 'Two' })],
+    activeId: 'b',
+  })
+  await userEvent.click(await screen.findByLabelText('Restart this session'))
+
+  await waitFor(() => expect(kill).toHaveBeenCalledWith('b'))
+  expect(kill).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(start).toHaveBeenCalled())
+})
+
+test('a reconcile seed spawns ONE session, even under StrictMode', async () => {
+  // StrictMode invokes effects twice in development, and clearing the seed is a
+  // round trip through state — so an unguarded effect spawns two sessions for
+  // one reconcile, which is two tabs both told to resolve the same merge.
+  const store = createStore()
+  current = []
+  store.set(activeRemoteAtom, REMOTE)
+  store.set(agentSessionsAtom, [])
+  store.set(agentPanelOpenAtom, true)
+  store.set(agentSeedPromptAtom, 'resolve the merge conflict')
+  render(
+    <StrictMode>
+      <Provider store={store}>
+        <ResizablePanelGroup orientation="horizontal">
+          <AgentPanel />
+        </ResizablePanelGroup>
+      </Provider>
+    </StrictMode>,
+  )
+
+  await waitFor(() => expect(store.get(agentSeedPromptAtom)).toBeNull())
+  expect(start).toHaveBeenCalledTimes(1)
+  expect(start).toHaveBeenCalledWith(
+    expect.objectContaining({ prompt: 'resolve the merge conflict' }),
+  )
+})
+
+test('a vault switch clears the turn review', async () => {
+  // The record is per vault and this panel outlives the switch. Left alone, the
+  // review stays open on the last vault's turn and asks the new vault's git for
+  // a range it has never heard of.
+  const turn: Turn = { base: 'aaa', end: 'bbb', at: '2026-09-09T10:00:00Z', sessionId: 'a' }
+  const { store } = setup({ sessions: [session({ id: 'a' })] })
+  store.set(reviewTurnAtom, turn)
+  store.set(turnReviewOpenAtom, true)
+
+  await act(async () => {
+    store.set(activeRemoteAtom, 'someone/else')
+  })
+
+  expect(store.get(reviewTurnAtom)).toBeNull()
+  expect(store.get(turnReviewOpenAtom)).toBe(false)
+})
+
+test('forgets a session’s spawn-time theme when it leaves the list', async () => {
+  // The map is keyed by session id and nothing else prunes it, so entries would
+  // pile up for the life of the window.
+  const { store } = setup({ sessions: [session({ id: 'a' }), session({ id: 'b' })] })
+  store.set(agentModeAtSpawnAtom, { a: 'dark', b: 'light' })
+  await waitFor(() => expect(pushSessions).not.toBeNull())
+
+  await act(async () => {
+    pushSessions!([session({ id: 'b' })])
+  })
+
+  expect(store.get(agentModeAtSpawnAtom)).toEqual({ b: 'light' })
 })

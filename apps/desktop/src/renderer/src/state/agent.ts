@@ -43,9 +43,6 @@ export const activeSessionAtom = atom<AgentSession | null>((get) => {
   return picked ?? sessions.find((s) => !s.exited) ?? sessions[0] ?? null
 })
 
-/** Is anything live? The footer and the drawer's auto-start both ask this. */
-export const hasLiveSessionAtom = atom((get) => get(agentSessionsAtom).some((s) => !s.exited))
-
 /**
  * The colour mode resolved when each session spawned, keyed by session id.
  *

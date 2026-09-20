@@ -28,6 +28,7 @@ import {
   type AgentSession,
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
+import { resetTurnReviewAtom, turnReviewOpenAtom } from '@/state/turns'
 import { activeRemoteAtom } from '@/state/vaults'
 import { SessionTerminal } from './SessionTerminal'
 import { TurnChip } from './TurnChip'
@@ -47,6 +48,8 @@ export function AgentPanel() {
   const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
   const mode = useAtomValue(activeModeAtom)
   const [modeAtSpawn, setModeAtSpawn] = useAtom(agentModeAtSpawnAtom)
+  const resetTurnReview = useSetAtom(resetTurnReviewAtom)
+  const setTurnReviewOpen = useSetAtom(turnReviewOpenAtom)
   /** …and a mirror of it for `startSession`, which must not take `mode` as a
    *  dependency: rebuilding that callback on a theme flip re-runs the effects
    *  that own auto-start. */
@@ -71,10 +74,50 @@ export function AgentPanel() {
   // right before the drawer has ever been opened, and a renderer reload lands
   // after every push this vault's sessions have made.
   useEffect(() => {
-    const off = window.holi.agent.onSessions(setSessions)
-    void window.holi.agent.sessions().then(setSessions)
+    // A push that lands while the mount-time question is in flight is NEWER than
+    // its answer, and letting the answer win would drop a tab whose terminal is
+    // already mounted, taking its xterm with it.
+    let pushed = false
+    const off = window.holi.agent.onSessions((list) => {
+      pushed = true
+      setSessions(list)
+    })
+    void window.holi.agent.sessions().then((list) => {
+      if (!pushed) setSessions(list)
+    })
     return off
   }, [setSessions])
+
+  /**
+   * A vault switch clears the turn review.
+   *
+   * The record is per vault and this panel outlives the switch, so without this
+   * the review stays open on the previous vault's turn — and every query it
+   * makes asks the NEW vault's git for a range it has never heard of. The panel
+   * is the always-mounted owner of that lifecycle now that the chip is per tab
+   * and the chip that used to own it can be absent.
+   *
+   * The edge and not the level: on mount there is nothing to clear, and clearing
+   * anyway would throw away a record that has just been loaded.
+   */
+  const lastRemote = useRef(activeRemote)
+  useEffect(() => {
+    if (lastRemote.current === activeRemote) return
+    lastRemote.current = activeRemote
+    resetTurnReview()
+    setTurnReviewOpen(false)
+  }, [activeRemote, resetTurnReview, setTurnReviewOpen])
+
+  /** A session that has left the list takes its spawn-time colour mode with it.
+   *  The map is keyed by session id and nothing else prunes it. */
+  useEffect(() => {
+    setModeAtSpawn((byId) => {
+      const live = new Set(sessions.map((s) => s.id))
+      const kept = Object.entries(byId).filter(([id]) => live.has(id))
+      // Same object when nothing went, so this cannot loop on its own write.
+      return kept.length === Object.keys(byId).length ? byId : Object.fromEntries(kept)
+    })
+  }, [sessions, setModeAtSpawn])
 
   const startSession = useCallback(
     async (opts: { resume?: boolean; prompt?: string } = {}): Promise<string | null> => {
@@ -117,12 +160,25 @@ export function AgentPanel() {
     void startSession()
   }, [open, startSession])
 
-  // Reconcile: the "Ask Claude to reconcile" button set a seed prompt (and opened
-  // the drawer). It gets its OWN session rather than restarting one — the seed
-  // cannot be injected into a conversation mid-flight, and with tabs there is no
-  // longer a single slot it would have to displace. Then clear it.
+  /**
+   * Reconcile: the "Ask Claude to reconcile" button set a seed prompt (and opened
+   * the drawer). It gets its OWN session rather than restarting one — the seed
+   * cannot be injected into a conversation mid-flight, and with tabs there is no
+   * longer a single slot it would have to displace. Then clear it.
+   *
+   * The seed already in flight is remembered, because clearing it is a round
+   * trip through state: React StrictMode invokes this twice in development, and
+   * `startSession`'s identity changes with the active vault, so without the
+   * guard one reconcile spawns two sessions.
+   */
+  const handledSeed = useRef<string | null>(null)
   useEffect(() => {
-    if (seedPrompt === null) return
+    if (seedPrompt === null) {
+      handledSeed.current = null
+      return
+    }
+    if (handledSeed.current === seedPrompt) return
+    handledSeed.current = seedPrompt
     void (async () => {
       await startSession({ prompt: seedPrompt })
       setSeedPrompt(null)
@@ -165,16 +221,27 @@ export function AgentPanel() {
   }
 
   /**
-   * Restart, and resume, act on the tab you are looking at.
+   * Restart ends the tab you are looking at and starts another.
    *
-   * Both end that session and start another, which with ids is genuinely a NEW
-   * session rather than the same one reborn — so its tab is a new tab, at the
-   * end of the strip. Saying otherwise would mean pretending a conversation
-   * survived that did not. `--resume` is bare: the CLI shows its own picker.
+   * With ids that is genuinely a NEW session rather than the same one reborn, so
+   * it gets a new tab. Saying otherwise would mean pretending a conversation
+   * survived that did not. It touches no other tab.
    */
-  const replace = async (resume: boolean) => {
+  const restart = async () => {
     if (active !== null) await window.holi.agent.kill(active.id)
-    await startSession({ resume })
+    await startSession()
+  }
+
+  /**
+   * History opens `--resume` in a new tab and **kills nothing**.
+   *
+   * It used to kill first because there was one slot to resume into. There is
+   * not any more, and ending a live conversation to go and look at an old one is
+   * a cost the design does not ask anybody to pay. Bare `--resume`: the CLI
+   * shows its own picker in the new tab.
+   */
+  const history = async () => {
+    await startSession({ resume: true })
   }
 
   return (
@@ -201,13 +268,13 @@ export function AgentPanel() {
           actions={[
             {
               icon: <History />,
-              label: 'Resume a past session in this tab',
-              onSelect: () => void replace(true),
+              label: 'Resume a past session in a new tab',
+              onSelect: () => void history(),
             },
             {
               icon: <RotateCw />,
               label: 'Restart this session',
-              onSelect: () => void replace(false),
+              onSelect: () => void restart(),
             },
           ]}
           close={{
@@ -318,7 +385,10 @@ export function AgentPanel() {
             three sessions had just finished one. */}
         {active !== null && (
           <div className="shrink-0 border-t border-divider px-2 py-1">
-            <TurnChip sessionId={active.id} />
+            {/* Keyed: its `wasWorking` and `acked` refs are about ONE session,
+                and carrying them to the next tab blooms for a turn that landed
+                minutes ago. */}
+            <TurnChip key={active.id} sessionId={active.id} />
           </div>
         )}
       </aside>

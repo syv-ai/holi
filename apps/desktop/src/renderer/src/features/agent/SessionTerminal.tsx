@@ -163,13 +163,21 @@ export function SessionTerminal({
     // start taking live data.
     void (async () => {
       const state = await window.holi.agent.attach(sessionId)
-      if (state) term.write(state + HIDE_CURSOR)
+      if (state) term.write(state)
+      term.write(HIDE_CURSOR)
     })()
+
+    // Ink's startup re-enables the cursor, so hiding it once is not enough for a
+    // session that has only just spawned: its mirror is empty, the replay above
+    // writes nothing, and Ink's `\x1b[?25h` arrives afterwards. Without this a
+    // fresh tab shows xterm's cursor beside Claude's for the life of the session.
+    const reHide = setTimeout(() => term.write(HIDE_CURSOR), 500)
 
     const observer = new ResizeObserver(() => syncSize())
     observer.observe(host)
 
     disposeRef.current = () => {
+      clearTimeout(reHide)
       offData()
       offExit()
       typed.dispose()
