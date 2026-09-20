@@ -105,6 +105,52 @@ describe('ensureAgentConfigDir', () => {
     expect(after.disableClaudeAiConnectors).toBe(true)
   })
 
+  it('points the status line at the script Holi is about to run', async () => {
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, {
+      statusLine: '/somewhere/bin/holi-statusline',
+    })
+
+    expect((await settings(configDir)).statusLine).toEqual({
+      type: 'command',
+      command: '/somewhere/bin/holi-statusline',
+    })
+  })
+
+  it('follows the script when the app moves', async () => {
+    // It lives under `userData`, so the path is not stable across an install or
+    // a rename. A command pointing at where it used to be fails in a footer
+    // nobody reads twice, which is why this tracks rather than seeds.
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { statusLine: '/old/bin/sl' })
+    await ensureAgentConfigDir(userData, VAULT, { statusLine: '/new/bin/sl' })
+
+    expect((await settings(configDir)).statusLine).toEqual({
+      type: 'command',
+      command: '/new/bin/sl',
+    })
+  })
+
+  it('overwrites a hand-written status line, which is the cost of tracking one', async () => {
+    // Stated because it is a real cost: this key is Holi's, and a hand-written
+    // `statusLine` in the vault's config directory is replaced on the next
+    // spawn. The directory is Holi's own (D86), and the alternative is a footer
+    // that silently stops working after an app update.
+    const userData = await tempDir()
+    const configDir = await ensureAgentConfigDir(userData, VAULT)
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ statusLine: { type: 'command', command: 'mine.sh' } }),
+    )
+
+    await ensureAgentConfigDir(userData, VAULT, { statusLine: '/bin/holi-statusline' })
+
+    expect((await settings(configDir)).statusLine).toEqual({
+      type: 'command',
+      command: '/bin/holi-statusline',
+    })
+  })
+
   it('adds the opt-out to a settings file that predates it', async () => {
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT)

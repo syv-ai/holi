@@ -28,6 +28,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { statusLinePath } from './cli'
 import { resolveColorMode } from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
 
@@ -90,10 +91,15 @@ export type AgentTheme = 'dark' | 'light'
  *   detect: the agent stayed dark while D85 took the app light. Holi answers the
  *   question instead of leaving it to be guessed.
  */
-function settingsWithRequired(existing: string | null, theme?: AgentTheme): string | null {
+function settingsWithRequired(
+  existing: string | null,
+  theme?: AgentTheme,
+  statusLine?: string,
+): string | null {
   if (existing === null || existing.trim() === '') {
     const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
     if (theme) seed.theme = theme
+    if (statusLine) seed.statusLine = { type: 'command', command: statusLine }
     return JSON.stringify(seed, null, 2) + '\n'
   }
 
@@ -114,6 +120,28 @@ function settingsWithRequired(existing: string | null, theme?: AgentTheme): stri
   if (theme && settings.theme !== theme) {
     settings.theme = theme
     changed = true
+  }
+  /**
+   * The status line **tracks a path**, so it is written whenever it is not
+   * already what Holi is about to run: the script lives under `userData`, which
+   * moves with the app, and a command pointing at where it used to be would
+   * fail silently in a footer nobody reads twice.
+   *
+   * Written here rather than into the vault's own `.claude/settings.json`,
+   * which syncs: a path on this machine means nothing on a teammate's, and a
+   * Holi-shaped footer is not something a vault should impose on whoever clones
+   * it.
+   */
+  if (statusLine) {
+    const current = settings.statusLine
+    const already =
+      current !== null &&
+      typeof current === 'object' &&
+      (current as Record<string, unknown>).command === statusLine
+    if (!already) {
+      settings.statusLine = { type: 'command', command: statusLine }
+      changed = true
+    }
   }
 
   return changed ? JSON.stringify(settings, null, 2) + '\n' : null
@@ -136,13 +164,17 @@ function settingsWithRequired(existing: string | null, theme?: AgentTheme): stri
 export async function ensureAgentConfigDir(
   userDataDir: string,
   remote: string,
-  opts: { theme?: AgentTheme } = {},
+  opts: { theme?: AgentTheme; statusLine?: string } = {},
 ): Promise<string> {
   const configDir = join(userDataDir, AGENT_CONFIG_DIR_NAME, agentConfigSlug(remote))
   await mkdir(configDir, { recursive: true })
 
   const path = join(configDir, SETTINGS)
-  const next = settingsWithRequired(await readFile(path, 'utf8').catch(() => null), opts.theme)
+  const next = settingsWithRequired(
+    await readFile(path, 'utf8').catch(() => null),
+    opts.theme,
+    opts.statusLine,
+  )
   if (next !== null) await writeFile(path, next, 'utf8')
 
   return configDir
@@ -171,7 +203,13 @@ export async function ensureAgentConfigDir(
  */
 export async function takeFirstSpawn(configDir: string): Promise<boolean> {
   const marker = join(configDir, SPAWNED_MARKER)
-  if (await stat(marker).then(() => true, () => false)) return false
+  if (
+    await stat(marker).then(
+      () => true,
+      () => false,
+    )
+  )
+    return false
   await writeFile(marker, '', 'utf8')
   return true
 }
@@ -208,7 +246,13 @@ export async function resolveVaultAgentConfig(args: {
 }): Promise<AgentConfigResolution> {
   const { colorScheme } = await readVaultSettings(args.root)
   const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
-  const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, { theme })
+  const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, {
+    theme,
+    // D101: the footer says which model is answering and how full the context
+    // is. The script is Holi's, under `userData`, so the path is stamped here on
+    // every spawn the way the theme is.
+    statusLine: statusLinePath(args.userDataDir),
+  })
   return { dir, firstSpawn: await takeFirstSpawn(dir) }
 }
 
@@ -288,7 +332,12 @@ export async function migrateSharedAgentConfig(
   const staging = join(userDataDir, MIGRATING_DIR_NAME)
 
   // Read the evidence BEFORE anything moves — afterwards the paths are stale.
-  const source = (await stat(staging).then((s) => s.isDirectory(), () => false)) ? staging : parent
+  const source = (await stat(staging).then(
+    (s) => s.isDirectory(),
+    () => false,
+  ))
+    ? staging
+    : parent
   const owner =
     usedByVault(await readFile(join(source, CLAUDE_JSON), 'utf8').catch(() => null), vaults) ??
     vaults[0]?.remote ??
@@ -296,16 +345,26 @@ export async function migrateSharedAgentConfig(
   if (owner === null) return null // nowhere to put it
   const slot = join(parent, agentConfigSlug(owner))
 
-  const exists = (path: string) => stat(path).then(() => true, () => false)
+  const exists = (path: string) =>
+    stat(path).then(
+      () => true,
+      () => false,
+    )
   /** Someone has already been here (a downgrade, then an upgrade). Their
    *  directory is the live one; never bury it under an older copy. */
   const taken = () => exists(slot)
 
-  const interrupted = await stat(staging).then((s) => s.isDirectory(), () => false)
+  const interrupted = await stat(staging).then(
+    (s) => s.isDirectory(),
+    () => false,
+  )
   if (!interrupted) {
     // Every install that ever ran `ensureAgentConfigDir` has this file, and the
     // per-vault layout has only subdirectories — so its presence IS the old shape.
-    const isFlat = await stat(join(parent, SETTINGS)).then((s) => s.isFile(), () => false)
+    const isFlat = await stat(join(parent, SETTINGS)).then(
+      (s) => s.isFile(),
+      () => false,
+    )
     if (!isFlat) return null
     // Checked BEFORE the rename, not after: the rename carries the slot into the
     // staging directory, and a check on the far side would find nothing and bury

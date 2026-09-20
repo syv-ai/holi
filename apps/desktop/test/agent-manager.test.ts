@@ -957,6 +957,78 @@ describe('pasting an ask', () => {
   })
 })
 
+describe('the status line', () => {
+  const status = (over: Record<string, unknown> = {}) => ({
+    model: { display_name: 'Sonnet 4.5' },
+    context_window: { used_percentage: 42.4 },
+    ...over,
+  })
+
+  it('prints the model and how full the context is', async () => {
+    const r = await rig()
+    const id = await r.start()
+
+    expect(r.manager.noteStatus(id, status())).toBe('Sonnet 4.5  ·  42% context')
+  })
+
+  it('prints what it has when Claude Code sends only half of it', async () => {
+    // Another program's JSON, and it changes between versions: a missing field
+    // costs that field and nothing else.
+    const r = await rig()
+    const id = await r.start()
+
+    expect(r.manager.noteStatus(id, { model: { display_name: 'Opus 4.5' } })).toBe('Opus 4.5')
+    expect(r.manager.noteStatus(id, {})).toBe('Opus 4.5') // the last reading stands
+    expect(r.manager.noteStatus(id, { model: 7, context_window: 'no' })).toBe('Opus 4.5')
+  })
+
+  it('says nothing for a session it does not have', async () => {
+    const r = await rig()
+    expect(r.manager.noteStatus('nobody', status())).toBe('')
+  })
+
+  it("takes Claude Code's own name for the session from it", async () => {
+    // `session_name` is the name set with `--name` or `/rename` when there is
+    // one, and otherwise the title Claude Code's own small-model pass wrote for
+    // the first prompt. Either way it is a real name, so it needs none of the
+    // inference the listing does.
+    const r = await rig()
+    const id = await r.start()
+    expect(r.session(id).name).toBe('New session')
+
+    r.manager.noteStatus(id, status({ session_name: 'fix the merge conflict' }))
+    expect(r.session(id).name).toBe('fix the merge conflict')
+    expect(r.pushed()[0]!.name).toBe('fix the merge conflict')
+  })
+
+  it('keeps the name when a later reading does not carry one', async () => {
+    // A name only ever arrives. Claude Code dropping the field is not something
+    // Holi can tell apart from a read that has not caught up.
+    const r = await rig()
+    const id = await r.start()
+    r.manager.noteStatus(id, status({ session_name: 'fix the merge conflict' }))
+
+    r.manager.noteStatus(id, status())
+    expect(r.session(id).name).toBe('fix the merge conflict')
+  })
+
+  it("outranks the listing's own name", async () => {
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+    })
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo-d9', status: 'idle' }])
+    fake.fire()
+    await tick()
+    expect(r.session(id).name).toBe('New session') // the default display name, hidden
+
+    r.manager.noteStatus(id, status({ session_name: 'fix the merge conflict' }))
+    expect(r.session(id).name).toBe('fix the merge conflict')
+  })
+})
+
 describe('duplicating a session', () => {
   /** A rig whose listing carries a real conversation id for the first session. */
   async function forkable() {

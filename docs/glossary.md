@@ -66,16 +66,16 @@ A rule in a task's frontmatter that fires a notification: relative (**`Nd`** / *
 A rule that rolls a completed recurring task forward to its next occurrence: `frequency (daily|weekly|monthly|yearly), interval, weekdays[], endDate`. Rolls forward locally, on completion, by rewriting the file.
 
 ### Agent / Vault assistant
-The in-app **Claude Code** instance. Runs as an interactive `claude` process in a **PTY**, shown in the **xterm drawer**, with the vault clone as its cwd. It reads and writes vault files with its native tools — there is nothing to bridge, because the files are the truth. A vault runs **any number of sessions** at once (D100); "the agent" is the set of them, and a **session** is one of them.
+The in-app **Claude Code** instance. Runs as an interactive `claude` process in a **PTY**, shown in a **session tab**, with the vault clone as its cwd. It reads and writes vault files with its native tools — there is nothing to bridge, because the files are the truth. A vault runs **any number of sessions** at once (D100); "the agent" is the set of them, and a **session** is one of them.
 
 ### Session
-One live `claude` process in a vault: one drawer tab, one terminal, one conversation. Its **name** is Claude Code's own (`--name` at spawn or `/rename` inside) and its state (`needs-you | working | idle`) is read from Claude Code's own session listing rather than inferred. Ends with its vault.
+One live `claude` process in a vault: one terminal, one conversation, and a tab whenever you want to look at it. Its **name** is Claude Code's own (`--name` at spawn, `/rename` inside, or the title Claude Code's own small-model pass writes for an unnamed one) and its state (`needs-you | working | idle`) is read from Claude Code's own session listing rather than inferred. Ends with its vault.
 
 ### Ask
 Text sent from somewhere in Holi to a session — a passage selected in a note, a task's description, a mail thread. It lands in that session's input box as a **bracketed paste with no Enter**, so nothing Holi writes can submit a draft the user was still typing. The one exception is a **reconcile**, which submits its instruction as turn one of a session of its own.
 
-### xterm drawer
-The terminal drawer on the right of the window: a tab per session, each rendering its own live interactive `claude` — the chat surface, including history (via native `--resume`, which opens in a new tab).
+### Session tab
+A session's terminal, as an ordinary tab beside notes, apps and the board (D101). It renders the live interactive `claude` — the chat surface, including history (via native `--resume`, which opens in a new tab). Closing one does not end the session; the sidebar's sessions list is how you get back to it. It replaced the **xterm drawer**, a right-hand panel that held every session's tabs at once.
 
 ### Persona
 The shared vault-assistant identity: **SOUL.md** / **IDENTITY.md** + shared **AGENTS.md** + shared skills. Ordinary vault content, committed to the repo.
@@ -110,7 +110,7 @@ writing this surface changes what the assistant will do next.
 The fresh context (active note, linked tasks, memory fill-state) injected into every agent turn via a **`UserPromptSubmit` hook**.
 
 ### History (chat)
-Claude Code's **native session resume**: the drawer relaunches `claude --resume`, CC's own session picker, replaying the full transcript in the terminal. No custom reconstruction, no summaries, no sync.
+Claude Code's **native session resume**: the sessions list opens `claude --resume` in a new tab, CC's own session picker, replaying the full transcript in the terminal. No custom reconstruction, no summaries, no sync.
 
 ### Client / Shared (code)
 - **Client** = `apps/desktop` (Electron + React) — the whole product.

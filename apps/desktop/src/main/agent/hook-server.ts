@@ -24,6 +24,17 @@ export interface HookServerDeps {
    *  vault's standing one — see `TokenBearer`. */
   onTurnStart(sessionId: string): void
   onTurnEnd(sessionId: string): void
+  /**
+   * This session's status line asked what to print (D101).
+   *
+   * The whole of Claude Code's status JSON arrives as the body, and what comes
+   * back is the one line the session's footer shows. Holi does the parsing
+   * because the alternative is a shell script picking fields out of JSON with
+   * `sed`, and because main wants two of those fields for itself: the model and
+   * the context reading go on the wire with the session list, and `session_name`
+   * carries the title Claude Code's own small-model pass wrote.
+   */
+  onStatus?: (sessionId: string, status: unknown) => string
   log?: (msg: string) => void
   /**
    * The agent-ops routes for **one vault**, if this instance has them. Absent —
@@ -101,6 +112,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     }
 
     const isTurn = url.pathname === '/turn/start' || url.pathname === '/turn/end'
+    const isStatus = url.pathname === '/statusline'
 
     // A turn signal sends nothing we read, so its body is drained and discarded;
     // an ops route's arguments ride in the body so `curl --data-urlencode`
@@ -117,6 +129,23 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     })
 
     req.on('end', () => {
+      if (isStatus) {
+        // A status line belongs to exactly one session, and the bearer says
+        // which — so nothing here has to guess, and the vault's standing token
+        // (which names no session) simply prints nothing.
+        let line = ''
+        if (bearer.sessionId !== undefined && deps.onStatus !== undefined) {
+          try {
+            line = deps.onStatus(bearer.sessionId, JSON.parse(body))
+          } catch (error) {
+            // Malformed JSON, or a bug in the reader. An empty status line is a
+            // blank row in a terminal; a 500 here would be a red one.
+            log(`statusline failed: ${String(error)}`)
+          }
+        }
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }).end(line)
+        return
+      }
       if (isTurn) {
         // A turn signal on the vault's standing token names no session, and with
         // several running there is no honest guess: applying it to an arbitrary

@@ -249,6 +249,9 @@ export interface AgentManager {
   /** Turn bracket from the hook server for one session (UserPromptSubmit → true,
    *  Stop → false). Handed to the coordinator, which owns the vault's pause. */
   setTurnActive(sessionId: string, active: boolean): void
+  /** One session's status line reported (D101). Returns the line it should
+   *  print, and keeps what Holi wants from it. */
+  noteStatus(sessionId: string, status: unknown): string
   /** The vault's files changed on disk (wired to the host's snapshot signal).
    *  Re-fingerprints each live session's agent-config files against its own
    *  root and flips its `configStale`. */
@@ -298,6 +301,19 @@ interface Session {
   pendingPastes: string[]
   /** The backstop. Cleared when it becomes ready, or when it dies. */
   readyTimer: ReturnType<typeof setTimeout> | null
+  /**
+   * The last reading from this session's own status line: what Claude Code says
+   * it is called, which model it is on, and how full the context is.
+   *
+   * `statusName` is the better answer to "what is this session called" than the
+   * listing's, and not by a little: Claude Code documents it as the name set
+   * with `--name` or `/rename` **when one exists, otherwise the AI-generated
+   * session title** — so a value here is always a real name and needs none of
+   * `deriveName`'s inference.
+   */
+  statusName: string | null
+  model: string | null
+  contextPercent: number | null
   /** A content fingerprint of the agent-config files this session loaded. */
   configBaseline: string | null
   configStale: boolean
@@ -337,6 +353,11 @@ async function fingerprintAgentConfig(root: string): Promise<string> {
  * else is the default display name, which describes nothing.
  */
 function deriveName(session: Session, row: SessionRow | undefined): string {
+  // The status line's answer, when it has given one, ends the question: Claude
+  // Code puts a real name there or the title its own small-model pass wrote, and
+  // never the default display name. Everything below is the inference that was
+  // needed before there was a status line to ask.
+  if (session.statusName !== null) return session.statusName
   if (row === undefined || row.name === '') {
     return session.lastName ?? session.nameAtSpawn ?? NEW_SESSION
   }
@@ -346,6 +367,30 @@ function deriveName(session: Session, row: SessionRow | undefined): string {
   if (session.nameAtSpawn !== null) return row.name
   if (session.firstSeenName !== null && row.name !== session.firstSeenName) return row.name
   return NEW_SESSION
+}
+
+/**
+ * What a session's status line prints.
+ *
+ * Two facts and no decoration: which model is answering, and how much of the
+ * context window is gone. Both are questions you ask mid-task and neither has
+ * another home in the terminal — Claude Code's own footer hints are what a
+ * custom status line replaces, so anything put here has to be worth more than
+ * `esc to interrupt` was.
+ */
+function statusLineText(model: string | null, percent: number | null): string {
+  const parts = [model === null ? null : model, percent === null ? null : `${percent}% context`]
+  return parts.filter((p): p is string => p !== null).join('  ·  ')
+}
+
+/** One field out of Claude Code's status JSON, or undefined. Shape-checked rather
+ *  than trusted: it is another program's output and it changes between
+ *  versions, so a missing field costs that field and nothing else. */
+function readField(status: unknown, path: [string, string]): unknown {
+  if (status === null || typeof status !== 'object') return undefined
+  const parent = (status as Record<string, unknown>)[path[0]]
+  if (parent === null || typeof parent !== 'object') return undefined
+  return (parent as Record<string, unknown>)[path[1]]
 }
 
 export function createAgentManager(deps: AgentManagerDeps): AgentManager {
@@ -643,6 +688,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       nameAtSpawn: sessionName(args.name),
       firstSeenName: null,
       lastName: null,
+      statusName: null,
+      model: null,
+      contextPercent: null,
       ready: false,
       pendingPastes: args.paste !== undefined && args.paste !== '' ? [args.paste] : [],
       readyTimer: null,
@@ -874,6 +922,39 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       if (vault === null) return
       ensureFocusWriter(vault.root)
       focusWriter?.snapshot.setFocus(focus)
+    },
+
+    noteStatus: (sessionId, status) => {
+      const session = sessions.get(sessionId)
+      if (session === undefined) return ''
+
+      const model = readField(status, ['model', 'display_name'])
+      const percent = readField(status, ['context_window', 'used_percentage'])
+      const name =
+        status !== null && typeof status === 'object'
+          ? (status as Record<string, unknown>)['session_name']
+          : undefined
+
+      if (typeof model === 'string' && model !== '') session.model = model
+      if (typeof percent === 'number' && Number.isFinite(percent)) {
+        session.contextPercent = Math.round(percent)
+      }
+      // A name only ever arrives; it never goes back to absent, because Claude
+      // Code stops sending it in no case Holi can distinguish from a slow read.
+      if (typeof name === 'string' && name !== '') session.statusName = name
+
+      /**
+       * The status line fires on every event in a session, far more often than
+       * anything else here, so this pushes only when something derived actually
+       * moved — which `pushSessions` decides by comparing the encoded list.
+       *
+       * That is also why the model and the context reading stay on the Session
+       * and out of the summary: they move constantly, nothing in Holi's own UI
+       * shows them (the footer does, which is where they were asked for), and a
+       * list pushed on every token would re-render every tab to say nothing new.
+       */
+      pushSessions()
+      return statusLineText(session.model, session.contextPercent)
     },
 
     setTurnActive: (sessionId, active) => {

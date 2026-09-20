@@ -415,7 +415,7 @@ These modules exist in the old repo and are **deliberately not ported** — reje
 
 ## Ask Claude about a selection
 
-Select a passage, press one button, and the agent drawer opens already knowing which note and which lines you meant ([`#5`](https://github.com/syv-ai/holi/issues/5), 2026-09-09). The prompt reads `[From projects/roadmap.md, lines 12-18]` followed by the passage quoted with `> `, and a single-line selection says `line 12` rather than `lines 12-12`.
+Select a passage, press one button, and the session you pick has it already, knowing which note and which lines you meant ([`#5`](https://github.com/syv-ai/holi/issues/5), 2026-09-09). The prompt reads `[From projects/roadmap.md, lines 12-18]` followed by the passage quoted with `> `, and a single-line selection says `line 12` rather than `lines 12-12`.
 
 **The line numbers are exact, and that is the point.** The affordance is adopted from ailex's `handleChatAboutSelection`, which recovers them by searching the markdown source for the selected substring — approximate by construction, and wrong outright when the passage appears twice. CodeMirror already holds the range, so the prompt quotes a location rather than guessing at one.
 
@@ -423,7 +423,7 @@ Select a passage, press one button, and the agent drawer opens already knowing w
 
 **Which stacks get it, and why the others must not.** The seam is `askAgent` on `EditorDeps`, so only `baseEditorExtensions` can have it — the mail composer is a separate stack precisely because it knows nothing about a vault, and a seeded vault prompt is exactly the kind of thing it must not grow; `plainTextExtensions` takes a path and a read-only flag, and a `.json` is not a note. A task's description **does** get it, being prose in the notes stack. **A locked file shows no button**: a reconcile is resolving it ([`vaults-sync.md`](vaults-sync.md) FR-19), and handing that to a second conversation mid-merge is the one case this must not offer.
 
-**No new transport.** `sendToAgent` is the whole wire, and every other ask in the app goes down it ([`agent.md`](agent.md) §Several sessions per vault). What the popover adds on top of it is the **target row**: live sessions, then New session, defaulting to the tab the drawer is showing. It is the second thing in a popover that was deliberately one field, and it earns that because an ask now goes to one of several conversations and the alternative is finding out where it went afterwards. A send that is refused — the session ended while the popover was open — keeps the text and says why.
+**No new transport.** `sendToAgent` is the whole wire, and every other ask in the app goes down it ([`agent.md`](agent.md) §Several sessions per vault). What the popover adds on top of it is the **target row**: live sessions, then New session, defaulting to the session you are on. It is the second thing in a popover that was deliberately one field, and it earns that because an ask now goes to one of several conversations and the alternative is finding out where it went afterwards. A send that is refused — the session ended while the popover was open — keeps the text and says why.
 
 ## Images and other binaries
 

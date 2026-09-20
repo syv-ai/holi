@@ -478,7 +478,9 @@ async function main(): Promise<void> {
   }))
   await googleOps.start()
   const googleCliPath = await installGoogleCli(app.getPath('userData'))
-  // Same bin directory, so one PATH prepend covers both.
+  // Same bin directory, so one PATH prepend covers both. It also writes
+  // `holi-statusline`, which is NOT found on PATH: Claude Code runs that command
+  // in a shell of its own and the vault's config directory names it absolutely.
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
   /** Every ops route acts on the vault that is open right now. There is
@@ -507,6 +509,9 @@ async function main(): Promise<void> {
   const hookServer = createHookServer({
     onTurnStart: (sessionId) => agent.setTurnActive(sessionId, true),
     onTurnEnd: (sessionId) => agent.setTurnActive(sessionId, false),
+    // What a session's footer prints, and where Holi learns the name Claude
+    // Code's own small-model pass wrote for it (D101).
+    onStatus: (sessionId, status) => agent.noteStatus(sessionId, status),
     opsFor: (remote) =>
       createAgentOps({
       openApp: async (appId) => {

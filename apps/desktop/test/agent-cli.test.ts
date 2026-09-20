@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { HOLI_CLI_SCRIPT, installHoliCli } from '../src/main/agent/cli'
+import { HOLI_CLI_SCRIPT, installHoliCli, statusLinePath } from '../src/main/agent/cli'
 import { createHookServer, type HookServer } from '../src/main/agent/hook-server'
 import { createAgentOps, type AgentOpsDeps } from '../src/main/agent/ops'
 
@@ -20,9 +20,15 @@ async function run(
   bin: string,
   args: string[],
   env: NodeJS.ProcessEnv,
+  /** What the script reads on stdin. Always passed, even empty: `holi-statusline`
+   *  pipes stdin to curl, and a pipe nobody closes is a script that never
+   *  returns. */
+  input = '',
 ): Promise<{ stdout: string; stderr: string; code: number }> {
   try {
-    const { stdout, stderr } = await execFileAsync(bin, args, { env })
+    const child = execFileAsync(bin, args, { env })
+    child.child.stdin?.end(input)
+    const { stdout, stderr } = await child
     return { stdout, stderr, code: 0 }
   } catch (error) {
     const e = error as { stdout?: string; stderr?: string; code?: number }
@@ -43,7 +49,11 @@ beforeEach(async () => {
     openApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, id } as { ok: true })),
     initApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, created: [id] })),
     refreshSeed: vi.fn((input: { path?: string; force?: boolean }) =>
-      Promise.resolve({ refreshed: [input.path ?? 'all'], skipped: [], force: input.force === true }),
+      Promise.resolve({
+        refreshed: [input.path ?? 'all'],
+        skipped: [],
+        force: input.force === true,
+      }),
     ),
   }
   server = createHookServer({
@@ -155,5 +165,62 @@ describe('seed refresh', () => {
   it('takes --force with no path', async () => {
     await run(bin, ['seed', 'refresh', '--force'], env)
     expect(deps.refreshSeed).toHaveBeenCalledWith({ path: undefined, force: true })
+  })
+})
+
+describe('holi-statusline, for real', () => {
+  /** A hook server whose statusline route echoes what it was handed, so the
+   *  test reads what actually crossed the wire rather than what we hoped did. */
+  async function statusServer(onStatus: (sessionId: string, status: unknown) => string) {
+    const s = createHookServer({
+      onTurnStart: () => {},
+      onTurnEnd: () => {},
+      onStatus,
+      log: () => {},
+    })
+    await s.start()
+    return s
+  }
+
+  it('posts Claude Code’s status JSON through and prints the answer', async () => {
+    // The script parses nothing: `jq` is not on a stock macOS, and `sed` over
+    // another program's JSON is a parser that breaks on the version that adds a
+    // field. Holi does the reading, and answers with the line.
+    let seen: unknown = null
+    const s = await statusServer((_id, status) => {
+      seen = status
+      return 'Sonnet 4.5  ·  42% context'
+    })
+    const token = s.mintSessionToken('owner/repo', 'session-1')
+    const res = await run(
+      statusLinePath(dir),
+      [],
+      { PATH: env.PATH, HOLI_HOOK_PORT: String(s.port()), HOLI_HOOK_TOKEN: token },
+      JSON.stringify({ model: { display_name: 'Sonnet 4.5' }, session_name: 'fix the merge' }),
+    )
+    await s.stop()
+
+    expect(res.stdout).toBe('Sonnet 4.5  ·  42% context')
+    // Verbatim: the script is a pipe, not a parser.
+    expect(seen).toEqual({ model: { display_name: 'Sonnet 4.5' }, session_name: 'fix the merge' })
+  })
+
+  it('says nothing at all when Holi is not running', async () => {
+    // An empty row in the footer, never `curl: (7) failed to connect` printed
+    // into every session Claude Code draws.
+    const res = await run(statusLinePath(dir), [], {
+      PATH: env.PATH,
+      HOLI_HOOK_PORT: '1',
+      HOLI_HOOK_TOKEN: 'nope',
+    })
+    expect(res.stdout).toBe('')
+    expect(res.stderr).toBe('')
+    expect(res.code).toBe(0)
+  })
+
+  it('says nothing when the environment has no door', async () => {
+    const res = await run(statusLinePath(dir), [], { PATH: env.PATH })
+    expect(res.stdout).toBe('')
+    expect(res.code).toBe(0)
   })
 })

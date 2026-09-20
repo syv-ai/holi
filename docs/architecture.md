@@ -21,7 +21,7 @@ How Holi fits together. This is the technical spine — the map; each PRD in [`p
 │  └──────────────────────────────────┘           │  fs walk + watcher        │     │
 │                                                 ├───────────────────────────┤     │
 │                                                 │ PTY host → `claude`       │     │
-│                                                 │  (xterm drawer)           │     │
+│                                                 │  (session tabs)           │     │
 │                                                 ├───────────────────────────┤     │
 │                                                 │ GitHub client (device     │     │
 │                                                 │  flow, repos, collabs)    │     │
@@ -54,7 +54,7 @@ How Holi fits together. This is the technical spine — the map; each PRD in [`p
 
 **Build only what Claude Code doesn't already do; work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Standing assumptions:
 
-- **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability. Git is a tool they already have.
+- **Every employee is a developer.** The raw TUI is the natural interface, not a liability. Git is a tool they already have.
 - **CC is already installed and authenticated** on every machine (each employee's own account, native auth). Holi does no provisioning, metering, or credential management.
 
 This principle governs the whole agent surface (§5), and under the new shape it governs *more*: with the vault being plain files in a git repo, the set of things Claude Code cannot already do has shrunk to **zero**, so the MCP op surface is empty (§5).
@@ -112,9 +112,9 @@ Full design: [`prd/auth-identity.md`](prd/auth-identity.md).
 Full design: [`prd/agent.md`](prd/agent.md).
 
 ### Runtime: interactive Claude in a PTY
-Electron main spawns **`claude`** in a **node-pty** PTY, with the **vault clone** as its cwd and the user's own Claude auth (per-user cost attribution). Bytes stream to an **xterm.js** drawer in the renderer. This is the **live** surface — native Claude UX (permission prompts, plan mode, thinking, todos) at full fidelity, with no stream-json parsing. Rejected: a server-side/headless agent — which now has nowhere to run anyway.
+Electron main spawns **`claude`** in a **node-pty** PTY, with the **vault clone** as its cwd and the user's own Claude auth (per-user cost attribution). Bytes stream to an **xterm.js** terminal in the renderer. This is the **live** surface — native Claude UX (permission prompts, plan mode, thinking, todos) at full fidelity, with no stream-json parsing. Rejected: a server-side/headless agent — which now has nowhere to run anyway.
 
-**A vault runs several of them at once (D100)**, one drawer tab each, and main is a registry of sessions rather than a single one: every agent IPC route names a session, and each session owns its runtime, mirror, pid, hook bearer and config staleness. What a session is *doing* is **read** from Claude Code's own listing (`claude agents --json`, joined by pid) rather than inferred from its output, with the turn hooks as the floor. The vault keeps **one** working set across them, so there is still exactly one sync pause and one settle commit. A vault switch ends every session, and asks first if any is mid-turn. See `prd/agent.md` §Several sessions per vault.
+**A vault runs several of them at once (D100)**, an ordinary tab each (D101), and main is a registry of sessions rather than a single one: every agent IPC route names a session, and each session owns its runtime, mirror, pid, hook bearer and config staleness. What a session is *doing* is **read** from Claude Code's own listing (`claude agents --json`, joined by pid) rather than inferred from its output, with the turn hooks as the floor. The vault keeps **one** working set across them, so there is still exactly one sync pause and one settle commit. A vault switch ends every session, and asks first if any is mid-turn. See `prd/agent.md` §Several sessions per vault.
 
 ### Config layering
 **Pure CC-native layering — Holi composes nothing and syncs no personal config:**
@@ -141,7 +141,7 @@ Phase 2's calendar and mail are the one category expected to need an MCP server 
 This is the agent's one *new* structural role. When a pull conflicts, Holi hands the merge to the agent rather than to a three-pane diff UI — because a merge editor resolves conflicts *positionally*, which is the wrong level for prose and for YAML frontmatter, while an agent resolves on meaning, in a surface already open, and can ask. It operates inside git, mid-merge, on a repo whose pre-merge state is a commit; the worst case is `git merge --abort`.
 
 ### History: native `--resume`
-No custom history system. The drawer's history affordance relaunches **`claude --resume`** — CC's own session picker, replaying the transcript in the terminal at perfect fidelity. Conversations stay on the machine that ran them.
+No custom history system. The sessions list's resume affordance opens **`claude --resume`** in a new tab — CC's own session picker, replaying the transcript in the terminal at perfect fidelity. Conversations stay on the machine that ran them.
 
 ---
 

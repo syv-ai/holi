@@ -52,7 +52,20 @@ describe('readRows', () => {
       nameSource: 'user',
       status: 'busy',
       waitingFor: undefined,
+      // Claude Code's own id for the conversation: what a Duplicate forks
+      // (D101), read at the moment it is used and never stored.
+      sessionId: '0ed06be6-aba7-4553-ba1b-caab3adccf85',
     })
+  })
+
+  it('has no conversation id when the listing gives none', async () => {
+    // Undefined rather than empty, because "not said" is what a Duplicate has
+    // to refuse on rather than fork.
+    const { sessionId: _dropped, ...withoutId } = ROW
+    const registry = registryWith(async () => listing([withoutId]))
+
+    const rows = await registry.readRows({ configDir: '/cfg', vaultRoot: VAULT_ROOT })
+    expect(rows.get(4242)?.sessionId).toBeUndefined()
   })
 
   it('parses a row with no nameSource, which is every row the command prints', async () => {

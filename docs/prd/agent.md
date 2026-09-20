@@ -4,23 +4,23 @@ The in-app Claude Code instance. This PRD covers its runtime, config, context in
 
 **Standing principle: build only what Claude Code doesn't already do, and work with CC as-is.** No adapter layers, no version-pinning ceremony — if a CC release breaks something, fix forward. Native Claude Code already provides the interactive UX, the file tools, the config layering, and the history; every subsystem below exists only because it clears that bar.
 
-**What Holi builds is now essentially one thing: the PTY runtime and its drawer.** No MCP op surface, no file↔CRDT bridge, and — sharpened in the 2026-07-26 revision — **no prompt content**: Holi injects nothing into `--append-system-prompt`, and the per-turn hook injects only the *current focused file*. Claude Code stays pure; everything it needs to know lives in `AGENTS.md`/`CLAUDE.md` (read natively from the cwd) and in `.claude/skills/`, and the agent discovers vault state (tasks, backrefs, sync) with its own native tools. The agent edits the vault the same way you do, with the tools it already has.
+**What Holi builds is now essentially one thing: the PTY runtime and the tabs it shows in.** No MCP op surface, no file↔CRDT bridge, and — sharpened in the 2026-07-26 revision — **no prompt content**: Holi injects nothing into `--append-system-prompt`, and the per-turn hook injects only the *current focused file*. Claude Code stays pure; everything it needs to know lives in `AGENTS.md`/`CLAUDE.md` (read natively from the cwd) and in `.claude/skills/`, and the agent discovers vault state (tasks, backrefs, sync) with its own native tools. The agent edits the vault the same way you do, with the tools it already has.
 
 ---
 
 ## Summary
 
-Each employee's Electron app spawns **their own `claude`** in a **node-pty** PTY, authenticated with **their** Claude account, pointed at the vault's **clone directory**, rendered live in an **xterm.js drawer**. The agent works the vault with its native `Read/Write/Edit/Bash/Glob/Grep` tools, and that is the entire integration: its writes are file writes, picked up by the editor's watcher and the sync engine like any other.
+Each employee's Electron app spawns **their own `claude`** in a **node-pty** PTY, authenticated with **their** Claude account, pointed at the vault's **clone directory**, rendered live in an **xterm.js terminal**. The agent works the vault with its native `Read/Write/Edit/Bash/Glob/Grep` tools, and that is the entire integration: its writes are file writes, picked up by the editor's watcher and the sync engine like any other.
 
 Holi builds **no prompt content**. `--append-system-prompt` is empty; vault conventions live in `AGENTS.md` (which CC reads natively via a `CLAUDE.md` shim) and capabilities are `.claude/skills/`. The only per-turn injection, through a **`UserPromptSubmit` hook**, is **the current focused note/file** — the one piece of state the agent cannot discover itself; it gets tasks, backrefs, and sync-state with native `Glob`/`grep`/`git`. Config layering is **pure CC-native** — the repo's `.claude/` is the shared layer and Holi composes and syncs nothing — but it is layered over **Holi's own config directory rather than the machine's `~/.claude`**, so a vault agent inherits the vault and not the laptop. History is **`claude --resume`** — CC's own session picker, full-fidelity replay in the terminal; conversations stay machine-local.
 
-It renders in a **right-hand resizable drawer** (`AgentPanel`), toggled with **⌘J** and opened automatically by the reconcile flow. The agent also gains one role it did not have before: it is the **conflict resolver**. When a pull cannot merge, Holi hands the merge to the agent rather than to a three-pane diff UI.
+Each session renders in an **ordinary tab** beside notes, apps and the board (D101), opened with **⌘J**, from the sidebar's sessions list, or by the reconcile flow. It used to be a right-hand drawer; a tab can be split beside the note it is about, and several can be on screen at once. The agent also gains one role it did not have before: it is the **conflict resolver**. When a pull cannot merge, Holi hands the merge to the agent rather than to a three-pane diff UI.
 
 ## Assumptions
 
 These are load-bearing — they dissolved several risks outright:
 
-- **Every employee is a developer.** The raw TUI drawer is the natural interface, not a liability to soften.
+- **Every employee is a developer.** The raw TUI is the natural interface, not a liability to soften.
 - **Claude Code is already installed and authenticated on every machine**, each employee on their own account with native auth. Holi does **no provisioning, no metering, no credential management**. The old login-PTY flow is at most an **edge-case fallback**.
 - **Work with CC as-is.** No adapter layers, no version-pinning ceremony.
 - **The agent is git-literate.** This is new, and the reconcile flow depends on it: resolving a merge conflict is a task Claude Code does well with the tools it already has, in a repo it is already sitting in.
@@ -48,16 +48,16 @@ These are load-bearing — they dissolved several risks outright:
 
 ## User stories
 
-- *As a member*, I open the assistant drawer, type into a real Claude session, and watch it read my notes, run commands, and edit files with the native TUI I already know.
+- *As a member*, I open a session tab, type into a real Claude session, and watch it read my notes, run commands, and edit files with the native TUI I already know.
 - *As a member*, when I ask the assistant to "add a task for the Q2 review," it writes a file and the task appears on my board.
 - *As a member*, when the assistant edits `projects/q2/roadmap.md` while I have it open with unsaved changes, both survive — the editor merges its write into my buffer.
-- *As a member*, when a pull can't merge, I click **"Ask Claude to reconcile"** and my local agent resolves the conflict in the drawer, where I can watch it and answer if it asks.
-- *As any user*, I pick up an old conversation from `claude --resume`'s session picker in the drawer — the full transcript replays right there in the terminal.
+- *As a member*, when a pull can't merge, I click **"Ask Claude to reconcile"** and my local agent resolves the conflict in a session tab, where I can watch it and answer if it asks.
+- *As any user*, I pick up an old conversation from `claude --resume`'s session picker in a new tab — the full transcript replays right there in the terminal.
 - *As any user*, my `CLAUDE.local.md` tweaks work in Holi exactly as they do in my shell, and my `~/.claude` is never written to. **It is also never read** — a vault agent runs on Holi's own config directory, so my personal skills and plugins are not in the vault (Config layering).
 
 ---
 
-## Runtime (PTY + xterm drawer)
+## Runtime (PTY + xterm tabs)
 
 The agent is **interactive Claude Code in a real terminal**, spawned client-side per user. **Why:** native Claude Code UX at full fidelity, native file tools, no brittle stream-json parsing for the live view, and per-user cost attribution. **Rejected:** a headless streaming session rendered in a custom chat panel (re-implements block assembly and the TUI), and a server-side agent (there is no server, and it would forfeit the native interactive UX regardless).
 
@@ -83,6 +83,8 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 | renderer → main | `agent:sessions` | — → the list, for a renderer that has just mounted |
 | renderer → main | `agent:attach` | `id` → replayable terminal state, and opens that session's data tap |
 | renderer → main | `agent:paste` | `{ id, text }` → `{ ok, message? }` |
+| renderer → main | `agent:duplicate` | `id` → `{ ok, id?, message? }` — fork the conversation |
+| session → main | `POST /statusline` | Claude Code's status JSON on the hook server, answered with the line to print |
 | renderer → main | `agent-pty:write` | `{ id, data }` — keystroke bytes |
 | renderer → main | `agent-pty:resize` | `{ id, cols, rows }` |
 | renderer → main | `agent-pty:kill` | `id` |
@@ -94,40 +96,71 @@ the **vault's**, one path in the clone, read by whichever session takes the next
 
 - A **reader loop** on the PTY master forwards each chunk to the renderer; **EOF/EIO** ends the session (the template treats `EIO`/errno 5 as normal remote-hangup).
 - A **child-wait** task parks on the child, clears session state, then emits `exit` — clearing before emitting so a renderer that kills-on-exit doesn't race a dead child.
-- **Any number of live sessions per vault (D100)**, one drawer tab each; see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you; so does adding a vault, which opens the one it creates.
-- Drawer lifecycle: opening the drawer starts a session when the vault has none, and otherwise shows the tabs it already has; each terminal is the **live** surface for its own session. The drawer's **history affordance** opens **bare `--resume`** in a *new* tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
+- **Any number of live sessions per vault (D100)**, an ordinary tab each (D101); see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you; so does adding a vault, which opens the one it creates.
+- Lifecycle: **⌘J and the footer door go to the agent** — the current session's tab, or a new session when the vault has none. They do not toggle: a drawer was a thing to open and shut, a tab is a place to go. The sessions list's **resume affordance** opens **bare `--resume`** in a new tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
   - **No `--resume <id>` shortcuts for recent sessions**, which was the obvious next affordance and is deliberately absent: the CLI's picker is the surface the user already knows, and a Holi-drawn list of recent sessions would be a second index over another program's session store — the same bet §Config layering declines when it refuses to migrate transcripts.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it. It is a positional argv, so Claude Code **submits** it as turn one, and reconcile is the only sender that does (D100).
 - **The `paste` field on `start` is every other ask.** Main holds the text until Claude Code's own listing first carries that session — which it does because Claude Code writes the session file at `SessionStart`, measured 0.94 s after the spawn — and then writes it as a bracketed paste, with a backstop for a listing that never answers. A paste written at spawn would go into a TUI that is not reading stdin yet.
 
+**The status line is Holi's** (D101). The vault's config directory carries a `statusLine`
+command pointing at a generated `holi-statusline`, which **parses nothing**: Claude Code
+writes its status JSON to the script's stdin, the script posts it to the hook server, and
+Holi answers with the line to print — `Sonnet 4.5 · 42% context`. `jq` is not installed on
+a stock macOS and `sed` over another program's JSON is a parser that breaks on the version
+that adds a field, so the parsing happens where there is a real one. It also means main
+sees the status, which is how a session's name reaches Holi (above).
+
+**The cost, stated:** configuring any status line makes Claude Code drop most of its
+footer's keyboard hints, `esc to interrupt` included. The key still works.
+
 **Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. So the first launch after the relocation is logged out, once, ever.
 
-**Holi says nothing about it, and that is the decision.** Claude Code prints `Not logged in · Please run /login` in the terminal the drawer is already showing, and `/login` is typed into that same terminal. A notice in Holi's header would be a **second copy of state Holi does not own** — and duplicate state has to be kept honest: `/login` spawns nothing, opens no turn and exits nothing, so it fires none of the events Holi has to refresh on, and the header's copy is wrong from the moment the user acts on it. The fix for a stale mirror is not a fresher mirror. There is **no login probe at all** — no `authenticated` field on agent status, and nothing reading `<configDir>/.claude.json`.
+**Holi says nothing about it, and that is the decision.** Claude Code prints `Not logged in · Please run /login` in the terminal the session tab is already showing, and `/login` is typed into that same terminal. A notice in Holi's header would be a **second copy of state Holi does not own** — and duplicate state has to be kept honest: `/login` spawns nothing, opens no turn and exits nothing, so it fires none of the events Holi has to refresh on, and the header's copy is wrong from the moment the user acts on it. The fix for a stale mirror is not a fresher mirror. There is **no login probe at all** — no `authenticated` field on agent status, and nothing reading `<configDir>/.claude.json`.
 
 ## Several sessions per vault (D100)
 
 A vault runs **any number of `claude` sessions at once**. Design of record:
 [`../specs/2026-09-14-agent-sessions-design.md`](../specs/2026-09-14-agent-sessions-design.md).
 
-**Where they are.** A tab per session in the drawer, in spawn order, each with its own
-terminal and scrollback; every tab stays mounted so switching is instant and nothing is
-rebuilt. The sidebar carries the same set as cards, which is what says a session exists
-while the drawer is shut, and the footer door reduces the whole set to one dot — painted
-by whichever session most wants you to open it. An **exited** session keeps its tab until
-someone closes it: an exit is something to read, not a tab that vanishes from under the
-reader.
+**Where they are.** An ordinary tab each (D101), so a session can sit beside the note it
+is about, be split into its own pane, or be moved between panes like anything else. Every
+session tab in a pane keeps its terminal **mounted** while another tab is showing, because
+a terminal that unmounts throws away its scrollback and has to replay main's mirror to get
+it back. **Closing a tab does not end the session**: a tab is a view, the PTY keeps
+running, and the sidebar's sessions list is how you get back to it. That list is also
+where a session is started, resumed, renamed, duplicated, restarted and ended, and the
+footer door reduces the whole set to one dot — painted by whichever session most wants you
+to open it, and more important than it was, because a session with no tab open has nothing
+else on screen.
 
-**Their names are Claude Code's own.** `--name` at spawn, or `/rename` typed inside. There
-is no rename in Holi: a second name kept beside Claude's would be a copy that goes stale
-the moment anybody types `/rename`. A session started for an ask is named from the ask's
-first line, so its tab is named from the moment it exists.
+**Renaming goes through Claude Code, and stops short of sending.** There is no shell route
+to a rename (`claude agents`, `attach`, `logs`, `stop`, `respawn`, `rm`, and nothing for a
+name), so Holi writes `/rename <name>` into the session's box as a paste and leaves it for
+you to send. Appending the Enter was the alternative and is not safe: Holi cannot see the
+composer, so a half-written draft would be submitted along with the command.
+
+**Duplicating one forks the conversation**, `--resume <id> --fork-session`, where the id is
+Claude Code's own — read out of the listing at the moment of the fork and never stored,
+which is the difference between using that id and keying a session by it. The original
+keeps running and neither copy sees the other's turns.
+
+**Their names are Claude Code's own**, and Holi keeps none of its own beside them. A name
+comes from `--name` at spawn, `/rename` inside, an accepted plan, or — for a session
+nobody has named — the **title Claude Code writes itself**, a summary of the first prompt
+"written by a background request to the small/fast model, normally a Haiku-class model".
+That title does not reach `claude agents --json`, which carries the default display name
+instead (`privat-d9`, the directory plus two characters, unique per session and not even a
+resume handle). It reaches the **status line** as `session_name`, which is why Holi's own
+status-line command reports it back: a value there is always a real name, so it outranks
+the listing and needs none of the inference below. A session started for an ask is named
+from the ask's first line, so its tab is named from the moment it exists.
 
 **What a session is doing is read, not inferred.** Claude Code already tracks every live
 session on the machine and lists them with `claude agents --json`; Holi joins that listing
 to its own sessions **by pid** and derives one of `needs-you | working | idle`,
 `waitingFor` first, then the listing's `busy`, then the turn bracket. The listing is
 re-read on a watcher edge under `<configDir>/sessions/`, on every turn hook and when the
-drawer opens — never on a timer — and the joined list is pushed only when something
+session tab opens — never on a timer — and the joined list is pushed only when something
 derived actually changes.
 
 **It degrades honestly.** If the CLI is missing, slow or fails, a session still reports
@@ -143,9 +176,9 @@ and §Reviewing a turn.
 
 **An ask is pasted, never submitted.** Text sent to a session — from the "Ask agent"
 popover over a selection, from a task's description, from a mail thread — lands in its
-input box as a bracketed paste with no Enter, and the drawer focuses that tab. One rule
+input box as a bracketed paste with no Enter, and its tab comes forward. One rule
 everywhere, and it cannot append a submit to a half-typed draft. The popover picks the
-target: live sessions, then New session, defaulting to the tab the drawer is showing. A
+target: live sessions, then New session, defaulting to the session you are on. A
 session that is **needs-you** is not offered, because it is blocked on a dialog and the
 text would sit unread behind it; a target that ended between being picked and being sent
 to is refused with a reason, and the text stays in the popover. **Reconcile is the
@@ -192,7 +225,7 @@ CC reads all of this from the cwd natively — **zero extra machinery**. A teamm
     - **Holi stamps the agent's theme** into that file, from the same resolved mode that stamps `data-theme` (D85's `colorScheme` + `resolveColorMode`), on **every** spawn rather than only when absent — unlike `disableClaudeAiConnectors`, it tracks a setting rather than seeding a default. Claude Code ships `"auto"`, meaning *detect the terminal background*, and inside Holi's embedded PTY there is nothing reliable to detect, so the agent stayed dark while D85 took the app light. **Known limit:** Claude Code reads settings at start, so a live session keeps its theme until restarted, and the panel says so rather than attempting to hot-swap another program's settings.
     - **On upgrade, the shared directory is renamed into the slot of the vault that actually ran the agent in it** — which the directory itself records, in `.claude.json`'s `projects{}` keys, and which is *not* the same as the most recently opened vault. A whole-directory rename, never a rewrite of the contents, which is why it is safe where copying transcripts was not. **What it carries is files** — transcripts and the plugin set. The credential is not in the directory at all: it is a macOS keychain entry Claude Code owns, so whether a login survives the rename is not Holi's to promise. It did on the install this was built against.
     - **The first-spawn notice does not read Claude Code's sign-in state**, because that state cannot be read honestly: a session was observed printing `Not logged in` in a directory whose `.claude.json` carried an `oauthAccount`. The key records **an account**, not whether the credential behind it is reachable — that lives in the keychain, which can be locked or re-keyed without the file changing. Holi writes its own `.holi-spawned` marker into the config directory instead. It is a proxy rather than a guess — credentials are keyed to the directory, so a directory Holi has never spawned in cannot be signed in — and it is the honest scope of the message, which is less "you are logged out" than "this vault is new, and that is why you are being asked again".
-  - **A pulled config change nudges, and the split is known.** `AGENT_CONFIG_FILES` — `.claude/settings.json`, `CLAUDE.md`, and the `AGENTS.md` it shims to — are read **once at launch**, so a change arriving by pull only takes effect on a restart, and the drawer says so (*"shared config changed; restart to pick it up"*, `AgentPanel.tsx`). **Hooks and skills are deliberately not in that set**: they are external scripts re-read per invocation, so a pulled skill works immediately and a nudge would be noise. `.holi/settings/app.yaml` is out because it is Holi's config, not the agent's, and `*.local.*` is out because it never syncs, so no collaborator's pull can change it.
+  - **A pulled config change nudges, and the split is known.** `AGENT_CONFIG_FILES` — `.claude/settings.json`, `CLAUDE.md`, and the `AGENTS.md` it shims to — are read **once at launch**, so a change arriving by pull only takes effect on a restart, and the session's dot says so (*"shared config changed; restart to pick it up"*, `AgentPanel.tsx`). **Hooks and skills are deliberately not in that set**: they are external scripts re-read per invocation, so a pulled skill works immediately and a nudge would be noise. `.holi/settings/app.yaml` is out because it is Holi's config, not the agent's, and `*.local.*` is out because it never syncs, so no collaborator's pull can change it.
   - **What is lost, deliberately:** transcripts already under `~/.claude/projects/` are invisible to the relocated agent, so `--resume` starts empty once. Copying them across would mean rewriting another program's internal state store, which is a worse bet than a sentence in a release note.
   - **The vault's own `.claude/` is untouched and still outranks everything.** Isolation is from the machine, not from the vault: a vault may declare its own skills and MCP servers, which is why `--strict-mcp-config` stays off.
 - **`CLAUDE.local.md`** in the clone — CC's native personal-per-project layer.
@@ -306,7 +339,7 @@ So the tool surface is still **zero ops**, and it now holds for external data to
 
 The vault is a **regular git repo** and the agent may run **any** git it likes — commit, push, pull, resolve a merge. The one hazard is two git actors on one repo: Holi's own sync loop (autosave-commit on a quiet timer, periodic pull, push) and the agent. They must not contend on `.git/index.lock`, and an agent rebase/branch-switch must not strand Holi's loop.
 
-**Rule: while *any* session is working (mid-turn), Holi suspends its sync loop; it resumes after the last of them goes idle (with a short settle).** So Holi is never a second git actor. With several sessions the vault keeps **one** working set and one pause around it (D100): the first turn to start pauses, the last to end resumes, and the settle commit covers whatever the set wrote between those two moments. Holi keys this off Claude Code's own **hooks** (`UserPromptSubmit` starts the turn, `Stop` ends it) rather than inferring working/idle from PTY output — parsing a terminal to guess what another program is doing is a rabbit hole, and the hooks say it exactly. **`Stop` is not guaranteed** on an interrupt or a crash, so the pause is capped and a dead session resumes the vault rather than stranding it paused. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
+**Rule: while *any* session is working (mid-turn), Holi suspends its sync loop; it resumes after the last of them goes idle (with a short settle).** So Holi is never a second git actor. With several sessions the vault keeps **one** working set and one pause around it (D100): the first turn to start pauses, the last to end resumes, and the settle commit covers whatever the set wrote between those two moments. Holi keys this off Claude Code's own **hooks** (`UserPromptSubmit` starts the turn, `Stop` ends it) rather than inferring working/idle from PTY output — parsing a terminal to guess what another program is doing is a rabbit hole, and the hooks say it exactly. **`Stop` is not guaranteed** on an interrupt or a crash, so the pause is capped and a dead session resumes the vault rather than stranding it paused. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the session tab open — so the pause is scoped to actual agent turns, not the whole session.
 
 `AGENTS.md` states this to the agent plainly: *git is yours; Holi pauses its own sync while you work, and reconciles when you're done.* This **supersedes** the old AGENTS.md prohibition on the agent running git.
 
@@ -341,7 +374,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 1. **Autosave and auto-pull stop** for that vault, so nothing writes underneath the resolution. This needed no explicit call in the end: a merge in progress is already a `blockedReason`, so step 2 is what suspends the loops and the agent's merge commit is what releases them. The vault reads as paused throughout, for the reason it actually is.
 2. **Re-runs the merge for real**, leaving the conflict in the working tree.
-3. **Opens the drawer** and starts the session with a **seeded first message** (the `prompt` field on `agent-pty:start`) naming the conflicted paths — the user does not type it. It names the paths and not the branches: the marked-up files are the whole of what has to be resolved, and the branch names would be decoration in a prompt whose next instruction is to read them.
+3. **Opens a session tab** and starts the session with a **seeded first message** (the `prompt` field on `agent-pty:start`) naming the conflicted paths — the user does not type it. It names the paths and not the branches: the marked-up files are the whole of what has to be resolved, and the branch names would be decoration in a prompt whose next instruction is to read them.
 4. The agent resolves the `<<<<<`/`=====`/`>>>>>` markers with native tools and **finishes the merge itself** (`git add` + commit), **in front of the user**, who can watch and answer if it asks.
 5. On a clean tree, Holi resumes normal operation.
 
@@ -353,7 +386,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Where the wire runs.** `reconcileAtom` (`state/agent-send.ts`) is the whole of it: `sync.reconcile` re-runs the merge in main (`activeVault.reconcile()` over `repo.remerge()`, which unlike the auto-pull path deliberately does **not** abort), and the conflicted paths it returns become a new session's submitted first turn via `lib/reconcile-prompt.ts` and `start`'s `prompt`. **An empty path list is a real outcome, not an error**: the merge now applies cleanly, so the banner clears and no agent is handed anything.
 
-**What surrounds it** is in [`vaults-sync.md`](vaults-sync.md): the conflicted files are read-only while the reconcile runs (FR-19), **Abandon** in the footer is the way out of it (FR-20), and the reconcile ends on the agent's merge commit rather than on anything the drawer reports — which is what lets the agent take as many turns over it as the merge needs.
+**What surrounds it** is in [`vaults-sync.md`](vaults-sync.md): the conflicted files are read-only while the reconcile runs (FR-19), **Abandon** in the footer is the way out of it (FR-20), and the reconcile ends on the agent's merge commit rather than on anything the session reports — which is what lets the agent take as many turns over it as the merge needs.
 
 ## Rendering PDFs
 
@@ -380,13 +413,13 @@ Ported to TypeScript, adapted as noted above:
 - **Prompt injection via shared content** — accepted residual risk. Native permission prompts + seeded egress gating + git history bound the blast radius.
 - **Hook latency** — the `UserPromptSubmit` hook runs on *every* prompt; a slow grep stalls the user's turn. Budget it (target < ~50 ms) and degrade to "context unavailable" rather than block. A vault-wide grep per turn is the thing to measure first.
 - **`claude` missing or unauthenticated** — clear error + the fallback login PTY flow.
-- **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session and CC reads it at launch only. Resolved: the drawer nudges (*"shared config changed; restart to pick it up"*), over the `AGENT_CONFIG_FILES` set described in §Config layering — hooks and skills are out of it, being re-read per invocation.
-- **Terminal resize / reflow** — xterm + node-pty resize wiring must stay in sync; test drawer resize under active output.
+- **Shared config drift mid-session** — a pull can land a new `.claude/settings.json` mid-session and CC reads it at launch only. Resolved: the session nudges (*"shared config changed; restart to pick it up"*), over the `AGENT_CONFIG_FILES` set described in §Config layering — hooks and skills are out of it, being re-read per invocation.
+- **Terminal resize / reflow** — xterm + node-pty resize wiring must stay in sync; test tab resize under active output.
 - **The agent editing during a reconcile** — the reconcile pauses autosave, but the *user* could still type into the file the agent was resolving. Settled and built: the conflicted files go read-only, everything else stays editable ([`vaults-sync.md`](vaults-sync.md) FR-19). A keystroke landing between the agent's read and its write is a resolution built on a file that moved, and Claude Code's own read-before-edit guard would have failed the write rather than caught the problem.
 
 ## Dependencies
 
-- **[`../architecture.md`](../architecture.md)** — the sync engine, and the reconcile flow this PRD's drawer is the surface for.
+- **[`../architecture.md`](../architecture.md)** — the sync engine, and the reconcile flow this PRD's agent is the surface for.
 - **[`notes-editor.md`](notes-editor.md)** — the editor's external-write handling, which is what makes the agent's file writes safe against an open buffer.
 - **[`tasks.md`](tasks.md)** — the task file convention, which is the agent's entire task interface and therefore belongs in the system prompt.
 - **[`auth-identity.md`](auth-identity.md)** — GitHub access; the push credential the agent's repo can reach.
