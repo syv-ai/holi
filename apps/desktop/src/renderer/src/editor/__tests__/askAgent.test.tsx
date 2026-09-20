@@ -460,6 +460,43 @@ describe('the selection tooltip', () => {
     expect(onAsk).toHaveBeenLastCalledWith('[From a.md, line 1]\n> one', 'new')
   })
 
+  it('does not reach back into the editor when the send lands after it has gone', async () => {
+    // The send is a round trip now, and a spawn is long enough to select
+    // something else meanwhile. Left unguarded, the fade would be armed on a
+    // destroyed tooltip and, a fifth of a second later, collapse whatever is
+    // selected by then and take focus back into the editor.
+    let settle: (r: { ok: boolean }) => void = () => {}
+    onAsk.mockImplementation(() => new Promise((res) => (settle = res)))
+    const v = mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
+    press(button()!)
+    sendKey(field()!)
+
+    // A different passage: the tooltip is rebuilt, so the one that sent is gone.
+    v.dispatch({ selection: EditorSelection.single(4, 7) })
+    settle({ ok: true })
+
+    await new Promise((res) => setTimeout(res, 250))
+    expect(v.state.selection.main.empty).toBe(false)
+    expect(v.state.selection.main.from).toBe(4)
+  })
+
+  it('says nothing about a refusal that arrives after Escape', async () => {
+    // Escape put the trigger back. There is no box left to keep the text in and
+    // no popover to say why, so the answer is to write to neither.
+    let settle: (r: { ok: boolean; message?: string }) => void = () => {}
+    onAsk.mockImplementation(() => new Promise((res) => (settle = res)))
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
+    press(button()!)
+    const input = field()!
+    sendKey(input)
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+    settle({ ok: false, message: 'That session has ended.' })
+    await new Promise((res) => setTimeout(res, 20))
+    expect(notice()).toBe('')
+    expect(button()).not.toBeNull()
+  })
+
   it('offers nothing on a locked file', () => {
     // A reconcile is resolving it. Handing that to a second conversation
     // mid-merge is the one case this must not offer.

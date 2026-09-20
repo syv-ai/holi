@@ -13,6 +13,7 @@
  * part way through or drops a question nobody answered.
  */
 import { useAtomValue } from 'jotai'
+import { useState } from 'react'
 import { Button, Dialog } from '@/primitives'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
 import { agentSessionsAtom } from '@/state/agent'
@@ -34,7 +35,16 @@ export function VaultSwitchConfirm(props: {
   onConfirm: () => void
   onCancel: () => void
 }): React.JSX.Element {
-  const busy = sessionsWorthAsking(useAtomValue(agentSessionsAtom))
+  /**
+   * Read once, when the question is asked.
+   *
+   * The list is live, and a turn can land while the dialog is open — which
+   * would rewrite the sentence under the reader, at worst into "0 sessions are
+   * still running" over two buttons asking about them. What it says is what was
+   * true when it interrupted you.
+   */
+  const sessions = useAtomValue(agentSessionsAtom)
+  const [busy] = useState(() => sessionsWorthAsking(sessions))
 
   return (
     <Dialog open onClose={props.onCancel} size="sm">

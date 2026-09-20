@@ -832,9 +832,10 @@ describe('pasting an ask', () => {
    *  constant from the code under test would pass if the code pasted nothing. */
   const paste = (text: string) => `\x1b[200~${text}\x1b[201~`
 
-  it('puts text in a live session unsent, as one bracketed paste', async () => {
-    const r = await rig()
+  it('puts text in a session that is up unsent, as one bracketed paste', async () => {
+    const r = await rig({ pasteBackstopMs: 20 })
     const id = await r.start()
+    await new Promise((res) => setTimeout(res, 60)) // it is up
 
     expect(r.manager.paste(id, 'summarise this thread')).toEqual({ ok: true })
     // Exactly one write, and no `\r`: an ask lands in the composer and the
@@ -843,7 +844,7 @@ describe('pasting an ask', () => {
   })
 
   it('refuses a session that has ended, rather than dropping the text', async () => {
-    const r = await rig()
+    const r = await rig({ pasteBackstopMs: 20 })
     const id = await r.start()
     r.pty().exit(0)
     await tick()
@@ -892,6 +893,58 @@ describe('pasting an ask', () => {
 
     await new Promise((res) => setTimeout(res, 60))
     expect(r.pty().writes).toEqual([paste('look at this')])
+  })
+
+  it('holds an ask for a session the listing has not seen yet', async () => {
+    // The new tab is in the drawer and is what an ask defaults to from the
+    // moment it appears, so this is reachable in a second of real use: ask for a
+    // new session, then ask it something before its TUI has started reading.
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+      pasteBackstopMs: 60_000,
+    })
+    const id = await r.start({ paste: 'the first ask' })
+    await tick()
+
+    expect(r.manager.paste(id, 'and a second')).toEqual({ ok: true })
+    expect(r.pty().writes).toEqual([])
+
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle' }])
+    fake.fire()
+    await tick()
+    // Two asks are two things somebody typed, delivered in order rather than
+    // glued into one.
+    expect(r.pty().writes).toEqual([paste('the first ask'), paste('and a second')])
+  })
+
+  it('stops holding once the session is up', async () => {
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+      pasteBackstopMs: 60_000,
+    })
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle' }])
+    fake.fire()
+    await tick()
+
+    r.manager.paste(id, 'have a look')
+    expect(r.pty().writes).toEqual([paste('have a look')])
+  })
+
+  it('stops holding once the backstop has given up, so no ask waits twice', async () => {
+    // A machine whose CLI cannot list never sights anything. Holding every ask
+    // for five seconds because of that would be the registry's failure charged
+    // to the user over and over.
+    const r = await rig({ pasteBackstopMs: 20 })
+    const id = await r.start()
+    await new Promise((res) => setTimeout(res, 60))
+
+    r.manager.paste(id, 'have a look')
+    expect(r.pty().writes).toEqual([paste('have a look')])
   })
 
   it('drops a pending paste when the session exits before it lands', async () => {

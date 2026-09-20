@@ -269,6 +269,26 @@ export function MailView() {
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
 
+  /**
+   * Hand the open thread to the agent.
+   *
+   * The target was chosen when this rendered, and a session can end between then
+   * and the click — so a refusal here is not a failure to report, it is the
+   * answer the default target would have given if the list had been fresh: a new
+   * session. There is no box keeping the text, the way the ask popover has, so
+   * the alternative is a click that does nothing.
+   */
+  const summarize = async () => {
+    if (open === null) return
+    const text = buildSummarizePrompt({
+      subject: open.subject,
+      threadId: open.id,
+      webUrl: open.webUrl,
+    })
+    const res = await sendToAgent({ text, target: agentTarget })
+    if (!res.ok && agentTarget !== 'new') await sendToAgent({ text, target: 'new' })
+  }
+
   const showDrafts = view.kind === 'drafts'
   const searching = submitted !== ''
 
@@ -996,16 +1016,7 @@ export function MailView() {
                     variant="secondary"
                     size="xs"
                     className="shrink-0 gap-1"
-                    onClick={() =>
-                      void sendToAgent({
-                        text: buildSummarizePrompt({
-                          subject: open.subject,
-                          threadId: open.id,
-                          webUrl: open.webUrl,
-                        }),
-                        target: agentTarget,
-                      })
-                    }
+                    onClick={() => void summarize()}
                   >
                     <Sparkles size={13} />
                     Summarize

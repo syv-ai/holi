@@ -93,14 +93,16 @@ const IDLE_RECHECK_MS = 1_100
 const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
 
 /**
- * How long a brand-new session's paste waits for a delivery address.
+ * How long a session is treated as not yet ready to be pasted into.
  *
- * The address is the registry's first sighting of the session, which exists
- * because Claude Code writes its session file at `SessionStart` — measured 0.94 s
- * after the spawn, and measured as the point where a paste lands in the composer
- * rather than into a TUI that is not reading yet. This is the backstop for a
- * listing that never answers at all: the registry degrades honestly everywhere
- * else, and text the user has already written is not the thing to lose to it.
+ * Ready means the registry has sighted it, which happens because Claude Code
+ * writes its session file at `SessionStart` — measured 0.94 s after the spawn,
+ * and measured as the point where a paste lands in the composer rather than into
+ * a TUI that is not reading stdin yet. This is the backstop for a listing that
+ * never answers at all: the registry degrades honestly everywhere else, and text
+ * the user has already written is not the thing to lose to it. After it elapses
+ * a session is called ready on the grounds that 5 s is five times the measured
+ * figure, so a paste is never delayed twice.
  */
 const PASTE_BACKSTOP_MS = 5_000
 
@@ -275,10 +277,19 @@ interface Session {
    *  the listing stops carrying it — after it exits, or across a read that
    *  failed — rather than flapping back to 'New session'. */
   lastName: string | null
-  /** Text waiting for this session to be up, and the timer that gives up
-   *  waiting. Both null once it has been delivered or dropped. */
-  pendingPaste: string | null
-  pasteTimer: ReturnType<typeof setTimeout> | null
+  /**
+   * Is its TUI up and reading stdin?
+   *
+   * False from the spawn until the registry first sights the session, or until
+   * the backstop gives up waiting for that. A paste written while this is false
+   * goes nowhere, so one is held instead.
+   */
+  ready: boolean
+  /** Asks held until it is. Each is delivered as its own paste, in order: two
+   *  asks are two things somebody typed, not one longer one. */
+  pendingPastes: string[]
+  /** The backstop. Cleared when it becomes ready, or when it dies. */
+  readyTimer: ReturnType<typeof setTimeout> | null
   /** A content fingerprint of the agent-config files this session loaded. */
   configBaseline: string | null
   configStale: boolean
@@ -429,10 +440,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       // under the first time we saw it.
       if (session.firstSeenName === null) {
         session.firstSeenName = row.name
-        // …and the first sighting is also the address a held paste was waiting
-        // for: a session is in this listing because Claude Code wrote its file
-        // at `SessionStart`, so its TUI is up and reading.
-        releasePaste(session, true)
+        // …and the first sighting is also what a held paste was waiting for: a
+        // session is in this listing because Claude Code wrote its file at
+        // `SessionStart`, so its TUI is up and reading.
+        markReady(session)
       }
       session.lastName = deriveName(session, row)
       if (row.status !== 'idle') {
@@ -487,22 +498,31 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   }
 
   /**
-   * Deliver a held paste, or stop holding it.
+   * This session's TUI is up: deliver whatever was held for it.
    *
-   * Called on the session's first sighting in the listing, on the backstop, and
-   * on its death. It is one-shot either way: the text is taken out of the
-   * session before anything is written, so a second sighting has nothing left
-   * to deliver.
+   * Called on its first sighting in the listing and by the backstop, and it is
+   * one-shot — `ready` latches, so a second sighting has nothing left to do and
+   * every later paste goes straight through.
    */
-  function releasePaste(session: Session, deliver: boolean): void {
-    if (session.pasteTimer !== null) {
-      clearTimeout(session.pasteTimer)
-      session.pasteTimer = null
+  function markReady(session: Session): void {
+    if (session.readyTimer !== null) {
+      clearTimeout(session.readyTimer)
+      session.readyTimer = null
     }
-    const text = session.pendingPaste
-    session.pendingPaste = null
-    if (text === null || !deliver || session.exited) return
-    session.runtime.write(bracketedPaste(text))
+    if (session.ready) return
+    session.ready = true
+    const held = session.pendingPastes.splice(0)
+    if (session.exited) return
+    for (const text of held) session.runtime.write(bracketedPaste(text))
+  }
+
+  /** It is never going to be read now. */
+  function dropPending(session: Session): void {
+    if (session.readyTimer !== null) {
+      clearTimeout(session.readyTimer)
+      session.readyTimer = null
+    }
+    session.pendingPastes.length = 0
   }
 
   /**
@@ -515,7 +535,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
   async function teardown(session: Session): Promise<void> {
     if (!sessions.delete(session.id)) return // guard the double-stop
     coordinator.forget(session.id)
-    releasePaste(session, false)
+    dropPending(session)
     // Before anything else mints its own: a dead session's bearer must stop
     // opening the door.
     if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
@@ -613,8 +633,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       nameAtSpawn: sessionName(args.name),
       firstSeenName: null,
       lastName: null,
-      pendingPaste: args.paste !== undefined && args.paste !== '' ? args.paste : null,
-      pasteTimer: null,
+      ready: false,
+      pendingPastes: args.paste !== undefined && args.paste !== '' ? [args.paste] : [],
+      readyTimer: null,
       configBaseline: null,
       configStale: false,
       exited: false,
@@ -631,7 +652,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       session.exited = true
       session.attached = false
       coordinator.forget(id)
-      releasePaste(session, false)
+      dropPending(session)
       if (session.googleToken !== null) deps.revokeGoogleToken?.(session.googleToken)
       if (session.hookToken !== null) deps.revokeHookToken?.(session.hookToken)
       session.googleToken = null
@@ -674,13 +695,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
 
     sessions.set(id, session)
     // Armed only once the PTY is alive: a spawn that threw has nothing to paste
-    // into, and its `catch` above has already torn the mirror down.
-    if (session.pendingPaste !== null) {
-      session.pasteTimer = setTimeout(
-        () => releasePaste(session, true),
-        deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS,
-      )
-    }
+    // into, and its `catch` above has already torn the mirror down. Armed whether
+    // or not anything is held, because it is what bounds how long the NEXT ask
+    // waits on a listing that may never answer.
+    session.readyTimer = setTimeout(
+      () => markReady(session),
+      deps.pasteBackstopMs ?? PASTE_BACKSTOP_MS,
+    )
     // After the spawn took, so a failed one cannot retire a writer that another
     // vault's sessions are still using.
     ensureFocusWriter(workRoot)
@@ -757,13 +778,20 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
      * A session that has gone is a refusal, not a silent drop: the text is in a
      * box the user typed it into, and the honest answer is to leave it there and
      * say why.
+     *
+     * One that simply is not up yet is neither. It is a real session, it is in
+     * the drawer, it is the tab an ask defaults to from the moment it appears —
+     * and a paste written into it before its TUI reads stdin would be accepted
+     * here and land nowhere. So it joins the queue the spawn's own paste is
+     * already in.
      */
     paste: (id, text) => {
       const session = sessions.get(id)
       if (session === undefined || session.exited) {
         return { ok: false, message: 'That session has ended. Pick another one.' }
       }
-      session.runtime.write(bracketedPaste(text))
+      if (!session.ready) session.pendingPastes.push(text)
+      else session.runtime.write(bracketedPaste(text))
       return { ok: true }
     },
 

@@ -142,6 +142,9 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
   dom.className = 'cm-ask-agent'
 
   let leaving: ReturnType<typeof setTimeout> | null = null
+  /** The tooltip has been taken off the screen — another selection, the note
+   *  closing. A send in flight when that happens has nowhere left to land. */
+  let gone = false
 
   const leave = () => {
     dom.classList.add('cm-ask-agent-leaving')
@@ -228,6 +231,17 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
       notice.textContent = ''
       const res = await seam.onAsk(askPrompt(instruction, quote), target)
       sending = false
+      /**
+       * This popover may not exist any more.
+       *
+       * The send became a round trip when the target picker arrived, and a
+       * second's worth of spawn is long enough to press Escape or to select
+       * something else. Writing into detached nodes would be harmless; `leave()`
+       * would not be. It arms a timer that `destroy` has already run and cannot
+       * clear, and a fifth of a second later that timer collapses whatever the
+       * user has selected SINCE and takes focus back into the editor.
+       */
+      if (gone || !field.isConnected) return
       if (!res.ok) {
         // The text stays exactly where it was. Somewhere to send it to is the
         // only thing missing, and that is a choice the row above can still make.
@@ -361,6 +375,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     // closing — and the pending dispatch would then land on a view that has
     // moved on.
     destroy: () => {
+      gone = true
       if (leaving !== null) clearTimeout(leaving)
       leaving = null
     },

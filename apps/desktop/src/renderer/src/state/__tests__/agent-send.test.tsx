@@ -12,6 +12,7 @@ import {
   activeSessionIdAtom,
   agentPanelOpenAtom,
   agentSessionsAtom,
+  askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
 } from '../agent'
@@ -89,9 +90,12 @@ test('a start opens the drawer BEFORE it spawns, and only makes one session', as
   // becoming two tabs: it opens the drawer on its way, and the session it is
   // making is not in the pushed list yet.
   const store = storeWith([])
-  await store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
+  const spawning = store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
 
+  // Before the spawn has resolved, which is the half that matters.
   expect(store.get(agentPanelOpenAtom)).toBe(true)
+  await spawning
+
   expect(start).toHaveBeenCalledTimes(1)
   expect(start).toHaveBeenCalledWith(
     expect.objectContaining({ prompt: 'resolve the merge conflict' }),
@@ -153,6 +157,31 @@ test('a failed spawn comes back with why', async () => {
   const res = await store.set(sendToAgentAtom, { text: 'have a look', target: 'new' })
 
   expect(res).toEqual({ ok: false, message: 'Claude CLI not found on PATH' })
+})
+
+test('a session waiting on you is not offered as a target', () => {
+  // It is blocked on a dialog of its own, so an ask sent to it waits behind that
+  // dialog at best. Offering it is offering somewhere for text to disappear to.
+  const store = storeWith([
+    session({ id: 'a', name: 'One' }),
+    session({ id: 'b', name: 'Two', state: 'needs-you' }),
+    session({ id: 'c', name: 'Three', state: 'working' }),
+  ])
+  expect(store.get(askTargetsAtom)).toEqual([
+    { id: 'a', name: 'One' },
+    // Working is fine: a paste lands in the composer mid-turn (measured).
+    { id: 'c', name: 'Three' },
+  ])
+})
+
+test('an exited session is not offered either', () => {
+  const store = storeWith([session({ id: 'a', name: 'One', exited: true })])
+  expect(store.get(askTargetsAtom)).toEqual([])
+})
+
+test('the targets are in tab order', () => {
+  const store = storeWith([session({ id: 'a', name: 'One' }), session({ id: 'b', name: 'Two' })])
+  expect(store.get(askTargetsAtom).map((t) => t.id)).toEqual(['a', 'b'])
 })
 
 test('the default target is the tab you are looking at', () => {
