@@ -66,7 +66,7 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 **Spawn (Electron main).**
 - Binary: resolve `claude` on `PATH`; surface a clear "Claude CLI not found" error if absent.
 - Working directory: **the vault's clone directory** — a real git repo, which is also why the agent can run git commands against it directly.
-- **`CLAUDE_CONFIG_DIR` → `userData/agent-config/`** — Holi's own, shared by every vault, so the machine's `~/.claude` is out of play (see Config layering). Reserved like the `HOLI_*` keys: any inherited value is stripped before ours is set, since an inherited one would silently put the agent back on the config this exists to exclude.
+- **`CLAUDE_CONFIG_DIR` → `userData/agent-config/<owner>-<repo>/`** — Holi's own, **one directory per vault** (D86), so the machine's `~/.claude` is out of play and one vault's sessions, transcripts and sign-in are not another's (see Config layering). It is also what makes the session listing in §Several sessions per vault answer for one vault: `claude agents --json` reads the config directory it is pointed at. Reserved like the `HOLI_*` keys: any inherited value is stripped before ours is set, since an inherited one would silently put the agent back on the config this exists to exclude.
 - **No `--append-system-prompt` content** (empty) — conventions come from `AGENTS.md`/`CLAUDE.md`, which CC reads natively (see Per-turn context).
 - **`TYPST_BIN`** in the env when a typst binary is resolvable (find-only at spawn, non-blocking; see Rendering PDFs).
 - Env hygiene, ported from the template: strip `CLAUDECODE` / `CLAUDE_CODE_ENTRYPOINT` (so a Holi launched from a Claude shell doesn't refuse), inherit a usable `PATH` + `HOME` (GUI-launched Electron ships a stripped PATH and can't find node/ripgrep otherwise), set `TERM=xterm-256color`.
@@ -76,23 +76,92 @@ The agent is **interactive Claude Code in a real terminal**, spawned client-side
 **Wire shape (IPC, ported from the template's event names).**
 | Direction | Channel | Payload |
 |---|---|---|
-| main → renderer | `agent-pty:data` | `Uint8Array` chunk (xterm decodes) |
-| main → renderer | `agent-pty:exit` | `{ code }` |
-| renderer → main | `agent-pty:start` | `{ vaultId, resume?, prompt? }` |
-| renderer → main | `agent-pty:write` | keystroke bytes |
-| renderer → main | `agent-pty:resize` | `{ cols, rows }` |
-| renderer → main | `agent-pty:kill` | — |
+| main → renderer | `agent-pty:data` | `{ id, data }` — a chunk for one session (xterm decodes) |
+| main → renderer | `agent-pty:exit` | `{ id, code }` |
+| main → renderer | `agent:sessions` | the whole list: `{ id, name, state, waitingFor?, configStale, exited }[]` |
+| renderer → main | `agent-pty:start` | `{ vaultId, name?, resume?, cols?, rows?, prompt?, paste? }` → `{ ok, id?, message? }` |
+| renderer → main | `agent:sessions` | — → the list, for a renderer that has just mounted |
+| renderer → main | `agent:attach` | `id` → replayable terminal state, and opens that session's data tap |
+| renderer → main | `agent:paste` | `{ id, text }` → `{ ok, message? }` |
+| renderer → main | `agent-pty:write` | `{ id, data }` — keystroke bytes |
+| renderer → main | `agent-pty:resize` | `{ id, cols, rows }` |
+| renderer → main | `agent-pty:kill` | `id` |
+| renderer → main | `agent:focus` | `{ focusedPath, openPaths }` |
+
+**Every route but `agent:focus` names a session (D100).** A vault runs several, so
+"write to the agent" is not an address. Focus is the exception because the focus file is
+the **vault's**, one path in the clone, read by whichever session takes the next turn.
 
 - A **reader loop** on the PTY master forwards each chunk to the renderer; **EOF/EIO** ends the session (the template treats `EIO`/errno 5 as normal remote-hangup).
 - A **child-wait** task parks on the child, clears session state, then emits `exit` — clearing before emitting so a renderer that kills-on-exit doesn't race a dead child.
-- **One live session per vault.** Starting a new one kills the prior child (SIGTERM → SIGKILL of the process **group** so Claude's helper subprocesses die too).
-- Drawer lifecycle: opening the drawer starts (or re-attaches to) the session; the terminal is the **live** surface. The drawer's **history affordance** relaunches the session with **bare `--resume`**, so Claude Code shows its own session picker in the terminal. Scrollback is ephemeral; durable history is CC's own sessions.
+- **Any number of live sessions per vault (D100)**, one drawer tab each; see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you.
+- Drawer lifecycle: opening the drawer starts a session when the vault has none, and otherwise shows the tabs it already has; each terminal is the **live** surface for its own session. The drawer's **history affordance** opens **bare `--resume`** in a *new* tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
   - **No `--resume <id>` shortcuts for recent sessions**, which was the obvious next affordance and is deliberately absent: the CLI's picker is the surface the user already knows, and a Holi-drawn list of recent sessions would be a second index over another program's session store — the same bet §Config layering declines when it refuses to migrate transcripts.
-- **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it.
+- **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it. It is a positional argv, so Claude Code **submits** it as turn one, and reconcile is the only sender that does (D100).
+- **The `paste` field on `start` is every other ask.** Main holds the text until Claude Code's own listing first carries that session — which it does because Claude Code writes the session file at `SessionStart`, measured 0.94 s after the spawn — and then writes it as a bracketed paste, with a backstop for a listing that never answers. A paste written at spawn would go into a TUI that is not reading stdin yet.
 
 **Auth.** Per-user Claude account, already present per the Assumptions — but a login **in Holi's config directory**, which the machine's own Claude Code being logged in says nothing about. So the first launch after the relocation is logged out, once, ever.
 
 **Holi says nothing about it, and that is the decision.** Claude Code prints `Not logged in · Please run /login` in the terminal the drawer is already showing, and `/login` is typed into that same terminal. A notice in Holi's header would be a **second copy of state Holi does not own** — and duplicate state has to be kept honest: `/login` spawns nothing, opens no turn and exits nothing, so it fires none of the events Holi has to refresh on, and the header's copy is wrong from the moment the user acts on it. The fix for a stale mirror is not a fresher mirror. There is **no login probe at all** — no `authenticated` field on agent status, and nothing reading `<configDir>/.claude.json`.
+
+## Several sessions per vault (D100)
+
+A vault runs **any number of `claude` sessions at once**. Design of record:
+[`../specs/2026-09-14-agent-sessions-design.md`](../specs/2026-09-14-agent-sessions-design.md).
+
+**Where they are.** A tab per session in the drawer, in spawn order, each with its own
+terminal and scrollback; every tab stays mounted so switching is instant and nothing is
+rebuilt. The sidebar carries the same set as cards, which is what says a session exists
+while the drawer is shut, and the footer door reduces the whole set to one dot — painted
+by whichever session most wants you to open it. An **exited** session keeps its tab until
+someone closes it: an exit is something to read, not a tab that vanishes from under the
+reader.
+
+**Their names are Claude Code's own.** `--name` at spawn, or `/name` typed inside. There
+is no rename in Holi: a second name kept beside Claude's would be a copy that goes stale
+the moment anybody types `/name`. A session started for an ask is named from the ask's
+first line, so its tab is named from the moment it exists.
+
+**What a session is doing is read, not inferred.** Claude Code already tracks every live
+session on the machine and lists them with `claude agents --json`; Holi joins that listing
+to its own sessions **by pid** and derives one of `needs-you | working | idle`,
+`waitingFor` first, then the listing's `busy`, then the turn bracket. The listing is
+re-read on a watcher edge under `<configDir>/sessions/`, on every turn hook and when the
+drawer opens — never on a timer — and the joined list is pushed only when something
+derived actually changes.
+
+**It degrades honestly.** If the CLI is missing, slow or fails, a session still reports
+`working` from the turn bracket and simply never reports needs-you. The bracket is the
+floor; the listing is the enrichment. The listing also closes a hole the bracket has
+always had: escaping a permission prompt fires **no `Stop` hook at all**, and a session
+the listing calls idle while Holi still has it mid-turn has demonstrably finished, so the
+ten-minute safety cap goes back to being a backstop rather than the only way out.
+
+**One working set per vault**, not one per session: the first turn to start pauses sync,
+the last to end resumes it, and one settle commit covers the range. See §Git coexistence
+and §Reviewing a turn.
+
+**An ask is pasted, never submitted.** Text sent to a session — from the "Ask agent"
+popover over a selection, from a task's description, from a mail thread — lands in its
+input box as a bracketed paste with no Enter, and the drawer focuses that tab. One rule
+everywhere, and it cannot append a submit to a half-typed draft. The popover picks the
+target: live sessions, then New session, defaulting to the tab the drawer is showing. A
+session that is **needs-you** is not offered, because it is blocked on a dialog and the
+text would sit unread behind it; a target that ended between being picked and being sent
+to is refused with a reason, and the text stays in the popover. **Reconcile is the
+exception** and keeps its submitted first turn.
+
+**A vault switch ends every session**, and asks first if any of them is mid-turn or
+waiting on you. It is not a policy choice: `VaultHost` holds exactly one `ActiveVault`
+and `open()` closes the current one first, so a session left running in the vault you
+walked away from has no repo, no watcher and no sync loop behind it. The conversations
+stay reachable through `--resume`. **The cost, stated:** you cannot leave a long task
+running in one vault and go and work in another.
+
+**Not decided here, deliberately:** a cap on how many sessions may run, splitting an
+overlapped turn's changes by session, and adopting sessions Holi did not spawn (they
+carry no `$HOLI_HOOK_PORT`, so their turns are invisible to the sync pause — the same
+accepted gap as a bare `claude` in a terminal).
 
 ## Config layering (pure CC-native)
 
@@ -234,7 +303,7 @@ So the tool surface is still **zero ops**, and it now holds for external data to
 
 The vault is a **regular git repo** and the agent may run **any** git it likes — commit, push, pull, resolve a merge. The one hazard is two git actors on one repo: Holi's own sync loop (autosave-commit on a quiet timer, periodic pull, push) and the agent. They must not contend on `.git/index.lock`, and an agent rebase/branch-switch must not strand Holi's loop.
 
-**Rule: while the agent is *working* (mid-turn), Holi suspends its sync loop; it resumes after the turn goes idle (with a short settle).** So at any moment there is a single active git actor. Holi keys this off Claude Code's own **hooks** (`UserPromptSubmit` starts the turn, `Stop` ends it) rather than inferring working/idle from PTY output — parsing a terminal to guess what another program is doing is a rabbit hole, and the hooks say it exactly. **`Stop` is not guaranteed** on an interrupt or a crash, so the pause is capped and a dead session resumes the vault rather than stranding it paused. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
+**Rule: while *any* session is working (mid-turn), Holi suspends its sync loop; it resumes after the last of them goes idle (with a short settle).** So Holi is never a second git actor. With several sessions the vault keeps **one** working set and one pause around it (D100): the first turn to start pauses, the last to end resumes, and the settle commit covers whatever the set wrote between those two moments. Holi keys this off Claude Code's own **hooks** (`UserPromptSubmit` starts the turn, `Stop` ends it) rather than inferring working/idle from PTY output — parsing a terminal to guess what another program is doing is a rabbit hole, and the hooks say it exactly. **`Stop` is not guaranteed** on an interrupt or a crash, so the pause is capped and a dead session resumes the vault rather than stranding it paused. The user's ordinary editor autosave keeps running whenever the agent is idle — even with the drawer open — so the pause is scoped to actual agent turns, not the whole session.
 
 `AGENTS.md` states this to the agent plainly: *git is yours; Holi pauses its own sync while you work, and reconciles when you're done.* This **supersedes** the old AGENTS.md prohibition on the agent running git.
 
@@ -244,9 +313,16 @@ The turn bracket above does a second job: it is also the boundary a **review** i
 
 **A turn is a commit range.** `base` is HEAD when the turn starts, `end` is the sha of the settle commit at the end of it, and what the turn changed is `git diff base..end`. A range rather than a working-tree diff, because a working-tree diff keeps growing and would attribute a day of your own writing to the agent. A range rather than a record of the agent's tool calls, because git catches the files it changed through `Bash` — a `sed`, an `mv`, a script — that a `Write|Edit|MultiEdit` matcher never sees.
 
-**Only the range is stored** (`.holi/turns.local.json`, capped at 50, `.local.` so it never syncs: a turn is a thing that happened on this machine, and a teammate pulling your agent's turn boundaries would be reading your session rather than the vault). The file list and every diff are asked of git when they are shown. Storing the paths as well would be a second copy of an answer git already holds, and one that goes stale the moment anything else touches the tree.
+**Only the range is stored** (`.holi/state/turns.local.json`, capped at 50, `.local.` so it never syncs: a turn is a thing that happened on this machine, and a teammate pulling your agent's turn boundaries would be reading your session rather than the vault). The file list and every diff are asked of git when they are shown. Storing the paths as well would be a second copy of an answer git already holds, and one that goes stale the moment anything else touches the tree.
 
 **The footer says `Claude changed 4 files`** and opens a panel beside history: each file with its `+N / −M`, and the selected file's diff as a merge view with per-hunk accept and reject. A hunk rejected is written back as a **new commit**, never a rewrite, the same rule [`vaults-sync.md`](vaults-sync.md) §History gives Restore. The resolutions are collected and written when you say so rather than as you make them, so a file's worth of them is one commit instead of a dozen.
+
+**A turn that overlapped another says so** (D100). The range is taken across the vault's
+working set, so when two sessions were mid-turn at once it contains both sessions' edits.
+It is not split, and cannot honestly be: git cannot say which session wrote a line, and a
+tool-level record would miss the edits made through `Bash` that the commit range exists to
+catch. The chip on an overlapped turn reports that instead of claiming everything as its
+own.
 
 **A record outlives the commits it names.** After a reset or a re-clone the range is unreachable, and the panel says the turn's history is gone rather than showing a turn that appears to have changed nothing — which it cannot be, since a turn that changed nothing is never recorded.
 
@@ -270,7 +346,7 @@ This replaces the old bridge/turn-protocol/reconcile section, and is much smalle
 
 **Why this is safe to hand to an agent at all:** it operates inside git, mid-merge, on a repo whose pre-merge state is a commit. The worst outcome is recoverable with `git merge --abort`.
 
-**A second producer of seeded turns** ([`#5`](https://github.com/syv-ai/holi/issues/5), 2026-09-09): selecting a passage in a note and pressing **Ask Claude** opens the drawer with that note's path, the exact line range and the quoted text already in the prompt. It uses the same wire and adds no transport — `agentSeedPromptAtom`, which the reconcile handoff below already fills — and the editor end of it knows nothing about an agent, only about an `askAgent` seam on `EditorDeps`. **The line numbers are exact**: the affordance is adopted from ailex, which recovers them by searching the markdown source for the selected substring, and CodeMirror simply holds the range. See [`notes-editor.md`](notes-editor.md) §Ask Claude about a selection.
+**A second producer of asks** ([`#5`](https://github.com/syv-ai/holi/issues/5), 2026-09-09): selecting a passage in a note and pressing **Ask agent** sends that note's path, the exact line range and the quoted text to a session you pick. It adds no transport — `sendToAgent`, the same one every other ask uses (§Several sessions per vault) — and the editor end of it knows nothing about an agent, only about an `askAgent` seam on `EditorDeps`. **The line numbers are exact**: the affordance is adopted from ailex, which recovers them by searching the markdown source for the selected substring, and CodeMirror simply holds the range. See [`notes-editor.md`](notes-editor.md) §Ask Claude about a selection.
 
 **Where the wire runs.** `reconcileAtom` (`state/vaults.ts`) is the whole of it: `sync.reconcile` re-runs the merge in main (`activeVault.reconcile()` over `repo.remerge()`, which unlike the auto-pull path deliberately does **not** abort), and the conflicted paths it returns become the drawer's seeded first turn via `lib/reconcile-prompt.ts`. **An empty path list is a real outcome, not an error**: the merge now applies cleanly, so the banner clears and no agent is handed anything.
 

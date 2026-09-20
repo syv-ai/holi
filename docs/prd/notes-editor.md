@@ -423,7 +423,7 @@ Select a passage, press one button, and the agent drawer opens already knowing w
 
 **Which stacks get it, and why the others must not.** The seam is `askAgent` on `EditorDeps`, so only `baseEditorExtensions` can have it — the mail composer is a separate stack precisely because it knows nothing about a vault, and a seeded vault prompt is exactly the kind of thing it must not grow; `plainTextExtensions` takes a path and a read-only flag, and a `.json` is not a note. A task's description **does** get it, being prose in the notes stack. **A locked file shows no button**: a reconcile is resolving it ([`vaults-sync.md`](vaults-sync.md) FR-19), and handing that to a second conversation mid-merge is the one case this must not offer.
 
-**No new transport.** `agentSeedPromptAtom` is the whole wire, and the reconcile handoff already fills it ([`agent.md`](agent.md)).
+**No new transport.** `sendToAgent` is the whole wire, and every other ask in the app goes down it ([`agent.md`](agent.md) §Several sessions per vault). What the popover adds on top of it is the **target row**: live sessions, then New session, defaulting to the tab the drawer is showing. It is the second thing in a popover that was deliberately one field, and it earns that because an ask now goes to one of several conversations and the alternative is finding out where it went afterwards. A send that is refused — the session ended while the popover was open — keeps the text and says why.
 
 ## Images and other binaries
 
