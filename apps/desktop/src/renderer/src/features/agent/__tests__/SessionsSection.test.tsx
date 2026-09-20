@@ -124,8 +124,8 @@ test('asks before ending one that is mid-turn', async () => {
 })
 
 test('offers no rename, because the name is Claude Code’s', async () => {
-  // Set with `--name` at spawn or `/name` inside the session. A second copy kept
-  // in Holi goes stale the moment anybody types `/name`.
+  // Set with `--name` at spawn or `/rename` inside the session. A second copy kept
+  // in Holi goes stale the moment anybody types `/rename`.
   setup([session({ id: 'a', name: 'One' })])
   await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByText('One') })
 

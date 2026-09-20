@@ -117,9 +117,9 @@ by whichever session most wants you to open it. An **exited** session keeps its 
 someone closes it: an exit is something to read, not a tab that vanishes from under the
 reader.
 
-**Their names are Claude Code's own.** `--name` at spawn, or `/name` typed inside. There
+**Their names are Claude Code's own.** `--name` at spawn, or `/rename` typed inside. There
 is no rename in Holi: a second name kept beside Claude's would be a copy that goes stale
-the moment anybody types `/name`. A session started for an ask is named from the ask's
+the moment anybody types `/rename`. A session started for an ask is named from the ask's
 first line, so its tab is named from the moment it exists.
 
 **What a session is doing is read, not inferred.** Claude Code already tracks every live

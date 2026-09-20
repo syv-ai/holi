@@ -69,7 +69,7 @@ A rule that rolls a completed recurring task forward to its next occurrence: `fr
 The in-app **Claude Code** instance. Runs as an interactive `claude` process in a **PTY**, shown in the **xterm drawer**, with the vault clone as its cwd. It reads and writes vault files with its native tools — there is nothing to bridge, because the files are the truth. A vault runs **any number of sessions** at once (D100); "the agent" is the set of them, and a **session** is one of them.
 
 ### Session
-One live `claude` process in a vault: one drawer tab, one terminal, one conversation. Its **name** is Claude Code's own (`--name` at spawn or `/name` inside) and its state (`needs-you | working | idle`) is read from Claude Code's own session listing rather than inferred. Ends with its vault.
+One live `claude` process in a vault: one drawer tab, one terminal, one conversation. Its **name** is Claude Code's own (`--name` at spawn or `/rename` inside) and its state (`needs-you | working | idle`) is read from Claude Code's own session listing rather than inferred. Ends with its vault.
 
 ### Ask
 Text sent from somewhere in Holi to a session — a passage selected in a note, a task's description, a mail thread. It lands in that session's input box as a **bracketed paste with no Enter**, so nothing Holi writes can submit a draft the user was still typing. The one exception is a **reconcile**, which submits its instruction as turn one of a session of its own.

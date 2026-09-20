@@ -71,9 +71,12 @@ const SIGN_IN_NOTICE =
 /**
  * What a session is called before it has a name of its own.
  *
- * Claude Code gives an unnamed session a placeholder built from its cwd, which
- * is the **same string for every session in one vault** — so showing it would
- * label three tabs identically. See `deriveName` for how the two are told apart.
+ * Claude Code gives an unnamed session a **default display name**: the working
+ * directory's name plus a two-character suffix, `privat-d9`. It is unique per
+ * session — this used to say it was one string for the whole vault, measured
+ * before the suffix existed — but it is still not a label. It says nothing about
+ * the conversation, and Claude Code does not even accept it as a resume handle.
+ * See `deriveName` for how the two are told apart.
  */
 const NEW_SESSION = 'New session'
 
@@ -113,7 +116,7 @@ export interface SessionSummary {
   /**
    * The registry's name when it is a real one, else 'New session'. It is real if
    * Holi passed `--name` at spawn, or if the row's name has changed since the
-   * first read after that spawn, which is what a `/name` looks like from
+   * first read after that spawn, which is what a `/rename` looks like from
    * outside. The listing does not carry `nameSource` (2.1.278), so that
    * inference is the discriminator until it does.
    */
@@ -271,7 +274,7 @@ interface Session {
   /** The normalised `--name` Holi passed, or null. Half of `deriveName`. */
   nameAtSpawn: string | null
   /** The row's name at the first listing that saw this session. A later change
-   *  to it is what a `/name` looks like from outside. */
+   *  to it is what a `/rename` looks like from outside. */
   firstSeenName: string | null
   /** The last name derived from a row. Held so a session keeps its label when
    *  the listing stops carrying it — after it exits, or across a read that
@@ -323,9 +326,10 @@ async function fingerprintAgentConfig(root: string): Promise<string> {
  * The listing gives one `name` field and does not say where it came from, so the
  * caller has to know another way. It knows two things the listing does not: it
  * spawned the session, so it knows whether it passed `--name`; and it has seen
- * the row before, so a name that has since changed can only be a `/name` typed
- * inside the session. Anything else is the cwd placeholder, which is identical
- * across the vault's sessions and therefore not a label.
+ * the row before, so a name that has since changed can only be a `/rename` typed
+ * inside the session — or the title Claude Code writes when a plan is accepted,
+ * which is a real description of the work and equally worth showing. Anything
+ * else is the default display name, which describes nothing.
  */
 function deriveName(session: Session, row: SessionRow | undefined): string {
   if (row === undefined || row.name === '') {
@@ -436,7 +440,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       const pid = session.runtime.pid
       const row = pid === null ? undefined : rows.get(pid)
       if (row === undefined) continue
-      // The baseline for the `/name` inference: the name this session was listed
+      // The baseline for the `/rename` inference: the name this session was listed
       // under the first time we saw it.
       if (session.firstSeenName === null) {
         session.firstSeenName = row.name

@@ -62,8 +62,11 @@ export interface SessionRow {
   pid: number
   /**
    * What Claude Code calls the session. Either something a person chose (`--name`
-   * at spawn, `/name` inside it) or a placeholder built from the cwd — which is
-   * the **same string for every session in one vault**, so it is not a label.
+   * at spawn, `/rename` inside it) or the **default display name** Claude Code
+   * gives an unnamed one: the working directory's name plus a two-character
+   * suffix, `privat-d9`. That is unique per session but it is not a label — it
+   * says nothing about the conversation, and Claude Code documents it as not
+   * being a resume handle either.
    *
    * **The listing does not say which**, verified against 2.1.278: the underlying
    * file carries `nameSource`, the supported command does not. So the caller

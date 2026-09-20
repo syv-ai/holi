@@ -26,8 +26,8 @@
  * and line up with the file icons above them.
  *
  * There is no Rename. The name is Claude Code's own, set with `--name` at spawn
- * or `/name` inside the session, and a second one kept beside it in Holi would
- * be a copy that goes stale the moment anybody types `/name`.
+ * or `/rename` inside the session, and a second one kept beside it in Holi would
+ * be a copy that goes stale the moment anybody types `/rename`.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { ChevronRight } from 'lucide-react'

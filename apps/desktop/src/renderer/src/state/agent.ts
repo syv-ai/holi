@@ -10,7 +10,7 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 export interface AgentSession {
   id: string
   /** Claude Code's own name for it, or 'New session' when it has none. There is
-   *  no rename here: the name is set with `--name` at spawn or `/name` inside. */
+   *  no second name here: it is set with `--name` at spawn or `/rename` inside. */
   name: string
   state: SessionState
   /** Only for 'needs-you': why, e.g. 'permission prompt'. */

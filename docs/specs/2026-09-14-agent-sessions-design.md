@@ -108,6 +108,25 @@ spawn** (which is what a `/name` looks like from outside). Otherwise the tab say
 
 There is no Rename in Holi: the name is Claude Code's, set at spawn or with `/name`.
 
+**2026-09-20, two corrections to the paragraphs above**, from Claude Code's own docs and
+a listing read out of a real vault. This is a dated record, so the prose above stands as
+what was believed; these are what is true.
+
+1. **The slash command is `/rename`, not `/name`.** Also `Ctrl+R` in the session picker.
+2. **The placeholder is not one string per vault.** An unnamed session gets a *default
+   display name* — the working directory's name plus a two-character suffix, `privat-d9`
+   — which is unique per session. The inference above is unaffected (a name that has
+   changed since the first sighting is still a real one), but the reason for hiding it is
+   not that it collides: it is that it describes nothing, and Claude Code does not accept
+   it as a resume handle either. A third source of a real name turns up in the same
+   place: **accepting a plan** gives the session a generated title, and that one *does*
+   replace the default in `claude agents --json`.
+3. **Claude Code already names sessions with a small model.** An unnamed session gets a
+   generated title summarising its first prompt, "written by a background request to the
+   small/fast model, normally a Haiku-class model". It reaches the session picker and the
+   statusline's `session_name` field, but *not* the listing this design reads, which is
+   why D101 takes it from the statusline instead.
+
 ### A session is a terminal, and the join key is its pid
 
 Main keys a session by an id Holi mints for its own wire, and joins it to the registry

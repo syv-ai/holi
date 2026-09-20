@@ -499,7 +499,7 @@ describe('what a session is called', () => {
     expect(r.session(r.id).name).toBe('New session')
   })
 
-  it('takes the name the moment it changes, which is what /name looks like', async () => {
+  it('takes the name the moment it changes, which is what /rename looks like', async () => {
     const r = await named()
     r.fake.setRows([{ pid: 1000, name: 'repo', status: 'idle' }])
     r.fake.fire()
