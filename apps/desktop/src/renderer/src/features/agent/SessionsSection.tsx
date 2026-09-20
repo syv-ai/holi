@@ -13,6 +13,13 @@
  * redundant with the drawer's own header, one card is the only thing on screen
  * that says a session exists while the drawer is shut.
  *
+ * **It fills a resizable panel**, exactly as the apps section does: a header
+ * that never scrolls and a list that does. It used to size to its contents
+ * below the sidebar's group, on the reasoning that a handful of rows does not
+ * earn a handle — which held while a vault had one session and stopped holding
+ * the moment it could have six, because the tree then lost its height to a list
+ * nobody could shrink.
+ *
  * **The rows are tree rows, not chips**, for `AppsSection`'s reason: a section
  * that styles itself as chips reads as a fourth chip row stuck under the tree.
  * So they take the tree row's metrics verbatim (22px, `text-sm`, `font-normal`)
@@ -82,7 +89,10 @@ export function SessionsSection(): React.JSX.Element | null {
   }
 
   return (
-    <div className="flex shrink-0 flex-col">
+    // Fills its panel: a header that never scrolls, and a list that does. The
+    // header is also what stays visible when the panel is collapsed to it, so
+    // `shrink-0` on it is load-bearing rather than tidiness.
+    <div className="flex h-full flex-col overflow-hidden">
       {/* The whole header is the toggle, not a chevron you have to hit. Same
           metrics and same lowercase as the apps section: nothing in this sidebar
           shouts. */}
@@ -103,7 +113,7 @@ export function SessionsSection(): React.JSX.Element | null {
       {open && (
         // No horizontal padding on the list: each row carries its own `px-2`,
         // the way a tree row does, so a hover highlight spans the sidebar.
-        <div className="flex flex-col pb-1">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-1">
           {sessions.map((session) => {
             const indicator = indicatorFor(session)
             return (

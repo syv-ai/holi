@@ -81,7 +81,12 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
-import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentSessionsAtom } from '@/state/agent'
+import {
+  agentModeAtSpawnAtom,
+  agentPanelOpenAtom,
+  agentSessionsAtom,
+  agentSessionsSectionOpenAtom,
+} from '@/state/agent'
 import { reconcileAtom, showAgentPanelAtom } from '@/state/agent-send'
 import { agentThemeNote, fleetIndicator, sessionsWorthAsking } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
@@ -104,9 +109,11 @@ import {
 // quiet/busy map to semantic tokens; warn stays a named amber utility — there is
 // no warning token yet, and named palette utilities are gate-legal (only arbitrary
 // colour literals are banned).
-/** The apps section's header row, in px — what the panel collapses TO, so the
- *  control that reopens the section does not vanish along with it. */
-const APPS_HEADER_HEIGHT = 22
+/** The apps and sessions sections' header row, in px — what a panel collapses
+ *  TO, so the control that reopens the section does not vanish along with it.
+ *  One number: both sections are built to the same tree-row metrics, and two
+ *  copies would be two things to keep equal. */
+const SECTION_HEADER_HEIGHT = 22
 
 const TONE = { quiet: 'text-muted-foreground', busy: 'text-brand', warn: 'text-amber-400' } as const
 
@@ -231,28 +238,36 @@ export function Shell() {
       .find((note) => note !== null) ?? null
   const agentState = fleetIndicator(agentSessions, agentThemeNudge)
   const shellLayout = usePanelLayout(activeRemote, 'shell')
-  // The sidebar's own vertical split: the tree above, the apps section below.
+  // The sidebar's own vertical split: the tree, then the apps and sessions
+  // sections under it.
   const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
   const hasApps = useAtomValue(hasAppsAtom)
   const [appsOpen, setAppsOpen] = useAtom(appsSectionOpenAtom)
-  /** Imperative handle on the apps panel, so `appsOpen` drives collapse/expand
-   *  rather than the panel owning a second copy of that state. */
+  const hasSessions = agentSessions.length > 0
+  const [sessionsOpen, setSessionsOpen] = useAtom(agentSessionsSectionOpenAtom)
+  /** Imperative handles on the two collapsible sections, so the persisted open
+   *  flags drive collapse/expand rather than each panel owning a second copy of
+   *  that state. */
   const appsPanelRef = useRef<PanelImperativeHandle | null>(null)
+  const sessionsPanelRef = useRef<PanelImperativeHandle | null>(null)
 
-  // Drive the panel from `appsOpen`, one frame late. The wait is not politeness:
-  // the ref is attached before effects run, but the GROUP has not registered the
-  // panel's constraints yet, and `isCollapsed()` throws `Panel constraints not
-  // found` if you ask before it has — taking the whole Shell down with it. This
-  // is the same `requestAnimationFrame` AgentPanel uses, for the same reason.
+  // Drive the panels from their open flags, one frame late. The wait is not
+  // politeness: the ref is attached before effects run, but the GROUP has not
+  // registered the panel's constraints yet, and `isCollapsed()` throws `Panel
+  // constraints not found` if you ask before it has — taking the whole Shell
+  // down with it.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      const panel = appsPanelRef.current
-      if (!panel) return
-      if (appsOpen && panel.isCollapsed()) panel.expand()
-      else if (!appsOpen && !panel.isCollapsed()) panel.collapse()
+      const drive = (panel: PanelImperativeHandle | null, want: boolean) => {
+        if (!panel) return
+        if (want && panel.isCollapsed()) panel.expand()
+        else if (!want && !panel.isCollapsed()) panel.collapse()
+      }
+      drive(appsPanelRef.current, appsOpen)
+      drive(sessionsPanelRef.current, sessionsOpen)
     })
     return () => cancelAnimationFrame(id)
-  }, [appsOpen, hasApps])
+  }, [appsOpen, hasApps, sessionsOpen, hasSessions])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
 
@@ -567,6 +582,7 @@ export function Shell() {
                   // category error that read every expanded panel as collapsed.
                   if (!meta.isUserInteraction) return
                   setAppsOpen(appsPanelRef.current?.isCollapsed() === false)
+                  setSessionsOpen(sessionsPanelRef.current?.isCollapsed() === false)
                 }}
               >
                 <ResizablePanel id="tree" minSize={80}>
@@ -588,7 +604,7 @@ export function Shell() {
                       // Collapsed leaves exactly the header row, which is the
                       // control that expands it again. Collapsing to 0 would take
                       // the section's own affordance away with it.
-                      collapsedSize={APPS_HEADER_HEIGHT}
+                      collapsedSize={SECTION_HEADER_HEIGHT}
                       defaultSize={160}
                       minSize={66}
                       maxSize="60"
@@ -598,13 +614,29 @@ export function Shell() {
                     </ResizablePanel>
                   </>
                 )}
+                {/* A third section of the same column, on the same terms as the
+                    apps list: present only when the vault has sessions, and
+                    collapsible to its own header. It sized to its contents below
+                    this group until the day a vault could hold six sessions, at
+                    which point the tree lost its height to a list nobody could
+                    shrink. */}
+                {hasSessions && (
+                  <>
+                    <ResizableHandle />
+                    <ResizablePanel
+                      id="sessions"
+                      collapsible
+                      collapsedSize={SECTION_HEADER_HEIGHT}
+                      defaultSize={140}
+                      minSize={66}
+                      maxSize="60"
+                      panelRef={sessionsPanelRef}
+                    >
+                      <SessionsSection />
+                    </ResizablePanel>
+                  </>
+                )}
               </ResizablePanelGroup>
-
-              {/* Below the resizable group, not inside it: a session list is a
-                  handful of rows, so it sizes to its contents and does not earn
-                  a third handle in a column that already has one. It hides
-                  itself when the vault has no sessions. */}
-              <SessionsSection />
 
               {/* Two rows, not one. Chips across a sidebar this narrow made it scroll
               horizontally — and `flex-1` alone could not fix that, since a flex
