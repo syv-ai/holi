@@ -30,7 +30,7 @@
  * be a copy that goes stale the moment anybody types `/rename`.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { ChevronRight } from 'lucide-react'
+import { ChevronRight, History, Plus } from 'lucide-react'
 import { useState } from 'react'
 import {
   Button,
@@ -47,18 +47,20 @@ import {
   activeSessionAtom,
   activeSessionIdAtom,
   agentModeAtSpawnAtom,
-  agentPanelOpenAtom,
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
   type AgentSession,
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
+import { openSession, workspaceAtom } from '@/state/panes'
+import { startSessionAtom } from '@/state/agent-send'
 
 export function SessionsSection(): React.JSX.Element | null {
   const sessions = useAtomValue(agentSessionsAtom)
   const active = useAtomValue(activeSessionAtom)
   const setActiveId = useSetAtom(activeSessionIdAtom)
-  const setPanelOpen = useSetAtom(agentPanelOpenAtom)
+  const setWorkspace = useSetAtom(workspaceAtom)
+  const startSession = useSetAtom(startSessionAtom)
   const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const mode = useAtomValue(activeModeAtom)
   const [open, setOpen] = useAtom(agentSessionsSectionOpenAtom)
@@ -76,11 +78,12 @@ export function SessionsSection(): React.JSX.Element | null {
       }),
     })
 
-  /** Show this session: the drawer opens on its tab. The one thing a card does
-   *  that the footer door cannot, which is why the card names a session. */
+  /** Show this session: its tab opens, or comes forward if it is already open
+   *  (D101). The one thing a card does that the footer door cannot, which is why
+   *  the card names a session. */
   const show = (session: AgentSession) => {
     setActiveId(session.id)
-    setPanelOpen(true)
+    setWorkspace((w) => openSession(w, session.id))
   }
 
   const end = async (session: AgentSession) => {
@@ -92,7 +95,37 @@ export function SessionsSection(): React.JSX.Element | null {
     // Fills its panel: a header that never scrolls, and a list that does. The
     // header is also what stays visible when the panel is collapsed to it, so
     // `shrink-0` on it is load-bearing rather than tidiness.
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="group/sessions relative flex h-full flex-col overflow-hidden">
+      {/* The two actions the drawer's header used to carry, in the explorer's
+          section-action pattern: floated top-right, and out of sight until you
+          are in the section. Starting a session is not something you do often
+          enough to spend a permanent row on, and neither is going back to an old
+          one — but when the drawer went, this became the only place either of
+          them could live. */}
+      <div className="motion-respond pointer-events-none absolute right-2 top-0.5 z-10 flex items-center gap-0.5 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/sessions:pointer-events-auto group-hover/sessions:opacity-100">
+        <Tooltip content="resume a past session in a new tab">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="resume a past session"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => void startSession({ resume: true })}
+          >
+            <History size={14} />
+          </Button>
+        </Tooltip>
+        <Tooltip content="start another session">
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="start another session"
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => void startSession()}
+          >
+            <Plus size={14} />
+          </Button>
+        </Tooltip>
+      </div>
       {/* The whole header is the toggle, not a chevron you have to hit. Same
           metrics and same lowercase as the apps section: nothing in this sidebar
           shouts. */}

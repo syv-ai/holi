@@ -69,6 +69,16 @@ export type Tab =
   /** A vault app (D74), identified by its directory name under `.holi/apps/`.
    *  There is one tab per app, not one per vault. */
   | { kind: 'app'; appId: string }
+  /**
+   * One of the vault's agent sessions (D101), by the id main minted for it.
+   *
+   * One tab per session, as with an app. **Closing the tab does not end the
+   * session** — it keeps running, and the sidebar's list is how you get back to
+   * it. That split is new: in the drawer a tab WAS the session, so closing one
+   * killed it and had to ask first. A tab is a view now, and a view is free to
+   * close.
+   */
+  | { kind: 'session'; id: string }
   /** The board, the Google agenda, mail (D67), settings and history — one of
    *  each, ever. */
   | { kind: SingletonTab }
@@ -98,6 +108,11 @@ function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
   if (a.kind === 'app' && b.kind === 'app') return a.appId === b.appId
+  if (a.kind === 'session' && b.kind === 'session') return a.id === b.id
+  // Everything left is a singleton, of which there is one, ever. A kind that
+  // carries an identity and is NOT listed above falls in here and reads as
+  // "already open" whatever it names — which is how two different sessions
+  // briefly shared one tab.
   return true
 }
 
@@ -186,6 +201,14 @@ export function openHistory(workspace: Workspace): Workspace {
  *  from the sidebar like a file, not from the nav rail like a singleton. */
 export function openApp(workspace: Workspace, appId: string): Workspace {
   return openTab(workspace, { kind: 'app', appId })
+}
+
+/** Show one agent session in the active pane, or focus its tab if it is already
+ *  open somewhere. Deduped by session id for the same reason an app is deduped
+ *  by its id: two terminals over one PTY would both be attached to it, and only
+ *  one of them would be the one you had scrolled. */
+export function openSession(workspace: Workspace, id: string): Workspace {
+  return openTab(workspace, { kind: 'session', id })
 }
 
 /**
@@ -387,7 +410,31 @@ export function retargetAppTab(workspace: Workspace, from: string, to: string): 
  * emptied pane stays as the empty-editor state (`active: -1`), never disappears.
  */
 export function closeTabsForPaths(workspace: Workspace, paths: string[]): Workspace {
-  const gone = (t: Tab) => t.kind === 'note' && paths.includes(t.path)
+  return closeTabsWhere(workspace, (t) => t.kind === 'note' && paths.includes(t.path))
+}
+
+/**
+ * Close the tabs of sessions that are no longer in main's list.
+ *
+ * A session leaves that list when it is **ended**, not when it exits: an exited
+ * session keeps its place, and its tab with it, so the last thing it printed is
+ * still there to read. What this closes is a terminal attached to a session that
+ * has been disposed of — by the End action, by a vault switch, or by the app
+ * closing the vault under it.
+ */
+export function closeSessionTabs(workspace: Workspace, liveIds: string[]): Workspace {
+  return closeTabsWhere(workspace, (t) => t.kind === 'session' && !liveIds.includes(t.id))
+}
+
+/**
+ * Every pane with the matching tabs removed, each pane's active index following
+ * the **document** rather than the position.
+ *
+ * Shared by both callers above, and by the two for one reason: the rule for
+ * where the selection lands when tabs are removed underneath it is fiddly
+ * enough that a second copy would be a second answer.
+ */
+function closeTabsWhere(workspace: Workspace, gone: (tab: Tab) => boolean): Workspace {
   return {
     ...workspace,
     panes: workspace.panes.map((pane) => {

@@ -1,6 +1,9 @@
-import { atom } from 'jotai'
+import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
+import { useEffect, useRef } from 'react'
 import type { ColorMode } from '@/lib/agent-notices'
+import { activeTab, closeSessionTabs, workspaceAtom } from './panes'
+import { resetTurnReviewAtom, turnReviewOpenAtom } from './turns'
 
 /** What a session is doing. Claude Code's own answer, joined by main (D100). */
 export type SessionState = 'needs-you' | 'working' | 'idle'
@@ -20,25 +23,32 @@ export interface AgentSession {
   exited: boolean
 }
 
-export const agentPanelOpenAtom = atom(false)
-
-/** Every session of the open vault, in spawn order, which is tab order. */
+/** Every session of the open vault, in spawn order. */
 export const agentSessionsAtom = atom<AgentSession[]>([])
 
-/** The tab the user picked, or null before they picked one. Not the answer to
- *  "which tab is showing" — `activeSessionAtom` is, because a picked session can
- *  be closed out from under this. */
+/** The last session the user opened or picked. A fallback, not the answer:
+ *  `activeSessionAtom` asks the workspace first. */
 export const activeSessionIdAtom = atom<string | null>(null)
 
 /**
- * The session the drawer is showing.
+ * The session the app is currently on.
  *
- * The pick while it is still in the list, then the first live one, then the
- * first one at all — so closing the active tab lands on a neighbour rather than
- * on nothing, and a list of only exited sessions still shows one.
+ * **The tab you are looking at is the answer** when it is a session tab (D101),
+ * because that is what "currently on" means once a session is an ordinary tab:
+ * clicking one in the strip has to move the app's idea of which session you are
+ * talking to, and the strip does not know this atom exists.
+ *
+ * Otherwise the last one picked, then the first live one, then the first at all
+ * — so closing a session's tab still leaves an answer, and a vault whose
+ * sessions have all exited still has one to show.
  */
 export const activeSessionAtom = atom<AgentSession | null>((get) => {
   const sessions = get(agentSessionsAtom)
+  const tab = activeTab(get(workspaceAtom))
+  if (tab?.kind === 'session') {
+    const shown = sessions.find((s) => s.id === tab.id)
+    if (shown !== undefined) return shown
+  }
   const picked = sessions.find((s) => s.id === get(activeSessionIdAtom))
   return picked ?? sessions.find((s) => !s.exited) ?? sessions[0] ?? null
 })
@@ -105,3 +115,84 @@ const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
  * so it has no geometry of its own, and the drawer is one width for all of them.
  */
 export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)
+
+/**
+ * Keep the session list in step with main, for as long as the app is open.
+ *
+ * **Mounted by the app shell**, not by whichever view happens to read the list:
+ * the footer's dot has to be right before any session tab exists, and the list
+ * is how the sidebar knows to show its section at all. A subscription that lived
+ * in a tab would start when you opened one, which is exactly when it is already
+ * too late. This used to live in the drawer, which was always mounted for the
+ * same reason and is gone (D101).
+ */
+export function useAgentSessions(): void {
+  const setSessions = useSetAtom(agentSessionsAtom)
+  const setModeAtSpawn = useSetAtom(agentModeAtSpawnAtom)
+  const sessions = useAtomValue(agentSessionsAtom)
+
+  useEffect(() => {
+    // A push that lands while the mount-time question is in flight is NEWER than
+    // its answer, and letting the answer win would drop a session that has just
+    // been announced.
+    let pushed = false
+    const off = window.holi.agent.onSessions((list) => {
+      pushed = true
+      setSessions(list)
+    })
+    void window.holi.agent.sessions().then((list) => {
+      if (!pushed) setSessions(list)
+    })
+    return off
+  }, [setSessions])
+
+  /** A session that has left the list takes its spawn-time colour mode with it.
+   *  The map is keyed by session id and nothing else prunes it. */
+  useEffect(() => {
+    setModeAtSpawn((byId) => {
+      const live = new Set(sessions.map((s) => s.id))
+      const kept = Object.entries(byId).filter(([id]) => live.has(id))
+      // Same object when nothing went, so this cannot loop on its own write.
+      return kept.length === Object.keys(byId).length ? byId : Object.fromEntries(kept)
+    })
+  }, [sessions, setModeAtSpawn])
+}
+
+/**
+ * Close the tabs of sessions that have gone, and clear the turn review on a
+ * vault switch.
+ *
+ * Both were the drawer's, and both are about the SET rather than about any one
+ * session, so they move to the shell with the subscription above rather than
+ * into a tab that may not be open when they need to happen.
+ */
+export function useSessionTabs(activeRemote: string | null): void {
+  const sessions = useAtomValue(agentSessionsAtom)
+  const setWorkspace = useSetAtom(workspaceAtom)
+  const resetTurnReview = useSetAtom(resetTurnReviewAtom)
+  const setTurnReviewOpen = useSetAtom(turnReviewOpenAtom)
+
+  const ids = sessions.map((s) => s.id).join('\u0000')
+  useEffect(() => {
+    const live = ids === '' ? [] : ids.split('\u0000')
+    setWorkspace((w) => closeSessionTabs(w, live))
+  }, [ids, setWorkspace])
+
+  /**
+   * A vault switch clears the turn review.
+   *
+   * The record is per vault, so without this the review stays open on the
+   * previous vault's turn — and every query it makes asks the NEW vault's git
+   * for a range it has never heard of.
+   *
+   * The edge and not the level: on mount there is nothing to clear, and clearing
+   * anyway would throw away a record that has just been loaded.
+   */
+  const lastRemote = useRef(activeRemote)
+  useEffect(() => {
+    if (lastRemote.current === activeRemote) return
+    lastRemote.current = activeRemote
+    resetTurnReview()
+    setTurnReviewOpen(false)
+  }, [activeRemote, resetTurnReview, setTurnReviewOpen])
+}

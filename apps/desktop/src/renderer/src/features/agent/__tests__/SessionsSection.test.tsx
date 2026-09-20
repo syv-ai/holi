@@ -13,13 +13,17 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { SessionsSection } from '../SessionsSection'
 import {
   activeSessionIdAtom,
-  agentPanelOpenAtom,
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
   type AgentSession,
 } from '@/state/agent'
+import { activeTab, workspaceAtom } from '@/state/panes'
+import { activeRemoteAtom } from '@/state/vaults'
+
+const REMOTE = 'owner/repo'
 
 const kill = vi.fn()
+const start = vi.fn()
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -32,7 +36,11 @@ const session = (over: Partial<AgentSession> & { id: string }): AgentSession => 
 beforeEach(() => {
   kill.mockReset()
   kill.mockResolvedValue({ ok: true })
-  window.holi = { agent: { kill: (id: string) => kill(id) } } as never
+  start.mockReset()
+  start.mockResolvedValue({ ok: true, id: 'spawned' })
+  window.holi = {
+    agent: { kill: (id: string) => kill(id), start: (args: unknown) => start(args) },
+  } as never
 })
 
 function setup(sessions: AgentSession[], open = true) {
@@ -88,12 +96,27 @@ test('says each session’s own state, not the vault’s', () => {
   expect(screen.getByText('ended')).toBeInTheDocument()
 })
 
-test('clicking a card opens the drawer on that session', async () => {
+test('clicking a card opens that session as a tab', async () => {
   const { store } = setup([session({ id: 'a', name: 'One' }), session({ id: 'b', name: 'Two' })])
   await userEvent.click(screen.getByText('Two'))
 
   expect(store.get(activeSessionIdAtom)).toBe('b')
-  expect(store.get(agentPanelOpenAtom)).toBe(true)
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'session', id: 'b' })
+})
+
+test('clicking a card whose tab is already open brings it forward', async () => {
+  // Deduped by id: two terminals over one PTY would both be attached to it.
+  const { store } = setup([session({ id: 'a', name: 'One' }), session({ id: 'b', name: 'Two' })])
+  await userEvent.click(screen.getByText('Two'))
+  await userEvent.click(screen.getByText('One'))
+  await userEvent.click(screen.getByText('Two'))
+
+  const panes = store.get(workspaceAtom).panes
+  expect(panes[0]!.tabs).toEqual([
+    { kind: 'session', id: 'b' },
+    { kind: 'session', id: 'a' },
+  ])
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'session', id: 'b' })
 })
 
 test('collapses to its heading, which is the control that expands it again', async () => {
@@ -131,4 +154,25 @@ test('offers no rename, because the name is Claude Code’s', async () => {
 
   await screen.findByText('End session')
   expect(screen.queryByText(/Rename/)).not.toBeInTheDocument()
+})
+
+test('starts another session from the section header', async () => {
+  // The drawer's `+` had nowhere to go when the drawer did. This is the only
+  // place left that means "another one of these".
+  const { store } = setup([session({ id: 'a', name: 'One' })])
+  store.set(activeRemoteAtom, REMOTE)
+  await userEvent.click(screen.getByLabelText('start another session'))
+
+  await waitFor(() =>
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
+  )
+})
+
+test('resumes a past session in a new tab, killing nothing', async () => {
+  const { store } = setup([session({ id: 'a', name: 'One' })])
+  store.set(activeRemoteAtom, REMOTE)
+  await userEvent.click(screen.getByLabelText('resume a past session'))
+
+  await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ resume: true })))
+  expect(kill).not.toHaveBeenCalled()
 })

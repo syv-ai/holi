@@ -9,10 +9,11 @@
  * am I" from global state, which is the question the props already answer.
  */
 import { fileKind, isTaskFilePath } from '@holi/shared'
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { cn } from '@/lib/cn'
 import { isLockedForReconcile } from '@/lib/reconcile-lock'
 import type { ConflictResolvers } from '@/lib/editor-reload'
+import { agentGeometryAtom } from '@/state/agent'
 import { syncStateAtom } from '@/state/vaults'
 import { useEffect, useState, type ReactNode } from 'react'
 import { TAB_MIME, paneDropZone, parseTabPayload, type PaneDropZone } from '@/lib/tab-drop'
@@ -23,6 +24,8 @@ import { AppFrame } from '@/features/apps/AppFrame'
 import { SettingsView } from '@/features/settings/SettingsView'
 import { HistoryView } from '@/features/history/HistoryView'
 import { BoardView } from '@/features/tasks/BoardView'
+import { SessionTerminal } from '@/features/agent/SessionTerminal'
+import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import type { Pane, Tab } from '@/state/panes'
@@ -119,6 +122,10 @@ export function PaneView({
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
+  /** What a session spawned from anywhere should be born at: the last geometry
+   *  a visible terminal actually measured. A session started for an ask has no
+   *  tab of its own yet and so nothing of its own to measure. */
+  const setGeometry = useSetAtom(agentGeometryAtom)
 
   /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
@@ -177,7 +184,10 @@ export function PaneView({
           CodeMirror instance and anything that changes the layout box drags its
           measure loop into every frame. */}
       <div ref={bodyRef} className="relative flex min-h-0 flex-1 flex-col">
-        {tab?.kind === 'app' ? (
+        {tab?.kind ===
+        'session' ? // Nothing here: a session's terminal is rendered below, outside this
+        // switch, because it has to stay mounted while another tab is showing.
+        null : tab?.kind === 'app' ? (
           <AppFrame appId={tab.appId} />
         ) : tab?.kind === 'board' ? (
           <BoardView />
@@ -210,6 +220,37 @@ export function PaneView({
             onEdit={onEdit}
             onConflict={onConflict}
           />
+        )}
+
+        {/**
+         * Every session tab in this pane, mounted, with only the active one
+         * shown (D101).
+         *
+         * Outside the switch above and keyed by session id, because a terminal
+         * that unmounts on a tab switch throws away its scrollback and has to
+         * replay main's mirror to get it back — a repaint you can see. The same
+         * rule the drawer's tab strip followed; what changed is which container
+         * enforces it.
+         */}
+        {pane.tabs.map((t, i) =>
+          t.kind !== 'session' ? null : (
+            <div
+              key={`session:${t.id}`}
+              className={cn('min-h-0 flex-1 flex-col', i === pane.active ? 'flex' : 'hidden')}
+            >
+              <SessionTerminal
+                sessionId={t.id}
+                visible={i === pane.active}
+                onGeometry={(cols, rows) => setGeometry({ cols, rows })}
+              />
+              {/* Under the terminal it belongs to. Keyed, so the chip's own
+                  "did this just land" refs are about ONE session and do not
+                  bloom for a turn that ended minutes ago in another. */}
+              <div className="shrink-0 border-t border-divider px-2 py-1">
+                <TurnChip key={t.id} sessionId={t.id} />
+              </div>
+            </div>
+          ),
         )}
 
         {/* One event target, always. The bands inside are `pointer-events-none`,

@@ -16,6 +16,15 @@ import { TAB_MIME, type PaneDropZone } from '@/lib/tab-drop'
 import type { Pane, Tab } from '@/state/panes'
 import { PaneView } from '../PaneView'
 
+// The terminal is stubbed: xterm needs measured geometry jsdom does not have,
+// and what a terminal does with its own bytes is `SessionTerminal`'s business.
+vi.mock('@/features/agent/SessionTerminal', () => ({
+  SessionTerminal: ({ sessionId, visible }: { sessionId: string; visible: boolean }) => (
+    <div data-terminal={sessionId} data-visible={visible} />
+  ),
+}))
+vi.mock('@/features/agent/TurnChip', () => ({ TurnChip: () => <div data-turn-chip /> }))
+
 /** Empty, so the body renders the empty-editor placeholder rather than mounting
  *  the whole CodeMirror stack — the wrapper is what is under test. */
 const empty: Pane = { tabs: [], active: -1 }
@@ -172,4 +181,37 @@ test('a pane that is staying is untouched', () => {
   const main = screen.getByTestId('tab-strip').closest('main')!
   expect(main).not.toHaveClass('motion-out-origin')
   expect(main).not.toHaveClass('pointer-events-none')
+})
+
+test('keeps every session tab’s terminal mounted, showing only the active one', () => {
+  // A terminal unmounted on a tab switch throws away its scrollback and has to
+  // replay main's mirror to get it back, which is a repaint you can see. This is
+  // the rule the drawer's strip enforced; the pane enforces it now (D101).
+  pane({
+    pane: {
+      tabs: [
+        { kind: 'session', id: 'a' },
+        { kind: 'session', id: 'b' },
+      ],
+      active: 1,
+    },
+  })
+
+  expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
+  expect(document.querySelector('[data-terminal="b"]')?.getAttribute('data-visible')).toBe('true')
+})
+
+test('a session tab shows its terminal instead of the editor', () => {
+  pane({ pane: { tabs: [{ kind: 'session', id: 'a' }], active: 0 } })
+
+  expect(document.querySelector('[data-terminal="a"]')).not.toBeNull()
+  expect(screen.queryByText('select or create a note')).not.toBeInTheDocument()
+})
+
+test('a note tab beside a session keeps the session’s terminal alive', () => {
+  // Switching to a note is a tab switch like any other: the PTY is main's and
+  // keeps running, and the terminal it is attached to must not go with the view.
+  pane({ pane: { tabs: [{ kind: 'session', id: 'a' }, note('plan')], active: 1 } })
+
+  expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
 })

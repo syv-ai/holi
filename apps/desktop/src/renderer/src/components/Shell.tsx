@@ -9,8 +9,8 @@
  * is subscribed once at the root — so this component listens to nothing and
  * reads atoms instead.
  *
- * The agent drawer (⌘J) mounts here as a right-hand sibling of the editor; the
- * history panel and daily notes are plan 7.
+ * The agent is not a panel here any more (D101): a session is an ordinary tab,
+ * so ⌘J and the footer door open one rather than sliding a drawer out.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, PanelRight, Settings } from 'lucide-react'
@@ -25,7 +25,6 @@ import {
   type PanelImperativeHandle,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { AgentPanel } from '@/features/agent/AgentPanel'
 import { TurnReview } from '@/features/agent/TurnReview'
 import { turnReviewOpenAtom } from '@/state/turns'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
@@ -42,6 +41,7 @@ import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
+import { matchHotkey } from '../lib/hotkey'
 import { syncLabel } from '../lib/sync-label'
 import { saveAllBuffers } from '../lib/buffer-registry'
 import { motionDurationMs, prefersReducedMotion } from '../lib/motion'
@@ -83,11 +83,12 @@ import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import {
   agentModeAtSpawnAtom,
-  agentPanelOpenAtom,
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
+  useAgentSessions,
+  useSessionTabs,
 } from '@/state/agent'
-import { reconcileAtom, showAgentPanelAtom } from '@/state/agent-send'
+import { reconcileAtom, showAgentAtom } from '@/state/agent-send'
 import { agentThemeNote, fleetIndicator, sessionsWorthAsking } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
 
@@ -211,10 +212,9 @@ export function Shell() {
     setWorkspace(apply)
   }
 
-  const agentOpen = useAtomValue(agentPanelOpenAtom)
-  /** Not a plain setter: opening the drawer onto a vault with no live session
-   *  starts one, and that rule lives with the sessions (`showAgentPanelAtom`). */
-  const showAgentPanel = useSetAtom(showAgentPanelAtom)
+  /** Not a plain setter: going to the agent in a vault with no live session
+   *  starts one, and that rule lives with the sessions (`showAgentAtom`). */
+  const showAgent = useSetAtom(showAgentAtom)
   // The footer's Claude control (#15) is the drawer's only affordance outside the
   // drawer. It reduces EVERY session to one dot (D100): needs-you outranks
   // working outranks a restart nudge, so the door is painted by whichever
@@ -270,6 +270,11 @@ export function Shell() {
   }, [appsOpen, hasApps, sessionsOpen, hasSessions])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
+  // The session list, and the two things that are about the whole set: tabs for
+  // sessions that have gone, and the turn review on a vault switch. Mounted here
+  // because the shell is what outlives every tab (D101).
+  useAgentSessions()
+  useSessionTabs(activeRemote)
 
   // Keep `nowAtom` on the current minute, so `overdue` turns over on the clock
   // rather than whenever something else happens to re-render. Every 30s and not
@@ -402,9 +407,23 @@ export function Shell() {
     return () => window.removeEventListener('keydown', onKey)
   }, [setWorkspace])
 
-  // ⌘J (toggle the agent drawer) now lives on the drawer's own PanelHeader close
-  // action — it owns its shortcut, and the panel stays mounted so it binds even
-  // while collapsed. See features/agent/AgentPanel.tsx.
+  /**
+   * ⌘J goes to the agent.
+   *
+   * Bound here now that there is no drawer to own it. It used to live on the
+   * drawer's `PanelHeader`, which could bind it because the panel stayed mounted
+   * while collapsed; a session tab is mounted only while it is open, so the
+   * shortcut that OPENS one cannot live inside it.
+   */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchHotkey(e, '⌘J')) return
+      e.preventDefault()
+      showAgent()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAgent])
 
   // Create a task in any folder (including one that is not yet a lane, which board
   // quick-add cannot reach). ⌘T captures quickly and stays put; ⌘⇧T captures and
@@ -530,7 +549,6 @@ export function Shell() {
             // the agent panel's own onResize into flipping open. The panel-level
             // callback can't tell a drag from a reflow; this one can.
             if (!meta.isUserInteraction) return
-            showAgentPanel((layout.agent ?? 0) > 0)
           }}
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
@@ -848,13 +866,6 @@ export function Shell() {
               </ResizablePanel>
             </>
           )}
-
-          {/* The agent drawer is now a first-class member of the row: always
-              mounted (its PTY + scrollback survive), collapsed to nothing when
-              closed, drag-resizable against the editor like every other panel.
-              ⌘J drives its collapse/expand from inside the component. */}
-          <ResizableHandle />
-          <AgentPanel />
         </ResizablePanelGroup>
 
         <DialogHost />
@@ -1000,10 +1011,13 @@ export function Shell() {
             </Tooltip>
           )}
         </div>
-        {/* The vault assistant's only door outside itself (#15). ⌘J used to be
-            the sole way in, and a live session was invisible once the drawer was
-            closed; this is both the door and the light. Same derivation as the
-            panel header, so the two cannot say different things.
+        {/* The vault assistant's door, and its light. Every session reduced to
+            one dot, from the same derivation the tabs and the sidebar cards use,
+            so the three cannot say different things.
+
+            It matters more now than it did, not less: with the drawer gone, a
+            session with no tab open is a session with nothing on screen at all,
+            and this is what says it is there.
 
             It has this corner to itself. The vault's remote and the signed-in
             login used to sit here, and neither was worth a permanent line: the
@@ -1012,9 +1026,8 @@ export function Shell() {
         <Tooltip content={`${agentState.title} (⌘J)`}>
           <Button
             variant="link"
-            aria-pressed={agentOpen}
             className="h-auto shrink-0 gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            onClick={() => showAgentPanel()}
+            onClick={() => showAgent()}
           >
             <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
             Claude

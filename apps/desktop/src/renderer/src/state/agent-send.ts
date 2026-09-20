@@ -15,13 +15,14 @@ import { atom } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { trpc } from '../lib/trpc'
 import {
+  activeSessionAtom,
   activeSessionIdAtom,
   agentGeometryAtom,
   agentModeAtSpawnAtom,
-  agentPanelOpenAtom,
   agentSessionsAtom,
   type AgentTarget,
 } from './agent'
+import { openSession, workspaceAtom } from './panes'
 import { activeModeAtom } from './color-scheme'
 import { activeRemoteAtom } from './vaults'
 
@@ -35,9 +36,10 @@ export interface StartResult {
 /**
  * Start one session in the open vault and show it.
  *
- * It opens the drawer directly rather than through `showAgentPanelAtom`, and the
- * distinction is the whole reason that atom exists: opening the drawer is what
- * *asks* for a session when there is none, and this is already answering.
+ * Showing it is opening its tab (D101). It used to be opening the drawer, which
+ * had to happen BEFORE the spawn so that the drawer's own auto-start could see a
+ * start in flight and stand down. Nothing watches a flag any more: a tab is
+ * opened for a session that exists, after it exists.
  */
 export const startSessionAtom = atom(
   null,
@@ -51,7 +53,6 @@ export const startSessionAtom = atom(
     const remote = get(activeRemoteAtom)
     if (remote === null) return { ok: false, message: 'No vault is open.' }
     const { cols, rows } = get(agentGeometryAtom)
-    set(agentPanelOpenAtom, true)
     const res = await window.holi.agent.start({ vaultId: remote, cols, rows, ...opts })
     if (!res.ok || res.id === undefined) {
       return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
@@ -59,6 +60,7 @@ export const startSessionAtom = atom(
     const id = res.id
     // Show it: someone who asked for a session is asking to look at it.
     set(activeSessionIdAtom, id)
+    set(workspaceAtom, (w) => openSession(w, id))
     // What Claude just read out of its settings, for this session alone (D86).
     set(agentModeAtSpawnAtom, (m) => ({ ...m, [id]: get(activeModeAtom) }))
     return { ok: true, id }
@@ -66,29 +68,33 @@ export const startSessionAtom = atom(
 )
 
 /**
- * Show or hide the drawer — and starting a session is part of showing it.
+ * Go to the agent: the footer door and ⌘J.
  *
- * **An empty drawer is not a place to talk to the agent**, so opening one onto a
- * vault with no live session starts one. That used to be an effect in
- * `AgentPanel` watching the open flag, which could not tell the drawer opening
- * itself apart from the drawer being opened BY a spawn: a reconcile or an ask
- * sent to a new session opens it on the way, and the session it is making is not
- * in the pushed list yet, so the effect started a second one. Owning both halves
- * here means there is no edge to misread.
+ * Opens the current session's tab, or starts one when the vault has none —
+ * "there is nowhere to talk to the agent" is answered by making somewhere,
+ * which is the rule the drawer had and the one thing worth keeping from it.
  *
- * `'toggle'` is the door and ⌘J; an explicit boolean is the handle being dragged
- * to or from zero width.
+ * **It does not toggle.** A drawer was a thing to open and shut; a tab is a
+ * place to go, and ⌘J pressed twice should leave you where it put you rather
+ * than undoing itself.
  */
-export const showAgentPanelAtom = atom(
-  null,
-  (get, set, next: boolean | 'toggle' = 'toggle'): void => {
-    const open = next === 'toggle' ? !get(agentPanelOpenAtom) : next
-    set(agentPanelOpenAtom, open)
-    if (!open) return
-    if (get(agentSessionsAtom).some((s) => !s.exited)) return
+export const showAgentAtom = atom(null, (get, set): void => {
+  const current = get(activeSessionAtom)
+  // An exited session is a record to read, not somewhere to be sent to work, so
+  // the door steps over it — to another live one if the vault has one, and to a
+  // new one if it does not. Its tab stays where it is; this is about where you
+  // are being put, not about tidying up.
+  const target =
+    current !== null && !current.exited
+      ? current
+      : (get(agentSessionsAtom).find((s) => !s.exited) ?? null)
+  if (target === null) {
     void set(startSessionAtom)
-  },
-)
+    return
+  }
+  set(activeSessionIdAtom, target.id)
+  set(workspaceAtom, (w) => openSession(w, target.id))
+})
 
 /**
  * Send text to a session, live or new. It lands in the input box **unsent**
@@ -118,8 +124,10 @@ export const sendToAgentAtom = atom(
     }
     const res = await window.holi.agent.paste(args.target, args.text)
     if (!res.ok) return res
+    // Focus the tab the text just landed in, opening it if it was closed: an ask
+    // that arrives somewhere you cannot see is an ask you will not answer.
     set(activeSessionIdAtom, args.target)
-    set(agentPanelOpenAtom, true)
+    set(workspaceAtom, (w) => openSession(w, args.target))
     return { ok: true }
   },
 )

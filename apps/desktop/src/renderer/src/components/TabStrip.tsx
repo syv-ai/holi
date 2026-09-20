@@ -60,6 +60,9 @@ import {
   type PillBox,
 } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
+import { agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { agentIndicator } from '@/lib/agent-notices'
+import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
 
 /** The singleton tabs' pill text and tooltip. Notes use their filename/path and
@@ -128,7 +131,9 @@ export function tabKey(tab: Tab): string {
     ? `note:${tab.path}`
     : tab.kind === 'app'
       ? `app:${tab.appId}`
-      : tab.kind
+      : tab.kind === 'session'
+        ? `session:${tab.id}`
+        : tab.kind
 }
 
 /** `icons` is `.holi/settings/icons.yaml` as the snapshot resolved it (D82), keyed by
@@ -136,21 +141,41 @@ export function tabKey(tab: Tab): string {
  *  module-level function, and the tree already proves the map belongs to the
  *  snapshot and not to a store of its own. Only a note tab can carry one — the
  *  singleton tabs are not files and have no path to key by. */
-function tabIcon(tab: Tab, icons: Record<string, string>): ReactNode {
+function tabIcon(tab: Tab, icons: Record<string, string>, sessions: AgentSession[]): ReactNode {
   if (tab.kind === 'note') return fileIconFor(tab.path, icons[tab.path])
   if (tab.kind === 'app') return <LayoutGrid size={14} />
   if (tab.kind === 'agenda') return <CalendarDays size={14} />
   if (tab.kind === 'mail') return <Mail size={14} />
+  // A session's glyph is its STATE, which is the thing worth a glance across a
+  // strip of tabs: the same dot the sidebar card and the footer door paint, from
+  // the same derivation, so the three cannot say different things (D72).
+  if (tab.kind === 'session') {
+    const session = sessions.find((s) => s.id === tab.id)
+    const dot =
+      session === undefined
+        ? 'bg-muted-foreground'
+        : agentIndicator({ ...session, themeNote: null }).dot
+    return <span aria-hidden="true" className={cn('h-2 w-2 shrink-0 rounded-full', dot)} />
+  }
   return <SquareKanban size={14} />
 }
 
-function tabName(tab: Tab): string {
+function tabName(tab: Tab, sessions: AgentSession[]): string {
   if (tab.kind === 'note') return tab.path.split('/').at(-1) ?? tab.path
   if (tab.kind === 'app') return tab.appId
+  // Claude Code's own name for it, pushed by main. A tab for a session that has
+  // gone keeps a label until the tab goes with it, one frame later.
+  if (tab.kind === 'session') return sessions.find((s) => s.id === tab.id)?.name ?? 'Session'
   return TAB_NAME[tab.kind]
 }
 
-function tabTooltip(tab: Tab): string {
+function tabTooltip(tab: Tab, sessions: AgentSession[]): string {
+  if (tab.kind === 'session') {
+    const session = sessions.find((s) => s.id === tab.id)
+    return session === undefined
+      ? 'this session has gone'
+      : agentIndicator({ ...session, themeNote: null }).title
+  }
   return (
     TAB_LABEL[tab.kind] ??
     (tab.kind === 'note' ? tab.path : tab.kind === 'app' ? `the ${tab.appId} app` : tab.kind)
@@ -182,12 +207,14 @@ function OverflowMenu({
   indices,
   tabs,
   icons,
+  sessions,
   onReveal,
 }: {
   side: 'left' | 'right'
   indices: number[]
   tabs: Tab[]
   icons: Record<string, string>
+  sessions: AgentSession[]
   onReveal: (index: number) => void
 }) {
   const visible = indices.length > 0
@@ -243,9 +270,9 @@ function OverflowMenu({
                 className="gap-2 text-xs"
                 onSelect={() => onReveal(index)}
               >
-                {tabIcon(tab, icons)}
+                {tabIcon(tab, icons, sessions)}
                 <span className={tab.kind === 'note' && tab.preview ? 'italic' : ''}>
-                  {tabName(tab)}
+                  {tabName(tab, sessions)}
                 </span>
               </DropdownMenuItem>
             )
@@ -301,6 +328,9 @@ export function TabStrip({
   // map, and threading it through `PaneView` would make each caller repeat a
   // lookup that has exactly one answer.
   const icons = useAtomValue(snapshotAtom).icons
+  // …and for the same reason: a session tab's name and dot are main's, pushed
+  // to one atom, and every strip wants the same answer.
+  const sessions = useAtomValue(agentSessionsAtom)
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /**
@@ -700,7 +730,7 @@ export function TabStrip({
                     : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Tooltip content={tabTooltip(t)}>
+                <Tooltip content={tabTooltip(t, sessions)}>
                   <Button
                     variant="ghost"
                     // Bare clickable on the pill — neutralise the ghost bg/padding so
@@ -722,8 +752,8 @@ export function TabStrip({
                     onClick={() => onSelect(i)}
                     onDoubleClick={() => onPin(i)}
                   >
-                    {tabIcon(t, icons)}
-                    <span>{tabName(t)}</span>
+                    {tabIcon(t, icons, sessions)}
+                    <span>{tabName(t, sessions)}</span>
                   </Button>
                 </Tooltip>
                 {/* Shown on hover of its own pill, and whenever it is focused so
@@ -749,6 +779,7 @@ export function TabStrip({
           indices={offscreen.left}
           tabs={tabs}
           icons={icons}
+          sessions={sessions}
           onReveal={reveal}
         />
         <OverflowMenu
@@ -756,6 +787,7 @@ export function TabStrip({
           indices={offscreen.right}
           tabs={tabs}
           icons={icons}
+          sessions={sessions}
           onReveal={reveal}
         />
       </div>

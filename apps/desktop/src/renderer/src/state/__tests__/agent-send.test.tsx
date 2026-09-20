@@ -10,13 +10,13 @@ import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   activeSessionIdAtom,
-  agentPanelOpenAtom,
   agentSessionsAtom,
   askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
 } from '../agent'
-import { sendToAgentAtom, showAgentPanelAtom, startSessionAtom } from '../agent-send'
+import { sendToAgentAtom, showAgentAtom, startSessionAtom } from '../agent-send'
+import { activeTab, openSession, workspaceAtom } from '../panes'
 import { activeRemoteAtom } from '../vaults'
 
 const REMOTE = 'owner/repo'
@@ -46,55 +46,61 @@ beforeEach(() => {
 })
 
 /** A store with a vault open and whatever sessions main has pushed. */
-function storeWith(sessions: AgentSession[] = [], open = false) {
+function storeWith(sessions: AgentSession[] = [], openTabs: string[] = []) {
   const store = createStore()
   store.set(activeRemoteAtom, REMOTE)
   store.set(agentSessionsAtom, sessions)
-  store.set(agentPanelOpenAtom, open)
+  for (const id of openTabs) store.set(workspaceAtom, (w) => openSession(w, id))
   return store
 }
 
-test('opening the drawer onto no sessions starts one', async () => {
-  const store = storeWith([])
-  store.set(showAgentPanelAtom, true)
+/** The session tab showing, if the showing tab is a session at all. */
+const shown = (store: ReturnType<typeof createStore>): string | null => {
+  const tab = activeTab(store.get(workspaceAtom))
+  return tab?.kind === 'session' ? tab.id : null
+}
 
-  expect(store.get(agentPanelOpenAtom)).toBe(true)
+test('going to the agent with no sessions starts one', async () => {
+  const store = storeWith([])
+  store.set(showAgentAtom)
+
   await vi.waitFor(() =>
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ vaultId: REMOTE })),
   )
 })
 
-test('opening the drawer with a session already running starts nothing', () => {
+test('going to the agent opens the current session rather than starting one', () => {
   const store = storeWith([session({ id: 'a' })])
-  store.set(showAgentPanelAtom, true)
+  store.set(showAgentAtom)
+
   expect(start).not.toHaveBeenCalled()
+  expect(shown(store)).toBe('a')
 })
 
-test('opening the drawer onto only an exited session starts one', async () => {
-  // A dead tab is a record, not a session. Opening the drawer should hand you
-  // something you can type into.
+test('going to the agent twice leaves you where it put you', () => {
+  // A drawer was a thing to open and shut. A tab is a place to go, and the
+  // second press must not undo the first.
+  const store = storeWith([session({ id: 'a' })])
+  store.set(showAgentAtom)
+  store.set(showAgentAtom)
+
+  expect(shown(store)).toBe('a')
+  expect(store.get(workspaceAtom).panes[0]!.tabs).toHaveLength(1)
+})
+
+test('an exited session is not somewhere you can be sent to work', async () => {
+  // A dead session is a record. Going to the agent should hand you something you
+  // can type into.
   const store = storeWith([session({ id: 'a', exited: true })])
-  store.set(showAgentPanelAtom, true)
+  store.set(showAgentAtom)
   await vi.waitFor(() => expect(start).toHaveBeenCalled())
 })
 
-test('closing the drawer starts nothing', () => {
-  const store = storeWith([], true)
-  store.set(showAgentPanelAtom, 'toggle')
-  expect(store.get(agentPanelOpenAtom)).toBe(false)
-  expect(start).not.toHaveBeenCalled()
-})
-
-test('a start opens the drawer BEFORE it spawns, and only makes one session', async () => {
-  // The ordering is what keeps a reconcile (or an ask to a new session) from
-  // becoming two tabs: it opens the drawer on its way, and the session it is
-  // making is not in the pushed list yet.
+test('a start shows the session it made, and makes only one', async () => {
+  // A reconcile, or an ask sent to a new session, lands you in it: the tab is
+  // opened for a session that exists, after it exists.
   const store = storeWith([])
-  const spawning = store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
-
-  // Before the spawn has resolved, which is the half that matters.
-  expect(store.get(agentPanelOpenAtom)).toBe(true)
-  await spawning
+  await store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
 
   expect(start).toHaveBeenCalledTimes(1)
   expect(start).toHaveBeenCalledWith(
@@ -102,10 +108,11 @@ test('a start opens the drawer BEFORE it spawns, and only makes one session', as
   )
   // And it lands you on the new tab.
   expect(store.get(activeSessionIdAtom)).toBe('spawned')
+  expect(shown(store)).toBe('spawned')
 })
 
 test('a live target is pasted into, exactly once and with no submit', async () => {
-  const store = storeWith([session({ id: 'a' }), session({ id: 'b' })], true)
+  const store = storeWith([session({ id: 'a' }), session({ id: 'b' })])
 
   const res = await store.set(sendToAgentAtom, { text: 'what is this about?', target: 'b' })
 
@@ -115,9 +122,10 @@ test('a live target is pasted into, exactly once and with no submit', async () =
   // Main owns the bracketing and refuses to add an Enter; the renderer must not
   // have reached for `write` and done its own.
   expect(start).not.toHaveBeenCalled()
-  // The drawer focuses that tab.
+  // …and the tab it landed in is the one showing: an ask that arrives somewhere
+  // you cannot see is an ask you will not answer.
   expect(store.get(activeSessionIdAtom)).toBe('b')
-  expect(store.get(agentPanelOpenAtom)).toBe(true)
+  expect(shown(store)).toBe('b')
 })
 
 test("a 'new' target spawns, named after the ask, with the ask as its paste", async () => {
@@ -138,15 +146,15 @@ test("a 'new' target spawns, named after the ask, with the ask as its paste", as
 
 test('a target that ended between picking and sending is refused, not dropped', async () => {
   paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
-  const store = storeWith([session({ id: 'a' })], false)
+  const store = storeWith([session({ id: 'a' })])
 
   const res = await store.set(sendToAgentAtom, { text: 'have a look', target: 'a' })
 
   expect(res.ok).toBe(false)
   expect(res.message).toBe('That session has ended. Pick another one.')
-  // Nothing moved: the sender still has the text, and the drawer did not take
-  // over the screen to show a failure.
-  expect(store.get(agentPanelOpenAtom)).toBe(false)
+  // Nothing moved: the sender still has the text, and no tab opened to show a
+  // failure.
+  expect(shown(store)).toBeNull()
   expect(store.get(activeSessionIdAtom)).toBeNull()
 })
 
