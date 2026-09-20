@@ -6,7 +6,7 @@
  * cases here are when it appears at all, what a card says, and where a click
  * lands.
  */
-import { render, screen, waitFor } from '@/test/render'
+import { fireEvent, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -19,11 +19,13 @@ import {
 } from '@/state/agent'
 import { activeTab, workspaceAtom } from '@/state/panes'
 import { activeRemoteAtom } from '@/state/vaults'
+import { activeDialogAtom } from '@/state/dialogs'
 
 const REMOTE = 'owner/repo'
 
 const kill = vi.fn()
 const start = vi.fn()
+const duplicate = vi.fn()
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
   name: 'New session',
@@ -38,8 +40,14 @@ beforeEach(() => {
   kill.mockResolvedValue({ ok: true })
   start.mockReset()
   start.mockResolvedValue({ ok: true, id: 'spawned' })
+  duplicate.mockReset()
+  duplicate.mockResolvedValue({ ok: true, id: 'copy' })
   window.holi = {
-    agent: { kill: (id: string) => kill(id), start: (args: unknown) => start(args) },
+    agent: {
+      kill: (id: string) => kill(id),
+      start: (args: unknown) => start(args),
+      duplicate: (id: string) => duplicate(id),
+    },
   } as never
 })
 
@@ -146,14 +154,18 @@ test('asks before ending one that is mid-turn', async () => {
   await waitFor(() => expect(kill).toHaveBeenCalledWith('a'))
 })
 
-test('offers no rename, because the name is Claude Code’s', async () => {
-  // Set with `--name` at spawn or `/rename` inside the session. A second copy kept
-  // in Holi goes stale the moment anybody types `/rename`.
-  setup([session({ id: 'a', name: 'One' })])
-  await userEvent.pointer({ keys: '[MouseRight]', target: screen.getByText('One') })
+test('keeps no name of its own, even now that it offers a rename', async () => {
+  // D100 refused a Rename because a second name kept in Holi goes stale the
+  // moment anybody types `/rename`. That constraint is intact and this is how:
+  // the card shows what main pushed, and renaming sends Claude Code's own
+  // command rather than storing anything here.
+  const { store } = setup([session({ id: 'a', name: 'One' })])
+  fireEvent.contextMenu(screen.getByText('One'))
+  await userEvent.click(await screen.findByText('Rename…'))
 
-  await screen.findByText('End session')
-  expect(screen.queryByText(/Rename/)).not.toBeInTheDocument()
+  expect(store.get(activeDialogAtom)).toMatchObject({ sessionId: 'a', current: 'One' })
+  // Nothing was written anywhere in Holi by opening it.
+  expect(store.get(agentSessionsAtom)[0]!.name).toBe('One')
 })
 
 test('starts another session from the section header', async () => {
@@ -175,4 +187,52 @@ test('resumes a past session in a new tab, killing nothing', async () => {
 
   await waitFor(() => expect(start).toHaveBeenCalledWith(expect.objectContaining({ resume: true })))
   expect(kill).not.toHaveBeenCalled()
+})
+
+test('duplicating a session forks it, and shows the copy', async () => {
+  const { store } = setup([session({ id: 'a', name: 'Fix the merge' })])
+  fireEvent.contextMenu(screen.getByText('Fix the merge'))
+  await userEvent.click(await screen.findByText('Duplicate'))
+
+  await waitFor(() => expect(duplicate).toHaveBeenCalledWith('a'))
+  // Main answers with an ordinary Holi session, landed on like any other.
+  await waitFor(() =>
+    expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'session', id: 'copy' }),
+  )
+})
+
+test('renaming asks the dialog, which is where the /rename goes', async () => {
+  // Holi cannot rename a session by itself: there is no shell route, so the
+  // command has to be typed into the session and the dialog says so.
+  const { store } = setup([session({ id: 'a', name: 'Fix the merge' })])
+  fireEvent.contextMenu(screen.getByText('Fix the merge'))
+  await userEvent.click(await screen.findByText('Rename…'))
+
+  expect(store.get(activeDialogAtom)).toEqual({
+    id: 'rename-session',
+    size: 'sm',
+    sessionId: 'a',
+    current: 'Fix the merge',
+  })
+})
+
+test('an exited session cannot be renamed or restarted, but can be copied', async () => {
+  // Its transcript is exactly what a fork is made of; its PTY is not there to
+  // type into and not there to restart.
+  setup([session({ id: 'a', name: 'Fix the merge', exited: true })])
+  fireEvent.contextMenu(screen.getByText('Fix the merge'))
+
+  expect(await screen.findByText('Rename…')).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByText('Restart')).toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByText('Duplicate')).not.toHaveAttribute('aria-disabled', 'true')
+})
+
+test('restart ends this session and starts another', async () => {
+  const { store } = setup([session({ id: 'a', name: 'Fix the merge', state: 'idle' })])
+  store.set(activeRemoteAtom, REMOTE)
+  fireEvent.contextMenu(screen.getByText('Fix the merge'))
+  await userEvent.click(await screen.findByText('Restart'))
+
+  await waitFor(() => expect(kill).toHaveBeenCalledWith('a'))
+  await waitFor(() => expect(start).toHaveBeenCalled())
 })

@@ -296,6 +296,31 @@ describe('buildAgentArgs', () => {
     expect(buildAgentArgs()).toEqual([])
   })
 
+  it('forks a named conversation, which is not the same flag as bare --resume', () => {
+    // `--resume <id> --fork-session` copies that conversation; bare `--resume`
+    // shows Claude Code's own picker. Passing both would be one flag twice.
+    expect(buildAgentArgs({ forkOf: 'c737c427-7b06' })).toEqual([
+      '--resume',
+      'c737c427-7b06',
+      '--fork-session',
+    ])
+    expect(buildAgentArgs({ forkOf: 'c737c427-7b06', resume: true })).toEqual([
+      '--resume',
+      'c737c427-7b06',
+      '--fork-session',
+    ])
+  })
+
+  it('names a fork as well as forking it', () => {
+    expect(buildAgentArgs({ forkOf: 'abc', name: 'Fix the merge (copy)' })).toEqual([
+      '--name',
+      'Fix the merge (copy)',
+      '--resume',
+      'abc',
+      '--fork-session',
+    ])
+  })
+
   it('never passes --append-system-prompt (Holi builds no prompt content)', () => {
     expect(buildAgentArgs()).not.toContain('--append-system-prompt')
     expect(buildAgentArgs({ resume: true })).not.toContain('--append-system-prompt')

@@ -957,6 +957,75 @@ describe('pasting an ask', () => {
   })
 })
 
+describe('duplicating a session', () => {
+  /** A rig whose listing carries a real conversation id for the first session. */
+  async function forkable() {
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+    })
+    return { r, fake }
+  }
+
+  it('forks the conversation the listing names, and leaves the original running', async () => {
+    const { r, fake } = await forkable()
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle', sessionId: 'c737c427-7b06' }])
+    fake.fire()
+    await tick()
+
+    const res = await r.manager.duplicate(id)
+
+    expect(res.ok).toBe(true)
+    expect(r.spawns[1]!.args).toEqual(['--resume', 'c737c427-7b06', '--fork-session'])
+    // Two sessions, both alive: a copy is not a move.
+    expect(r.manager.sessions()).toHaveLength(2)
+    expect(r.session(id).exited).toBe(false)
+  })
+
+  it('marks the copy as one when the original has a name of its own', async () => {
+    const { r, fake } = await forkable()
+    const id = await r.start({ name: 'Fix the merge' })
+    fake.setRows([{ pid: 1000, name: 'Fix the merge', status: 'idle', sessionId: 'abc' }])
+    fake.fire()
+    await tick()
+
+    await r.manager.duplicate(id)
+    expect(r.spawns[1]!.args.slice(0, 2)).toEqual(['--name', 'Fix the merge (copy)'])
+  })
+
+  it('does not turn a placeholder into a name', async () => {
+    // "New session (copy)" would be a REAL name, which is the one thing the name
+    // inference exists to avoid: the copy would keep it for ever.
+    const { r, fake } = await forkable()
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo-d9', status: 'idle', sessionId: 'abc' }])
+    fake.fire()
+    await tick()
+
+    await r.manager.duplicate(id)
+    expect(r.spawns[1]!.args).not.toContain('--name')
+  })
+
+  it('refuses when the listing has not said what to fork', async () => {
+    // No registry at all here, so no row, so no conversation id. A fork with
+    // nothing to fork is a new session wearing the word "duplicate".
+    const r = await rig()
+    const id = await r.start()
+
+    const res = await r.manager.duplicate(id)
+    expect(res.ok).toBe(false)
+    expect(res.message).toBeTruthy()
+    expect(r.spawns).toHaveLength(1)
+  })
+
+  it('refuses an id it has never heard of', async () => {
+    const r = await rig()
+    expect((await r.manager.duplicate('nobody')).ok).toBe(false)
+  })
+})
+
 describe('stale config', () => {
   it('flips when a synced agent-config file changes under a live session', async () => {
     const r = await rig()

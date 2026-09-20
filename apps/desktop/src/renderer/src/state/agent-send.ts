@@ -11,7 +11,7 @@
  * the drawer, the tab you land on, and the colour mode that session read out of
  * its config. A second spawn path is a second place to forget one of them.
  */
-import { atom } from 'jotai'
+import { atom, type Getter, type Setter } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { trpc } from '../lib/trpc'
 import {
@@ -31,6 +31,23 @@ export interface StartResult {
   ok: boolean
   id?: string
   message?: string
+}
+
+/**
+ * What every spawn owes the app once main has made one: show it, and remember
+ * the colour mode it was born under (D86).
+ *
+ * Shared by the two atoms below, which are the only things that can produce a
+ * session. A second copy of these three lines would be a second place to forget
+ * one of them, and the colour mode is the one that would go quietly: a session
+ * missing from that map simply never nudges you to restart it.
+ */
+function land(get: Getter, set: Setter, id: string): void {
+  // Show it: someone who asked for a session is asking to look at it.
+  set(activeSessionIdAtom, id)
+  set(workspaceAtom, (w) => openSession(w, id))
+  // What Claude just read out of its settings, for this session alone (D86).
+  set(agentModeAtSpawnAtom, (m) => ({ ...m, [id]: get(activeModeAtom) }))
 }
 
 /**
@@ -58,12 +75,27 @@ export const startSessionAtom = atom(
       return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
     }
     const id = res.id
-    // Show it: someone who asked for a session is asking to look at it.
-    set(activeSessionIdAtom, id)
-    set(workspaceAtom, (w) => openSession(w, id))
-    // What Claude just read out of its settings, for this session alone (D86).
-    set(agentModeAtSpawnAtom, (m) => ({ ...m, [id]: get(activeModeAtom) }))
+    land(get, set, id)
     return { ok: true, id }
+  },
+)
+
+/**
+ * Copy a session's conversation into one of its own (D101).
+ *
+ * Main resolves which conversation that is — Claude Code's session id, read out
+ * of its listing at the moment of the fork — so the renderer never holds one.
+ * What comes back is an ordinary Holi session, landed on like any other.
+ */
+export const duplicateSessionAtom = atom(
+  null,
+  async (get, set, id: string): Promise<{ ok: boolean; message?: string }> => {
+    const res = await window.holi.agent.duplicate(id)
+    if (!res.ok || res.id === undefined) {
+      return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
+    }
+    land(get, set, res.id)
+    return { ok: true }
   },
 )
 

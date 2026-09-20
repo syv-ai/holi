@@ -10,12 +10,18 @@ import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
   activeSessionIdAtom,
+  agentModeAtSpawnAtom,
   agentSessionsAtom,
   askTargetsAtom,
   defaultAgentTargetAtom,
   type AgentSession,
 } from '../agent'
-import { sendToAgentAtom, showAgentAtom, startSessionAtom } from '../agent-send'
+import {
+  duplicateSessionAtom,
+  sendToAgentAtom,
+  showAgentAtom,
+  startSessionAtom,
+} from '../agent-send'
 import { activeTab, openSession, workspaceAtom } from '../panes'
 import { activeRemoteAtom } from '../vaults'
 
@@ -31,16 +37,20 @@ const session = (over: Partial<AgentSession> & { id: string }): AgentSession => 
 
 const start = vi.fn()
 const paste = vi.fn()
+const duplicate = vi.fn()
 
 beforeEach(() => {
   start.mockReset()
   paste.mockReset()
   start.mockResolvedValue({ ok: true, id: 'spawned' })
   paste.mockResolvedValue({ ok: true })
+  duplicate.mockReset()
+  duplicate.mockResolvedValue({ ok: true, id: 'copy' })
   window.holi = {
     agent: {
       start: (args: unknown) => start(args),
       paste: (id: string, text: string) => paste(id, text),
+      duplicate: (id: string) => duplicate(id),
     },
   } as never
 })
@@ -207,4 +217,42 @@ test('the default target is a new session when the tab cannot read it', () => {
 
   const dead = storeWith([session({ id: 'a', exited: true })])
   expect(dead.get(defaultAgentTargetAtom)).toBe('new')
+})
+
+test('a duplicate lands you on the copy, with its own spawn-time theme', async () => {
+  // Every spawn owes the app the same three things, and a fork is a spawn: main
+  // makes it, the renderer shows it and remembers the mode it was born under.
+  duplicate.mockResolvedValue({ ok: true, id: 'copy' })
+  const store = storeWith([session({ id: 'a' })])
+
+  const res = await store.set(duplicateSessionAtom, 'a')
+
+  expect(res).toEqual({ ok: true })
+  expect(duplicate).toHaveBeenCalledWith('a')
+  expect(shown(store)).toBe('copy')
+  expect(store.get(activeSessionIdAtom)).toBe('copy')
+  expect(store.get(agentModeAtSpawnAtom)).toHaveProperty('copy')
+})
+
+test('a duplicate that main refuses says why, and shows nothing', async () => {
+  duplicate.mockResolvedValue({ ok: false, message: 'Claude Code has not said which…' })
+  const store = storeWith([session({ id: 'a' })])
+
+  const res = await store.set(duplicateSessionAtom, 'a')
+
+  expect(res).toEqual({ ok: false, message: 'Claude Code has not said which…' })
+  expect(shown(store)).toBeNull()
+})
+
+test('a rename is the /rename command, pasted and not submitted', async () => {
+  // The whole of Holi's rename: there is no shell route, so the command goes
+  // into the session's box the way every other thing Holi sends does.
+  const store = storeWith([session({ id: 'a', name: 'One' })])
+
+  await store.set(sendToAgentAtom, { text: '/rename fix the merge', target: 'a' })
+
+  expect(paste).toHaveBeenCalledWith('a', '/rename fix the merge')
+  // …and the tab it went to is the one showing, because the Enter that finishes
+  // the rename is one the user has to press there.
+  expect(shown(store)).toBe('a')
 })

@@ -105,6 +105,10 @@ declare global {
         /** Put text in a live session's input box, unsent. Refused if that
          *  session ended between picking it and sending. */
         paste(id: string, text: string): Promise<{ ok: boolean; message?: string }>
+        /** Fork this session's conversation into a new one (`--fork-session`).
+         *  Main resolves Claude Code's own session id; the renderer never holds
+         *  one. Refused when the listing cannot say what to fork. */
+        duplicate(id: string): Promise<{ ok: boolean; id?: string; message?: string }>
         /** End one session and drop it from the list. */
         kill(id: string): Promise<{ ok: true }>
         write(id: string, data: string): void

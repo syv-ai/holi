@@ -227,10 +227,15 @@ export interface AgentManager {
      *  rather than written at spawn: a paste written before Claude Code's TUI
      *  reads stdin goes nowhere. */
     paste?: string
+    /** Claude Code's session id to fork a copy of (`duplicate`). */
+    forkOf?: string
   }): Promise<{ ok: true; id: string }>
   /** Put text in one live session's input box, unsent. Refuses a session that
    *  has ended rather than writing into a PTY nobody is reading. */
   paste(id: string, text: string): { ok: boolean; message?: string }
+  /** Fork one session's conversation into a new one (D101). Refuses when the
+   *  listing cannot say which conversation it is. */
+  duplicate(id: string): Promise<{ ok: boolean; id?: string; message?: string }>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
   /** End one session and drop it from the list. Unknown ids are a no-op. */
@@ -579,6 +584,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     rows?: number
     prompt?: string
     paste?: string
+    forkOf?: string
   }): Promise<{ ok: true; id: string }> {
     const vault = deps.host.active()
     if (!vault || vault.remote !== args.vaultId) {
@@ -673,6 +679,7 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
         args: buildAgentArgs({
           ...(args.name === undefined ? {} : { name: args.name }),
           ...(args.resume === undefined ? {} : { resume: args.resume }),
+          ...(args.forkOf === undefined ? {} : { forkOf: args.forkOf }),
           ...(args.prompt === undefined ? {} : { prompt: args.prompt }),
         }),
         cwd: workRoot,
@@ -749,7 +756,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     if (changed) pushSessions()
   }
 
-  return {
+  // Named rather than returned as a literal: `duplicate` is a spawn, and a
+  // spawn goes through `start` so it queues on the same chain as every other.
+  const api: AgentManager = {
     start(args) {
       // Every start queues behind every other one, failures included: the chain
       // is about the config directory's unlocked writes, not about success.
@@ -799,6 +808,48 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       return { ok: true }
     },
 
+    /**
+     * Copy a conversation into a session of its own.
+     *
+     * `--resume <id> --fork-session`, where the id is **Claude Code's**, read
+     * out of the listing here and passed straight to the spawn. Holi keys a
+     * session by its terminal (D100) exactly because that id moves under one
+     * terminal on `/clear`; reading it at the moment of the fork is what keeps
+     * this from being a copy that goes stale.
+     *
+     * The new session is its own process with its own conversation from that
+     * point: neither sees the other's turns, and the original is untouched.
+     */
+    duplicate: async (id) => {
+      const session = sessions.get(id)
+      if (session === undefined) return { ok: false, message: 'That session has ended.' }
+      const pid = session.runtime.pid
+      const row = pid === null ? undefined : rows.get(pid)
+      if (row?.sessionId === undefined) {
+        // No listing, or a session it has not caught up with. Refusing is the
+        // honest answer: a fork with no conversation to fork is a new session
+        // wearing the word "duplicate".
+        return {
+          ok: false,
+          message: 'Claude Code has not said which conversation this is yet. Try again shortly.',
+        }
+      }
+      // A copy says so. Only when the original has a name of its own, though:
+      // "New session (copy)" would turn a placeholder into a real name, which is
+      // the one thing `deriveName` exists to avoid.
+      const label = session.lastName
+      const name = label === null || label === NEW_SESSION ? undefined : `${label} (copy)`
+      try {
+        return await api.start({
+          vaultId: session.vaultId,
+          forkOf: row.sessionId,
+          ...(name === undefined ? {} : { name }),
+        })
+      } catch (err) {
+        return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      }
+    },
+
     write: (id, data) => sessions.get(id)?.runtime.write(data),
 
     resize: (id, cols, rows) => {
@@ -843,4 +894,5 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       for (const session of [...sessions.values()]) await teardown(session)
     },
   }
+  return api
 }

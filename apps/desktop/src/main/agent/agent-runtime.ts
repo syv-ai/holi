@@ -222,6 +222,16 @@ export interface AgentArgs {
    *  `claude "<prompt>"` starts interactive and auto-submits it as turn one — a
    *  positional arg, NOT a system prompt and NOT a keystroke written into the TUI. */
   prompt?: string
+  /**
+   * Claude Code's own session id to **fork**: `--resume <id> --fork-session`
+   * copies that conversation into a new session and leaves the original alone.
+   *
+   * The id is Claude Code's, read out of its listing at the moment of the fork
+   * and never stored — D100 keys a session by its terminal precisely because
+   * this id changes under one terminal on `/clear`, and a copy Holi kept would
+   * name a conversation that had moved on.
+   */
+  forkOf?: string
 }
 
 /**
@@ -251,11 +261,14 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
-export function buildAgentArgs({ name, resume, prompt }: AgentArgs = {}): string[] {
+export function buildAgentArgs({ name, resume, forkOf, prompt }: AgentArgs = {}): string[] {
   const label = sessionName(name)
   return [
     ...(label === null ? [] : ['--name', label]),
-    ...(resume ? ['--resume'] : []),
+    // A fork names the conversation it copies and asks for a copy; bare
+    // `--resume` shows Claude Code's own picker instead. They are the same flag
+    // with and without an argument, so only one of them can be passed.
+    ...(forkOf !== undefined ? ['--resume', forkOf, '--fork-session'] : resume ? ['--resume'] : []),
     ...(prompt ? [prompt] : []),
   ]
 }

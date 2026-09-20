@@ -37,6 +37,7 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
   Dialog,
   Tooltip,
@@ -53,7 +54,8 @@ import {
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { openSession, workspaceAtom } from '@/state/panes'
-import { startSessionAtom } from '@/state/agent-send'
+import { duplicateSessionAtom, startSessionAtom } from '@/state/agent-send'
+import { openDialogAtom } from '@/state/dialogs'
 
 export function SessionsSection(): React.JSX.Element | null {
   const sessions = useAtomValue(agentSessionsAtom)
@@ -61,6 +63,8 @@ export function SessionsSection(): React.JSX.Element | null {
   const setActiveId = useSetAtom(activeSessionIdAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const startSession = useSetAtom(startSessionAtom)
+  const duplicateSession = useSetAtom(duplicateSessionAtom)
+  const openDialog = useSetAtom(openDialogAtom)
   const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const mode = useAtomValue(activeModeAtom)
   const [open, setOpen] = useAtom(agentSessionsSectionOpenAtom)
@@ -89,6 +93,14 @@ export function SessionsSection(): React.JSX.Element | null {
   const end = async (session: AgentSession) => {
     setConfirming(null)
     await window.holi.agent.kill(session.id)
+  }
+
+  /** End this one and start another. A genuinely new session rather than the
+   *  same one reborn, which is what restarting a process actually is — saying
+   *  otherwise would pretend a conversation survived that did not. */
+  const restart = async (session: AgentSession) => {
+    await window.holi.agent.kill(session.id)
+    await startSession()
   }
 
   return (
@@ -196,6 +208,30 @@ export function SessionsSection(): React.JSX.Element | null {
                   </ContextMenuTrigger>
                 </Tooltip>
                 <ContextMenuContent>
+                  <ContextMenuItem
+                    disabled={session.exited}
+                    onSelect={() =>
+                      openDialog({
+                        id: 'rename-session',
+                        size: 'sm',
+                        sessionId: session.id,
+                        current: session.name,
+                      })
+                    }
+                  >
+                    Rename…
+                  </ContextMenuItem>
+                  {/* A copy of the conversation, in a session of its own: the
+                      original keeps running and neither sees the other's turns.
+                      Offered for an exited session too — its transcript is
+                      exactly what a fork is made of. */}
+                  <ContextMenuItem onSelect={() => void duplicateSession(session.id)}>
+                    Duplicate
+                  </ContextMenuItem>
+                  <ContextMenuItem disabled={session.exited} onSelect={() => void restart(session)}>
+                    Restart
+                  </ContextMenuItem>
+                  <ContextMenuSeparator />
                   <ContextMenuItem
                     variant="destructive"
                     onSelect={() => {

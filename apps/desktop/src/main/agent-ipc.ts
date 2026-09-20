@@ -48,6 +48,10 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
     agent.paste(msg.id, msg.text),
   )
 
+  // A spawn, so it can fail the same ways `start` can — and one more: the
+  // listing may not yet know which conversation this session is.
+  ipcMain.handle('agent:duplicate', (_e, id: string) => agent.duplicate(id))
+
   ipcMain.handle('agent-pty:kill', (_e, id: string) => agent.kill(id))
   ipcMain.handle('agent:attach', (_e, id: string) => agent.attach(id))
   ipcMain.handle('agent:sessions', (): SessionSummary[] => agent.sessions())

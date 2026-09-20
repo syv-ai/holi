@@ -88,6 +88,15 @@ export interface SessionRow {
   /** Only when `status` is `waiting`: `permission prompt`, `input needed`,
    *  `sandbox request`. This is the reason a card can print. */
   waitingFor?: string
+  /**
+   * Claude Code's own id for the conversation, when the listing carries one.
+   *
+   * **Read, never stored** (D101's Duplicate): it is what `--resume <id>
+   * --fork-session` takes, and it is the id D100 refuses to key a session by,
+   * because it changes under one terminal on `/clear`. Taking it at the moment
+   * of the fork is the difference between those two statements.
+   */
+  sessionId?: string
 }
 
 export interface SessionRegistry {
@@ -141,6 +150,7 @@ function toRow(value: unknown, vaultRoot: string): SessionRow | null {
     nameSource: typeof r['nameSource'] === 'string' ? r['nameSource'] : undefined,
     status: r['status'],
     waitingFor: typeof r['waitingFor'] === 'string' ? r['waitingFor'] : undefined,
+    sessionId: typeof r['sessionId'] === 'string' ? r['sessionId'] : undefined,
   }
 }
 

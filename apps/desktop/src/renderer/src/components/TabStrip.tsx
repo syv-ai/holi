@@ -28,7 +28,7 @@
  * **per side** by `lib/tab-overflow.ts` — pure, because jsdom computes no layout
  * and a rendered strip measures 0×0.
  */
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
@@ -61,6 +61,7 @@ import {
 } from '@/lib/tab-drop'
 import type { Tab } from '@/state/panes'
 import { agentSessionsAtom, type AgentSession } from '@/state/agent'
+import { openDialogAtom } from '@/state/dialogs'
 import { agentIndicator } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import { snapshotAtom } from '@/state/vaults'
@@ -331,6 +332,12 @@ export function TabStrip({
   // …and for the same reason: a session tab's name and dot are main's, pushed
   // to one atom, and every strip wants the same answer.
   const sessions = useAtomValue(agentSessionsAtom)
+  const openDialog = useSetAtom(openDialogAtom)
+  const renameSession = (id: string) => {
+    const session = sessions.find((s) => s.id === id)
+    if (session === undefined || session.exited) return
+    openDialog({ id: 'rename-session', size: 'sm', sessionId: id, current: session.name })
+  }
   const hostRef = useRef<HTMLDivElement | null>(null)
   const pillRefs = useRef(new Map<string, HTMLElement>())
   /**
@@ -750,7 +757,11 @@ export function TabStrip({
                       t.kind === 'note' && t.preview ? 'italic' : ''
                     }`}
                     onClick={() => onSelect(i)}
-                    onDoubleClick={() => onPin(i)}
+                    // Double-click pins a preview tab, which is a note's
+                    // promotion and means nothing for a session — so a session's
+                    // double-click renames it instead, which is the gesture the
+                    // same shape has in every file tree.
+                    onDoubleClick={() => (t.kind === 'session' ? renameSession(t.id) : onPin(i))}
                   >
                     {tabIcon(t, icons, sessions)}
                     <span>{tabName(t, sessions)}</span>
