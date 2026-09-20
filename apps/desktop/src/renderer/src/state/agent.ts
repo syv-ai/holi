@@ -112,7 +112,10 @@ const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
  * The geometry the last visible tab measured.
  *
  * Shared rather than per tab: a session started for an ask has never been shown,
- * so it has no geometry of its own, and the drawer is one width for all of them.
+ * so it has no geometry of its own, and something has to be guessed for it. The
+ * last measurement is the best guess available — panes can be different widths
+ * (D101), so it may be the wrong one, and the terminal refits the moment it is
+ * shown either way.
  */
 export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)
 

@@ -11,8 +11,8 @@ import { cn } from '@/lib/cn'
  *
  * A convenience over PanelHeader for the common panel shape: a string `title`, an
  * optional `subtitle`, structured header `actions`, and a plain `onClose` that
- * becomes the trailing close control. A panel that needs a richer header (the
- * agent drawer's status line) composes PanelHeader directly instead.
+ * becomes the trailing close control. A panel that needs a richer header
+ * composes PanelHeader directly instead.
  *
  * Width/resize is not this component's job — the Resizable group around it owns
  * that. A SidePanel only fills the panel it is given.

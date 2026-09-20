@@ -565,7 +565,7 @@ export const editorTheme = EditorView.baseTheme({
   /**
    * The target row: which session this ask goes to.
    *
-   * Reads like the drawer's own tab strip, because it is the same set of things:
+   * Reads like the pane's own tab strip, because it is the same set of things:
    * the chosen one carries the neutral `--secondary` fill and full-strength text,
    * the rest are muted until hovered. Nothing here is coloured — a state colour
    * on a pill of its own hue is the thing the strip already refuses — and the

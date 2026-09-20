@@ -77,7 +77,7 @@ test('adding a vault asks the same question in its own words', async () => {
 test('says what is at stake the same way whichever it is', async () => {
   setup([session({ id: 'a', name: 'Fix the merge' })], 'add')
   expect(await screen.findByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
-  expect(await screen.findByText(/Resume in the agent drawer/)).toBeInTheDocument()
+  expect(await screen.findByText(/Resume in the sessions list/)).toBeInTheDocument()
 })
 
 test('keeps saying what was true when it interrupted you', async () => {

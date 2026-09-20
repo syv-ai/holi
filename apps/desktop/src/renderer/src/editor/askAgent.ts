@@ -72,8 +72,8 @@ export interface AskTargets {
    *  question of its own is left out by the caller: text sent to it would sit
    *  unread behind that question. */
   sessions: AskTarget[]
-  /** Selected when the popover opens: the tab the drawer is showing, or `'new'`
-   *  when that tab cannot take an ask. */
+  /** Selected when the popover opens: the session you are on, or `'new'` when
+   *  that session cannot take an ask. */
   initial: string | 'new'
 }
 
@@ -183,7 +183,7 @@ function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): Tool
     row.setAttribute('role', 'radiogroup')
     row.setAttribute('aria-label', 'Which session to ask')
     // Live sessions in tab order, then New session — so the list reads like the
-    // drawer, and the one option that is always there is always last.
+    // sidebar's, and the one option that is always there is always last.
     const choices = [
       ...sessions.map((s) => ({ value: s.id, label: s.name })),
       {

@@ -10,7 +10,8 @@
  * reads atoms instead.
  *
  * The agent is not a panel here any more (D101): a session is an ordinary tab,
- * so ⌘J and the footer door open one rather than sliding a drawer out.
+ * so ⌘J opens one rather than sliding a drawer out, and the sidebar's sessions
+ * list is the rest of what the app says about them.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, PanelRight, Settings } from 'lucide-react'
@@ -714,8 +715,8 @@ export function Shell() {
 
           <ResizablePanel id="editor" minSize={360}>
             {/* The panes. One `ResizablePanelGroup` nested inside the editor
-                slot, so the split resizes against itself and the sidebars, the
-                history drawer and the agent panel are untouched by it.
+                slot, so the split resizes against itself and the sidebars and
+                the history panel are untouched by it.
 
                 Its layout is deliberately NOT persisted (`usePanelLayout`): a
                 stored layout is an array of weights keyed to a panel count, and

@@ -1,8 +1,8 @@
 /**
  * One agent session's terminal (D100).
  *
- * A vault runs several sessions and the drawer shows them as tabs, so the xterm
- * that was the panel's single child is now one of N, each owning its own
+ * A vault runs several sessions and each is an ordinary tab (D100, D101), so the
+ * xterm that was the drawer's single child is now one of N, each owning its own
  * scrollback, its own data tap and its own geometry. Every component here is
  * **mounted for as long as its session exists** and merely hidden when another
  * tab is showing: a terminal unmounted on tab switch would throw away its

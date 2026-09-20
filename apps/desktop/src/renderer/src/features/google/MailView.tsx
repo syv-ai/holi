@@ -1008,7 +1008,7 @@ export function MailView() {
                 )}
                 {/* Goes to a real session rather than printing a paragraph: the
                     answer to "what is this about" is usually followed by another
-                    question, and the drawer is where that conversation lives. It
+                    question, and a session is where that conversation lives. It
                     lands unsent like every other ask (D100), so the question can
                     be edited before it goes. */}
                 <Tooltip content="ask the vault assistant to summarise this thread">

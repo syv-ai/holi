@@ -66,8 +66,8 @@ declare global {
       /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
       chooseFolder(): Promise<string | null>
       /**
-       * The vault agent — the vault's live Claude Code sessions, one drawer tab
-       * each (D100). A byte stream, not tRPC: PTY output and the session list
+       * The vault agent — the vault's live Claude Code sessions, an ordinary
+       * tab each (D100, D101). A byte stream, not tRPC: PTY output and the session list
        * are pushed (`onData`/`onExit`/`onSessions`, each returning its
        * unsubscribe), keystrokes/resize/focus are fire-and-forget, and
        * start/kill/attach/sessions are request/response.
@@ -91,8 +91,8 @@ declare global {
            *  exists. Normalised in main: first line, collapsed, capped. */
           name?: string
           resume?: boolean
-          /** Spawn the PTY at this geometry — the drawer's fitted size — so
-           *  Claude's TUI fills the pane from the first paint. */
+          /** Spawn the PTY at this geometry — the last size a visible terminal
+           *  fitted to — so Claude's TUI fills the pane from the first paint. */
           cols?: number
           rows?: number
           /** Seed the interactive session's first turn (the reconcile flow). */

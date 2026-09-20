@@ -7,9 +7,9 @@
  * keeps those two from importing each other.
  *
  * **Everything that spawns a session comes through `startSessionAtom`**, which
- * is why it exists: a spawn is not one call but four steps — the vault guard,
- * the drawer, the tab you land on, and the colour mode that session read out of
- * its config. A second spawn path is a second place to forget one of them.
+ * is why it exists: a spawn is not one call but three steps — the vault guard,
+ * the tab you land on, and the colour mode that session read out of its config.
+ * A second spawn path is a second place to forget one of them.
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
@@ -121,7 +121,7 @@ export const duplicateSessionAtom = atom(
 )
 
 /**
- * Go to the agent: the footer door and ⌘J.
+ * Go to the agent: ⌘J.
  *
  * Opens the current session's tab, or starts one when the vault has none —
  * "there is nowhere to talk to the agent" is answered by making somewhere,
@@ -151,7 +151,7 @@ export const showAgentAtom = atom(null, (get, set): void => {
 
 /**
  * Send text to a session, live or new. It lands in the input box **unsent**
- * (D100) and the drawer focuses that tab.
+ * (D100) and that session's tab comes forward.
  *
  * One rule for every sender, which is the point: nothing Holi writes can append
  * a submit to a draft somebody was half way through typing. A `'new'` target is

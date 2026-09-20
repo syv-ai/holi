@@ -8,7 +8,7 @@
  * Main has always ended them. Nothing has ever said so first.
  *
  * It is asked only for a session that is mid-turn or waiting on you, which is
- * the same line the drawer's close button draws: an idle conversation ends
+ * the same line the End action in the sidebar draws: an idle conversation ends
  * quietly and comes back with Resume, and interrupting one of these costs work
  * part way through or drops a question nobody answered.
  *
@@ -77,7 +77,7 @@ export function VaultSwitchConfirm(props: {
         <Dialog.Body>
           <p className="text-xs text-muted-foreground">
             {why(busy)} {wording.what} What they have already written stays in it, and Resume in the
-            agent drawer picks a conversation up again.
+            sessions list picks a conversation up again.
           </p>
         </Dialog.Body>
         <Dialog.Footer>

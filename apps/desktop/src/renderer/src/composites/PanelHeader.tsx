@@ -10,10 +10,11 @@ import { matchHotkey } from '@/lib/hotkey'
  *
  * Controls are DATA, not hand-rolled buttons — a `HeaderAction` carries its icon,
  * label, optional keyboard shortcut, and handler. That is what keeps every panel
- * (including the agent drawer, which used to hand-roll its own bar) speaking one
- * vocabulary. A `hotkey` is both SHOWN in the tooltip and BOUND while the header
- * is mounted, so a panel owns its controls and their shortcuts in one place —
- * e.g. the agent drawer's ⌘J lives here, not in a detached Shell listener.
+ * speaking one vocabulary. A `hotkey` is both SHOWN in the tooltip and BOUND
+ * while the header is mounted, so a panel owns its controls and their shortcuts
+ * in one place rather than in a detached Shell listener. The exception proves
+ * the rule: ⌘J opens a session tab, and a tab cannot bind the shortcut that
+ * opens it, so that one is a Shell listener (D101).
  *
  * Domain-agnostic → composites/. Width/height-of-row is fixed for alignment with
  * the nav/editor/panel bars it shares the Resizable row with; override via

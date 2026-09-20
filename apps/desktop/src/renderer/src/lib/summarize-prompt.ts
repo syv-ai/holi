@@ -5,7 +5,7 @@
  *
  * A seeded session rather than a headless call, deliberately: the answer to
  * "what is this thread about" is usually followed by another question, and the
- * drawer is where that conversation already lives. A one-shot summary rendered
+ * session is where that conversation already lives. A one-shot summary rendered
  * in the header would be a second way to invoke the agent, with its own
  * spinner and error state, that you cannot reply to.
  */

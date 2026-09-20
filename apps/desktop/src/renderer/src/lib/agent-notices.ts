@@ -122,7 +122,7 @@ export interface FleetSession {
  * **Every live session ends on a switch**, idle ones included — a session left
  * running in the vault you walked away from has no repo, no watcher and no sync
  * loop behind it. Only these are worth a question, for the same reason the
- * drawer's close button only asks about these: ending an idle session costs a
+ * sidebar's End only asks about these: ending an idle session costs a
  * conversation you can resume, and ending one of these costs work part way
  * through or a question nobody answered.
  */
