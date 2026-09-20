@@ -68,7 +68,8 @@ import {
   X,
 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
+import { defaultAgentTargetAtom } from '@/state/agent'
+import { sendToAgentAtom } from '@/state/agent-send'
 import { buildSummarizePrompt } from '@/lib/summarize-prompt'
 import {
   Button,
@@ -262,8 +263,8 @@ export function MailView() {
   const remote = useAtomValue(activeRemoteAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const openDialog = useSetAtom(openDialogAtom)
-  const setSeedPrompt = useSetAtom(agentSeedPromptAtom)
-  const setDrawerOpen = useSetAtom(agentPanelOpenAtom)
+  const sendToAgent = useSetAtom(sendToAgentAtom)
+  const agentTarget = useAtomValue(defaultAgentTargetAtom)
   /** Account-scoped, not per-vault: mail is the same mail in every vault, and it
    *  opens with no vault at all. See `useGlobalPanelLayout`. */
   const layout = useGlobalPanelLayout('mail')
@@ -985,24 +986,26 @@ export function MailView() {
                     </Button>
                   </Tooltip>
                 )}
-                {/* Seeds a real session rather than printing a paragraph: the
+                {/* Goes to a real session rather than printing a paragraph: the
                     answer to "what is this about" is usually followed by another
-                    question, and the drawer is where that conversation lives. */}
+                    question, and the drawer is where that conversation lives. It
+                    lands unsent like every other ask (D100), so the question can
+                    be edited before it goes. */}
                 <Tooltip content="ask the vault assistant to summarise this thread">
                   <Button
                     variant="secondary"
                     size="xs"
                     className="shrink-0 gap-1"
-                    onClick={() => {
-                      setSeedPrompt(
-                        buildSummarizePrompt({
+                    onClick={() =>
+                      void sendToAgent({
+                        text: buildSummarizePrompt({
                           subject: open.subject,
                           threadId: open.id,
                           webUrl: open.webUrl,
                         }),
-                      )
-                      setDrawerOpen(true)
-                    }}
+                        target: agentTarget,
+                      })
+                    }
                   >
                     <Sparkles size={13} />
                     Summarize

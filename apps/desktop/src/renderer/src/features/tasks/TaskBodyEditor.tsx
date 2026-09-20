@@ -18,7 +18,8 @@ import { trpc } from '@/lib/trpc'
 import { baseEditorExtensions } from '@/editor/extensions'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
-import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
+import { defaultAgentTargetAtom } from '@/state/agent'
+import { sendToAgentAtom } from '@/state/agent-send'
 import { openNoteTabAtom } from '@/state/panes'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -74,13 +75,10 @@ export function TaskDescriptionEditor({
   }
   /** Same seam the notes editor has (#5): a task's description is prose in the
    *  notes stack, so a passage of it is as askable as a passage of a note. */
-  const setAgentSeed = useSetAtom(agentSeedPromptAtom)
-  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const sendToAgent = useSetAtom(sendToAgentAtom)
+  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
   const askAgentRef = useRef<(prompt: string) => void>(() => {})
-  askAgentRef.current = (prompt) => {
-    setAgentSeed(prompt)
-    setAgentOpen(true)
-  }
+  askAgentRef.current = (prompt) => void sendToAgent({ text: prompt, target: defaultTarget })
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     openNote: (target) =>

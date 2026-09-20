@@ -31,7 +31,8 @@ import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
-import { agentPanelOpenAtom, agentSeedPromptAtom } from '@/state/agent'
+import { defaultAgentTargetAtom } from '@/state/agent'
+import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
@@ -95,16 +96,13 @@ export function EditorPane({
       ...(t.due === undefined ? {} : { due: t.due }),
     })),
   }
-  const setAgentSeed = useSetAtom(agentSeedPromptAtom)
-  const setAgentOpen = useSetAtom(agentPanelOpenAtom)
+  const sendToAgent = useSetAtom(sendToAgentAtom)
+  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
   /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on
-   *  every render, and a seam that closed over a stale setter would seed the
-   *  panel and never open it. */
+   *  every render, and a seam that closed over a stale setter would send an ask
+   *  to the tab that was active three selections ago. */
   const askAgentRef = useRef<(prompt: string) => void>(() => {})
-  askAgentRef.current = (prompt) => {
-    setAgentSeed(prompt)
-    setAgentOpen(true)
-  }
+  askAgentRef.current = (prompt) => void sendToAgent({ text: prompt, target: defaultTarget })
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     // A link can point at a note or task that does not exist yet; the chip renders

@@ -1,12 +1,17 @@
 import { atom, type createStore } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { type DocMeta, GITKEEP, scaffoldNoteText, type VaultEntry, type VaultSnapshot, emptyVaultSnapshot} from '@holi/shared'
+import {
+  type DocMeta,
+  GITKEEP,
+  scaffoldNoteText,
+  type VaultEntry,
+  type VaultSnapshot,
+  emptyVaultSnapshot,
+} from '@holi/shared'
 import type { SyncState } from '../../../main/vault/active-vault'
 import type { HeldBackFile } from '../../../main/vault/large-files'
 import { flushAllBuffers } from '../lib/buffer-registry'
-import { buildReconcilePrompt } from '../lib/reconcile-prompt'
 import { trpc } from '../lib/trpc'
-import { agentPanelOpenAtom, agentSeedPromptAtom } from './agent'
 import { closeTabsForPaths, openApp, retargetTab, retargetTabs, workspaceAtom } from './panes'
 import { openTaskAtom } from './view'
 
@@ -239,29 +244,6 @@ export const backrefsFor = atom(
 )
 
 /**
- * Rename a note: move the file, rewrite inbound links, follow the open tab (FR-11).
- *
- * The order is the correctness: flush the live buffer and commit a clean
- * restore point *before* the multi-file edit, so every step after is
- * recoverable (there is no transaction — prd/notes-editor.md §Rename). Then the
- * rename, then a second commit so it lands as one commit on safe ground. The
- * open tab and active doc follow the file to its new path — a missed tab points
- * at something that no longer exists.
- */
-/**
- * "Ask Claude to reconcile" (FR-18). Re-materialise the conflict in the working
- * tree (main re-runs the merge), then open the drawer and seed the agent's first
- * turn with the conflicted paths. If the merge now applies cleanly (no paths),
- * the banner is already cleared and there is nothing to hand the agent.
- */
-export const reconcileAtom = atom(null, async (_get, set) => {
-  const { paths } = await trpc.sync.reconcile.mutate()
-  if (paths.length === 0) return
-  set(agentSeedPromptAtom, buildReconcilePrompt(paths))
-  set(agentPanelOpenAtom, true)
-})
-
-/**
  * "Abandon" (FR-20). Takes the merge back out of the tree; the conflict it was
  * called on is still a conflict, so the banner comes back with it. Nothing is
  * closed and nothing is discarded — the agent's session stays where it is, and
@@ -272,6 +254,16 @@ export const abandonReconcileAtom = atom(null, async () => {
   await trpc.sync.abandon.mutate()
 })
 
+/**
+ * Rename a note: move the file, rewrite inbound links, follow the open tab (FR-11).
+ *
+ * The order is the correctness: flush the live buffer and commit a clean
+ * restore point *before* the multi-file edit, so every step after is
+ * recoverable (there is no transaction — prd/notes-editor.md §Rename). Then the
+ * rename, then a second commit so it lands as one commit on safe ground. The
+ * open tab and active doc follow the file to its new path — a missed tab points
+ * at something that no longer exists.
+ */
 export const renameNoteAtom = atom(
   null,
   async (get, set, { from, to }: { from: string; to: string }) => {
@@ -344,7 +336,12 @@ export const copyNotesAtom = atom(
  */
 export const importFilesAtom = atom(
   null,
-  async (get, set, sources: string[], folder: string): Promise<{ name: string; reason: string }[]> => {
+  async (
+    get,
+    set,
+    sources: string[],
+    folder: string,
+  ): Promise<{ name: string; reason: string }[]> => {
     const remote = get(activeRemoteAtom)
     if (!remote) return []
     const { skipped } = await trpc.notes.importFiles.mutate({ remote, sources, folder })

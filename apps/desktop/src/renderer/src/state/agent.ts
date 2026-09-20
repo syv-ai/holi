@@ -64,7 +64,31 @@ export const agentSessionsSectionOpenAtom = atomWithStorage<boolean>(
   true,
 )
 
-/** A pending reconcile seed: set by the "Ask Claude to reconcile" button, it asks
- *  AgentPanel to start a session with this as its first message, then clears
- *  itself. Null when there is no reconcile in flight. */
-export const agentSeedPromptAtom = atom<string | null>(null)
+/** Where an ask goes: one of the vault's sessions, by id, or a new one. */
+export type AgentTarget = string | 'new'
+
+/**
+ * The target an ask goes to when nobody picked one.
+ *
+ * The tab you are looking at, which is the session you are already having this
+ * conversation with — unless it has ended or is waiting on a question of its
+ * own, in which case the text would sit unread behind that question and a new
+ * session is the honest answer.
+ */
+export const defaultAgentTargetAtom = atom<AgentTarget>((get) => {
+  const active = get(activeSessionAtom)
+  if (active === null || active.exited || active.state === 'needs-you') return 'new'
+  return active.id
+})
+
+/** What a session is spawned at before any tab has been measured. xterm's own
+ *  native default, so the first paint is never a resize-to-catch-up. */
+const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
+
+/**
+ * The geometry the last visible tab measured.
+ *
+ * Shared rather than per tab: a session started for an ask has never been shown,
+ * so it has no geometry of its own, and the drawer is one width for all of them.
+ */
+export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)

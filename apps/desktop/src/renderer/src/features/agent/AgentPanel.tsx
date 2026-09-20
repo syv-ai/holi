@@ -12,63 +12,50 @@
  */
 import { History, Plus, RotateCw, X } from 'lucide-react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Dialog, ResizablePanel, Tooltip, type PanelImperativeHandle } from '@/primitives'
 import { PanelHeader } from '@/composites'
 import { cn } from '@/lib/cn'
 import { DEFAULT_AGENT_PANEL_WIDTH, MIN_AGENT_PANEL_WIDTH } from '@/lib/agent-panel-geometry'
-import { agentIndicator, agentThemeNote, type ColorMode } from '@/lib/agent-notices'
+import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
 import {
   activeSessionAtom,
   activeSessionIdAtom,
+  agentGeometryAtom,
   agentModeAtSpawnAtom,
   agentPanelOpenAtom,
-  agentSeedPromptAtom,
   agentSessionsAtom,
   type AgentSession,
 } from '@/state/agent'
+import { showAgentPanelAtom, startSessionAtom } from '@/state/agent-send'
 import { activeModeAtom } from '@/state/color-scheme'
 import { resetTurnReviewAtom, turnReviewOpenAtom } from '@/state/turns'
 import { activeRemoteAtom } from '@/state/vaults'
 import { SessionTerminal } from './SessionTerminal'
 import { TurnChip } from './TurnChip'
 
-/** What a session is spawned at before any tab has been measured. xterm's own
- *  native default, so the first paint is never a resize-to-catch-up. */
-const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
-
 export function AgentPanel() {
-  const [open, setOpen] = useAtom(agentPanelOpenAtom)
+  const open = useAtomValue(agentPanelOpenAtom)
+  const showPanel = useSetAtom(showAgentPanelAtom)
   const [sessions, setSessions] = useAtom(agentSessionsAtom)
   const active = useAtomValue(activeSessionAtom)
   const setActiveId = useSetAtom(activeSessionIdAtom)
-  // A vault's identity is its remote (D60); it is the id the manager matches
-  // against `host.active().remote`.
+  // A vault's identity is its remote (D60). The panel no longer passes it to a
+  // start — `startSessionAtom` reads it — but it is still what a vault SWITCH
+  // looks like from here, which the turn review below reacts to.
   const activeRemote = useAtomValue(activeRemoteAtom)
-  const [seedPrompt, setSeedPrompt] = useAtom(agentSeedPromptAtom)
+  const startSession = useSetAtom(startSessionAtom)
+  const setGeometry = useSetAtom(agentGeometryAtom)
   const mode = useAtomValue(activeModeAtom)
   const [modeAtSpawn, setModeAtSpawn] = useAtom(agentModeAtSpawnAtom)
   const resetTurnReview = useSetAtom(resetTurnReviewAtom)
   const setTurnReviewOpen = useSetAtom(turnReviewOpenAtom)
-  /** …and a mirror of it for `startSession`, which must not take `mode` as a
-   *  dependency: rebuilding that callback on a theme flip re-runs the effects
-   *  that own auto-start. */
-  const modeRef = useRef<ColorMode>(mode)
-  modeRef.current = mode
   /** Imperative handle on the collapsible group panel — driven by `open` (below),
    *  so ⌘J and the reconcile trigger expand/collapse the panel instead of a bespoke
    *  width. The panel stays mounted while collapsed, so the PTYs + scrollback live on. */
   const panelRef = useRef<PanelImperativeHandle | null>(null)
-  /** The last geometry any visible tab measured. A session started for a tab
-   *  that has never been shown has none of its own. */
-  const geometryRef = useRef(FALLBACK_GEOMETRY)
   /** The session a close is waiting on confirmation for. */
   const [confirming, setConfirming] = useState<AgentSession | null>(null)
-
-  const sessionsRef = useRef(sessions)
-  sessionsRef.current = sessions
-  const seedPromptRef = useRef<string | null>(seedPrompt)
-  seedPromptRef.current = seedPrompt
 
   // The list is pushed, and asked for once on mount: the drawer's dot has to be
   // right before the drawer has ever been opened, and a renderer reload lands
@@ -118,72 +105,6 @@ export function AgentPanel() {
       return kept.length === Object.keys(byId).length ? byId : Object.fromEntries(kept)
     })
   }, [sessions, setModeAtSpawn])
-
-  const startSession = useCallback(
-    async (opts: { resume?: boolean; prompt?: string } = {}): Promise<string | null> => {
-      if (!activeRemote) return null
-      const { cols, rows } = geometryRef.current
-      const res = await window.holi.agent.start({
-        vaultId: activeRemote,
-        cols,
-        rows,
-        ...(opts.resume === undefined ? {} : { resume: opts.resume }),
-        ...(opts.prompt === undefined ? {} : { prompt: opts.prompt }),
-      })
-      if (!res.ok || res.id === undefined) return null
-      // Show it: someone who pressed + is asking to look at the new session, and
-      // a reconcile's seeded turn is the thing they want to watch.
-      setActiveId(res.id)
-      // What Claude just read out of its settings, for this session alone.
-      setModeAtSpawn((m) => ({ ...m, [res.id as string]: modeRef.current }))
-      return res.id
-    },
-    [activeRemote, setActiveId, setModeAtSpawn],
-  )
-
-  /**
-   * Opening the drawer starts a session when there is none.
-   *
-   * Keyed to the drawer OPENING, not to "the list is empty while it is open":
-   * the second reading respawns instantly when you close the last tab, which
-   * makes the close button look broken.
-   */
-  const wasOpen = useRef(open)
-  useEffect(() => {
-    const opening = open && !wasOpen.current
-    wasOpen.current = open
-    if (!opening) return
-    // A reconcile seed is pending — the seed effect owns that start so the
-    // prompt lands on turn one. Don't race it with a bare session.
-    if (seedPromptRef.current !== null) return
-    if (sessionsRef.current.some((s) => !s.exited)) return
-    void startSession()
-  }, [open, startSession])
-
-  /**
-   * Reconcile: the "Ask Claude to reconcile" button set a seed prompt (and opened
-   * the drawer). It gets its OWN session rather than restarting one — the seed
-   * cannot be injected into a conversation mid-flight, and with tabs there is no
-   * longer a single slot it would have to displace. Then clear it.
-   *
-   * The seed already in flight is remembered, because clearing it is a round
-   * trip through state: React StrictMode invokes this twice in development, and
-   * `startSession`'s identity changes with the active vault, so without the
-   * guard one reconcile spawns two sessions.
-   */
-  const handledSeed = useRef<string | null>(null)
-  useEffect(() => {
-    if (seedPrompt === null) {
-      handledSeed.current = null
-      return
-    }
-    if (handledSeed.current === seedPrompt) return
-    handledSeed.current = seedPrompt
-    void (async () => {
-      await startSession({ prompt: seedPrompt })
-      setSeedPrompt(null)
-    })()
-  }, [seedPrompt, startSession, setSeedPrompt])
 
   // `open` is the source of truth; drive the panel to match. Deferred a frame:
   // the panel's imperative API throws "Group not found" if touched during the
@@ -281,7 +202,7 @@ export function AgentPanel() {
             icon: <X />,
             label: 'Hide agent panel',
             hotkey: '⌘J',
-            onSelect: () => setOpen((o) => !o),
+            onSelect: () => showPanel(),
           }}
         >
           <span className="text-foreground">Claude</span>
@@ -375,7 +296,7 @@ export function AgentPanel() {
             key={session.id}
             sessionId={session.id}
             visible={open && session.id === active?.id}
-            onGeometry={(cols, rows) => (geometryRef.current = { cols, rows })}
+            onGeometry={(cols, rows) => setGeometry({ cols, rows })}
           />
         ))}
         {sessions.length === 0 && <div className="min-h-0 flex-1 bg-background" />}

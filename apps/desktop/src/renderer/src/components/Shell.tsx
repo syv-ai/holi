@@ -81,6 +81,7 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { agentModeAtSpawnAtom, agentPanelOpenAtom, agentSessionsAtom } from '@/state/agent'
+import { reconcileAtom, showAgentPanelAtom } from '@/state/agent-send'
 import { agentThemeNote, fleetIndicator } from '@/lib/agent-notices'
 import { activeModeAtom } from '@/state/color-scheme'
 
@@ -95,7 +96,6 @@ import {
   heldBackAtom,
   openVaultAtom,
   abandonReconcileAtom,
-  reconcileAtom,
   syncStateAtom,
   vaultsAtom,
 } from '../state/vaults'
@@ -203,7 +203,10 @@ export function Shell() {
     setWorkspace(apply)
   }
 
-  const [agentOpen, setAgentOpen] = useAtom(agentPanelOpenAtom)
+  const agentOpen = useAtomValue(agentPanelOpenAtom)
+  /** Not a plain setter: opening the drawer onto a vault with no live session
+   *  starts one, and that rule lives with the sessions (`showAgentPanelAtom`). */
+  const showAgentPanel = useSetAtom(showAgentPanelAtom)
   // The footer's Claude control (#15) is the drawer's only affordance outside the
   // drawer. It reduces EVERY session to one dot (D100): needs-you outranks
   // working outranks a restart nudge, so the door is painted by whichever
@@ -471,7 +474,7 @@ export function Shell() {
             // the agent panel's own onResize into flipping open. The panel-level
             // callback can't tell a drag from a reflow; this one can.
             if (!meta.isUserInteraction) return
-            setAgentOpen((layout.agent ?? 0) > 0)
+            showAgentPanel((layout.agent ?? 0) > 0)
           }}
         >
           <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
@@ -925,7 +928,7 @@ export function Shell() {
             variant="link"
             aria-pressed={agentOpen}
             className="h-auto shrink-0 gap-1.5 p-0 text-xs font-normal text-muted-foreground hover:text-foreground"
-            onClick={() => setAgentOpen((o) => !o)}
+            onClick={() => showAgentPanel()}
           >
             <span className={`h-2 w-2 shrink-0 rounded-full ${agentState.dot}`} />
             Claude

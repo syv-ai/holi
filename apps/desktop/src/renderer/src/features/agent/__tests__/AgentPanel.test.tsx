@@ -19,10 +19,10 @@ import {
   activeSessionIdAtom,
   agentModeAtSpawnAtom,
   agentPanelOpenAtom,
-  agentSeedPromptAtom,
   agentSessionsAtom,
   type AgentSession,
 } from '@/state/agent'
+import { startSessionAtom } from '@/state/agent-send'
 import { activeRemoteAtom } from '@/state/vaults'
 import { reviewTurnAtom, turnReviewOpenAtom, type Turn } from '@/state/turns'
 import { ResizablePanelGroup } from '@/primitives'
@@ -70,6 +70,7 @@ beforeEach(() => {
       start: (args: unknown) => start(args),
       kill: (id: string) => kill(id),
       attach: () => Promise.resolve(''),
+      paste: () => Promise.resolve({ ok: true }),
       write: () => {},
       resize: () => {},
       onData: () => () => {},
@@ -204,17 +205,10 @@ test('an exited session keeps its tab, and ends without a question', async () =>
   await waitFor(() => expect(kill).toHaveBeenCalledWith('a'))
 })
 
-test('opening the drawer with no sessions starts one', async () => {
-  const { store } = setup({ sessions: [], open: false })
-  await act(async () => {
-    store.set(agentPanelOpenAtom, true)
-  })
-  await waitFor(() => expect(start).toHaveBeenCalled())
-})
-
 test('closing the last tab does not instantly start another', async () => {
-  // Keyed to the drawer OPENING, not to "the list is empty while it is open" —
-  // the second reading respawns on the close and makes the button look broken.
+  // Starting one is what OPENING the drawer does (`showAgentPanelAtom`), not
+  // something anything watches the list for: a level trigger respawns on the
+  // close and makes the button look broken.
   setup({ sessions: [session({ id: 'a', name: 'One' })], open: true })
   await waitFor(() => expect(pushSessions).not.toBeNull())
   start.mockClear()
@@ -225,24 +219,6 @@ test('closing the last tab does not instantly start another', async () => {
   })
 
   expect(start).not.toHaveBeenCalled()
-})
-
-test('opening the drawer with a session already running starts nothing', async () => {
-  const { store } = setup({ sessions: [session({ id: 'a' })], open: false })
-  await act(async () => {
-    store.set(agentPanelOpenAtom, true)
-  })
-  expect(start).not.toHaveBeenCalled()
-})
-
-test('opening the drawer with only an exited session starts one', async () => {
-  // A dead tab is a record, not a session. Opening the drawer should hand you
-  // something you can type into.
-  const { store } = setup({ sessions: [session({ id: 'a', exited: true })], open: false })
-  await act(async () => {
-    store.set(agentPanelOpenAtom, true)
-  })
-  await waitFor(() => expect(start).toHaveBeenCalled())
 })
 
 test('Resume opens a new tab and kills nothing', async () => {
@@ -268,16 +244,16 @@ test('Restart ends the tab you are looking at, and only that one', async () => {
   await waitFor(() => expect(start).toHaveBeenCalled())
 })
 
-test('a reconcile seed spawns ONE session, even under StrictMode', async () => {
-  // StrictMode invokes effects twice in development, and clearing the seed is a
-  // round trip through state — so an unguarded effect spawns two sessions for
-  // one reconcile, which is two tabs both told to resolve the same merge.
+test('a reconcile spawns ONE session, even under StrictMode', async () => {
+  // The drawer it opens on its way is a drawer opening onto an empty list, and
+  // that used to be an effect here which started a SECOND session — two tabs
+  // both told to resolve the same merge. StrictMode runs effects twice in
+  // development, which is the same case arriving twice as fast.
   const store = createStore()
   current = []
   store.set(activeRemoteAtom, REMOTE)
   store.set(agentSessionsAtom, [])
-  store.set(agentPanelOpenAtom, true)
-  store.set(agentSeedPromptAtom, 'resolve the merge conflict')
+  store.set(agentPanelOpenAtom, false)
   render(
     <StrictMode>
       <Provider store={store}>
@@ -288,7 +264,11 @@ test('a reconcile seed spawns ONE session, even under StrictMode', async () => {
     </StrictMode>,
   )
 
-  await waitFor(() => expect(store.get(agentSeedPromptAtom)).toBeNull())
+  await act(async () => {
+    await store.set(startSessionAtom, { prompt: 'resolve the merge conflict' })
+  })
+
+  expect(store.get(agentPanelOpenAtom)).toBe(true)
   expect(start).toHaveBeenCalledTimes(1)
   expect(start).toHaveBeenCalledWith(
     expect.objectContaining({ prompt: 'resolve the merge conflict' }),
