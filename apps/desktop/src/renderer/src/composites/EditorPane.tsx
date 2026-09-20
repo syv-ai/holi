@@ -25,13 +25,14 @@ import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
+import type { AskAgentSeam } from '@/editor/askAgent'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
 import { playOnce } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
-import { defaultAgentTargetAtom } from '@/state/agent'
+import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -97,12 +98,19 @@ export function EditorPane({
     })),
   }
   const sendToAgent = useSetAtom(sendToAgentAtom)
+  const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
   /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on
-   *  every render, and a seam that closed over a stale setter would send an ask
-   *  to the tab that was active three selections ago. */
-  const askAgentRef = useRef<(prompt: string) => void>(() => {})
-  askAgentRef.current = (prompt) => void sendToAgent({ text: prompt, target: defaultTarget })
+   *  every render, and a seam that closed over a stale list would offer the tabs
+   *  that were open three selections ago. */
+  const askAgentRef = useRef<AskAgentSeam>({
+    targets: () => ({ sessions: [], initial: 'new' }),
+    onAsk: () => Promise.resolve({ ok: true }),
+  })
+  askAgentRef.current = {
+    targets: () => ({ sessions: askTargets, initial: defaultTarget }),
+    onAsk: (prompt, target) => sendToAgent({ text: prompt, target }),
+  }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     // A link can point at a note or task that does not exist yet; the chip renders
@@ -188,7 +196,10 @@ export function EditorPane({
                     ),
                   mentionData: () => mentionRef.current,
                   nav: () => navRef.current,
-                  askAgent: (prompt) => askAgentRef.current(prompt),
+                  askAgent: {
+                    targets: () => askAgentRef.current.targets(),
+                    onAsk: (prompt, target) => askAgentRef.current.onAsk(prompt, target),
+                  },
                   notePath: path,
                   readOnly,
                 })),

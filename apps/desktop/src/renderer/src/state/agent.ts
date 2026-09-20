@@ -68,6 +68,19 @@ export const agentSessionsSectionOpenAtom = atomWithStorage<boolean>(
 export type AgentTarget = string | 'new'
 
 /**
+ * The sessions an ask may be sent to, in tab order.
+ *
+ * Live, and not blocked on a question of their own: text sent to a session
+ * sitting on a permission prompt waits behind that prompt at best, so offering
+ * it is offering somewhere for an ask to disappear to.
+ */
+export const askTargetsAtom = atom((get) =>
+  get(agentSessionsAtom)
+    .filter((s) => !s.exited && s.state !== 'needs-you')
+    .map((s) => ({ id: s.id, name: s.name })),
+)
+
+/**
  * The target an ask goes to when nobody picked one.
  *
  * The tab you are looking at, which is the session you are already having this

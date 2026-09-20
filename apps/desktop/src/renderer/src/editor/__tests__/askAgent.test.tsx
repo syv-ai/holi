@@ -9,8 +9,15 @@
 import { waitFor } from '@/test/render'
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { askAgentTooltip, askPrompt, promptForSelection, selectionPrompt } from '../askAgent'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  askAgentTooltip,
+  askPrompt,
+  promptForSelection,
+  selectionPrompt,
+  type AskAgentSeam,
+  type AskTarget,
+} from '../askAgent'
 import { baseEditorExtensions, mailComposerExtensions, plainTextExtensions } from '../extensions'
 
 describe('selectionPrompt', () => {
@@ -87,9 +94,8 @@ function mount(doc: string, selection: EditorSelection, extensions: unknown[]): 
   return view
 }
 
-/** The trigger, which is the only button until the form is open. */
-const button = () =>
-  document.querySelector<HTMLButtonElement>('.cm-ask-agent button:not(.cm-ask-agent-send)')
+/** The trigger, which is the only button until the popover is open. */
+const button = () => document.querySelector<HTMLButtonElement>('.cm-ask-agent-trigger')
 const field = () => document.querySelector<HTMLTextAreaElement>('.cm-ask-agent-field')
 
 /** ⌘/Ctrl + Enter. A plain Enter is a newline, so a multi-line message cannot be
@@ -101,6 +107,27 @@ const sendKey = (input: HTMLTextAreaElement) =>
  *  moves focus and collapses the selection the message is about. */
 const press = (el: HTMLElement) =>
   el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+
+/** Where an ask went, and what the popover was told back. */
+const onAsk = vi.fn<AskAgentSeam['onAsk']>()
+beforeEach(() => {
+  onAsk.mockReset()
+  onAsk.mockResolvedValue({ ok: true })
+})
+
+/** The seam the tooltip is given: which sessions exist, which is offered first,
+ *  and somewhere to send. */
+const seam = (sessions: AskTarget[] = [], initial: string | 'new' = 'new'): AskAgentSeam => ({
+  targets: () => ({ sessions, initial }),
+  onAsk,
+})
+
+/** The target row's options, as they read. */
+const targets = () =>
+  [...document.querySelectorAll('.cm-ask-agent-target')].map((el) => el.textContent)
+const chosen = () =>
+  document.querySelector('.cm-ask-agent-target[aria-checked="true"]')?.textContent ?? null
+const notice = () => document.querySelector('.cm-ask-agent-notice')?.textContent ?? ''
 
 describe('askPrompt', () => {
   const QUOTE = '[From a.md, line 1]\n> one'
@@ -125,31 +152,32 @@ describe('askPrompt', () => {
 
 describe('the selection tooltip', () => {
   it('offers nothing when nothing is selected', () => {
-    mount('one\ntwo', EditorSelection.single(0), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0), [askAgentTooltip('a.md', seam())])
     expect(button()).toBeNull()
   })
 
   it('offers a button over a selection', () => {
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     expect(button()).not.toBeNull()
     expect(button()!.textContent).toBe('Ask agent')
   })
 
   it('opens a field rather than sending straight away', () => {
     // The whole point of the field: a passage on its own is not an instruction.
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     expect(onAsk).not.toHaveBeenCalled()
     expect(field()).not.toBeNull()
   })
 
-  it('is a field and nothing else — the placeholder is the only instruction', () => {
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+  it('carries no send button — the placeholder is the only instruction', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
-    // No send button: a second control beside a field you are already typing in
-    // is a thing to look at rather than a thing to use.
-    expect(document.querySelectorAll('.cm-ask-agent button')).toHaveLength(0)
+    // A second control beside a field you are already typing in is a thing to
+    // look at rather than a thing to use. The target row is the exception, and
+    // it answers a question the field cannot.
+    const buttons = [...document.querySelectorAll('.cm-ask-agent button')]
+    expect(buttons.every((b) => b.classList.contains('cm-ask-agent-target'))).toBe(true)
     expect(field()!.placeholder).toContain('⌘↵')
   })
 
@@ -158,7 +186,7 @@ describe('the selection tooltip', () => {
     // instantly at full size — so there was nothing to see. The class goes on at
     // the press rather than at mount, because this element is rebuilt on every
     // selection change and a mount-time animation would replay through a drag.
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     const bubble = document.querySelector('.cm-ask-agent')!
     expect(bubble.classList.contains('cm-ask-agent-open')).toBe(false)
     press(button()!)
@@ -168,7 +196,7 @@ describe('the selection tooltip', () => {
   it('grows with what is typed rather than scrolling inside a fixed box', () => {
     // jsdom lays nothing out, so the height the browser would report is stated
     // here. What is being tested is that the field takes it, and takes it again.
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const input = field()!
     let content = 40
@@ -207,14 +235,18 @@ describe('the selection tooltip', () => {
       configurable: true,
       value: () => ({ height: parseFloat(input.style.height) || 0 }) as DOMRect,
     })
-    return { bubble, input, grow: (to: number) => {
-      content = to
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    } }
+    return {
+      bubble,
+      input,
+      grow: (to: number) => {
+        content = to
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      },
+    }
   }
 
   it('holds its bottom edge still as it grows, so it does not blink', () => {
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const { bubble, grow } = growable()
     bubble.classList.add('cm-tooltip-above')
@@ -226,7 +258,7 @@ describe('the selection tooltip', () => {
   it('lets it grow downward when the bubble is below the passage', () => {
     // CodeMirror flips it when there is no room above, and then growing down is
     // the correct direction. Compensating anyway would walk it up the screen.
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const { bubble, grow } = growable()
     bubble.classList.add('cm-tooltip-below')
@@ -238,7 +270,7 @@ describe('the selection tooltip', () => {
   it('scrolls only once it has nowhere left to grow', () => {
     // The app paints its own scrollbars, so Chromium gives up overlay ones and a
     // box that is scrollable by a fraction of a pixel shows a permanent track.
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', () => {})])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const input = field()!
     input.style.maxHeight = '100px'
@@ -262,22 +294,21 @@ describe('the selection tooltip', () => {
   })
 
   it('sends what was typed, above the passage', () => {
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const input = field()!
     input.value = 'Rewrite this in one sentence'
     sendKey(input)
     expect(onAsk).toHaveBeenCalledWith(
       'Rewrite this in one sentence\n\n[From a.md, line 1]\n> one',
+      'new',
     )
   })
 
   it('takes a plain Enter as a newline rather than as send', () => {
     // A message about a passage is often more than one line, and a bare Enter
     // would send it half written.
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const input = field()!
     input.value = 'first line'
@@ -286,19 +317,17 @@ describe('the selection tooltip', () => {
   })
 
   it('sends the passage alone when the field is left empty', () => {
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     sendKey(field()!)
-    expect(onAsk).toHaveBeenCalledWith('[From a.md, line 1]\n> one')
+    expect(onAsk).toHaveBeenCalledWith('[From a.md, line 1]\n> one', 'new')
   })
 
   it('lets go of the passage once it is sent, which is what closes the popover', async () => {
     // The tooltip exists because the selection is not empty, so collapsing it is
     // the whole of how this closes — one mechanism rather than a second dismiss
     // path that would have to agree with the first.
-    const onAsk = vi.fn()
-    const v = mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    const v = mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     sendKey(field()!)
     expect(v.state.selection.main.empty).toBe(false) // still selected while it fades
@@ -311,8 +340,7 @@ describe('the selection tooltip', () => {
   it('sends once however many times the key is pressed', async () => {
     // The passage is still selected during the fade, so the field is still there
     // to type into.
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     const input = field()!
     sendKey(input)
@@ -324,8 +352,7 @@ describe('the selection tooltip', () => {
   it('Escape goes back to the button, not out of the editor', () => {
     // Escape here means "not this", not "stop selecting" — the selection is
     // still what the tooltip is anchored to.
-    const onAsk = vi.fn()
-    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', onAsk)])
+    mount('one\ntwo', EditorSelection.single(0, 3), [askAgentTooltip('a.md', seam())])
     press(button()!)
     field()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(field()).toBeNull()
@@ -333,18 +360,118 @@ describe('the selection tooltip', () => {
     expect(onAsk).not.toHaveBeenCalled()
   })
 
+  it('lists the live sessions, then New session', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip(
+        'a.md',
+        seam([
+          { id: 'a', name: 'Fix the merge' },
+          { id: 'b', name: 'Notes' },
+        ]),
+      ),
+    ])
+    press(button()!)
+    // Tab order, then the one option that is always there.
+    expect(targets()).toEqual(['Fix the merge', 'Notes', 'New session'])
+  })
+
+  it('offers the tab the drawer is showing first', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip(
+        'a.md',
+        seam(
+          [
+            { id: 'a', name: 'Fix the merge' },
+            { id: 'b', name: 'Notes' },
+          ],
+          'b',
+        ),
+      ),
+    ])
+    press(button()!)
+    expect(chosen()).toBe('Notes')
+  })
+
+  it('falls back to New session when the offered tab has gone', () => {
+    // The list is read as the popover opens, and a session can end between two
+    // selections. A name pointing at nothing is worse than the honest answer.
+    mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip('a.md', seam([{ id: 'a', name: 'Fix the merge' }], 'gone')),
+    ])
+    press(button()!)
+    expect(chosen()).toBe('New session')
+  })
+
+  it('sends to the session that was picked', () => {
+    mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip('a.md', seam([{ id: 'a', name: 'Fix the merge' }], 'new')),
+    ])
+    press(button()!)
+    press(document.querySelectorAll<HTMLElement>('.cm-ask-agent-target')[0]!)
+    expect(chosen()).toBe('Fix the merge')
+
+    sendKey(field()!)
+    expect(onAsk).toHaveBeenCalledWith('[From a.md, line 1]\n> one', 'a')
+  })
+
+  it('picking a target does not collapse the passage it is about', () => {
+    // The row is outside the editor's content, so a plain click would move focus
+    // and take the highlight — and the highlight is what this tooltip exists for.
+    const v = mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip('a.md', seam([{ id: 'a', name: 'Fix the merge' }])),
+    ])
+    press(button()!)
+    const option = document.querySelectorAll<HTMLElement>('.cm-ask-agent-target')[0]!
+    const event = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    option.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(v.state.selection.main.empty).toBe(false)
+  })
+
+  it('keeps the text, and says why, when the send is refused', async () => {
+    // A session that ended between being picked and being sent to. The text is
+    // still in the box, and the row above it can still choose somewhere else.
+    onAsk.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
+    const v = mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip('a.md', seam([{ id: 'a', name: 'Fix the merge' }], 'a')),
+    ])
+    press(button()!)
+    const input = field()!
+    input.value = 'Tighten this'
+    sendKey(input)
+
+    await waitFor(() => expect(notice()).toBe('That session has ended. Pick another one.'))
+    expect(field()!.value).toBe('Tighten this')
+    expect(v.state.selection.main.empty).toBe(false)
+  })
+
+  it('can be sent again after a refusal', async () => {
+    onAsk.mockResolvedValueOnce({ ok: false, message: 'That session has ended.' })
+    mount('one\ntwo', EditorSelection.single(0, 3), [
+      askAgentTooltip('a.md', seam([{ id: 'a', name: 'Fix the merge' }], 'a')),
+    ])
+    press(button()!)
+    sendKey(field()!)
+    await waitFor(() => expect(notice()).not.toBe(''))
+
+    press(document.querySelectorAll<HTMLElement>('.cm-ask-agent-target')[1]!) // New session
+    sendKey(field()!)
+    await waitFor(() => expect(onAsk).toHaveBeenCalledTimes(2))
+    expect(onAsk).toHaveBeenLastCalledWith('[From a.md, line 1]\n> one', 'new')
+  })
+
   it('offers nothing on a locked file', () => {
     // A reconcile is resolving it. Handing that to a second conversation
     // mid-merge is the one case this must not offer.
     mount('one\ntwo', EditorSelection.single(0, 3), [
       EditorState.readOnly.of(true),
-      askAgentTooltip('a.md', () => {}),
+      askAgentTooltip('a.md', seam()),
     ])
     expect(button()).toBeNull()
   })
 
   it('appears and disappears as the selection does', () => {
-    const v = mount('one\ntwo', EditorSelection.single(0), [askAgentTooltip('a.md', () => {})])
+    const v = mount('one\ntwo', EditorSelection.single(0), [askAgentTooltip('a.md', seam())])
     expect(button()).toBeNull()
     v.dispatch({ selection: EditorSelection.single(0, 3) })
     expect(button()).not.toBeNull()
@@ -361,7 +488,7 @@ describe('which stacks get it', () => {
     mentionData: () => ({ notes: [], tasks: [] }),
     nav: () => ({ openNote: () => {}, openExternal: () => {} }),
     notePath: 'note.md',
-    askAgent: () => {},
+    askAgent: seam(),
   }
 
   it('the notes editor does', () => {

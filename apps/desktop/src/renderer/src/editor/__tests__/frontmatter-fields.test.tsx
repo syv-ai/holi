@@ -35,7 +35,10 @@ function mount(doc: string, notePath: string): EditorView {
         mentionData: () => ({ notes: [], tasks: [] }),
         nav: () => ({ openNote: () => {}, openExternal: () => {} }),
         notePath,
-        askAgent: () => {},
+        askAgent: {
+          targets: () => ({ sessions: [], initial: 'new' as const }),
+          onAsk: () => Promise.resolve({ ok: true }),
+        },
       }),
     }),
     parent,

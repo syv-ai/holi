@@ -552,7 +552,7 @@ export const editorTheme = EditorView.baseTheme({
    * what sits inside it — first a button, and once pressed the field it opens
    * into, so the passage can be sent with an instruction rather than alone.
    */
-  '.cm-ask-agent button': {
+  '.cm-ask-agent-trigger': {
     padding: '0.15rem 0.5rem',
     fontSize: '0.75rem',
     lineHeight: '1.4',
@@ -561,7 +561,56 @@ export const editorTheme = EditorView.baseTheme({
     border: 'none',
     cursor: 'pointer',
   },
-  '.cm-ask-agent button:hover': { color: 'var(--link)' },
+  '.cm-ask-agent-trigger:hover': { color: 'var(--link)' },
+  /**
+   * The target row: which session this ask goes to.
+   *
+   * Reads like the drawer's own tab strip, because it is the same set of things:
+   * the chosen one carries the neutral `--secondary` fill and full-strength text,
+   * the rest are muted until hovered. Nothing here is coloured — a state colour
+   * on a pill of its own hue is the thing the strip already refuses — and the
+   * sessions offered are all live and unblocked anyway, so there is no state to
+   * say.
+   *
+   * It scrolls sideways rather than wrapping: the bubble is 26rem and a second
+   * row of names would push the field down the screen.
+   */
+  '.cm-ask-agent-targets': {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.15rem',
+    padding: '0.35rem 0.45rem 0',
+    overflowX: 'auto',
+    scrollbarWidth: 'none',
+  },
+  '.cm-ask-agent-target': {
+    flexShrink: '0',
+    maxWidth: '9rem',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    padding: '0.1rem 0.45rem',
+    borderRadius: '9999px',
+    fontSize: '0.6875rem',
+    lineHeight: '1.5',
+    color: 'var(--muted-foreground)',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+  },
+  '.cm-ask-agent-target:hover': { color: 'var(--foreground)' },
+  '.cm-ask-agent-target[aria-checked="true"]': {
+    color: 'var(--foreground)',
+    background: 'var(--secondary)',
+  },
+  /** Why a send did not go. Empty, and so invisible, until one does not. */
+  '.cm-ask-agent-notice': {
+    padding: '0 0.6rem 0.45rem',
+    fontSize: '0.6875rem',
+    lineHeight: '1.5',
+    color: 'var(--destructive)',
+  },
+  '.cm-ask-agent-notice:empty': { display: 'none' },
   /**
    * The popover: one field in a bubble, and the motion in and out.
    *

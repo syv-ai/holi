@@ -15,10 +15,11 @@ import { EditorView, placeholder } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { trpc } from '@/lib/trpc'
+import type { AskAgentSeam } from '@/editor/askAgent'
 import { baseEditorExtensions } from '@/editor/extensions'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
-import { defaultAgentTargetAtom } from '@/state/agent'
+import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { openNoteTabAtom } from '@/state/panes'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -76,9 +77,16 @@ export function TaskDescriptionEditor({
   /** Same seam the notes editor has (#5): a task's description is prose in the
    *  notes stack, so a passage of it is as askable as a passage of a note. */
   const sendToAgent = useSetAtom(sendToAgentAtom)
+  const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
-  const askAgentRef = useRef<(prompt: string) => void>(() => {})
-  askAgentRef.current = (prompt) => void sendToAgent({ text: prompt, target: defaultTarget })
+  const askAgentRef = useRef<AskAgentSeam>({
+    targets: () => ({ sessions: [], initial: 'new' }),
+    onAsk: () => Promise.resolve({ ok: true }),
+  })
+  askAgentRef.current = {
+    targets: () => ({ sessions: askTargets, initial: defaultTarget }),
+    onAsk: (prompt, target) => sendToAgent({ text: prompt, target }),
+  }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
     openNote: (target) =>
@@ -109,7 +117,10 @@ export function TaskDescriptionEditor({
                   ),
             mentionData: () => mentionRef.current,
             nav: () => navRef.current,
-            askAgent: (prompt) => askAgentRef.current(prompt),
+            askAgent: {
+              targets: () => askAgentRef.current.targets(),
+              onAsk: (prompt, target) => askAgentRef.current.onAsk(prompt, target),
+            },
             notePath,
           }),
           placeholder('description — @ to mention a note, [[wiki-links]] to link'),

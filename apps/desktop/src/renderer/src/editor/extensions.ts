@@ -10,7 +10,7 @@ import { holiCompletion } from './completion'
 import { fenceLanguage } from './fence-languages'
 import { formattingKeymap } from './formatting'
 import { linkClickHandler, type LinkNav } from './links'
-import { askAgentTooltip } from './askAgent'
+import { askAgentTooltip, type AskAgentSeam } from './askAgent'
 import { frontmatterExtension } from './frontmatter'
 import { mermaidExtension } from './mermaid'
 import { languageForPath, validityStatus } from './languages'
@@ -43,12 +43,12 @@ export interface EditorDeps {
   mentionData: () => MentionData
   /** Where a clicked link goes (FR-6/FR-7). */
   nav: () => LinkNav
-  /** Hand the current selection to the agent as a seeded turn (#5). On
-   *  `EditorDeps` rather than on a facet because only `baseEditorExtensions`
+  /** Hand the current selection to one of the vault's agent sessions (#5, D100).
+   *  On `EditorDeps` rather than on a facet because only `baseEditorExtensions`
    *  takes these: the mail composer is a separate stack precisely so that it
-   *  knows nothing about a vault, and a seeded vault prompt is exactly the kind
-   *  of thing it must not grow. */
-  askAgent: (prompt: string) => void
+   *  knows nothing about a vault, and a vault prompt is exactly the kind of
+   *  thing it must not grow. */
+  askAgent: AskAgentSeam
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked — a reconcile is resolving this file

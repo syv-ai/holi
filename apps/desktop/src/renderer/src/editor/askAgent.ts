@@ -9,9 +9,10 @@
  * already holds the range, so the prompt quotes a location rather than guessing
  * at one.
  *
- * **No new transport.** The button hands a finished string to a seam on
- * `EditorDeps`, and `EditorPane` puts it in `agentSeedPromptAtom` — the wire the
- * reconcile handoff already uses. Nothing here knows there is an agent.
+ * **No new transport.** The button hands a finished string, and which session to
+ * hand it to, to a seam on `EditorDeps`; `EditorPane` routes that through
+ * `sendToAgent`. Nothing here knows what a session IS — it is given a list of
+ * names and gives one back.
  */
 import { EditorSelection, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { showTooltip, type EditorView, type Tooltip, type TooltipView } from '@codemirror/view'
@@ -57,6 +58,41 @@ export function promptForSelection(state: EditorState, notePath: string): string
   )
 }
 
+/** One session an ask can be sent to, as the popover needs it: something to
+ *  show, and something to send back. */
+export interface AskTarget {
+  id: string
+  name: string
+}
+
+/** What the popover offers, asked for at the moment it opens rather than when
+ *  the tooltip was built — a session can start or end between two selections. */
+export interface AskTargets {
+  /** Live sessions that could read an ask, in tab order. One blocked on a
+   *  question of its own is left out by the caller: text sent to it would sit
+   *  unread behind that question. */
+  sessions: AskTarget[]
+  /** Selected when the popover opens: the tab the drawer is showing, or `'new'`
+   *  when that tab cannot take an ask. */
+  initial: string | 'new'
+}
+
+/** Sent, or refused with a reason the popover shows while keeping the text. */
+export interface AskResult {
+  ok: boolean
+  message?: string
+}
+
+/** The editor's whole view of the agent: a list of names, and somewhere to send. */
+export interface AskAgentSeam {
+  targets: () => AskTargets
+  onAsk: (prompt: string, target: string | 'new') => Promise<AskResult>
+}
+
+/** What a new session is called in the picker. Not a name — main derives the
+ *  real one from the ask's first line, at spawn. */
+const NEW_SESSION = 'New session'
+
 /**
  * How long the popover takes to leave, in the milliseconds a `setTimeout` takes.
  *
@@ -75,10 +111,12 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
 /**
  * The tooltip's two states: a button, and the popover it opens into.
  *
- * **The popover is a textarea and nothing else.** No send button, no chrome: the
+ * **The popover is a row of names and a textarea.** No send button: the
  * placeholder says how to send, which is the only instruction it needs, and a
  * second control beside a field you are already typing in is a thing to look at
- * rather than a thing to use.
+ * rather than a thing to use. The picker earns the exception because it answers
+ * a question the field cannot — an ask goes to one of several conversations now
+ * (D100), and the alternative is sending it somewhere and finding out after.
  *
  * Both states live in one element that swaps its own children, rather than in a
  * `StateField`, because the state is genuinely local — nothing outside this
@@ -99,19 +137,13 @@ const exitMs = (): number => (prefersReducedMotion() ? 0 : motionDurationMs('--m
  * before the animation, so nothing waits on it; the collapse follows the fade so
  * there is something to fade.
  */
-function askAgentView(
-  view: EditorView,
-  quote: string,
-  onAsk: (prompt: string) => void,
-): TooltipView {
+function askAgentView(view: EditorView, quote: string, seam: AskAgentSeam): TooltipView {
   const dom = document.createElement('div')
   dom.className = 'cm-ask-agent'
 
   let leaving: ReturnType<typeof setTimeout> | null = null
 
-  const send = (instruction: string) => {
-    if (leaving !== null) return // already on the way out
-    onAsk(askPrompt(instruction, quote))
+  const leave = () => {
     dom.classList.add('cm-ask-agent-leaving')
     leaving = setTimeout(() => {
       leaving = null
@@ -123,9 +155,89 @@ function askAgentView(
   }
 
   const popover = (): HTMLElement => {
+    const wrap = document.createElement('div')
+    wrap.className = 'cm-ask-agent-popover'
+
     const field = document.createElement('textarea')
     field.rows = 1
     field.className = 'cm-ask-agent-field'
+
+    /**
+     * Who the ask goes to.
+     *
+     * Asked for here, as the popover opens, rather than held anywhere: the
+     * tooltip is rebuilt on every selection change, and the list of sessions
+     * moves on its own — one can start or end between two selections. The
+     * offered default can also be gone by now, in which case a new session is
+     * the honest answer rather than a name pointing at nothing.
+     */
+    const { sessions, initial } = seam.targets()
+    let target: string | 'new' =
+      initial !== 'new' && sessions.some((s) => s.id === initial) ? initial : 'new'
+
+    const row = document.createElement('div')
+    row.className = 'cm-ask-agent-targets'
+    row.setAttribute('role', 'radiogroup')
+    row.setAttribute('aria-label', 'Which session to ask')
+    // Live sessions in tab order, then New session — so the list reads like the
+    // drawer, and the one option that is always there is always last.
+    const choices = [
+      ...sessions.map((s) => ({ value: s.id, label: s.name })),
+      {
+        value: 'new' as const,
+        label: NEW_SESSION,
+      },
+    ]
+    const buttons = choices.map((choice) => {
+      const option = document.createElement('button')
+      option.type = 'button'
+      option.className = 'cm-ask-agent-target'
+      option.textContent = choice.label
+      option.setAttribute('role', 'radio')
+      // Same reason as the trigger: this element is outside the editor's
+      // content, so a plain click would move focus and take the highlight with
+      // it. Preventing the default also leaves the field focused, so picking a
+      // target does not interrupt typing.
+      option.onmousedown = (e) => {
+        e.preventDefault()
+        target = choice.value
+        paint()
+      }
+      return option
+    })
+    const paint = () => {
+      buttons.forEach((option, i) =>
+        option.setAttribute('aria-checked', String(choices[i]!.value === target)),
+      )
+    }
+    paint()
+    row.append(...buttons)
+
+    /** Why the last send did not go, kept under the field with the text still
+     *  in it. Empty until something refuses. */
+    const notice = document.createElement('div')
+    notice.className = 'cm-ask-agent-notice'
+
+    /** A send is in flight. It is a round trip now (a session can have ended),
+     *  so the guard is not only about the fade. */
+    let sending = false
+
+    const send = async (instruction: string) => {
+      if (leaving !== null || sending) return // already on the way out, or already going
+      sending = true
+      notice.textContent = ''
+      const res = await seam.onAsk(askPrompt(instruction, quote), target)
+      sending = false
+      if (!res.ok) {
+        // The text stays exactly where it was. Somewhere to send it to is the
+        // only thing missing, and that is a choice the row above can still make.
+        notice.textContent = res.message ?? 'That could not be sent.'
+        view.dispatch({}) // the bubble is taller; let CodeMirror place it again
+        field.focus()
+        return
+      }
+      leave()
+    }
 
     /**
      * Grow with what is typed rather than scroll inside a fixed box.
@@ -195,7 +307,7 @@ function askAgentView(
       // written.
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
-        send(field.value)
+        void send(field.value)
         return
       }
       // Back to the button rather than out of the editor: Escape here means "not
@@ -214,12 +326,14 @@ function askAgentView(
       field.focus()
       grow()
     })
-    return field
+    wrap.append(row, field, notice)
+    return wrap
   }
 
   const trigger = (): HTMLElement => {
     const button = document.createElement('button')
     button.type = 'button'
+    button.className = 'cm-ask-agent-trigger'
     button.textContent = 'Ask agent'
     button.onmousedown = (e) => {
       e.preventDefault()
@@ -253,11 +367,7 @@ function askAgentView(
   }
 }
 
-function tooltipFor(
-  state: EditorState,
-  notePath: string,
-  onAsk: (prompt: string) => void,
-): Tooltip[] {
+function tooltipFor(state: EditorState, notePath: string, seam: AskAgentSeam): Tooltip[] {
   // A locked file is one a reconcile is resolving (`vaults-sync.md` FR-19).
   // Handing it to a second conversation mid-merge is the one case this must not
   // offer. `state.readOnly` and not the `editable` facet: only the former is a
@@ -272,7 +382,7 @@ function tooltipFor(
       pos: range.from,
       end: range.to,
       above: true,
-      create: (view) => askAgentView(view, prompt, onAsk),
+      create: (view) => askAgentView(view, prompt, seam),
     },
   ]
 }
@@ -284,15 +394,15 @@ function tooltipFor(
  * rebuilds the view per document — the same reason `notePathFacet` can be static
  * in live preview.
  */
-export function askAgentTooltip(notePath: string, onAsk: (prompt: string) => void): Extension {
+export function askAgentTooltip(notePath: string, seam: AskAgentSeam): Extension {
   const field = StateField.define<readonly Tooltip[]>({
-    create: (state) => tooltipFor(state, notePath, onAsk),
+    create: (state) => tooltipFor(state, notePath, seam),
     update(tooltips, tr) {
       // Only a selection or a document change can alter it. A viewport scroll
       // cannot, and recomputing on one would rebuild the button under the
       // pointer while you were reaching for it.
       if (!tr.docChanged && tr.selection === undefined) return tooltips
-      return tooltipFor(tr.state, notePath, onAsk)
+      return tooltipFor(tr.state, notePath, seam)
     },
     provide: (f) => showTooltip.computeN([f], (state) => state.field(f)),
   })
