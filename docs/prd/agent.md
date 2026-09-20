@@ -94,7 +94,7 @@ the **vault's**, one path in the clone, read by whichever session takes the next
 
 - A **reader loop** on the PTY master forwards each chunk to the renderer; **EOF/EIO** ends the session (the template treats `EIO`/errno 5 as normal remote-hangup).
 - A **child-wait** task parks on the child, clears session state, then emits `exit` — clearing before emitting so a renderer that kills-on-exit doesn't race a dead child.
-- **Any number of live sessions per vault (D100)**, one drawer tab each; see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you.
+- **Any number of live sessions per vault (D100)**, one drawer tab each; see §Several sessions per vault. Ending one (SIGTERM → SIGKILL of the process **group**, so Claude's helper subprocesses die too) touches no other. A **vault switch** ends all of them, and asks first if any is mid-turn or waiting on you; so does adding a vault, which opens the one it creates.
 - Drawer lifecycle: opening the drawer starts a session when the vault has none, and otherwise shows the tabs it already has; each terminal is the **live** surface for its own session. The drawer's **history affordance** opens **bare `--resume`** in a *new* tab and kills nothing, so Claude Code shows its own session picker there. Scrollback is ephemeral; durable history is CC's own sessions.
   - **No `--resume <id>` shortcuts for recent sessions**, which was the obvious next affordance and is deliberately absent: the CLI's picker is the surface the user already knows, and a Holi-drawn list of recent sessions would be a second index over another program's session store — the same bet §Config layering declines when it refuses to migrate transcripts.
 - **The `prompt` field on `start` is what the reconcile flow uses** — it seeds the session with the conflict-resolution instruction rather than making the user type it. It is a positional argv, so Claude Code **submits** it as turn one, and reconcile is the only sender that does (D100).
@@ -155,7 +155,10 @@ exception** and keeps its submitted first turn.
 waiting on you. It is not a policy choice: `VaultHost` holds exactly one `ActiveVault`
 and `open()` closes the current one first, so a session left running in the vault you
 walked away from has no repo, no watcher and no sync loop behind it. The conversations
-stay reachable through `--resume`. **The cost, stated:** you cannot leave a long task
+stay reachable through `--resume`. **Adding a vault asks the same question**, when the
+ritual starts rather than when it finishes: creating a vault opens it, so it ends these
+sessions just as picking another one does, and the moment to say so is before someone has
+named a repo and waited for a clone. **The cost, stated:** you cannot leave a long task
 running in one vault and go and work in another.
 
 **Not decided here, deliberately:** a cap on how many sessions may run, splitting an

@@ -289,9 +289,12 @@ export function Shell() {
    */
   const [overStrip, setOverStrip] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
-  /** The vault a switch is waiting on an answer about, because sessions are
-   *  running in the one being left (D100). */
-  const [pendingVault, setPendingVault] = useState<string | null>(null)
+  /** Leaving this vault is waiting on an answer, because sessions are running in
+   *  it (D100). Either picking another vault, or adding one — which opens it,
+   *  and so ends them just the same. */
+  const [leaving, setLeaving] = useState<
+    { kind: 'switch'; remote: string } | { kind: 'add' } | null
+  >(null)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
   const [banner, setBanner] = useState<{
@@ -440,7 +443,7 @@ export function Shell() {
    *  remote is all that is needed: the open effect above picks it up and runs
    *  the same open → daily → sweep sequence as cold start. */
   const applySwitch = (remote: string) => {
-    setPendingVault(null)
+    setLeaving(null)
     setWorkspace(() => ({ panes: [{ tabs: [], active: -1 }], active: 0 }))
     setBanner(null)
     setActiveRemote(remote)
@@ -458,10 +461,26 @@ export function Shell() {
   const switchVault = (remote: string) => {
     if (remote === activeRemote) return
     if (sessionsWorthAsking(agentSessions).length > 0) {
-      setPendingVault(remote)
+      setLeaving({ kind: 'switch', remote })
       return
     }
     applySwitch(remote)
+  }
+
+  /**
+   * …and adding one is the same departure, asked at the start.
+   *
+   * The ritual ends by activating the vault it just made, so it takes the
+   * sessions with it exactly as the picker does. The moment to say so is before
+   * someone has named a repo and waited for a clone, not after — which is also
+   * why this guards the trigger rather than the ritual's last act.
+   */
+  const addVault = () => {
+    if (sessionsWorthAsking(agentSessions).length > 0) {
+      setLeaving({ kind: 'add' })
+      return
+    }
+    setShowAdd(true)
   }
 
   // A conflict in the shared config files can leave the vault misconfigured while
@@ -506,14 +525,21 @@ export function Shell() {
                   vaults={vaults}
                   activeRemote={activeRemote}
                   onSelect={switchVault}
-                  onAddVault={() => setShowAdd(true)}
+                  onAddVault={addVault}
                 />
               </div>
               {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
-              {pendingVault !== null && (
+              {leaving !== null && (
                 <VaultSwitchConfirm
-                  onConfirm={() => applySwitch(pendingVault)}
-                  onCancel={() => setPendingVault(null)}
+                  intent={leaving.kind}
+                  onConfirm={() => {
+                    if (leaving.kind === 'switch') applySwitch(leaving.remote)
+                    else {
+                      setLeaving(null)
+                      setShowAdd(true)
+                    }
+                  }}
+                  onCancel={() => setLeaving(null)}
                 />
               )}
 

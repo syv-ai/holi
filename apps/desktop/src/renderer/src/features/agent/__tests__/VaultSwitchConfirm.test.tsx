@@ -7,11 +7,11 @@
  * both answers reach the caller — Shell holds the switch itself, and a cancel
  * that silently switched anyway would be worse than never asking.
  */
-import { render, screen } from '@/test/render'
+import { act, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { VaultSwitchConfirm } from '../VaultSwitchConfirm'
+import { VaultSwitchConfirm, type LeaveIntent } from '../VaultSwitchConfirm'
 import { agentSessionsAtom, type AgentSession } from '@/state/agent'
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
@@ -22,17 +22,17 @@ const session = (over: Partial<AgentSession> & { id: string }): AgentSession => 
   ...over,
 })
 
-function setup(sessions: AgentSession[]) {
+function setup(sessions: AgentSession[], intent: LeaveIntent = 'switch') {
   const store = createStore()
   store.set(agentSessionsAtom, sessions)
   const onConfirm = vi.fn()
   const onCancel = vi.fn()
   render(
     <Provider store={store}>
-      <VaultSwitchConfirm onConfirm={onConfirm} onCancel={onCancel} />
+      <VaultSwitchConfirm intent={intent} onConfirm={onConfirm} onCancel={onCancel} />
     </Provider>,
   )
-  return { onConfirm, onCancel }
+  return { store, onConfirm, onCancel }
 }
 
 test('names the one session that is in the way', async () => {
@@ -63,6 +63,34 @@ test('leaves an idle session out of the count', async () => {
 test('says every session ends, not only the busy one', async () => {
   setup([session({ id: 'a', name: 'Fix the merge' })])
   expect(await screen.findByText(/ends every session in this vault/)).toBeInTheDocument()
+})
+
+test('adding a vault asks the same question in its own words', async () => {
+  // Creating a vault opens it, so it ends these sessions exactly as picking
+  // another one does. It is asked before the ritual rather than after it.
+  setup([session({ id: 'a', name: 'Fix the merge' })], 'add')
+  expect(await screen.findByText('Add a vault?')).toBeInTheDocument()
+  expect(await screen.findByText(/Adding a vault opens it/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument()
+})
+
+test('says what is at stake the same way whichever it is', async () => {
+  setup([session({ id: 'a', name: 'Fix the merge' })], 'add')
+  expect(await screen.findByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
+  expect(await screen.findByText(/Resume in the agent drawer/)).toBeInTheDocument()
+})
+
+test('keeps saying what was true when it interrupted you', async () => {
+  // The list is live and a turn can land while the dialog is open. Left to
+  // follow it, the body would rewrite itself under the reader — at worst into
+  // "0 sessions are still running" over two buttons asking about them.
+  const { store } = setup([session({ id: 'a', name: 'Fix the merge' })])
+  expect(await screen.findByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
+
+  await act(async () => {
+    store.set(agentSessionsAtom, [session({ id: 'a', name: 'Fix the merge', state: 'idle' })])
+  })
+  expect(screen.getByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
 })
 
 test('confirming hands the switch back to the caller', async () => {

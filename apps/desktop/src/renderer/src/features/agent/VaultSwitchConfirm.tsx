@@ -11,6 +11,11 @@
  * the same line the drawer's close button draws: an idle conversation ends
  * quietly and comes back with Resume, and interrupting one of these costs work
  * part way through or drops a question nobody answered.
+ *
+ * **Adding a vault asks the same question, at the start of the ritual rather
+ * than at the end of it.** Creating a vault opens it, so it ends these sessions
+ * just as picking another one does — and the moment to say so is before someone
+ * has named a repo and waited for a clone, not after.
  */
 import { useAtomValue } from 'jotai'
 import { useState } from 'react'
@@ -31,10 +36,29 @@ function why(busy: { name: string; state: string }[]): string {
   return `${busy.length} sessions are still running.`
 }
 
+/** Which act is being confirmed. Both leave this vault; they differ in what the
+ *  person just pressed. */
+export type LeaveIntent = 'switch' | 'add'
+
+const WORDING = {
+  switch: {
+    title: 'Switch vaults?',
+    what: 'Switching ends every session in this vault.',
+    go: 'Switch anyway',
+  },
+  add: {
+    title: 'Add a vault?',
+    what: 'Adding a vault opens it, which ends every session in this vault.',
+    go: 'Continue',
+  },
+} as const
+
 export function VaultSwitchConfirm(props: {
+  intent: LeaveIntent
   onConfirm: () => void
   onCancel: () => void
 }): React.JSX.Element {
+  const wording = WORDING[props.intent]
   /**
    * Read once, when the question is asked.
    *
@@ -49,11 +73,11 @@ export function VaultSwitchConfirm(props: {
   return (
     <Dialog open onClose={props.onCancel} size="sm">
       <div className="grid min-w-0 gap-4 [&>*]:min-w-0">
-        <Dialog.Header>Switch vaults?</Dialog.Header>
+        <Dialog.Header>{wording.title}</Dialog.Header>
         <Dialog.Body>
           <p className="text-xs text-muted-foreground">
-            {why(busy)} Switching ends every session in this vault. What they have already written
-            stays in it, and Resume in the agent drawer picks a conversation up again.
+            {why(busy)} {wording.what} What they have already written stays in it, and Resume in the
+            agent drawer picks a conversation up again.
           </p>
         </Dialog.Body>
         <Dialog.Footer>
@@ -61,7 +85,7 @@ export function VaultSwitchConfirm(props: {
             Cancel
           </Button>
           <Button variant="destructive" size="sm" onClick={props.onConfirm}>
-            Switch anyway
+            {wording.go}
           </Button>
         </Dialog.Footer>
       </div>
