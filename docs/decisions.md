@@ -4,7 +4,7 @@ New load-bearing decisions land here first, as lightweight ADRs (context, decisi
 
 The living docs are the truth; this file is only the staging area.
 
-**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. **D96 is agreed and built** (2026-09-12) and sits below them. **D98 — the motion system — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D100 — several agent sessions per vault — is agreed and built** (2026-09-14 to 2026-09-20), so it has left this inbox and its row is in the table. **D101 — a session is a tab, and Holi reads Claude Code's status line — is agreed and built** (2026-09-20), so it is in the table too. **Next free is D102.** **D99 — the completion popup — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D97 was spent twice and the motion system gave it up**: the settings-schema row below had already taken it, and the motion work read this file's section heading, which still said "next free is D97", rather than this sentence. The motion system is D98; the heading is corrected below so the two cannot disagree again. D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
+**D80 and D81 are agreed and not built** (2026-08-22); their rows are below. **D96 is agreed and built** (2026-09-12) and sits below them. **D98 — the motion system — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D100 — several agent sessions per vault — is agreed and built** (2026-09-14 to 2026-09-20), so it has left this inbox and its row is in the table. **D101 — a session is a tab, and Holi reads Claude Code's status line — is agreed and built** (2026-09-20), so it is in the table too. **D102 — the command palette and one table of commands — is agreed and not built** (2026-09-21); its row is below and its design of record is [`specs/2026-09-21-command-palette-design.md`](specs/2026-09-21-command-palette-design.md). **Next free is D103.** **D99 — the completion popup — is agreed and built** (2026-09-13) and is consolidated straight into the living docs, so its row is in the table rather than in this inbox. **D97 was spent twice and the motion system gave it up**: the settings-schema row below had already taken it, and the motion work read this file's section heading, which still said "next free is D97", rather than this sentence. The motion system is D98; the heading is corrected below so the two cannot disagree again. D91 through D95 were agreed and built on 2026-09-09 and never sat in this inbox; their rows are in the table. **D90 is skipped, not spent** — nothing in the repo ever claimed it, and the handoff that carried the editor work forward recorded it as taken, so it is cheaper to lose a number than to risk two decisions wearing one. D86 and D87 were built on 2026-08-23 and 2026-08-24 and are consolidated. **D88 and D89 never entered this inbox** — both were designed straight into `specs/` and agreed there, so their rows in the table record where the design lives rather than where prose was folded to. D79 was built and consolidated on 2026-08-21; D75, D76, D77 and D78 on 2026-08-20. Where each spent number's prose now lives is in the table below.
 
 ---
 
@@ -93,9 +93,45 @@ simplest of all, and the frontmatter stops being part of the document you are lo
 buffer between the sidebar and a pane* — architecturally the right answer to the panel problem, and it
 rewrites the external-reload story everything else rests on.
 
+## D102 — the command palette and one table of commands
+
+**Context.** Holi has no way to reach a file, a surface or an action from the keyboard except
+the five shortcuts `Shell.tsx` binds in five separate effects, plus ⌘W as a menu accelerator.
+The old Holi had a palette that did several things right (a leading `>` switches to commands,
+the prefix is stripped before scoring, every action closes the palette before it runs) and one
+thing wrong that this decision exists to avoid: its bindings registry carried no handlers, its
+shortcut hook dispatched on a `switch` of its own, and the palette's `onSelect` closures were a
+third copy of the same actions, so two of thirteen commands ever showed a shortcut hint.
+
+**Decision.** ⌘P opens Quick Open, VS Code exactly: typing `>` switches the box to commands and
+⌘⇧P opens it there. ⌘P lists every openable thing, not files alone: markdown docs, other vault
+files, vault apps, live agent sessions and the five fixed surfaces. Once something is typed the
+last row is "Ask the assistant", which sends the text to the session ⌘J goes to, starting one
+when there is none. Before anything is typed the rows are the most recently opened things,
+remembered per vault in `localStorage` beside the panel layouts, so ⌘P then Enter returns to
+the previous thing. **Every app-level action is one row of one table**, `state/commands.ts`:
+id, label, an optional hotkey glyph and a Jotai write. The keydown dispatcher, the `>` list and
+main's menu all run commands by id through that table, so a shortcut hint beside a command is
+never a second list to maintain. Shell's pane-exit animation and vault-switch confirm move into
+atoms so the table can reach them. The palette is its own overlay, today's shadcn Command
+component in `primitives/`, Radix Dialog composed directly, top-anchored with no dimmed
+backdrop. Ranking is a pure function over `command-score`, not cmdk's built-in filter, so a
+node test and the screen agree.
+
+**Rejected.** Files only in ⌘P with surfaces as commands (VS Code's letter, not the access he
+wants). Recents in `app.local.yaml` (a settings document whose validator refuses undeclared keys
+and whose every write regenerates the file). Declarations in `@holi/shared` with the menu built
+from them (a menu accelerator takes the key from CodeMirror and xterm, so each menu item is a
+deliberate choice, not a table row). A sixth entry in the form-dialog registry (a different
+overlay class). Rebindable keys (the old repo's dead layer).
+
+**Design of record:** [`specs/2026-09-21-command-palette-design.md`](specs/2026-09-21-command-palette-design.md).
+**Consolidates into:** a new `prd/command-palette.md`, `architecture.md` §renderer, and the
+absent-entry sentences in `prd/vault-apps.md` and `not-built.md`.
+
 ---
 
-## Number allocation — **next free is D102**
+## Number allocation — **next free is D103**
 
 Living docs carry decisions as **prose, never as numbers**. D-numbers exist for two purposes only: **code comments** and **git history**. So this ledger is the one place that records which numbers are spent. Check it before allocating.
 
