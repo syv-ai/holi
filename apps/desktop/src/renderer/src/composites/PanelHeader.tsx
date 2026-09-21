@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Button, Tooltip } from '@/primitives'
+import { Button, Kbd, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { matchHotkey } from '@/lib/hotkey'
 
@@ -83,9 +83,7 @@ export function PanelHeader({
                 a.hotkey ? (
                   <span className="inline-flex items-center gap-1.5">
                     {a.label}
-                    <kbd className="rounded border bg-muted px-1 font-sans text-muted-foreground">
-                      {a.hotkey}
-                    </kbd>
+                    <Kbd>{a.hotkey}</Kbd>
                   </span>
                 ) : (
                   a.label

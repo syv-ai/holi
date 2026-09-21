@@ -1,5 +1,16 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
+export {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from './Command'
 export { ColorSwatch } from './ColorSwatch'
 export {
   ContextMenu,
@@ -37,6 +48,7 @@ export {
   DropdownMenuTrigger,
 } from './DropdownMenu'
 export { Input } from './Input'
+export { Kbd } from './Kbd'
 export { Popover, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'
