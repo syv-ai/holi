@@ -13,6 +13,7 @@
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
+import { focusSessionTerminal } from '../lib/session-terminals'
 import { trpc } from '../lib/trpc'
 import {
   activeSessionAtom,
@@ -181,6 +182,11 @@ export const sendToAgentAtom = atom(
     // that arrives somewhere you cannot see is an ask you will not answer.
     set(activeSessionIdAtom, args.target)
     set(workspaceAtom, (w) => openSession(w, args.target))
+    // …and the keyboard with it. A tab coming forward focuses its own terminal;
+    // one that was already showing does not, and a `/rename ` whose name then
+    // went to the double-clicked tab is the case this is for. A miss is fine:
+    // it means the terminal is not built yet, and it focuses itself when it is.
+    focusSessionTerminal(args.target)
     return { ok: true }
   },
 )

@@ -25,6 +25,7 @@ import {
 } from '../agent-send'
 import { activeTab, openSession, workspaceAtom } from '../panes'
 import { activeRemoteAtom } from '../vaults'
+import { registerSessionTerminal } from '../../lib/session-terminals'
 
 const REMOTE = 'owner/repo'
 
@@ -258,6 +259,32 @@ test('a rename is the command, pasted, with the name left to type', async () => 
   expect(paste).toHaveBeenCalledWith('a', '/rename ')
   // …and its tab is the one showing, because the typing happens there.
   expect(shown(store)).toBe('a')
+})
+
+test('a rename puts the keyboard in the terminal the command landed in', async () => {
+  // The tab was already showing, so nothing becomes visible and nothing would
+  // focus on its own — the name would be typed into the double-clicked tab. The
+  // send asks the terminal for focus directly.
+  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
+  const focus = vi.fn()
+  const unregister = registerSessionTerminal('a', focus)
+
+  await store.set(renameSessionAtom, 'a')
+
+  expect(focus).toHaveBeenCalledTimes(1)
+  unregister()
+})
+
+test('a refused send asks nothing for focus', async () => {
+  paste.mockResolvedValue({ ok: false, message: 'That session has ended. Pick another one.' })
+  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
+  const focus = vi.fn()
+  const unregister = registerSessionTerminal('a', focus)
+
+  await store.set(sendToAgentAtom, { text: 'have a look', target: 'a' })
+
+  expect(focus).not.toHaveBeenCalled()
+  unregister()
 })
 
 test('a rename refused by main says so, and takes you nowhere', async () => {

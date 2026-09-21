@@ -18,6 +18,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useCallback, useEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { terminalKeyAction } from '@/lib/agent-terminal-keys'
+import { registerSessionTerminal } from '@/lib/session-terminals'
 
 /** Claude Code is an Ink TUI: it draws its own cursor, so xterm's would blink a
  * second one at the buffer end. Ink's init re-enables it (`\x1b[?25h`), hence
@@ -107,6 +108,9 @@ export function SessionTerminal({
     term.open(host)
     termRef.current = term
     fitRef.current = fit
+    // So a paste into this session can be followed by the keyboard: see
+    // `session-terminals.ts` for the case the visible effect below misses.
+    const unregister = registerSessionTerminal(sessionId, () => term.focus())
 
     const selection = term.onSelectionChange(() => {
       const selected = term.getSelection()
@@ -178,6 +182,7 @@ export function SessionTerminal({
 
     disposeRef.current = () => {
       clearTimeout(reHide)
+      unregister()
       offData()
       offExit()
       typed.dispose()
