@@ -213,7 +213,14 @@ export function SessionsSection(): React.JSX.Element {
                     </Button>
                   </ContextMenuTrigger>
                 </Tooltip>
-                <ContextMenuContent>
+                {/* Radix hands focus back to the row when the menu closes, and it
+                    does so AFTER the item's work: Rename had already put the
+                    keyboard in the terminal, and the menu took it back to the
+                    row, so the name went nowhere. Nothing on this menu wants
+                    the row focused afterwards: three of the four land you in a
+                    tab that focuses its own terminal, and the fourth opens a
+                    dialog or removes the row. */}
+                <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
                   {/* No dialog: the command goes in the session's box and the
                       name is typed where it is going to be read. */}
                   <ContextMenuItem
