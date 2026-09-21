@@ -51,11 +51,12 @@ declare global {
       dev: {
         onTestOnboarding(cb: () => void): () => void
       }
-      /** The application menu's items that act on the renderer. ⌘W is a menu
-       *  accelerator, which fires before any keydown reaches the page, so
-       *  Close Tab arrives here rather than as a key. Returns its unsubscribe. */
+      /** The application menu ran an item: the id of a row in the command
+       *  table (`state/commands.ts`). ⌘W is a menu accelerator, which fires
+       *  before any keydown reaches the page, so Close Tab arrives here rather
+       *  than as a key. Returns its unsubscribe. */
       menu: {
-        onCloseTab(cb: () => void): () => void
+        onCommand(cb: (id: string) => void): () => void
       }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file

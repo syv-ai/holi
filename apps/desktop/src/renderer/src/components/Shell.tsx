@@ -42,11 +42,9 @@ import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
-import { matchHotkey } from '../lib/hotkey'
 import { syncLabel } from '../lib/sync-label'
-import { saveAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
-import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
+import { sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
 import {
   activeTab,
@@ -63,7 +61,6 @@ import {
   openInNewPane,
   openPreview,
   pinActive,
-  splitPane,
   pinTab,
   workspaceAtom,
   type Tab,
@@ -71,14 +68,13 @@ import {
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
-import { openDialogAtom } from '../state/dialogs'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
+import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import {
-  closeActiveTabWithExitAtom,
   closePaneWithExitAtom,
   closeTabWithExitAtom,
   leavingPaneAtom,
@@ -90,7 +86,7 @@ import {
   useAgentSessions,
   useSessionTabs,
 } from '@/state/agent'
-import { reconcileAtom, showAgentAtom } from '@/state/agent-send'
+import { reconcileAtom } from '@/state/agent-send'
 import { sessionsWorthAsking } from '@/lib/agent-notices'
 
 /** One shared empty array, so a pane not being dragged over keeps the same
@@ -138,14 +134,12 @@ export function Shell() {
   const syncState = useAtomValue(syncStateAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
   const openVault = useSetAtom(openVaultAtom)
-  const openDaily = useSetAtom(openTodaysDailyAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
   const turnReviewOpen = useAtomValue(turnReviewOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
-  const openDialog = useSetAtom(openDialogAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
   // settings panel shares this atom rather than holding its own answer.
@@ -159,24 +153,13 @@ export function Shell() {
   const leavingPane = useAtomValue(leavingPaneAtom)
   const closePaneWithExit = useSetAtom(closePaneWithExitAtom)
   const closeTabWithExit = useSetAtom(closeTabWithExitAtom)
-  const closeActiveTab = useSetAtom(closeActiveTabWithExitAtom)
+  const runCommand = useSetAtom(runCommandAtom)
 
-  /**
-   * File → Close Tab (⌘W): the focused pane's active tab, through the same
-   * close the strip's button takes, so an emptied split plays its exit here too.
-   *
-   * It arrives from main rather than as a keydown because ⌘W is the menu's
-   * accelerator, and a menu accelerator fires before the page sees the key
-   * (`main/menu.ts`). With a single pane the last tab leaves it empty; with
-   * nothing open at all, `closeTab` at `-1` is a no-op. An EMPTY pane in a
-   * split does go, which is what ⌘\ then ⌘W should do.
-   *
-   */
-  useEffect(() => window.holi.menu.onCloseTab(closeActiveTab), [closeActiveTab])
+  // The application menu runs commands by id through the same table. ⌘W is
+  // its accelerator, which fires before the page sees the key (`main/menu.ts`),
+  // so Close Tab arrives here rather than as a keydown.
+  useEffect(() => window.holi.menu.onCommand((id) => void runCommand(id)), [runCommand])
 
-  /** Not a plain setter: going to the agent in a vault with no live session
-   *  starts one, and that rule lives with the sessions (`showAgentAtom`). */
-  const showAgent = useSetAtom(showAgentAtom)
   // Only for the vault-switch confirm and the sessions panel's presence now that
   // the footer no longer reduces the set to a dot. What each session is doing is
   // the sidebar's to say, per card.
@@ -290,95 +273,9 @@ export function Shell() {
     })()
   }, [activeRemote, openVault, openLanding, sweepDaily])
 
-  // FR-6: ⌘⇧D jumps to today's daily (creating it if needed). Deliberately NOT
-  // routed through `openLanding` — this is the gesture that still works in a
-  // vault whose `dailyNotes` is off, which is what makes "off" mean "stop doing
-  // this behind my back" rather than "the feature is gone".
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
-        e.preventDefault()
-        void openDaily()
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [openDaily])
-
-  // ⌘\ splits: a new empty pane beside this one, focused. Empty rather than a
-  // copy of the current tab — see `splitPane`; one buffer per file is not a
-  // preference, it is what the autosave/reload story rests on. The gesture that
-  // opens something INTO a new pane is "open in a new pane", on the tree row and
-  // the app row, which is the one people actually reach for.
-  /**
-   * ⌘S / Ctrl-S: save everything and commit, from anywhere in the window.
-   *
-   * It is a real commit point rather than a placebo (`prd/vaults-sync.md`
-   * FR-4): write the buffers, then ask main to commit instead of waiting out
-   * the idle timer, then push — ⌘S is an explicit "save this", so getting it
-   * off-machine matches the intent (D61). The commit has to resolve before the
-   * push, or the push races ahead of the edit ⌘S just committed.
-   *
-   * It lives here rather than in the editor because the board, a task's detail
-   * and the agenda are all places where you have just changed something and
-   * would press it. Every open buffer saves, not the focused one — a window
-   * with two panes has two lots of work in it — and a buffer whose syntax is
-   * mid-edit holds off on its own (FR-16), which is why this asks the registry
-   * for the *gated* writer.
-   */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 's') return
-      e.preventDefault()
-      void saveAllBuffers()
-        .then(() => trpc.sync.commitNow.mutate())
-        .then(() => trpc.sync.pushNow.mutate())
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === '\\') {
-        e.preventDefault()
-        setWorkspace((w) => splitPane(w))
-      }
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [setWorkspace])
-
-  /**
-   * ⌘J goes to the agent.
-   *
-   * Bound here now that there is no drawer to own it. It used to live on the
-   * drawer's `PanelHeader`, which could bind it because the panel stayed mounted
-   * while collapsed; a session tab is mounted only while it is open, so the
-   * shortcut that OPENS one cannot live inside it.
-   */
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!matchHotkey(e, '⌘J')) return
-      e.preventDefault()
-      showAgent()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [showAgent])
-
-  // Create a task in any folder (including one that is not yet a lane, which board
-  // quick-add cannot reach). ⌘T captures quickly and stays put; ⌘⇧T captures and
-  // opens the detail editor to fill in the rest.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 't') return
-      e.preventDefault()
-      openDialog({ id: 'create-task', size: 'md', mode: e.shiftKey ? 'full' : 'quick' })
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [openDialog])
+  // Every app-level key, from the one table (`state/commands.ts`, D102). What
+  // each key does is written beside its row there, not here.
+  useCommandHotkeys()
 
   const tab = activeTab(workspace)
   // Every way a drag can end, including an escape-cancel and a drop that landed

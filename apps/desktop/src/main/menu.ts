@@ -25,9 +25,12 @@ import { app, Menu, type BrowserWindow, type MenuItemConstructorOptions } from '
 /** Main → renderer: open the ritual in dry-run mode. */
 export const TEST_ONBOARDING_CHANNEL = 'dev:test-onboarding'
 
-/** Main → renderer: File → Close Tab (⌘W). The renderer decides which tab that
- *  is — the focused pane's active one — because main has no notion of panes. */
-export const CLOSE_TAB_CHANNEL = 'menu:close-tab'
+/**
+ * Main → renderer: a menu item ran, carrying the id of a row in the renderer's
+ * command table (`state/commands.ts`, D102). The renderer decides what the id
+ * means — which tab ⌘W closes, say — because main has no notion of panes.
+ */
+export const MENU_COMMAND_CHANNEL = 'menu:command'
 
 function fileMenu(getWindow: () => BrowserWindow | null): MenuItemConstructorOptions {
   const isMac = process.platform === 'darwin'
@@ -37,7 +40,7 @@ function fileMenu(getWindow: () => BrowserWindow | null): MenuItemConstructorOpt
       {
         label: 'Close Tab',
         accelerator: 'CmdOrCtrl+W',
-        click: () => getWindow()?.webContents.send(CLOSE_TAB_CHANNEL),
+        click: () => getWindow()?.webContents.send(MENU_COMMAND_CHANNEL, 'tab.close'),
       },
       { type: 'separator' },
       { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' },

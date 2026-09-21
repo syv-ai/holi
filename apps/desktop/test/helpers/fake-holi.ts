@@ -43,7 +43,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
   const appOpenSubs = new Set<(appId: string) => void>()
   const testOnboardingSubs = new Set<() => void>()
-  const closeTabSubs = new Set<() => void>()
+  const menuCommandSubs = new Set<(id: string) => void>()
   let onFlushed: (() => void) | null = null
 
   const subscribe = <T>(subs: Set<(v: T) => void>) => (cb: (v: T) => void) => {
@@ -80,9 +80,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     dev: {
       onTestOnboarding: subscribe(testOnboardingSubs),
     },
-    // File → Close Tab. Same story: the shell subscribes unconditionally.
+    // The menu's command ids. Same story: the shell subscribes unconditionally.
     menu: {
-      onCloseTab: subscribe(closeTabSubs),
+      onCommand: subscribe(menuCommandSubs),
     },
     openExternal: async () => {},
   }
