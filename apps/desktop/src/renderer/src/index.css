@@ -100,6 +100,8 @@
      doing that job. `--shadow-dialog` is untouched — a dialog sits over a
      scrim, which is its own separation. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
+  /* The shade a scroll edge casts over rows that have gone out of sight. */
+  --shadow-scroll-edge: rgb(0 0 0 / 0.32);
   --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* ── Editor chip tokens (per-vault themeable) ────────────────────────
@@ -264,6 +266,7 @@
      smudge rather than elevation. --selection stays brand-derived and needs no
      light arm. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
+  --shadow-scroll-edge: rgb(0 0 0 / 0.14);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -869,6 +872,42 @@
  * any residual utility for the same property. */
 .shadow-popover {
   box-shadow: var(--shadow-popover);
+}
+
+/* A scroller that shades its edges once rows have gone out of sight: a soft
+   shadow along the top while scrolled down, and along the bottom while more
+   remains. Sticky pseudo-elements with negative margins, so they cost no
+   height; `data-scroll-top` / `data-scroll-bottom` are set by the element's
+   own scroll handler (primitives/Command.tsx). */
+.scroll-edges {
+  position: relative;
+}
+.scroll-edges::before,
+.scroll-edges::after {
+  content: '';
+  position: sticky;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: block;
+  height: 14px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.scroll-edges::before {
+  top: 0;
+  margin-bottom: -14px;
+  background: linear-gradient(to bottom, var(--shadow-scroll-edge), transparent);
+}
+.scroll-edges::after {
+  bottom: 0;
+  margin-top: -14px;
+  background: linear-gradient(to top, var(--shadow-scroll-edge), transparent);
+}
+.scroll-edges[data-scroll-top='true']::before,
+.scroll-edges[data-scroll-bottom='true']::after {
+  opacity: 1;
 }
 .shadow-dialog {
   box-shadow: var(--shadow-dialog);

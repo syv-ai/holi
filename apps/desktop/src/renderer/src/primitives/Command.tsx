@@ -1,6 +1,7 @@
 import { Command as CommandPrimitive } from 'cmdk'
 import { SearchIcon } from 'lucide-react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
+import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 
 /**
@@ -113,18 +114,47 @@ function CommandInput({
   )
 }
 
+/**
+ * Mark which edges of a scroller have rows beyond them, so `.scroll-edges`
+ * (index.css) can shade them. Re-measured on scroll and whenever the content
+ * resizes, which is what a filtered list does on every keystroke.
+ */
+function useScrollEdges(ref: React.RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    const el = ref.current
+    if (el === null) return
+    const measure = (): void => {
+      el.dataset.scrollTop = String(el.scrollTop > 0)
+      el.dataset.scrollBottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
+    }
+    measure()
+    el.addEventListener('scroll', measure, { passive: true })
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    observer?.observe(el)
+    for (const child of el.children) observer?.observe(child)
+    return () => {
+      el.removeEventListener('scroll', measure)
+      observer?.disconnect()
+    }
+  }, [ref])
+}
+
 function CommandList({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>): React.JSX.Element {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useScrollEdges(ref)
   return (
     <CommandPrimitive.List
+      ref={ref}
       data-slot="command-list"
       // Taller than the registry's 300px, and the scrollbar is always painted
       // (`.scrollbar-always`, index.css) so the list's length can be read off
-      // the thumb rather than discovered by scrolling.
+      // the thumb rather than discovered by scrolling. `.scroll-edges` shades
+      // the edge that rows have slipped past.
       className={cn(
-        'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
+        'scroll-edges scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
         className,
       )}
       {...props}
