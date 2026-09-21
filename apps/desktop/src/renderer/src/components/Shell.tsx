@@ -211,6 +211,28 @@ export function Shell() {
     setWorkspace(apply)
   }
 
+  /**
+   * File → Close Tab (⌘W): the focused pane's active tab, through the same
+   * close the strip's button takes, so an emptied split plays its exit here too.
+   *
+   * It arrives from main rather than as a keydown because ⌘W is the menu's
+   * accelerator, and a menu accelerator fires before the page sees the key
+   * (`main/menu.ts`). With a single pane the last tab leaves it empty; with
+   * nothing open at all, `closeTab` at `-1` is a no-op. An EMPTY pane in a
+   * split does go, which is what ⌘\ then ⌘W should do.
+   *
+   * Held in a ref so the subscription is made once: the handler closes over
+   * the current workspace and is rebuilt every render, and re-subscribing on
+   * each of those would be churn for nothing.
+   */
+  const closeActiveTab = useRef<() => void>(() => {})
+  closeActiveTab.current = () => {
+    const focused = workspace.panes[workspace.active]
+    if (focused === undefined) return
+    closeTabWithExit(workspace.active, focused.active)
+  }
+  useEffect(() => window.holi.menu.onCloseTab(() => closeActiveTab.current()), [])
+
   /** Not a plain setter: going to the agent in a vault with no live session
    *  starts one, and that rule lives with the sessions (`showAgentAtom`). */
   const showAgent = useSetAtom(showAgentAtom)

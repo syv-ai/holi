@@ -470,6 +470,36 @@ describe('closing the last tab of a split', () => {
   })
 })
 
+/**
+ * ⌘W is `closeTab` at the focused pane's active index — the shell computes
+ * exactly this, so these pin what the key does at the edges the strip's close
+ * button never reaches: a pane with nothing in it.
+ */
+describe("⌘W: the focused pane's active tab", () => {
+  const closeActive = (w: Workspace) => closeTab(w, activePane(w)!.active)
+
+  it('closes the active tab of the focused pane, not of the first one', () => {
+    const w = closeActive({ ...split(), active: 1 })
+
+    expect(layout(w)).toEqual([['a.md', 'b.md']])
+    expect(w.active).toBe(0)
+  })
+
+  it('does nothing when nothing is open', () => {
+    const one = emptyWorkspace()
+
+    expect(closeActive(one)).toEqual(one)
+  })
+
+  it('takes an empty pane out of a split, the same as emptying it would', () => {
+    // ⌘\ then ⌘W: the pane ⌘\ made goes again, and focus returns.
+    const w = closeActive(splitPane(openPreview(emptyWorkspace(), 'a.md')))
+
+    expect(layout(w)).toEqual([['a.md']])
+    expect(w.active).toBe(0)
+  })
+})
+
 describe('focusPane', () => {
   it('moves the focus', () => {
     expect(focusPane(split(), 1).active).toBe(1)

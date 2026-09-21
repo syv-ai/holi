@@ -51,6 +51,12 @@ declare global {
       dev: {
         onTestOnboarding(cb: () => void): () => void
       }
+      /** The application menu's items that act on the renderer. ⌘W is a menu
+       *  accelerator, which fires before any keydown reaches the page, so
+       *  Close Tab arrives here rather than as a key. Returns its unsubscribe. */
+      menu: {
+        onCloseTab(cb: () => void): () => void
+      }
       openExternal(url: string): Promise<void>
       /** Reveal a local path — a vault's clone folder — in the system file
        *  manager (Finder on macOS), selected in its parent. */

@@ -158,6 +158,13 @@ leaves a permanent empty column that only a second, separate gesture could remov
 never goes** — an empty pane is the empty-editor state, and a workspace with no panes has nothing to
 render into. A pane holding ten tabs closes in one gesture, from a control in its own strip.
 
+**⌘W closes the focused pane's active tab**, through the same rules: a split it empties goes with
+it, a single pane stays open and empty, and with nothing open the key does nothing. The window closes
+on ⌘⇧W (VS Code's convention) or its traffic light, never on ⌘W. The key is the application menu's
+*File → Close Tab* accelerator rather than a renderer keydown, because a menu accelerator fires
+before the page sees the key; main sends it over, and the shell decides which tab it means. Closing a
+session tab does not end the session (D101).
+
 **The focused pane is the one "open" means**, and it follows both the pointer and the keyboard
 (`onPointerDownCapture` + `onFocusCapture`, so putting a caret in an editor moves it too). The
 unfocused pane's active pill keeps its shape and loses its weight, which is the whole of the cue.

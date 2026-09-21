@@ -12,11 +12,41 @@
  * onboarding ritual against nothing — no repo, no vault, no writes — which is a
  * tool for whoever is building the ritual, not a thing to hand someone who just
  * installed Holi. Shipping it is a one-line change if that judgement is wrong.
+ *
+ * **File is spelled out rather than taken from the `fileMenu` role.** The stock
+ * one is a single *Close Window* on ⌘W, and a menu accelerator fires before the
+ * renderer ever sees the key — so ⌘W closed the window, which in a
+ * tray-resident app reads as "quits", and no renderer handler could take it
+ * back while the menu held it. Here ⌘W is *Close Tab*, sent to the renderer,
+ * and the window closes on ⌘⇧W (VS Code's convention) or its traffic light.
  */
 import { app, Menu, type BrowserWindow, type MenuItemConstructorOptions } from 'electron'
 
 /** Main → renderer: open the ritual in dry-run mode. */
 export const TEST_ONBOARDING_CHANNEL = 'dev:test-onboarding'
+
+/** Main → renderer: File → Close Tab (⌘W). The renderer decides which tab that
+ *  is — the focused pane's active one — because main has no notion of panes. */
+export const CLOSE_TAB_CHANNEL = 'menu:close-tab'
+
+function fileMenu(getWindow: () => BrowserWindow | null): MenuItemConstructorOptions {
+  const isMac = process.platform === 'darwin'
+  return {
+    label: 'File',
+    submenu: [
+      {
+        label: 'Close Tab',
+        accelerator: 'CmdOrCtrl+W',
+        click: () => getWindow()?.webContents.send(CLOSE_TAB_CHANNEL),
+      },
+      { type: 'separator' },
+      { role: 'close', accelerator: 'CmdOrCtrl+Shift+W' },
+      // Quit lives in the app menu on macOS; the stock File menu carries it
+      // everywhere else, and losing it would leave the tray as the only exit.
+      ...(isMac ? [] : [{ type: 'separator' as const }, { role: 'quit' as const }]),
+    ],
+  }
+}
 
 function developerMenu(getWindow: () => BrowserWindow | null): MenuItemConstructorOptions {
   return {
@@ -50,7 +80,7 @@ export function installAppMenu(getWindow: () => BrowserWindow | null): void {
     // `appMenu` is the About/Services/Hide/Quit block macOS expects under the
     // app's own name. It does not exist on other platforms.
     ...(isMac ? [{ role: 'appMenu' as const }] : []),
-    { role: 'fileMenu' },
+    fileMenu(getWindow),
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },

@@ -70,6 +70,10 @@ const onAppOpen = pushChannel<string>('apps:open')
  *  channel simply never fires there. */
 const onTestOnboarding = pushChannel<void>('dev:test-onboarding')
 
+/** File → Close Tab (⌘W). The accelerator is the menu's, so the key never
+ *  reaches the renderer as a keydown; this is how it arrives instead. */
+const onCloseTab = pushChannel<void>('menu:close-tab')
+
 /** The ONE seam between renderer and main (architecture §8). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
@@ -88,6 +92,9 @@ contextBridge.exposeInMainWorld('holi', {
   },
   dev: {
     onTestOnboarding,
+  },
+  menu: {
+    onCloseTab,
   },
   openExternal: (url: string) => ipcRenderer.invoke('holi:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('holi:openPath', path),
