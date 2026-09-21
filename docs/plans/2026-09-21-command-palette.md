@@ -174,19 +174,19 @@ effect), `state/commands.ts` (the stub from Task 3) · test `test/recents.test.t
 **Behaviour:** The active vault has a most-recent-first list of `{ kind, key }` entries, capped
 at 50, that survives a restart. Activating any tab records it; running any command records it.
 
-- [ ] `lib/recents.ts`: `type RecentKind = 'path' | 'app' | 'session' | 'surface' | 'command'`;
+- [x] `lib/recents.ts`: `type RecentKind = 'path' | 'app' | 'session' | 'surface' | 'command'`;
       `RecentEntry = { kind: RecentKind; key: string }`; `touch(list, entry, cap = 50)` moves or
       inserts at the front; `prune(list, isLive: (e) => boolean)`.
-- [ ] `state/recents.ts`: `recentsByVaultAtom = atomWithStorage<Record<string, RecentEntry[]>>('holi:recents', {})`;
+- [x] `state/recents.ts`: `recentsByVaultAtom = atomWithStorage<Record<string, RecentEntry[]>>('holi:recents', {})`;
       `recentsAtom` reads the active remote's list; `touchRecentAtom(entry)` writes through
       `touch`. No remote, no write.
-- [ ] Shell: an effect on `activeTab(workspace)` that maps a tab to an entry (`note` → `path`,
+- [x] Shell: an effect on `activeTab(workspace)` that maps a tab to an entry (`note` → `path`,
       `app` → `app`, `session` → `session`, singleton → `surface`) and touches it. One place,
       so the tree, the strip and the palette all count.
-- [ ] node test: `touch` moves an existing entry to the front without duplicating; caps; `prune`
+- [x] node test: `touch` moves an existing entry to the front without duplicating; caps; `prune`
       drops what `isLive` refuses and keeps order.
-- [ ] Verify: node test passes; in the app, `localStorage['holi:recents']` fills as tabs change.
-- [ ] Commit: `feat(state): recents per vault`.
+- [x] Verify: node test passes; in the app, `localStorage['holi:recents']` fills as tabs change.
+- [x] Commit: `feat(state): recents per vault`.
 
 ### Task 5: rows and ranking
 
@@ -196,25 +196,25 @@ test `test/palette-rows.test.ts`
 **Behaviour:** Given the snapshot, the app ids, the live sessions, the recents and a query, a
 pure function returns the rows to show, in order, capped. `>` strips itself before scoring.
 
-- [ ] `PaletteRow = { kind: RecentKind minus 'command'; key: string; name: string; detail?: string; icon: string | { kind: 'emoji'; value: string }; dim?: boolean }`.
-- [ ] `buildRows({ snapshot, appIds, sessions, activeRemote })`: `snapshot.docs` and
+- [x] `PaletteRow = { kind: RecentKind minus 'command'; key: string; name: string; detail?: string; icon: string | { kind: 'emoji'; value: string }; dim?: boolean }`.
+- [x] `buildRows({ snapshot, appIds, sessions, activeRemote })`: `snapshot.docs` and
       `snapshot.files` minus `isHiddenPath` (from `@holi/shared`), `detail` = folder, `dim` when
       in `snapshot.ignored`, emoji from `snapshot.icons[path]`; one row per app id; one per
       session that has not exited, named by the session; five surface rows with the
       `TAB_NAME` labels the strip uses.
-- [ ] `rankRows(rows, query, recents, cap = 50)`: empty query → recents that still exist, in
+- [x] `rankRows(rows, query, recents, cap = 50)`: empty query → recents that still exist, in
       order, then the newest-modified docs up to the cap; typed → `commandScore(name, q)` with
       a fallback to `commandScore(key, q)` at a discount, zero dropped, stable sort by score
       with recents order as the tie-break, capped. `command-score` has no types: declare the
       module in `global.d.ts` or a `types/` shim.
-- [ ] `commandQuery(query)`: `null` unless it starts with `>`, else the rest trimmed.
+- [x] `commandQuery(query)`: `null` unless it starts with `>`, else the rest trimmed.
       `rankCommands(commands, query, recents)`: `when` false dropped; empty → recently used
       first then the rest by label; typed → scored on label.
-- [ ] node test: hidden and `.holi/` paths absent; emoji rows; empty-query order is recents then
+- [x] node test: hidden and `.holi/` paths absent; emoji rows; empty-query order is recents then
       modified time; `'>spl'` scores "Split pane" first; a dead session's recent is pruned; the
       cap holds; a query matching a folder name still finds the file through `key`.
-- [ ] Verify: node test passes.
-- [ ] Commit: `feat(palette): rows and ranking as pure functions`.
+- [x] Verify: node test passes.
+- [x] Commit: `feat(palette): rows and ranking as pure functions`.
 
 ### Task 6: the palette
 
@@ -228,11 +228,11 @@ pinned, ⌘Enter opens beside; `>` lists commands with their glyphs; ⌘⇧P ope
 open moves the selection down; Escape closes and focus returns. The palette closes before the
 chosen action runs.
 
-- [ ] `state/palette.ts`: `paletteAtom = atom<{ open: boolean; query: string; step: number }>`;
+- [x] `state/palette.ts`: `paletteAtom = atom<{ open: boolean; query: string; step: number }>`;
       `openPaletteAtom(mode)`: closed → `{ open: true, query: mode === 'commands' ? '>' : '' }`;
       already open and mode `'commands'` → query `'>'`; already open and mode `'open'` →
       `step + 1`. `closePaletteAtom`.
-- [ ] `CommandPalette.tsx`: `CommandDialog` on `paletteAtom.open`, `Command shouldFilter={false}`,
+- [x] `CommandPalette.tsx`: `CommandDialog` on `paletteAtom.open`, `Command shouldFilter={false}`,
       `CommandInput` bound to `query`; rows from `rankRows` or `rankCommands` by
       `commandQuery`; a `CommandGroup` "Recently opened" / "Recently used" for the rows that
       came from recents and one for the rest; each row's `onSelect` closes first, then acts:
@@ -242,16 +242,16 @@ chosen action runs.
       `step` change dispatches `new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })`
       on the cmdk root, which is how cmdk moves selection. The command rows render the glyph
       through `Kbd`.
-- [ ] Shell mounts `<CommandPalette />` beside `<DialogHost />`.
-- [ ] dom test: seed `snapshotAtom` with three docs and `recentsByVaultAtom` with one; press
+- [x] Shell mounts `<CommandPalette />` beside `<DialogHost />`.
+- [x] dom test: seed `snapshotAtom` with three docs and `recentsByVaultAtom` with one; press
       ⌘P (`userEvent.keyboard('{Meta>}p{/Meta}')` after `useCommandHotkeys` is mounted in a
       small harness component); the recent doc is first; type part of another name; Enter puts
       that path pinned in `workspaceAtom`; the palette is closed. `'>'` shows "Split pane" with
       `⌘\`; Enter on it adds a pane. ⌘⇧P opens with `>` already in the input. Escape closes.
-- [ ] Verify: dom suite passes; `pnpm lint` 0 errors (the feature imports `primitives`,
+- [x] Verify: dom suite passes; `pnpm lint` 0 errors (the feature imports `primitives`,
       `composites`, `state`, `lib` only); live over CDP: ⌘P then Enter returns to the previous
       file.
-- [ ] Commit: `feat(palette): ⌘P quick open and > commands`.
+- [x] Commit: `feat(palette): ⌘P quick open and > commands`.
 
 ### Task 7: the Ask row
 
@@ -264,14 +264,14 @@ assistant: <query>". Choosing it closes the palette and sends the text through
 that tab comes forward (D100), starting a session named from the text when the target is
 `'new'`.
 
-- [ ] Append the row after the capped results, never scored, `icon` the agent's; `onSelect`
+- [x] Append the row after the capped results, never scored, `icon` the agent's; `onSelect`
       closes then `set(sendToAgentAtom, { text, target: get(defaultAgentTargetAtom) })`.
-- [ ] dom test: type "why is the board empty", arrow up to the last row, Enter; the fake
+- [x] dom test: type "why is the board empty", arrow up to the last row, Enter; the fake
       `window.holi.agent.paste` (or `startSessionAtom`'s call) received the text and the
       palette is closed.
-- [ ] Verify: dom suite passes; live: a sentence, Enter on Ask, the session tab shows it in the
+- [x] Verify: dom suite passes; live: a sentence, Enter on Ask, the session tab shows it in the
       input box.
-- [ ] Commit: `feat(palette): ask the assistant from the palette`.
+- [x] Commit: `feat(palette): ask the assistant from the palette`.
 
 ### Task 8: consolidate D102
 
@@ -284,13 +284,13 @@ table), `docs/decisions.md` (D102 leaves the inbox for the table, status paragra
 **Behaviour:** The living docs describe what is built; no doc calls the palette absent; the
 onboarding ritual promises a key that exists.
 
-- [ ] `prd/command-palette.md`: what it lists, the two modes, recents, the Ask row, the table
+- [x] `prd/command-palette.md`: what it lists, the two modes, recents, the Ask row, the table
       and its invariants, out of scope (rebinding, other prefixes, titles), with the spec
       linked as design of record.
-- [ ] The three amendments and the decisions row, matching the D101 row's shape.
-- [ ] Verify: `pnpm exec prettier --check` on the new PRD; `pnpm lint`; the dom suite (the
+- [x] The three amendments and the decisions row, matching the D101 row's shape.
+- [x] Verify: `pnpm exec prettier --check` on the new PRD; `pnpm lint`; the dom suite (the
       onboarding test renders that act).
-- [ ] Commit: `docs: consolidate D102, the command palette`.
+- [x] Commit: `docs: consolidate D102, the command palette`.
 
 ## End-to-end verification
 

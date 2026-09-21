@@ -162,8 +162,9 @@ render into. A pane holding ten tabs closes in one gesture, from a control in it
 it, a single pane stays open and empty, and with nothing open the key does nothing. The window closes
 on ⌘⇧W (VS Code's convention) or its traffic light, never on ⌘W. The key is the application menu's
 *File → Close Tab* accelerator rather than a renderer keydown, because a menu accelerator fires
-before the page sees the key; main sends it over, and the shell decides which tab it means. Closing a
-session tab does not end the session (D101).
+before the page sees the key; main sends the command id, and the `tab.close` row of the command table
+([`command-palette.md`](command-palette.md)) decides which tab it means. Closing a session tab does
+not end the session (D101).
 
 **The focused pane is the one "open" means**, and it follows both the pointer and the keyboard
 (`onPointerDownCapture` + `onFocusCapture`, so putting a caret in an editor moves it too). The

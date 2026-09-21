@@ -26,6 +26,7 @@ The living documentation for Holi. The PRDs, architecture, and vision are the **
 | [prd/google-mail-calendar.md](prd/google-mail-calendar.md) | @syv.ai Gmail + Calendar: triage, the sandboxed reader, the composer, meetings |
 | [prd/pdf-export.md](prd/pdf-export.md) | Markdown → branded syv.ai PDFs via Typst, as a vault skill |
 | [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: the per-app `holi-app://` origin, app tabs, the `holi.*` bridge, the authoring skill. Slices 1–2 shipped; app **state** is still undecided, see [not-built.md](not-built.md) |
+| [prd/command-palette.md](prd/command-palette.md) | ⌘P quick open over everything openable, `>` commands, ask the assistant, recents; and the one table of commands the keys, menu and palette share (D102) |
 
 ## Designed, not built
 Not PRDs, because they describe nothing that exists — *yet*. [not-built.md](not-built.md) owns their status, and a doc graduates into the table above when it ships.

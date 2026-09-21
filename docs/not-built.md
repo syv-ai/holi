@@ -58,7 +58,7 @@ missed. Nothing here is blocked on design; each is additive against the surface 
   state question and nothing else.
 - The `utilityProcess` **backend** (`server.mjs`) and **personal apps** in `userData/apps/` —
   each waits for an app that needs it.
-- **Auto-reload** and a **command-palette** entry — deliberately not second surfaces.
+- **Auto-reload** — deliberately not a second surface. (The command-palette entry was the other half of this line until D102 built it, 2026-09-21.)
 
 No longer absent, as of slice 2 (2026-08-20): the app **manifest** (`app.yaml`, now the
 registration marker), a `holi` CLI the agent can type (`app open`, `app init`, `seed refresh`),

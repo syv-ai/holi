@@ -569,7 +569,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
 
               <div className="obrit-hotkeys">
                 <div className="obrit-hotkey">
-                  <kbd className="obrit-kbd">⌘K</kbd>
+                  <kbd className="obrit-kbd">⌘P</kbd>
                   <span className="obrit-hotkey-label">command palette</span>
                 </div>
                 <div className="obrit-hotkey">
