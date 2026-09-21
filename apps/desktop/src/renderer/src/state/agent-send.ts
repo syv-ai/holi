@@ -122,6 +122,27 @@ export const duplicateSessionAtom = atom(
 )
 
 /**
+ * End a session and start another in its place, under its name (D101).
+ *
+ * Main does the ending and the naming: which names are real is its rule, and
+ * the renderer only ever holds the derived string. What the renderer adds is
+ * the geometry, so the new terminal is born at the size the old one had, and
+ * the landing, which is what any spawn owes the app.
+ */
+export const restartSessionAtom = atom(
+  null,
+  async (get, set, id: string): Promise<{ ok: boolean; message?: string }> => {
+    const { cols, rows } = get(agentGeometryAtom)
+    const res = await window.holi.agent.restart(id, { cols, rows })
+    if (!res.ok || res.id === undefined) {
+      return { ok: false, ...(res.message === undefined ? {} : { message: res.message }) }
+    }
+    land(get, set, res.id)
+    return { ok: true }
+  },
+)
+
+/**
  * Go to the agent: ⌘J.
  *
  * Opens the current session's tab, or starts one when the vault has none —

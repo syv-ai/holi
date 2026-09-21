@@ -129,8 +129,9 @@ a terminal that unmounts throws away its scrollback and has to replay main's mir
 it back. **Closing a tab does not end the session**: a tab is a view, the PTY keeps
 running, and the sidebar's sessions list is how you get back to it. That list is also
 where a session is started, resumed, renamed, duplicated, restarted and ended. **It is
-always present**, unlike the apps section, and shows a row that starts one when the vault
-has none: it is the only place a first session can be started with the mouse.
+always present**, unlike the apps section, headed "chats", with the `+` beside the heading
+as the way in when the vault has none: it is the only place a first session can be started
+with the mouse.
 
 **There is no Claude control in the footer.** There was, and it reduced every session to
 one dot while a session's state had nowhere else to live — the drawer hid them and the
@@ -150,7 +151,26 @@ command.
 **Duplicating one forks the conversation**, `--resume <id> --fork-session`, where the id is
 Claude Code's own — read out of the listing at the moment of the fork and never stored,
 which is the difference between using that id and keying a session by it. The original
-keeps running and neither copy sees the other's turns.
+keeps running and neither copy sees the other's turns. **It needs a turn to copy.** A fresh
+session is listed with an id from `SessionStart`, but Claude Code has no transcript under
+it until a prompt goes in, and `--resume` of that id fails with "No conversation found"
+inside the copy. So Holi refuses to duplicate a session that has not had a turn (the hook
+bracket says; a fork counts as born with one) rather than spawn a copy that dies on
+arrival.
+
+**Restarting one ends it and starts a new one under its name.** A genuinely new session,
+not the same one reborn: restarting a process is what this is, and the conversation does
+not survive it. The name does, because it was chosen for the work and not for the process;
+a placeholder is not carried over, for `deriveName`'s reason. Main does both halves, since
+main is where the rule for which names are real lives.
+
+**Escaping the resume picker leaves nothing behind.** Bare `--resume` puts Claude Code's
+picker in the terminal, and ESC there exits the process non-zero. That is a cancel, not a
+crash: no conversation was opened and none is lost. So a resume session that exits
+non-zero before its first turn is dropped rather than kept as an exited record — no
+"[session ended]" in a dead tab, and the tab closes with the session, the way any tab of a
+session that has left the list does. A picker exited cleanly (`/exit`), or one whose pick
+was then used, is an ordinary exit and stays to be read.
 
 **Their names are Claude Code's own**, and Holi keeps none of its own beside them. A name
 comes from `--name` at spawn, `/rename` inside, an accepted plan, or — for a session

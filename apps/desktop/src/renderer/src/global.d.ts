@@ -109,6 +109,13 @@ declare global {
          *  Main resolves Claude Code's own session id; the renderer never holds
          *  one. Refused when the listing cannot say what to fork. */
         duplicate(id: string): Promise<{ ok: boolean; id?: string; message?: string }>
+        /** End this session and start a new one under its name, at this
+         *  geometry. Main decides which names are real; a placeholder is not
+         *  carried over. */
+        restart(
+          id: string,
+          geometry?: { cols?: number; rows?: number },
+        ): Promise<{ ok: boolean; id?: string; message?: string }>
         /** End one session and drop it from the list. */
         kill(id: string): Promise<{ ok: true }>
         write(id: string, data: string): void

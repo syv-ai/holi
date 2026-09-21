@@ -1047,6 +1047,10 @@ describe('duplicating a session', () => {
     fake.fire()
     await tick()
 
+    // A turn went in, so there is a conversation to fork.
+    r.manager.setTurnActive(id, true)
+    r.manager.setTurnActive(id, false)
+
     const res = await r.manager.duplicate(id)
 
     expect(res.ok).toBe(true)
@@ -1063,6 +1067,9 @@ describe('duplicating a session', () => {
     fake.fire()
     await tick()
 
+    r.manager.setTurnActive(id, true)
+    r.manager.setTurnActive(id, false)
+
     await r.manager.duplicate(id)
     expect(r.spawns[1]!.args.slice(0, 2)).toEqual(['--name', 'Fix the merge (copy)'])
   })
@@ -1076,8 +1083,50 @@ describe('duplicating a session', () => {
     fake.fire()
     await tick()
 
+    r.manager.setTurnActive(id, true)
+    r.manager.setTurnActive(id, false)
+
     await r.manager.duplicate(id)
     expect(r.spawns[1]!.args).not.toContain('--name')
+  })
+
+  it('refuses before the session has had a turn, whatever the listing says', async () => {
+    // A fresh session IS listed, with an id from `SessionStart`, but there is
+    // no transcript under it yet: forking that id printed "No conversation
+    // found with session ID" into the copy and exited it. The turn, not the
+    // id, is what says there is something to copy.
+    const { r, fake } = await forkable()
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle', sessionId: 'fresh' }])
+    fake.fire()
+    await tick()
+
+    const res = await r.manager.duplicate(id)
+
+    expect(res.ok).toBe(false)
+    expect(res.message).toMatch(/not had a turn/)
+    expect(r.spawns).toHaveLength(1)
+  })
+
+  it('takes a fork as having a conversation from birth', async () => {
+    // It is a copy of one that exists, so a copy of the copy needs no new turn.
+    const { r, fake } = await forkable()
+    const id = await r.start()
+    r.manager.setTurnActive(id, true)
+    r.manager.setTurnActive(id, false)
+    fake.setRows([{ pid: 1000, name: 'repo', status: 'idle', sessionId: 'orig' }])
+    fake.fire()
+    await tick()
+    const copy = await r.manager.duplicate(id)
+    fake.setRows([
+      { pid: 1000, name: 'repo', status: 'idle', sessionId: 'orig' },
+      { pid: 1001, name: 'repo', status: 'idle', sessionId: 'copied' },
+    ])
+    fake.fire()
+    await tick()
+
+    expect((await r.manager.duplicate(copy.id!)).ok).toBe(true)
+    expect(r.spawns[2]!.args).toEqual(['--resume', 'copied', '--fork-session'])
   })
 
   it('refuses when the listing has not said what to fork', async () => {
@@ -1095,6 +1144,94 @@ describe('duplicating a session', () => {
   it('refuses an id it has never heard of', async () => {
     const r = await rig()
     expect((await r.manager.duplicate('nobody')).ok).toBe(false)
+  })
+})
+
+describe('restarting a session', () => {
+  it('ends it and starts a new one under its name', async () => {
+    const r = await rig()
+    const id = await r.start({ name: 'Fix the merge' })
+
+    const res = await r.manager.restart(id)
+
+    expect(res.ok).toBe(true)
+    expect(res.id).not.toBe(id)
+    // A new process, not the same one reborn: the old is gone, not exited.
+    expect(r.manager.sessions().map((s) => s.id)).toEqual([res.id])
+    expect(r.spawns[1]!.args).toEqual(['--name', 'Fix the merge'])
+    expect(r.session(res.id!).name).toBe('Fix the merge')
+  })
+
+  it('carries a rename over, which is the name the person will look for', async () => {
+    const fake = fakeRegistry()
+    const r = await rig({
+      sessionRegistry: fake.registry,
+      resolveConfigDir: () => Promise.resolve({ dir: CONFIG_DIR, firstSpawn: false }),
+    })
+    const id = await r.start()
+    fake.setRows([{ pid: 1000, name: 'repo-d9', status: 'idle' }])
+    fake.fire()
+    await tick()
+    fake.setRows([{ pid: 1000, name: 'Drafting the PRD', status: 'idle' }])
+    fake.fire()
+    await tick()
+    expect(r.session(id).name).toBe('Drafting the PRD')
+
+    await r.manager.restart(id)
+
+    expect(r.spawns[1]!.args).toEqual(['--name', 'Drafting the PRD'])
+  })
+
+  it('does not turn the placeholder into a name', async () => {
+    const r = await rig()
+    const id = await r.start()
+
+    await r.manager.restart(id)
+
+    expect(r.spawns[1]!.args).not.toContain('--name')
+  })
+
+  it('refuses an id it has never heard of', async () => {
+    const r = await rig()
+    expect((await r.manager.restart('nobody')).ok).toBe(false)
+  })
+})
+
+describe('a resume picker that was escaped', () => {
+  it('leaves nothing behind: no session, no exit notice', async () => {
+    // ESC in Claude Code's picker exits the process non-zero. Nothing was
+    // opened and nothing is lost, so nothing is kept to read either.
+    const r = await rig()
+    await r.manager.start({ vaultId: VAULT, resume: true })
+
+    r.pty().exit(1)
+    await tick()
+
+    expect(r.manager.sessions()).toEqual([])
+    expect(r.pushed()).toEqual([])
+    expect(r.sent.filter((m) => m.channel === 'agent-pty:exit')).toEqual([])
+  })
+
+  it('is an ordinary exit once a picked conversation has been used', async () => {
+    const r = await rig()
+    const { id } = await r.manager.start({ vaultId: VAULT, resume: true })
+    r.manager.setTurnActive(id, true)
+    r.manager.setTurnActive(id, false)
+
+    r.pty().exit(1)
+    await tick()
+
+    expect(r.session(id).exited).toBe(true)
+  })
+
+  it('keeps a picker that exited cleanly, which is /exit rather than ESC', async () => {
+    const r = await rig()
+    const { id } = await r.manager.start({ vaultId: VAULT, resume: true })
+
+    r.pty().exit(0)
+    await tick()
+
+    expect(r.session(id).exited).toBe(true)
   })
 })
 

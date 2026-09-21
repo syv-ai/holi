@@ -236,6 +236,12 @@ export interface AgentManager {
   /** Fork one session's conversation into a new one (D101). Refuses when the
    *  listing cannot say which conversation it is. */
   duplicate(id: string): Promise<{ ok: boolean; id?: string; message?: string }>
+  /** End one session and start a new one under its name, at the given
+   *  geometry. Unknown ids are refused. */
+  restart(
+    id: string,
+    geometry?: { cols?: number; rows?: number },
+  ): Promise<{ ok: boolean; id?: string; message?: string }>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
   /** End one session and drop it from the list. Unknown ids are a no-op. */
@@ -267,6 +273,20 @@ interface Session {
   /** The bearers minted for this session, revoked when it ends. */
   googleToken: string | null
   hookToken: string | null
+  /**
+   * Does Claude Code have a conversation for it yet?
+   *
+   * True once a prompt has been submitted in it (the hook bracket's start), or
+   * from birth for a fork, which is a copy of a conversation that exists. Before
+   * that the listing already carries a session id — Claude Code mints one at
+   * `SessionStart` — but there is no transcript under it, and `--resume` of that
+   * id fails with "No conversation found". So this, not the id, is what says
+   * whether there is anything to duplicate.
+   */
+  hadTurn: boolean
+  /** Spawned with bare `--resume`: Claude Code's picker is the first thing in
+   *  the terminal, and escaping it exits the process. */
+  resumePick: boolean
   /** The clone dir the session launched in — the root its config fingerprint is
    *  read from. Held so a vault switch can't point the check at the wrong tree. */
   root: string
@@ -680,6 +700,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       vaultId: args.vaultId,
       googleToken,
       hookToken,
+      // A fork is born with a conversation; everything else gets one at its
+      // first prompt.
+      hadTurn: args.forkOf !== undefined,
+      resumePick: args.resume === true,
       root: workRoot,
       configDir: config?.dir ?? null,
       runtime,
@@ -702,8 +726,25 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       terminal.write(data) // the mirror is the record; the renderer is a view
       if (session.attached) send('agent-pty:data', { id, data })
     })
+    /** Set once this session has been dropped from inside its own exit, so the
+     *  teardown's kill — which a fake PTY answers with a second exit — reports
+     *  nothing about a session that is already gone. */
+    let dropped = false
     runtime.onExit((e) => {
+      if (dropped) return
       log(`session ${id} exited (code ${e.exitCode})`)
+      // A resume picker escaped before anything was picked. Claude Code exits
+      // non-zero, and what that means is that nothing happened: no conversation
+      // was opened and none is lost. So there is nothing to read, and the
+      // honest answer is to leave nothing behind — no "[session ended]" in a
+      // dead tab, no card in the sidebar. The renderer closes the tab of a
+      // session that has left the list, and this session leaves it.
+      if (session.resumePick && !session.hadTurn && e.exitCode !== 0) {
+        dropped = true
+        void teardown(session)
+        pushSessions()
+        return
+      }
       // The session stays in the list with its scrollback: an exit is something
       // to read, not a tab that disappears from under the reader. It leaves the
       // working set at once, though — nothing is going to end that turn now.
@@ -804,8 +845,22 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     if (changed) pushSessions()
   }
 
-  // Named rather than returned as a literal: `duplicate` is a spawn, and a
-  // spawn goes through `start` so it queues on the same chain as every other.
+  /**
+   * The name a session has of its own, or undefined for the placeholder.
+   *
+   * What `duplicate` and `restart` carry across: "New session (copy)" would
+   * turn the placeholder into a real name, which is the one thing `deriveName`
+   * exists to avoid, and a restarted placeholder is still a placeholder.
+   */
+  const ownName = (session: Session): string | undefined => {
+    const pid = session.runtime.pid
+    const label = deriveName(session, pid === null ? undefined : rows.get(pid))
+    return label === NEW_SESSION ? undefined : label
+  }
+
+  // Named rather than returned as a literal: `duplicate` and `restart` are
+  // spawns, and a spawn goes through `start` so it queues on the same chain as
+  // every other.
   const api: AgentManager = {
     start(args) {
       // Every start queues behind every other one, failures included: the chain
@@ -871,6 +926,12 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     duplicate: async (id) => {
       const session = sessions.get(id)
       if (session === undefined) return { ok: false, message: 'That session has ended.' }
+      // Before the listing check, because it is the more useful answer: a fresh
+      // session IS listed, with an id, and forking that id is what printed "No
+      // conversation found with session ID" into the copy. See `hadTurn`.
+      if (!session.hadTurn) {
+        return { ok: false, message: 'Nothing to copy yet: this session has not had a turn.' }
+      }
       const pid = session.runtime.pid
       const row = pid === null ? undefined : rows.get(pid)
       if (row?.sessionId === undefined) {
@@ -882,16 +943,43 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
           message: 'Claude Code has not said which conversation this is yet. Try again shortly.',
         }
       }
-      // A copy says so. Only when the original has a name of its own, though:
-      // "New session (copy)" would turn a placeholder into a real name, which is
-      // the one thing `deriveName` exists to avoid.
-      const label = session.lastName
-      const name = label === null || label === NEW_SESSION ? undefined : `${label} (copy)`
+      // A copy says so, when the original has a name of its own to say it with.
+      const label = ownName(session)
+      const name = label === undefined ? undefined : `${label} (copy)`
       try {
         return await api.start({
           vaultId: session.vaultId,
           forkOf: row.sessionId,
           ...(name === undefined ? {} : { name }),
+        })
+      } catch (err) {
+        return { ok: false, message: err instanceof Error ? err.message : String(err) }
+      }
+    },
+
+    /**
+     * End one session and start another in its place.
+     *
+     * A genuinely new session rather than the same one reborn — restarting a
+     * process is what this is, and saying otherwise would pretend a
+     * conversation survived that did not. What does carry over is the name:
+     * it was chosen for the work, not for the process, and a rename lost to a
+     * restart was the thing the person noticed first. Read here, in main,
+     * where the rule for which names are real already lives; the renderer only
+     * ever sees the derived string.
+     */
+    restart: async (id, geometry = {}) => {
+      const session = sessions.get(id)
+      if (session === undefined) return { ok: false, message: 'That session has ended.' }
+      const name = ownName(session)
+      await teardown(session)
+      pushSessions()
+      try {
+        return await api.start({
+          vaultId: session.vaultId,
+          ...(name === undefined ? {} : { name }),
+          ...(geometry.cols === undefined ? {} : { cols: geometry.cols }),
+          ...(geometry.rows === undefined ? {} : { rows: geometry.rows }),
         })
       } catch (err) {
         return { ok: false, message: err instanceof Error ? err.message : String(err) }
@@ -960,9 +1048,13 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     setTurnActive: (sessionId, active) => {
       // A stray or late hook must not pause a vault on behalf of a session that
       // is gone — the token is revoked with the session, so this is belt only.
-      if (!sessions.has(sessionId)) return
-      if (active) coordinator.begin(sessionId)
-      else coordinator.end(sessionId)
+      const session = sessions.get(sessionId)
+      if (session === undefined) return
+      if (active) {
+        // A prompt went in, so Claude Code has a transcript for it from here on.
+        session.hadTurn = true
+        coordinator.begin(sessionId)
+      } else coordinator.end(sessionId)
       // A turn boundary moves every derived field, and it is a moment Holi knows
       // about without waiting for a watcher edge.
       void refreshRows()

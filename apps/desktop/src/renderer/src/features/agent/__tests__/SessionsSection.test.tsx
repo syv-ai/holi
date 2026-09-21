@@ -25,6 +25,7 @@ const REMOTE = 'owner/repo'
 const kill = vi.fn()
 const start = vi.fn()
 const duplicate = vi.fn()
+const restart = vi.fn()
 const paste = vi.fn()
 
 const session = (over: Partial<AgentSession> & { id: string }): AgentSession => ({
@@ -42,6 +43,8 @@ beforeEach(() => {
   start.mockResolvedValue({ ok: true, id: 'spawned' })
   duplicate.mockReset()
   duplicate.mockResolvedValue({ ok: true, id: 'copy' })
+  restart.mockReset()
+  restart.mockResolvedValue({ ok: true, id: 'reborn' })
   paste.mockReset()
   paste.mockResolvedValue({ ok: true })
   window.holi = {
@@ -49,6 +52,7 @@ beforeEach(() => {
       kill: (id: string) => kill(id),
       start: (args: unknown) => start(args),
       duplicate: (id: string) => duplicate(id),
+      restart: (id: string, geometry: unknown) => restart(id, geometry),
       paste: (id: string, text: string) => paste(id, text),
     },
   } as never
@@ -233,12 +237,17 @@ test('an exited session cannot be renamed or restarted, but can be copied', asyn
   expect(screen.getByText('Duplicate')).not.toHaveAttribute('aria-disabled', 'true')
 })
 
-test('restart ends this session and starts another', async () => {
+test('restart asks main to end this session and start another under its name', async () => {
+  // One route rather than a kill and a bare start from here: main is where the
+  // rule for which names are real lives, so main is what carries the name over.
   const { store } = setup([session({ id: 'a', name: 'Fix the merge', state: 'idle' })])
   store.set(activeRemoteAtom, REMOTE)
   fireEvent.contextMenu(screen.getByText('Fix the merge'))
   await userEvent.click(await screen.findByText('Restart'))
 
-  await waitFor(() => expect(kill).toHaveBeenCalledWith('a'))
-  await waitFor(() => expect(start).toHaveBeenCalled())
+  await waitFor(() => expect(restart).toHaveBeenCalledWith('a', expect.any(Object)))
+  expect(kill).not.toHaveBeenCalled()
+  expect(start).not.toHaveBeenCalled()
+  // …and the replacement is the session shown.
+  await waitFor(() => expect(activeTab(store.get(workspaceAtom))).toMatchObject({ id: 'reborn' }))
 })

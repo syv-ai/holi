@@ -51,6 +51,11 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
   // A spawn, so it can fail the same ways `start` can — and one more: the
   // listing may not yet know which conversation this session is.
   ipcMain.handle('agent:duplicate', (_e, id: string) => agent.duplicate(id))
+  // Also a spawn, at the pane's geometry: the renderer knows what size the
+  // terminal is, main knows which name is real.
+  ipcMain.handle('agent:restart', (_e, msg: { id: string; cols?: number; rows?: number }) =>
+    agent.restart(msg.id, msg),
+  )
 
   ipcMain.handle('agent-pty:kill', (_e, id: string) => agent.kill(id))
   ipcMain.handle('agent:attach', (_e, id: string) => agent.attach(id))

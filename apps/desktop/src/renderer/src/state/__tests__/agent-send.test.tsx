@@ -19,6 +19,7 @@ import {
 import {
   duplicateSessionAtom,
   renameSessionAtom,
+  restartSessionAtom,
   sendToAgentAtom,
   showAgentAtom,
   startSessionAtom,
@@ -40,6 +41,7 @@ const session = (over: Partial<AgentSession> & { id: string }): AgentSession => 
 const start = vi.fn()
 const paste = vi.fn()
 const duplicate = vi.fn()
+const restart = vi.fn()
 
 beforeEach(() => {
   start.mockReset()
@@ -48,11 +50,14 @@ beforeEach(() => {
   paste.mockResolvedValue({ ok: true })
   duplicate.mockReset()
   duplicate.mockResolvedValue({ ok: true, id: 'copy' })
+  restart.mockReset()
+  restart.mockResolvedValue({ ok: true, id: 'reborn' })
   window.holi = {
     agent: {
       start: (args: unknown) => start(args),
       paste: (id: string, text: string) => paste(id, text),
       duplicate: (id: string) => duplicate(id),
+      restart: (id: string, geometry: unknown) => restart(id, geometry),
     },
   } as never
 })
@@ -243,6 +248,33 @@ test('a duplicate that main refuses says why, and shows nothing', async () => {
   const res = await store.set(duplicateSessionAtom, 'a')
 
   expect(res).toEqual({ ok: false, message: 'Claude Code has not said which…' })
+  expect(shown(store)).toBeNull()
+})
+
+test('a restart is asked of main, at the pane geometry, and lands on the new session', async () => {
+  // The name and the ending are main's; what the renderer adds is the size
+  // the old terminal had and the landing every spawn owes the app.
+  const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
+
+  const res = await store.set(restartSessionAtom, 'a')
+
+  expect(res).toEqual({ ok: true })
+  expect(restart).toHaveBeenCalledWith('a', {
+    cols: expect.any(Number),
+    rows: expect.any(Number),
+  })
+  expect(store.get(activeSessionIdAtom)).toBe('reborn')
+  expect(shown(store)).toBe('reborn')
+  expect(store.get(agentModeAtSpawnAtom)).toHaveProperty('reborn')
+})
+
+test('a restart refused by main says so, and takes you nowhere', async () => {
+  restart.mockResolvedValue({ ok: false, message: 'That session has ended.' })
+  const store = storeWith([session({ id: 'a', name: 'One' })])
+
+  const res = await store.set(restartSessionAtom, 'a')
+
+  expect(res).toEqual({ ok: false, message: 'That session has ended.' })
   expect(shown(store)).toBeNull()
 })
 

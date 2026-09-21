@@ -59,7 +59,12 @@ import {
 } from '@/state/agent'
 import { activeModeAtom } from '@/state/color-scheme'
 import { openSession, workspaceAtom } from '@/state/panes'
-import { duplicateSessionAtom, renameSessionAtom, startSessionAtom } from '@/state/agent-send'
+import {
+  duplicateSessionAtom,
+  renameSessionAtom,
+  restartSessionAtom,
+  startSessionAtom,
+} from '@/state/agent-send'
 
 export function SessionsSection(): React.JSX.Element {
   const sessions = useAtomValue(agentSessionsAtom)
@@ -68,6 +73,7 @@ export function SessionsSection(): React.JSX.Element {
   const setWorkspace = useSetAtom(workspaceAtom)
   const startSession = useSetAtom(startSessionAtom)
   const duplicateSession = useSetAtom(duplicateSessionAtom)
+  const restartSession = useSetAtom(restartSessionAtom)
   const renameSession = useSetAtom(renameSessionAtom)
   const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const mode = useAtomValue(activeModeAtom)
@@ -97,13 +103,11 @@ export function SessionsSection(): React.JSX.Element {
     await window.holi.agent.kill(session.id)
   }
 
-  /** End this one and start another. A genuinely new session rather than the
-   *  same one reborn, which is what restarting a process actually is — saying
-   *  otherwise would pretend a conversation survived that did not. */
-  const restart = async (session: AgentSession) => {
-    await window.holi.agent.kill(session.id)
-    await startSession()
-  }
+  /** End this one and start another under its name. A genuinely new session
+   *  rather than the same one reborn, which is what restarting a process
+   *  actually is — saying otherwise would pretend a conversation survived that
+   *  did not. The name survives, because it was chosen for the work. */
+  const restart = (session: AgentSession) => restartSession(session.id)
 
   return (
     // Fills its panel: a header that never scrolls, and a list that does. The

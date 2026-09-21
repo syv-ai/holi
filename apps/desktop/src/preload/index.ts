@@ -124,6 +124,8 @@ contextBridge.exposeInMainWorld('holi', {
     }) => ipcRenderer.invoke('agent-pty:start', args),
     paste: (id: string, text: string) => ipcRenderer.invoke('agent:paste', { id, text }),
     duplicate: (id: string) => ipcRenderer.invoke('agent:duplicate', id),
+    restart: (id: string, geometry: { cols?: number; rows?: number } = {}) =>
+      ipcRenderer.invoke('agent:restart', { id, ...geometry }),
     kill: (id: string) => ipcRenderer.invoke('agent-pty:kill', id),
     write: (id: string, data: string) => ipcRenderer.send('agent-pty:write', { id, data }),
     resize: (id: string, cols: number, rows: number) =>
