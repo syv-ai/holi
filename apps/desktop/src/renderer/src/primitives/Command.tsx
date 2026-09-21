@@ -43,6 +43,9 @@ type CommandDialogProps = {
   title?: string
   description?: string
   className?: string
+  /** cmdk filters by item value unless told not to. The palette ranks with
+   *  its own pure function and passes `false`. */
+  shouldFilter?: boolean
   children: React.ReactNode
 } & Pick<React.ComponentProps<typeof DialogPrimitive.Content>, 'onCloseAutoFocus'>
 
@@ -52,6 +55,7 @@ function CommandDialog({
   title = 'Command palette',
   description = 'Search for something to open or a command to run',
   className,
+  shouldFilter,
   children,
   onCloseAutoFocus,
 }: CommandDialogProps): React.JSX.Element {
@@ -73,7 +77,10 @@ function CommandDialog({
           <DialogPrimitive.Description className="sr-only">
             {description}
           </DialogPrimitive.Description>
-          <Command className="**:data-[slot=command-input-wrapper]:h-12 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
+          <Command
+            shouldFilter={shouldFilter}
+            className="**:data-[slot=command-input-wrapper]:h-12 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5"
+          >
             {children}
           </Command>
         </DialogPrimitive.Content>

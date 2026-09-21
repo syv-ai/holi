@@ -19,6 +19,7 @@ import {
 } from '../src/renderer/src/state/commands'
 import { activeRemoteAtom, vaultsAtom } from '../src/renderer/src/state/vaults'
 import { emptyWorkspace, workspaceAtom } from '../src/renderer/src/state/panes'
+import { recentsByVaultAtom } from '../src/renderer/src/state/recents'
 
 let holi: FakeHoli
 beforeEach(() => {
@@ -102,6 +103,19 @@ describe('runCommandAtom', () => {
     await store.set(runCommandAtom, 'note.new')
 
     expect(holi.calls.map((c) => c.path)).not.toContain('notes.create')
+  })
+})
+
+describe('recording', () => {
+  it('records a run command, but not the palette opening itself', async () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'o/a')
+    store.set(recentsByVaultAtom, {})
+
+    await store.set(runCommandAtom, 'palette.open')
+    await store.set(runCommandAtom, 'pane.split')
+
+    expect(store.get(recentsByVaultAtom)['o/a']).toEqual([{ kind: 'command', key: 'pane.split' }])
   })
 })
 

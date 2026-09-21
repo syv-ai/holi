@@ -73,6 +73,7 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
+import { CommandPalette } from '@/features/palette/CommandPalette'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
 import {
@@ -693,6 +694,7 @@ export function Shell() {
         </ResizablePanelGroup>
 
         <DialogHost />
+        <CommandPalette />
 
         {/* Every open frontmatter block's controls, portalled into the
             CodeMirror widgets that asked for them. Mounted here rather than in

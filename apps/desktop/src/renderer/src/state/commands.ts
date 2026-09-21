@@ -46,6 +46,9 @@ export interface Command {
   boundBy?: 'menu'
   /** Listed and runnable only while true. Absent means always. */
   when?: (get: Getter) => boolean
+  /** Not recorded as recently used: the palette's own two rows, which would
+   *  otherwise head that list every time. */
+  quiet?: true
   run: (get: Getter, set: Setter) => void | Promise<void>
 }
 
@@ -160,12 +163,14 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
   {
     id: 'palette.open',
+    quiet: true,
     label: 'Quick open',
     hotkey: '⌘P',
     run: (_get, set) => set(openPaletteAtom, 'open'),
   },
   {
     id: 'palette.commands',
+    quiet: true,
     label: 'Command palette',
     hotkey: '⌘⇧P',
     run: (_get, set) => set(openPaletteAtom, 'commands'),
@@ -194,7 +199,7 @@ export const runCommandAtom = atom(null, async (get, set, id: string): Promise<v
   const command = get(commandsAtom).find((c) => c.id === id)
   if (command === undefined) return
   if (command.when !== undefined && !command.when(get)) return
-  set(touchRecentAtom, { kind: 'command', key: id })
+  if (command.quiet === undefined) set(touchRecentAtom, { kind: 'command', key: id })
   await command.run(get, set)
 })
 
