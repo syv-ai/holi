@@ -30,6 +30,7 @@ import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
+import { touchRecentAtom } from './recents'
 import { openPinned, openSingleton, splitPane, workspaceAtom, type SingletonTab } from './panes'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
 import { switchVaultAtom } from './vault-switch'
@@ -193,6 +194,7 @@ export const runCommandAtom = atom(null, async (get, set, id: string): Promise<v
   const command = get(commandsAtom).find((c) => c.id === id)
   if (command === undefined) return
   if (command.when !== undefined && !command.when(get)) return
+  set(touchRecentAtom, { kind: 'command', key: id })
   await command.run(get, set)
 })
 

@@ -74,6 +74,7 @@ import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
+import { recentOfTab, touchRecentAtom } from '../state/recents'
 import {
   closePaneWithExitAtom,
   closeTabWithExitAtom,
@@ -278,6 +279,15 @@ export function Shell() {
   useCommandHotkeys()
 
   const tab = activeTab(workspace)
+  // The one place recents are recorded for tabs (`state/recents.ts`): whatever
+  // opened this tab — the tree, the strip, a link, the palette — it is active
+  // now, and that is what "recently opened" means.
+  const touchRecent = useSetAtom(touchRecentAtom)
+  useEffect(() => {
+    if (tab === null) return
+    const entry = recentOfTab(tab)
+    if (entry !== null) touchRecent(entry)
+  }, [tab, touchRecent])
   // Every way a drag can end, including an escape-cancel and a drop that landed
   // somewhere with no handler at all. Without this the landing strips would stay
   // on screen for a drag that finished.
