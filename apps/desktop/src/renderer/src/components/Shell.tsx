@@ -45,15 +45,11 @@ import { VaultPicker } from '@/features/vault/VaultPicker'
 import { matchHotkey } from '../lib/hotkey'
 import { syncLabel } from '../lib/sync-label'
 import { saveAllBuffers } from '../lib/buffer-registry'
-import { motionDurationMs, prefersReducedMotion } from '../lib/motion'
 import { trpc } from '../lib/trpc'
 import { openTodaysDailyAtom, sweepDailyAtom } from '../state/daily'
 import { openLandingAtom } from '../state/landing'
 import {
   activeTab,
-  closePane,
-  closeTab,
-  closingTabRemovesPane,
   dropZones,
   focusPane,
   moveTab,
@@ -71,7 +67,6 @@ import {
   pinTab,
   workspaceAtom,
   type Tab,
-  type Workspace,
 } from '../state/panes'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
@@ -82,6 +77,13 @@ import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
+import {
+  closeActiveTabWithExitAtom,
+  closePaneWithExitAtom,
+  closeTabWithExitAtom,
+  leavingPaneAtom,
+} from '../state/pane-exit'
+import { applyVaultSwitchAtom, leavingVaultAtom, switchVaultAtom } from '../state/vault-switch'
 import {
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
@@ -135,7 +137,6 @@ export function Shell() {
   const activeRemote = useAtomValue(activeRemoteAtom)
   const syncState = useAtomValue(syncStateAtom)
   const [workspace, setWorkspace] = useAtom(workspaceAtom)
-  const setActiveRemote = useSetAtom(activeRemoteAtom)
   const openVault = useSetAtom(openVaultAtom)
   const openDaily = useSetAtom(openTodaysDailyAtom)
   const openLanding = useSetAtom(openLandingAtom)
@@ -152,64 +153,13 @@ export function Shell() {
   const reconcile = useSetAtom(reconcileAtom)
   const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
-  /**
-   * The pane on its way out of a split.
-   *
-   * React unmounts the instant state says the pane is gone, so an exit written
-   * as a class on a pane that has already been removed never runs. The change is
-   * held for exactly as long as the animation takes, read off `--motion-leave`
-   * so the wait and the CSS cannot drift, and the pane is marked `leaving`
-   * meanwhile. Under reduced motion there is nothing to wait for.
-   *
-   * **Both ways out of a split come through here.** The close-pane button is the
-   * obvious one; closing the LAST TAB of a pane also unsplits, and that is the
-   * one people actually do — an exit only the button played would look broken
-   * more often than it looked right.
-   */
-  const [leavingPane, setLeavingPane] = useState<number | null>(null)
-  const leaveTimer = useRef<number | null>(null)
-
-  useEffect(
-    () => () => {
-      if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
-    },
-    [],
-  )
-
-  const leaveThenApply = (index: number, apply: (w: Workspace) => Workspace): void => {
-    if (prefersReducedMotion()) {
-      setWorkspace(apply)
-      return
-    }
-    // A second close before the first has landed: drop the outstanding timer
-    // rather than letting two of them fire, which would take two panes for one
-    // deliberate gesture.
-    if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
-    setLeavingPane(index)
-    leaveTimer.current = window.setTimeout(
-      () => {
-        leaveTimer.current = null
-        setWorkspace(apply)
-        setLeavingPane(null)
-      },
-      motionDurationMs('--motion-leave', 190),
-    )
-  }
-
-  const closePaneWithExit = (index: number): void =>
-    leaveThenApply(index, (w) => closePane(w, index))
-
-  const closeTabWithExit = (paneIndex: number, tabIndex: number): void => {
-    const apply = (w: Workspace): Workspace => closeTab(focusPane(w, paneIndex), tabIndex)
-    // Only the close that EMPTIES a pane is an exit. Every other tab close is
-    // just a tab going, and holding those back by 190ms would make the strip
-    // feel slow for the common case.
-    if (closingTabRemovesPane(focusPane(workspace, paneIndex), tabIndex)) {
-      leaveThenApply(paneIndex, apply)
-      return
-    }
-    setWorkspace(apply)
-  }
+  /** The pane playing its exit, if any; the timer that drives it is the
+   *  atom's (`state/pane-exit.ts`), so a key, the menu and the palette all
+   *  close through the same one. */
+  const leavingPane = useAtomValue(leavingPaneAtom)
+  const closePaneWithExit = useSetAtom(closePaneWithExitAtom)
+  const closeTabWithExit = useSetAtom(closeTabWithExitAtom)
+  const closeActiveTab = useSetAtom(closeActiveTabWithExitAtom)
 
   /**
    * File → Close Tab (⌘W): the focused pane's active tab, through the same
@@ -221,17 +171,8 @@ export function Shell() {
    * nothing open at all, `closeTab` at `-1` is a no-op. An EMPTY pane in a
    * split does go, which is what ⌘\ then ⌘W should do.
    *
-   * Held in a ref so the subscription is made once: the handler closes over
-   * the current workspace and is rebuilt every render, and re-subscribing on
-   * each of those would be churn for nothing.
    */
-  const closeActiveTab = useRef<() => void>(() => {})
-  closeActiveTab.current = () => {
-    const focused = workspace.panes[workspace.active]
-    if (focused === undefined) return
-    closeTabWithExit(workspace.active, focused.active)
-  }
-  useEffect(() => window.holi.menu.onCloseTab(() => closeActiveTab.current()), [])
+  useEffect(() => window.holi.menu.onCloseTab(closeActiveTab), [closeActiveTab])
 
   /** Not a plain setter: going to the agent in a vault with no live session
    *  starts one, and that rule lives with the sessions (`showAgentAtom`). */
@@ -315,9 +256,7 @@ export function Shell() {
   /** Leaving this vault is waiting on an answer, because sessions are running in
    *  it (D100). Either picking another vault, or adding one — which opens it,
    *  and so ends them just the same. */
-  const [leaving, setLeaving] = useState<
-    { kind: 'switch'; remote: string } | { kind: 'add' } | null
-  >(null)
+  const [leaving, setLeaving] = useAtom(leavingVaultAtom)
   /** An unmergeable external write, with the two ways out the editor handed up.
    *  Held as one object so the message can never outlive its resolvers. */
   const [banner, setBanner] = useState<{
@@ -475,34 +414,12 @@ export function Shell() {
   const open = (path: string) => setWorkspace((w) => openPreview(w, path))
   const openPin = (path: string) => setWorkspace((w) => openPinned(w, path))
 
-  /** A vault switch is a teardown in main — the old watcher and timers stop —
-   *  so the tabs over the old vault have to go with it. Setting the active
-   *  remote is all that is needed: the open effect above picks it up and runs
-   *  the same open → daily → sweep sequence as cold start. */
-  const applySwitch = (remote: string) => {
-    setLeaving(null)
-    setWorkspace(() => ({ panes: [{ tabs: [], active: -1 }], active: 0 }))
-    setBanner(null)
-    setActiveRemote(remote)
-  }
-
-  /**
-   * …and it ends every session in the vault, which is worth asking about first
-   * (D100).
-   *
-   * The question has to be asked HERE, before `activeRemoteAtom` moves: the
-   * effect above reacts to that atom by opening the new vault, which is what
-   * closes the old one and takes its sessions with it. By the time the atom has
-   * changed there is nothing left to confirm.
-   */
-  const switchVault = (remote: string) => {
-    if (remote === activeRemote) return
-    if (sessionsWorthAsking(agentSessions).length > 0) {
-      setLeaving({ kind: 'switch', remote })
-      return
-    }
-    applySwitch(remote)
-  }
+  /** Both live in `state/vault-switch.ts` (D102): a switch is a command, and
+   *  the confirm it may need is asked there, before the remote moves. */
+  const applySwitch = useSetAtom(applyVaultSwitchAtom)
+  const switchVault = useSetAtom(switchVaultAtom)
+  // The conflict banner is about a file in the vault that just closed.
+  useEffect(() => setBanner(null), [activeRemote])
 
   /**
    * …and adding one is the same departure, asked at the start.
