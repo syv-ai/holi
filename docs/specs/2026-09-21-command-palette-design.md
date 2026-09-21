@@ -56,7 +56,8 @@ Decided by Nicolai on 2026-09-21, in this order. None is open.
    is where their hotkeys show.
 4. **A question can be asked from the same box.** Once something is typed, the
    last row is "Ask the assistant: …". It sends the text to the current session,
-   the one ⌘J goes to, starting a session with that prompt when there is none.
+   the one ⌘J goes to, where it lands unsent in the input box (D100), starting a
+   session named from the text when there is none.
 5. **Recents come first and survive a restart.** Before anything is typed the
    rows are the most recently opened things, across every kind, remembered per
    vault on this machine. ⌘P then Enter switches to the previous thing.
@@ -141,7 +142,7 @@ command palette (⌘⇧P).
 - **The Ask row** is the last row whenever the query is non-empty and does not
   start with `>`. Choosing it closes the palette, then sends the text to the
   current session via the existing send atom and shows its tab, or starts a
-  session with the text as its first prompt when there is none.
+  session named from the text when the target is `'new'`. It lands unsent (D100).
 - **Recents** (`recentsByVaultAtom`, `atomWithStorage('holi:recents')`):
   `{ [remote]: RecentEntry[] }`, `RecentEntry = { kind, key }`, most recent
   first, capped. Touched on every open through the palette, on every tab
@@ -190,4 +191,4 @@ onboarding ritual's "⌘K command palette" copy becomes ⌘P.
 3. Live, after a dev restart (the menu and preload are main-side): ⌘P, type a
    filename, Enter; ⌘P, Enter returns to the previous file; `>spl` runs split;
    ⌘W still closes the tab; type a sentence and choose Ask, the session tab shows
-   it as a turn.
+   it in its input box, unsent.
