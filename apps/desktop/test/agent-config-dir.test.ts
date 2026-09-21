@@ -1,7 +1,8 @@
 import { SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   AGENT_CONFIG_DIR_NAME,
@@ -113,8 +114,25 @@ describe('ensureAgentConfigDir', () => {
 
     expect((await settings(configDir)).statusLine).toEqual({
       type: 'command',
-      command: '/somewhere/bin/holi-statusline',
+      command: "'/somewhere/bin/holi-statusline'",
     })
+  })
+
+  it('quotes the script for the shell Claude Code runs it in', async () => {
+    // The real path: `userData` is `~/Library/Application Support/…` on macOS,
+    // and Claude Code hands the command to a shell, which stopped at the space
+    // and printed its default footer instead. Proven the way it fails: by
+    // running the setting through `sh`.
+    const userData = join(await tempDir(), 'Application Support', 'holi')
+    const script = join(userData, 'bin', "it's-statusline")
+    await mkdir(dirname(script), { recursive: true })
+    await writeFile(script, '#!/bin/sh\necho reached\n', { mode: 0o755 })
+    const configDir = await ensureAgentConfigDir(userData, VAULT, { statusLine: script })
+
+    const { command } = (await settings(configDir)).statusLine as { command: string }
+    const out = execFileSync('sh', ['-c', command], { encoding: 'utf8' })
+
+    expect(out.trim()).toBe('reached')
   })
 
   it('follows the script when the app moves', async () => {
@@ -127,7 +145,7 @@ describe('ensureAgentConfigDir', () => {
 
     expect((await settings(configDir)).statusLine).toEqual({
       type: 'command',
-      command: '/new/bin/sl',
+      command: "'/new/bin/sl'",
     })
   })
 
@@ -147,7 +165,7 @@ describe('ensureAgentConfigDir', () => {
 
     expect((await settings(configDir)).statusLine).toEqual({
       type: 'command',
-      command: '/bin/holi-statusline',
+      command: "'/bin/holi-statusline'",
     })
   })
 

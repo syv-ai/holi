@@ -69,6 +69,21 @@ export function agentConfigSlug(remote: string): string {
 export type AgentTheme = 'dark' | 'light'
 
 /**
+ * A path as one word for `sh`.
+ *
+ * Claude Code runs a `statusLine` command through a shell — the same runner
+ * its hooks use — so the setting is a command line, not a path, and a path is
+ * only a command line once it is quoted. Holi's script lives under `userData`,
+ * which on macOS is `~/Library/Application Support/…`: written bare, the shell
+ * stopped at the space and the footer silently showed Claude Code's default
+ * hints instead. Single quotes, because they are the one form under which
+ * nothing else in a path needs escaping.
+ */
+function shellQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`
+}
+
+/**
  * The settings text this directory should have, or **null** if it already
  * carries what Holi requires (or cannot be parsed).
  *
@@ -96,10 +111,11 @@ function settingsWithRequired(
   theme?: AgentTheme,
   statusLine?: string,
 ): string | null {
+  const command = statusLine === undefined ? undefined : shellQuote(statusLine)
   if (existing === null || existing.trim() === '') {
     const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
     if (theme) seed.theme = theme
-    if (statusLine) seed.statusLine = { type: 'command', command: statusLine }
+    if (command) seed.statusLine = { type: 'command', command }
     return JSON.stringify(seed, null, 2) + '\n'
   }
 
@@ -132,14 +148,14 @@ function settingsWithRequired(
    * Holi-shaped footer is not something a vault should impose on whoever clones
    * it.
    */
-  if (statusLine) {
+  if (command) {
     const current = settings.statusLine
     const already =
       current !== null &&
       typeof current === 'object' &&
-      (current as Record<string, unknown>).command === statusLine
+      (current as Record<string, unknown>).command === command
     if (!already) {
-      settings.statusLine = { type: 'command', command: statusLine }
+      settings.statusLine = { type: 'command', command }
       changed = true
     }
   }
