@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn'
 export function Kbd({ className, ...props }: React.ComponentProps<'kbd'>): React.JSX.Element {
   return (
     <kbd
-      className={cn('rounded border bg-muted px-1 font-sans text-muted-foreground', className)}
+      className={cn('rounded bg-muted px-1 font-sans text-muted-foreground', className)}
       {...props}
     />
   )

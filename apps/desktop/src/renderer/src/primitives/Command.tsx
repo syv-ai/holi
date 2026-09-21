@@ -82,6 +82,8 @@ function CommandDialog({
             // cmdk's Ctrl+J/K/N/P defaults collide with the app's own keys off
             // macOS, where ⌘ in a hotkey glyph means Ctrl (`lib/hotkey.ts`).
             vimBindings={false}
+            // ↑ on the first row lands on the last, and ↓ on the last on the first.
+            loop
             className="**:data-[slot=command-input-wrapper]:h-12 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]]:px-2 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5"
           >
             {children}
@@ -118,7 +120,13 @@ function CommandList({
   return (
     <CommandPrimitive.List
       data-slot="command-list"
-      className={cn('max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto', className)}
+      // Taller than the registry's 300px, and the scrollbar is always painted
+      // (`.scrollbar-always`, index.css) so the list's length can be read off
+      // the thumb rather than discovered by scrolling.
+      className={cn(
+        'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
+        className,
+      )}
       {...props}
     />
   )

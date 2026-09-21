@@ -1,7 +1,7 @@
 /**
  * The tree's structural icons: the expand chevron, the folder glyph, and the
  * markdown glyph used by the new-file pending row. Per-file-type leaf icons live
- * in `file-icons.tsx`. All inherit `currentColor` so they follow the row's tint.
+ * in `composites/file-icons.tsx`. All inherit `currentColor` so they follow the row's tint.
  */
 import type { TaskStatus } from '@holi/shared'
 import {

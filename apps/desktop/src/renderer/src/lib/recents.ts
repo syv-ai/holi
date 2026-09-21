@@ -7,6 +7,8 @@
  * caller's to say — the snapshot for paths, main's list for sessions —
  * because this module knows nothing but keys.
  */
+import type { Tab } from '../state/panes'
+
 export type RecentKind = 'path' | 'app' | 'session' | 'surface' | 'command'
 
 export interface RecentEntry {
@@ -17,6 +19,20 @@ export interface RecentEntry {
 }
 
 export const RECENTS_CAP = 50
+
+/** The recent a tab counts as. Every tab kind is remembered. */
+export function entryOfTab(tab: Tab): RecentEntry {
+  switch (tab.kind) {
+    case 'note':
+      return { kind: 'path', key: tab.path }
+    case 'app':
+      return { kind: 'app', key: tab.appId }
+    case 'session':
+      return { kind: 'session', key: tab.id }
+    default:
+      return { kind: 'surface', key: tab.kind }
+  }
+}
 
 export function sameEntry(a: RecentEntry, b: RecentEntry): boolean {
   return a.kind === b.kind && a.key === b.key

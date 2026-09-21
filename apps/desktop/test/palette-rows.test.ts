@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRows,
   commandQuery,
+  openTabRows,
   rankCommands,
   rankRows,
   type PaletteRow,
@@ -139,6 +140,30 @@ describe('rankRows with a query', () => {
   it('finds a surface and a session by name', () => {
     expect(keys(rankRows(rows(), 'boa', []))[0]).toBe('surface:board')
     expect(keys(rankRows(rows(), 'refac', []))[0]).toBe('session:s1')
+  })
+})
+
+describe('openTabRows', () => {
+  const tabs = [
+    { kind: 'note', path: 'notes/alpha.md' },
+    { kind: 'app', appId: 'plan' },
+    { kind: 'board' },
+    { kind: 'session', id: 's1' },
+  ] as const
+
+  it('lists the open tabs most recently used first, without the current one', () => {
+    const recents: RecentEntry[] = [
+      { kind: 'surface', key: 'board' },
+      { kind: 'session', key: 's1' },
+      { kind: 'path', key: 'notes/alpha.md' },
+    ]
+    const ranked = openTabRows(rows(), [...tabs], { kind: 'board' }, recents)
+    expect(keys(ranked)).toEqual(['session:s1', 'path:notes/alpha.md', 'app:plan'])
+    expect(ranked.map((r) => r.recent)).toEqual([true, true, false])
+  })
+
+  it('is empty with one tab open, so ⌃⇥ has nowhere to go', () => {
+    expect(openTabRows(rows(), [tabs[0]], tabs[0], [])).toEqual([])
   })
 })
 

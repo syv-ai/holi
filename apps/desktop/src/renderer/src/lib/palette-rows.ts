@@ -13,7 +13,8 @@
  */
 import commandScore from 'command-score'
 import { isHiddenPath, type VaultSnapshot } from '@holi/shared'
-import type { RecentEntry, RecentKind } from './recents'
+import type { Tab } from '../state/panes'
+import { entryOfTab, type RecentEntry, type RecentKind } from './recents'
 
 export type RowKind = Exclude<RecentKind, 'command'>
 
@@ -179,6 +180,39 @@ export function rankRows(
     )
     .slice(0, cap)
     .map(({ row }): RankedRow => ({ ...row, recent: order.has(rowId(row.kind, row.key)) }))
+}
+
+/**
+ * The ⌃⇥ switcher's list: the rows that are open as tabs, most recently
+ * activated first, with the tab you are on left out — the first row is where
+ * one ⌃⇥ takes you. Tabs the recents do not know come after, in pane order.
+ */
+export function openTabRows(
+  rows: readonly PaletteRow[],
+  openTabs: readonly Tab[],
+  current: Tab | null,
+  recents: readonly RecentEntry[],
+): RankedRow[] {
+  const byId = new Map(rows.map((r) => [rowId(r.kind, r.key), r]))
+  const currentId =
+    current === null ? null : rowId(entryOfTab(current).kind, entryOfTab(current).key)
+  const open = new Map<string, PaletteRow>()
+  for (const tab of openTabs) {
+    const e = entryOfTab(tab)
+    const id = rowId(e.kind, e.key)
+    const row = byId.get(id)
+    if (row !== undefined && id !== currentId) open.set(id, row)
+  }
+  const ordered: RankedRow[] = []
+  for (const r of recents) {
+    const row = open.get(rowId(r.kind, r.key))
+    if (row !== undefined) {
+      ordered.push({ ...row, recent: true })
+      open.delete(rowId(r.kind, r.key))
+    }
+  }
+  for (const row of open.values()) ordered.push({ ...row, recent: false })
+  return ordered
 }
 
 /** The text after a leading `>`, trimmed; null when the box is not in command mode. */

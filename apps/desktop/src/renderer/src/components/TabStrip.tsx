@@ -46,7 +46,7 @@ import {
   Mail,
   SquareKanban,
 } from 'lucide-react'
-import { fileIconFor } from '@/features/explorer/file-icons'
+import { fileIconFor } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
 import { reorderOffsets } from '@/lib/tab-reorder'
 import {

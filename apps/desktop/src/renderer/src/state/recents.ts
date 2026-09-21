@@ -13,7 +13,7 @@
  */
 import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { prune, touch, type RecentEntry } from '../lib/recents'
+import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
 import { agentSessionsAtom } from './agent'
 import { appIdsAtom } from './apps'
 import type { Tab } from './panes'
@@ -73,16 +73,7 @@ export const touchRecentAtom = atom(null, (get, set, entry: RecentEntry): void =
   }))
 })
 
-/** The recent a tab counts as, or null for a kind that is not remembered. */
-export function recentOfTab(tab: Tab): RecentEntry | null {
-  switch (tab.kind) {
-    case 'note':
-      return { kind: 'path', key: tab.path }
-    case 'app':
-      return { kind: 'app', key: tab.appId }
-    case 'session':
-      return { kind: 'session', key: tab.id }
-    default:
-      return { kind: 'surface', key: tab.kind }
-  }
+/** Kept for its callers; the rule is `entryOfTab` in `lib/recents.ts`. */
+export function recentOfTab(tab: Tab): RecentEntry {
+  return entryOfTab(tab)
 }

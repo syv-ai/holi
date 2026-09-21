@@ -47,7 +47,7 @@ beforeEach(() => {
   })
   store.set(recentsByVaultAtom, { 'o/vault': [{ kind: 'path', key: 'gamma.md' }] })
   store.set(workspaceAtom, emptyWorkspace())
-  store.set(paletteAtom, { open: false, query: '', step: 0 })
+  store.set(paletteAtom, { open: false, mode: 'open', query: '', step: 0, stepDirection: 1 })
   store.set(agentSessionsAtom, [])
   store.set(activeSessionIdAtom, null)
 })
@@ -110,6 +110,81 @@ test('typing > switches to commands, and Enter runs the row', async () => {
 
   await waitFor(() => expect(store.get(workspaceAtom).panes).toHaveLength(2))
   expect(store.get(paletteAtom).open).toBe(false)
+})
+
+test('the palette does not list its own two commands', async () => {
+  mount()
+  await userEvent.keyboard('{Meta>}{Shift>}p{/Shift}{/Meta}')
+
+  expect(itemNames().some((n) => n.startsWith('Quick open'))).toBe(false)
+  expect(itemNames().some((n) => n.startsWith('Command palette'))).toBe(false)
+  expect(itemNames().some((n) => n.startsWith('Split pane'))).toBe(true)
+})
+
+test('⌃⇥ lists the open tabs most recent first without the current one; releasing ⌃ switches', async () => {
+  // Three tabs open, gamma active; alpha was the one before it.
+  store.set(workspaceAtom, {
+    panes: [
+      {
+        tabs: [
+          { kind: 'note', path: 'notes/alpha.md' },
+          { kind: 'note', path: 'notes/beta.md' },
+          { kind: 'note', path: 'gamma.md' },
+        ],
+        active: 2,
+      },
+    ],
+    active: 0,
+  })
+  store.set(recentsByVaultAtom, {
+    'o/vault': [
+      { kind: 'path', key: 'gamma.md' },
+      { kind: 'path', key: 'notes/alpha.md' },
+      { kind: 'path', key: 'notes/beta.md' },
+    ],
+  })
+  mount()
+  // One user instance: held keys are forgotten between bare `userEvent.keyboard`
+  // calls, so releasing ⌃ in a second call would never send its keyup.
+  const user = userEvent.setup()
+
+  await user.keyboard('{Control>}{Tab}')
+
+  expect(screen.getByPlaceholderText('Switch to an open tab')).toBeInTheDocument()
+  expect(itemNames().map((n) => n.replace(/notes$/, ''))).toEqual(['alpha.md', 'beta.md'])
+
+  await user.keyboard('{/Control}')
+
+  await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  expect(store.get(workspaceAtom).panes[0]!.active).toBe(0)
+})
+
+test('a second ⌃⇥ steps down before ⌃ is released', async () => {
+  store.set(workspaceAtom, {
+    panes: [
+      {
+        tabs: [
+          { kind: 'note', path: 'notes/alpha.md' },
+          { kind: 'note', path: 'notes/beta.md' },
+          { kind: 'note', path: 'gamma.md' },
+        ],
+        active: 2,
+      },
+    ],
+    active: 0,
+  })
+  store.set(recentsByVaultAtom, {
+    'o/vault': [
+      { kind: 'path', key: 'gamma.md' },
+      { kind: 'path', key: 'notes/alpha.md' },
+      { kind: 'path', key: 'notes/beta.md' },
+    ],
+  })
+  mount()
+
+  await userEvent.keyboard('{Control>}{Tab}{Tab}{/Control}')
+
+  await waitFor(() => expect(store.get(workspaceAtom).panes[0]!.active).toBe(1))
 })
 
 test('Escape closes', async () => {

@@ -795,6 +795,12 @@
   background-clip: content-box;
   transition: background-color 150ms ease;
 }
+/* A scroller whose thumb never fades: where the length of a list is part of
+   what it tells you, as in the command palette. */
+.scrollbar-always::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: content-box;
+}
 :hover::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   background-clip: content-box;

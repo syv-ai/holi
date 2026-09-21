@@ -31,7 +31,19 @@ recorded in two places only: Shell watches the active tab, whichever surface ope
 
 **`>` lists the command table**, each row with its hotkey glyph beside it in the house `Kbd`
 chip, recently used first, then the rest by label. A command whose `when` is false is not
-listed.
+listed, and neither are the palette's own two rows: a list inside the palette has no use for
+"open the palette".
+
+**⌃⇥ is the tab switcher.** It opens the same box over the open tabs across every pane, most
+recently used first with the current one left out, so one ⌃⇥ and release is "back to the
+previous tab"; each further ⇥ moves down (⇧⇥ up) while ⌃ is held, and releasing ⌃ takes the
+selected one. It is a chord finished by a keyup, so it lives beside the palette rather than in
+the command table, and it means the literal Control key on every platform.
+
+**The rows look like the tree's.** A path gets the tree's type glyph in its type colour, or the
+vault's emoji for it; a session gets the sidebar's status orb, from the same rule; the folder
+sits right-aligned in the muted tint. The list is tall (60vh) with its scrollbar always painted,
+so its length can be read off the thumb; ↑ on the first row wraps to the last.
 
 **Ask the assistant.** Once anything is typed outside `>` mode the last row reads "Ask the
 assistant: …". Choosing it closes the palette and sends the text to the session ⌘J goes to,

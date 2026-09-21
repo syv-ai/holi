@@ -40,7 +40,7 @@ import {
 import { DeleteConfirm } from '@/composites'
 import { ExplorerHeader } from './ExplorerHeader'
 import { AppFolderIcon, ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
-import { fileIconFor } from './file-icons'
+import { fileIconFor } from '@/composites/file-icons'
 import { useExplorerActions } from './useExplorerActions'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import {

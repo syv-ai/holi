@@ -1,6 +1,7 @@
 /**
  * The command palette (D102): ⌘P quick-opens every openable thing, `>`
- * switches the same box to commands, ⌘⇧P opens there. VS Code's shape.
+ * switches the same box to commands, ⌘⇧P opens there, and ⌃⇥ is the tab
+ * switcher. VS Code's shape.
  *
  * Thin on purpose. What is listed and in what order is `lib/palette-rows.ts`,
  * pure and node-tested; cmdk runs with `shouldFilter={false}` and renders
@@ -17,34 +18,31 @@
  * it on purpose: a session tab or the Ask row focuses a terminal, and Radix
  * pulling it back to the old editor a tick later would undo that.
  *
+ * **⌃⇥ is a chord, not a command.** It opens the palette over the open tabs,
+ * most recently used first with the current one left out, so the first row is
+ * the previous tab; each further ⇥ moves down (⇧⇥ up); releasing ⌃ takes the
+ * selected one. It lives here rather than in the command table because the
+ * table binds keydowns, and this one is finished by a keyup. It is also the
+ * one binding that means the literal Control key on every platform.
+ *
  * The last row, once anything is typed outside `>` mode, asks the assistant:
  * the text goes to the session ⌘J goes to and lands unsent in its input
  * (D100), starting a session when there is none.
  */
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
-import {
-  AppWindow,
-  Calendar,
-  CalendarDays,
-  File,
-  FileText,
-  History,
-  Kanban,
-  Mail,
-  Settings,
-  Sparkles,
-  Terminal,
-} from 'lucide-react'
+import { AppWindow, Calendar, History, Kanban, Mail, Settings, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
+import { fileIconFor } from '@/composites/file-icons'
+import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
 import { cn } from '@/lib/cn'
 import {
   buildRows,
   commandQuery,
+  openTabRows,
   rankCommands,
   rankRows,
   type PaletteRow,
   type RankedRow,
-  type RowIcon,
 } from '@/lib/palette-rows'
 import {
   CommandDialog,
@@ -56,12 +54,25 @@ import {
   CommandShortcut,
   Kbd,
 } from '@/primitives'
-import { activeSessionIdAtom, agentSessionsAtom, defaultAgentTargetAtom } from '@/state/agent'
+import {
+  activeSessionIdAtom,
+  agentModeAtSpawnAtom,
+  agentSessionsAtom,
+  defaultAgentTargetAtom,
+} from '@/state/agent'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { appIdsAtom } from '@/state/apps'
+import { activeModeAtom } from '@/state/color-scheme'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
-import { closePaletteAtom, paletteAtom, setPaletteQueryAtom } from '@/state/palette'
 import {
+  closePaletteAtom,
+  openPaletteAtom,
+  paletteAtom,
+  setPaletteQueryAtom,
+  stepPaletteBackAtom,
+} from '@/state/palette'
+import {
+  activeTab,
   openApp,
   openBeside,
   openInNewPane,
@@ -75,24 +86,13 @@ import {
 import { recentsAtom } from '@/state/recents'
 import { snapshotAtom } from '@/state/vaults'
 
-const GLYPHS = {
-  note: FileText,
-  daily: CalendarDays,
-  file: File,
-  app: AppWindow,
-  session: Terminal,
+const SURFACE_GLYPHS = {
   board: Kanban,
   agenda: Calendar,
   mail: Mail,
   settings: Settings,
   history: History,
 } as const
-
-function RowIconView({ icon }: { icon: RowIcon }): React.JSX.Element {
-  if ('emoji' in icon) return <span className="w-4 text-center leading-none">{icon.emoji}</span>
-  const Glyph = GLYPHS[icon.glyph]
-  return <Glyph />
-}
 
 /** The tab a row opens as, for the "beside" gesture. */
 function tabOf(row: PaletteRow): Tab {
@@ -113,13 +113,18 @@ const rowValue = (row: PaletteRow): string => `${row.kind}:${row.key}`
 export function CommandPalette(): React.JSX.Element {
   const state = useAtomValue(paletteAtom)
   const setQuery = useSetAtom(setPaletteQueryAtom)
+  const openPalette = useSetAtom(openPaletteAtom)
+  const stepBack = useSetAtom(stepPaletteBackAtom)
   const close = useSetAtom(closePaletteAtom)
   const store = useStore()
   const snapshot = useAtomValue(snapshotAtom)
   const appIds = useAtomValue(appIdsAtom)
   const sessions = useAtomValue(agentSessionsAtom)
+  const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
+  const colorMode = useAtomValue(activeModeAtom)
   const recents = useAtomValue(recentsAtom)
   const commands = useAtomValue(commandsAtom)
+  const workspace = useAtomValue(workspaceAtom)
   const run = useSetAtom(runCommandAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
   const setActiveSession = useSetAtom(activeSessionIdAtom)
@@ -130,34 +135,84 @@ export function CommandPalette(): React.JSX.Element {
     () => buildRows({ snapshot, appIds, sessions }),
     [snapshot, appIds, sessions],
   )
+  const tabsMode = state.mode === 'tabs'
   const query = state.query
-  const cmdQuery = commandQuery(query)
-  const ranked = useMemo(
-    () => (cmdQuery === null ? rankRows(rows, query, recents) : []),
-    [cmdQuery, rows, query, recents],
-  )
+  const cmdQuery = tabsMode ? null : commandQuery(query)
+  const ranked = useMemo((): RankedRow[] => {
+    if (tabsMode) {
+      const open = openTabRows(
+        rows,
+        workspace.panes.flatMap((p) => p.tabs),
+        activeTab(workspace),
+        recents,
+      )
+      return query.trim() === '' ? open : rankRows(open, query, [])
+    }
+    return cmdQuery === null ? rankRows(rows, query, recents) : []
+  }, [tabsMode, cmdQuery, rows, query, recents, workspace])
   const rankedCommands = useMemo(
     () =>
       cmdQuery === null
         ? []
         : rankCommands(
-            commands.filter((c) => c.when === undefined || c.when(store.get)),
+            commands.filter(
+              (c) => c.hidden === undefined && (c.when === undefined || c.when(store.get)),
+            ),
             cmdQuery,
             recents,
           ),
     [cmdQuery, commands, recents, store],
   )
 
-  // ⌘P while open: the selection moves down, as VS Code's does. cmdk moves it
-  // on an ArrowDown keydown reaching its root, so one is dispatched from the
+  // ⌘P or ⌃⇥ while open: the selection moves, as VS Code's does. cmdk moves
+  // it on an arrow keydown reaching its root, so one is dispatched from the
   // input, which is inside it.
   const inputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!state.open || state.step === 0) return
     inputRef.current?.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      new KeyboardEvent('keydown', {
+        key: state.stepDirection === 1 ? 'ArrowDown' : 'ArrowUp',
+        bubbles: true,
+      }),
     )
-  }, [state.open, state.step])
+  }, [state.open, state.step, state.stepDirection])
+
+  // ⌃⇥ / ⇧⌃⇥ open the switcher or step it; releasing ⌃ takes the selection.
+  // Capture phase, so the focus trap never sees the ⇥.
+  const tabsModeRef = useRef(false)
+  tabsModeRef.current = state.open && tabsMode
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Tab' || !e.ctrlKey || e.metaKey || e.altKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      if (!tabsModeRef.current) {
+        openPalette('tabs')
+        return
+      }
+      if (e.shiftKey) stepBack()
+      else openPalette('tabs')
+    }
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.key !== 'Control' || !tabsModeRef.current) return
+      // The selected row, or the first one when ⌃ was released before cmdk
+      // had selected anything (one ⌃⇥ and straight off it is the common case).
+      // A click rather than an Enter: cmdk's Enter needs a selection to exist.
+      const root = inputRef.current?.closest('[cmdk-root]')
+      const item =
+        root?.querySelector<HTMLElement>('[cmdk-item][data-selected="true"]') ??
+        root?.querySelector<HTMLElement>('[cmdk-item]')
+      if (item) item.click()
+      else close()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('keyup', onKeyUp, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('keyup', onKeyUp, true)
+    }
+  }, [openPalette, stepBack, close])
 
   const beside = useRef(false)
   /** The chosen row focused something itself; Radix must not refocus. */
@@ -200,8 +255,27 @@ export function CommandPalette(): React.JSX.Element {
     void sendToAgent({ text, target: askTarget })
   }
 
-  const showAsk = cmdQuery === null && query.trim() !== ''
-  const untyped = query.trim() === ''
+  /** The sidebar's orb for a session row, from the same rule the cards use. */
+  const orbFor = (id: string): string => {
+    const session = sessions.find((s) => s.id === id)
+    if (session === undefined) return 'bg-muted-foreground'
+    return agentIndicator({
+      ...session,
+      themeNote: agentThemeNote({
+        running: !session.exited,
+        modeAtSpawn: modeAtSpawn[session.id] ?? null,
+        mode: colorMode,
+      }),
+    }).dot
+  }
+
+  const showAsk = cmdQuery === null && !tabsMode && query.trim() !== ''
+  const grouped = query.trim() === '' && !tabsMode
+  const placeholder = tabsMode
+    ? 'Switch to an open tab'
+    : cmdQuery === null
+      ? 'Open anything, > for commands'
+      : 'Run a command'
 
   return (
     <CommandDialog
@@ -226,21 +300,23 @@ export function CommandPalette(): React.JSX.Element {
           autoFocus
           value={query}
           onValueChange={setQuery}
-          placeholder={cmdQuery === null ? 'Open anything, > for commands' : 'Run a command'}
+          placeholder={placeholder}
         />
         <CommandList>
           <CommandEmpty>Nothing matches</CommandEmpty>
           {cmdQuery === null ? (
             <>
               <RowGroup
-                heading={untyped ? 'Recently opened' : undefined}
-                rows={ranked.filter((r) => untyped && r.recent)}
+                heading={grouped ? 'Recently opened' : undefined}
+                rows={ranked.filter((r) => grouped && r.recent)}
                 onChoose={chooseRow}
+                orbFor={orbFor}
               />
               <RowGroup
-                heading={untyped ? 'Recently modified' : undefined}
-                rows={ranked.filter((r) => !(untyped && r.recent))}
+                heading={grouped ? 'Recently modified' : undefined}
+                rows={ranked.filter((r) => !(grouped && r.recent))}
                 onChoose={chooseRow}
+                orbFor={orbFor}
               />
               {showAsk && (
                 <CommandGroup>
@@ -277,14 +353,45 @@ export function CommandPalette(): React.JSX.Element {
 
 const untypedCommand = (cmdQuery: string): boolean => cmdQuery.trim() === ''
 
+/**
+ * A row's icon, in the colours the tree uses: a path gets its type glyph (or
+ * the vault's emoji for it), a session its status orb, an app the app glyph,
+ * a surface its own. The tree's tint is the muted foreground, which the item
+ * already gives an untinted svg.
+ */
+function RowIconView({ row, orb }: { row: PaletteRow; orb?: string }): React.JSX.Element {
+  switch (row.kind) {
+    case 'path':
+      return (
+        <span className="flex w-4 shrink-0 justify-center">
+          {fileIconFor(row.key, 'emoji' in row.icon ? row.icon.emoji : undefined)}
+        </span>
+      )
+    case 'session':
+      return (
+        <span className="flex w-4 shrink-0 justify-center">
+          <span aria-hidden="true" className={cn('h-2 w-2 rounded-full', orb)} />
+        </span>
+      )
+    case 'app':
+      return <AppWindow />
+    case 'surface': {
+      const Glyph = SURFACE_GLYPHS[row.key as keyof typeof SURFACE_GLYPHS]
+      return <Glyph />
+    }
+  }
+}
+
 function RowGroup({
   heading,
   rows,
   onChoose,
+  orbFor,
 }: {
   heading: string | undefined
   rows: RankedRow[]
   onChoose: (row: PaletteRow) => void
+  orbFor: (sessionId: string) => string
 }): React.JSX.Element | null {
   if (rows.length === 0) return null
   return (
@@ -296,10 +403,12 @@ function RowGroup({
           onSelect={() => onChoose(row)}
           className={cn(row.dim && 'opacity-60')}
         >
-          <RowIconView icon={row.icon} />
+          <RowIconView row={row} orb={row.kind === 'session' ? orbFor(row.key) : undefined} />
           <span className="truncate">{row.name}</span>
           {row.detail !== undefined && (
-            <span className="truncate text-xs text-muted-foreground">{row.detail}</span>
+            <span className="ml-auto shrink-0 truncate text-xs text-muted-foreground">
+              {row.detail}
+            </span>
           )}
         </CommandItem>
       ))}
