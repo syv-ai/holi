@@ -177,49 +177,58 @@ export function PaneView({
           Wrapped rather than handled in place because the overlay needs
           somewhere to be absolutely positioned, and it must cover the content
           WITHOUT covering the strip, which has drop handling of its own. */}
-      {/* Arrive on a swap. Opening a different note, or moving between a note
-          and the board, used to be an instant replacement — the pane simply
-          contained something else on the next frame. A short fade gives the
-          navigation somewhere to land. Opacity only, because this wraps a
-          CodeMirror instance and anything that changes the layout box drags its
-          measure loop into every frame. */}
-      <div ref={bodyRef} className="relative flex min-h-0 flex-1 flex-col">
-        {tab?.kind ===
-        'session' ? // Nothing here: a session's terminal is rendered below, outside this
-        // switch, because it has to stay mounted while another tab is showing.
-        null : tab?.kind === 'app' ? (
-          <AppFrame appId={tab.appId} />
-        ) : tab?.kind === 'board' ? (
-          <BoardView />
-        ) : tab?.kind === 'agenda' ? (
-          <AgendaView />
-        ) : tab?.kind === 'mail' ? (
-          <MailView />
-        ) : tab?.kind === 'settings' ? (
-          <SettingsView />
-        ) : tab?.kind === 'history' ? (
-          <HistoryView />
-        ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
-          <ImageViewer path={tab.path} />
-        ) : tab?.kind === 'note' &&
-          (fileKind(tab.path) === 'pdf' || fileKind(tab.path) === 'doc') ? (
-          // Rich formats we can't yet render open a typed placeholder — a real
-          // per-type viewer replaces it later (spec §Arbitrary files). Text
-          // files (json/yaml/…) fall through to the plain editor below.
-          <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
-        ) : (
-          <EditorPane
-            path={tab?.kind === 'note' ? tab.path : null}
-            // A non-markdown text file (.json/.yaml/.env/…) edits in the plain
-            // stack — no wiki-links, no frontmatter, syntax highlighting by
-            // extension. Markdown notes keep the full editor.
-            plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
-            // FR-19: a file the running reconcile is resolving opens locked.
-            readOnly={tab?.kind === 'note' && isLockedForReconcile(syncState, tab.path)}
-            onOpenNote={onOpenNote}
-            onEdit={onEdit}
-            onConflict={onConflict}
-          />
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        {/* Arrive on a swap. Opening a different note, or moving between a note
+            and the board, used to be an instant replacement — the pane simply
+            contained something else on the next frame. A short fade gives the
+            navigation somewhere to land. Opacity only, because this wraps a
+            CodeMirror instance and anything that changes the layout box drags
+            its measure loop into every frame.
+
+            The fade wraps only what a swap REPLACES. A session's terminal is
+            rendered below, outside this wrapper, because it stays mounted while
+            another tab is showing — and it is left out of the fade for the same
+            reason: its pixels were already there, so fading them in on every
+            switch read as the terminal blinking. Rendered as nothing rather
+            than as an empty flex-1 box, which would take the height the
+            terminals need. */}
+        {tab?.kind === 'session' ? null : (
+          <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
+            {tab?.kind === 'app' ? (
+              <AppFrame appId={tab.appId} />
+            ) : tab?.kind === 'board' ? (
+              <BoardView />
+            ) : tab?.kind === 'agenda' ? (
+              <AgendaView />
+            ) : tab?.kind === 'mail' ? (
+              <MailView />
+            ) : tab?.kind === 'settings' ? (
+              <SettingsView />
+            ) : tab?.kind === 'history' ? (
+              <HistoryView />
+            ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
+              <ImageViewer path={tab.path} />
+            ) : tab?.kind === 'note' &&
+              (fileKind(tab.path) === 'pdf' || fileKind(tab.path) === 'doc') ? (
+              // Rich formats we can't yet render open a typed placeholder — a
+              // real per-type viewer replaces it later (spec §Arbitrary files).
+              // Text files (json/yaml/…) fall through to the plain editor below.
+              <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
+            ) : (
+              <EditorPane
+                path={tab?.kind === 'note' ? tab.path : null}
+                // A non-markdown text file (.json/.yaml/.env/…) edits in the
+                // plain stack — no wiki-links, no frontmatter, syntax
+                // highlighting by extension. Markdown notes keep the full editor.
+                plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
+                // FR-19: a file the running reconcile is resolving opens locked.
+                readOnly={tab?.kind === 'note' && isLockedForReconcile(syncState, tab.path)}
+                onOpenNote={onOpenNote}
+                onEdit={onEdit}
+                onConflict={onConflict}
+              />
+            )}
+          </div>
         )}
 
         {/**
