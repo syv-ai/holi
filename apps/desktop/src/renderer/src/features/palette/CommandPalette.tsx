@@ -10,8 +10,12 @@
  * chosen action that opens a tab never fights the palette for focus.
  *
  * ⌘↵ opens beside rather than in the focused pane. cmdk's `onSelect` carries
- * no event, so the root's keydown notes the modifier a moment before the
- * select fires — cmdk calls the root's own handler first.
+ * no event, so a capture-phase keydown on a wrapper inside cmdk's root notes
+ * the modifier; React runs it before the root's own handler selects.
+ *
+ * Focus returns to where it was, by Radix, except when the chosen row moved
+ * it on purpose: a session tab or the Ask row focuses a terminal, and Radix
+ * pulling it back to the old editor a tick later would undo that.
  *
  * The last row, once anything is typed outside `>` mode, asks the assistant:
  * the text goes to the session ⌘J goes to and lands unsent in its input
@@ -156,10 +160,13 @@ export function CommandPalette(): React.JSX.Element {
   }, [state.open, state.step])
 
   const beside = useRef(false)
+  /** The chosen row focused something itself; Radix must not refocus. */
+  const keepFocus = useRef(false)
 
   const chooseRow = (row: PaletteRow): void => {
     const openBesideIt = beside.current
     beside.current = false
+    keepFocus.current = row.kind === 'session'
     close()
     if (row.kind === 'session') setActiveSession(row.key)
     setWorkspace((w) => {
@@ -180,12 +187,15 @@ export function CommandPalette(): React.JSX.Element {
   }
 
   const chooseCommand = (command: Command): void => {
+    beside.current = false
     close()
     void run(command.id)
   }
 
   const ask = (): void => {
     const text = query.trim()
+    beside.current = false
+    keepFocus.current = true
     close()
     void sendToAgent({ text, target: askTarget })
   }
@@ -199,6 +209,11 @@ export function CommandPalette(): React.JSX.Element {
       shouldFilter={false}
       onOpenChange={(open) => {
         if (!open) close()
+      }}
+      onCloseAutoFocus={(e) => {
+        if (!keepFocus.current) return
+        keepFocus.current = false
+        e.preventDefault()
       }}
     >
       <div
@@ -228,7 +243,7 @@ export function CommandPalette(): React.JSX.Element {
                 onChoose={chooseRow}
               />
               {showAsk && (
-                <CommandGroup forceMount>
+                <CommandGroup>
                   <CommandItem value={`ask:${query}`} onSelect={ask}>
                     <Sparkles />
                     <span className="truncate">Ask the assistant: {query.trim()}</span>

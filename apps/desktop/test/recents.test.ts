@@ -10,7 +10,8 @@ import {
   recentsByVaultAtom,
   touchRecentAtom,
 } from '../src/renderer/src/state/recents'
-import { activeRemoteAtom } from '../src/renderer/src/state/vaults'
+import { activeRemoteAtom, snapshotAtom } from '../src/renderer/src/state/vaults'
+import { emptyVaultSnapshot } from '@holi/shared'
 
 const path = (key: string): RecentEntry => ({ kind: 'path', key })
 
@@ -68,6 +69,34 @@ describe('the per-vault atoms', () => {
 
     expect(store.get(recentsByVaultAtom)).toEqual({})
     expect(store.get(recentsAtom)).toEqual([])
+  })
+})
+
+describe('pruning on write', () => {
+  it('drops a dead session and a vanished path once the vault is scanned', () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'o/a')
+    store.set(recentsByVaultAtom, {
+      'o/a': [{ kind: 'session', key: 'gone' }, path('renamed.md'), path('kept.md')],
+    })
+    store.set(snapshotAtom, {
+      ...emptyVaultSnapshot(),
+      docs: [{ path: 'kept.md', kind: 'note', updatedAt: '' }],
+    })
+
+    store.set(touchRecentAtom, path('kept.md'))
+
+    expect(store.get(recentsAtom)).toEqual([path('kept.md')])
+  })
+
+  it('keeps paths while the vault has not been scanned yet', () => {
+    const store = createStore()
+    store.set(activeRemoteAtom, 'o/a')
+    store.set(recentsByVaultAtom, { 'o/a': [path('a.md')] })
+
+    store.set(touchRecentAtom, path('b.md'))
+
+    expect(store.get(recentsAtom)).toEqual([path('b.md'), path('a.md')])
   })
 })
 
