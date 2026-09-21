@@ -182,9 +182,14 @@ export function CommandPalette(): React.JSX.Element {
   // Capture phase, so the focus trap never sees the ⇥.
   const tabsModeRef = useRef(false)
   tabsModeRef.current = state.open && tabsMode
+  /** Nothing to switch to: one tab, or none. The chord then does nothing
+   *  rather than opening an empty list. */
+  const lonelyRef = useRef(true)
+  lonelyRef.current = workspace.panes.reduce((n, p) => n + p.tabs.length, 0) < 2
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key !== 'Tab' || !e.ctrlKey || e.metaKey || e.altKey) return
+      if (!tabsModeRef.current && lonelyRef.current) return
       e.preventDefault()
       e.stopPropagation()
       if (!tabsModeRef.current) {

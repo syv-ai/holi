@@ -159,6 +159,18 @@ test('⌃⇥ lists the open tabs most recent first without the current one; rele
   expect(store.get(workspaceAtom).panes[0]!.active).toBe(0)
 })
 
+test('⌃⇥ with one tab open does nothing', async () => {
+  store.set(workspaceAtom, {
+    panes: [{ tabs: [{ kind: 'note', path: 'gamma.md' }], active: 0 }],
+    active: 0,
+  })
+  mount()
+
+  await userEvent.keyboard('{Control>}{Tab}{/Control}')
+
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
 test('a second ⌃⇥ steps down before ⌃ is released', async () => {
   store.set(workspaceAtom, {
     panes: [
