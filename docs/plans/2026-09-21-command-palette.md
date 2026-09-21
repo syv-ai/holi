@@ -61,21 +61,21 @@ project `primitives/__tests__/Command.test.tsx`, `features/palette/__tests__/Com
 (`shouldFilter={false}` is the caller's to set), closes on Escape and returns focus to the
 opener. `Kbd` renders a glyph string in the chip style the panel-header tooltip uses today.
 
-- [ ] From `apps/desktop`: `pnpm dlx shadcn@4.21.0 add command`. It lands in `primitives/`
+- [x] (Done by hand, not the CLI: it would also install `dialog` as `primitives/dialog.tsx`, which this case-insensitive filesystem lands on `Dialog.tsx`.) From `apps/desktop`: `pnpm dlx shadcn@4.21.0 add command`. It lands in `primitives/`
       (the `ui` alias) and adds `cmdk`. Confirm `cmdk` resolves to 1.1.1 and that `pnpm install`
       did not need an `onlyBuiltDependencies` entry.
-- [ ] Rewrite `CommandDialog`: the registry item imports the compound `Dialog`, `DialogContent`,
+- [x] Rewrite `CommandDialog`: the registry item imports the compound `Dialog`, `DialogContent`,
       `DialogHeader`, `DialogTitle`, `DialogDescription`, none of which exist here. Compose
       `Dialog` from `radix-ui` directly: Portal, an Overlay with no tint (`bg-transparent`),
       Content fixed at `top-[12vh] left-1/2 -translate-x-1/2 w-full max-w-xl p-0`, the
       popover's `motion-in-origin`/`motion-out-origin` classes, an sr-only Title and
       Description, no close button. Keep every other export as shadcn wrote it, with `text-sm`
       swapped for the house scale where the file's neighbours do that.
-- [ ] `Kbd.tsx`: `<kbd className="rounded border bg-muted px-1 font-sans text-muted-foreground">`
+- [x] `Kbd.tsx`: `<kbd className="rounded border bg-muted px-1 font-sans text-muted-foreground">`
       as a primitive; `PanelHeader.tsx:85-87` uses it. Export both from `primitives/index.ts`.
-- [ ] dom test: render `CommandDialog open` with two `CommandItem`s; the input has focus; the
+- [x] dom test: render `CommandDialog open` with two `CommandItem`s; the input has focus; the
       list shows both; `userEvent.keyboard('{Escape}')` calls `onOpenChange(false)`.
-- [ ] Verify: `pnpm -C apps/desktop exec vitest run --project dom primitives` passes;
+- [x] Verify: `pnpm -C apps/desktop exec vitest run --project dom primitives` passes;
       `pnpm lint` reports 0 errors (the file is in `primitives/`, so Radix and the native
       `kbd` are allowed there).
 
@@ -92,26 +92,26 @@ first timer; reduced motion applies at once. A vault switch asks first when
 `sessionsWorthAsking` is non-empty, otherwise resets the workspace and moves
 `activeRemoteAtom`. Shell renders from the atoms and owns no copy.
 
-- [ ] `state/pane-exit.ts`: `leavingPaneAtom: atom<number | null>`; a module-level timer handle;
+- [x] `state/pane-exit.ts`: `leavingPaneAtom: atom<number | null>`; a module-level timer handle;
       `closeTabWithExitAtom(paneIndex, tabIndex)` and `closePaneWithExitAtom(index)` with the
       same bodies as `Shell.tsx:179-212`, using `prefersReducedMotion` and `motionDurationMs`
       from wherever Shell imports them.
-- [ ] `state/vault-switch.ts`: `leavingVaultAtom: atom<{ kind: 'switch'; remote } | { kind: 'add' } | null>`;
+- [x] `state/vault-switch.ts`: `leavingVaultAtom: atom<{ kind: 'switch'; remote } | { kind: 'add' } | null>`;
       `applyVaultSwitchAtom(remote)` resets `leavingVaultAtom`, `workspaceAtom` to
       `emptyWorkspace()`, and sets `activeRemoteAtom`; `switchVaultAtom(remote)` is
       `Shell.tsx:498-505` over `agentSessionsAtom`. The conflict banner Shell clears in
       `applySwitch` becomes a Shell effect that clears it when `activeRemote` changes.
-- [ ] Shell: delete the moved code, read `leavingPaneAtom` where it read `leavingPane`, and
+- [x] Shell: delete the moved code, read `leavingPaneAtom` where it read `leavingPane`, and
       call the atoms from the tab strip, the pane close button, `VaultPicker.onSelect` and
       `VaultSwitchConfirm`. Add-vault (`leaving.kind === 'add'`) keeps working.
-- [ ] node test: with a fake timer, `closeTabWithExitAtom` on the last tab of a split sets
+- [x] node test: with a fake timer, `closeTabWithExitAtom` on the last tab of a split sets
       `leavingPaneAtom`, applies after the duration, clears it; on a non-emptying close it
       applies at once; `switchVaultAtom` with a live session sets `leavingVaultAtom` and does
       not move the remote. Use `getDefaultStore()` or a fresh `createStore()`; stub
       `prefersReducedMotion` via `vi.mock` on its module.
-- [ ] Verify: `pnpm -C apps/desktop exec vitest run --project node test/pane-exit.test.ts` and
+- [x] Verify: `pnpm -C apps/desktop exec vitest run --project node test/pane-exit.test.ts` and
       `--project dom` pass; ⌘W over CDP (or the strip's ✕) still plays the exit in the app.
-- [ ] Commit: `refactor(shell): the pane exit and the vault switch are atoms`.
+- [x] Commit: `refactor(shell): the pane exit and the vault switch are atoms`.
 
 ### Task 3: the table, and Shell dispatches from it
 
@@ -122,7 +122,7 @@ first timer; reduced motion applies at once. A vault switch asks first when
 **Behaviour:** Every shortcut that worked yesterday works today, from one listener over one
 table. The menu's Close Tab runs `tab.close` through the same table. Ids and hotkeys are unique.
 
-- [ ] `Command` as in the spec's "The table" section, plus `category?: string` used only for
+- [x] `Command` as in the spec's "The table" section, plus `category?: string` used only for
       the label prefix ("View: ", "Agent: ") the way VS Code prints one. The static list has
       the ids and hotkeys in the table below, each `run` calling what Shell calls today.
       `folder.new` is not a command: the tree names a new note or folder inline in a
@@ -145,26 +145,26 @@ table. The menu's Close Tab runs `tab.close` through the same table. Ids and hot
 | `palette.commands`            | Command palette                             | ⌘⇧P                   | `openPaletteAtom('commands')` (Task 6)                                                                             |
 | `vault.switch:<remote>`       | Switch to <name>                            |                       | `switchVaultAtom`, one per other vault, from `commandsAtom`                                                        |
 
-- [ ] `runCommandAtom(id)`: looks the id up in `commandsAtom`, refuses when `when` is false,
+- [x] `runCommandAtom(id)`: looks the id up in `commandsAtom`, refuses when `when` is false,
       records `{ kind: 'command', key: id }` through `touchRecentAtom` (Task 4; stub as a no-op
       until then), then awaits `run`.
-- [ ] `useCommandHotkeys()`: one `keydown` listener installed once, reading the table through
+- [x] `useCommandHotkeys()`: one `keydown` listener installed once, reading the table through
       a ref so it never re-subscribes; skips `boundBy` rows and `when === false` rows; on a
       match, `preventDefault` and `set(runCommandAtom, id)`. It ignores `e.isComposing`.
-- [ ] Shell: delete the five effects and the ⌘W subscriber; call `useCommandHotkeys()`;
+- [x] Shell: delete the five effects and the ⌘W subscriber; call `useCommandHotkeys()`;
       subscribe `window.holi.menu.onCommand((id) => set(runCommandAtom, id))`.
-- [ ] Main: `MENU_COMMAND_CHANNEL = 'menu:command'`; Close Tab's `click` sends `'tab.close'`;
+- [x] Main: `MENU_COMMAND_CHANNEL = 'menu:command'`; Close Tab's `click` sends `'tab.close'`;
       delete `CLOSE_TAB_CHANNEL`. Preload: `menu.onCommand` via `pushChannel<string>`;
       `global.d.ts` and `fake-holi.ts` follow. Bump the comments that name `menu:close-tab`
       (`Shell.tsx`, `menu.ts`, `preload/index.ts`, `prd/notes-editor.md` §Split panes).
-- [ ] node test `test/commands.test.ts`: ids unique; hotkeys unique; every `boundBy` row has a
+- [x] node test `test/commands.test.ts`: ids unique; hotkeys unique; every `boundBy` row has a
       hotkey; every hotkey parses through `parseHotkey` to a non-empty key; `commandsAtom`
       with two vaults yields one switch row for the other vault and none for the active one;
       `runCommandAtom` on an unknown id is a no-op.
-- [ ] Verify: node test passes; the full node suite passes (preload changed); `pnpm typecheck`;
+- [x] Verify: node test passes; the full node suite passes (preload changed); `pnpm typecheck`;
       `pnpm --filter @holi/desktop build`; over CDP each of ⌘⇧D, ⌘S, ⌘\, ⌘J, ⌘T, ⌘⇧T still
       does its thing (after a `location.reload()`; ⌘W needs his restart).
-- [ ] Commit: `feat(shell): one table of commands, and the keys dispatch from it`.
+- [x] Commit: `feat(shell): one table of commands, and the keys dispatch from it`.
 
 ### Task 4: recents
 
