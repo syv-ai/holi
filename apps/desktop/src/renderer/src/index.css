@@ -874,22 +874,22 @@
   box-shadow: var(--shadow-popover);
 }
 
-/* A scroller that shades its edges once rows have gone out of sight: a soft
-   shadow along the top while scrolled down, and along the bottom while more
-   remains. Sticky pseudo-elements with negative margins, so they cost no
-   height; `data-scroll-top` / `data-scroll-bottom` are set by the element's
-   own scroll handler (primitives/Command.tsx). */
+/* A wrapper around a scroller that shades its edges once rows have gone out
+   of sight: a soft shadow along the top while scrolled down, and along the
+   bottom while more remains. On the WRAPPER, not the scroller, so the shade
+   spans the scrollbar's gutter as well; `data-scroll-top` /
+   `data-scroll-bottom` are set from the scroller's own measurement
+   (primitives/Command.tsx). */
 .scroll-edges {
   position: relative;
 }
 .scroll-edges::before,
 .scroll-edges::after {
   content: '';
-  position: sticky;
+  position: absolute;
   left: 0;
   right: 0;
   z-index: 1;
-  display: block;
   height: 14px;
   pointer-events: none;
   opacity: 0;
@@ -897,12 +897,10 @@
 }
 .scroll-edges::before {
   top: 0;
-  margin-bottom: -14px;
   background: linear-gradient(to bottom, var(--shadow-scroll-edge), transparent);
 }
 .scroll-edges::after {
   bottom: 0;
-  margin-top: -14px;
   background: linear-gradient(to top, var(--shadow-scroll-edge), transparent);
 }
 .scroll-edges[data-scroll-top='true']::before,

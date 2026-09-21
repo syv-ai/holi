@@ -115,17 +115,23 @@ function CommandInput({
 }
 
 /**
- * Mark which edges of a scroller have rows beyond them, so `.scroll-edges`
- * (index.css) can shade them. Re-measured on scroll and whenever the content
- * resizes, which is what a filtered list does on every keystroke.
+ * Mark on `frame` which edges of the scroller `ref` have rows beyond them, so
+ * `.scroll-edges` (index.css) can shade them. Re-measured on scroll and
+ * whenever the content resizes, which is what a filtered list does on every
+ * keystroke. The marks go on the frame around the scroller rather than on it,
+ * so the shade can span the scrollbar's gutter.
  */
-function useScrollEdges(ref: React.RefObject<HTMLDivElement | null>): void {
+function useScrollEdges(
+  ref: React.RefObject<HTMLDivElement | null>,
+  frame: React.RefObject<HTMLDivElement | null>,
+): void {
   useEffect(() => {
     const el = ref.current
-    if (el === null) return
+    const box = frame.current
+    if (el === null || box === null) return
     const measure = (): void => {
-      el.dataset.scrollTop = String(el.scrollTop > 0)
-      el.dataset.scrollBottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
+      box.dataset.scrollTop = String(el.scrollTop > 0)
+      box.dataset.scrollBottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
     }
     measure()
     el.addEventListener('scroll', measure, { passive: true })
@@ -136,7 +142,7 @@ function useScrollEdges(ref: React.RefObject<HTMLDivElement | null>): void {
       el.removeEventListener('scroll', measure)
       observer?.disconnect()
     }
-  }, [ref])
+  }, [ref, frame])
 }
 
 function CommandList({
@@ -144,21 +150,25 @@ function CommandList({
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
-  useScrollEdges(ref)
+  const frame = useRef<HTMLDivElement | null>(null)
+  useScrollEdges(ref, frame)
   return (
-    <CommandPrimitive.List
-      ref={ref}
-      data-slot="command-list"
-      // Taller than the registry's 300px, and the scrollbar is always painted
-      // (`.scrollbar-always`, index.css) so the list's length can be read off
-      // the thumb rather than discovered by scrolling. `.scroll-edges` shades
-      // the edge that rows have slipped past.
-      className={cn(
-        'scroll-edges scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
-        className,
-      )}
-      {...props}
-    />
+    // The frame carries the edge shades (`.scroll-edges`) over the whole width,
+    // scrollbar included; the list inside is the scroller.
+    <div ref={frame} className="scroll-edges">
+      <CommandPrimitive.List
+        ref={ref}
+        data-slot="command-list"
+        // Taller than the registry's 300px, and the scrollbar is always painted
+        // (`.scrollbar-always`, index.css) so the list's length can be read off
+        // the thumb rather than discovered by scrolling.
+        className={cn(
+          'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
+          className,
+        )}
+        {...props}
+      />
+    </div>
   )
 }
 
