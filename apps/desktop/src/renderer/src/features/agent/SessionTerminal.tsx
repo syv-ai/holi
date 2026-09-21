@@ -52,6 +52,12 @@ export function SessionTerminal({
   onGeometry?: (cols: number, rows: number) => void
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
+  /** Where xterm actually opens: the box INSIDE the gutter. FitAddon sizes the
+   *  terminal from its parent's computed width and height, which under
+   *  `box-sizing: border-box` include the parent's padding — so padding on the
+   *  host bought two rows and four columns that were drawn into the gutter it
+   *  was meant to keep clear. The gutter is the inset between the two boxes. */
+  const mountRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
   const disposeRef = useRef<(() => void) | null>(null)
@@ -66,9 +72,9 @@ export function SessionTerminal({
   const syncSize = useCallback(() => {
     const term = termRef.current
     const fit = fitRef.current
-    const host = hostRef.current
-    if (!term || !fit || !host?.isConnected) return
-    if (host.clientWidth < MIN_FITTABLE_PX || host.clientHeight < MIN_FITTABLE_PX) return
+    const mount = mountRef.current
+    if (!term || !fit || !mount?.isConnected) return
+    if (mount.clientWidth < MIN_FITTABLE_PX || mount.clientHeight < MIN_FITTABLE_PX) return
     try {
       fit.fit()
     } catch {
@@ -94,8 +100,8 @@ export function SessionTerminal({
    * tab switch with no replay and no repaint.
    */
   const build = useCallback(() => {
-    const host = hostRef.current
-    if (!host || termRef.current) return
+    const mount = mountRef.current
+    if (!mount || termRef.current) return
     const term = new Terminal({
       fontSize: 13,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, monospace',
@@ -105,7 +111,7 @@ export function SessionTerminal({
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.open(host)
+    term.open(mount)
     termRef.current = term
     fitRef.current = fit
     // So a paste into this session can be followed by the keyboard: see
@@ -178,7 +184,7 @@ export function SessionTerminal({
     const reHide = setTimeout(() => term.write(HIDE_CURSOR), 500)
 
     const observer = new ResizeObserver(() => syncSize())
-    observer.observe(host)
+    observer.observe(mount)
 
     disposeRef.current = () => {
       clearTimeout(reHide)
@@ -216,7 +222,12 @@ export function SessionTerminal({
     <div
       ref={hostRef}
       data-session-terminal={sessionId}
-      className={cn('min-h-0 flex-1 bg-background px-4 py-2', !visible && 'hidden')}
-    />
+      className={cn('relative min-h-0 flex-1 bg-background', !visible && 'hidden')}
+    >
+      {/* The gutter is the inset, not padding: xterm measures the box it is
+          opened in, and an inset box measures what it is. 16px either side,
+          8px above and below. */}
+      <div ref={mountRef} className="absolute inset-x-4 inset-y-2" />
+    </div>
   )
 }
