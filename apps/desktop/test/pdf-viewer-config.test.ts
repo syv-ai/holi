@@ -41,6 +41,15 @@ describe('pdfViewerTheme', () => {
     }
   })
 
+  it('paints its toolbars from the pane background, so they sit flush with Holi', () => {
+    // `surface` is every toolbar and sidebar, `surfaceAlt` the Annotate and
+    // Shapes secondary toolbar: both measured, both were grey bands.
+    const { background } = pdfViewerTheme('dark').dark
+    expect(background.app).toBe('var(--background)')
+    expect(background.surface).toBe('var(--background)')
+    expect(background.surfaceAlt).toBe('var(--background)')
+  })
+
   it('carries the mode as the preference and the same map for both modes', () => {
     expect(pdfViewerTheme('light').preference).toBe('light')
     expect(pdfViewerTheme('dark').preference).toBe('dark')

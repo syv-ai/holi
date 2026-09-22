@@ -54,9 +54,12 @@ const v = (slug: string): string => `var(--${slug})`
 export function pdfViewerTheme(mode: 'light' | 'dark') {
   const colors = {
     background: {
+      // The viewer's toolbars paint from `surface` (top bar, sidebars) and
+      // `surfaceAlt` (the Annotate/Shapes bar). Holi's chrome is flat, so all
+      // three are the pane; the toolbar's own border is what separates them.
       app: v('background'),
-      surface: v('card'),
-      surfaceAlt: v('muted'),
+      surface: v('background'),
+      surfaceAlt: v('background'),
       elevated: v('popover'),
       input: v('input'),
     },
