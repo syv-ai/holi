@@ -2,6 +2,7 @@ import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
   PDF_DISABLED_CATEGORIES,
+  PDF_PAGE_PLACEHOLDER_CSS,
   pdfViewerTheme,
   shortcutOf,
 } from '../src/renderer/src/lib/pdf-viewer-config'
@@ -45,6 +46,22 @@ describe('pdfViewerTheme', () => {
     expect(pdfViewerTheme('dark').preference).toBe('dark')
     // The variables already flip with the mode; the map does not have to.
     expect(pdfViewerTheme('dark').light).toEqual(pdfViewerTheme('dark').dark)
+  })
+})
+
+describe('PDF_PAGE_PLACEHOLDER_CSS', () => {
+  it("overrides the viewer's hard-coded white page with a Holi token", () => {
+    // embedpdf paints every page wrapper `#fff` inline until PDFium's bitmap
+    // lands; on a dark PDF that is the white flash. The bitmap brings its own
+    // paper, so the wrapper is only ever a placeholder.
+    expect(PDF_PAGE_PLACEHOLDER_CSS).toContain('[style*="background-color: rgb(255, 255, 255)"]')
+    const values = [
+      ...PDF_PAGE_PLACEHOLDER_CSS.matchAll(/\{\s*background-color:\s*([^;!]+?)\s*!important/g),
+    ]
+    expect(values).toHaveLength(1)
+    const m = /^var\(--([a-z-]+)\)$/.exec(values[0]![1]!)
+    expect(m, values[0]![1]).not.toBeNull()
+    expect(THEME_TOKENS).toContain(m![1])
   })
 })
 

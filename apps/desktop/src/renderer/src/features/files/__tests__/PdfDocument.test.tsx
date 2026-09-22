@@ -24,6 +24,8 @@ const seam = vi.hoisted(() => ({
   annotationCb: null as (() => void) | null,
   setTheme: vi.fn(),
   saveAsCopy: vi.fn(),
+  /** The viewer's shadow root, as the real container has one. */
+  shadow: null as ShadowRoot | null,
 }))
 
 vi.mock('@/lib/trpc', () => ({
@@ -58,7 +60,15 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     getPlugin: (id: string) => (id in plugins ? { provides: () => plugins[id] } : null),
   }
   const PDFViewer = forwardRef(function FakeViewer(
-    { config, onReady }: { config: { src: string }; onReady?: (r: unknown) => void },
+    {
+      config,
+      onInit,
+      onReady,
+    }: {
+      config: { src: string }
+      onInit?: (c: HTMLElement) => void
+      onReady?: (r: unknown) => void
+    },
     ref,
   ) {
     useImperativeHandle(ref, () => ({ container: { setTheme: seam.setTheme }, registry: null }))
@@ -68,6 +78,9 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         if (s !== null) seam.seen.push(s)
       }
       document.addEventListener('keydown', listener)
+      const container = document.createElement('embedpdf-container')
+      seam.shadow = container.attachShadow({ mode: 'open' })
+      onInit?.(container)
       onReady?.(registry)
       return () => document.removeEventListener('keydown', listener)
       // Mounted once per src, like the real wrapper.
@@ -134,6 +147,13 @@ test('themes the viewer through setTheme with Holi tokens', async () => {
   await waitFor(() => expect(seam.setTheme).toHaveBeenCalled())
   const theme = seam.setTheme.mock.calls[0]![0] as { dark: { background: { app: string } } }
   expect(theme.dark.background.app).toBe('var(--background)')
+})
+
+test("covers the viewer's white page placeholder from inside its shadow root", async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  const css = [...seam.shadow!.querySelectorAll('style')].map((el) => el.textContent).join('\n')
+  expect(css).toMatch(/background-color: rgb\(255, 255, 255\).*var\(--muted\)/)
 })
 
 test('writes the exported document back after a mark, and not before', async () => {

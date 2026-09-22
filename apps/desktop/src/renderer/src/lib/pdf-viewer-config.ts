@@ -94,6 +94,20 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
 }
 
 /**
+ * The page before it is painted, in Holi's tokens instead of white.
+ *
+ * embedpdf's page renderer hard-codes `backgroundColor: "#fff"` inline on every
+ * page wrapper, with no config for it, and PDFium's bitmap arrives some tens of
+ * milliseconds later. On a dark PDF that gap is a white flash. The bitmap is
+ * rendered onto opaque white paper of its own (the engine fills it before
+ * drawing), so the wrapper is only ever a placeholder and a white PDF still
+ * looks white. Adopted into the viewer's shadow root, where `!important` beats
+ * the inline style; the selector is the library's own white, so it catches
+ * every place it paints one and nothing else.
+ */
+export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255, 255)"] { background-color: ${v('muted')} !important; }`
+
+/**
  * A keydown spelled the way the viewer's shortcut table spells one:
  * `ctrl`/`shift`/`alt`/`meta` plus the lower-cased key, sorted, joined with
  * `+`; a bare modifier is nothing. Mirrors the plugin so `PdfViewer` can ask

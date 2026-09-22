@@ -26,13 +26,22 @@
  *   event did not start inside the viewer. A disabled command (print on ⌘P) is
  *   not claimed, so Holi's palette still opens.
  * - **Theme.** `pdfViewerTheme` speaks in `var(--token)` strings that cross the
- *   shadow boundary; a mode flip goes through `setTheme`, not a remount.
+ *   shadow boundary; a mode flip goes through `setTheme`, not a remount. The
+ *   one colour the palette cannot reach, the white a page shows until it is
+ *   painted, is overridden by a `<style>` put into the viewer's shadow root at
+ *   init: a sibling of Preact's render, like the viewer's own theme style, so a
+ *   re-render leaves it alone.
  */
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PDFViewer, type PDFViewerRef, type PluginRegistry } from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
-import { PDF_DISABLED_CATEGORIES, pdfViewerTheme, shortcutOf } from '@/lib/pdf-viewer-config'
+import {
+  PDF_DISABLED_CATEGORIES,
+  PDF_PAGE_PLACEHOLDER_CSS,
+  pdfViewerTheme,
+  shortcutOf,
+} from '@/lib/pdf-viewer-config'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -167,6 +176,12 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
     }
   }, [save])
 
+  const onInit = useCallback((container: HTMLElement) => {
+    const style = document.createElement('style')
+    style.textContent = PDF_PAGE_PLACEHOLDER_CSS
+    container.shadowRoot?.append(style)
+  }, [])
+
   const onReady = useCallback(
     (registry: PluginRegistry) => {
       registryRef.current = registry
@@ -206,6 +221,7 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
           ref={viewerRef}
           className="min-h-0 flex-1"
           style={{ height: '100%' }}
+          onInit={onInit}
           onReady={onReady}
           config={{
             src,
