@@ -28,6 +28,7 @@ import { SessionTerminal } from '@/features/agent/SessionTerminal'
 import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
+import { PdfViewer } from '@/features/files/PdfViewer'
 import type { Pane, Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
 import { TabStrip, tabKey } from './TabStrip'
@@ -208,12 +209,13 @@ export function PaneView({
               <HistoryView />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'image' ? (
               <ImageViewer path={tab.path} />
-            ) : tab?.kind === 'note' &&
-              (fileKind(tab.path) === 'pdf' || fileKind(tab.path) === 'doc') ? (
+            ) : tab?.kind === 'note' && fileKind(tab.path) === 'pdf' ? (
+              <PdfViewer path={tab.path} />
+            ) : tab?.kind === 'note' && fileKind(tab.path) === 'doc' ? (
               // Rich formats we can't yet render open a typed placeholder — a
               // real per-type viewer replaces it later (spec §Arbitrary files).
               // Text files (json/yaml/…) fall through to the plain editor below.
-              <FilePlaceholder path={tab.path} kind={fileKind(tab.path) as 'pdf' | 'doc'} />
+              <FilePlaceholder path={tab.path} kind="doc" />
             ) : (
               <EditorPane
                 path={tab?.kind === 'note' ? tab.path : null}

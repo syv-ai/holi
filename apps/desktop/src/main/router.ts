@@ -11,7 +11,7 @@
  * with no server, a check running on the machine of the person it restricts is
  * theatre. GitHub decides what leaves, at push time (auth PRD §Access model).
  */
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
@@ -1135,6 +1135,45 @@ export function createRouter(deps: RouterDeps) {
       ),
   })
 
+  /**
+   * Bytes for a file the renderer renders itself (D103: the PDF viewer). The
+   * `holi-vault://` protocol serves the same bytes to `<img>`, but a renderer
+   * `fetch` of it fails on CORS, and giving the protocol a permissive header
+   * would open it to the sandboxed vault-app frames too — a packaged `file://`
+   * renderer sends the same `null` origin they do, so no origin check could tell
+   * them apart. So bytes cross the IPC seam instead, as a `Uint8Array` that
+   * structured clone carries verbatim; nothing base64 here either.
+   */
+  const files = t.router({
+    read: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<Uint8Array> => {
+        const abs = absPathFor(await rootFor(input.remote), safe(input.path))
+        const buf = await readFile(abs).catch(() => null)
+        if (buf === null) throw new TRPCError({ code: 'NOT_FOUND', message: input.path })
+        // A fresh copy, not the Buffer: small Buffers are views into a shared
+        // 8 KB pool, and structured clone copies the whole underlying buffer.
+        return new Uint8Array(buf)
+      }),
+
+    /** Overwrite a binary in place; returns the mtime the scanner will report,
+     *  so the writer can tell its own change from a foreign one. */
+    write: vaultMutation
+      .input((raw: unknown) => {
+        const base = fields({ remote: 'string', path: 'string' })(raw)
+        const bytes = (raw as { bytes?: unknown }).bytes
+        if (!(bytes instanceof Uint8Array)) throw new Error('bytes must be a Uint8Array')
+        return { ...base, bytes }
+      })
+      .mutation(async ({ input }): Promise<{ updatedAt: string }> => {
+        const root = await rootFor(input.remote)
+        const rel = safe(input.path)
+        await writeAtomic(root, rel, input.bytes)
+        const info = await stat(absPathFor(root, rel))
+        return { updatedAt: info.mtime.toISOString() }
+      }),
+  })
+
   const notes = t.router({
     read: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
@@ -2172,6 +2211,7 @@ export function createRouter(deps: RouterDeps) {
     github,
     vaults,
     notes,
+    files,
     tasks,
     sync,
     history,

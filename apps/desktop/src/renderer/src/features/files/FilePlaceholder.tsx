@@ -1,23 +1,20 @@
 /**
- * The in-app stand-in for a rich file Holi can't yet render — an image, PDF or
+ * The in-app stand-in for a rich file Holi can't yet render — today only an
  * office document (spec §Arbitrary files). It names the file and its type and
- * says support is coming; a real per-type viewer replaces it later. Text files
- * are NOT here: they edit in the plain editor (`EditorPane plain`). Deliberately
- * NOT a "reveal in Finder" shortcut — the file stays in-app, in the vault, and
- * syncs like everything else.
+ * says support is coming; a real per-type viewer replaces it, as `ImageViewer`
+ * did for images and `PdfViewer` for PDFs (D103). Text files are NOT here: they
+ * edit in the plain editor (`EditorPane plain`). Deliberately NOT a "reveal in
+ * Finder" shortcut — the file stays in-app, in the vault, and syncs like
+ * everything else.
  */
 import type { FileKind } from '@holi/shared'
-import { FileText, Image, type LucideIcon } from 'lucide-react'
+import { FileText, type LucideIcon } from 'lucide-react'
 
-/** The rich formats without an editor — text opens the plain editor instead. */
-type OpenableKind = Exclude<FileKind, 'markdown' | 'text'>
+/** The rich formats without a viewer — text opens the plain editor instead. */
+type OpenableKind = Exclude<FileKind, 'markdown' | 'text' | 'image' | 'pdf'>
 
 function describe(kind: OpenableKind): { label: string; Icon: LucideIcon; note: string } {
   switch (kind) {
-    case 'image':
-      return { label: 'Image', Icon: Image, note: 'Image preview is coming soon.' }
-    case 'pdf':
-      return { label: 'PDF', Icon: FileText, note: 'PDF preview is coming soon.' }
     case 'doc':
       return { label: 'Document', Icon: FileText, note: 'Document preview is coming soon.' }
   }

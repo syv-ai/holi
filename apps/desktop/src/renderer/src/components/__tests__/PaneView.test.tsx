@@ -24,6 +24,11 @@ vi.mock('@/features/agent/SessionTerminal', () => ({
   ),
 }))
 vi.mock('@/features/agent/TurnChip', () => ({ TurnChip: () => <div data-turn-chip /> }))
+// The PDF viewer is embedpdf over a wasm engine; these tests open `.pdf` tabs
+// precisely so the pane body is cheap, so it is a stub here too.
+vi.mock('@/features/files/PdfViewer', () => ({
+  PdfViewer: ({ path }: { path: string }) => <div data-pdf-viewer={path} />,
+}))
 
 /** Empty, so the body renders the empty-editor placeholder rather than mounting
  *  the whole CodeMirror stack — the wrapper is what is under test. */
@@ -54,8 +59,8 @@ function pane(props: Partial<Parameters<typeof PaneView>[0]> = {}) {
   return { onDropTab, onDropEdge }
 }
 
-/** A `.pdf` note renders `FilePlaceholder` — a pure component — so a pane can
- *  hold real tabs here without mounting the editor stack. */
+/** A `.pdf` note renders the stubbed `PdfViewer` above, so a pane can hold
+ *  real tabs here without mounting the editor stack. */
 const note = (name: string): Tab => ({ kind: 'note', path: `notes/${name}.pdf` })
 
 /** Pick a pill up from this pane's own strip, which is what tells the pane the

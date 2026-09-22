@@ -307,6 +307,56 @@ describe('vaults', () => {
   })
 })
 
+describe('files', () => {
+  /** Bytes with a PDF header and a NUL in the middle, so a utf8 round trip
+   *  would visibly corrupt them. */
+  const PDF = new Uint8Array([
+    0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x00, 0xff, 0x7e,
+  ])
+
+  it('reads a binary file as a fresh Uint8Array', async () => {
+    const { caller, root } = await rig()
+    await writeFile(join(root, 'case.pdf'), PDF)
+    const bytes = await caller.files.read({ remote: REMOTE, path: 'case.pdf' })
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    expect(Array.from(bytes)).toEqual(Array.from(PDF))
+    // A pooled Buffer view would drag its 8 KB pool across the seam.
+    expect(bytes.byteOffset).toBe(0)
+    expect(bytes.buffer.byteLength).toBe(PDF.byteLength)
+  })
+
+  it('refuses a path outside the vault, and NOT_FOUND for a missing one', async () => {
+    const { caller } = await rig()
+    await expect(caller.files.read({ remote: REMOTE, path: '../etc/passwd' })).rejects.toThrow()
+    await expect(caller.files.read({ remote: REMOTE, path: 'ghost.pdf' })).rejects.toThrow(/ghost/)
+  })
+
+  it('writes bytes atomically and reports the mtime the scanner will see', async () => {
+    const { caller, root } = await rig()
+    await caller.vaults.open({ remote: REMOTE })
+    await writeFile(join(root, 'case.pdf'), PDF)
+    const next = new Uint8Array([...PDF, 0x01, 0x02])
+    const { updatedAt } = await caller.files.write({
+      remote: REMOTE,
+      path: 'case.pdf',
+      bytes: next,
+    })
+    expect(Array.from(await readFile(join(root, 'case.pdf')))).toEqual(Array.from(next))
+    const { stat } = await import('node:fs/promises')
+    expect(updatedAt).toBe((await stat(join(root, 'case.pdf'))).mtime.toISOString())
+    // The write is a vaultMutation: the very next snapshot read already carries it.
+    const snap = await caller.vaults.snapshot({ remote: REMOTE })
+    expect(snap.files.find((f) => f.path === 'case.pdf')?.updatedAt).toBe(updatedAt)
+  })
+
+  it('refuses bytes that are not a Uint8Array', async () => {
+    const { caller } = await rig()
+    await expect(
+      caller.files.write({ remote: REMOTE, path: 'x.pdf', bytes: 'AAAA' as unknown as Uint8Array }),
+    ).rejects.toThrow(/Uint8Array/)
+  })
+})
+
 describe('notes', () => {
   it('reads and writes', async () => {
     const { caller, root } = await rig({ 'a.md': '# A\n' })
