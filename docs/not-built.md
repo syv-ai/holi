@@ -117,16 +117,7 @@ format with no viewer. Noticed 2026-08-20 while verifying the image plate; not f
 fix is a *third* answer between "editable text" and "typed placeholder" — probably a byte-sniff
 rather than a longer extension list, since the whole point is the extensions nobody enumerated.
 
-**Viewing a binary Holi cannot render.** A PDF or `.docx` in a vault gets a typed placeholder
-naming what it is. Opening one in place — page nav for a PDF, `mammoth`-rendered HTML for a
-`.docx` — is not built. **The framing this inherited is dead:** an earlier design converted
-incoming PDFs and `.docx` files to markdown on entry and archived the original to object storage,
-and D62 killed it — the vault is text-first *by authorship*, so rich documents are what it
-**emits** ([`prd/pdf-export.md`](prd/pdf-export.md)), not what it imports. What survives is the
-viewer, and it is genuinely optional: given how rarely an original is opened, "reveal it in the
-Finder and let the OS open it" may be the whole feature. The old viewer is the reason to be
-careful — the previous app's EmbedPDF integration was ~1550 LOC with worker-engine and StrictMode
-hangs on "Loading PDF…".
+**Viewing a `.docx` Holi cannot render.** A `.docx` in a vault gets a typed placeholder naming what it is. Opening one in place, `mammoth`-rendered HTML say, is not built. **A PDF is no longer in this entry**: the viewer shipped on 2026-09-21 (D103, [`prd/pdf-export.md`](prd/pdf-export.md) §Viewing a PDF), embedpdf's ready-made viewer over its own PDFium wasm, with marks saved into the file, and an earlier version of this paragraph calling the viewer "genuinely optional" because originals are rarely opened was overtaken by his asking for it. **The framing this inherited is dead:** an earlier design converted incoming PDFs and `.docx` files to markdown on entry and archived the original to object storage, and D62 killed it, because the vault is text-first *by authorship*, so rich documents are what it **emits**, not what it imports. What survives is the viewer, and for `.docx` the same question the PDF answered stands: given how rarely an original is opened, "reveal it in the Finder and let the OS open it" may be the whole feature. The old viewer's lesson is recorded in the PDF design rather than here: the previous app's EmbedPDF integration was ~1550 LOC on the headless route with worker-engine and StrictMode hangs on "Loading PDF…", and the ready-made shape avoided all of it.
 
 **Importing a folder.** Dropping a folder in from Finder is refused with a sentence — the copy is
 per file, and recursing means deciding what to do about the files inside it that collide, which is
