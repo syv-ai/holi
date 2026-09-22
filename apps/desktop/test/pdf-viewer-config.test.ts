@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_VIEWPORT_CSS,
+  openingZoomCap,
   pdfViewerTheme,
   shortcutOf,
 } from '../src/renderer/src/lib/pdf-viewer-config'
@@ -71,6 +73,32 @@ describe('PDF_PAGE_PLACEHOLDER_CSS', () => {
     const m = /^var\(--([a-z-]+)\)$/.exec(values[0]![1]!)
     expect(m, values[0]![1]).not.toBeNull()
     expect(THEME_TOKENS).toContain(m![1])
+  })
+})
+
+describe('PDF_VIEWPORT_CSS', () => {
+  it("reserves the scroller's scrollbar gutter, so fit-width is right the first time", () => {
+    // Without it the scrollbar appears once pages lay out, the viewport
+    // narrows by its width, and fit-width is recomputed mid-fade.
+    expect(PDF_VIEWPORT_CSS).toMatch(
+      /^\.bg-bg-app\[style\*="overflow: auto"\] \{ scrollbar-gutter: stable; \}$/,
+    )
+  })
+})
+
+describe('openingZoomCap', () => {
+  it('holds a wide pane at 150%, which fit-width would overshoot', () => {
+    expect(openingZoomCap('fit-width', 2.37)).toBe(1.5)
+  })
+
+  it('leaves fit-width alone when the page would overflow at 150%', () => {
+    expect(openingZoomCap('fit-width', 0.75)).toBeNull()
+    expect(openingZoomCap('fit-width', 1.5)).toBeNull()
+  })
+
+  it('never touches a zoom that is not the fit-width opening', () => {
+    expect(openingZoomCap(2, 2)).toBeNull()
+    expect(openingZoomCap('automatic', 2)).toBeNull()
   })
 })
 

@@ -37,15 +37,26 @@
  *   laid out invisible and fades in (D98's arrive) when the first page image
  *   loads. A timer reveals it anyway, so a broken file's error or a password
  *   prompt is never left invisible.
+ * - **It opens at 150%, or fit-width if that is narrower** (`openingZoomCap`).
+ *   The viewer opens at fit-width and the first zoom each document gets is
+ *   capped; both happen before the first page paints, so there is no visible
+ *   second resize.
  */
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { PDFViewer, type PDFViewerRef, type PluginRegistry } from '@embedpdf/react-pdf-viewer'
+import {
+  PDFViewer,
+  ZoomMode,
+  type PDFViewerRef,
+  type PluginRegistry,
+} from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
 import { cn } from '@/lib/cn'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_VIEWPORT_CSS,
+  openingZoomCap,
   pdfViewerTheme,
   shortcutOf,
 } from '@/lib/pdf-viewer-config'
@@ -65,7 +76,7 @@ const REVEAL_AFTER_MS = 1500
 /**
  * The slices of the viewer's plugins this file touches, typed structurally.
  * The plugin packages are transitive dependencies of the snippet, so their
- * types are not importable here, and these four methods are all that is used.
+ * types are not importable here, and these methods are all that is used.
  */
 interface Task<T> {
   toPromise(): Promise<T>
@@ -73,6 +84,12 @@ interface Task<T> {
 interface ViewerPlugins {
   annotation: { onAnnotationEvent(cb: () => void): () => void }
   export: { saveAsCopy(): Task<ArrayBuffer> }
+  zoom: {
+    onZoomChange(
+      cb: (event: { documentId: string; level: string | number; newZoom: number }) => void,
+    ): () => void
+    forDocument(documentId: string): { requestZoom(level: number): void }
+  }
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string): { disabled: boolean; visible: boolean }
@@ -207,7 +224,7 @@ export function PdfDocument({
       const root = container.shadowRoot
       if (root === null) return
       const style = document.createElement('style')
-      style.textContent = PDF_PAGE_PLACEHOLDER_CSS
+      style.textContent = `${PDF_PAGE_PLACEHOLDER_CSS}\n${PDF_VIEWPORT_CSS}`
       root.append(style)
       root.addEventListener(
         'load',
@@ -224,6 +241,14 @@ export function PdfDocument({
     (registry: PluginRegistry) => {
       registryRef.current = registry
       provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
+      const zoom = provided(registry, 'zoom')
+      const opened = new Set<string>()
+      zoom?.onZoomChange((event) => {
+        if (opened.has(event.documentId)) return
+        opened.add(event.documentId)
+        const cap = openingZoomCap(event.level, event.newZoom)
+        if (cap !== null) zoom.forDocument(event.documentId).requestZoom(cap)
+      })
     },
     [scheduleSave],
   )
@@ -277,6 +302,7 @@ export function PdfDocument({
             // No CDN fonts: the vault's PDFs embed theirs, and the app is offline-first.
             fontFallback: null,
             tabBar: 'never',
+            zoom: { defaultZoomLevel: ZoomMode.FitWidth },
             disabledCategories: [...PDF_DISABLED_CATEGORIES],
             theme: pdfViewerTheme(mode),
           }}

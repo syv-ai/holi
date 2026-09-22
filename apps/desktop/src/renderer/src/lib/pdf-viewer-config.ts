@@ -2,10 +2,11 @@
  * What the embedded PDF viewer may do, as data (D103).
  *
  * embedpdf's ready-made viewer ships a toolbar and a commands plugin that binds
- * shortcuts on `document`. Three things about it are Holi's to decide and live
- * here as pure values so a node test can hold them still: which command
- * categories are switched off, how its palette is fed from Holi's theme tokens,
- * and how a keydown is spelled the way its shortcut table spells one.
+ * shortcuts on `document`. What about it is Holi's to decide lives here as
+ * pure values so a node test can hold them still: which command categories are
+ * switched off, how its palette is fed from Holi's theme tokens, the CSS put
+ * into its shadow root, the zoom a document opens at, and how a keydown is
+ * spelled the way its shortcut table spells one.
  *
  * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
  * consumes this, `test/pdf-viewer-config.test.ts` pins it.
@@ -104,11 +105,37 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
  * milliseconds later. On a dark PDF that gap is a white flash. The bitmap is
  * rendered onto opaque white paper of its own (the engine fills it before
  * drawing), so the wrapper is only ever a placeholder and a white PDF still
- * looks white. Adopted into the viewer's shadow root, where `!important` beats
+ * looks white. Put into the viewer's shadow root, where `!important` beats
  * the inline style; the selector is the library's own white, so it catches
  * every place it paints one and nothing else.
  */
 export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255, 255)"] { background-color: ${v('muted')} !important; }`
+
+/**
+ * The page scroller keeps room for its scrollbar from the start.
+ *
+ * The scrollbar appears only once the pages lay out taller than the pane, and
+ * takes its width from the viewport. The viewer recomputes fit-width on that
+ * resize, 150 ms later, which on a narrow pane was a visible second zoom
+ * during the arrival fade (93.9% to 92.5%). A stable gutter means the width
+ * the first fit-width sees is the width it keeps. The scroller is the
+ * viewport, painted `bg-bg-app` with an inline `overflow: auto`.
+ */
+export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar-gutter: stable; }`
+
+/** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
+export const PDF_OPENING_ZOOM_MAX = 1.5
+
+/**
+ * A PDF opens at 150%, or at fit-width when the page would overflow the pane
+ * at 150%. The viewer has no such mode (its `automatic` is fit-width capped at
+ * 100%), so it opens at fit-width and this caps the result. Asked of the first
+ * zoom a document gets and no later one, so choosing Fit Width from the menu
+ * still fits the width. `null` is "leave it".
+ */
+export function openingZoomCap(level: string | number, zoom: number): number | null {
+  return level === 'fit-width' && zoom > PDF_OPENING_ZOOM_MAX ? PDF_OPENING_ZOOM_MAX : null
+}
 
 /**
  * A keydown spelled the way the viewer's shortcut table spells one:

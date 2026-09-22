@@ -24,6 +24,11 @@ const seam = vi.hoisted(() => ({
   annotationCb: null as (() => void) | null,
   setTheme: vi.fn(),
   saveAsCopy: vi.fn(),
+  /** The zoom plugin's listener, and what was asked of it. */
+  zoomCb: null as
+    ((e: { documentId: string; level: string | number; newZoom: number }) => void) | null,
+  requestZoom: vi.fn(),
+  config: null as { zoom?: { defaultZoomLevel?: unknown } } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
 }))
@@ -48,6 +53,15 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       },
     },
     export: { saveAsCopy: () => seam.saveAsCopy() },
+    zoom: {
+      onZoomChange: (cb: NonNullable<typeof seam.zoomCb>) => {
+        seam.zoomCb = cb
+        return () => {}
+      },
+      forDocument: (id: string) => ({
+        requestZoom: (level: unknown) => seam.requestZoom(id, level),
+      }),
+    },
     commands: {
       getCommandByShortcut: (s: string) =>
         s === 'h' || s === 'meta+f' || s === 'meta+p' ? { id: s } : undefined,
@@ -66,7 +80,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       onInit,
       onReady,
     }: {
-      config: { src: string }
+      config: { src: string; zoom?: { defaultZoomLevel?: unknown } }
       className?: string
       onInit?: (c: HTMLElement) => void
       onReady?: (r: unknown) => void
@@ -87,6 +101,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         if (s !== null) seam.seen.push(s)
       }
       document.addEventListener('keydown', listener)
+      seam.config = config
       onInit?.(container)
       onReady?.(registry)
       return () => document.removeEventListener('keydown', listener)
@@ -95,7 +110,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     }, [])
     return <div data-testid="pdf" data-pdf-src={config.src} className={className} />
   })
-  return { PDFViewer }
+  return { PDFViewer, ZoomMode: { FitWidth: 'fit-width' } }
 })
 
 import { PdfDocument } from '../PdfDocument'
@@ -116,6 +131,8 @@ beforeEach(() => {
   seam.setTheme.mockReset()
   seam.seen.length = 0
   seam.annotationCb = null
+  seam.zoomCb = null
+  seam.requestZoom.mockReset()
   urlCounter = 0
   // jsdom has no object URLs.
   URL.createObjectURL = vi.fn(() => `blob:holi/${++urlCounter}`)
@@ -186,6 +203,26 @@ test('arrives anyway when no page ever paints, so an error is never invisible', 
   const viewer = await screen.findByTestId('pdf')
   expect(viewer).toHaveClass('opacity-0')
   await waitFor(() => expect(viewer).toHaveClass('motion-in-fade'))
+})
+
+test('opens at fit-width, held to 150% where that would overshoot, once', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  expect(seam.config?.zoom?.defaultZoomLevel).toBe('fit-width')
+
+  // A narrow pane: fit-width is under 150% and stands.
+  act(() => seam.zoomCb!({ documentId: 'narrow', level: 'fit-width', newZoom: 0.75 }))
+  expect(seam.requestZoom).not.toHaveBeenCalled()
+
+  // A wide pane: fit-width would be 237%, so the opening is 150%.
+  act(() => seam.zoomCb!({ documentId: 'wide', level: 'fit-width', newZoom: 2.37 }))
+  expect(seam.requestZoom).toHaveBeenCalledWith('wide', 1.5)
+
+  // Fit Width chosen later from the menu means fit width.
+  seam.requestZoom.mockClear()
+  act(() => seam.zoomCb!({ documentId: 'wide', level: 'fit-width', newZoom: 2.37 }))
+  act(() => seam.zoomCb!({ documentId: 'narrow', level: 'fit-width', newZoom: 2.37 }))
+  expect(seam.requestZoom).not.toHaveBeenCalled()
 })
 
 test('writes the exported document back after a mark, and not before', async () => {
