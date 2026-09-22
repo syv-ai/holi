@@ -5,7 +5,7 @@
  * `document` from an effect. What a PDF looks like is the library's business.
  */
 import { Provider, createStore } from 'jotai'
-import { forwardRef, useEffect, useImperativeHandle } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 import { emptyVaultSnapshot } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -62,31 +62,38 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
   const PDFViewer = forwardRef(function FakeViewer(
     {
       config,
+      className,
       onInit,
       onReady,
     }: {
       config: { src: string }
+      className?: string
       onInit?: (c: HTMLElement) => void
       onReady?: (r: unknown) => void
     },
     ref,
   ) {
-    useImperativeHandle(ref, () => ({ container: { setTheme: seam.setTheme }, registry: null }))
+    // The real container is a custom element with an open shadow root, which
+    // is where the viewer's UI and its page images live.
+    const [container] = useState(() => {
+      const el = document.createElement('embedpdf-container')
+      seam.shadow = el.attachShadow({ mode: 'open' })
+      return Object.assign(el, { setTheme: seam.setTheme })
+    })
+    useImperativeHandle(ref, () => ({ container, registry: null }))
     useEffect(() => {
       const listener = (e: KeyboardEvent) => {
         const s = shortcutOf(e)
         if (s !== null) seam.seen.push(s)
       }
       document.addEventListener('keydown', listener)
-      const container = document.createElement('embedpdf-container')
-      seam.shadow = container.attachShadow({ mode: 'open' })
       onInit?.(container)
       onReady?.(registry)
       return () => document.removeEventListener('keydown', listener)
       // Mounted once per src, like the real wrapper.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
-    return <div data-testid="pdf" data-pdf-src={config.src} />
+    return <div data-testid="pdf" data-pdf-src={config.src} className={className} />
   })
   return { PDFViewer }
 })
@@ -122,10 +129,10 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function mount() {
+function mount({ revealAfterMs }: { revealAfterMs?: number } = {}) {
   return render(
     <Provider store={store}>
-      <PdfDocument path={PATH} quietMs={0} />
+      <PdfDocument path={PATH} quietMs={0} revealAfterMs={revealAfterMs} />
     </Provider>,
   )
 }
@@ -154,6 +161,31 @@ test("covers the viewer's white page placeholder from inside its shadow root", a
   await screen.findByTestId('pdf')
   const css = [...seam.shadow!.querySelectorAll('style')].map((el) => el.textContent).join('\n')
   expect(css).toMatch(/background-color: rgb\(255, 255, 255\).*var\(--muted\)/)
+})
+
+test('stays invisible through its own loading states and arrives with the first page', async () => {
+  mount()
+  const viewer = await screen.findByTestId('pdf')
+  // Engine and plugin spinners, then a toolbar, then pages: none of it shows.
+  expect(viewer).toHaveClass('opacity-0')
+  expect(viewer).not.toHaveClass('motion-in-fade')
+
+  // Page images live in the shadow root; `load` does not bubble, so this is
+  // exactly what a capture listener on that root has to catch.
+  const page = document.createElement('img')
+  seam.shadow!.append(page)
+  act(() => {
+    page.dispatchEvent(new Event('load'))
+  })
+  expect(viewer).toHaveClass('motion-in-fade')
+  expect(viewer).not.toHaveClass('opacity-0')
+})
+
+test('arrives anyway when no page ever paints, so an error is never invisible', async () => {
+  mount({ revealAfterMs: 10 })
+  const viewer = await screen.findByTestId('pdf')
+  expect(viewer).toHaveClass('opacity-0')
+  await waitFor(() => expect(viewer).toHaveClass('motion-in-fade'))
 })
 
 test('writes the exported document back after a mark, and not before', async () => {

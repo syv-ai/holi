@@ -31,11 +31,18 @@
  *   painted, is overridden by a `<style>` put into the viewer's shadow root at
  *   init: a sibling of Preact's render, like the viewer's own theme style, so a
  *   re-render leaves it alone.
+ * - **It arrives once, whole.** Opening, the viewer shows "Initializing PDF
+ *   engine…" and "Initializing plugins…" over a spinner, then its toolbar, then
+ *   its pages, spread over some 300 ms and none of it configurable. So it is
+ *   laid out invisible and fades in (D98's arrive) when the first page image
+ *   loads. A timer reveals it anyway, so a broken file's error or a password
+ *   prompt is never left invisible.
  */
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { PDFViewer, type PDFViewerRef, type PluginRegistry } from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
+import { cn } from '@/lib/cn'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_PAGE_PLACEHOLDER_CSS,
@@ -50,6 +57,10 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
  *  the feel of autosave without being it: autosave's 3 s is a git commit, this
  *  is a file write the commit then picks up. */
 const SAVE_QUIET_MS = 1000
+
+/** How long the viewer may stay invisible waiting for a page. Measured opens
+ *  paint the first page in about 300 ms; this only matters when none comes. */
+const REVEAL_AFTER_MS = 1500
 
 /**
  * The slices of the viewer's plugins this file touches, typed structurally.
@@ -75,7 +86,15 @@ function provided<K extends keyof ViewerPlugins>(
   return plugin === null ? null : plugin.provides()
 }
 
-export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; quietMs?: number }) {
+export function PdfDocument({
+  path,
+  quietMs = SAVE_QUIET_MS,
+  revealAfterMs = REVEAL_AFTER_MS,
+}: {
+  path: string
+  quietMs?: number
+  revealAfterMs?: number
+}) {
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -86,6 +105,9 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
   // Bumped to fetch the bytes again; the viewer is keyed on the URL, so a new
   // URL is a fresh viewer over the new document.
   const [generation, setGeneration] = useState(0)
+  /** The `src` whose viewer has painted a page (or given up waiting for one).
+   *  Keyed on the URL, so a reload after a foreign change arrives again too. */
+  const [revealedSrc, setRevealedSrc] = useState<string | null>(null)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewerRef>(null)
@@ -176,11 +198,27 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
     }
   }, [save])
 
-  const onInit = useCallback((container: HTMLElement) => {
-    const style = document.createElement('style')
-    style.textContent = PDF_PAGE_PLACEHOLDER_CSS
-    container.shadowRoot?.append(style)
-  }, [])
+  // Per container, as the wrapper creates it: in development StrictMode builds
+  // and discards one before the one that stays, so a ref read from an effect
+  // can be the discarded one. `load` does not bubble, but it does travel the
+  // capture phase, so one listener on the shadow root hears every page image.
+  const onInit = useCallback(
+    (container: HTMLElement) => {
+      const root = container.shadowRoot
+      if (root === null) return
+      const style = document.createElement('style')
+      style.textContent = PDF_PAGE_PLACEHOLDER_CSS
+      root.append(style)
+      root.addEventListener(
+        'load',
+        (event) => {
+          if (event.target instanceof HTMLImageElement) setRevealedSrc(src)
+        },
+        true,
+      )
+    },
+    [src],
+  )
 
   const onReady = useCallback(
     (registry: PluginRegistry) => {
@@ -211,6 +249,13 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
     viewerRef.current?.container?.setTheme(pdfViewerTheme(mode))
   }, [mode, src])
 
+  // The fallback: a viewer that never paints a page still arrives.
+  useEffect(() => {
+    if (src === null) return
+    const timer = setTimeout(() => setRevealedSrc(src), revealAfterMs)
+    return () => clearTimeout(timer)
+  }, [src, revealAfterMs])
+
   return (
     <div ref={hostRef} className="flex min-h-0 flex-1 flex-col bg-background">
       {error !== null ? (
@@ -219,7 +264,7 @@ export function PdfDocument({ path, quietMs = SAVE_QUIET_MS }: { path: string; q
         <PDFViewer
           key={src}
           ref={viewerRef}
-          className="min-h-0 flex-1"
+          className={cn('min-h-0 flex-1', revealedSrc === src ? 'motion-in-fade' : 'opacity-0')}
           style={{ height: '100%' }}
           onInit={onInit}
           onReady={onReady}
