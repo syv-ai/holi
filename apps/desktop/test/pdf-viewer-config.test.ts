@@ -4,6 +4,7 @@ import {
   PDF_DISABLED_CATEGORIES,
   PDF_BORDERLESS_CSS,
   PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_SCROLLBAR_CSS,
   PDF_SHADOW_CSS,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
@@ -52,6 +53,22 @@ describe('pdfViewerTheme', () => {
     expect(background.app).toBe('var(--background)')
     expect(background.surface).toBe('var(--background)')
     expect(background.surfaceAlt).toBe('var(--background)')
+  })
+
+  it("paints tooltips and scrollbars the way Holi's own are painted", () => {
+    // Left out, these fell back to embedpdf's palette: a light #f9fafb tooltip
+    // in dark mode and a grey-blue scrollbar track.
+    const theme = pdfViewerTheme('dark').dark
+    expect(theme.tooltip).toEqual({
+      background: 'var(--popover)',
+      foreground: 'var(--popover-foreground)',
+    })
+    expect(theme.scrollbar).toEqual({
+      track: 'var(--background)',
+      thumb: 'var(--scrollbar-thumb)',
+      thumbHover: 'var(--scrollbar-thumb-hover)',
+    })
+    expect(theme.foreground.disabled).toBe('var(--muted-foreground)')
   })
 
   it('carries the mode as the preference and the same map for both modes', () => {
@@ -104,9 +121,29 @@ describe('PDF_BORDERLESS_CSS', () => {
   })
 })
 
+describe('PDF_SCROLLBAR_CSS', () => {
+  it("draws Holi's scrollbar: 10px, clear track, a thumb that shows on hover", () => {
+    expect(PDF_SCROLLBAR_CSS).toContain('width: 10px; height: 10px;')
+    expect(PDF_SCROLLBAR_CSS).toContain(
+      ':host *::-webkit-scrollbar-track { background: transparent; }',
+    )
+    expect(PDF_SCROLLBAR_CSS).toMatch(
+      /:host \*:hover::-webkit-scrollbar-thumb \{ background: var\(--scrollbar-thumb\);/,
+    )
+    // Motion from D98's tokens, never a number.
+    expect(PDF_SCROLLBAR_CSS).toContain('var(--motion-respond) var(--ease-settle)')
+    expect(PDF_SCROLLBAR_CSS).not.toMatch(/\d+m?s\b/)
+  })
+})
+
 describe('PDF_SHADOW_CSS', () => {
   it('is every rule Holi puts into the viewer, in one stylesheet', () => {
-    for (const rule of [PDF_PAGE_PLACEHOLDER_CSS, PDF_VIEWPORT_CSS, PDF_BORDERLESS_CSS]) {
+    for (const rule of [
+      PDF_PAGE_PLACEHOLDER_CSS,
+      PDF_VIEWPORT_CSS,
+      PDF_BORDERLESS_CSS,
+      PDF_SCROLLBAR_CSS,
+    ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
   })

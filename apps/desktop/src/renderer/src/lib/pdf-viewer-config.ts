@@ -68,6 +68,7 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
       primary: v('foreground'),
       secondary: v('muted-foreground'),
       muted: v('muted-foreground'),
+      disabled: v('muted-foreground'),
       onAccent: v('primary-foreground'),
     },
     border: {
@@ -93,6 +94,19 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
       error: v('destructive'),
       errorLight: v('destructive'),
     },
+    // Holi's tooltip is the popover surface, not an inverted chip
+    // (`primitives/Tooltip.tsx`). The scrollbar's shape is `PDF_SCROLLBAR_CSS`.
+    tooltip: {
+      background: v('popover'),
+      foreground: v('popover-foreground'),
+    },
+    scrollbar: {
+      track: v('background'),
+      thumb: v('scrollbar-thumb'),
+      thumbHover: v('scrollbar-thumb-hover'),
+    },
+    // Not mapped, so the viewer's own defaults stand: `background.overlay` and
+    // the warning, success and info states, which Holi has no token for.
   }
   return { preference: mode, light: colors, dark: colors }
 }
@@ -143,10 +157,31 @@ export const PDF_BORDERLESS_CSS = [
   '.ring-border-default { --tw-ring-color: transparent; }',
 ].join('\n')
 
+/**
+ * Holi's scrollbar, inside the viewer.
+ *
+ * `index.css` styles every scrollbar in the app with a bare `::-webkit-scrollbar`
+ * rule, but a document stylesheet does not reach into a shadow root, so the
+ * viewer kept its own: 8px, always painted. This is Holi's shape again (10px, a
+ * clear track, a thumb inset from the edge that shows while the pointer is over
+ * the scroller) written against `:host *`, the same selector as the viewer's
+ * rule it replaces, and later in the root so it wins. The colours are the
+ * palette's `scrollbar` group.
+ */
+export const PDF_SCROLLBAR_CSS = [
+  ':host *::-webkit-scrollbar { width: 10px; height: 10px; }',
+  ':host *::-webkit-scrollbar-track { background: transparent; }',
+  ':host *::-webkit-scrollbar-thumb { background: transparent; border-radius: 9999px; border: 3px solid transparent; background-clip: content-box; transition: background-color var(--motion-respond) var(--ease-settle); }',
+  `:host *:hover::-webkit-scrollbar-thumb { background: ${v('scrollbar-thumb')}; background-clip: content-box; }`,
+].join('\n')
+
 /** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
-export const PDF_SHADOW_CSS = [PDF_PAGE_PLACEHOLDER_CSS, PDF_VIEWPORT_CSS, PDF_BORDERLESS_CSS].join(
-  '\n',
-)
+export const PDF_SHADOW_CSS = [
+  PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_VIEWPORT_CSS,
+  PDF_BORDERLESS_CSS,
+  PDF_SCROLLBAR_CSS,
+].join('\n')
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5
