@@ -30,6 +30,7 @@ const seam = vi.hoisted(() => ({
     ((e: { documentId: string; level: string | number; newZoom: number }) => void) | null,
   requestZoom: vi.fn(),
   sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
+  mergeSchema: vi.fn(),
   execute: vi.fn(),
   loadEntries: vi.fn(),
   entriesCb: null as ((entries: unknown[]) => void) | null,
@@ -78,6 +79,21 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       },
     },
     ui: {
+      getSchema: () => ({
+        toolbars: {
+          'main-toolbar': {
+            id: 'main-toolbar',
+            items: [
+              {
+                type: 'group',
+                id: 'right-group',
+                items: [{ type: 'command-button', id: 'search-button' }],
+              },
+            ],
+          },
+        },
+      }),
+      mergeSchema: (partial: unknown) => seam.mergeSchema(partial),
       onSidebarChanged: (cb: NonNullable<typeof seam.sidebarCb>) => {
         seam.sidebarCb = cb
         return () => {}
@@ -181,6 +197,7 @@ beforeEach(() => {
   seam.annotationCb = null
   seam.zoomCb = null
   seam.sidebarCb = null
+  seam.mergeSchema.mockReset()
   seam.execute.mockReset()
   seam.loadEntries.mockReset()
   seam.entriesCb = null
@@ -310,6 +327,17 @@ test('loads the signature faces when the signature panel opens', async () => {
   expect(load).toHaveBeenCalledWith('16px "Dancing Script"')
   // jsdom has no FontFaceSet; do not leave the fake behind for other tests.
   delete (document as { fonts?: unknown }).fonts
+})
+
+test('puts Signatures on the top bar', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  expect(seam.mergeSchema).toHaveBeenCalledTimes(1)
+  const partial = seam.mergeSchema.mock.calls[0]![0] as {
+    toolbars: Record<string, { items: { id: string; items?: { id: string }[] }[] }>
+  }
+  const right = partial.toolbars['main-toolbar']!.items.find((i) => i.id === 'right-group')!
+  expect(right.items!.map((i) => i.id)).toEqual(['signature-button', 'search-button'])
 })
 
 test('asks for a signature alone, never initials as well', async () => {

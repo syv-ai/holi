@@ -22,7 +22,8 @@
  * fullscreen, the hamburger menu they hang from, and the annotation families
  * outside "highlight and mark up": redaction, stamps, forms, and the Insert
  * tab's rubber stamp, image and attachment. Signatures are the one Insert item
- * kept (D104).
+ * kept (D104), and they sit on the top bar (`withSignatureButton`), so the
+ * Insert tab itself (`mode-insert`) goes as well: it would only repeat them.
  *
  * The names are the viewer's own, read from its commands and UI schema, and a
  * name that matches nothing fails silently: this list once said `signature`,
@@ -45,6 +46,7 @@ export const PDF_DISABLED_CATEGORIES: readonly string[] = [
   'insert-rubber-stamp',
   'insert-image',
   'insert-attachment',
+  'mode-insert',
 ]
 
 /** A token slug from `THEME_TOKENS`; the node test checks every one is real. */
@@ -273,6 +275,37 @@ export const PDF_SIGNATURE_FONT_FAMILIES: readonly string[] = [
   'Great Vibes',
   'Pacifico',
 ]
+
+/** A toolbar item as the viewer's UI schema spells one, as far as this file reads it. */
+export interface PdfToolbarItem {
+  type: string
+  id: string
+  commandId?: string
+  items?: PdfToolbarItem[]
+  [key: string]: unknown
+}
+
+const SIGNATURE_BUTTON: PdfToolbarItem = {
+  type: 'command-button',
+  id: 'signature-button',
+  commandId: 'insert:add-signature',
+  variant: 'icon',
+}
+
+/**
+ * The main toolbar's items with Signatures at the top level, first in the
+ * right-hand group beside Search and Comment. The viewer keeps it in the
+ * Insert tab's secondary bar, which at a narrow pane is itself inside the tab
+ * overflow menu. Fed to `ui.mergeSchema`, which replaces a toolbar's item list
+ * wholesale, so this returns the whole list; applying it twice changes nothing.
+ */
+export function withSignatureButton(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
+  return items.map((item) => {
+    if (item.id !== 'right-group' || item.items === undefined) return item
+    if (item.items.some((child) => child.id === SIGNATURE_BUTTON.id)) return item
+    return { ...item, items: [SIGNATURE_BUTTON, ...item.items] }
+  })
+}
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5

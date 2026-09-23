@@ -82,6 +82,8 @@ import {
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
   openingZoomCap,
+  withSignatureButton,
+  type PdfToolbarItem,
   pdfViewerTheme,
   shortcutOf,
 } from '@/lib/pdf-viewer-config'
@@ -120,7 +122,11 @@ interface ViewerPlugins {
     ): () => void
     forDocument(documentId: string): { requestZoom(level: number): void }
   }
-  ui: { onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void }
+  ui: {
+    onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void
+    getSchema(): { toolbars: Record<string, { items: PdfToolbarItem[] } | undefined> }
+    mergeSchema(partial: { toolbars: Record<string, { items: PdfToolbarItem[] }> }): void
+  }
   signature: {
     loadEntries(entries: SignatureEntry[]): void
     onEntriesChange(cb: (entries: SignatureEntry[]) => void): () => void
@@ -301,7 +307,15 @@ export function PdfDocument({
       // whatever held focus in the panel (the field, its close button) is gone
       // with it; after the render, focus goes to the search field if that is
       // what opened, or back to the host if it fell to <body>.
-      provided(registry, 'ui')?.onSidebarChanged((event) => {
+      const ui = provided(registry, 'ui')
+      // Signatures on the top bar rather than inside the Insert tab (D104).
+      const mainToolbar = ui?.getSchema().toolbars['main-toolbar']
+      if (ui != null && mainToolbar !== undefined) {
+        ui.mergeSchema({
+          toolbars: { 'main-toolbar': { items: withSignatureButton(mainToolbar.items) } },
+        })
+      }
+      ui?.onSidebarChanged((event) => {
         // Before a signature can be typed, so its canvas never draws one in a
         // fallback face (`PDF_SIGNATURE_FONT_FAMILIES`). Local files, cheap.
         if (event.sidebarId === 'signature-panel' && 'fonts' in document) {

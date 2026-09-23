@@ -11,6 +11,7 @@ import {
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
+  withSignatureButton,
   pdfViewerTheme,
   shortcutOf,
 } from '../src/renderer/src/lib/pdf-viewer-config'
@@ -31,6 +32,9 @@ describe('PDF_DISABLED_CATEGORIES', () => {
     expect(PDF_DISABLED_CATEGORIES).toEqual(
       expect.arrayContaining(['insert-rubber-stamp', 'insert-image', 'insert-attachment']),
     )
+    // Signatures sit on the top bar, so the Insert tab, which would only
+    // repeat them, is gone too.
+    expect(PDF_DISABLED_CATEGORIES).toContain('mode-insert')
     for (const kept of ['insert', 'insert-signature', 'signature']) {
       expect(PDF_DISABLED_CATEGORIES).not.toContain(kept)
     }
@@ -247,6 +251,43 @@ describe('PDF_FONTS', () => {
       'Great Vibes',
       'Pacifico',
     ])
+  })
+})
+
+describe('withSignatureButton', () => {
+  // The shape of the live main toolbar, trimmed to what matters here.
+  const items = [
+    { type: 'group', id: 'left-group', items: [{ type: 'command-button', id: 'x' }] },
+    { type: 'spacer', id: 'spacer-2' },
+    {
+      type: 'group',
+      id: 'right-group',
+      items: [
+        { type: 'command-button', id: 'search-button', commandId: 'panel:toggle-search' },
+        { type: 'command-button', id: 'comment-button', commandId: 'panel:toggle-comment' },
+      ],
+    },
+  ]
+
+  it('puts Signatures at the top level, first in the right-hand group', () => {
+    const right = withSignatureButton(items).find((i) => i.id === 'right-group') as {
+      items: { id: string; commandId?: string }[]
+    }
+    expect(right.items.map((i) => i.id)).toEqual([
+      'signature-button',
+      'search-button',
+      'comment-button',
+    ])
+    expect(right.items[0]!.commandId).toBe('insert:add-signature')
+  })
+
+  it('leaves the rest alone, is idempotent, and does not mutate its input', () => {
+    const once = withSignatureButton(items)
+    expect(withSignatureButton(once)).toEqual(once)
+    expect(once.filter((i) => i.id !== 'right-group')).toEqual(
+      items.filter((i) => i.id !== 'right-group'),
+    )
+    expect((items[2] as { items: unknown[] }).items).toHaveLength(2)
   })
 })
 
