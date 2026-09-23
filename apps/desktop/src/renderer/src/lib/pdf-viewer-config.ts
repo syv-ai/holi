@@ -205,6 +205,10 @@ export const PDF_BORDERLESS_CSS = [
   // drew the mark's type icon in one beside each comment, and each reply's
   // initials on a colour picked from the name's first letter.
   '[data-sidebar-id="comment-panel"] .rounded-full:is(.bg-bg-surface-alt, .text-white) { display: none; }',
+  // Each page's heading ("Page 9", "3 comments") starts where the comments
+  // under it do: the cards' text is inset by their 1px edge, clear now, and
+  // their 1rem padding, past the heading's own 0.25rem.
+  '[data-sidebar-id="comment-panel"] .sticky.top-0:has(h3) { padding-inline-start: calc(0.25rem + 1px + 1rem); }',
 ].join('\n')
 
 /**

@@ -190,6 +190,12 @@ describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
     )
   })
 
+  it("starts each page's heading where the comments under it start", () => {
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id="comment-panel"] .sticky.top-0:has(h3) { padding-inline-start: calc(0.25rem + 1px + 1rem); }',
+    )
+  })
+
   it('draws no ring or shadow in a sidebar, so a comment is selected by colour', () => {
     // The selected comment drew `ring-2` in the focus-ring blue, the comment
     // field `focus:ring-2`, the edit field `focus:ring-1`; cards a shadow. A
