@@ -10,6 +10,7 @@ import {
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
+  PDF_SIDEBAR_MOTION_CSS,
   PDF_SIGNATURE_NOTE,
   PDF_TOOLBAR_CSS,
   PDF_VIEWPORT_CSS,
@@ -254,6 +255,7 @@ describe('PDF_SHADOW_CSS', () => {
       PDF_SCROLLBAR_CSS,
       PDF_SIGNATURE_DIALOG_CSS,
       PDF_TOOLBAR_CSS,
+      PDF_SIDEBAR_MOTION_CSS,
     ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
@@ -330,6 +332,19 @@ describe('PDF_TOOLBAR_CSS', () => {
     expect(PDF_TOOLBAR_CSS).toContain(
       ':is([data-epdf-i="signature-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"]):empty { display: none; }',
     )
+  })
+})
+
+describe('PDF_SIDEBAR_MOTION_CSS', () => {
+  it('slides a sidebar in from the side it docks on, in the motion tokens', () => {
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(
+      '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-arrive) var(--ease-settle) both; }',
+    )
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(
+      '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-arrive) var(--ease-settle) both; }',
+    )
+    expect(PDF_SIDEBAR_MOTION_CSS).toMatch(/holi-sidebar-in-left \{ from \{[^}]*translateX\(-/)
+    expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/\d+m?s\b/)
   })
 })
 

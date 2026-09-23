@@ -339,6 +339,24 @@ export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarIte
  */
 export const PDF_TOOLBAR_CSS = `:is(${HOLI_BUTTONS.map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
 
+/**
+ * A sidebar arrives from the side it docks on (D98's arrive).
+ *
+ * Thumbnails and Signatures dock left, drawn with `border-r`; Search and
+ * Comments dock right, with `border-l`. The narrow-pane bottom sheet has
+ * neither class and keeps its own motion. The shape is the app's
+ * `motion-in-left` and `motion-in-right`, redeclared here because a keyframe
+ * name does not reach into a shadow root; the timing is the motion tokens,
+ * which do, like the colour tokens. There is no leave: the viewer unmounts a
+ * closing sidebar in the same render, so there is nothing left to animate.
+ */
+export const PDF_SIDEBAR_MOTION_CSS = [
+  '@keyframes holi-sidebar-in-left { from { opacity: 0; transform: translateX(-0.75rem); } }',
+  '@keyframes holi-sidebar-in-right { from { opacity: 0; transform: translateX(0.75rem); } }',
+  '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-arrive) var(--ease-settle) both; }',
+  '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-arrive) var(--ease-settle) both; }',
+].join('\n')
+
 /** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
 export const PDF_SHADOW_CSS = [
   PDF_PAGE_PLACEHOLDER_CSS,
@@ -347,6 +365,7 @@ export const PDF_SHADOW_CSS = [
   PDF_SCROLLBAR_CSS,
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_TOOLBAR_CSS,
+  PDF_SIDEBAR_MOTION_CSS,
 ].join('\n')
 
 /**
