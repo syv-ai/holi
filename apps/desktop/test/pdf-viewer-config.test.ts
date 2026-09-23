@@ -11,6 +11,7 @@ import {
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIGNATURE_NOTE,
+  PDF_TOOLBAR_CSS,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   withHoliButtons,
@@ -246,6 +247,7 @@ describe('PDF_SHADOW_CSS', () => {
       PDF_BORDERLESS_CSS,
       PDF_SCROLLBAR_CSS,
       PDF_SIGNATURE_DIALOG_CSS,
+      PDF_TOOLBAR_CSS,
     ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
@@ -311,6 +313,17 @@ describe('withHoliButtons', () => {
       items.filter((i) => i.id !== 'right-group'),
     )
     expect((items[2] as { items: unknown[] }).items).toHaveLength(2)
+  })
+})
+
+describe('PDF_TOOLBAR_CSS', () => {
+  it('takes a hidden Holi button out of the row, so its twin does not move', () => {
+    // A command that is not visible renders its item's wrapper empty, and an
+    // empty wrapper is still a flex item: one more 8px gap on one side of the
+    // lock, which swapped sides with the read-only state.
+    expect(PDF_TOOLBAR_CSS).toContain(
+      ':is([data-epdf-i="signature-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"]):empty { display: none; }',
+    )
   })
 })
 

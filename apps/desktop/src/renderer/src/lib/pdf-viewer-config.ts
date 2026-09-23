@@ -243,15 +243,6 @@ export const PDF_SIGNATURE_DIALOG_CSS = [
   `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
-/** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
-export const PDF_SHADOW_CSS = [
-  PDF_PAGE_PLACEHOLDER_CSS,
-  PDF_VIEWPORT_CSS,
-  PDF_BORDERLESS_CSS,
-  PDF_SCROLLBAR_CSS,
-  PDF_SIGNATURE_DIALOG_CSS,
-].join('\n')
-
 /**
  * The viewer's fonts, none of them fetched.
  *
@@ -329,6 +320,29 @@ export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarIte
     return missing.length === 0 ? item : { ...item, items: [...missing, ...item.items] }
   })
 }
+
+/**
+ * Holi's buttons keep their places as they come and go.
+ *
+ * A command that is not visible leaves its item's wrapper in the row, empty,
+ * and an empty wrapper is still a flex item with a gap on either side. The
+ * read-only toggle is two items of which one is always hidden, so the lock
+ * sat 8px further from one neighbour than the other and the extra gap changed
+ * sides with the state: the lock stepped right when locked and back when
+ * unlocked. The viewer's own spacers are empty too, on purpose, so the rule
+ * names Holi's items and nothing else.
+ */
+export const PDF_TOOLBAR_CSS = `:is(${HOLI_BUTTONS.map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
+
+/** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
+export const PDF_SHADOW_CSS = [
+  PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_VIEWPORT_CSS,
+  PDF_BORDERLESS_CSS,
+  PDF_SCROLLBAR_CSS,
+  PDF_SIGNATURE_DIALOG_CSS,
+  PDF_TOOLBAR_CSS,
+].join('\n')
 
 /**
  * Holi's own icons for the viewer's toolbar, as SVG path data (the viewer's
