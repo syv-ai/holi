@@ -231,6 +231,27 @@ describe('PDF_SIGNATURE_DIALOG_CSS', () => {
   })
 })
 
+describe('PDF_SIGNATURE_DIALOG_CSS, the panel header', () => {
+  const header = '[data-sidebar-id="signature-panel"] .border-b.p-3:has(> h2)'
+
+  it('puts Create New Signature beside the title, as a round plus', () => {
+    expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
+      `${header} { display: flex; align-items: center; justify-content: space-between;`,
+    )
+    const button = PDF_SIGNATURE_DIALOG_CSS.split('\n').find((r) =>
+      r.startsWith(`${header} > button {`),
+    )
+    expect(button).toMatch(/border-radius: 9999px;/)
+    // The label stays in the DOM as its accessible name, at no size.
+    expect(button).toMatch(/font-size: 0;/)
+    // The plus is drawn in a token, never a literal or a fetched image.
+    expect(button).toMatch(
+      /linear-gradient\(var\(--primary-foreground\), var\(--primary-foreground\)\)/,
+    )
+    expect(button).not.toMatch(/url\(/)
+  })
+})
+
 describe('PDF_SIGNATURE_NOTE', () => {
   it('says where a placed signature goes and who can copy it, in plain words', () => {
     expect(PDF_SIGNATURE_NOTE).toMatch(/saved into this PDF/)
