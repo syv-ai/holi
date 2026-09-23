@@ -68,6 +68,7 @@ import {
 } from '@/lib/pdf-viewer-config'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
+import { sessionAtom } from '@/state/session'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** How long the marks have to be quiet before the file is rewritten. Matches
@@ -127,6 +128,11 @@ export function PdfDocument({
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  // Marks and comments are signed with the GitHub login, the identity Holi
+  // shows everywhere else, rather than the viewer's default "Guest". Read at
+  // mount, like the rest of the config; signed out, `App` renders only the
+  // sign-in screen, so a pane never exists without a session.
+  const author = useAtomValue(sessionAtom)?.login
   const fileUpdatedAt = snapshot.files.find((f) => f.path === path)?.updatedAt ?? null
 
   const [src, setSrc] = useState<string | null>(null)
@@ -355,6 +361,7 @@ export function PdfDocument({
             fontFallback: null,
             tabBar: 'never',
             zoom: { defaultZoomLevel: ZoomMode.FitWidth },
+            annotations: { annotationAuthor: author },
             disabledCategories: [...PDF_DISABLED_CATEGORIES],
             theme: pdfViewerTheme(mode),
           }}

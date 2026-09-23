@@ -10,6 +10,7 @@ import { emptyVaultSnapshot } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import { sessionAtom } from '@/state/session'
 import { shortcutOf } from '@/lib/pdf-viewer-config'
 
 const REMOTE = 'syv-ai/vault'
@@ -30,7 +31,10 @@ const seam = vi.hoisted(() => ({
   requestZoom: vi.fn(),
   sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
   execute: vi.fn(),
-  config: null as { zoom?: { defaultZoomLevel?: unknown } } | null,
+  config: null as {
+    zoom?: { defaultZoomLevel?: unknown }
+    annotations?: { annotationAuthor?: string }
+  } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
 }))
@@ -89,7 +93,11 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       onInit,
       onReady,
     }: {
-      config: { src: string; zoom?: { defaultZoomLevel?: unknown } }
+      config: {
+        src: string
+        zoom?: { defaultZoomLevel?: unknown }
+        annotations?: { annotationAuthor?: string }
+      }
       className?: string
       onInit?: (c: HTMLElement) => void
       onReady?: (r: unknown) => void
@@ -154,6 +162,7 @@ beforeEach(() => {
   store = createStore()
   store.set(activeRemoteAtom, REMOTE)
   store.set(snapshotAtom, snapshotWith('T1'))
+  store.set(sessionAtom, { login: 'ada-holm', name: 'Ada Holm' })
 })
 
 afterEach(() => {
@@ -237,6 +246,12 @@ test('opens at fit-width, held to 150% where that would overshoot, once', async 
   act(() => seam.zoomCb!({ documentId: 'wide', level: 'fit-width', newZoom: 2.37 }))
   act(() => seam.zoomCb!({ documentId: 'narrow', level: 'fit-width', newZoom: 2.37 }))
   expect(seam.requestZoom).not.toHaveBeenCalled()
+})
+
+test('signs marks and comments with the GitHub login, not "Guest"', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  expect(seam.config?.annotations?.annotationAuthor).toBe('ada-holm')
 })
 
 test('writes the exported document back after a mark, and not before', async () => {
