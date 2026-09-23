@@ -1,6 +1,7 @@
 import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
+  PDF_COMMENT_FIELD_CSS,
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
   PDF_ICONS,
@@ -19,6 +20,7 @@ import {
   withHoliButtons,
   pdfViewerTheme,
   shortcutOf,
+  singleLine,
 } from '../src/renderer/src/lib/pdf-viewer-config'
 
 describe('PDF_DISABLED_CATEGORIES', () => {
@@ -284,6 +286,7 @@ describe('PDF_SHADOW_CSS', () => {
       PDF_SIGNATURE_DIALOG_CSS,
       PDF_TOOLBAR_CSS,
       PDF_SIDEBAR_MOTION_CSS,
+      PDF_COMMENT_FIELD_CSS,
     ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
@@ -379,6 +382,32 @@ describe('PDF_SIDEBAR_MOTION_CSS', () => {
 describe('PDF_SIDEBAR_WIDTHS', () => {
   it('widens the comments panel and no other', () => {
     expect(PDF_SIDEBAR_WIDTHS).toEqual({ 'comment-panel': { width: '360px' } })
+  })
+})
+
+describe('PDF_COMMENT_FIELD_CSS', () => {
+  it('grows the field with its text, first in the row, drawn in tokens', () => {
+    const field = PDF_COMMENT_FIELD_CSS.split('\n').find((r) =>
+      r.startsWith('textarea.holi-comment-field {'),
+    )
+    expect(field).toMatch(/field-sizing: content;/)
+    expect(field).toMatch(/max-height: \d+px;/)
+    expect(field).toMatch(/order: -1;/)
+    expect(field).toMatch(/background-color: var\(--input\);/)
+    expect(field).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i)
+  })
+
+  it("keeps the viewer's input focusable, only out of sight", () => {
+    const input = PDF_COMMENT_FIELD_CSS.split('\n').find((r) => r.includes('> input[type="text"]'))
+    expect(input).toMatch(/opacity: 0;/)
+    expect(input).not.toMatch(/display: none|visibility: hidden/)
+  })
+})
+
+describe('singleLine', () => {
+  it('makes a line break a space, and leaves the rest', () => {
+    expect(singleLine('one\ntwo\r\nthree')).toBe('one two three')
+    expect(singleLine('  spaced  ')).toBe('  spaced  ')
   })
 })
 

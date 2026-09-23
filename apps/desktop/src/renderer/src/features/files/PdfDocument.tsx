@@ -77,6 +77,7 @@ import '@fontsource/dancing-script/400.css'
 import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
 import { cn } from '@/lib/cn'
+import { PdfCommentField } from './PdfCommentField'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
@@ -121,6 +122,39 @@ const SEARCH_FIELD = '[data-sidebar-id="search-panel"] input[type="text"]'
 /** The Signatures panel's column: header, then the list, which scrolls. The
  *  note is portalled in after them, so it stays in view as the list grows. */
 const SIGNATURE_PANEL_COLUMN = '[data-sidebar-id="signature-panel"] > .min-h-0 > .flex-col'
+
+/** The comments panel, whose one-line fields `PdfCommentField` stands in for. */
+const COMMENT_PANEL = '[data-sidebar-id="comment-panel"]'
+
+/** A comment row the viewer rendered: its field and, beside it, its send button. */
+interface CommentRow {
+  row: Element
+  input: HTMLInputElement
+  send: HTMLButtonElement
+}
+
+/** Each comment row in the panel, in order; none while it is closed. */
+function commentRowsIn(root: ShadowRoot): CommentRow[] {
+  const panel = root.querySelector(COMMENT_PANEL)
+  if (panel === null) return []
+  return [...panel.querySelectorAll<HTMLInputElement>('input[type="text"]')].flatMap((input) => {
+    const send = input.nextElementSibling
+    const row = input.parentElement
+    return send instanceof HTMLButtonElement && row !== null ? [{ row, input, send }] : []
+  })
+}
+
+/** A stable key per row element, so a portal keeps its field as rows come and go. */
+const rowKeys = new WeakMap<Element, string>()
+let nextRowKey = 0
+function rowKey(row: Element): string {
+  let key = rowKeys.get(row)
+  if (key === undefined) {
+    key = `comment-row-${nextRowKey++}`
+    rowKeys.set(row, key)
+  }
+  return key
+}
 
 /**
  * The slices of the viewer's plugins this file touches, typed structurally.
@@ -215,6 +249,8 @@ export function PdfDocument({
   /** The open Signatures panel's column, where `PDF_SIGNATURE_NOTE` is
    *  portalled; null while the panel is closed. */
   const [signatureColumn, setSignatureColumn] = useState<Element | null>(null)
+  /** The comment rows Holi's field is portalled into (`PdfCommentField`). */
+  const [commentRows, setCommentRows] = useState<CommentRow[]>([])
 
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewerRef>(null)
@@ -331,6 +367,24 @@ export function PdfDocument({
         event.stopPropagation()
         commands.execute('panel:toggle-search')
       })
+      // Comment rows come and go with the panel, with each comment added or
+      // deleted, and with selection, so they are followed by watching the
+      // root. Pages repaint through it constantly, so the look is once per
+      // frame at most, and the state changes only when the rows did.
+      let pendingFrame = false
+      new MutationObserver(() => {
+        if (pendingFrame) return
+        pendingFrame = true
+        requestAnimationFrame(() => {
+          pendingFrame = false
+          const rows = commentRowsIn(root)
+          setCommentRows((prev) =>
+            prev.length === rows.length && prev.every((p, i) => p.input === rows[i]!.input)
+              ? prev
+              : rows,
+          )
+        })
+      }).observe(root, { childList: true, subtree: true })
       root.addEventListener(
         'load',
         (event) => {
@@ -537,6 +591,9 @@ export function PdfDocument({
             theme: pdfViewerTheme(mode),
           }}
         />
+      )}
+      {commentRows.map(({ row, input, send }) =>
+        createPortal(<PdfCommentField input={input} send={send} />, row, rowKey(row)),
       )}
       {signatureColumn !== null &&
         createPortal(<p className="holi-signature-note">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}

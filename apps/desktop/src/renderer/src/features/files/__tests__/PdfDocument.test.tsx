@@ -523,6 +523,78 @@ test('opening a PDF focuses it, so ⌘F reaches its search, like a note focuses 
   expect(seam.seen).toContain('f+meta')
 })
 
+/**
+ * A comment row as the viewer renders one: a one-line field whose value is
+ * component state fed by its `input` event, and a send button that is
+ * disabled while that state is blank and clears it on send.
+ */
+function commentRow() {
+  const panel = document.createElement('div')
+  panel.dataset.sidebarId = 'comment-panel'
+  const row = document.createElement('div')
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.placeholder = 'Add comment...'
+  const send = document.createElement('button')
+  send.disabled = true
+  const sent: string[] = []
+  let state = ''
+  input.addEventListener('input', () => {
+    state = input.value
+    send.disabled = state.trim() === ''
+  })
+  send.addEventListener('click', () => {
+    sent.push(state)
+    state = ''
+    input.value = ''
+    send.disabled = true
+  })
+  row.append(input, send)
+  panel.append(row)
+  return { panel, row, input, send, sent }
+}
+
+test('a comment is written in a field that wraps, and sent through the viewer', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  const { panel, row, input, sent } = commentRow()
+  seam.shadow!.append(panel)
+  const field = await waitFor(() => {
+    const el = row.querySelector('textarea')
+    expect(el).not.toBeNull()
+    return el!
+  })
+  expect(field.placeholder).toBe('Add comment...')
+
+  // Every keystroke reaches the viewer's own field, so its send button and
+  // its idea of the text stay right. Its field is one line, so a line break
+  // is a space: the comment would lose it anyway.
+  fireEvent.change(field, { target: { value: 'one\ntwo' } })
+  expect(input.value).toBe('one two')
+  expect(field.value).toBe('one two')
+
+  fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+  expect(sent).toEqual([])
+  fireEvent.keyDown(field, { key: 'Enter' })
+  expect(sent).toEqual(['one two'])
+  await waitFor(() => expect(field.value).toBe(''))
+
+  // Blank, the viewer's button is disabled and Enter sends nothing.
+  fireEvent.keyDown(field, { key: 'Enter' })
+  expect(sent).toEqual(['one two'])
+})
+
+test("focus the viewer gives its comment field goes to Holi's", async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  const { panel, row, input } = commentRow()
+  seam.shadow!.append(panel)
+  await waitFor(() => expect(row.querySelector('textarea')).not.toBeNull())
+  // Selecting a comment focuses the field under it.
+  act(() => input.focus())
+  expect(seam.shadow!.activeElement).toBe(row.querySelector('textarea'))
+})
+
 test('⌘F puts the caret in the search field, and closing it gives focus back', async () => {
   mount()
   const host = (await screen.findByTestId('pdf')).parentElement!

@@ -369,6 +369,35 @@ export const PDF_SIDEBAR_MOTION_CSS = [
   '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-arrive) var(--ease-settle) both; }',
 ].join('\n')
 
+/**
+ * Holi's comment field (`features/files/PdfCommentField.tsx`) in the viewer's
+ * comment row, in place of the viewer's one-line input.
+ *
+ * The row is the viewer's: its input, then its send button, spaced by
+ * `space-x-2`. The textarea is portalled in after them, so it is ordered first
+ * and the row spaced by a gap instead. The input stays focusable, because
+ * selecting a comment focuses it and that focus is what Holi's field takes
+ * over; it is only out of sight. The field grows with its text up to about
+ * eight lines, then scrolls, and is drawn like the viewer's fields: `--input`,
+ * with the dimmed edge every sidebar field has.
+ */
+const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> .holi-comment-field)'
+export const PDF_COMMENT_FIELD_CSS = [
+  `${COMMENT_ROW} { gap: 8px; }`,
+  `${COMMENT_ROW} > * { margin: 0; }`,
+  `${COMMENT_ROW} > input[type="text"] { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }`,
+  `textarea.holi-comment-field { order: -1; flex: 1; min-width: 0; min-height: 36px; max-height: 176px; field-sizing: content; resize: none; box-sizing: border-box; padding: 7px 12px; border: 1px solid ${v('divider')}; border-radius: 8px; background-color: ${v('input')}; color: ${v('foreground')}; font: inherit; font-size: 14px; line-height: 20px; outline: none; box-shadow: none; }`,
+  `textarea.holi-comment-field::placeholder { color: ${v('muted-foreground')}; }`,
+].join('\n')
+
+/**
+ * A comment as the viewer's one-line field can hold it: a line break is a
+ * space, where the field would otherwise drop it and join the words.
+ */
+export function singleLine(text: string): string {
+  return text.replace(/\r?\n/g, ' ')
+}
+
 /** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
 export const PDF_SHADOW_CSS = [
   PDF_PAGE_PLACEHOLDER_CSS,
@@ -378,6 +407,7 @@ export const PDF_SHADOW_CSS = [
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_TOOLBAR_CSS,
   PDF_SIDEBAR_MOTION_CSS,
+  PDF_COMMENT_FIELD_CSS,
 ].join('\n')
 
 /**
