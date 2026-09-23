@@ -126,6 +126,28 @@ describe('PDF_BORDERLESS_CSS', () => {
   })
 })
 
+describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
+  it('shows a toolbar button as selected or hovered by its background alone', () => {
+    // The selected tool and every hovered button drew a 1px `--tw-ring`, a
+    // box-shadow; the narrow-width mode select drew an outline.
+    expect(PDF_BORDERLESS_CSS).toContain(
+      'button:is(.ring-accent, .hover\\:ring-accent:hover) { --tw-ring-color: transparent; }',
+    )
+    expect(PDF_BORDERLESS_CSS).toContain('.outline-border-default { outline-color: transparent; }')
+    // The selected tool also carried a drop shadow; background alone means none.
+    expect(PDF_BORDERLESS_CSS).toContain('button.ring-accent { box-shadow: none; }')
+  })
+
+  it('sets a sidebar apart from the pane by colour, with no border inside it', () => {
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: var(--card); }',
+    )
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
+    )
+  })
+})
+
 describe('PDF_SCROLLBAR_CSS', () => {
   it("draws Holi's scrollbar: 10px, clear track, a thumb that shows on hover", () => {
     expect(PDF_SCROLLBAR_CSS).toContain('width: 10px; height: 10px;')

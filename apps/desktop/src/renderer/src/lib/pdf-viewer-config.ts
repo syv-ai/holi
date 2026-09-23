@@ -157,6 +157,19 @@ export const PDF_BORDERLESS_CSS = [
   ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
   '.ring-border-default { --tw-ring-color: transparent; }',
   `.bg-bg-input.border-border-default:not(:focus) { border-color: ${v('divider')}; }`,
+  // A toolbar button is selected (the pointer, pan) or hovered by its
+  // background alone: the 1px ring both drew is a Tailwind `--tw-ring`, a
+  // box-shadow keyed on this colour, and the mode select's edge an outline.
+  // The selected one also had a drop shadow of its own.
+  'button:is(.ring-accent, .hover\\:ring-accent:hover) { --tw-ring-color: transparent; }',
+  'button.ring-accent { box-shadow: none; }',
+  '.outline-border-default { outline-color: transparent; }',
+  // A sidebar (thumbnails, search, comments) is set apart from the pane by
+  // colour: `--card`, a step up from `--background`, where the viewer drew a
+  // border on `surface`. Nothing inside it has an edge either, a selected
+  // search hit included, except a form field's dimmed outline.
+  `[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: ${v('card')}; }`,
+  '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
 ].join('\n')
 
 /**
