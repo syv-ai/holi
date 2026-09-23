@@ -57,7 +57,7 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
     background: {
       // The viewer's toolbars paint from `surface` (top bar, sidebars) and
       // `surfaceAlt` (the Annotate/Shapes bar). Holi's chrome is flat, so all
-      // three are the pane; the toolbar's own border is what separates them.
+      // three are the pane, with no rule between them (`PDF_BORDERLESS_CSS`).
       app: v('background'),
       surface: v('background'),
       surfaceAlt: v('background'),
@@ -122,6 +122,31 @@ export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255
  * viewport, painted `bg-bg-app` with an inline `overflow: auto`.
  */
 export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar-gutter: stable; }`
+
+/**
+ * No lines between regions, the way Holi's own chrome has none.
+ *
+ * The viewer draws a rule under each toolbar, beside each sidebar, between
+ * sections of its panels and menus, and around floating things like the page
+ * pill, all as `border-border-default` or `-subtle`; the dividers between
+ * toolbar groups are 1px boxes painted `bg-border-default`. Those go clear.
+ * Dividers stay as space, so the toolbar keeps its rhythm, and a menu or the
+ * page pill is separated from the page by the shadow it already has, which is
+ * how Holi's own menus and tooltips are drawn. Form controls keep their
+ * outline: every one sits on `bg-bg-input`, and an input with no edge is hard
+ * to find. The selector's two classes outrank the single-class utilities it
+ * overrides, so no `!important`.
+ */
+export const PDF_BORDERLESS_CSS = [
+  ':is(.border-border-default, .border-border-subtle):not(.bg-bg-input) { border-color: transparent; }',
+  ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
+  '.ring-border-default { --tw-ring-color: transparent; }',
+].join('\n')
+
+/** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
+export const PDF_SHADOW_CSS = [PDF_PAGE_PLACEHOLDER_CSS, PDF_VIEWPORT_CSS, PDF_BORDERLESS_CSS].join(
+  '\n',
+)
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5

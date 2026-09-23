@@ -2,7 +2,9 @@ import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
   PDF_DISABLED_CATEGORIES,
+  PDF_BORDERLESS_CSS,
   PDF_PAGE_PLACEHOLDER_CSS,
+  PDF_SHADOW_CSS,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   pdfViewerTheme,
@@ -83,6 +85,30 @@ describe('PDF_VIEWPORT_CSS', () => {
     expect(PDF_VIEWPORT_CSS).toMatch(
       /^\.bg-bg-app\[style\*="overflow: auto"\] \{ scrollbar-gutter: stable; \}$/,
     )
+  })
+})
+
+describe('PDF_BORDERLESS_CSS', () => {
+  it('clears every separator and container edge, and nothing else', () => {
+    // Region edges and section rules (toolbars, sidebars, menus, the page
+    // pill) are `border-border-default`/`-subtle`; the toolbar dividers are
+    // 1px boxes painted `bg-border-default`. Form controls sit on
+    // `bg-bg-input` and keep their outline.
+    expect(PDF_BORDERLESS_CSS).toContain(
+      ':is(.border-border-default, .border-border-subtle):not(.bg-bg-input) { border-color: transparent; }',
+    )
+    expect(PDF_BORDERLESS_CSS).toContain(
+      ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
+    )
+    expect(PDF_BORDERLESS_CSS).toContain('.ring-border-default { --tw-ring-color: transparent; }')
+  })
+})
+
+describe('PDF_SHADOW_CSS', () => {
+  it('is every rule Holi puts into the viewer, in one stylesheet', () => {
+    for (const rule of [PDF_PAGE_PLACEHOLDER_CSS, PDF_VIEWPORT_CSS, PDF_BORDERLESS_CSS]) {
+      expect(PDF_SHADOW_CSS).toContain(rule)
+    }
   })
 })
 

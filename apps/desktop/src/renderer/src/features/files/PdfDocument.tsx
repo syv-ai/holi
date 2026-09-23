@@ -54,8 +54,7 @@ import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
 import { cn } from '@/lib/cn'
 import {
   PDF_DISABLED_CATEGORIES,
-  PDF_PAGE_PLACEHOLDER_CSS,
-  PDF_VIEWPORT_CSS,
+  PDF_SHADOW_CSS,
   openingZoomCap,
   pdfViewerTheme,
   shortcutOf,
@@ -224,7 +223,7 @@ export function PdfDocument({
       const root = container.shadowRoot
       if (root === null) return
       const style = document.createElement('style')
-      style.textContent = `${PDF_PAGE_PLACEHOLDER_CSS}\n${PDF_VIEWPORT_CSS}`
+      style.textContent = PDF_SHADOW_CSS
       root.append(style)
       root.addEventListener(
         'load',
