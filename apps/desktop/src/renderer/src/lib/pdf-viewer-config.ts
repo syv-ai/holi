@@ -452,6 +452,53 @@ export const PDF_ICONS = {
 export const PDF_SIGNATURE_NOTE =
   'A signature you place is saved into this PDF, which is committed to the vault. Anyone with access to the vault can copy it, and removing it later leaves it in the history.'
 
+/**
+ * The viewer's red, `#E44234`: its default for underline, strikeout,
+ * squiggly, insert and replace text, the pen, every shape and free text.
+ * The highlighters are yellow and a comment's note blue, and stay so.
+ */
+const VIEWER_RED = '#e44234'
+
+/** A drawing tool as the viewer's annotation plugin lists one, as far as this reads it. */
+export interface PdfTool {
+  id: string
+  defaults: Record<string, unknown>
+}
+
+/**
+ * The tool defaults that make the viewer's red the theme's colour instead:
+ * for each tool with a default in that red, a patch for `setToolDefaults`
+ * setting those keys (and only those) to `color`. A mark's colour is written
+ * into the PDF, so `color` is a hex, not a token.
+ */
+export function themedToolDefaults(
+  tools: readonly PdfTool[],
+  color: string,
+): { toolId: string; patch: Record<string, string> }[] {
+  return tools.flatMap(({ id, defaults }) => {
+    const keys = Object.keys(defaults).filter(
+      (key) => typeof defaults[key] === 'string' && defaults[key].toLowerCase() === VIEWER_RED,
+    )
+    return keys.length === 0
+      ? []
+      : [{ toolId: id, patch: Object.fromEntries(keys.map((key) => [key, color])) }]
+  })
+}
+
+/**
+ * A computed colour (`rgb(0, 105, 168)`) as the `#0069a8` a PDF stores, or
+ * null when it is not an opaque `rgb()`/`rgba()`: a theme may write its
+ * colours as `oklch()`, which the browser computes as itself.
+ */
+export function hexOfRgb(css: string): string | null {
+  const match = /^rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(css.trim())
+  if (match === null || (match[4] !== undefined && Number(match[4]) !== 1)) return null
+  return `#${match
+    .slice(1, 4)
+    .map((part) => Number(part).toString(16).padStart(2, '0'))
+    .join('')}`
+}
+
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5
 

@@ -86,11 +86,14 @@ import {
   PDF_SIDEBAR_WIDTHS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIGNATURE_NOTE,
+  hexOfRgb,
   openingZoomCap,
   withHoliButtons,
   type PdfToolbarItem,
   pdfViewerTheme,
   shortcutOf,
+  themedToolDefaults,
+  type PdfTool,
 } from '@/lib/pdf-viewer-config'
 import {
   MAKE_EDITABLE,
@@ -168,6 +171,10 @@ interface ViewerPlugins {
   annotation: {
     onAnnotationEvent(cb: () => void): () => void
     updateAnnotation(pageIndex: number, id: string, patch: { flags: string[] }): void
+    getTools(): PdfTool[]
+    setToolDefaults(toolId: string, patch: Record<string, string>): void
+    getColorPresets(): string[]
+    addColorPreset(color: string): void
   }
   export: { saveAsCopy(): Task<ArrayBuffer> }
   zoom: {
@@ -209,6 +216,28 @@ interface ViewerCommand {
   visible?(context: CommandContext): boolean
   disabled?(context: CommandContext): boolean
   active?(context: CommandContext): boolean
+}
+
+/**
+ * A theme token's colour as a hex, for what the viewer writes into a PDF,
+ * where a token means nothing; null when it cannot be resolved. The computed
+ * colour is `rgb()` for a hex or `rgb()` theme and itself for `oklch()` and
+ * the like, which a canvas then converts by painting one pixel.
+ */
+function themeHex(token: string): string | null {
+  const probe = document.createElement('span')
+  probe.style.color = `var(--${token})`
+  document.body.append(probe)
+  const computed = getComputedStyle(probe).color
+  probe.remove()
+  const direct = hexOfRgb(computed)
+  if (direct !== null || computed === '' || computed.includes('var(')) return direct
+  const context = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
+  if (context === null) return null
+  context.fillStyle = computed
+  context.fillRect(0, 0, 1, 1)
+  const [r, g, b] = context.getImageData(0, 0, 1, 1).data
+  return hexOfRgb(`rgb(${r}, ${g}, ${b})`)
 }
 
 function provided<K extends keyof ViewerPlugins>(
@@ -408,6 +437,17 @@ export function PdfDocument({
       // direction, each computed from the annotations in the viewer's store so
       // the button follows every change without Holi keeping any state.
       const annotation = provided(registry, 'annotation')
+      // The viewer marks in its red by default; Holi's marks are the theme's
+      // primary colour, resolved once as the viewer opens, and offered in the
+      // style picker. Once: a colour chosen there is a tool default too, and
+      // is not overwritten later.
+      const primary = themeHex('primary')
+      if (annotation !== null && primary !== null) {
+        for (const { toolId, patch } of themedToolDefaults(annotation.getTools(), primary)) {
+          annotation.setToolDefaults(toolId, patch)
+        }
+        if (!annotation.getColorPresets().includes(primary)) annotation.addColorPreset(primary)
+      }
       const commands = provided(registry, 'commands')
       if (annotation !== null && commands !== null) {
         const counts = ({ state, documentId }: CommandContext) =>

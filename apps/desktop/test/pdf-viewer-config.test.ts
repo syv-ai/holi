@@ -19,8 +19,10 @@ import {
   openingZoomCap,
   withHoliButtons,
   pdfViewerTheme,
+  hexOfRgb,
   shortcutOf,
   singleLine,
+  themedToolDefaults,
 } from '../src/renderer/src/lib/pdf-viewer-config'
 
 describe('PDF_DISABLED_CATEGORIES', () => {
@@ -418,6 +420,46 @@ describe('singleLine', () => {
   it('makes a line break a space, and leaves the rest', () => {
     expect(singleLine('one\ntwo\r\nthree')).toBe('one two three')
     expect(singleLine('  spaced  ')).toBe('  spaced  ')
+  })
+})
+
+describe('themedToolDefaults', () => {
+  // The shape of the viewer's tools, trimmed: its red on the markup, pen,
+  // shape and text tools, its yellow on the highlighters.
+  const tools = [
+    { id: 'highlight', defaults: { type: 9, strokeColor: '#FFCD45', color: '#FFCD45' } },
+    { id: 'underline', defaults: { type: 10, strokeColor: '#E44234', color: '#E44234' } },
+    { id: 'insertText', defaults: { type: 14, strokeColor: '#E44234', intent: 'Insert' } },
+    { id: 'freeText', defaults: { type: 3, fontColor: '#E44234', color: 'transparent' } },
+    { id: 'textComment', defaults: { type: 1, strokeColor: '#597CE2' } },
+  ]
+
+  it("recolours every default that is the viewer's red, and nothing else", () => {
+    expect(themedToolDefaults(tools, '#0069a8')).toEqual([
+      { toolId: 'underline', patch: { strokeColor: '#0069a8', color: '#0069a8' } },
+      { toolId: 'insertText', patch: { strokeColor: '#0069a8' } },
+      { toolId: 'freeText', patch: { fontColor: '#0069a8' } },
+    ])
+  })
+
+  it('matches the red whatever its case', () => {
+    const lower = [{ id: 'ink', defaults: { strokeColor: '#e44234' } }]
+    expect(themedToolDefaults(lower, '#0069a8')).toEqual([
+      { toolId: 'ink', patch: { strokeColor: '#0069a8' } },
+    ])
+  })
+})
+
+describe('hexOfRgb', () => {
+  it('spells a computed rgb() colour as the hex a PDF stores', () => {
+    expect(hexOfRgb('rgb(0, 105, 168)')).toBe('#0069a8')
+    expect(hexOfRgb('rgba(255, 0, 7, 1)')).toBe('#ff0007')
+  })
+
+  it('is null for anything else, a translucent colour included', () => {
+    expect(hexOfRgb('oklch(0.5 0.1 240)')).toBeNull()
+    expect(hexOfRgb('rgba(0, 0, 0, 0)')).toBeNull()
+    expect(hexOfRgb('')).toBeNull()
   })
 })
 

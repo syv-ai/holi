@@ -74,6 +74,10 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         seam.annotationCb = cb
         return () => {}
       },
+      getTools: () => [],
+      setToolDefaults: () => {},
+      getColorPresets: () => [],
+      addColorPreset: () => {},
     },
     export: { saveAsCopy: () => seam.saveAsCopy() },
     signature: {
