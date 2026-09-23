@@ -158,6 +158,11 @@ describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
     expect(PDF_BORDERLESS_CSS).toContain('.outline-border-default { outline-color: transparent; }')
     // The selected tool also carried a drop shadow; background alone means none.
     expect(PDF_BORDERLESS_CSS).toContain('button.ring-accent { box-shadow: none; }')
+    // Its icon kept the accent colour of the ring, blue on the blue selection;
+    // the background is the state, the icon stays the foreground.
+    expect(PDF_BORDERLESS_CSS).toContain(
+      'button.bg-interactive-selected.text-accent { color: var(--foreground); }',
+    )
     // The zoom group (select and its two buttons) was painted the hover colour
     // at rest; it is the only <div> that wears that class statically.
     expect(PDF_BORDERLESS_CSS).toContain(

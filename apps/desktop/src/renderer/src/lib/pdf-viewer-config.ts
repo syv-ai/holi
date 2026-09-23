@@ -172,9 +172,13 @@ export const PDF_BORDERLESS_CSS = [
   // A toolbar button is selected (the pointer, pan) or hovered by its
   // background alone: the 1px ring both drew is a Tailwind `--tw-ring`, a
   // box-shadow keyed on this colour, and the mode select's edge an outline.
-  // The selected one also had a drop shadow of its own.
+  // The selected one also had a drop shadow of its own, and drew its icon in
+  // the accent, blue on the blue selection: its icon is the foreground, like
+  // every other button's. A mode tab is `text-accent` with no background, so
+  // its underline and text still mark it.
   'button:is(.ring-accent, .hover\\:ring-accent:hover) { --tw-ring-color: transparent; }',
   'button.ring-accent { box-shadow: none; }',
+  `button.bg-interactive-selected.text-accent { color: ${v('foreground')}; }`,
   // The zoom group (level select, zoom out, zoom in) sat on the hover colour
   // at rest, so it read as a grey block on the toolbar. It stands on the
   // toolbar's own colour; its buttons still take the hover fill. The only
