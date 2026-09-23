@@ -82,6 +82,7 @@ import {
 } from './google/gmail'
 import type { OutgoingMail } from './google/mime'
 import type { ImagePrefsStore } from './google/image-prefs'
+import type { SignatureStore } from './pdf/signatures'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
@@ -149,6 +150,12 @@ export interface RouterDeps {
    * until the user says otherwise — the safe direction to degrade in.
    */
   imagePrefs?: ImagePrefsStore
+  /**
+   * The signatures made in the PDF viewer, in `userData` (`pdf/signatures.ts`).
+   * Optional like the other stores: absent, there are simply none saved, and a
+   * save says why it could not be.
+   */
+  signatures?: SignatureStore
   /** Which vault is open, and everything running behind it. */
   host: VaultHost
   /** The managed root clones live under — `~/Holi` in the app, a tmpdir in
@@ -1596,6 +1603,33 @@ export function createRouter(deps: RouterDeps) {
   })
 
   const pdf = t.router({
+    // The signatures made in the PDF viewer, as the library's serialized list.
+    // Not vault-scoped: one list per machine and person, kept out of every
+    // vault because a vault is a shared repo.
+    signatures: t.procedure.query(async (): Promise<string> => {
+      return (await deps.signatures?.read()) ?? '[]'
+    }),
+
+    saveSignatures: t.procedure
+      .input(fields({ entriesJson: 'string' }))
+      .mutation(async ({ input }) => {
+        if (deps.signatures === undefined) {
+          throw new TRPCError({
+            code: 'PRECONDITION_FAILED',
+            message: 'signatures cannot be saved here',
+          })
+        }
+        try {
+          await deps.signatures.write(input.entriesJson)
+        } catch (error) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+        return { ok: true as const }
+      }),
+
     // The vault's templates, for the Convert picker + its metadata inputs.
     // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
     templates: t.procedure

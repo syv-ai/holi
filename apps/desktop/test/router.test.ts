@@ -11,6 +11,7 @@ import { ensureSeeded } from '../src/main/agent/seed-content'
 import { makeClone, makeNonVaultRemote, makeRemote, plainGit } from './helpers/git-fixtures'
 import { createRouter } from '../src/main/router'
 import { resolveTypstBin } from '../src/main/pdf/typst-bin'
+import { createSignatureStore } from '../src/main/pdf/signatures'
 import plainTemplateTyp from '../src/main/agent/templates/plain/template.typ?raw'
 
 const exec = promisify(execFile)
@@ -110,6 +111,7 @@ async function rig(files: Record<string, string> = {}, auth?: StoredAuth) {
     trashItem,
     downloadsDir: join(base, 'Downloads'),
     typstCacheDir: join(base, 'typst'),
+    signatures: createSignatureStore(join(base, 'pdf-signatures.json')),
     now: () => '2026-07-21T12:00:00Z',
     today: () => TODAY,
   }).createCaller({})
@@ -1566,6 +1568,23 @@ describe('pdf', () => {
         },
       ]),
     )
+  })
+
+  it('keeps the signatures made in the viewer, outside the vault', async () => {
+    const { caller, root } = await rig()
+    expect(await caller.pdf.signatures()).toBe('[]')
+
+    const entries = [{ id: 'sig-1', createdAt: 1, signature: { creationType: 'draw' } }]
+    await caller.pdf.saveSignatures({ entriesJson: JSON.stringify(entries) })
+
+    expect(JSON.parse(await caller.pdf.signatures())).toEqual(entries)
+    // Never in the clone: a vault is a shared repo.
+    await expect(readFile(join(root, 'pdf-signatures.json'), 'utf8')).rejects.toThrow()
+  })
+
+  it('saveSignatures refuses anything but a list', async () => {
+    const { caller } = await rig()
+    await expect(caller.pdf.saveSignatures({ entriesJson: '{}' })).rejects.toThrow(/list/)
   })
 
   it('render rejects a meta value that is not a string', async () => {

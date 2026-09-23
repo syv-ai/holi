@@ -31,9 +31,14 @@ const seam = vi.hoisted(() => ({
   requestZoom: vi.fn(),
   sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
   execute: vi.fn(),
+  loadEntries: vi.fn(),
+  entriesCb: null as ((entries: unknown[]) => void) | null,
+  savedSignatures: vi.fn(),
+  saveSignatures: vi.fn(),
   config: null as {
     zoom?: { defaultZoomLevel?: unknown }
     annotations?: { annotationAuthor?: string }
+    signature?: { mode?: string }
   } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
@@ -44,6 +49,10 @@ vi.mock('@/lib/trpc', () => ({
     files: {
       read: { query: (input: unknown) => seam.read(input) },
       write: { mutate: (input: unknown) => seam.write(input) },
+    },
+    pdf: {
+      signatures: { query: () => seam.savedSignatures() },
+      saveSignatures: { mutate: (input: unknown) => seam.saveSignatures(input) },
     },
   },
 }))
@@ -59,6 +68,13 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       },
     },
     export: { saveAsCopy: () => seam.saveAsCopy() },
+    signature: {
+      loadEntries: (entries: unknown[]) => seam.loadEntries(entries),
+      onEntriesChange: (cb: NonNullable<typeof seam.entriesCb>) => {
+        seam.entriesCb = cb
+        return () => {}
+      },
+    },
     ui: {
       onSidebarChanged: (cb: NonNullable<typeof seam.sidebarCb>) => {
         seam.sidebarCb = cb
@@ -97,6 +113,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         src: string
         zoom?: { defaultZoomLevel?: unknown }
         annotations?: { annotationAuthor?: string }
+        signature?: { mode?: string }
       }
       className?: string
       onInit?: (c: HTMLElement) => void
@@ -130,7 +147,14 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
     }, [])
     return <div ref={divRef} data-testid="pdf" data-pdf-src={config.src} className={className} />
   })
-  return { PDFViewer, ZoomMode: { FitWidth: 'fit-width' } }
+  return {
+    PDFViewer,
+    ZoomMode: { FitWidth: 'fit-width' },
+    SignatureMode: { SignatureOnly: 'signature-only' },
+    // The library's own (de)serializers, tagged so the test can see they ran.
+    serializeEntries: (entries: unknown[]) => entries.map((e) => ({ serialized: e })),
+    deserializeEntries: (entries: unknown[]) => entries.map((e) => ({ deserialized: e })),
+  }
 })
 
 import { PdfDocument } from '../PdfDocument'
@@ -154,6 +178,10 @@ beforeEach(() => {
   seam.zoomCb = null
   seam.sidebarCb = null
   seam.execute.mockReset()
+  seam.loadEntries.mockReset()
+  seam.entriesCb = null
+  seam.savedSignatures.mockReset().mockResolvedValue('[]')
+  seam.saveSignatures.mockReset().mockResolvedValue({ ok: true })
   seam.requestZoom.mockReset()
   urlCounter = 0
   // jsdom has no object URLs.
@@ -252,6 +280,30 @@ test('signs marks and comments with the GitHub login, not "Guest"', async () => 
   mount()
   await screen.findByTestId('pdf')
   expect(seam.config?.annotations?.annotationAuthor).toBe('ada-holm')
+})
+
+test('asks for a signature alone, never initials as well', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  // In signature-and-initials mode Save stays disabled until both are filled,
+  // with nothing saying so: an uploaded signature looked like it did nothing.
+  expect(seam.config?.signature?.mode).toBe('signature-only')
+})
+
+test('loads the saved signatures, then saves every change to them', async () => {
+  seam.savedSignatures.mockResolvedValue(JSON.stringify([{ id: 's1' }]))
+  mount()
+  await screen.findByTestId('pdf')
+  await waitFor(() => expect(seam.loadEntries).toHaveBeenCalledTimes(1))
+  expect(seam.loadEntries).toHaveBeenCalledWith([{ deserialized: { id: 's1' } }])
+  // Loading is not a change to save back.
+  expect(seam.saveSignatures).not.toHaveBeenCalled()
+
+  await waitFor(() => expect(seam.entriesCb).not.toBeNull())
+  act(() => seam.entriesCb!([{ id: 's1' }, { id: 's2' }]))
+  expect(seam.saveSignatures).toHaveBeenCalledWith({
+    entriesJson: JSON.stringify([{ serialized: { id: 's1' } }, { serialized: { id: 's2' } }]),
+  })
 })
 
 test('writes the exported document back after a mark, and not before', async () => {

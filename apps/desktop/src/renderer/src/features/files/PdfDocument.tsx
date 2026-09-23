@@ -44,6 +44,11 @@
  *   laid out invisible and fades in (D98's arrive) when the first page image
  *   loads. A timer reveals it anyway, so a broken file's error or a password
  *   prompt is never left invisible.
+ * - **Signatures outlive the PDF they were made in** (D104). The viewer keeps
+ *   them in memory, so each viewer loads the saved list from main (`userData`,
+ *   never a vault) when it is ready and saves the list on every change, in the
+ *   library's own serialized form. Signature only: with initials as well, Save
+ *   stayed disabled until both were filled, and nothing said so.
  * - **It opens at 150%, or fit-width if that is narrower** (`openingZoomCap`).
  *   The viewer opens at fit-width and the first zoom each document gets is
  *   capped; both happen before the first page paints, so there is no visible
@@ -53,9 +58,14 @@ import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   PDFViewer,
+  SignatureMode,
   ZoomMode,
+  deserializeEntries,
+  serializeEntries,
   type PDFViewerRef,
   type PluginRegistry,
+  type SerializedSignatureEntry,
+  type SignatureEntry,
 } from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
 import { cn } from '@/lib/cn'
@@ -102,6 +112,10 @@ interface ViewerPlugins {
     forDocument(documentId: string): { requestZoom(level: number): void }
   }
   ui: { onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void }
+  signature: {
+    loadEntries(entries: SignatureEntry[]): void
+    onEntriesChange(cb: (entries: SignatureEntry[]) => void): () => void
+  }
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string): { disabled: boolean; visible: boolean }
@@ -289,6 +303,27 @@ export function PdfDocument({
           else if (document.activeElement === document.body) hostRef.current?.focus()
         })
       })
+      const signatures = provided(registry, 'signature')
+      if (signatures !== null) {
+        // Subscribed only once the saved list is in, so loading it is never
+        // taken for a change and written straight back.
+        void trpc.pdf.signatures
+          .query()
+          .then((json) => {
+            signatures.loadEntries(
+              deserializeEntries(JSON.parse(json) as SerializedSignatureEntry[]),
+            )
+          })
+          .catch((err: unknown) => console.error('[pdf] could not load signatures:', err))
+          .finally(() => {
+            signatures.onEntriesChange((entries) => {
+              const entriesJson = JSON.stringify(serializeEntries(entries))
+              void trpc.pdf.saveSignatures
+                .mutate({ entriesJson })
+                .catch((err: unknown) => console.error('[pdf] could not save signatures:', err))
+            })
+          })
+      }
       const zoom = provided(registry, 'zoom')
       const opened = new Set<string>()
       zoom?.onZoomChange((event) => {
@@ -362,6 +397,7 @@ export function PdfDocument({
             tabBar: 'never',
             zoom: { defaultZoomLevel: ZoomMode.FitWidth },
             annotations: { annotationAuthor: author },
+            signature: { mode: SignatureMode.SignatureOnly },
             disabledCategories: [...PDF_DISABLED_CATEGORIES],
             theme: pdfViewerTheme(mode),
           }}

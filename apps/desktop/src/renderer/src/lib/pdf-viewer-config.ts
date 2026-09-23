@@ -20,7 +20,13 @@
  * accelerator and closes Holi's tab, not the viewer's document; `capture` is
  * ⌘⇧S. The second block is what a pane is not for: exporting, protecting,
  * fullscreen, the hamburger menu they hang from, and the annotation families
- * outside "highlight and mark up": redaction, signatures, stamps, forms.
+ * outside "highlight and mark up": redaction, stamps, forms, and the Insert
+ * tab's rubber stamp, image and attachment. Signatures are the one Insert item
+ * kept (D104).
+ *
+ * The names are the viewer's own, read from its commands and UI schema, and a
+ * name that matches nothing fails silently: this list once said `signature`,
+ * which is not a category, and the whole Insert tab leaked in through it.
  */
 export const PDF_DISABLED_CATEGORIES: readonly string[] = [
   'document-open',
@@ -33,10 +39,12 @@ export const PDF_DISABLED_CATEGORIES: readonly string[] = [
   'document-fullscreen',
   'document-menu',
   'redaction',
-  'signature',
   'stamp',
   'form',
   'security',
+  'insert-rubber-stamp',
+  'insert-image',
+  'insert-attachment',
 ]
 
 /** A token slug from `THEME_TOKENS`; the node test checks every one is real. */
@@ -204,12 +212,37 @@ export const PDF_SCROLLBAR_CSS = [
   `:host *:hover::-webkit-scrollbar-thumb { background: ${v('scrollbar-thumb')}; background-clip: content-box; }`,
 ].join('\n')
 
+/**
+ * The Create Signature dialog (D104).
+ *
+ * Its panel painted `surface`, which is the pane's colour here, so it sat on
+ * the page with nothing to lift it; it is Holi's dialog surface, `--popover`,
+ * as `primitives/Dialog.tsx` is. Its three places to make a signature (the
+ * Draw canvas, the Type field, the Upload zone) were outlined, and the
+ * borderless rules took the outlines away. They are paper instead, because a
+ * signature is black ink: drawn, typed or uploaded, the mark was invisible on
+ * a dark pad. `light-dark()` picks by the colour scheme the viewer inherits
+ * from the root, so dark mode gets white paper and light mode, whose dialog is
+ * already white, gets `--muted`. White is the one literal in these rules, and
+ * it is the paper, not chrome, for the same reason PDFium paints pages white.
+ *
+ * The Upload zone showed a file dragged over it by its border; that is now
+ * `--selection`. One class more than the paper rule, because `:is()` takes
+ * its most specific argument and would otherwise win.
+ */
+export const PDF_SIGNATURE_DIALOG_CSS = [
+  `.bg-bg-overlay > .bg-bg-surface { background-color: ${v('popover')}; }`,
+  `.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(${v('muted')}, white); }`,
+  `.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: ${v('selection')}; }`,
+].join('\n')
+
 /** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
 export const PDF_SHADOW_CSS = [
   PDF_PAGE_PLACEHOLDER_CSS,
   PDF_VIEWPORT_CSS,
   PDF_BORDERLESS_CSS,
   PDF_SCROLLBAR_CSS,
+  PDF_SIGNATURE_DIALOG_CSS,
 ].join('\n')
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */

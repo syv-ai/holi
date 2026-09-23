@@ -27,6 +27,7 @@ import { createSession } from './github/electron'
 import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
+import { createSignatureStore } from './pdf/signatures'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
@@ -178,6 +179,8 @@ async function main(): Promise<void> {
    * teammates is not a preference, it is a disclosure.
    */
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
+  /** The PDF viewer's saved signatures: `userData` too, never a vault. */
+  const signatures = createSignatureStore(join(app.getPath('userData'), 'pdf-signatures.json'))
   // Bound to the session's token *getter*, never a token: the getter refreshes
   // and single-flights, so every call goes through the one authority.
   /** The active vault's Google client (D87). Resolved inside the getter so the
@@ -367,6 +370,7 @@ async function main(): Promise<void> {
     calendarPrefs,
     googleDataFor,
     imagePrefs,
+    signatures,
     host,
     vaultRoot: vaultRoot(),
     openExternal: async (url) => {

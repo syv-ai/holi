@@ -6,6 +6,7 @@ import {
   PDF_PAGE_PLACEHOLDER_CSS,
   PDF_SCROLLBAR_CSS,
   PDF_SHADOW_CSS,
+  PDF_SIGNATURE_DIALOG_CSS,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   pdfViewerTheme,
@@ -19,6 +20,18 @@ describe('PDF_DISABLED_CATEGORIES', () => {
     expect(PDF_DISABLED_CATEGORIES).toEqual(
       expect.arrayContaining(['document-open', 'document-print', 'document-close', 'capture']),
     )
+  })
+
+  it("hides the Insert tab's stamp, image and attachment, and keeps its signatures", () => {
+    // The viewer's real category names, read from its commands: `insert-*`.
+    // A bare `signature` matched nothing, which is how the whole Insert tab
+    // leaked in; signatures are now a feature (D104), the rest are not.
+    expect(PDF_DISABLED_CATEGORIES).toEqual(
+      expect.arrayContaining(['insert-rubber-stamp', 'insert-image', 'insert-attachment']),
+    )
+    for (const kept of ['insert', 'insert-signature', 'signature']) {
+      expect(PDF_DISABLED_CATEGORIES).not.toContain(kept)
+    }
   })
 
   it('keeps reading, searching and marking', () => {
@@ -184,6 +197,24 @@ describe('PDF_SCROLLBAR_CSS', () => {
   })
 })
 
+describe('PDF_SIGNATURE_DIALOG_CSS', () => {
+  it("is Holi's dialog surface, with paper to sign on", () => {
+    expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
+      '.bg-bg-overlay > .bg-bg-surface { background-color: var(--popover); }',
+    )
+    // Signatures are black ink: on a dark pad the drawn, typed or uploaded mark
+    // was invisible. White paper in dark mode, --muted on the white light-mode
+    // dialog, chosen by the colour-scheme the viewer inherits.
+    expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
+      '.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(var(--muted), white); }',
+    )
+    // The drop zone's drag highlight was its border; it is now a colour.
+    expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
+      '.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: var(--selection); }',
+    )
+  })
+})
+
 describe('PDF_SHADOW_CSS', () => {
   it('is every rule Holi puts into the viewer, in one stylesheet', () => {
     for (const rule of [
@@ -191,6 +222,7 @@ describe('PDF_SHADOW_CSS', () => {
       PDF_VIEWPORT_CSS,
       PDF_BORDERLESS_CSS,
       PDF_SCROLLBAR_CSS,
+      PDF_SIGNATURE_DIALOG_CSS,
     ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
