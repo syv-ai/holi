@@ -111,20 +111,24 @@ describe('index.css is the one motion vocabulary', () => {
   // consumer is staggerDelay() above, which builds its calc() at runtime, so in
   // `@theme` it was tree-shaken out of the built stylesheet entirely and the
   // stagger silently resolved to nothing.
-  test('--motion-stagger is declared outside @theme, where it cannot be tree-shaken', () => {
-    const themeBlocks = [...css.matchAll(/@theme\s*\{/g)].map((m) => {
-      let depth = 0
-      let i = m.index + m[0].length - 1
-      do {
-        if (css[i] === '{') depth++
-        else if (css[i] === '}') depth--
-        i++
-      } while (depth > 0 && i < css.length)
-      return css.slice(m.index, i)
-    })
-    expect(themeBlocks.some((b) => /--motion-stagger\s*:/.test(b))).toBe(false)
-    expect(css).toMatch(/--motion-stagger\s*:/)
-  })
+  test.each(['--motion-stagger', '--motion-slide', '--ease-slide'])(
+    '%s is declared outside @theme, where it cannot be tree-shaken',
+    (token) => {
+      const themeBlocks = [...css.matchAll(/@theme\s*\{/g)].map((m) => {
+        let depth = 0
+        let i = m.index + m[0].length - 1
+        do {
+          if (css[i] === '{') depth++
+          else if (css[i] === '}') depth--
+          i++
+        } while (depth > 0 && i < css.length)
+        return css.slice(m.index, i)
+      })
+      const declared = new RegExp(`${token}\\s*:`)
+      expect(themeBlocks.some((b) => declared.test(b))).toBe(false)
+      expect(css).toMatch(declared)
+    },
+  )
 })
 
 /**

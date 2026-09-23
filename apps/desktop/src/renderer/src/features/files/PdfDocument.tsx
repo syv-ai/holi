@@ -78,12 +78,14 @@ import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
 import { cn } from '@/lib/cn'
 import { PdfCommentField } from './PdfCommentField'
+import { playSidebarLeaves } from './pdf-sidebar-leave'
 import {
   ADD_COMMENT,
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
   PDF_ICONS,
   PDF_SHADOW_CSS,
+  PDF_SIDEBAR_LEAVING,
   PDF_SIDEBAR_WIDTHS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIGNATURE_NOTE,
@@ -123,14 +125,14 @@ const REVEAL_AFTER_MS = 1500
 
 /** The search panel's field, found by the `data-sidebar-id` the library tags
  *  each sidebar with rather than by its placeholder, which is translated. */
-const SEARCH_FIELD = '[data-sidebar-id="search-panel"] input[type="text"]'
+const SEARCH_FIELD = `[data-sidebar-id="search-panel"]:not(.${PDF_SIDEBAR_LEAVING}) input[type="text"]`
 
 /** The Signatures panel's column: header, then the list, which scrolls. The
  *  note is portalled in after them, so it stays in view as the list grows. */
-const SIGNATURE_PANEL_COLUMN = '[data-sidebar-id="signature-panel"] > .min-h-0 > .flex-col'
+const SIGNATURE_PANEL_COLUMN = `[data-sidebar-id="signature-panel"]:not(.${PDF_SIDEBAR_LEAVING}) > .min-h-0 > .flex-col`
 
 /** The comments panel, whose one-line fields `PdfCommentField` stands in for. */
-const COMMENT_PANEL = '[data-sidebar-id="comment-panel"]'
+const COMMENT_PANEL = `[data-sidebar-id="comment-panel"]:not(.${PDF_SIDEBAR_LEAVING})`
 
 /** A comment row the viewer rendered: its field and, beside it, its send button. */
 interface CommentRow {
@@ -399,12 +401,16 @@ export function PdfDocument({
         event.stopPropagation()
         commands.execute('panel:toggle-search')
       })
-      // Comment rows come and go with the panel, with each comment added or
-      // deleted, and with selection, so they are followed by watching the
-      // root. Pages repaint through it constantly, so the look is once per
-      // frame at most, and the state changes only when the rows did.
+      // The root is watched for two things. A sidebar the viewer unmounts is
+      // put back as a stand-in that slides out (`pdf-sidebar-leave.ts`), at
+      // once: the callback runs before the next paint, so the panel is never
+      // seen gone. And comment rows, which come and go with the panel, with
+      // each comment added or deleted, and with selection. Pages repaint
+      // through the root constantly, so the rows are looked for once per
+      // frame at most, and the state changes only when they did.
       let pendingFrame = false
-      new MutationObserver(() => {
+      new MutationObserver((records) => {
+        playSidebarLeaves(records)
         if (pendingFrame) return
         pendingFrame = true
         requestAnimationFrame(() => {

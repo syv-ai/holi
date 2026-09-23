@@ -383,15 +383,31 @@ describe('PDF_TOOLBAR_CSS', () => {
 })
 
 describe('PDF_SIDEBAR_MOTION_CSS', () => {
-  it('slides a sidebar in from the side it docks on, in the motion tokens', () => {
+  it('slides a sidebar its whole width in from the edge it docks on, and out again', () => {
+    // Left-docked panels (`border-r`) by their start margin, right-docked
+    // (`border-l`) by their end margin, so the pages move over with them.
     expect(PDF_SIDEBAR_MOTION_CSS).toContain(
-      '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-arrive) var(--ease-settle) both; }',
+      '@keyframes holi-sidebar-in-left { from { margin-inline-start: calc(-1 * var(--holi-sidebar-width)); } }',
     )
     expect(PDF_SIDEBAR_MOTION_CSS).toContain(
-      '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-arrive) var(--ease-settle) both; }',
+      '@keyframes holi-sidebar-out-right { to { margin-inline-end: calc(-1 * var(--holi-sidebar-width)); } }',
     )
-    expect(PDF_SIDEBAR_MOTION_CSS).toMatch(/holi-sidebar-in-left \{ from \{[^}]*translateX\(-/)
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(
+      '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-slide) var(--ease-slide); }',
+    )
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(
+      '[data-sidebar-id].border-l.holi-sidebar-leaving { animation: holi-sidebar-out-right var(--motion-slide) var(--ease-slide) forwards; }',
+    )
+    // Smooth both ways: one slide token in and out, not D98's quicker leave.
+    expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/--motion-(arrive|leave)|--ease-settle/)
     expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/\d+m?s\b/)
+  })
+
+  it("knows each sidebar's width, the viewer's 250px unless Holi widened it", () => {
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain('[data-sidebar-id] { --holi-sidebar-width: 250px; }')
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(
+      '[data-sidebar-id="comment-panel"] { --holi-sidebar-width: 360px; }',
+    )
   })
 })
 

@@ -641,6 +641,61 @@ test("focus the viewer gives its comment field goes to Holi's", async () => {
   expect(seam.shadow!.activeElement).toBe(row.querySelector('textarea'))
 })
 
+/** A docked sidebar as the viewer renders one on a wide pane. */
+function dockedPanel(id: string, text: string) {
+  const panel = document.createElement('div')
+  panel.dataset.sidebarId = id
+  panel.className = 'border-l bg-bg-surface flex flex-col'
+  panel.innerHTML = `<p>${text}</p>`
+  return panel
+}
+
+test('a closing sidebar slides out: a stand-in plays the leave, then goes', async () => {
+  // jsdom runs no animations; the stand-in waits on whatever it is given.
+  let finish!: () => void
+  const finished = new Promise<void>((resolve) => (finish = resolve))
+  Element.prototype.getAnimations = () => [{ finished }] as unknown as Animation[]
+  try {
+    mount()
+    await screen.findByTestId('pdf')
+    const panel = dockedPanel('comment-panel', 'Page 9')
+    seam.shadow!.append(panel)
+    // The viewer unmounts a closing sidebar in the same render.
+    panel.remove()
+    const stand = await waitFor(() => {
+      const el = seam.shadow!.querySelector('.holi-sidebar-leaving')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    expect(stand.textContent).toBe('Page 9')
+    expect(stand.getAttribute('data-sidebar-id')).toBe('comment-panel')
+    // A picture of the panel, not the panel: nothing in it takes input.
+    expect(stand.hasAttribute('inert')).toBe(true)
+
+    finish()
+    await waitFor(() => expect(seam.shadow!.querySelector('.holi-sidebar-leaving')).toBeNull())
+  } finally {
+    delete (Element.prototype as { getAnimations?: unknown }).getAnimations
+  }
+})
+
+test('a sidebar opening where one is still leaving takes its place at once', async () => {
+  Element.prototype.getAnimations = () =>
+    [{ finished: new Promise(() => {}) }] as unknown as Animation[]
+  try {
+    mount()
+    await screen.findByTestId('pdf')
+    const panel = dockedPanel('comment-panel', 'Page 9')
+    seam.shadow!.append(panel)
+    panel.remove()
+    await waitFor(() => expect(seam.shadow!.querySelector('.holi-sidebar-leaving')).not.toBeNull())
+    seam.shadow!.append(dockedPanel('search-panel', 'Search'))
+    await waitFor(() => expect(seam.shadow!.querySelector('.holi-sidebar-leaving')).toBeNull())
+  } finally {
+    delete (Element.prototype as { getAnimations?: unknown }).getAnimations
+  }
+})
+
 test('⌘F puts the caret in the search field, and closing it gives focus back', async () => {
   mount()
   const host = (await screen.findByTestId('pdf')).parentElement!

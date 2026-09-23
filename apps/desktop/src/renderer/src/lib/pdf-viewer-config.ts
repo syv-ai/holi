@@ -400,21 +400,55 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
 export const PDF_TOOLBAR_CSS = `:is(${HOLI_BUTTONS.map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
 
 /**
- * A sidebar arrives from the side it docks on (D98's arrive).
+ * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
+ * gives every sidebar a `width` (250px by default) and merges a partial into
+ * each one field by field. Comments get room for a sentence to a line; the
+ * rest keep the viewer's width.
+ */
+export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = {
+  'comment-panel': { width: '360px' },
+}
+
+/** The class on the stand-in that plays a closing sidebar's slide out
+ *  (`features/files/pdf-sidebar-leave.ts`). */
+export const PDF_SIDEBAR_LEAVING = 'holi-sidebar-leaving'
+
+/** The width the viewer gives a sidebar Holi does not widen. */
+const VIEWER_SIDEBAR_WIDTH = '250px'
+
+/**
+ * A sidebar slides its whole width in from the edge it docks on, and back out
+ * (D98's arrive/leave, a sidebar being the spec's "width, from its edge").
  *
  * Thumbnails and Signatures dock left, drawn with `border-r`; Search and
  * Comments dock right, with `border-l`. The narrow-pane bottom sheet has
- * neither class and keeps its own motion. The shape is the app's
- * `motion-in-left` and `motion-in-right`, redeclared here because a keyframe
- * name does not reach into a shadow root; the timing is the motion tokens,
- * which do, like the colour tokens. There is no leave: the viewer unmounts a
- * closing sidebar in the same render, so there is nothing left to animate.
+ * neither class and keeps its own motion. The slide is a negative margin as
+ * wide as the panel, on the side it docks on, so the panel keeps its width
+ * (nothing inside it reflows) while the pages beside it, `flex-1`, move over
+ * with it; the row they share clips what is past its edge. The width is not
+ * readable from CSS (it is an inline style), so it is written here from the
+ * same widths the schema is given.
+ *
+ * The timing is `--motion-slide` and `--ease-slide` (`index.css`): eased in
+ * and out, slower than an arrival, and the same both ways, where D98 would
+ * have a leaving thing go faster, so a slide reads as one smooth motion. The
+ * viewer unmounts a closing panel in the same render, so the leave is played
+ * by a stand-in (`PDF_SIDEBAR_LEAVING`). Keyframe names do not reach into a
+ * shadow root, so they are declared here; the motion tokens do.
  */
 export const PDF_SIDEBAR_MOTION_CSS = [
-  '@keyframes holi-sidebar-in-left { from { opacity: 0; transform: translateX(-0.75rem); } }',
-  '@keyframes holi-sidebar-in-right { from { opacity: 0; transform: translateX(0.75rem); } }',
-  '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-arrive) var(--ease-settle) both; }',
-  '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-arrive) var(--ease-settle) both; }',
+  `[data-sidebar-id] { --holi-sidebar-width: ${VIEWER_SIDEBAR_WIDTH}; }`,
+  ...Object.entries(PDF_SIDEBAR_WIDTHS).map(
+    ([id, { width }]) => `[data-sidebar-id="${id}"] { --holi-sidebar-width: ${width}; }`,
+  ),
+  '@keyframes holi-sidebar-in-left { from { margin-inline-start: calc(-1 * var(--holi-sidebar-width)); } }',
+  '@keyframes holi-sidebar-in-right { from { margin-inline-end: calc(-1 * var(--holi-sidebar-width)); } }',
+  '@keyframes holi-sidebar-out-left { to { margin-inline-start: calc(-1 * var(--holi-sidebar-width)); } }',
+  '@keyframes holi-sidebar-out-right { to { margin-inline-end: calc(-1 * var(--holi-sidebar-width)); } }',
+  '[data-sidebar-id].border-r { animation: holi-sidebar-in-left var(--motion-slide) var(--ease-slide); }',
+  '[data-sidebar-id].border-l { animation: holi-sidebar-in-right var(--motion-slide) var(--ease-slide); }',
+  `[data-sidebar-id].border-r.${PDF_SIDEBAR_LEAVING} { animation: holi-sidebar-out-left var(--motion-slide) var(--ease-slide) forwards; }`,
+  `[data-sidebar-id].border-l.${PDF_SIDEBAR_LEAVING} { animation: holi-sidebar-out-right var(--motion-slide) var(--ease-slide) forwards; }`,
 ].join('\n')
 
 /**
@@ -457,16 +491,6 @@ export const PDF_SHADOW_CSS = [
   PDF_SIDEBAR_MOTION_CSS,
   PDF_COMMENT_FIELD_CSS,
 ].join('\n')
-
-/**
- * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
- * gives every sidebar a `width` (250px by default) and merges a partial into
- * each one field by field. Comments get room for a sentence to a line; the
- * rest keep the viewer's width.
- */
-export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = {
-  'comment-panel': { width: '360px' },
-}
 
 /**
  * Holi's own icons for the viewer's toolbar, as SVG path data (the viewer's

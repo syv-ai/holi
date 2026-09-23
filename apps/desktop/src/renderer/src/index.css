@@ -364,9 +364,20 @@
  * resolved to nothing.
  *
  * Any future motion token whose only consumer is JavaScript belongs here too,
- * for the same reason. `test/motion.test.ts` guards it. */
+ * for the same reason. `test/motion.test.ts` guards it.
+ *
+ * **Slide**, the same for the same reason: its only consumer is the CSS put
+ * into the PDF viewer's shadow root (`lib/pdf-viewer-config.ts`), a string
+ * Tailwind never reads. It is A (arrive/leave) for a panel that slides its
+ * whole width in from an edge and back out, moving what is beside it. Over
+ * that distance `--ease-settle` covers most of the way in the first frames
+ * and then crawls, which read as abrupt; a slide is eased in and out, and
+ * slower, and leaves at the pace it came, so it reads as one smooth motion
+ * each way (a design call, 2026-09-23). */
 :root {
   --motion-stagger: 45ms;
+  --motion-slide: 400ms;
+  --ease-slide: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 /* ════ The four behaviours, as utilities ═══════════════════════════════
