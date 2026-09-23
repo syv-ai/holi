@@ -11,7 +11,7 @@ import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { sessionAtom } from '@/state/session'
-import { PDF_FONTS, shortcutOf } from '@/lib/pdf-viewer-config'
+import { PDF_FONTS, PDF_SIGNATURE_NOTE, shortcutOf } from '@/lib/pdf-viewer-config'
 
 const REMOTE = 'syv-ai/vault'
 const PATH = 'docs/case.pdf'
@@ -327,6 +327,26 @@ test('loads the signature faces when the signature panel opens', async () => {
   expect(load).toHaveBeenCalledWith('16px "Dancing Script"')
   // jsdom has no FontFaceSet; do not leave the fake behind for other tests.
   delete (document as { fonts?: unknown }).fonts
+})
+
+test('the signature panel says what placing a signature shares, while it is open', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  // The panel as the viewer renders it: a column inside the tagged sidebar.
+  const panel = document.createElement('div')
+  panel.dataset.sidebarId = 'signature-panel'
+  panel.innerHTML = '<div class="min-h-0"><div class="flex-col"><button>Create</button></div></div>'
+  seam.shadow!.append(panel)
+
+  act(() => seam.sidebarCb!({ sidebarId: 'signature-panel' }))
+  await waitFor(() => expect(seam.shadow!.querySelector('.holi-signature-note')).not.toBeNull())
+  const note = seam.shadow!.querySelector('.flex-col > .holi-signature-note')!
+  expect(note.textContent).toBe(PDF_SIGNATURE_NOTE)
+  expect(note.textContent!.length).toBeGreaterThan(40)
+
+  panel.remove()
+  act(() => seam.sidebarCb!({ sidebarId: '' }))
+  await waitFor(() => expect(seam.shadow!.querySelector('.holi-signature-note')).toBeNull())
 })
 
 test('puts Signatures on the top bar', async () => {

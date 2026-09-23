@@ -56,6 +56,7 @@
  */
 import { useAtomValue } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   PDFViewer,
   SignatureMode,
@@ -81,6 +82,7 @@ import {
   PDF_FONTS,
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
+  PDF_SIGNATURE_NOTE,
   openingZoomCap,
   withSignatureButton,
   type PdfToolbarItem,
@@ -104,6 +106,10 @@ const REVEAL_AFTER_MS = 1500
 /** The search panel's field, found by the `data-sidebar-id` the library tags
  *  each sidebar with rather than by its placeholder, which is translated. */
 const SEARCH_FIELD = '[data-sidebar-id="search-panel"] input[type="text"]'
+
+/** The Signatures panel's column: header, then the list, which scrolls. The
+ *  note is portalled in after them, so it stays in view as the list grows. */
+const SIGNATURE_PANEL_COLUMN = '[data-sidebar-id="signature-panel"] > .min-h-0 > .flex-col'
 
 /**
  * The slices of the viewer's plugins this file touches, typed structurally.
@@ -172,6 +178,9 @@ export function PdfDocument({
   /** The `src` whose viewer has painted a page (or given up waiting for one).
    *  Keyed on the URL, so a reload after a foreign change arrives again too. */
   const [revealedSrc, setRevealedSrc] = useState<string | null>(null)
+  /** The open Signatures panel's column, where `PDF_SIGNATURE_NOTE` is
+   *  portalled; null while the panel is closed. */
+  const [signatureColumn, setSignatureColumn] = useState<Element | null>(null)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewerRef>(null)
@@ -325,6 +334,9 @@ export function PdfDocument({
         }
         requestAnimationFrame(() => {
           const root = viewerRef.current?.container?.shadowRoot
+          // Asked on every change, whichever side moved: the Signatures panel
+          // docks left and search right, so either can open or close alone.
+          setSignatureColumn(root?.querySelector(SIGNATURE_PANEL_COLUMN) ?? null)
           const field =
             event.sidebarId === 'search-panel'
               ? root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
@@ -439,6 +451,8 @@ export function PdfDocument({
           }}
         />
       )}
+      {signatureColumn !== null &&
+        createPortal(<p className="holi-signature-note">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
     </div>
   )
 }

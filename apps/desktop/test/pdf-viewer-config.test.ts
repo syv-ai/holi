@@ -9,6 +9,7 @@ import {
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
+  PDF_SIGNATURE_NOTE,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   withSignatureButton,
@@ -217,6 +218,21 @@ describe('PDF_SIGNATURE_DIALOG_CSS', () => {
     // The drop zone's drag highlight was its border; it is now a colour.
     expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
       '.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: var(--selection); }',
+    )
+  })
+})
+
+describe('PDF_SIGNATURE_NOTE', () => {
+  it('says where a placed signature goes and who can copy it, in plain words', () => {
+    expect(PDF_SIGNATURE_NOTE).toMatch(/saved into this PDF/)
+    expect(PDF_SIGNATURE_NOTE).toMatch(/copy it/)
+    expect(PDF_SIGNATURE_NOTE).toMatch(/history/)
+    expect(PDF_SIGNATURE_NOTE).not.toMatch(/\u2014/) // no em dashes in UI copy
+  })
+
+  it('is styled from Holi tokens inside the shadow root', () => {
+    expect(PDF_SIGNATURE_DIALOG_CSS).toMatch(
+      /\.holi-signature-note \{[^}]*color: var\(--muted-foreground\);[^}]*\}/,
     )
   })
 })

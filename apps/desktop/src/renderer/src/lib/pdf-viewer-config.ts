@@ -236,6 +236,9 @@ export const PDF_SIGNATURE_DIALOG_CSS = [
   `.bg-bg-overlay > .bg-bg-surface { background-color: ${v('popover')}; }`,
   `.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(${v('muted')}, white); }`,
   `.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: ${v('selection')}; }`,
+  // `PDF_SIGNATURE_NOTE`, at the foot of the Signatures panel. Tailwind's
+  // classes do not reach into the shadow root, so its look is here.
+  `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /** Everything Holi puts into the viewer's shadow root, as one stylesheet. */
@@ -306,6 +309,15 @@ export function withSignatureButton(items: readonly PdfToolbarItem[]): PdfToolba
     return { ...item, items: [SIGNATURE_BUTTON, ...item.items] }
   })
 }
+
+/**
+ * What placing a signature shares, said where it is placed from: the foot of
+ * the Signatures panel, for as long as the panel is open (D104). A signature
+ * on a page is an image inside the PDF, the PDF is committed and synced, and
+ * anyone with the file can extract that image, from any earlier commit too.
+ */
+export const PDF_SIGNATURE_NOTE =
+  'A signature you place is saved into this PDF, which is committed to the vault. Anyone with access to the vault can copy it, and removing it later leaves it in the history.'
 
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5
