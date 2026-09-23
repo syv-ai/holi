@@ -24,7 +24,13 @@
  *   child's effect, so it sits ahead of the plugin's listener and can
  *   `stopImmediatePropagation` a key the viewer would otherwise claim when the
  *   event did not start inside the viewer. A disabled command (print on ⌘P) is
- *   not claimed, so Holi's palette still opens.
+ *   not claimed, so Holi's palette still opens. "Inside" needs focus to be
+ *   there, and a page is not focusable, so the host is (`tabIndex={-1}`): a
+ *   click anywhere in the viewer focuses it, and opening a PDF focuses it the
+ *   way opening a note focuses its editor, so ⌘F reaches the viewer's search.
+ *   The search panel does not focus its own field, so opening it puts the
+ *   caret there, and closing it hands focus back to the host rather than
+ *   letting it fall to `<body>`, where the next ⌘F would be a key from outside.
  * - **Theme.** `pdfViewerTheme` speaks in `var(--token)` strings that cross the
  *   shadow boundary; a mode flip goes through `setTheme`, not a remount. The
  *   one colour the palette cannot reach, the white a page shows until it is
@@ -72,6 +78,10 @@ const SAVE_QUIET_MS = 1000
  *  paint the first page in about 300 ms; this only matters when none comes. */
 const REVEAL_AFTER_MS = 1500
 
+/** The search panel's field, found by the `data-sidebar-id` the library tags
+ *  each sidebar with rather than by its placeholder, which is translated. */
+const SEARCH_FIELD = '[data-sidebar-id="search-panel"] input[type="text"]'
+
 /**
  * The slices of the viewer's plugins this file touches, typed structurally.
  * The plugin packages are transitive dependencies of the snippet, so their
@@ -89,6 +99,7 @@ interface ViewerPlugins {
     ): () => void
     forDocument(documentId: string): { requestZoom(level: number): void }
   }
+  ui: { onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void }
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string): { disabled: boolean; visible: boolean }
@@ -132,6 +143,9 @@ export function PdfDocument({
    *  snapshot said at first sight, then what each of our writes produced. */
   const knownMtimeRef = useRef<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** Focus is taken once, when the PDF opens; a reload after a foreign change
+   *  (an agent's re-export, say) must not pull it out of wherever you are. */
+  const tookFocusRef = useRef(false)
   const savePendingRef = useRef(false)
 
   useEffect(() => {
@@ -240,6 +254,16 @@ export function PdfDocument({
     (registry: PluginRegistry) => {
       registryRef.current = registry
       provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
+      provided(registry, 'ui')?.onSidebarChanged((event) => {
+        if (event.sidebarId !== 'search-panel') return
+        // After the panel has rendered (or gone): the event fires on the toggle.
+        requestAnimationFrame(() => {
+          const root = viewerRef.current?.container?.shadowRoot
+          const field = root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
+          if (field != null) field.focus()
+          else if (document.activeElement === document.body) hostRef.current?.focus()
+        })
+      })
       const zoom = provided(registry, 'zoom')
       const opened = new Set<string>()
       zoom?.onZoomChange((event) => {
@@ -273,6 +297,12 @@ export function PdfDocument({
     viewerRef.current?.container?.setTheme(pdfViewerTheme(mode))
   }, [mode, src])
 
+  useEffect(() => {
+    if (src === null || tookFocusRef.current) return
+    tookFocusRef.current = true
+    hostRef.current?.focus({ preventScroll: true })
+  }, [src])
+
   // The fallback: a viewer that never paints a page still arrives.
   useEffect(() => {
     if (src === null) return
@@ -281,7 +311,11 @@ export function PdfDocument({
   }, [src, revealAfterMs])
 
   return (
-    <div ref={hostRef} className="flex min-h-0 flex-1 flex-col bg-background">
+    <div
+      ref={hostRef}
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col bg-background outline-none"
+    >
       {error !== null ? (
         <p className="m-auto text-xs text-muted-foreground">{error}</p>
       ) : src === null ? null : (

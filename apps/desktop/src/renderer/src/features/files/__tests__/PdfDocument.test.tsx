@@ -5,7 +5,7 @@
  * `document` from an effect. What a PDF looks like is the library's business.
  */
 import { Provider, createStore } from 'jotai'
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { emptyVaultSnapshot } from '@holi/shared'
 import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -28,6 +28,7 @@ const seam = vi.hoisted(() => ({
   zoomCb: null as
     ((e: { documentId: string; level: string | number; newZoom: number }) => void) | null,
   requestZoom: vi.fn(),
+  sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
   config: null as { zoom?: { defaultZoomLevel?: unknown } } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
@@ -53,6 +54,12 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       },
     },
     export: { saveAsCopy: () => seam.saveAsCopy() },
+    ui: {
+      onSidebarChanged: (cb: NonNullable<typeof seam.sidebarCb>) => {
+        seam.sidebarCb = cb
+        return () => {}
+      },
+    },
     zoom: {
       onZoomChange: (cb: NonNullable<typeof seam.zoomCb>) => {
         seam.zoomCb = cb
@@ -95,6 +102,8 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       return Object.assign(el, { setTheme: seam.setTheme })
     })
     useImperativeHandle(ref, () => ({ container, registry: null }))
+    // Appended into its own div, as the real wrapper does.
+    const divRef = useRef<HTMLDivElement>(null)
     useEffect(() => {
       const listener = (e: KeyboardEvent) => {
         const s = shortcutOf(e)
@@ -102,13 +111,14 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       }
       document.addEventListener('keydown', listener)
       seam.config = config
+      divRef.current?.append(container)
       onInit?.(container)
       onReady?.(registry)
       return () => document.removeEventListener('keydown', listener)
       // Mounted once per src, like the real wrapper.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
-    return <div data-testid="pdf" data-pdf-src={config.src} className={className} />
+    return <div ref={divRef} data-testid="pdf" data-pdf-src={config.src} className={className} />
   })
   return { PDFViewer, ZoomMode: { FitWidth: 'fit-width' } }
 })
@@ -132,6 +142,7 @@ beforeEach(() => {
   seam.seen.length = 0
   seam.annotationCb = null
   seam.zoomCb = null
+  seam.sidebarCb = null
   seam.requestZoom.mockReset()
   urlCounter = 0
   // jsdom has no object URLs.
@@ -275,6 +286,56 @@ test('a key the viewer would claim reaches it only from inside the viewer', asyn
   // A key the viewer does not bind is never touched.
   fireEvent.keyDown(document.body, { key: 'j', metaKey: true })
   expect(seam.seen).toContain('j+meta')
+})
+
+test('opening a PDF focuses it, so ⌘F reaches its search, like a note focuses its editor', async () => {
+  mount()
+  const host = (await screen.findByTestId('pdf')).parentElement!
+  // Focusable, so a click on a page (not itself focusable) lands here too.
+  expect(host).toHaveAttribute('tabindex', '-1')
+  await waitFor(() => expect(document.activeElement).toBe(host))
+
+  fireEvent.keyDown(document.activeElement!, { key: 'f', metaKey: true })
+  expect(seam.seen).toContain('f+meta')
+})
+
+test('⌘F puts the caret in the search field, and closing it gives focus back', async () => {
+  mount()
+  const host = (await screen.findByTestId('pdf')).parentElement!
+  // The panel the viewer renders into its shadow root, tagged by the library.
+  const panel = document.createElement('div')
+  panel.dataset.sidebarId = 'search-panel'
+  const field = document.createElement('input')
+  field.type = 'text'
+  panel.append(field)
+  seam.shadow!.append(panel)
+
+  act(() => seam.sidebarCb!({ sidebarId: 'search-panel' }))
+  await waitFor(() => expect(seam.shadow!.activeElement).toBe(field))
+
+  // Closed: the field goes, and focus must not fall to <body>, or the next ⌘F
+  // would be a key from outside the viewer.
+  panel.remove()
+  act(() => seam.sidebarCb!({ sidebarId: 'search-panel' }))
+  await waitFor(() => expect(document.activeElement).toBe(host))
+})
+
+test('a reload after a foreign change does not take focus back', async () => {
+  mount()
+  const host = (await screen.findByTestId('pdf')).parentElement!
+  // The opening focus is an effect; let it land before moving focus away, or
+  // it can arrive after and look like the reload took focus.
+  await waitFor(() => expect(document.activeElement).toBe(host))
+  const elsewhere = document.createElement('button')
+  document.body.append(elsewhere)
+  elsewhere.focus()
+
+  act(() => store.set(snapshotAtom, snapshotWith('T3')))
+  await waitFor(() =>
+    expect(screen.getByTestId('pdf')).toHaveAttribute('data-pdf-src', 'blob:holi/2'),
+  )
+  expect(document.activeElement).toBe(elsewhere)
+  elsewhere.remove()
 })
 
 test('a disabled viewer command is not claimed, so ⌘P still reaches Holi', async () => {
