@@ -147,14 +147,16 @@ export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar
  * Dividers stay as space, so the toolbar keeps its rhythm, and a menu or the
  * page pill is separated from the page by the shadow it already has, which is
  * how Holi's own menus and tooltips are drawn. Form controls keep their
- * outline: every one sits on `bg-bg-input`, and an input with no edge is hard
- * to find. The selector's two classes outrank the single-class utilities it
- * overrides, so no `!important`.
+ * outline, dimmed to `--divider`: every one sits on `bg-bg-input`, and an input
+ * with no edge is hard to find. The dimming stands aside under `:focus`, so a
+ * focused field still brightens to its accent. The selectors' two classes
+ * outrank the single-class utilities they override, so no `!important`.
  */
 export const PDF_BORDERLESS_CSS = [
   ':is(.border-border-default, .border-border-subtle):not(.bg-bg-input) { border-color: transparent; }',
   ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
   '.ring-border-default { --tw-ring-color: transparent; }',
+  `.bg-bg-input.border-border-default:not(:focus) { border-color: ${v('divider')}; }`,
 ].join('\n')
 
 /**

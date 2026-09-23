@@ -118,6 +118,11 @@ describe('PDF_BORDERLESS_CSS', () => {
       ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
     )
     expect(PDF_BORDERLESS_CSS).toContain('.ring-border-default { --tw-ring-color: transparent; }')
+    // A form control keeps its edge, dimmed to the divider tone, and brightens
+    // to its accent when focused (the rule stands aside under :focus).
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '.bg-bg-input.border-border-default:not(:focus) { border-color: var(--divider); }',
+    )
   })
 })
 
