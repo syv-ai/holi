@@ -170,9 +170,10 @@ describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
     )
   })
 
-  it('sets a sidebar apart from the pane by colour, with no border inside it', () => {
+  it('lays a sidebar flat on the pane, with no border inside it', () => {
+    // Like Holi's own file tree: `--background`, nothing between it and the pane.
     expect(PDF_BORDERLESS_CSS).toContain(
-      '[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: var(--card); }',
+      '[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: var(--background); }',
     )
     expect(PDF_BORDERLESS_CSS).toContain(
       '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',

@@ -186,11 +186,12 @@ export const PDF_BORDERLESS_CSS = [
   // comment Cancel), where the fill is the state, so the rule names the div.
   'div.bg-interactive-hover { background-color: transparent; }',
   '.outline-border-default { outline-color: transparent; }',
-  // A sidebar (thumbnails, search, comments) is set apart from the pane by
-  // colour: `--card`, a step up from `--background`, where the viewer drew a
-  // border on `surface`. Nothing inside it has an edge either, a selected
-  // search hit included, except a form field's dimmed outline.
-  `[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: ${v('card')}; }`,
+  // A sidebar (thumbnails, signatures, search, comments) lies flat on the
+  // pane, `--background` with nothing between them, the way Holi's own file
+  // tree does; the viewer drew a border on `surface`. Nothing inside it has an
+  // edge either, a selected search hit included, except a form field's dimmed
+  // outline.
+  `[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: ${v('background')}; }`,
   '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
   // Nor a ring or a shadow: the selected comment drew a 2px focus-ring blue
   // ring, the comment and edit fields a ring on focus, the cards a shadow. A
