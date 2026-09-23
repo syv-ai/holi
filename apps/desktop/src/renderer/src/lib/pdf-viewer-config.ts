@@ -201,6 +201,10 @@ export const PDF_BORDERLESS_CSS = [
   '[data-sidebar-id] :not(.bg-bg-elevated) { box-shadow: none !important; }',
   `[data-sidebar-id] .ring-interactive-focus-ring { background-color: ${v('accent')}; }`,
   `[data-sidebar-id] :is(input, textarea) { border-color: ${v('divider')} !important; }`,
+  // A comment card leads with its author's name, not a circle: the viewer
+  // drew the mark's type icon in one beside each comment, and each reply's
+  // initials on a colour picked from the name's first letter.
+  '[data-sidebar-id="comment-panel"] .rounded-full:is(.bg-bg-surface-alt, .text-white) { display: none; }',
 ].join('\n')
 
 /**

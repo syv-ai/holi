@@ -181,6 +181,12 @@ describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
     )
   })
 
+  it('draws no round avatar beside a comment or a reply, only the name', () => {
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id="comment-panel"] .rounded-full:is(.bg-bg-surface-alt, .text-white) { display: none; }',
+    )
+  })
+
   it('draws no ring or shadow in a sidebar, so a comment is selected by colour', () => {
     // The selected comment drew `ring-2` in the focus-ring blue, the comment
     // field `focus:ring-2`, the edit field `focus:ring-1`; cards a shadow. A
