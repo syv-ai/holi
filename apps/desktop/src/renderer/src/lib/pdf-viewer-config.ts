@@ -253,12 +253,14 @@ export const PDF_SIGNATURE_DIALOG_CSS = [
   `.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(${v('muted')}, white); }`,
   `.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: ${v('selection')}; }`,
   // The panel's header is one row: the title, and Create New Signature as a
-  // round plus beside it rather than a full-width bar under it. It is still
-  // the viewer's own button, so its action, focus and accessible name (the
-  // text, kept at no size) are unchanged. The plus is two bars painted in
-  // the button's own foreground, over the accent fill it already has.
+  // plus beside it rather than a full-width bar under it, drawn like the top
+  // bar's icon buttons: 32px, no fill until hovered, the icon in the
+  // foreground at the weight of the viewer's 20px icons. It is still the
+  // viewer's own button, so its action, focus and accessible name (the text,
+  // kept at no size) are unchanged. The plus is two bars in the foreground.
   `${SIGNATURE_HEADER} { display: flex; align-items: center; justify-content: space-between; gap: 8px; }`,
-  `${SIGNATURE_HEADER} > button { flex: none; width: 28px; height: 28px; margin: 0; padding: 0; border-radius: 9999px; font-size: 0; background-image: linear-gradient(${v('primary-foreground')}, ${v('primary-foreground')}), linear-gradient(${v('primary-foreground')}, ${v('primary-foreground')}); background-size: 12px 2px, 2px 12px; background-position: center; background-repeat: no-repeat; }`,
+  `${SIGNATURE_HEADER} > button { flex: none; width: 32px; height: 32px; margin: 0; padding: 0; border-radius: 6px; font-size: 0; background-color: transparent; background-image: linear-gradient(${v('foreground')}, ${v('foreground')}), linear-gradient(${v('foreground')}, ${v('foreground')}); background-size: 12px 1.5px, 1.5px 12px; background-position: center; background-repeat: no-repeat; }`,
+  `${SIGNATURE_HEADER} > button:hover { background-color: ${v('accent')}; }`,
   // `PDF_SIGNATURE_NOTE`, at the foot of the Signatures panel. Tailwind's
   // classes do not reach into the shadow root, so its look is here.
   `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,

@@ -249,20 +249,24 @@ describe('PDF_SIGNATURE_DIALOG_CSS', () => {
 describe('PDF_SIGNATURE_DIALOG_CSS, the panel header', () => {
   const header = '[data-sidebar-id="signature-panel"] .border-b.p-3:has(> h2)'
 
-  it('puts Create New Signature beside the title, as a round plus', () => {
+  it('puts Create New Signature beside the title, as a toolbar icon button', () => {
     expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
       `${header} { display: flex; align-items: center; justify-content: space-between;`,
     )
     const button = PDF_SIGNATURE_DIALOG_CSS.split('\n').find((r) =>
       r.startsWith(`${header} > button {`),
     )
-    expect(button).toMatch(/border-radius: 9999px;/)
+    // The top bar's icon buttons: 32px, rounded-md, no fill at rest.
+    expect(button).toMatch(/width: 32px; height: 32px;/)
+    expect(button).toMatch(/border-radius: 6px;/)
+    expect(button).toMatch(/background-color: transparent;/)
+    expect(PDF_SIGNATURE_DIALOG_CSS).toContain(
+      `${header} > button:hover { background-color: var(--accent); }`,
+    )
     // The label stays in the DOM as its accessible name, at no size.
     expect(button).toMatch(/font-size: 0;/)
     // The plus is drawn in a token, never a literal or a fetched image.
-    expect(button).toMatch(
-      /linear-gradient\(var\(--primary-foreground\), var\(--primary-foreground\)\)/,
-    )
+    expect(button).toMatch(/linear-gradient\(var\(--foreground\), var\(--foreground\)\)/)
     expect(button).not.toMatch(/url\(/)
   })
 })
