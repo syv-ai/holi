@@ -151,6 +151,22 @@ describe('PDF_BORDERLESS_CSS, buttons and sidebars', () => {
       '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
     )
   })
+
+  it('draws no ring or shadow in a sidebar, so a comment is selected by colour', () => {
+    // The selected comment drew `ring-2` in the focus-ring blue, the comment
+    // field `focus:ring-2`, the edit field `focus:ring-1`; cards a shadow. A
+    // menu that floats over the panel (`bg-bg-elevated`) keeps its shadow.
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id] :not(.bg-bg-elevated) { box-shadow: none !important; }',
+    )
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id] .ring-interactive-focus-ring { background-color: var(--accent); }',
+    )
+    // A field keeps its dimmed edge, focused or not, never the accent.
+    expect(PDF_BORDERLESS_CSS).toContain(
+      '[data-sidebar-id] :is(input, textarea) { border-color: var(--divider) !important; }',
+    )
+  })
 })
 
 describe('PDF_SCROLLBAR_CSS', () => {

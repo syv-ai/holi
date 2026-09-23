@@ -176,6 +176,14 @@ export const PDF_BORDERLESS_CSS = [
   // search hit included, except a form field's dimmed outline.
   `[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: ${v('card')}; }`,
   '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
+  // Nor a ring or a shadow: the selected comment drew a 2px focus-ring blue
+  // ring, the comment and edit fields a ring on focus, the cards a shadow. A
+  // menu floating over the panel (`bg-bg-elevated`) keeps its shadow, which is
+  // what lifts it off the panel. The selected comment is marked by colour,
+  // and a field keeps its dimmed edge whether focused or not.
+  '[data-sidebar-id] :not(.bg-bg-elevated) { box-shadow: none !important; }',
+  `[data-sidebar-id] .ring-interactive-focus-ring { background-color: ${v('accent')}; }`,
+  `[data-sidebar-id] :is(input, textarea) { border-color: ${v('divider')} !important; }`,
 ].join('\n')
 
 /**
