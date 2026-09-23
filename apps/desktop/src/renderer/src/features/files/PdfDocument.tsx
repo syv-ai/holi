@@ -31,6 +31,7 @@
  *   The search panel does not focus its own field, so opening it puts the
  *   caret there, and closing it hands focus back to the host rather than
  *   letting it fall to `<body>`, where the next ⌘F would be a key from outside.
+ *   Escape in the field closes it, as it closes a browser's find bar.
  * - **Theme.** `pdfViewerTheme` speaks in `var(--token)` strings that cross the
  *   shadow boundary; a mode flip goes through `setTheme`, not a remount. The
  *   one colour the palette cannot reach, the white a page shows until it is
@@ -103,6 +104,7 @@ interface ViewerPlugins {
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string): { disabled: boolean; visible: boolean }
+    execute(id: string): void
   }
 }
 function provided<K extends keyof ViewerPlugins>(
@@ -239,6 +241,18 @@ export function PdfDocument({
       const style = document.createElement('style')
       style.textContent = PDF_SHADOW_CSS
       root.append(style)
+      // Escape in the search field closes the search, and is consumed so no
+      // Holi Escape handler acts on it as well. The viewer has no binding of
+      // its own for it.
+      root.addEventListener('keydown', (event) => {
+        if (!(event instanceof KeyboardEvent) || event.key !== 'Escape') return
+        if (!(event.target instanceof Element) || !event.target.matches(SEARCH_FIELD)) return
+        const registry = registryRef.current
+        const commands = registry === null ? null : provided(registry, 'commands')
+        if (commands === null) return
+        event.stopPropagation()
+        commands.execute('panel:toggle-search')
+      })
       root.addEventListener(
         'load',
         (event) => {
@@ -254,12 +268,17 @@ export function PdfDocument({
     (registry: PluginRegistry) => {
       registryRef.current = registry
       provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
+      // A sidebar opening or closing. Closing reports an empty `sidebarId`, and
+      // whatever held focus in the panel (the field, its close button) is gone
+      // with it; after the render, focus goes to the search field if that is
+      // what opened, or back to the host if it fell to <body>.
       provided(registry, 'ui')?.onSidebarChanged((event) => {
-        if (event.sidebarId !== 'search-panel') return
-        // After the panel has rendered (or gone): the event fires on the toggle.
         requestAnimationFrame(() => {
           const root = viewerRef.current?.container?.shadowRoot
-          const field = root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
+          const field =
+            event.sidebarId === 'search-panel'
+              ? root?.querySelector<HTMLInputElement>(SEARCH_FIELD)
+              : null
           if (field != null) field.focus()
           else if (document.activeElement === document.body) hostRef.current?.focus()
         })

@@ -29,6 +29,7 @@ const seam = vi.hoisted(() => ({
     ((e: { documentId: string; level: string | number; newZoom: number }) => void) | null,
   requestZoom: vi.fn(),
   sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
+  execute: vi.fn(),
   config: null as { zoom?: { defaultZoomLevel?: unknown } } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
@@ -75,6 +76,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
       resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
+      execute: (id: string) => seam.execute(id),
     },
   }
   const registry = {
@@ -143,6 +145,7 @@ beforeEach(() => {
   seam.annotationCb = null
   seam.zoomCb = null
   seam.sidebarCb = null
+  seam.execute.mockReset()
   seam.requestZoom.mockReset()
   urlCounter = 0
   // jsdom has no object URLs.
@@ -315,9 +318,33 @@ test('⌘F puts the caret in the search field, and closing it gives focus back',
 
   // Closed: the field goes, and focus must not fall to <body>, or the next ⌘F
   // would be a key from outside the viewer.
+  // Closing reports no sidebar at all, measured in the running viewer.
   panel.remove()
-  act(() => seam.sidebarCb!({ sidebarId: 'search-panel' }))
+  act(() => seam.sidebarCb!({ sidebarId: '' }))
   await waitFor(() => expect(document.activeElement).toBe(host))
+})
+
+test('Escape in the search field closes the search, like a find bar', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  const panel = document.createElement('div')
+  panel.dataset.sidebarId = 'search-panel'
+  const field = document.createElement('input')
+  field.type = 'text'
+  panel.append(field)
+  seam.shadow!.append(panel)
+  const holi = vi.fn()
+  document.addEventListener('keydown', holi)
+
+  fireEvent.keyDown(field, { key: 'Escape' })
+  expect(seam.execute).toHaveBeenCalledWith('panel:toggle-search')
+  // Consumed: Holi's own Escape handlers do not also act on it.
+  expect(holi).not.toHaveBeenCalled()
+
+  // Escape anywhere else in the viewer is not ours to take.
+  fireEvent.keyDown(seam.shadow!.host, { key: 'Escape' })
+  expect(seam.execute).toHaveBeenCalledTimes(1)
+  document.removeEventListener('keydown', holi)
 })
 
 test('a reload after a foreign change does not take focus back', async () => {
