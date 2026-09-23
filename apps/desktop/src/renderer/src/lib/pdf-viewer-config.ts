@@ -163,6 +163,12 @@ export const PDF_BORDERLESS_CSS = [
   // The selected one also had a drop shadow of its own.
   'button:is(.ring-accent, .hover\\:ring-accent:hover) { --tw-ring-color: transparent; }',
   'button.ring-accent { box-shadow: none; }',
+  // The zoom group (level select, zoom out, zoom in) sat on the hover colour
+  // at rest, so it read as a grey block on the toolbar. It stands on the
+  // toolbar's own colour; its buttons still take the hover fill. The only
+  // other static uses of the class are buttons (a menu's highlighted row, the
+  // comment Cancel), where the fill is the state, so the rule names the div.
+  'div.bg-interactive-hover { background-color: transparent; }',
   '.outline-border-default { outline-color: transparent; }',
   // A sidebar (thumbnails, search, comments) is set apart from the pane by
   // colour: `--card`, a step up from `--background`, where the viewer drew a
