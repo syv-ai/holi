@@ -79,6 +79,7 @@ import '@fontsource/pacifico/400.css'
 import { cn } from '@/lib/cn'
 import { PdfCommentField } from './PdfCommentField'
 import {
+  ADD_COMMENT,
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
   PDF_ICONS,
@@ -92,7 +93,9 @@ import {
   type PdfToolbarItem,
   pdfViewerTheme,
   shortcutOf,
+  commentToolActive,
   themedToolDefaults,
+  withoutMovedTools,
   type PdfTool,
 } from '@/lib/pdf-viewer-config'
 import {
@@ -197,8 +200,8 @@ interface ViewerPlugins {
   }
   commands: {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
-    resolve(id: string): { disabled: boolean; visible: boolean }
-    execute(id: string): void
+    resolve(id: string, documentId?: string): { disabled: boolean; visible: boolean }
+    execute(id: string, documentId?: string): void
     registerCommand(command: ViewerCommand): void
   }
 }
@@ -490,16 +493,39 @@ export function PdfDocument({
         })
       }
 
+      // The viewer's comment tool on the top bar, as "Add comment" (the
+      // viewer calls it "Comment", like the comments panel's button). It is
+      // the viewer's command underneath: the same tool, toggled the same way.
+      if (commands !== null) {
+        commands.registerCommand({
+          id: ADD_COMMENT,
+          label: 'Add comment',
+          icon: 'message',
+          action: ({ documentId }) => commands.execute('annotation:add-comment', documentId),
+          active: ({ state, documentId }) => commentToolActive(state, documentId),
+          disabled: ({ documentId }) =>
+            commands.resolve('annotation:add-comment', documentId).disabled,
+        })
+      }
+
       const ui = provided(registry, 'ui')
-      // Signatures and the read-only toggle on the top bar (D104, D105),
-      // merged after the commands exist so the buttons can resolve them, and
-      // the wider comments panel.
+      // Signatures, Add comment and the read-only toggle on the top bar
+      // (D104, D105), merged after the commands exist so the buttons can
+      // resolve them; the comment tool off the Annotate bar; and the wider
+      // comments panel.
       if (ui != null) {
-        const mainToolbar = ui.getSchema().toolbars['main-toolbar']
+        const { toolbars } = ui.getSchema()
+        const mainToolbar = toolbars['main-toolbar']
+        const annotationToolbar = toolbars['annotation-toolbar']
         ui.mergeSchema({
-          ...(mainToolbar !== undefined && {
-            toolbars: { 'main-toolbar': { items: withHoliButtons(mainToolbar.items) } },
-          }),
+          toolbars: {
+            ...(mainToolbar !== undefined && {
+              'main-toolbar': { items: withHoliButtons(mainToolbar.items) },
+            }),
+            ...(annotationToolbar !== undefined && {
+              'annotation-toolbar': { items: withoutMovedTools(annotationToolbar.items) },
+            }),
+          },
           sidebars: PDF_SIDEBAR_WIDTHS,
         })
       }

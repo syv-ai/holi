@@ -100,6 +100,19 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
               },
             ],
           },
+          'annotation-toolbar': {
+            id: 'annotation-toolbar',
+            items: [
+              {
+                type: 'group',
+                id: 'annotation-tools',
+                items: [
+                  { type: 'command-button', id: 'add-highlight' },
+                  { type: 'command-button', id: 'add-comment' },
+                ],
+              },
+            ],
+          },
         },
       }),
       mergeSchema: (partial: unknown) => seam.mergeSchema(partial),
@@ -123,7 +136,8 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       // ⌘P is print, which Holi disables by category; a disabled command must
       // not be claimed, or the palette never opens while a PDF is on screen.
       resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
-      execute: (id: string) => seam.execute(id),
+      execute: (id: string, documentId?: string) =>
+        documentId === undefined ? seam.execute(id) : seam.execute(id, documentId),
       registerCommand: (command: unknown) => seam.registerCommand(command),
     },
   }
@@ -372,6 +386,7 @@ test('puts Signatures on the top bar', async () => {
   const right = partial.toolbars['main-toolbar']!.items.find((i) => i.id === 'right-group')!
   expect(right.items!.map((i) => i.id)).toEqual([
     'signature-button',
+    'add-comment-button',
     'make-read-only-button',
     'make-editable-button',
     'search-button',
@@ -383,6 +398,33 @@ test('puts Signatures on the top bar', async () => {
   expect(seam.config?.icons).toHaveProperty('holi-lock')
   // The same merge widens the comments panel.
   expect(seam.mergeSchema.mock.calls[0]![0]).toHaveProperty('sidebars.comment-panel.width', '360px')
+  // The comment tool moved to the top bar, so the Annotate bar drops it.
+  const annotate = partial.toolbars['annotation-toolbar']!.items.find(
+    (i) => i.id === 'annotation-tools',
+  )!
+  expect(annotate.items!.map((i) => i.id)).toEqual(['add-highlight'])
+})
+
+test("Add comment on the top bar is the viewer's comment tool, under its own name", async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  type Cmd = {
+    id: string
+    label: string
+    icon: string
+    action: (c: unknown) => void
+    active: (c: unknown) => boolean
+  }
+  const add = (seam.registerCommand.mock.calls.map((c) => c[0]) as Cmd[]).find(
+    (c) => c.id === 'holi:add-comment',
+  )!
+  // Not "Comment": that is the comments panel's button, right beside it.
+  expect(add.label).toBe('Add comment')
+  expect(add.icon).toBe('message')
+  add.action({ state: {}, documentId: 'doc' })
+  expect(seam.execute).toHaveBeenCalledWith('annotation:add-comment', 'doc')
+  const on = { plugins: { annotation: { documents: { doc: { activeToolId: 'textComment' } } } } }
+  expect(add.active({ state: on, documentId: 'doc' })).toBe(true)
 })
 
 test('makes every mark read-only, then editable again, from the top bar', async () => {

@@ -304,6 +304,25 @@ export interface PdfToolbarItem {
   [key: string]: unknown
 }
 
+/**
+ * Holi's name for the viewer's comment tool (`annotation:add-comment`, the
+ * `textComment` tool), so it can sit on the top bar as "Add comment": the
+ * viewer labels it "Comment", as it does the comments panel's button beside
+ * it, and a command's label is fixed.
+ */
+export const ADD_COMMENT = 'holi:add-comment'
+
+/** Whether the viewer's comment tool is the active one in a document, read
+ *  from the viewer's store the way its own command reads it. */
+export function commentToolActive(state: unknown, documentId: string): boolean {
+  const documents = (
+    state as {
+      plugins?: { annotation?: { documents?: Record<string, { activeToolId?: string | null }> } }
+    }
+  ).plugins?.annotation?.documents
+  return documents?.[documentId]?.activeToolId === 'textComment'
+}
+
 /** Holi's buttons on the viewer's top bar, in order. Only one of the two
  *  read-only buttons is ever visible: each command says when it applies. */
 const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
@@ -311,6 +330,12 @@ const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
     type: 'command-button',
     id: 'signature-button',
     commandId: 'insert:add-signature',
+    variant: 'icon',
+  },
+  {
+    type: 'command-button',
+    id: 'add-comment-button',
+    commandId: ADD_COMMENT,
     variant: 'icon',
   },
   {
@@ -341,6 +366,23 @@ export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarIte
     const present = new Set(item.items.map((child) => child.id))
     const missing = HOLI_BUTTONS.filter((button) => !present.has(button.id))
     return missing.length === 0 ? item : { ...item, items: [...missing, ...item.items] }
+  })
+}
+
+/** The viewer's own items that Holi's top bar now carries, by item id. */
+const MOVED_TOOLS: ReadonlySet<string> = new Set(['add-comment'])
+
+/**
+ * A toolbar's items without the ones moved to the top bar, at any depth: the
+ * comment tool leaves the Annotate bar, where it would be the same button a
+ * second time. Fed to `ui.mergeSchema`, so it returns the whole list.
+ */
+export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
+  return items.flatMap((item) => {
+    if (MOVED_TOOLS.has(item.id)) return []
+    if (item.items === undefined) return [item]
+    const kept = withoutMovedTools(item.items)
+    return [kept.length === item.items.length ? item : { ...item, items: kept }]
   })
 }
 

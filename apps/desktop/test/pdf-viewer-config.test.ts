@@ -18,7 +18,9 @@ import {
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   withHoliButtons,
+  withoutMovedTools,
   pdfViewerTheme,
+  commentToolActive,
   hexOfRgb,
   shortcutOf,
   singleLine,
@@ -339,19 +341,21 @@ describe('withHoliButtons', () => {
     },
   ]
 
-  it('puts Signatures and the read-only toggle at the top level, first on the right', () => {
+  it('puts Signatures, Add comment and the read-only toggle at the top level, first on the right', () => {
     const right = withHoliButtons(items).find((i) => i.id === 'right-group') as {
       items: { id: string; commandId?: string }[]
     }
     expect(right.items.map((i) => i.id)).toEqual([
       'signature-button',
+      'add-comment-button',
       'make-read-only-button',
       'make-editable-button',
       'search-button',
       'comment-button',
     ])
-    expect(right.items.map((i) => i.commandId).slice(0, 3)).toEqual([
+    expect(right.items.map((i) => i.commandId).slice(0, 4)).toEqual([
       'insert:add-signature',
+      'holi:add-comment',
       'holi:make-marks-read-only',
       'holi:make-marks-editable',
     ])
@@ -373,7 +377,7 @@ describe('PDF_TOOLBAR_CSS', () => {
     // empty wrapper is still a flex item: one more 8px gap on one side of the
     // lock, which swapped sides with the read-only state.
     expect(PDF_TOOLBAR_CSS).toContain(
-      ':is([data-epdf-i="signature-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"]):empty { display: none; }',
+      ':is([data-epdf-i="signature-button"], [data-epdf-i="add-comment-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"]):empty { display: none; }',
     )
   })
 })
@@ -460,6 +464,48 @@ describe('hexOfRgb', () => {
     expect(hexOfRgb('oklch(0.5 0.1 240)')).toBeNull()
     expect(hexOfRgb('rgba(0, 0, 0, 0)')).toBeNull()
     expect(hexOfRgb('')).toBeNull()
+  })
+})
+
+describe('withoutMovedTools', () => {
+  // The Annotate bar, trimmed: the comment tool sits among the markup tools.
+  const items = [
+    { type: 'spacer', id: 'spacer-3' },
+    {
+      type: 'group',
+      id: 'annotation-tools',
+      items: [
+        { type: 'command-button', id: 'add-highlight' },
+        { type: 'command-button', id: 'add-comment', commandId: 'annotation:add-comment' },
+        { type: 'command-button', id: 'add-callout' },
+      ],
+    },
+  ]
+
+  it('takes the comment tool off the Annotate bar, now that it is on the top bar', () => {
+    const group = withoutMovedTools(items).find((i) => i.id === 'annotation-tools')!
+    expect(group.items!.map((i) => i.id)).toEqual(['add-highlight', 'add-callout'])
+  })
+
+  it('leaves the rest alone, is idempotent, and does not mutate its input', () => {
+    const once = withoutMovedTools(items)
+    expect(withoutMovedTools(once)).toEqual(once)
+    expect(once[0]).toBe(items[0])
+    expect(items[1]!.items).toHaveLength(3)
+  })
+})
+
+describe('commentToolActive', () => {
+  const state = (activeToolId: string | null) => ({
+    plugins: { annotation: { documents: { doc: { activeToolId } } } },
+  })
+
+  it("is the viewer's comment tool being the active one in that document", () => {
+    expect(commentToolActive(state('textComment'), 'doc')).toBe(true)
+    expect(commentToolActive(state('highlight'), 'doc')).toBe(false)
+    expect(commentToolActive(state(null), 'doc')).toBe(false)
+    expect(commentToolActive(state('textComment'), 'other')).toBe(false)
+    expect(commentToolActive({}, 'doc')).toBe(false)
   })
 })
 
