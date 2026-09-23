@@ -377,6 +377,8 @@ test('puts Signatures on the top bar', async () => {
     seam.mergeSchema.mock.invocationCallOrder[0]!,
   )
   expect(seam.config?.icons).toHaveProperty('holi-lock')
+  // The same merge widens the comments panel.
+  expect(seam.mergeSchema.mock.calls[0]![0]).toHaveProperty('sidebars.comment-panel.width', '360px')
 })
 
 test('makes every mark read-only, then editable again, from the top bar', async () => {

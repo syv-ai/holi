@@ -11,6 +11,7 @@ import {
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIDEBAR_MOTION_CSS,
+  PDF_SIDEBAR_WIDTHS,
   PDF_SIGNATURE_NOTE,
   PDF_TOOLBAR_CSS,
   PDF_VIEWPORT_CSS,
@@ -372,6 +373,12 @@ describe('PDF_SIDEBAR_MOTION_CSS', () => {
     )
     expect(PDF_SIDEBAR_MOTION_CSS).toMatch(/holi-sidebar-in-left \{ from \{[^}]*translateX\(-/)
     expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/\d+m?s\b/)
+  })
+})
+
+describe('PDF_SIDEBAR_WIDTHS', () => {
+  it('widens the comments panel and no other', () => {
+    expect(PDF_SIDEBAR_WIDTHS).toEqual({ 'comment-panel': { width: '360px' } })
   })
 })
 

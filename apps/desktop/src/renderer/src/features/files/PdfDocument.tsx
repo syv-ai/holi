@@ -82,6 +82,7 @@ import {
   PDF_FONTS,
   PDF_ICONS,
   PDF_SHADOW_CSS,
+  PDF_SIDEBAR_WIDTHS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIGNATURE_NOTE,
   openingZoomCap,
@@ -144,7 +145,10 @@ interface ViewerPlugins {
   ui: {
     onSidebarChanged(cb: (event: { sidebarId: string }) => void): () => void
     getSchema(): { toolbars: Record<string, { items: PdfToolbarItem[] } | undefined> }
-    mergeSchema(partial: { toolbars: Record<string, { items: PdfToolbarItem[] }> }): void
+    mergeSchema(partial: {
+      toolbars?: Record<string, { items: PdfToolbarItem[] }>
+      sidebars?: Record<string, { width: string }>
+    }): void
   }
   signature: {
     loadEntries(entries: SignatureEntry[]): void
@@ -394,11 +398,15 @@ export function PdfDocument({
 
       const ui = provided(registry, 'ui')
       // Signatures and the read-only toggle on the top bar (D104, D105),
-      // merged after the commands exist so the buttons can resolve them.
-      const mainToolbar = ui?.getSchema().toolbars['main-toolbar']
-      if (ui != null && mainToolbar !== undefined) {
+      // merged after the commands exist so the buttons can resolve them, and
+      // the wider comments panel.
+      if (ui != null) {
+        const mainToolbar = ui.getSchema().toolbars['main-toolbar']
         ui.mergeSchema({
-          toolbars: { 'main-toolbar': { items: withHoliButtons(mainToolbar.items) } },
+          ...(mainToolbar !== undefined && {
+            toolbars: { 'main-toolbar': { items: withHoliButtons(mainToolbar.items) } },
+          }),
+          sidebars: PDF_SIDEBAR_WIDTHS,
         })
       }
       ui?.onSidebarChanged((event) => {

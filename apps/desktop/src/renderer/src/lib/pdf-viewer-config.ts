@@ -381,6 +381,16 @@ export const PDF_SHADOW_CSS = [
 ].join('\n')
 
 /**
+ * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
+ * gives every sidebar a `width` (250px by default) and merges a partial into
+ * each one field by field. Comments get room for a sentence to a line; the
+ * rest keep the viewer's width.
+ */
+export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = {
+  'comment-panel': { width: '360px' },
+}
+
+/**
  * Holi's own icons for the viewer's toolbar, as SVG path data (the viewer's
  * icon registry takes paths only). lucide's `lock` and `lock-open`, the set
  * the rest of Holi draws from, with the body's `rect` spelled as a path.
