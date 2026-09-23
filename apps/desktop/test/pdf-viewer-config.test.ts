@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
+  PDF_ICONS,
   PDF_BORDERLESS_CSS,
   PDF_PAGE_PLACEHOLDER_CSS,
   PDF_SCROLLBAR_CSS,
@@ -12,7 +13,7 @@ import {
   PDF_SIGNATURE_NOTE,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
-  withSignatureButton,
+  withHoliButtons,
   pdfViewerTheme,
   shortcutOf,
 } from '../src/renderer/src/lib/pdf-viewer-config'
@@ -270,7 +271,7 @@ describe('PDF_FONTS', () => {
   })
 })
 
-describe('withSignatureButton', () => {
+describe('withHoliButtons', () => {
   // The shape of the live main toolbar, trimmed to what matters here.
   const items = [
     { type: 'group', id: 'left-group', items: [{ type: 'command-button', id: 'x' }] },
@@ -285,25 +286,41 @@ describe('withSignatureButton', () => {
     },
   ]
 
-  it('puts Signatures at the top level, first in the right-hand group', () => {
-    const right = withSignatureButton(items).find((i) => i.id === 'right-group') as {
+  it('puts Signatures and the read-only toggle at the top level, first on the right', () => {
+    const right = withHoliButtons(items).find((i) => i.id === 'right-group') as {
       items: { id: string; commandId?: string }[]
     }
     expect(right.items.map((i) => i.id)).toEqual([
       'signature-button',
+      'make-read-only-button',
+      'make-editable-button',
       'search-button',
       'comment-button',
     ])
-    expect(right.items[0]!.commandId).toBe('insert:add-signature')
+    expect(right.items.map((i) => i.commandId).slice(0, 3)).toEqual([
+      'insert:add-signature',
+      'holi:make-marks-read-only',
+      'holi:make-marks-editable',
+    ])
   })
 
   it('leaves the rest alone, is idempotent, and does not mutate its input', () => {
-    const once = withSignatureButton(items)
-    expect(withSignatureButton(once)).toEqual(once)
+    const once = withHoliButtons(items)
+    expect(withHoliButtons(once)).toEqual(once)
     expect(once.filter((i) => i.id !== 'right-group')).toEqual(
       items.filter((i) => i.id !== 'right-group'),
     )
     expect((items[2] as { items: unknown[] }).items).toHaveLength(2)
+  })
+})
+
+describe('PDF_ICONS', () => {
+  it("carries Holi's lock glyphs as path data only", () => {
+    // lucide's lock and lock-open, the set the rest of Holi draws from.
+    expect(Object.keys(PDF_ICONS).sort()).toEqual(['holi-lock', 'holi-lock-open'])
+    for (const icon of Object.values(PDF_ICONS)) {
+      for (const path of icon.paths) expect(path.d).toMatch(/^M[\d\s.,a-zA-Z-]+$/)
+    }
   })
 })
 

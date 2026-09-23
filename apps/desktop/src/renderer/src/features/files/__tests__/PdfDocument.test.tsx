@@ -31,6 +31,8 @@ const seam = vi.hoisted(() => ({
   requestZoom: vi.fn(),
   sidebarCb: null as ((e: { sidebarId: string }) => void) | null,
   mergeSchema: vi.fn(),
+  registerCommand: vi.fn(),
+  updateAnnotation: vi.fn(),
   execute: vi.fn(),
   loadEntries: vi.fn(),
   entriesCb: null as ((entries: unknown[]) => void) | null,
@@ -42,6 +44,7 @@ const seam = vi.hoisted(() => ({
     signature?: { mode?: string }
     fonts?: unknown
     stamp?: { manifests?: unknown }
+    icons?: Record<string, unknown>
   } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
@@ -65,6 +68,8 @@ vi.mock('@embedpdf/pdfium/pdfium.wasm?url', () => ({ default: '/assets/pdfium.wa
 vi.mock('@embedpdf/react-pdf-viewer', () => {
   const plugins: Record<string, unknown> = {
     annotation: {
+      updateAnnotation: (pageIndex: number, id: string, patch: unknown) =>
+        seam.updateAnnotation(pageIndex, id, patch),
       onAnnotationEvent: (cb: () => void) => {
         seam.annotationCb = cb
         return () => {}
@@ -115,6 +120,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
       // not be claimed, or the palette never opens while a PDF is on screen.
       resolve: (id: string) => ({ disabled: id === 'meta+p', visible: true }),
       execute: (id: string) => seam.execute(id),
+      registerCommand: (command: unknown) => seam.registerCommand(command),
     },
   }
   const registry = {
@@ -134,6 +140,7 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         signature?: { mode?: string }
         fonts?: unknown
         stamp?: { manifests?: unknown }
+        icons?: Record<string, unknown>
       }
       className?: string
       onInit?: (c: HTMLElement) => void
@@ -198,6 +205,8 @@ beforeEach(() => {
   seam.zoomCb = null
   seam.sidebarCb = null
   seam.mergeSchema.mockReset()
+  seam.registerCommand.mockReset()
+  seam.updateAnnotation.mockReset()
   seam.execute.mockReset()
   seam.loadEntries.mockReset()
   seam.entriesCb = null
@@ -357,7 +366,72 @@ test('puts Signatures on the top bar', async () => {
     toolbars: Record<string, { items: { id: string; items?: { id: string }[] }[] }>
   }
   const right = partial.toolbars['main-toolbar']!.items.find((i) => i.id === 'right-group')!
-  expect(right.items!.map((i) => i.id)).toEqual(['signature-button', 'search-button'])
+  expect(right.items!.map((i) => i.id)).toEqual([
+    'signature-button',
+    'make-read-only-button',
+    'make-editable-button',
+    'search-button',
+  ])
+  // The commands those buttons name exist before the toolbar asks for them.
+  expect(seam.registerCommand.mock.invocationCallOrder[0]).toBeLessThan(
+    seam.mergeSchema.mock.invocationCallOrder[0]!,
+  )
+  expect(seam.config?.icons).toHaveProperty('holi-lock')
+})
+
+test('makes every mark read-only, then editable again, from the top bar', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  type Cmd = {
+    id: string
+    visible: (c: unknown) => boolean
+    disabled?: (c: unknown) => boolean
+    action: (c: unknown) => void
+  }
+  const cmd = (id: string) =>
+    (seam.registerCommand.mock.calls.map((c) => c[0]) as Cmd[]).find((c) => c.id === id)!
+  const ctx = (objects: { id: string; pageIndex: number; type: number; flags: string[] }[]) => ({
+    documentId: 'doc',
+    state: {
+      plugins: {
+        annotation: {
+          documents: {
+            doc: { byUid: Object.fromEntries(objects.map((o) => [o.id, { object: o }])) },
+          },
+        },
+      },
+    },
+  })
+  const makeReadOnly = cmd('holi:make-marks-read-only')
+  const makeEditable = cmd('holi:make-marks-editable')
+
+  // A highlight and a signature, plus a link that belongs to the document.
+  const open = ctx([
+    { id: 'h', pageIndex: 0, type: 9, flags: ['print'] },
+    { id: 's', pageIndex: 8, type: 13, flags: ['print'] },
+    { id: 'l', pageIndex: 0, type: 2, flags: [] },
+  ])
+  expect(makeReadOnly.visible(open)).toBe(true)
+  expect(makeReadOnly.disabled!(open)).toBe(false)
+  expect(makeEditable.visible(open)).toBe(false)
+  makeReadOnly.action(open)
+  expect(seam.updateAnnotation.mock.calls).toEqual([
+    [0, 'h', { flags: ['print', 'readOnly'] }],
+    [8, 's', { flags: ['print', 'readOnly'] }],
+  ])
+
+  const locked = ctx([
+    { id: 'h', pageIndex: 0, type: 9, flags: ['print', 'readOnly'] },
+    { id: 'l', pageIndex: 0, type: 2, flags: [] },
+  ])
+  expect(makeReadOnly.visible(locked)).toBe(false)
+  expect(makeEditable.visible(locked)).toBe(true)
+  seam.updateAnnotation.mockClear()
+  makeEditable.action(locked)
+  expect(seam.updateAnnotation.mock.calls).toEqual([[0, 'h', { flags: ['print'] }]])
+
+  // Nothing to protect: the button shows, and does nothing.
+  expect(makeReadOnly.disabled!(ctx([{ id: 'l', pageIndex: 0, type: 2, flags: [] }]))).toBe(true)
 })
 
 test('asks for a signature alone, never initials as well', async () => {

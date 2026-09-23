@@ -80,15 +80,25 @@ import { cn } from '@/lib/cn'
 import {
   PDF_DISABLED_CATEGORIES,
   PDF_FONTS,
+  PDF_ICONS,
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIGNATURE_NOTE,
   openingZoomCap,
-  withSignatureButton,
+  withHoliButtons,
   type PdfToolbarItem,
   pdfViewerTheme,
   shortcutOf,
 } from '@/lib/pdf-viewer-config'
+import {
+  MAKE_EDITABLE,
+  MAKE_READ_ONLY,
+  isLockable,
+  marksIn,
+  readOnlyState,
+  withReadOnly,
+  withoutReadOnly,
+} from '@/lib/pdf-read-only'
 import { trpc } from '@/lib/trpc'
 import { activeModeAtom } from '@/state/color-scheme'
 import { sessionAtom } from '@/state/session'
@@ -120,7 +130,10 @@ interface Task<T> {
   toPromise(): Promise<T>
 }
 interface ViewerPlugins {
-  annotation: { onAnnotationEvent(cb: () => void): () => void }
+  annotation: {
+    onAnnotationEvent(cb: () => void): () => void
+    updateAnnotation(pageIndex: number, id: string, patch: { flags: string[] }): void
+  }
   export: { saveAsCopy(): Task<ArrayBuffer> }
   zoom: {
     onZoomChange(
@@ -141,8 +154,25 @@ interface ViewerPlugins {
     getCommandByShortcut(shortcut: string): { id: string } | undefined
     resolve(id: string): { disabled: boolean; visible: boolean }
     execute(id: string): void
+    registerCommand(command: ViewerCommand): void
   }
 }
+/** A command as the viewer's commands plugin takes one, as far as Holi uses it:
+ *  the dynamic fields are handed the viewer's store and the document. */
+interface CommandContext {
+  state: unknown
+  documentId: string
+}
+interface ViewerCommand {
+  id: string
+  label: string
+  icon: string
+  action(context: CommandContext): void
+  visible?(context: CommandContext): boolean
+  disabled?(context: CommandContext): boolean
+  active?(context: CommandContext): boolean
+}
+
 function provided<K extends keyof ViewerPlugins>(
   registry: PluginRegistry,
   id: K,
@@ -316,12 +346,59 @@ export function PdfDocument({
       // whatever held focus in the panel (the field, its close button) is gone
       // with it; after the render, focus goes to the search field if that is
       // what opened, or back to the host if it fell to <body>.
+      // The read-only toggle (`lib/pdf-read-only.ts`): two commands, one per
+      // direction, each computed from the annotations in the viewer's store so
+      // the button follows every change without Holi keeping any state.
+      const annotation = provided(registry, 'annotation')
+      const commands = provided(registry, 'commands')
+      if (annotation !== null && commands !== null) {
+        const counts = ({ state, documentId }: CommandContext) =>
+          readOnlyState(marksIn(state, documentId))
+        commands.registerCommand({
+          id: MAKE_READ_ONLY,
+          label: 'Make marks read-only',
+          icon: 'holi-lock-open',
+          visible: (c) => {
+            const { editable, readOnly } = counts(c)
+            return editable > 0 || readOnly === 0
+          },
+          disabled: (c) => counts(c).editable === 0,
+          action: ({ state, documentId }) => {
+            for (const mark of marksIn(state, documentId)) {
+              if (!isLockable(mark.type) || mark.flags?.includes('readOnly')) continue
+              annotation.updateAnnotation(mark.pageIndex, mark.id, {
+                flags: withReadOnly(mark.flags),
+              })
+            }
+          },
+        })
+        commands.registerCommand({
+          id: MAKE_EDITABLE,
+          label: 'Make marks editable',
+          icon: 'holi-lock',
+          visible: (c) => {
+            const { editable, readOnly } = counts(c)
+            return editable === 0 && readOnly > 0
+          },
+          active: () => true,
+          action: ({ state, documentId }) => {
+            for (const mark of marksIn(state, documentId)) {
+              if (!isLockable(mark.type) || !mark.flags?.includes('readOnly')) continue
+              annotation.updateAnnotation(mark.pageIndex, mark.id, {
+                flags: withoutReadOnly(mark.flags),
+              })
+            }
+          },
+        })
+      }
+
       const ui = provided(registry, 'ui')
-      // Signatures on the top bar rather than inside the Insert tab (D104).
+      // Signatures and the read-only toggle on the top bar (D104, D105),
+      // merged after the commands exist so the buttons can resolve them.
       const mainToolbar = ui?.getSchema().toolbars['main-toolbar']
       if (ui != null && mainToolbar !== undefined) {
         ui.mergeSchema({
-          toolbars: { 'main-toolbar': { items: withSignatureButton(mainToolbar.items) } },
+          toolbars: { 'main-toolbar': { items: withHoliButtons(mainToolbar.items) } },
         })
       }
       ui?.onSidebarChanged((event) => {
@@ -439,6 +516,8 @@ export function PdfDocument({
             // Nor Google Fonts for its own UI or signatures: Holi's font, and
             // the script faces bundled above.
             fonts: PDF_FONTS,
+            // Holi's lock glyphs for the read-only toggle.
+            icons: PDF_ICONS,
             // Rubber stamps are disabled, but the plugin still fetched its
             // default manifest and stamps from jsDelivr on every open.
             stamp: { manifests: [] },

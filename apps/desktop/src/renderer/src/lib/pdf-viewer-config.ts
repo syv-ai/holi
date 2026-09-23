@@ -11,6 +11,8 @@
  * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
  * consumes this, `test/pdf-viewer-config.test.ts` pins it.
  */
+import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
+
 /**
  * Disabled by category, which removes the command AND its shortcut together.
  *
@@ -22,7 +24,7 @@
  * fullscreen, the hamburger menu they hang from, and the annotation families
  * outside "highlight and mark up": redaction, stamps, forms, and the Insert
  * tab's rubber stamp, image and attachment. Signatures are the one Insert item
- * kept (D104), and they sit on the top bar (`withSignatureButton`), so the
+ * kept (D104), and they sit on the top bar (`withHoliButtons`), so the
  * Insert tab itself (`mode-insert`) goes as well: it would only repeat them.
  *
  * The names are the viewer's own, read from its commands and UI schema, and a
@@ -288,26 +290,61 @@ export interface PdfToolbarItem {
   [key: string]: unknown
 }
 
-const SIGNATURE_BUTTON: PdfToolbarItem = {
-  type: 'command-button',
-  id: 'signature-button',
-  commandId: 'insert:add-signature',
-  variant: 'icon',
+/** Holi's buttons on the viewer's top bar, in order. Only one of the two
+ *  read-only buttons is ever visible: each command says when it applies. */
+const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
+  {
+    type: 'command-button',
+    id: 'signature-button',
+    commandId: 'insert:add-signature',
+    variant: 'icon',
+  },
+  {
+    type: 'command-button',
+    id: 'make-read-only-button',
+    commandId: MAKE_READ_ONLY,
+    variant: 'icon',
+  },
+  {
+    type: 'command-button',
+    id: 'make-editable-button',
+    commandId: MAKE_EDITABLE,
+    variant: 'icon',
+  },
+]
+
+/**
+ * The main toolbar's items with Holi's buttons at the top level, first in the
+ * right-hand group beside Search and Comment: Signatures, which the viewer
+ * keeps in the Insert tab's secondary bar (at a narrow pane itself inside the
+ * tab overflow menu), and the read-only toggle (`lib/pdf-read-only.ts`). Fed to
+ * `ui.mergeSchema`, which replaces a toolbar's item list wholesale, so this
+ * returns the whole list; applying it twice changes nothing.
+ */
+export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
+  return items.map((item) => {
+    if (item.id !== 'right-group' || item.items === undefined) return item
+    const present = new Set(item.items.map((child) => child.id))
+    const missing = HOLI_BUTTONS.filter((button) => !present.has(button.id))
+    return missing.length === 0 ? item : { ...item, items: [...missing, ...item.items] }
+  })
 }
 
 /**
- * The main toolbar's items with Signatures at the top level, first in the
- * right-hand group beside Search and Comment. The viewer keeps it in the
- * Insert tab's secondary bar, which at a narrow pane is itself inside the tab
- * overflow menu. Fed to `ui.mergeSchema`, which replaces a toolbar's item list
- * wholesale, so this returns the whole list; applying it twice changes nothing.
+ * Holi's own icons for the viewer's toolbar, as SVG path data (the viewer's
+ * icon registry takes paths only). lucide's `lock` and `lock-open`, the set
+ * the rest of Holi draws from, with the body's `rect` spelled as a path.
  */
-export function withSignatureButton(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
-  return items.map((item) => {
-    if (item.id !== 'right-group' || item.items === undefined) return item
-    if (item.items.some((child) => child.id === SIGNATURE_BUTTON.id)) return item
-    return { ...item, items: [SIGNATURE_BUTTON, ...item.items] }
-  })
+const LOCK_BODY = 'M5 11h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z'
+const lucideIcon = (...d: string[]) => ({
+  paths: d.map((path) => ({ d: path, stroke: 'currentColor' })),
+  strokeWidth: 2,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+})
+export const PDF_ICONS = {
+  'holi-lock': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 10 0v4'),
+  'holi-lock-open': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 9.9-1'),
 }
 
 /**
