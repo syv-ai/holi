@@ -245,6 +245,35 @@ export const PDF_SHADOW_CSS = [
   PDF_SIGNATURE_DIALOG_CSS,
 ].join('\n')
 
+/**
+ * The viewer's fonts, none of them fetched.
+ *
+ * Left to itself the viewer adds Google Fonts stylesheets to Holi's page: Open
+ * Sans for its UI whenever it starts, and Caveat, Dancing Script, Great Vibes
+ * and Pacifico for typed signatures when that dialog opens. That is a request
+ * on every PDF, from an app whose viewer was chosen partly for making none.
+ * The UI is Holi's own font instead, and the four script faces are bundled
+ * with the app (`@fontsource/*`, OFL-1.1, imported by `PdfDocument`) under the
+ * family names the viewer already lists, so its font picker is unchanged.
+ */
+export const PDF_FONTS = {
+  ui: { family: 'var(--font-sans)', stylesheetUrl: null },
+  signature: { stylesheetUrl: null },
+}
+
+/**
+ * The bundled script faces, by the family names the viewer lists. Loaded when
+ * the signature panel opens: the viewer used to load them with the Google
+ * stylesheet, and without that nothing asks for them before the Type tab's
+ * canvas draws, so a quickly typed signature could be saved in a fallback face.
+ */
+export const PDF_SIGNATURE_FONT_FAMILIES: readonly string[] = [
+  'Caveat',
+  'Dancing Script',
+  'Great Vibes',
+  'Pacifico',
+]
+
 /** The widest a PDF opens: 150%, where 100% is one CSS pixel per PDF point. */
 export const PDF_OPENING_ZOOM_MAX = 1.5
 

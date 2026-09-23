@@ -68,10 +68,19 @@ import {
   type SignatureEntry,
 } from '@embedpdf/react-pdf-viewer'
 import pdfiumWasmUrl from '@embedpdf/pdfium/pdfium.wasm?url'
+// The typed-signature faces, bundled so the viewer never fetches them from
+// Google Fonts (`PDF_FONTS`). Here, in the lazy chunk, so the main one never
+// carries them; a face's file loads only when a signature is typed in it.
+import '@fontsource/caveat/400.css'
+import '@fontsource/dancing-script/400.css'
+import '@fontsource/great-vibes/400.css'
+import '@fontsource/pacifico/400.css'
 import { cn } from '@/lib/cn'
 import {
   PDF_DISABLED_CATEGORIES,
+  PDF_FONTS,
   PDF_SHADOW_CSS,
+  PDF_SIGNATURE_FONT_FAMILIES,
   openingZoomCap,
   pdfViewerTheme,
   shortcutOf,
@@ -293,6 +302,13 @@ export function PdfDocument({
       // with it; after the render, focus goes to the search field if that is
       // what opened, or back to the host if it fell to <body>.
       provided(registry, 'ui')?.onSidebarChanged((event) => {
+        // Before a signature can be typed, so its canvas never draws one in a
+        // fallback face (`PDF_SIGNATURE_FONT_FAMILIES`). Local files, cheap.
+        if (event.sidebarId === 'signature-panel' && 'fonts' in document) {
+          for (const family of PDF_SIGNATURE_FONT_FAMILIES) {
+            document.fonts.load(`16px "${family}"`).catch(() => {})
+          }
+        }
         requestAnimationFrame(() => {
           const root = viewerRef.current?.container?.shadowRoot
           const field =
@@ -394,6 +410,12 @@ export function PdfDocument({
             worker: true,
             // No CDN fonts: the vault's PDFs embed theirs, and the app is offline-first.
             fontFallback: null,
+            // Nor Google Fonts for its own UI or signatures: Holi's font, and
+            // the script faces bundled above.
+            fonts: PDF_FONTS,
+            // Rubber stamps are disabled, but the plugin still fetched its
+            // default manifest and stamps from jsDelivr on every open.
+            stamp: { manifests: [] },
             tabBar: 'never',
             zoom: { defaultZoomLevel: ZoomMode.FitWidth },
             annotations: { annotationAuthor: author },

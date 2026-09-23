@@ -11,7 +11,7 @@ import { act, fireEvent, render, screen, waitFor } from '@/test/render'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 import { sessionAtom } from '@/state/session'
-import { shortcutOf } from '@/lib/pdf-viewer-config'
+import { PDF_FONTS, shortcutOf } from '@/lib/pdf-viewer-config'
 
 const REMOTE = 'syv-ai/vault'
 const PATH = 'docs/case.pdf'
@@ -39,6 +39,8 @@ const seam = vi.hoisted(() => ({
     zoom?: { defaultZoomLevel?: unknown }
     annotations?: { annotationAuthor?: string }
     signature?: { mode?: string }
+    fonts?: unknown
+    stamp?: { manifests?: unknown }
   } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
@@ -114,6 +116,8 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
         zoom?: { defaultZoomLevel?: unknown }
         annotations?: { annotationAuthor?: string }
         signature?: { mode?: string }
+        fonts?: unknown
+        stamp?: { manifests?: unknown }
       }
       className?: string
       onInit?: (c: HTMLElement) => void
@@ -280,6 +284,32 @@ test('signs marks and comments with the GitHub login, not "Guest"', async () => 
   mount()
   await screen.findByTestId('pdf')
   expect(seam.config?.annotations?.annotationAuthor).toBe('ada-holm')
+})
+
+test("fetches no font: its UI is Holi's and the signature faces are bundled", async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  expect(seam.config?.fonts).toEqual(PDF_FONTS)
+})
+
+test('fetches no stamp library from the CDN', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  // Rubber stamps are disabled, but the stamp plugin still fetched its default
+  // manifest and stamps from jsDelivr on every open.
+  expect(seam.config?.stamp?.manifests).toEqual([])
+})
+
+test('loads the signature faces when the signature panel opens', async () => {
+  const load = vi.fn(async () => [])
+  Object.defineProperty(document, 'fonts', { value: { load }, configurable: true })
+  mount()
+  await screen.findByTestId('pdf')
+  act(() => seam.sidebarCb!({ sidebarId: 'signature-panel' }))
+  await waitFor(() => expect(load).toHaveBeenCalledTimes(4))
+  expect(load).toHaveBeenCalledWith('16px "Dancing Script"')
+  // jsdom has no FontFaceSet; do not leave the fake behind for other tests.
+  delete (document as { fonts?: unknown }).fonts
 })
 
 test('asks for a signature alone, never initials as well', async () => {

@@ -2,11 +2,13 @@ import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
   PDF_DISABLED_CATEGORIES,
+  PDF_FONTS,
   PDF_BORDERLESS_CSS,
   PDF_PAGE_PLACEHOLDER_CSS,
   PDF_SCROLLBAR_CSS,
   PDF_SHADOW_CSS,
   PDF_SIGNATURE_DIALOG_CSS,
+  PDF_SIGNATURE_FONT_FAMILIES,
   PDF_VIEWPORT_CSS,
   openingZoomCap,
   pdfViewerTheme,
@@ -226,6 +228,25 @@ describe('PDF_SHADOW_CSS', () => {
     ]) {
       expect(PDF_SHADOW_CSS).toContain(rule)
     }
+  })
+})
+
+describe('PDF_FONTS', () => {
+  it("fetches nothing: every font is Holi's or bundled with the app", () => {
+    // Left to itself the viewer adds Google Fonts stylesheets to the page, Open
+    // Sans on every open and four script faces for typed signatures.
+    expect(PDF_FONTS.ui).toEqual({ family: 'var(--font-sans)', stylesheetUrl: null })
+    expect(PDF_FONTS.signature).toEqual({ stylesheetUrl: null })
+    expect(JSON.stringify(PDF_FONTS)).not.toMatch(/https?:/)
+  })
+
+  it('names the bundled script faces, to load before a signature is typed', () => {
+    expect(PDF_SIGNATURE_FONT_FAMILIES).toEqual([
+      'Caveat',
+      'Dancing Script',
+      'Great Vibes',
+      'Pacifico',
+    ])
   })
 })
 
