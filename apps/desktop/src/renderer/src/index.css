@@ -592,7 +592,7 @@
 }
 
 /* ── Solo note column (#13) ───────────────────────────────────────────
- * When one note is the only thing open, the notes editor centres its column
+ * When a note is alone in the window, the notes editor centres its column
  * (`isSoloNote`; `EditorPane` sets `data-solo-column`). Otherwise it is anchored
  * left, for the reason `editor/theme.ts` gives at `.cm-content`.
  *

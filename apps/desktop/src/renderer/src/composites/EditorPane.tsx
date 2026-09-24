@@ -120,7 +120,7 @@ export function EditorPane({
    *  and a keystroke landing between the agent's read and its write is a
    *  resolution built on a file that moved. */
   readOnly?: boolean
-  /** One note is the only thing open (`isSoloNote`): centre the column, and
+  /** The note is alone in the window (`isSoloNote`): centre the column, and
    *  slide it when that starts or stops (#13). */
   centred?: boolean
 }) {
@@ -364,9 +364,9 @@ export function EditorPane({
    * slide plays only on a change of anchor, so dragging the explorer while solo
    * keeps the column centred 1:1 with no easing: only the margin follows it.
    *
-   * **Solo usually ends by opening another note**, and then the view on screen
-   * is about to be replaced by one that does not exist yet (it is built after
-   * an IPC read). Sliding the old one would animate text nobody will see, so
+   * **A change of anchor can arrive with a different note**, and then the view
+   * on screen is about to be replaced by one that does not exist yet (it is
+   * built after an IPC read). Sliding the old one would animate text nobody will see, so
    * the slide waits for the new view and plays from where the old column was:
    * what moves is the column, whichever note is in it.
    */

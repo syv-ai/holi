@@ -327,10 +327,11 @@ describe('splitPane', () => {
 })
 
 describe('isSoloNote', () => {
-  // Issue #13: a lone note centres its column. The rule is "centre only when
-  // nothing can open beside it on its own", so anything that makes a second
-  // thing on screen ends it — and nothing else does.
-  it('is one pane holding one note tab, preview or pinned', () => {
+  // Issue #13: a note alone in the window centres its column. The rule is
+  // "centre only when nothing can open beside it on its own", so a split ends
+  // it, and nothing else does: other tabs in the same pane sit behind the one
+  // showing and take no width from it.
+  it('is one pane showing a note, preview or pinned', () => {
     expect(isSoloNote(openPreview(emptyWorkspace(), 'a.md'))).toBe(true)
     expect(isSoloNote(openPinned(emptyWorkspace(), 'a.md'))).toBe(true)
   })
@@ -343,12 +344,13 @@ describe('isSoloNote', () => {
     expect(isSoloNote(emptyWorkspace())).toBe(false)
   })
 
-  it('ends with a second tab of any kind', () => {
+  it('survives other tabs in the pane, of any kind, while the note is the one showing', () => {
     const one = openPinned(emptyWorkspace(), 'a.md')
-    expect(isSoloNote(openPinned(one, 'b.md'))).toBe(false)
-    expect(isSoloNote(openBoard(one))).toBe(false)
-    expect(isSoloNote(openApp(one, 'crm'))).toBe(false)
-    expect(isSoloNote(openTab(one, { kind: 'session', id: 's1' }))).toBe(false)
+    expect(isSoloNote(openPinned(one, 'b.md'))).toBe(true)
+    // The board opens active; switching back to the note is what shows it.
+    const withBoard = openBoard(one)
+    expect(isSoloNote(withBoard)).toBe(false)
+    expect(isSoloNote(openPinned(withBoard, 'a.md'))).toBe(true)
   })
 
   it('ends with a split, even while the new pane is still empty', () => {
@@ -361,7 +363,7 @@ describe('isSoloNote', () => {
     }
   })
 
-  it('is not a lone singleton tab', () => {
+  it('is not a singleton tab', () => {
     expect(isSoloNote(openBoard(emptyWorkspace()))).toBe(false)
   })
 })

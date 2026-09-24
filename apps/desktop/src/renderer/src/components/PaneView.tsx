@@ -71,8 +71,8 @@ export interface PaneViewProps {
   focused: boolean
   /** Closing: play the exit, and stop taking input while it runs. */
   leaving?: boolean
-  /** This pane's one note is the only thing open (`isSoloNote`), so its
-   *  column centres (#13). Only the workspace can know it, which is why it is
+  /** This is the only pane and it is showing a note (`isSoloNote`), so the
+   *  note's column centres (#13). Only the workspace can know it, which is why it is
    *  handed in rather than worked out from `pane`. */
   solo?: boolean
   /** Clicking anywhere in the pane focuses it — including in its content, so

@@ -458,22 +458,22 @@ export function activeTab(workspace: Workspace): Tab | null {
 }
 
 /**
- * Whether one note is the only thing on screen: one pane, one tab, and that tab
- * a markdown file (a note or a task file, which open in the same editor, D96).
+ * Whether a note is alone in the window: one pane, and the tab it is showing a
+ * markdown file (a note or a task file, which open in the same editor, D96).
  *
  * This is when the notes editor centres its column (#13). `theme.ts` explains
  * why the column is otherwise anchored left: a centred column moves whenever
  * the pane changes width, and a panel appearing beside you should narrow the
- * text, not slide it. Solo is the layout where nothing can appear beside the
- * note on its own, so any second tab or pane ends it. The explorer and the
- * sidebars do not: their width is only ever changed by the user dragging it.
+ * text, not slide it. With one pane nothing can appear beside the note on its
+ * own, so only a split ends it. Other tabs in the pane do not: they sit behind
+ * the one showing and take no width from it. Nor do the explorer and the
+ * sidebars, whose width only ever changes because the user dragged it.
  */
 export function isSoloNote(workspace: Workspace): boolean {
   if (workspace.panes.length !== 1) return false
-  const tabs = workspace.panes[0]!.tabs
-  if (tabs.length !== 1) return false
-  const tab = tabs[0]!
-  return tab.kind === 'note' && fileKind(tab.path) === 'markdown'
+  const pane = workspace.panes[0]!
+  const tab = pane.tabs[pane.active]
+  return tab?.kind === 'note' && fileKind(tab.path) === 'markdown'
 }
 
 function updatePane(workspace: Workspace, fn: (pane: Pane) => Pane): Workspace {
