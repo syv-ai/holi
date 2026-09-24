@@ -20,9 +20,16 @@
  * than "that app has no manifest yet". A thrown dep becomes `{ok:false,error}`
  * for the same reason.
  *
+ * **`/pdf/comments` is the one exception**, and on purpose: its output is the
+ * answer itself, text the agent reads, and a refusal (no such file, not a PDF)
+ * is an error the command exits non-zero on, the way `cat` does. So it answers
+ * `text/plain`, 200 with the comments or 422 with one line, and the script
+ * routes the one to stdout and the other to stderr.
+ *
  * NOTE: no `electron` import, here or in `hook-server.ts` — both load under
  * vitest, and an import of it breaks the suite in a way that looks unrelated.
  */
+import { commentThreadsJson, formatCommentThreads, type PdfCommentThread } from '@holi/shared'
 
 /** What a route needs main to do. Injected, so this module stays testable
  *  without a window, a vault, or a running app. */
@@ -40,11 +47,18 @@ export interface AgentOpsDeps {
     path?: string
     force?: boolean
   }): Promise<{ refreshed: string[]; skipped: { path: string; reason: string }[] }>
+  /** A vault PDF's comment threads, read from the saved file (D106). `path` is
+   *  as the agent typed it; the dep checks it against the vault. */
+  pdfComments(
+    path: string,
+  ): Promise<{ ok: true; path: string; threads: PdfCommentThread[] } | { ok: false; error: string }>
 }
 
 export interface OpsReply {
   status: number
   body: string
+  /** `application/json` when absent, which is every route but one. */
+  contentType?: string
 }
 
 /** `null` means "not one of mine" — the server turns that into a 404. */
@@ -52,9 +66,14 @@ export type AgentOps = (pathname: string, params: URLSearchParams) => Promise<Op
 
 const json = (value: unknown): OpsReply => ({ status: 200, body: JSON.stringify(value) })
 
+const text = (status: number, body: string): OpsReply => ({
+  status,
+  body,
+  contentType: 'text/plain; charset=utf-8',
+})
+
 /** A thrown dep is an answer, not an outage — see the module doc. */
-const message = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
+const message = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
 export function createAgentOps(deps: AgentOpsDeps): AgentOps {
   return async (pathname, params) => {
@@ -99,6 +118,19 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
           // Keeps the shape the caller parses, so a failure is one branch in the
           // CLI rather than two.
           return json({ refreshed: [], skipped: [], error: message(error) })
+        }
+      }
+      case '/pdf/comments': {
+        const path = params.get('path')
+        if (path === null || path === '') return text(422, 'needs a path to a PDF in the vault')
+        try {
+          const result = await deps.pdfComments(path)
+          if (!result.ok) return text(422, result.error)
+          return params.get('json') === 'true'
+            ? text(200, JSON.stringify(commentThreadsJson(result.path, result.threads), null, 2))
+            : text(200, formatCommentThreads(result.path, result.threads))
+        } catch (error) {
+          return text(422, message(error))
         }
       }
       default:

@@ -170,7 +170,9 @@ export function createHookServer(deps: HookServerDeps): HookServer {
             res.writeHead(404).end()
             return
           }
-          res.writeHead(reply.status, { 'content-type': 'application/json' }).end(reply.body)
+          res
+            .writeHead(reply.status, { 'content-type': reply.contentType ?? 'application/json' })
+            .end(reply.body)
         })
         .catch((error: unknown) => {
           // Only reached if an ops route itself throws outside its own try —

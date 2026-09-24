@@ -17,6 +17,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { isAbsolute, relative } from 'node:path'
 import { init } from '@embedpdf/pdfium'
 import { PdfiumNative } from '@embedpdf/engines/pdfium'
 import type { PdfAnnotationObject, PdfDocumentObject, PdfPageObject, Rect } from '@embedpdf/models'
@@ -26,7 +27,9 @@ import {
   PDF_TEXT_MARKUP_SUBTYPES,
   type PdfAnnotationInput,
   type PdfCommentThread,
+  vaultRelPath,
 } from '@holi/shared'
+import { resolveRelative } from '@holi/shared/path-safety-node'
 
 export type PdfCommentsResult =
   | { ok: true; threads: PdfCommentThread[] }
@@ -146,4 +149,36 @@ async function toInput(
     ...(a.replyType === undefined ? {} : { replyType: a.replyType }),
     ...(text === undefined ? {} : { markedText: text }),
   }
+}
+
+/**
+ * `holi pdf comments <path>`, for the vault at `root`: the path checked against
+ * the vault, then read. Every refusal is a sentence the agent can act on.
+ *
+ * An absolute path inside the vault is taken as the vault path it names: the
+ * agent's cwd is the vault, and it types either form.
+ */
+export async function pdfCommentsInVault(
+  root: string,
+  typed: string,
+): Promise<{ ok: true; path: string; threads: PdfCommentThread[] } | { ok: false; error: string }> {
+  const rel = isAbsolute(typed) ? relative(root, typed) : typed
+  let path: string
+  let abs: string
+  try {
+    path = vaultRelPath(rel)
+    // Canonicalised, so a symlink inside the vault cannot lead the read out of it.
+    abs = await resolveRelative(root, path)
+  } catch {
+    return { ok: false, error: `${typed} is not a path inside this vault` }
+  }
+  if (!path.toLowerCase().endsWith('.pdf')) return { ok: false, error: `${path} is not a PDF` }
+  const result = await readPdfComments(abs)
+  if (result.ok) return { ok: true, path, threads: result.threads }
+  const why = {
+    'not-found': 'not found',
+    'not-pdf': 'is not a PDF PDFium can open',
+    password: 'is password-protected',
+  }[result.reason]
+  return { ok: false, error: `${path} ${why}` }
 }

@@ -28,6 +28,7 @@ import { createGoogleAccountsManager } from './google/electron'
 import { createCalendarPrefs } from './google/calendar-prefs'
 import { createImagePrefs } from './google/image-prefs'
 import { createSignatureStore } from './pdf/signatures'
+import { pdfCommentsInVault } from './pdf/comments'
 import { openGoogleCache } from './google/cache'
 import { createGoogleData, type GoogleData } from './google/data'
 import { createGoogleOpsServer } from './google/ops-server'
@@ -557,6 +558,12 @@ async function main(): Promise<void> {
           return { refreshed: [], skipped: [{ path: '', reason: 'no vault is open' }] }
         }
         return refreshManaged(root, input)
+      },
+      // `holi pdf comments` (D106): read-only, from the saved file.
+      pdfComments: async (path) => {
+        const root = await rootFor(remote)
+        if (root === null) return { ok: false, error: 'no vault is open' }
+        return pdfCommentsInVault(root, path)
       },
       }),
   })

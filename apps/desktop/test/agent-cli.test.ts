@@ -48,6 +48,32 @@ beforeEach(async () => {
   deps = {
     openApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, id } as { ok: true })),
     initApp: vi.fn((id: string) => Promise.resolve({ ok: true as const, created: [id] })),
+    pdfComments: vi.fn((path: string) =>
+      Promise.resolve(
+        path === 'gone.pdf'
+          ? { ok: false as const, error: 'gone.pdf not found' }
+          : {
+              ok: true as const,
+              path,
+              threads:
+                path === 'empty.pdf'
+                  ? []
+                  : [
+                      {
+                        id: 'n1',
+                        page: 1,
+                        kind: 'note' as const,
+                        markedText: null,
+                        author: 'Bo Lind',
+                        created: null,
+                        modified: null,
+                        text: 'Is this standard?',
+                        replies: [],
+                      },
+                    ],
+            },
+      ),
+    ),
     refreshSeed: vi.fn((input: { path?: string; force?: boolean }) =>
       Promise.resolve({
         refreshed: [input.path ?? 'all'],
@@ -98,12 +124,13 @@ describe('when Holi is not running', () => {
 })
 
 describe('usage', () => {
-  it('names exactly the three subcommands when called with none', async () => {
+  it('names every subcommand when called with none', async () => {
     const res = await run(bin, [], env)
     expect(res.code).not.toBe(0)
     expect(res.stderr).toContain('app open')
     expect(res.stderr).toContain('app init')
     expect(res.stderr).toContain('seed refresh')
+    expect(res.stderr).toContain('pdf comments')
   })
 
   it('refuses an unknown subcommand rather than doing something adjacent', async () => {
@@ -131,6 +158,52 @@ describe('app open', () => {
   it('needs an id', async () => {
     const res = await run(bin, ['app', 'open'], env)
     expect(res.code).not.toBe(0)
+  })
+})
+
+describe('pdf comments', () => {
+  it('prints the comments and exits 0', async () => {
+    const res = await run(bin, ['pdf', 'comments', 'docs/msa.pdf'], env)
+    expect(res.code).toBe(0)
+    expect(res.stdout).toBe(
+      '[From docs/msa.pdf, 1 comment]\n\nPage 1, note\n  Bo Lind\n  > Is this standard?\n',
+    )
+    expect(res.stderr).toBe('')
+  })
+
+  it('prints JSON with --json, before or after the path', async () => {
+    for (const args of [
+      ['--json', 'a.pdf'],
+      ['a.pdf', '--json'],
+    ]) {
+      const res = await run(bin, ['pdf', 'comments', ...args], env)
+      expect(res.code).toBe(0)
+      expect(JSON.parse(res.stdout)).toMatchObject({ path: 'a.pdf', threads: [{ id: 'n1' }] })
+    }
+  })
+
+  it('passes a path with a space through intact', async () => {
+    await run(bin, ['pdf', 'comments', 'client docs/a b.pdf'], env)
+    expect(deps.pdfComments).toHaveBeenCalledWith('client docs/a b.pdf')
+  })
+
+  it('says there are none and still exits 0', async () => {
+    const res = await run(bin, ['pdf', 'comments', 'empty.pdf'], env)
+    expect(res.code).toBe(0)
+    expect(res.stdout).toBe('No comments in empty.pdf.\n')
+  })
+
+  it('puts a refusal on stderr and exits non-zero', async () => {
+    const res = await run(bin, ['pdf', 'comments', 'gone.pdf'], env)
+    expect(res.code).toBe(1)
+    expect(res.stdout).toBe('')
+    expect(res.stderr).toBe('holi pdf comments: gone.pdf not found\n')
+  })
+
+  it('needs a path, and refuses an unknown option', async () => {
+    expect((await run(bin, ['pdf', 'comments'], env)).code).toBe(2)
+    expect((await run(bin, ['pdf', 'comments', '--all', 'a.pdf'], env)).code).toBe(2)
+    expect(deps.pdfComments).not.toHaveBeenCalled()
   })
 })
 

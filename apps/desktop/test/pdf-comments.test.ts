@@ -4,11 +4,11 @@
  * object streams, UTF-16 strings, no `/EPDFCustom`). Both are made by
  * `fixtures/pdf-comments/make-fixtures.cjs`.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { readPdfComments } from '../src/main/pdf/comments'
+import { pdfCommentsInVault, readPdfComments } from '../src/main/pdf/comments'
 
 const FIXTURES = join(__dirname, 'fixtures', 'pdf-comments')
 
@@ -78,6 +78,54 @@ describe('readPdfComments', () => {
       const junk = join(dir, 'junk.pdf')
       await writeFile(junk, 'this is not a pdf')
       expect(await readPdfComments(junk)).toEqual({ ok: false, reason: 'not-pdf' })
+    })
+  })
+})
+
+describe('pdfCommentsInVault', () => {
+  let root: string
+  let outside: string
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'holi-pdf-vault-'))
+    outside = await mkdtemp(join(tmpdir(), 'holi-pdf-outside-'))
+    await mkdir(join(root, 'client docs'))
+    await copyFile(join(FIXTURES, 'embedpdf.pdf'), join(root, 'client docs', 'msa.pdf'))
+    await writeFile(join(root, 'notes.md'), '# hi')
+    await copyFile(join(FIXTURES, 'embedpdf.pdf'), join(outside, 'secret.pdf'))
+    await symlink(outside, join(root, 'escape'))
+  })
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  it('reads a vault path, and names it back normalised', async () => {
+    const result = await pdfCommentsInVault(root, './client docs/msa.pdf')
+    expect(result).toMatchObject({ ok: true, path: 'client docs/msa.pdf' })
+  })
+
+  it('takes an absolute path inside the vault as the vault path it names', async () => {
+    const result = await pdfCommentsInVault(root, join(root, 'client docs', 'msa.pdf'))
+    expect(result).toMatchObject({ ok: true, path: 'client docs/msa.pdf' })
+  })
+
+  it('refuses a path that leaves the vault, by .. or by symlink', async () => {
+    for (const typed of ['../x.pdf', join(outside, 'secret.pdf'), 'escape/secret.pdf']) {
+      expect(await pdfCommentsInVault(root, typed)).toEqual({
+        ok: false,
+        error: `${typed} is not a path inside this vault`,
+      })
+    }
+  })
+
+  it('refuses what is not a PDF, and what is not there', async () => {
+    expect(await pdfCommentsInVault(root, 'notes.md')).toEqual({
+      ok: false,
+      error: 'notes.md is not a PDF',
+    })
+    expect(await pdfCommentsInVault(root, 'gone.pdf')).toEqual({
+      ok: false,
+      error: 'gone.pdf not found',
     })
   })
 })
