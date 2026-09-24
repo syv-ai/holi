@@ -533,7 +533,18 @@ const frontmatterTheme = EditorView.baseTheme({
   // so a bottom margin is height it does not know about, and every line below
   // then sits that much lower than CodeMirror thinks. At 2.5rem a click on the
   // first heading landed on the line under it.
-  '.cm-fm': { margin: '0 var(--editor-inset)', paddingBottom: '2.5rem' },
+  //
+  // Middle-aligned over the text, in every layout: one width open or closed,
+  // so opening it never makes it wider, centred in the column by auto side
+  // margins (horizontal margins are harmless to CodeMirror; only vertical ones
+  // escape its measure). The collapsed summary centres in that width and the
+  // fields fill it. A column narrower than the width keeps the text's inset.
+  '.cm-fm': {
+    width: 'min(24rem, 100% - 2 * var(--editor-inset))',
+    margin: '0 auto',
+    paddingBottom: '2.5rem',
+    textAlign: 'center',
+  },
   /**
    * Opening and closing (`playResize`). An ANIMATION rather than a transition,
    * because the element is new on each toggle and has no "before" to transition
@@ -579,7 +590,12 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   // Expanded: one borderless unit — the chevron sits to the left of the YAML,
   // no title, no box. The chevron aligns to the first line.
-  '.cm-fm-reveal': { display: 'flex', alignItems: 'flex-start', gap: '0.4rem' },
+  '.cm-fm-reveal': {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '0.4rem',
+    textAlign: 'start',
+  },
   '.cm-fm-chevron': {
     padding: '0',
     paddingTop: '0.05rem',

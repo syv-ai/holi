@@ -599,21 +599,13 @@
  * No motion: the change happens on a split or an unsplit, a layout event big
  * enough to carry it, and inside CodeMirror only paint may move.
  *
+ * The frontmatter is middle-aligned in every layout, so it has no rule here
+ * (`editor/frontmatter.ts`).
+ *
  * The child combinators are load-bearing: the frontmatter widget nests a whole
  * CodeMirror inside the note, and its `.cm-content` must not centre too. */
 [data-solo-column] > .cm-editor > .cm-scroller > .cm-content {
   margin-inline: auto;
-}
-/* The frontmatter sits in the middle of a centred column, one width open or
- * closed so opening it never makes it wider: the collapsed summary centres in
- * that width and the fields fill it. Left-anchored, it keeps the text's edge. */
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content > .cm-fm {
-  width: min(24rem, 100% - 2 * var(--editor-inset));
-  margin-inline: auto;
-  text-align: center;
-}
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content > .cm-fm .cm-fm-reveal {
-  text-align: start;
 }
 
 /* ── K · acknowledge ──────────────────────────────────────────────────
