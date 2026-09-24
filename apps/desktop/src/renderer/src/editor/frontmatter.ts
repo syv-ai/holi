@@ -50,9 +50,52 @@ import {
 } from './frontmatter-portals'
 import { notePathFacet } from './livePreview'
 import { codeHighlighting } from './theme'
+import { prefersReducedMotion } from '@/lib/motion'
 
 /** Flip the reveal state. The pill and the header chevron both dispatch this. */
 export const toggleFrontmatter = StateEffect.define<boolean>()
+
+/**
+ * The block's height when its pill or chevron was pressed, for the next build
+ * to open or close from.
+ *
+ * A toggle does not change this widget, it replaces it (`eq` differs on
+ * `expanded`), so there is no element whose height a transition could run on.
+ * The press records what was on screen, and `toDOM` animates the new block
+ * from that height to its own (`.cm-fm-resizing`, below). Keyed by view: two
+ * panes toggling at once must not hand each other a height.
+ */
+const toggledFrom = new WeakMap<EditorView, number>()
+
+function pressToggle(view: EditorView, wrap: HTMLElement, open: boolean): void {
+  toggledFrom.set(view, wrap.getBoundingClientRect().height)
+  view.dispatch({ effects: toggleFrontmatter.of(open) })
+}
+
+/**
+ * Open or close from the height the last block had (A, D98: it enters or
+ * leaves the layout, so leaving is the faster token).
+ *
+ * The one place inside a note where height moves, and why that is affordable
+ * here: it is one block widget at the top of the document, the text under it
+ * reflows as ordinary DOM with nothing for CodeMirror to redo per frame, and
+ * CodeMirror is asked to measure once, when the block has landed, so its height
+ * map catches up with what the animation left behind.
+ */
+function playResize(view: EditorView, wrap: HTMLElement, opening: boolean): void {
+  const from = toggledFrom.get(view)
+  toggledFrom.delete(view)
+  if (from === undefined || prefersReducedMotion()) return
+  wrap.style.setProperty('--fm-from', `${from}px`)
+  wrap.classList.add('cm-fm-resizing', opening ? 'cm-fm-opening' : 'cm-fm-closing')
+  const done = (e: AnimationEvent) => {
+    if (e.target !== wrap) return
+    wrap.classList.remove('cm-fm-resizing', 'cm-fm-opening', 'cm-fm-closing')
+    wrap.removeEventListener('animationend', done)
+    view.requestMeasure()
+  }
+  wrap.addEventListener('animationend', done)
+}
 
 /** Marks a transaction as the widget's own write-back, so the view plugin maps
  *  its decorations through it rather than rebuilding and remounting the nested
@@ -287,9 +330,10 @@ class FrontmatterWidget extends WidgetType {
       pill.append(mark, summary)
       pill.onmousedown = (e) => {
         e.preventDefault()
-        view.dispatch({ effects: toggleFrontmatter.of(true) })
+        pressToggle(view, wrap, true)
       }
       wrap.appendChild(pill)
+      playResize(view, wrap, false)
       return wrap
     }
 
@@ -308,7 +352,7 @@ class FrontmatterWidget extends WidgetType {
       this.chevron = chevron
       chevron.onmousedown = (e) => {
         e.preventDefault()
-        view.dispatch({ effects: toggleFrontmatter.of(false) })
+        pressToggle(view, wrap, false)
       }
       row.appendChild(chevron)
     }
@@ -318,22 +362,7 @@ class FrontmatterWidget extends WidgetType {
     row.appendChild(host)
     wrap.appendChild(row)
 
-    // The collapsed line's width, kept while expanded. Invisible and zero-high,
-    // it is what a centred note sizes the open block to (`index.css` §Solo note
-    // column), so opening the frontmatter does not make it wider. Hidden
-    // everywhere else. Its text is the summary as it was when the block opened:
-    // this widget is not rebuilt per keystroke while expanded (see `eq`).
-    const sizer = document.createElement('div')
-    sizer.className = 'cm-fm-pill cm-fm-sizer'
-    sizer.setAttribute('aria-hidden', 'true')
-    // Built like the pill, mark and summary as two spans, so the pill's gap is
-    // measured too rather than approximated by a space.
-    const sizerMark = document.createElement('span')
-    sizerMark.textContent = '▸'
-    const sizerSummary = document.createElement('span')
-    sizerSummary.textContent = frontmatterSummary(this.chars, this.commit)
-    sizer.append(sizerMark, sizerSummary)
-    wrap.appendChild(sizer)
+    playResize(view, wrap, true)
 
     // Rows, when this file has a schema and its frontmatter is a mapping. Both
     // halves matter: `.claude/` and `AGENTS.md` have no schema because their
@@ -498,7 +527,33 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 const frontmatterTheme = EditorView.baseTheme({
   // The inset every child of `.cm-content` carries itself: a block widget is not
   // a `.cm-line` and gets none of the line's padding (theme.ts says why).
-  '.cm-fm': { margin: '0 var(--editor-inset) 0.5rem' },
+  // The space under it is air between the note's metadata and the note, and it
+  // is the same open or closed so toggling moves nothing but the block itself.
+  // PADDING, not margin: CodeMirror measures a block widget by its border box,
+  // so a bottom margin is height it does not know about, and every line below
+  // then sits that much lower than CodeMirror thinks. At 2.5rem a click on the
+  // first heading landed on the line under it.
+  '.cm-fm': { margin: '0 var(--editor-inset)', paddingBottom: '2.5rem' },
+  /**
+   * Opening and closing (`playResize`). An ANIMATION rather than a transition,
+   * because the element is new on each toggle and has no "before" to transition
+   * from; `--fm-from` is that before. `interpolate-size` is what lets it end at
+   * `auto`, the block's own height, which nothing here has to measure, the same
+   * device the heading slide uses for width. The fields fade in on the way, so
+   * they do not appear at full strength inside a block still opening.
+   */
+  '.cm-fm-resizing': { interpolateSize: 'allow-keywords', overflow: 'clip' },
+  '.cm-fm-opening': {
+    animation: 'cm-fm-resize var(--motion-arrive, 300ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-fm-closing': {
+    animation: 'cm-fm-resize var(--motion-leave, 190ms) var(--ease-settle, ease-out)',
+  },
+  '.cm-fm-opening .cm-fm-reveal': {
+    animation: 'cm-fm-fields-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out)',
+  },
+  '@keyframes cm-fm-resize': { from: { height: 'var(--fm-from)' } },
+  '@keyframes cm-fm-fields-in': { from: { opacity: '0' } },
   // Collapsed: a chevron mark + a muted one-line summary, inline.
   '.cm-fm-pill': {
     display: 'inline-flex',
@@ -537,7 +592,6 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
   '.cm-fm-body': { flex: '1', minWidth: '0' },
-  '.cm-fm-sizer': { display: 'none' },
   // See `caretInBlock`: a caret whose head is inside the replaced region would
   // render as tall as the whole block.
   '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },
