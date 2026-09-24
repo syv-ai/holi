@@ -70,7 +70,8 @@ const toggledFrom = new WeakMap<EditorView, number>()
 
 /**
  * The summary as one line: `lead` (the collapse button, or the bare bar) with
- * the text in it, and the author beside it as a link to their GitHub profile.
+ * the text in it, the author beside it as a link to their GitHub profile, and
+ * the file's version (`v.<revisions>`) after the name.
  *
  * The git author name is used as the GitHub username, which it is for anyone
  * whose git identity is their GitHub one. The link sits BESIDE the button, not
@@ -84,7 +85,7 @@ function summaryLine(
   chars: number,
   commit: FrontmatterCommit | null,
 ): HTMLElement {
-  const { text, author } = frontmatterSummaryParts(chars, commit)
+  const { text, author, version } = frontmatterSummaryParts(chars, commit)
   const summary = document.createElement('span')
   summary.className = 'cm-fm-summary'
   summary.textContent = author === null ? text : `${text},`
@@ -106,6 +107,10 @@ function summaryLine(
     // The window never navigates: `openExternal` above is the whole action.
     link.onclick = (e) => e.preventDefault()
     line.appendChild(link)
+    const tail = document.createElement('span')
+    tail.className = 'cm-fm-version'
+    tail.textContent = `· ${version}`
+    line.appendChild(tail)
   }
   return line
 }
@@ -200,12 +205,15 @@ export const frontmatterExpandedField = StateField.define<boolean>({
 })
 
 /** The file's last commit, for the collapsed summary — the author is the "last
- *  edited by" and the date its "last updated". */
+ *  edited by" and the date its "last updated" — and how many commits touched
+ *  the file, its version. */
 export interface FrontmatterCommit {
   /** ISO 8601 (git author date). */
   date: string
   /** Author name (git `%an`). */
   author: string
+  /** Commits touching the file, the first included: the `v.N` in the summary. */
+  revisions: number
 }
 
 /** Set by EditorPane once the file's last commit is fetched (async, over IPC);
@@ -239,23 +247,27 @@ export function formatCharCount(n: number): string {
   return String(n)
 }
 
-/** The summary line in two parts: the text, and the author on their own, so
- *  the widget can make the name a link. "1.8K chars · Last updated DD/MM/YY",
- *  and the author once the file's last commit is known. */
+/** The summary line in parts: the text, the author on their own so the widget
+ *  can make the name a link, and the version after it. "1.8K chars · Last
+ *  updated DD/MM/YY", then the author and "v.14" once the last commit is known. */
 export function frontmatterSummaryParts(
   chars: number,
   commit: FrontmatterCommit | null,
-): { text: string; author: string | null } {
+): { text: string; author: string | null; version: string | null } {
   const base = `${formatCharCount(chars)} char${chars === 1 ? '' : 's'}`
   const date = commit === null ? '' : formatCommitDate(commit.date)
-  if (commit === null || date === '') return { text: base, author: null }
-  return { text: `${base} · Last updated ${date}`, author: commit.author }
+  if (commit === null || date === '') return { text: base, author: null, version: null }
+  return {
+    text: `${base} · Last updated ${date}`,
+    author: commit.author,
+    version: `v.${commit.revisions}`,
+  }
 }
 
-/** The summary line as one string: "1.8K chars · Last updated DD/MM/YY, Name". */
+/** The summary line as one string: "1.8K chars · Last updated DD/MM/YY, Name · v.14". */
 export function frontmatterSummary(chars: number, commit: FrontmatterCommit | null): string {
-  const { text, author } = frontmatterSummaryParts(chars, commit)
-  return author === null ? text : `${text}, ${author}`
+  const { text, author, version } = frontmatterSummaryParts(chars, commit)
+  return author === null ? text : `${text}, ${author} · ${version}`
 }
 
 /** Does the document's frontmatter parse? The save gate (EditorPane) reads this
@@ -300,7 +312,7 @@ function paintChevron(el: HTMLElement, body: string): void {
  *  fields — cheap value equality for the widget's `eq`. */
 function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boolean {
   if (a === null || b === null) return a === b
-  return a.date === b.date && a.author === b.author
+  return a.date === b.date && a.author === b.author && a.revisions === b.revisions
 }
 
 class FrontmatterWidget extends WidgetType {
@@ -659,6 +671,13 @@ const frontmatterTheme = EditorView.baseTheme({
     color: '#6b6b6b',
     textDecoration: 'none',
     cursor: 'pointer',
+  },
+  // After the name, never truncated with it: the version is part of the fact.
+  '.cm-fm-version': {
+    flexShrink: '0',
+    fontSize: '0.8rem',
+    lineHeight: '1.2',
+    color: '#6b6b6b',
   },
   '.cm-fm-author:hover': { color: '#a3a3a3', textDecoration: 'underline' },
   // The bar a file with no frontmatter gets (#17). The pill's type and colour

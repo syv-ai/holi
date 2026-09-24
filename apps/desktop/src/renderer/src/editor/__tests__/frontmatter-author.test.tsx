@@ -41,7 +41,11 @@ function mount(doc: string, openExternal: (url: string) => void): EditorView {
     parent,
   })
   view.dispatch({
-    effects: setFrontmatterCommit.of({ date: '2026-09-24T09:30:00Z', author: 'ada-holm' }),
+    effects: setFrontmatterCommit.of({
+      date: '2026-09-24T09:30:00Z',
+      author: 'ada-holm',
+      revisions: 14,
+    }),
   })
   return view
 }
@@ -65,6 +69,14 @@ it('opens the profile through the editor seam, and leaves the block closed', () 
 
   expect(openExternal).toHaveBeenCalledWith('https://github.com/ada-holm')
   expect(v.state.field(frontmatterExpandedField)).toBe(false)
+})
+
+it('ends the line with the version, after the name', () => {
+  const v = mount(DOC, () => {})
+  expect(v.dom.querySelector('.cm-fm-line')?.textContent).toBe(
+    '▸6 chars · Last updated 24/09/26,ada-holm· v.14',
+  )
+  expect(v.dom.querySelector('.cm-fm-version')?.textContent).toBe('· v.14')
 })
 
 it('shows no link while the last commit is unknown', () => {

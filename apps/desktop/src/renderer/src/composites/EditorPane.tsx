@@ -244,7 +244,11 @@ export function EditorPane({
           .query({ path })
           .then((history) => {
             if (disposed || viewRef.current !== view) return
-            view.dispatch({ effects: setFrontmatterCommit.of(history?.last ?? null) })
+            view.dispatch({
+              effects: setFrontmatterCommit.of(
+                history === null ? null : { ...history.last, revisions: history.revisions },
+              ),
+            })
           })
           .catch(() => {})
       }

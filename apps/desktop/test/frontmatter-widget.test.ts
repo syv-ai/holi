@@ -100,7 +100,7 @@ describe('frontmatterDecorations', () => {
     })
 
     it('carries the commit, so the bar says last-updated like any other', () => {
-      const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
+      const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada', revisions: 3 }
       const state = stateFor(BARE, [frontmatterCommitField]).update({
         effects: setFrontmatterCommit.of(commit),
       }).state
@@ -158,12 +158,14 @@ describe('frontmatterSummary', () => {
     expect(frontmatterSummary(1, null)).toBe('1 char')
   })
   it('appends last-updated + author when a commit is known', () => {
-    expect(frontmatterSummary(14, { date: '2026-07-01T09:30:00Z', author: 'Ada' })).toBe(
-      '14 chars · Last updated 01/07/26, Ada',
+    expect(
+      frontmatterSummary(14, { date: '2026-07-01T09:30:00Z', author: 'Ada', revisions: 14 }),
+    ).toBe(
+      '14 chars · Last updated 01/07/26, Ada · v.14',
     )
   })
   it('falls back to the char count when the commit date is unparseable', () => {
-    expect(frontmatterSummary(14, { date: 'nope', author: 'Ada' })).toBe('14 chars')
+    expect(frontmatterSummary(14, { date: 'nope', author: 'Ada', revisions: 2 })).toBe('14 chars')
   })
   it('counts thousands in K', () => {
     expect(frontmatterSummary(1861, null)).toBe('1.8K chars')
@@ -189,14 +191,23 @@ describe('formatCharCount', () => {
 describe('frontmatterSummaryParts', () => {
   it('splits the author off, so it can be a link of its own', () => {
     expect(
-      frontmatterSummaryParts(1861, { date: '2026-09-24T09:30:00Z', author: 'ada-holm' }),
+      frontmatterSummaryParts(1861, {
+        date: '2026-09-24T09:30:00Z',
+        author: 'ada-holm',
+        revisions: 14,
+      }),
     ).toEqual({
       text: '1.8K chars · Last updated 24/09/26',
       author: 'ada-holm',
+      version: 'v.14',
     })
   })
   it('has no author while the commit is unknown', () => {
-    expect(frontmatterSummaryParts(14, null)).toEqual({ text: '14 chars', author: null })
+    expect(frontmatterSummaryParts(14, null)).toEqual({
+      text: '14 chars',
+      author: null,
+      version: null,
+    })
   })
 })
 
@@ -211,7 +222,7 @@ describe('frontmatterDecorations summary data', () => {
   })
 
   it('reflects a commit dispatched via setFrontmatterCommit', () => {
-    const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
+    const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada', revisions: 3 }
     const state = stateFor(DOC, [frontmatterCommitField]).update({
       effects: setFrontmatterCommit.of(commit),
     }).state
