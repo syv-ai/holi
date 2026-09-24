@@ -247,6 +247,9 @@ export function FileTree({
   // this one reads `entry` and the action hook, both of which change per render.
   const dropFilesRef = useRef<(dataTransfer: DataTransfer, dest: string) => void>(() => {})
 
+  /** True while a row's click is being handed to headless-tree; see
+   *  `onPrimaryAction`. */
+  const clickingRef = useRef(false)
   const tree = useTree<TreeItemData>({
     rootItemId: ROOT_ID,
     initialState: { expandedItems: [ROOT_ID] },
@@ -257,7 +260,12 @@ export function FileTree({
       getChildren: (id) => dataRef.current[id]?.children ?? [],
     },
     indent: 12,
+    // The keyboard's way in (Enter). headless-tree also fires it on EVERY
+    // click, modifiers or not, which made a ⌘- or ⇧-click open a preview as
+    // well; the row's own `onClick` decides for the mouse, so a click in
+    // flight is ignored here.
     onPrimaryAction: (item) => {
+      if (clickingRef.current) return
       if (!item.isFolder()) onOpenPreview(item.getId())
     },
     // Folders rename too now (they fan out to N notes via renameFolder).
@@ -738,10 +746,28 @@ export function FileTree({
                     window.holi.startDrag(rowTargets(id).map(absPathFor))
                   }}
                   onClick={(e) => {
-                    origClick?.(e)
-                    // A plain click opens a preview; a modified click is a
-                    // selection gesture (⌘/⇧) and must not open anything.
-                    if (!isFolder && !e.metaKey && !e.shiftKey && !e.ctrlKey) onOpenPreview(id)
+                    // ⌘ on a file opens it in a new pane beside this one (#13
+                    // follow-up), so it is handed to the tree as a plain click
+                    // and selects just that file. That took ⌘ away from the
+                    // selection, so ⇧ is the toggle: it reaches headless-tree
+                    // as the ⌘ it understands, which toggles one row rather
+                    // than selecting a range. A folder keeps ⌘ as a plain click.
+                    const split = e.metaKey && !e.shiftKey
+                    const toggle = e.shiftKey
+                    clickingRef.current = true
+                    try {
+                      origClick?.({
+                        ...e,
+                        shiftKey: false,
+                        metaKey: toggle,
+                        ctrlKey: toggle || (e.ctrlKey && !split),
+                      })
+                    } finally {
+                      clickingRef.current = false
+                    }
+                    if (isFolder) return
+                    if (split) onOpenInNewPane(id)
+                    else if (!toggle && !e.ctrlKey) onOpenPreview(id)
                   }}
                   onDoubleClick={() => {
                     if (!isFolder) onOpenPinned(id)
