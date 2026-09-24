@@ -69,11 +69,11 @@ const TASK_FIELDS: readonly FieldSpec[] = [
 ]
 
 /** What `scaffoldNoteText` writes, and nothing more. A note has no `title`
- *  deliberately (see `scaffold-md.ts`), so there is no row for one. */
-const NOTE_FIELDS: readonly FieldSpec[] = [
-  { key: 'created', kind: { kind: 'date' } },
-  { key: 'tags', kind: { kind: 'list' } },
-]
+ *  deliberately (see `scaffold-md.ts`), so there is no row for one. Nor a
+ *  `created`: that is the file's first commit, shown as read-only metadata
+ *  beside the rows, never a date someone could edit into disagreeing with git.
+ *  A `created:` an older note still carries is just an unknown key now. */
+const NOTE_FIELDS: readonly FieldSpec[] = [{ key: 'tags', kind: { kind: 'list' } }]
 
 /**
  * The schema for a file, or `null` when its frontmatter is not ours to draw as

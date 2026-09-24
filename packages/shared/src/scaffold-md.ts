@@ -9,8 +9,10 @@
  * lines. The third is `wantsScaffold`, which is the interesting one: it says
  * where frontmatter is metadata about prose, and where it is something else.
  *
- * **Only non-derivable metadata**: `created`, because git's first-commit date is
- * not surfaced in-app, and an empty `tags` to fill in. Deliberately no `title` —
+ * **Only non-derivable metadata**, which leaves an empty `tags` to fill in. No
+ * `created`: git's first commit for the file IS its creation, and the editor
+ * shows it as read-only metadata, so a hand-editable copy in the file could
+ * only ever disagree with it. Deliberately no `title` —
  * the filename already is the note's identity, since paths are what wiki-links
  * and renames operate on, so a title field would duplicate it and drift the
  * moment either side changed.
@@ -18,9 +20,9 @@
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
 import { isTaskFilePath } from './task-file'
 
-/** The full file body a new note is created with. `isoDate` is `YYYY-MM-DD`. */
-export function scaffoldNoteText(isoDate: string): string {
-  return `---\ncreated: ${isoDate}\ntags: []\n---\n\n`
+/** The full file body a new note is created with. */
+export function scaffoldNoteText(): string {
+  return '---\ntags: []\n---\n\n'
 }
 
 /**
@@ -31,10 +33,10 @@ export function scaffoldNoteText(isoDate: string): string {
  *
  * - **The agent surface** (`CLAUDE.md`, `AGENTS.md`, `MEMORY.md`,
  *   `USER.local.md`, everything under `.claude/`). These are read VERBATIM as
- *   the agent's instructions, so a `created:` block at the top is not metadata,
+ *   the agent's instructions, so a `tags:` block at the top is not metadata,
  *   it is prompt text. D82 already established this when it refused to put a
  *   note's icon in frontmatter for the same reason. A skill's frontmatter is a
- *   typed interface with a schema of its own, and `created`/`tags` are not in it.
+ *   typed interface with a schema of its own, and `tags` is not in it.
  * - **Task files.** `serializeTaskFile` owns their frontmatter completely and
  *   `normalize-md` already rewrites it into canonical order; a second writer
  *   with its own idea of the shape would fight it every commit.
@@ -66,6 +68,6 @@ export function hasFrontmatter(text: string): boolean {
  * frontmatter. Idempotent by that check alone, which is what lets the transform
  * run on every commit.
  */
-export function scaffoldFrontmatter(text: string, isoDate: string): string {
-  return hasFrontmatter(text) ? text : scaffoldNoteText(isoDate) + text
+export function scaffoldFrontmatter(text: string): string {
+  return hasFrontmatter(text) ? text : scaffoldNoteText() + text
 }

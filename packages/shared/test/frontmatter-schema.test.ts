@@ -20,9 +20,10 @@ describe('frontmatterSchema', () => {
     })
   })
 
-  test('a note gets what the scaffold writes, and no title', () => {
+  test('a note gets what the scaffold writes, and no title or created date', () => {
+    // `created` is the file's first commit, shown read-only, never a field.
     const schema = frontmatterSchema('notes/meeting.md')!
-    expect(schema.map((f) => f.key)).toEqual(['created', 'tags'])
+    expect(schema.map((f) => f.key)).toEqual(['tags'])
   })
 
   test('the agent surface has no schema at all, so it shows YAML', () => {

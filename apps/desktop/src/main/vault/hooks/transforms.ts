@@ -46,8 +46,8 @@ export const VAULT_TRANSFORMS: Transform[] = [
  * `normalize-md` only ever make a change the author would not have noticed
  * making. `scaffold-md` is the one that IS visible — it writes four lines at the
  * top of a note — and it is on anyway, because it only ever fires on a file's
- * first commit and the alternative is the note losing its "N chars · Last
- * updated" bar and its `created` date for good.
+ * first commit and the alternative is a note arriving without the block its
+ * tags go in.
  */
 export const DEFAULT_HOOKS: HookSettings = { ...VAULT_SETTING_DEFAULTS.hooks }
 

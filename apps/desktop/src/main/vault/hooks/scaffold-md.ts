@@ -3,8 +3,7 @@
  *
  * Only one creation path used to scaffold: the file-tree `+`. An agent writing
  * a note through its own `Write`, a drag-and-drop import, a file made in another
- * editor in the same directory — all of them landed a `.md` with no `created`
- * and no `tags`, and until #17 that also cost the file its "N chars · Last
+ * editor in the same directory — all of them landed a `.md` with no `tags`, and until #17 that also cost the file its "N chars · Last
  * updated" bar, since the bar was the collapsed frontmatter widget.
  *
  * **Added files only, never modified ones.** That is the whole answer to the
@@ -13,8 +12,7 @@
  * one that has been in the vault for a year is `modified`, not `added`. What is
  * left is exactly the list the issue asked for — agent write, import, external
  * editor — all of which are creations, all of them local, and all of them ours to
- * shape. It also makes `created:` honest without asking git anything: a file
- * being added has no first commit yet, so its creation date is today.
+ * shape.
  *
  * Which files count is `wantsScaffold` in `@holi/shared`, and it is the part
  * worth reading — `CLAUDE.md` is markdown too, and frontmatter there is prompt
@@ -41,7 +39,6 @@ import type { TransformResult } from './relink'
 export async function scaffoldMd(
   root: string,
   staged: StagedChanges,
-  today = new Date().toLocaleDateString('en-CA'),
 ): Promise<TransformResult> {
   const changed: string[] = []
 
@@ -51,7 +48,7 @@ export async function scaffoldMd(
     const text = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
     if (text === null) continue
 
-    const next = scaffoldFrontmatter(text, today)
+    const next = scaffoldFrontmatter(text)
     if (next === text) continue
     await writeAtomic(root, rel, next)
     changed.push(path)

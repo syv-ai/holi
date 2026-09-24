@@ -210,12 +210,10 @@ export function subscribeToVault(store: JotaiStore): () => void {
 export const createNoteAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  // A markdown note opens with starter frontmatter (title + created) so the
-  // metadata is there from the start; any other file type is created empty — a
-  // note-scaffold in a .json would be nonsense (spec §Arbitrary files). Local
-  // date, to match how the daily note is dated.
-  const isoDate = new Date().toLocaleDateString('en-CA') // YYYY-MM-DD, local
-  const text = path.endsWith('.md') ? scaffoldNoteText(isoDate) : ''
+  // A markdown note opens with starter frontmatter so the metadata is there
+  // from the start; any other file type is created empty — a note-scaffold in
+  // a .json would be nonsense (spec §Arbitrary files).
+  const text = path.endsWith('.md') ? scaffoldNoteText() : ''
   await trpc.notes.create.mutate({ remote, path, text })
   await set(loadSnapshotAtom)
   set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === path) ?? null)

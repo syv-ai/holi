@@ -43,9 +43,17 @@ test('does not draw `order`, which means nothing to a human', () => {
 })
 
 test('a note gets the note schema, not the task one', () => {
-  fields('created: 2026-09-12\n', 'notes/meeting.md')
-  expect(screen.getByText('created')).toBeInTheDocument()
+  fields('tags: [ops]\n', 'notes/meeting.md')
+  expect(screen.getByText('tags')).toBeInTheDocument()
   expect(screen.queryByText('status')).not.toBeInTheDocument()
+})
+
+test('an old `created:` is an ordinary key now, not a date field', () => {
+  // The creation date is git's first commit, shown as metadata. A note that
+  // still carries the line gets a plain text row like any unknown key.
+  fields('created: 2026-09-12\n', 'notes/meeting.md')
+  expect(screen.getByRole('textbox', { name: 'created' })).toHaveValue('2026-09-12')
+  expect(screen.queryByTestId('fm-created')).not.toBeInTheDocument()
 })
 
 test('the folder row shows the parents, not the file', () => {

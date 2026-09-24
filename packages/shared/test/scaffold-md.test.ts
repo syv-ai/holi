@@ -9,8 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { hasFrontmatter, scaffoldFrontmatter, scaffoldNoteText, wantsScaffold } from '../src/scaffold-md'
 
 describe('scaffoldNoteText', () => {
-  it('is created + empty tags, and deliberately no title', () => {
-    expect(scaffoldNoteText('2026-07-23')).toBe('---\ncreated: 2026-07-23\ntags: []\n---\n\n')
+  it('is empty tags, and deliberately no title or created date', () => {
+    expect(scaffoldNoteText()).toBe('---\ntags: []\n---\n\n')
   })
 })
 
@@ -77,16 +77,16 @@ describe('wantsScaffold', () => {
 
 describe('scaffoldFrontmatter', () => {
   it('prepends the block', () => {
-    expect(scaffoldFrontmatter('body\n', '2026-09-09')).toBe(
-      '---\ncreated: 2026-09-09\ntags: []\n---\n\nbody\n',
+    expect(scaffoldFrontmatter('body\n')).toBe(
+      '---\ntags: []\n---\n\nbody\n',
     )
   })
 
   it('is a no-op on a file that already has a block, which is what makes it idempotent', () => {
     const text = '---\ntype: daily-note\ndate: 2026-09-09\n---\n\n# 09-09-2026\n'
-    expect(scaffoldFrontmatter(text, '2026-09-09')).toBe(text)
-    expect(scaffoldFrontmatter(scaffoldFrontmatter('body\n', 'x'), 'y')).toBe(
-      scaffoldFrontmatter('body\n', 'x'),
+    expect(scaffoldFrontmatter(text)).toBe(text)
+    expect(scaffoldFrontmatter(scaffoldFrontmatter('body\n'))).toBe(
+      scaffoldFrontmatter('body\n'),
     )
   })
 })

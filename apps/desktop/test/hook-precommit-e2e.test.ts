@@ -146,7 +146,7 @@ describe('scaffold-md, through a real commit', () => {
     await git(dir, ['commit', '-q', '-m', 'write'])
 
     const text = await committed(dir, 'a.md')
-    expect(text).toMatch(/^---\ncreated: \d{4}-\d{2}-\d{2}\ntags: \[\]\n---\n\n/)
+    expect(text).toMatch(/^---\ntags: \[\]\n---\n\n/)
     expect(text.endsWith('# Title\n\nbody\n')).toBe(true)
   })
 
