@@ -48,6 +48,7 @@ import {
   openFrontmatterPortal,
   updateFrontmatterPortal,
 } from './frontmatter-portals'
+import { linkNavFacet } from './links'
 import { notePathFacet } from './livePreview'
 import { codeHighlighting } from './theme'
 import { prefersReducedMotion } from '@/lib/motion'
@@ -66,6 +67,48 @@ export const toggleFrontmatter = StateEffect.define<boolean>()
  * panes toggling at once must not hand each other a height.
  */
 const toggledFrom = new WeakMap<EditorView, number>()
+
+/**
+ * The summary as one line: `lead` (the collapse button, or the bare bar) with
+ * the text in it, and the author beside it as a link to their GitHub profile.
+ *
+ * The git author name is used as the GitHub username, which it is for anyone
+ * whose git identity is their GitHub one. The link sits BESIDE the button, not
+ * in it: a link inside a button is not valid HTML, and pressing the name would
+ * toggle the block too. One line, never wrapped: in a narrow pane the text
+ * truncates and the name stays whole.
+ */
+function summaryLine(
+  view: EditorView,
+  lead: HTMLElement,
+  chars: number,
+  commit: FrontmatterCommit | null,
+): HTMLElement {
+  const { text, author } = frontmatterSummaryParts(chars, commit)
+  const summary = document.createElement('span')
+  summary.className = 'cm-fm-summary'
+  summary.textContent = author === null ? text : `${text},`
+  lead.appendChild(summary)
+
+  const line = document.createElement('div')
+  line.className = 'cm-fm-line'
+  line.appendChild(lead)
+  if (author !== null) {
+    const url = `https://github.com/${encodeURIComponent(author)}`
+    const link = document.createElement('a')
+    link.className = 'cm-fm-author'
+    link.href = url
+    link.textContent = author
+    link.onmousedown = (e) => {
+      e.preventDefault()
+      view.state.facet(linkNavFacet)?.().openExternal(url)
+    }
+    // The window never navigates: `openExternal` above is the whole action.
+    link.onclick = (e) => e.preventDefault()
+    line.appendChild(link)
+  }
+  return line
+}
 
 function pressToggle(view: EditorView, wrap: HTMLElement, open: boolean): void {
   toggledFrom.set(view, wrap.getBoundingClientRect().height)
@@ -185,14 +228,34 @@ export function formatCommitDate(iso: string): string {
   return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${pad(d.getFullYear() % 100)}`
 }
 
-/** The collapsed pill's text: the body char count, plus "· Last updated
- *  DD/MM/YY, Name" once the file's last commit is known. */
+/** A char count as it reads in the summary: the number under a thousand, then
+ *  `1.8K` / `2.3M`. One decimal, rounded DOWN, so a note just short of 2K never
+ *  claims to be 2K; a trailing `.0` is dropped. */
+export function formatCharCount(n: number): string {
+  const scaled = (unit: number, suffix: string) =>
+    `${String(Math.floor((n / unit) * 10) / 10)}${suffix}`
+  if (n >= 1_000_000) return scaled(1_000_000, 'M')
+  if (n >= 1_000) return scaled(1_000, 'K')
+  return String(n)
+}
+
+/** The summary line in two parts: the text, and the author on their own, so
+ *  the widget can make the name a link. "1.8K chars · Last updated DD/MM/YY",
+ *  and the author once the file's last commit is known. */
+export function frontmatterSummaryParts(
+  chars: number,
+  commit: FrontmatterCommit | null,
+): { text: string; author: string | null } {
+  const base = `${formatCharCount(chars)} char${chars === 1 ? '' : 's'}`
+  const date = commit === null ? '' : formatCommitDate(commit.date)
+  if (commit === null || date === '') return { text: base, author: null }
+  return { text: `${base} · Last updated ${date}`, author: commit.author }
+}
+
+/** The summary line as one string: "1.8K chars · Last updated DD/MM/YY, Name". */
 export function frontmatterSummary(chars: number, commit: FrontmatterCommit | null): string {
-  const base = `${chars} char${chars === 1 ? '' : 's'}`
-  if (commit === null) return base
-  const date = formatCommitDate(commit.date)
-  if (date === '') return base
-  return `${base} · Last updated ${date}, ${commit.author}`
+  const { text, author } = frontmatterSummaryParts(chars, commit)
+  return author === null ? text : `${text}, ${author}`
 }
 
 /** Does the document's frontmatter parse? The save gate (EditorPane) reads this
@@ -302,10 +365,9 @@ class FrontmatterWidget extends WidgetType {
       // and nothing here writes one, since `normalize-md` adds frontmatter on
       // the next commit anyway and two ways to do it is one too many.
       wrap.setAttribute('data-frontmatter', 'none')
-      const summary = document.createElement('span')
-      summary.className = 'cm-fm-summary cm-fm-bare'
-      summary.textContent = frontmatterSummary(this.chars, this.commit)
-      wrap.appendChild(summary)
+      const bare = document.createElement('span')
+      bare.className = 'cm-fm-bare'
+      wrap.appendChild(summaryLine(view, bare, this.chars, this.commit))
       return wrap
     }
 
@@ -323,16 +385,12 @@ class FrontmatterWidget extends WidgetType {
       mark.textContent = '▸'
       paintChevron(mark, this.body)
 
-      const summary = document.createElement('span')
-      summary.className = 'cm-fm-summary'
-      summary.textContent = frontmatterSummary(this.chars, this.commit)
-
-      pill.append(mark, summary)
+      pill.append(mark)
       pill.onmousedown = (e) => {
         e.preventDefault()
         pressToggle(view, wrap, true)
       }
-      wrap.appendChild(pill)
+      wrap.appendChild(summaryLine(view, pill, this.chars, this.commit))
       playResize(view, wrap, false)
       return wrap
     }
@@ -525,8 +583,6 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
 })
 
 const frontmatterTheme = EditorView.baseTheme({
-  // The inset every child of `.cm-content` carries itself: a block widget is not
-  // a `.cm-line` and gets none of the line's padding (theme.ts says why).
   // The space under it is air between the note's metadata and the note, and it
   // is the same open or closed so toggling moves nothing but the block itself.
   // PADDING, not margin: CodeMirror measures a block widget by its border box,
@@ -578,11 +634,36 @@ const frontmatterTheme = EditorView.baseTheme({
     border: 'none',
     cursor: 'pointer',
   },
-  '.cm-fm-summary': { color: 'inherit' },
+  // The summary line (`summaryLine`): never wrapped. The text gives way with an
+  // ellipsis in a narrow pane and the author's name stays whole beside it.
+  '.cm-fm-line': {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'baseline',
+    gap: '0.3em',
+    minWidth: '0',
+    whiteSpace: 'nowrap',
+  },
+  '.cm-fm-line > .cm-fm-pill, .cm-fm-line > .cm-fm-bare': { minWidth: '0', overflow: 'hidden' },
+  '.cm-fm-summary': {
+    color: 'inherit',
+    minWidth: '0',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  '.cm-fm-author': {
+    flexShrink: '0',
+    fontSize: '0.8rem',
+    lineHeight: '1.2',
+    color: '#6b6b6b',
+    textDecoration: 'none',
+    cursor: 'pointer',
+  },
+  '.cm-fm-author:hover': { color: '#a3a3a3', textDecoration: 'underline' },
   // The bar a file with no frontmatter gets (#17). The pill's type and colour
   // without the pill: there is nothing to press, so it is not a button.
   '.cm-fm-bare': {
-    display: 'inline-block',
+    display: 'flex',
     padding: '0.05rem 0.15rem',
     fontSize: '0.8rem',
     lineHeight: '1.2',

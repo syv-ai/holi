@@ -17,7 +17,9 @@ import {
   frontmatterDecorations,
   frontmatterExpandedField,
   frontmatterStartsRevealed,
+  formatCharCount,
   frontmatterSummary,
+  frontmatterSummaryParts,
   frontmatterValid,
   regionTextFrom,
   setFrontmatterCommit,
@@ -99,9 +101,9 @@ describe('frontmatterDecorations', () => {
 
     it('carries the commit, so the bar says last-updated like any other', () => {
       const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
-      const state = stateFor(BARE, [frontmatterCommitField])
-        .update({ effects: setFrontmatterCommit.of(commit) })
-        .state
+      const state = stateFor(BARE, [frontmatterCommitField]).update({
+        effects: setFrontmatterCommit.of(commit),
+      }).state
       const widget = specs(frontmatterDecorations(state))[0]!.spec.widget as { commit: unknown }
       expect(widget.commit).toEqual(commit)
     })
@@ -163,6 +165,39 @@ describe('frontmatterSummary', () => {
   it('falls back to the char count when the commit date is unparseable', () => {
     expect(frontmatterSummary(14, { date: 'nope', author: 'Ada' })).toBe('14 chars')
   })
+  it('counts thousands in K', () => {
+    expect(frontmatterSummary(1861, null)).toBe('1.8K chars')
+  })
+})
+
+describe('formatCharCount', () => {
+  it('is the plain number under a thousand', () => {
+    expect(formatCharCount(0)).toBe('0')
+    expect(formatCharCount(999)).toBe('999')
+  })
+  it('is K with one decimal, rounded down so it never overstates', () => {
+    expect(formatCharCount(1000)).toBe('1K')
+    expect(formatCharCount(1861)).toBe('1.8K')
+    expect(formatCharCount(1999)).toBe('1.9K')
+    expect(formatCharCount(10_450)).toBe('10.4K')
+  })
+  it('is M from a million', () => {
+    expect(formatCharCount(2_350_000)).toBe('2.3M')
+  })
+})
+
+describe('frontmatterSummaryParts', () => {
+  it('splits the author off, so it can be a link of its own', () => {
+    expect(
+      frontmatterSummaryParts(1861, { date: '2026-09-24T09:30:00Z', author: 'ada-holm' }),
+    ).toEqual({
+      text: '1.8K chars · Last updated 24/09/26',
+      author: 'ada-holm',
+    })
+  })
+  it('has no author while the commit is unknown', () => {
+    expect(frontmatterSummaryParts(14, null)).toEqual({ text: '14 chars', author: null })
+  })
 })
 
 describe('frontmatterDecorations summary data', () => {
@@ -177,9 +212,9 @@ describe('frontmatterDecorations summary data', () => {
 
   it('reflects a commit dispatched via setFrontmatterCommit', () => {
     const commit = { date: '2026-07-01T09:30:00Z', author: 'Ada' }
-    const state = stateFor(DOC, [frontmatterCommitField])
-      .update({ effects: setFrontmatterCommit.of(commit) })
-      .state
+    const state = stateFor(DOC, [frontmatterCommitField]).update({
+      effects: setFrontmatterCommit.of(commit),
+    }).state
     const widget = specs(frontmatterDecorations(state))[0]!.spec.widget as { commit: unknown }
     expect(widget.commit).toEqual(commit)
   })

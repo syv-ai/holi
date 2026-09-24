@@ -25,7 +25,7 @@
  *    elsewhere; clicking into its line first reveals the raw `[text](url)` to edit.
  */
 import { EditorView, ViewPlugin } from '@codemirror/view'
-import type { Extension } from '@codemirror/state'
+import { Facet, type Extension } from '@codemirror/state'
 
 /** On the editor root while ⌘/Ctrl is down. The theme hangs the markdown-link
  *  pointer cursor off it — see `modifierHeldClass`. */
@@ -38,12 +38,19 @@ export interface LinkNav {
   openExternal: (url: string) => void
 }
 
+/**
+ * The editor's way out to a note or a URL, for widgets that are not document
+ * text and so are not routed through `linkClickHandler`'s decision (the
+ * frontmatter summary's author link). The same seam the handler is given, so
+ * there is one path to `openExternal`, not two.
+ */
+export const linkNavFacet = Facet.define<() => LinkNav, (() => LinkNav) | null>({
+  combine: (values) => values[0] ?? null,
+})
+
 /** What a click resolves to. `null` — the common case — means "not a link, leave it
  * alone", which is what keeps ordinary clicks placing the caret. */
-export type LinkAction =
-  | { kind: 'note'; path: string }
-  | { kind: 'external'; url: string }
-  | null
+export type LinkAction = { kind: 'note'; path: string } | { kind: 'external'; url: string } | null
 
 export interface ClickTargets {
   /** `data-wiki-target` of the nearest chip ancestor, if any (note or task path). */
@@ -134,6 +141,7 @@ const modifierHeldClass = ViewPlugin.fromClass(
 export function linkClickHandler(nav: () => LinkNav): Extension {
   return [
     modifierHeldClass,
+    linkNavFacet.of(nav),
     EditorView.domEventHandlers({
       mousedown(event) {
         // Primary button only: a right-click wants its context menu and a
