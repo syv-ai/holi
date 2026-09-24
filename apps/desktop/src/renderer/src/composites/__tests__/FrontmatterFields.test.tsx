@@ -1,7 +1,8 @@
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { FrontmatterFields } from '../FrontmatterFields'
+import { frontmatterSchema } from '@holi/shared'
+import { FrontmatterFields, addableKey } from '../FrontmatterFields'
 
 /** The complete-a-task path, which is the one write that does not go through
  *  the document. Hoisted so the mock and the assertions share it. */
@@ -138,6 +139,41 @@ test('the last tag removed clears the key instead of writing an empty list', asy
   await user.click(screen.getByRole('button', { name: 'remove home' }))
 
   expect(onWrite.mock.calls[0]![0]).not.toContain('tags')
+})
+
+test('any key can be added as free text, below the rows', async () => {
+  const onWrite = fields('tags: [ops]\n', 'notes/meeting.md')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'add field' }))
+  await user.keyboard('source{Enter}')
+  expect(screen.getByRole('textbox', { name: 'new field value' })).toHaveFocus()
+  await user.keyboard('the standup{Enter}')
+
+  const written = onWrite.mock.calls[0]![0] as string
+  expect(written).toContain('source: the standup')
+  expect(written).toContain('tags:')
+})
+
+test('Escape closes the add row and writes nothing', async () => {
+  const onWrite = fields('tags: [ops]\n', 'notes/meeting.md')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'add field' }))
+  await user.keyboard('source{Escape}')
+
+  expect(onWrite).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: 'add field' })).toBeInTheDocument()
+})
+
+test('a key the block already has, or YAML syntax, is not addable', () => {
+  const schema = frontmatterSchema(TASK)!
+  expect(addableKey(' source ', [], schema)).toBe('source')
+  expect(addableKey('title', ['title'], schema)).toBeNull()
+  // Schema keys have their own rows; `order` is hidden, not a back door.
+  expect(addableKey('due', [], schema)).toBeNull()
+  expect(addableKey('order', [], schema)).toBeNull()
+  for (const bad of ['', 'a: b', '#x', '- x', '"x"']) expect(addableKey(bad, [], schema)).toBeNull()
 })
 
 test('done on a recurring task rolls forward instead of writing the word', async () => {

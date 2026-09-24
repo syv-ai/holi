@@ -354,6 +354,8 @@ primitives instead of a second date picker built inside the editor layer. Writes
 `editYamlMapping`, which preserves comments, key order and any nested structure this app does not
 understand.
 
+**Any key can be added** (2026-09-25). The last row is a quiet "add field" line that opens into a name input and a value input in the same two columns as the rows above, so the pair appears where it will then live. The value is free text; the schema's own keys are refused there because each already has its typed row, and so is a hidden key (`order`), which would otherwise be a back door to editing it. A name YAML would read as syntax (a colon, a leading `#`, `-`, `?` or quote) is refused where it is typed. A value is required: a bare key is a `null` in the file, which no row would draw as anything but an empty box.
+
 **The rows carry no edges, and tint under the pointer** (2026-09-25). The app keeps a dimmed `--divider` edge on form fields; the frontmatter rows are the one deliberate exception, because they are the note's metadata on the note's page and a stack of outlined boxes made the top of every note a form. `FIELD_CONTROL` goes borderless only inside `[data-frontmatter-fields]`, so the create-task dialog, which shares the date picker and recurrence field, keeps its edges. What says a value can be pressed is a neutral background tint on the whole row (`motion-respond`, `bg-muted/40`); read-only rows do not tint, since nothing there can be pressed.
 
 **The nested plain-YAML editor is the fallback, not a separate feature.** A file with **no schema**
