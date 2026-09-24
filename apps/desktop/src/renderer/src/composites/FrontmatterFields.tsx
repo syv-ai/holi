@@ -103,6 +103,29 @@ function TagsField({
         input.current?.focus()
       }}
     >
+      <Input
+        ref={input}
+        variant="bare"
+        value={draft}
+        aria-label="add a tag"
+        placeholder=""
+        // `flex-1` is what makes the box one control: the input owns every
+        // pixel the chips do not, so there is no dead part of the field. It
+        // comes BEFORE the chips so they stay at the right edge, in the column
+        // every other value ends in, and what you type lands beside them.
+        className="w-auto min-w-8 flex-1 text-right text-xs"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault()
+            commit()
+          }
+          if (e.key === 'Backspace' && draft === '' && value.length > 0) {
+            onChange(value.slice(0, -1))
+          }
+        }}
+      />
       {value.map((tag) => (
         <span
           key={tag}
@@ -120,28 +143,6 @@ function TagsField({
           </Button>
         </span>
       ))}
-      <Input
-        ref={input}
-        variant="bare"
-        value={draft}
-        aria-label="add a tag"
-        placeholder=""
-        // `flex-1` is what makes the box one control: the input owns every
-        // pixel the chips do not, so there is no dead part of the field. Its
-        // text sits at the right edge like every other value in the column.
-        className="w-auto min-w-8 flex-1 text-right text-xs"
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ',') {
-            e.preventDefault()
-            commit()
-          }
-          if (e.key === 'Backspace' && draft === '' && value.length > 0) {
-            onChange(value.slice(0, -1))
-          }
-        }}
-      />
     </div>
   )
 }
@@ -171,7 +172,14 @@ function TextField({
       value={draft ?? shown}
       aria-label={label}
       placeholder=""
-      className={cn(FIELD_CONTROL, 'text-right')}
+      // `dark:bg-transparent`: the Input primitive carries `dark:bg-input/30`,
+      // a variant, which outranks FIELD_CONTROL's bare `bg-transparent`, so the
+      // text rows were the one value in the block drawn as a filled box. With
+      // no edge to light, focus takes the app's one focus ring, the Button's.
+      className={cn(
+        FIELD_CONTROL,
+        'text-right dark:bg-transparent focus-visible:ring-1 focus-visible:ring-ring',
+      )}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={(e) => commit(e.target.value)}
       onKeyDown={(e) => {
