@@ -110,6 +110,20 @@ test('a tag is a chip, and removing one writes the rest', async () => {
   expect(written).not.toContain('home')
 })
 
+test('the tag field is one control: pressing its box puts the caret in it', async () => {
+  const onWrite = fields('status: todo\ntags: [home]\n')
+  const input = screen.getByRole('textbox', { name: 'add a tag' })
+  const user = userEvent.setup()
+
+  // The box, not the input: before, the input was a small island inside it and
+  // a press anywhere else in the field did nothing.
+  await user.click(input.parentElement!)
+  expect(input).toHaveFocus()
+
+  await user.keyboard('errand{Enter}')
+  expect(onWrite).toHaveBeenCalledWith(expect.stringContaining('errand'))
+})
+
 test('the last tag removed clears the key instead of writing an empty list', async () => {
   const onWrite = fields('status: todo\ntags: [home]\n')
   const user = userEvent.setup()

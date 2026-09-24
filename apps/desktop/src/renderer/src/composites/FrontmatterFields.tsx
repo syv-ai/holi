@@ -29,7 +29,7 @@ import {
 } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { X } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Button,
   Input,
@@ -56,8 +56,18 @@ const UNSET = '—'
  *  empty rather than say a word about being empty. */
 const UNSET_LABEL = ''
 
-/** A list value as chips, with a field to add to it. The one control here that
- *  no primitive covers, because `ChipInput` is a mail-address field. */
+/**
+ * A list value as chips, with somewhere to type more: ONE control.
+ *
+ * It used to be a field-shaped box with a 64px input hidden inside it, so the
+ * box you pressed was not the thing that took the typing and most of it did
+ * nothing. Now the box is the field: the input is bare and takes all the width
+ * the chips leave, and a press anywhere else in the box (the gaps between
+ * chips) puts the caret in it. Focus shows as the row's own tint, held.
+ *
+ * Not `ChipInput`: that is a mail-address field with validation and
+ * suggestions, and a tag is any short string.
+ */
 function TagsField({
   value,
   onChange,
@@ -66,6 +76,7 @@ function TagsField({
   onChange: (next: string[]) => void
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
+  const input = useRef<HTMLInputElement>(null)
   const commit = (): void => {
     const next = draft
       .split(',')
@@ -81,13 +92,20 @@ function TagsField({
         // `h-auto min-h-8` rather than a fixed height: this is the one control
         // whose content grows, and six tags must wrap inside its box rather
         // than out of it.
-        'flex h-auto min-h-8 flex-wrap items-center justify-end gap-1 px-2 py-1',
+        'flex h-auto min-h-8 cursor-text flex-wrap items-center justify-end gap-1 py-1',
+        'motion-respond focus-within:bg-muted/40',
       )}
+      onMouseDown={(e) => {
+        // Only the box itself: a chip's remove button handles its own press.
+        if (e.target !== e.currentTarget) return
+        e.preventDefault()
+        input.current?.focus()
+      }}
     >
       {value.map((tag) => (
         <span
           key={tag}
-          className="inline-flex items-center gap-1 rounded-full border border-input px-2 py-px text-[10px]"
+          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-px text-[10px]"
         >
           {tag}
           <Button
@@ -102,15 +120,15 @@ function TagsField({
         </span>
       ))}
       <Input
+        ref={input}
+        variant="bare"
         value={draft}
         aria-label="add a tag"
-        // Empty when empty. It used to say "none", which is a word occupying
-        // the space the absence already says.
-        placeholder={value.length === 0 ? '' : '+'}
-        // `dark:bg-transparent` as well as the bare one: the Input primitive
-        // carries `dark:bg-input/30`, which is a variant and so outranks an
-        // unprefixed override — the empty field read as a filled chip.
-        className="h-5 w-16 border-transparent bg-transparent px-1 text-xs shadow-none focus-visible:border-ring md:text-xs dark:bg-transparent"
+        placeholder=""
+        // `flex-1` is what makes the box one control: the input owns every
+        // pixel the chips do not, so there is no dead part of the field. Its
+        // text sits at the right edge like every other value in the column.
+        className="w-auto min-w-8 flex-1 text-right text-xs"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
