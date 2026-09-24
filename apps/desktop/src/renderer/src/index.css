@@ -591,6 +591,36 @@
   }
 }
 
+/* ── Solo note column (#13) ───────────────────────────────────────────
+ * When one note is the only thing open, the notes editor centres its column
+ * (`isSoloNote`; `EditorPane` sets `data-solo-column`). Otherwise it is anchored
+ * left, for the reason `editor/theme.ts` gives at `.cm-content`.
+ *
+ * The child combinators are load-bearing: the frontmatter widget nests a whole
+ * CodeMirror inside the note, and its `.cm-content` must not centre too.
+ *
+ * The change between the two is A, a slide on the `--motion-slide` pace: the
+ * column travels up to half a wide pane, which is the distance that token was
+ * chosen for. It is a FLIP, played by `EditorPane`: the margin changes at once
+ * and this transform brings the column in from where it was, because inside
+ * CodeMirror only paint may move. The caret and selection layers are drawn
+ * from measured positions, so they are hidden for the trip and redrawn where
+ * the column lands. Reduced motion never adds the class (JS gate). */
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content {
+  margin-inline: auto;
+}
+.holi-column-sliding > .cm-editor > .cm-scroller > .cm-content {
+  animation: holi-column-slide var(--motion-slide) var(--ease-slide);
+}
+.holi-column-sliding > .cm-editor > .cm-scroller > .cm-layer {
+  visibility: hidden;
+}
+@keyframes holi-column-slide {
+  from {
+    transform: translateX(var(--column-from));
+  }
+}
+
 /* ── K · acknowledge ──────────────────────────────────────────────────
  * One beat, once, for a discrete act the reader committed. Applied and
  * cleaned up by `lib/use-ack.ts`, which also handles the replay-on-retrigger

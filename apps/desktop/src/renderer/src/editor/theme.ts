@@ -210,6 +210,10 @@ export const editorTheme = EditorView.baseTheme({
    *
    * The horizontal padding is the other half: with the pane narrower than the
    * column, `maxWidth` stops applying and the text ran flush to both edges.
+   *
+   * One exception, and it is kept out of this base on purpose: a note that is
+   * the only thing open centres (#13, `index.css` §Solo note column), because
+   * then nothing can open beside it without the user asking for a new layout.
    */
   '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
   /**

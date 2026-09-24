@@ -71,6 +71,10 @@ export interface PaneViewProps {
   focused: boolean
   /** Closing: play the exit, and stop taking input while it runs. */
   leaving?: boolean
+  /** This pane's one note is the only thing open (`isSoloNote`), so its
+   *  column centres (#13). Only the workspace can know it, which is why it is
+   *  handed in rather than worked out from `pane`. */
+  solo?: boolean
   /** Clicking anywhere in the pane focuses it — including in its content, so
    *  putting a caret in an editor moves the focus with it. */
   onFocus: () => void
@@ -107,6 +111,7 @@ export function PaneView({
   pane,
   focused,
   leaving = false,
+  solo = false,
   onFocus,
   onSelect,
   onPin,
@@ -223,6 +228,7 @@ export function PaneView({
                 // plain stack — no wiki-links, no frontmatter, syntax
                 // highlighting by extension. Markdown notes keep the full editor.
                 plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
+                centred={solo}
                 // FR-19: a file the running reconcile is resolving opens locked.
                 readOnly={tab?.kind === 'note' && isLockedForReconcile(syncState, tab.path)}
                 onOpenNote={onOpenNote}

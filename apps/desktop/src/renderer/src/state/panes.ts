@@ -18,6 +18,7 @@
  * a rule that was already there — see `findTab`.
  */
 
+import { fileKind } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
 
@@ -454,6 +455,25 @@ export function activeTab(workspace: Workspace): Tab | null {
   const pane = workspace.panes[workspace.active]
   if (pane === undefined || pane.active < 0) return null
   return pane.tabs[pane.active] ?? null
+}
+
+/**
+ * Whether one note is the only thing on screen: one pane, one tab, and that tab
+ * a markdown file (a note or a task file, which open in the same editor, D96).
+ *
+ * This is when the notes editor centres its column (#13). `theme.ts` explains
+ * why the column is otherwise anchored left: a centred column moves whenever
+ * the pane changes width, and a panel appearing beside you should narrow the
+ * text, not slide it. Solo is the layout where nothing can appear beside the
+ * note on its own, so any second tab or pane ends it. The explorer and the
+ * sidebars do not: their width is only ever changed by the user dragging it.
+ */
+export function isSoloNote(workspace: Workspace): boolean {
+  if (workspace.panes.length !== 1) return false
+  const tabs = workspace.panes[0]!.tabs
+  if (tabs.length !== 1) return false
+  const tab = tabs[0]!
+  return tab.kind === 'note' && fileKind(tab.path) === 'markdown'
 }
 
 function updatePane(workspace: Workspace, fn: (pane: Pane) => Pane): Workspace {

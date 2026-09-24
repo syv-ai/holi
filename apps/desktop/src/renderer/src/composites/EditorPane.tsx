@@ -21,14 +21,14 @@ import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import type { Task } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
 import { syntaxValid } from '@/editor/languages'
 import type { AskAgentSeam } from '@/editor/askAgent'
 import type { LinkNav } from '@/editor/links'
 import type { MentionData } from '@/editor/mentions'
-import { playOnce } from '@/lib/motion'
+import { playOnce, prefersReducedMotion } from '@/lib/motion'
 import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
@@ -41,6 +41,61 @@ import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
  *  purpose: the file has to be there before the commit timer decides to look. */
 const SAVE_QUIET_MS = 600
 
+/** On the host while the column is sliding between its two anchors. `index.css`
+ *  §Solo note column has the animation it switches on. */
+const COLUMN_SLIDING = 'holi-column-sliding'
+
+/**
+ * Where the column's left edge is laid out on screen, ignoring any slide in
+ * flight: `offsetLeft` is layout, and a transform is not. Read against the
+ * offset parent's rect so a pane that moved (a split, the explorer) is counted.
+ */
+function columnLeft(view: EditorView): number | null {
+  const content = view.contentDOM
+  const parent = content.offsetParent
+  return parent === null ? null : parent.getBoundingClientRect().left + content.offsetLeft
+}
+
+/**
+ * Redraw the caret and the selection where the column now is.
+ *
+ * CodeMirror draws both in layers beside the content, at positions it measured,
+ * and it re-measures them when the editor's WIDTH changes. A column that moves
+ * inside an editor of the same width (a second tab opening, not a split) changes
+ * nothing it checks, so the caret stays where the text used to be. Setting the
+ * selection to itself is the one update both layers answer to.
+ */
+function redrawLayers(view: EditorView): void {
+  view.dispatch({ selection: view.state.selection })
+}
+
+/**
+ * Move the column to its anchor, sliding it in from `from` when there is a
+ * distance to cover. Returns where it is now laid out, for the next slide.
+ *
+ * A FLIP: the margin has already changed and the column is already laid out at
+ * its new anchor; `index.css` §Solo note column plays a transform from `from`.
+ * The caret and selection layers are hidden for the trip and redrawn where the
+ * column lands (the host's `animationend`, in `EditorPane`), because a measure
+ * mid-slide would pin them to wherever the transform happened to be.
+ */
+function slideColumn(host: HTMLElement, view: EditorView, from: number | null): number | null {
+  const to = columnLeft(view)
+  // Removed on both paths: it also ends a slide that was sent back before it
+  // arrived, which would otherwise leave the layers hidden.
+  host.classList.remove(COLUMN_SLIDING)
+  if (from === null || to === null || Math.abs(from - to) < 1 || prefersReducedMotion()) {
+    redrawLayers(view)
+    return to
+  }
+  host.style.setProperty('--column-from', `${from - to}px`)
+  // Not `playOnce`: its listener waits for an animation on the host itself, and
+  // this one runs on the content inside it. The reflow is the same restart.
+  void host.offsetWidth
+  host.classList.add(COLUMN_SLIDING)
+  return to
+}
+
 export function EditorPane({
   path,
   onOpenNote,
@@ -48,6 +103,7 @@ export function EditorPane({
   onEdit,
   plain = false,
   readOnly = false,
+  centred = false,
 }: {
   path: string | null
   onOpenNote: (path: string) => void
@@ -64,6 +120,9 @@ export function EditorPane({
    *  and a keystroke landing between the agent's read and its write is a
    *  resolution built on a file that moved. */
   readOnly?: boolean
+  /** One note is the only thing open (`isSoloNote`): centre the column, and
+   *  slide it when that starts or stops (#13). */
+  centred?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -77,6 +136,12 @@ export function EditorPane({
   /** Whether `onEdit` has fired for this open note — reset per open, so the
    *  promote-on-edit rule fires once, not once per keystroke. */
   const editedRef = useRef(false)
+  /** Where the column was last laid out on screen, for its slide (see below). */
+  const columnFrom = useRef<number | null>(null)
+  /** The path the current view was built for, and whether a change of anchor
+   *  is waiting for the next view to be built to play (see below). */
+  const viewPath = useRef<string | null>(null)
+  const slidePending = useRef(false)
 
   // Read on demand by the editor's pull-based seams, so a snapshot arriving
   // mid-edit does not rebuild the EditorView and drop the caret.
@@ -216,6 +281,11 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
+      viewPath.current = path
+      columnFrom.current = slidePending.current
+        ? slideColumn(host, view, columnFrom.current)
+        : columnLeft(view)
+      slidePending.current = false
       // Arrive when the DOCUMENT does, not when the tab changed.
       //
       // The pane's own fade fires the moment you pick a different tab, but this
@@ -256,6 +326,9 @@ export function EditorPane({
 
     return () => {
       disposed = true
+      // A slide still running belongs to this view. Left on the host, it would
+      // play again on the next one's content the moment it mounted.
+      host.classList.remove(COLUMN_SLIDING)
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
@@ -274,6 +347,74 @@ export function EditorPane({
     // what you see. The teardown flushes first, so a dirty buffer is written
     // before the lock rather than lost to it.
   }, [path, remote, plain, readOnly])
+
+  /**
+   * The column's slide between its two anchors (#13).
+   *
+   * The centring is CSS: `margin-inline: auto` under `data-solo-column`
+   * (`index.css` §Solo note column). The margin cannot be what moves, because
+   * `auto` does not interpolate and because inside CodeMirror motion is paint
+   * only: animating layout drags its measure loop into every frame. So
+   * `slideColumn` plays a transform in from where the column was.
+   *
+   * "Where it was" has to be known before the change, and a layout effect runs
+   * after it, often with the pane already narrowed by a split in the same
+   * commit. So `columnFrom` keeps the last laid-out position as it goes: when
+   * the view is built, after each slide, and whenever the host resizes. The
+   * slide plays only on a change of anchor, so dragging the explorer while solo
+   * keeps the column centred 1:1 with no easing: only the margin follows it.
+   *
+   * **Solo usually ends by opening another note**, and then the view on screen
+   * is about to be replaced by one that does not exist yet (it is built after
+   * an IPC read). Sliding the old one would animate text nobody will see, so
+   * the slide waits for the new view and plays from where the old column was:
+   * what moves is the column, whichever note is in it.
+   */
+  const hasHost = path !== null
+
+  useEffect(() => {
+    const host = hostRef.current
+    if (host === null) return
+    const landed = (e: AnimationEvent) => {
+      if (e.animationName !== 'holi-column-slide') return
+      host.classList.remove(COLUMN_SLIDING)
+      const view = viewRef.current
+      if (view !== null) redrawLayers(view)
+    }
+    host.addEventListener('animationend', landed)
+    // Absent in jsdom, where there is no layout to follow anyway.
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            const view = viewRef.current
+            if (view !== null) columnFrom.current = columnLeft(view)
+          })
+    observer?.observe(host)
+    return () => {
+      host.removeEventListener('animationend', landed)
+      observer?.disconnect()
+    }
+  }, [hasHost])
+
+  const firstAnchor = useRef(true)
+  useLayoutEffect(() => {
+    if (firstAnchor.current) {
+      firstAnchor.current = false
+      return
+    }
+    const host = hostRef.current
+    const view = viewRef.current
+    if (host === null) return
+    if (view === null || viewPath.current !== path) {
+      slidePending.current = true
+      return
+    }
+    columnFrom.current = slideColumn(host, view, columnFrom.current)
+    // On a change of anchor and nothing else. `path` is read to tell whether the
+    // view is about to be replaced; a new path on its own is not a reason to move.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [centred])
 
   /**
    * The vault changed somewhere. Re-read our own file and decide.
@@ -335,5 +476,11 @@ export function EditorPane({
       </div>
     )
   }
-  return <div ref={hostRef} className="min-w-0 flex-1 overflow-hidden" />
+  return (
+    <div
+      ref={hostRef}
+      className="min-w-0 flex-1 overflow-hidden"
+      data-solo-column={centred || undefined}
+    />
+  )
 }

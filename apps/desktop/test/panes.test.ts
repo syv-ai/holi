@@ -15,6 +15,7 @@ import {
   closingTabRemovesPane,
   closeTabsForPaths,
   emptyWorkspace,
+  isSoloNote,
   openApp,
   openBoard,
   openBeside,
@@ -322,6 +323,46 @@ describe('splitPane', () => {
     expect(w.panes).toHaveLength(3)
     expect(layout(w)).toEqual([['a.md', 'b.md'], [], ['c.md']])
     expect(w.active).toBe(1)
+  })
+})
+
+describe('isSoloNote', () => {
+  // Issue #13: a lone note centres its column. The rule is "centre only when
+  // nothing can open beside it on its own", so anything that makes a second
+  // thing on screen ends it — and nothing else does.
+  it('is one pane holding one note tab, preview or pinned', () => {
+    expect(isSoloNote(openPreview(emptyWorkspace(), 'a.md'))).toBe(true)
+    expect(isSoloNote(openPinned(emptyWorkspace(), 'a.md'))).toBe(true)
+  })
+
+  it('counts a task file, which opens in the same editor (D96)', () => {
+    expect(isSoloNote(openPreview(emptyWorkspace(), 'projects/task.fix-login.md'))).toBe(true)
+  })
+
+  it('is not an empty workspace', () => {
+    expect(isSoloNote(emptyWorkspace())).toBe(false)
+  })
+
+  it('ends with a second tab of any kind', () => {
+    const one = openPinned(emptyWorkspace(), 'a.md')
+    expect(isSoloNote(openPinned(one, 'b.md'))).toBe(false)
+    expect(isSoloNote(openBoard(one))).toBe(false)
+    expect(isSoloNote(openApp(one, 'crm'))).toBe(false)
+    expect(isSoloNote(openTab(one, { kind: 'session', id: 's1' }))).toBe(false)
+  })
+
+  it('ends with a split, even while the new pane is still empty', () => {
+    expect(isSoloNote(splitPane(openPreview(emptyWorkspace(), 'a.md')))).toBe(false)
+  })
+
+  it('is only a markdown note: a PDF, an image or a plain text file is not one', () => {
+    for (const path of ['a.pdf', 'b.png', 'c.json', 'd.docx']) {
+      expect(isSoloNote(openPreview(emptyWorkspace(), path))).toBe(false)
+    }
+  })
+
+  it('is not a lone singleton tab', () => {
+    expect(isSoloNote(openBoard(emptyWorkspace()))).toBe(false)
   })
 })
 

@@ -115,6 +115,12 @@ The file under the editor can change for three reasons: **the agent wrote it**, 
 
 The section still matters because two other PRDs depend on it by name: [`vault-apps.md`](vault-apps.md) §Tabs needs non-note tab kinds, and [`../architecture.md`](../architecture.md) states the constraint.
 
+### A lone note centres
+
+**The column is anchored left, except when one note is the only thing open** ([`#13`](https://github.com/syv-ai/holi/issues/13), 2026-09-24). Left is the rule because a centred column moves whenever its pane changes width, so a panel appearing beside the text would slide the words under the caret; `editor/theme.ts` has the history. Solo is `isSoloNote` in `state/panes.ts`: one pane, one tab, and that tab a markdown file, so a note or a task file (D96), preview or pinned. Any second tab of any kind, or a split, ends it. The explorer and the sidebars do not, because the only thing that changes their width is the user dragging it, and the column stays centred through that drag with no easing. The measure stays 48rem; only the position changes.
+
+**The change between the two slides**, on the `--motion-slide` pace (A, D98). It cannot be a transition on the margin: `auto` does not interpolate, and inside CodeMirror only paint may move. So it is a FLIP in `EditorPane`: `margin-inline: auto` applies at once and a transform plays the column in from where it was, remembered as a laid-out position so a split that narrows the pane in the same commit still slides from the right place. Solo usually ends by opening another note, whose view is built after an IPC read, so the slide waits for that view and plays from where the old column was. The caret and selection layers are hidden for the trip and redrawn by setting the selection to itself when the column lands, since CodeMirror re-measures them on a width change and a column moving inside the same width is not one.
+
 ### Tabs — preview vs pinned
 
 VS Code's two-state model, ported:
