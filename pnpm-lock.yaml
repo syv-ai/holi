@@ -71,6 +71,12 @@ importers:
       '@codemirror/view':
         specifier: ^6.43.6
         version: 6.43.6
+      '@embedpdf/engines':
+        specifier: 2.15.1
+        version: 2.15.1(preact@10.29.8)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(svelte@5.57.1(@typescript-eslint/types@8.65.0))(vue@3.5.43(typescript@5.9.3))
+      '@embedpdf/models':
+        specifier: 2.15.1
+        version: 2.15.1
       '@embedpdf/pdfium':
         specifier: 2.15.1
         version: 2.15.1

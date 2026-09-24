@@ -27,6 +27,8 @@
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
+    "@embedpdf/engines": "2.15.1",
+    "@embedpdf/models": "2.15.1",
     "@embedpdf/pdfium": "2.15.1",
     "@embedpdf/react-pdf-viewer": "2.15.1",
     "@fontsource/caveat": "^5.3.0",
