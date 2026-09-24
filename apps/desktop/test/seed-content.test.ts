@@ -71,6 +71,7 @@ describe('SEED_FILES', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/memory/SKILL.md',
+      '.claude/skills/pdf-comments/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
@@ -184,6 +185,12 @@ describe('SEED_FILES', () => {
 
   it('the using-tasks skill is MANAGED, so a correction reaches existing vaults', () => {
     expect(MANAGED_FILES['.claude/skills/using-tasks/SKILL.md']).toBeDefined()
+  })
+
+  it('seeds a managed pdf-comments skill naming the command and its flag', () => {
+    const skill = MANAGED_FILES['.claude/skills/pdf-comments/SKILL.md']!
+    expect(skill).toMatch(/^---\nname: pdf-comments\n/)
+    expect(skill).toContain('holi pdf comments <path> --json')
   })
 
   it('.holi/vault is the durable vault marker, and not a document', () => {
@@ -525,12 +532,20 @@ describe('settingsWithRequired', () => {
     // Untouched
     expect(after.hooks.PostToolUse[0].hooks[0].command).toBe('format')
     expect(after.hooks.UserPromptSubmit[0].hooks[0].command).toBe('mine')
-    expect(after.permissions.allow).toEqual(['Bash(ls:*)'])
+    expect(after.permissions.allow).toEqual(['Bash(ls:*)', 'Bash(holi pdf comments:*)'])
     expect(after.permissions.deny).toEqual(['Bash(sudo:*)'])
     expect(after.model).toBe('opus')
     // Added, not replaced
     expect(after.permissions.ask).toContain('Bash(rm:*)')
     expect(after.permissions.ask).toContain('Bash(holi-google send:*)')
+  })
+
+  it('allows the read-only holi pdf comments without a prompt, in a vault that predates it', () => {
+    const before = JSON.parse(SEED_FILES['.claude/settings.json']!) as Record<string, any>
+    delete before.permissions.allow
+    const after = parse(settingsWithRequired(JSON.stringify(before)))
+    expect(after.permissions.allow).toEqual(['Bash(holi pdf comments:*)'])
+    expect(after.permissions.ask).toEqual(before.permissions.ask)
   })
 
   it('is null when the gate is already wired — no pointless rewrite', () => {
@@ -699,6 +714,7 @@ describe('the managed / once split (D75)', () => {
       '.claude/skills/gmail-calendar/SKILL.md',
       '.claude/skills/md-to-pdf/SKILL.md',
       '.claude/skills/memory/SKILL.md',
+      '.claude/skills/pdf-comments/SKILL.md',
       '.claude/skills/theme/SKILL.md',
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',

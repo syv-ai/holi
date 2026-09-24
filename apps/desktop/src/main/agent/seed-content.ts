@@ -52,6 +52,7 @@ import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
 import vaultAppsSkill from './skills/vault-apps/SKILL.md?raw'
 import usingTasksSkill from './skills/using-tasks/SKILL.md?raw'
 import memorySkill from './skills/memory/SKILL.md?raw'
+import pdfCommentsSkill from './skills/pdf-comments/SKILL.md?raw'
 import { BRAND_BINARIES } from './templates/_brand/binary-assets.generated'
 import brandTyp from './templates/_brand/brand.typ?raw'
 import figuresTyp from './templates/_brand/figures.typ?raw'
@@ -242,6 +243,9 @@ const SETTINGS_JSON =
           'Bash(holi-google send:*)',
           'Bash(holi-google reply:*)',
         ],
+        // Read-only Holi commands, which ask nothing because they change
+        // nothing (D106). Merged into existing vaults like `ask` is.
+        allow: ['Bash(holi pdf comments:*)'],
       },
     },
     null,
@@ -355,6 +359,8 @@ export const MANAGED_FILES: Record<string, string> = {
    * vault-apps skill.
    */
   '.claude/skills/memory/SKILL.md': memorySkill,
+  /** `holi pdf comments` (D106): what it prints, and that it only reads. */
+  '.claude/skills/pdf-comments/SKILL.md': pdfCommentsSkill,
 }
 
 /**
@@ -491,7 +497,7 @@ export function settingsWithRequired(existing: string | null): string | null {
 
   const required = JSON.parse(SETTINGS_JSON) as {
     hooks: { PreToolUse: unknown[]; PostToolUse: unknown[]; SessionStart: unknown[] }
-    permissions: { ask: string[] }
+    permissions: { ask: string[]; allow: string[] }
     disableClaudeAiConnectors: boolean
     autoMemoryEnabled: boolean
   }
@@ -568,6 +574,16 @@ export function settingsWithRequired(existing: string | null): string | null {
   const missing = required.permissions.ask.filter((rule) => !ask.includes(rule))
   if (missing.length > 0) {
     permissions.ask = [...ask, ...missing]
+    settings.permissions = permissions
+    changed = true
+  }
+
+  // And the read-only commands that need no prompt, for the same reason: a rule
+  // seeded only at creation would reach no vault that exists today.
+  const allow = Array.isArray(permissions.allow) ? (permissions.allow as string[]) : []
+  const missingAllow = required.permissions.allow.filter((rule) => !allow.includes(rule))
+  if (missingAllow.length > 0) {
+    permissions.allow = [...allow, ...missingAllow]
     settings.permissions = permissions
     changed = true
   }
