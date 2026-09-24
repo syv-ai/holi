@@ -886,10 +886,11 @@ export const markdownHighlighting = syntaxHighlighting(markdownHighlightStyle)
  * **What stays mono inside a proportional document:**
  * - fenced code (`.cm-code-line`) and inline code (`.cm-inline-code`), which
  *   carry their own decoration classes already;
- * - the frontmatter widget (`.cm-fm`), including the nested YAML editor it
- *   hosts — that editor never includes `editorTheme` itself, but its
- *   `.cm-scroller` is a DOM descendant of this one's, so the rule reaches it
- *   and has to be told not to.
+ * - the nested YAML editor the frontmatter widget falls back to, which is code.
+ *   It never includes `editorTheme` itself, but its `.cm-scroller` is a DOM
+ *   descendant of this one's, so the rule reaches it and has to be told not to.
+ *   The widget's rows and summary are NOT code: they are the note's metadata
+ *   and read in the note's own face, so `.cm-fm` itself simply inherits.
  *
  * Tables come along too. `codemirror-markdown-tables` paints its cells from
  * `--tbl-style-font-family`, not from the inherited font, so the property has
@@ -903,7 +904,6 @@ export const notesFontTheme = EditorView.theme({
   '.cm-scroller': { fontFamily: `var(--editor-font, ${MONO})` },
   '.cm-code-line': { fontFamily: MONO },
   '.cm-inline-code': { fontFamily: MONO },
-  '.cm-fm': { fontFamily: MONO },
   '.cm-fm .cm-scroller': { fontFamily: MONO },
   // The ask popover is about a passage of prose, so it is written in the same
   // face. It reaches here because CodeMirror mounts a tooltip as a child of
