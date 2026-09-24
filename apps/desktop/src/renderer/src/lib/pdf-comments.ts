@@ -17,6 +17,9 @@ import {
 
 export const ASK_AGENT_THREAD = 'holi:ask-agent-thread'
 export const ASK_AGENT_ALL = 'holi:ask-agent-all'
+/** With no comments at all the button is still the way into a chat about the
+ *  PDF, so it names the PDF rather than going dark. */
+export const ASK_AGENT_PDF = 'holi:ask-agent-pdf'
 
 interface Rect {
   origin: { x: number; y: number }

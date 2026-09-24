@@ -11,7 +11,7 @@
  * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
  * consumes this, `test/pdf-viewer-config.test.ts` pins it.
  */
-import { ASK_AGENT_ALL, ASK_AGENT_THREAD } from './pdf-comments'
+import { ASK_AGENT_ALL, ASK_AGENT_PDF, ASK_AGENT_THREAD } from './pdf-comments'
 import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
 
 /**
@@ -354,8 +354,9 @@ const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
 ]
 
 /** Ask agent (D106), after the viewer's comments button because it asks about
- *  what that panel lists. Two commands, one visible at a time: a command's
- *  label is fixed, and the label says whether it is this comment or all. */
+ *  what that panel lists. Three commands, one visible at a time, because a
+ *  command's label is fixed and the label says what is asked about: this
+ *  comment, all of them, or, with none, the PDF itself. */
 const ASK_BUTTONS: readonly PdfToolbarItem[] = [
   {
     type: 'command-button',
@@ -367,6 +368,12 @@ const ASK_BUTTONS: readonly PdfToolbarItem[] = [
     type: 'command-button',
     id: 'ask-agent-all-button',
     commandId: ASK_AGENT_ALL,
+    variant: 'icon',
+  },
+  {
+    type: 'command-button',
+    id: 'ask-agent-pdf-button',
+    commandId: ASK_AGENT_PDF,
     variant: 'icon',
   },
 ]

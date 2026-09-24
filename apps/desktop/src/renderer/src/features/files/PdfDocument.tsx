@@ -82,6 +82,7 @@ import { askPrompt } from '@/editor/askAgent'
 import { cn } from '@/lib/cn'
 import {
   ASK_AGENT_ALL,
+  ASK_AGENT_PDF,
   ASK_AGENT_THREAD,
   selectedAnnotationId,
   threadOf,
@@ -305,6 +306,8 @@ export function PdfDocument({
     anchor: DOMRect
     documentId: string
     threadId: string | null
+    /** The label of the button that opened it, for a screen reader. */
+    label: string
   } | null>(null)
   const sendToAgent = useSetAtom(sendToAgentAtom)
   const askTargets = useAtomValue(askTargetsAtom)
@@ -538,14 +541,21 @@ export function PdfDocument({
         })
       }
 
-      // Ask agent (D106), about the selected comment's thread or about all of
-      // them: two commands whose `visible` swaps, like the read-only pair,
-      // because a command's label is fixed. Each opens Holi's popover under its
-      // own button, found in the shadow root by the id the toolbar CSS uses.
+      // Ask agent (D106), about the selected comment's thread, about all of
+      // them, or with none about the PDF itself, so the button is always a way
+      // into a chat: three commands whose `visible` swaps, like the read-only
+      // pair, because a command's label is fixed. Each opens Holi's popover
+      // under its own button, found in the shadow root by the id the toolbar
+      // CSS uses.
       if (commands !== null) {
         const selected = ({ state, documentId }: CommandContext) =>
           threadOf(threadsInViewer(state, documentId), selectedAnnotationId(state, documentId))
-        const openAsk = (documentId: string, buttonId: string, threadId: string | null) => {
+        const openAsk = (
+          documentId: string,
+          buttonId: string,
+          threadId: string | null,
+          label: string,
+        ) => {
           const item = viewerRef.current?.container?.shadowRoot?.querySelector(
             `[data-epdf-i="${buttonId}"]`,
           )
@@ -554,22 +564,36 @@ export function PdfDocument({
             item ??
             hostRef.current
           )?.getBoundingClientRect()
-          if (box !== undefined) setAsk({ anchor: box, documentId, threadId })
+          if (box !== undefined) setAsk({ anchor: box, documentId, threadId, label })
         }
         commands.registerCommand({
           id: ASK_AGENT_THREAD,
           label: 'Ask agent about this comment',
           icon: 'holi-sparkles',
           visible: (c) => selected(c) !== null,
-          action: (c) => openAsk(c.documentId, 'ask-agent-thread-button', selected(c)?.id ?? null),
+          action: (c) =>
+            openAsk(
+              c.documentId,
+              'ask-agent-thread-button',
+              selected(c)?.id ?? null,
+              'Ask agent about this comment',
+            ),
         })
         commands.registerCommand({
           id: ASK_AGENT_ALL,
           label: 'Ask agent about all comments',
           icon: 'holi-sparkles',
-          visible: (c) => selected(c) === null,
-          disabled: (c) => threadsInViewer(c.state, c.documentId).length === 0,
-          action: (c) => openAsk(c.documentId, 'ask-agent-all-button', null),
+          visible: (c) => selected(c) === null && threadsInViewer(c.state, c.documentId).length > 0,
+          action: (c) =>
+            openAsk(c.documentId, 'ask-agent-all-button', null, 'Ask agent about all comments'),
+        })
+        commands.registerCommand({
+          id: ASK_AGENT_PDF,
+          label: 'Ask agent about this PDF',
+          icon: 'holi-sparkles',
+          visible: (c) => threadsInViewer(c.state, c.documentId).length === 0,
+          action: (c) =>
+            openAsk(c.documentId, 'ask-agent-pdf-button', null, 'Ask agent about this PDF'),
         })
       }
 
@@ -728,9 +752,7 @@ export function PdfDocument({
       )}
       <AskAgentPopover
         anchor={ask?.anchor ?? null}
-        label={
-          ask?.threadId == null ? 'Ask agent about all comments' : 'Ask agent about this comment'
-        }
+        label={ask?.label ?? ''}
         targets={{ sessions: askTargets, initial: defaultTarget }}
         onClose={() => setAsk(null)}
         onSend={async (instruction, target) => {
@@ -747,7 +769,11 @@ export function PdfDocument({
           if (ask.threadId !== null && threads.length === 0) {
             return { ok: false, message: 'That comment is not in the PDF any more.' }
           }
-          const text = askPrompt(instruction, formatCommentThreads(path, threads))
+          // No comments: the PDF alone, named the way a note's ask names its
+          // note, so the chat starts from the file.
+          const about =
+            threads.length === 0 ? `[From ${path}]` : formatCommentThreads(path, threads)
+          const text = askPrompt(instruction, about)
           return sendToAgent({ text, target })
         }}
       />

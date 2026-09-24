@@ -411,6 +411,7 @@ test('puts Signatures on the top bar', async () => {
     // After the comments button, which this trimmed toolbar does not have.
     'ask-agent-thread-button',
     'ask-agent-all-button',
+    'ask-agent-pdf-button',
   ])
   // The commands those buttons name exist before the toolbar asks for them.
   expect(seam.registerCommand.mock.invocationCallOrder[0]).toBeLessThan(
@@ -861,11 +862,18 @@ test('asks the agent about the selected comment, or about all of them, pasting a
   expect(thread.label).toBe('Ask agent about this comment')
   expect(all.label).toBe('Ask agent about all comments')
 
-  // Nothing selected: the button asks about all, and is off with no comments.
+  const pdf = cmd('holi:ask-agent-pdf')
+  expect(pdf.label).toBe('Ask agent about this PDF')
+
+  // Nothing selected: the button asks about all.
   expect(thread.visible(ctx(stateWith(null)))).toBe(false)
   expect(all.visible(ctx(stateWith(null)))).toBe(true)
-  expect(all.disabled!(ctx(stateWith(null)))).toBe(false)
-  expect(all.disabled!(ctx(stateWith(null, [objects[3]!])))).toBe(true)
+  expect(pdf.visible(ctx(stateWith(null)))).toBe(false)
+  // No comments at all (a link is not one): still a way in, about the PDF.
+  const none = stateWith(null, [objects[3]!])
+  expect(all.visible(ctx(none))).toBe(false)
+  expect(pdf.visible(ctx(none))).toBe(true)
+  expect(pdf.disabled).toBeUndefined()
   // A comment selected, or a reply in its thread: this comment.
   expect(thread.visible(ctx(stateWith('h')))).toBe(true)
   expect(all.visible(ctx(stateWith('h')))).toBe(false)
@@ -921,6 +929,19 @@ test('asks the agent about the selected comment, or about all of them, pasting a
   expect((seam.send.mock.calls[1]![0] as { text: string }).text).toMatch(
     /^\[From docs\/case\.pdf, 1 comment\]\n\nPage 4, highlight/,
   )
+
+  // No comments: the PDF alone, after what was typed, into a session of your
+  // choosing, and landing there is sendToAgent's job.
+  seam.store = none
+  act(() => pdf.action(ctx(seam.store)))
+  const empty = await screen.findByLabelText(/Instructions for the agent/)
+  fireEvent.change(empty, { target: { value: 'What does this say about pricing?' } })
+  fireEvent.keyDown(empty, { key: 'Enter', metaKey: true })
+  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(3))
+  expect(seam.send.mock.calls[2]![0]).toEqual({
+    text: 'What does this say about pricing?\n\n[From docs/case.pdf]',
+    target: 'new',
+  })
 })
 
 test('keeps the text and says why when an ask is refused', async () => {
