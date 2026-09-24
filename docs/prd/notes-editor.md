@@ -354,6 +354,8 @@ primitives instead of a second date picker built inside the editor layer. Writes
 `editYamlMapping`, which preserves comments, key order and any nested structure this app does not
 understand.
 
+**The rows carry no edges, and tint under the pointer** (2026-09-25). The app keeps a dimmed `--divider` edge on form fields; the frontmatter rows are the one deliberate exception, because they are the note's metadata on the note's page and a stack of outlined boxes made the top of every note a form. `FIELD_CONTROL` goes borderless only inside `[data-frontmatter-fields]`, so the create-task dialog, which shares the date picker and recurrence field, keeps its edges. What says a value can be pressed is a neutral background tint on the whole row (`motion-respond`, `bg-muted/40`); read-only rows do not tint, since nothing there can be pressed.
+
 **The nested plain-YAML editor is the fallback, not a separate feature.** A file with **no schema**
 gets it — `.claude/` and the agent surface carry a contract of their own, and this app drawing rows
 for it would be inventing their shape — and so does any file whose frontmatter **will not parse as a

@@ -319,7 +319,7 @@ export function FrontmatterFields({
         </FieldRow>
       )}
       {frontmatterRows(schema, Object.keys(values)).map((field) => (
-        <FieldRow key={field.key} label={field.key}>
+        <FieldRow key={field.key} label={field.key} hover>
           {control(field)}
         </FieldRow>
       ))}

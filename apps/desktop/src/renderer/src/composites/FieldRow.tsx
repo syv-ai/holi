@@ -12,6 +12,7 @@
  * `basis-24` rather than the settings row's `basis-48`: a frontmatter key is one
  * word, not a question with a sentence underneath it.
  */
+import { cn } from '@/lib/cn'
 import { Tooltip } from '@/primitives'
 
 /**
@@ -32,7 +33,15 @@ export const FIELD_CONTROL =
   // `md:text-sm`, and a responsive variant outranks an unprefixed override — so
   // the one control in the block that is an input rendered its text at 14px
   // while every button beside it rendered at 12.
-  'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-xs font-normal md:text-xs'
+  'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-xs font-normal md:text-xs ' +
+  // **No edge inside a note's frontmatter**, the one place fields go without
+  // it. The app keeps a dimmed edge on form fields, but these rows are the
+  // note's metadata sitting on the note's page, and six outlined boxes made
+  // the top of every note a form. The row's hover tint (`FieldRow`'s `hover`)
+  // is what says a value can be pressed. Scoped by where the control IS rather
+  // than by a prop, because the date picker and recurrence field are shared
+  // with the create-task dialog, which keeps its edges.
+  'in-data-frontmatter-fields:border-transparent'
 
 /**
  * A value that is not set.
@@ -51,15 +60,24 @@ export const FIELD_READONLY = 'truncate px-3 text-xs text-muted-foreground'
 export function FieldRow({
   label,
   title,
+  hover = false,
   children,
 }: {
   label: string
   /** Tooltip text, when the label alone does not say enough. Defaults to it. */
   title?: string
+  /** Tint the row under the pointer. Off by default: a row nested inside
+   *  another (the recurrence field's) would tint twice. */
+  hover?: boolean
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-0.5">
+    <div
+      className={cn(
+        'flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md px-1 py-0.5',
+        hover && 'motion-respond hover:bg-muted/40',
+      )}
+    >
       <Tooltip content={title ?? label}>
         <span className="min-w-0 shrink-0 basis-24 truncate text-xs text-muted-foreground">
           {label}
