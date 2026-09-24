@@ -20,6 +20,15 @@ function PopoverTrigger(
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
+/** What the content is placed against when that is not the trigger: an element,
+ *  or a `virtualRef` whose `getBoundingClientRect` says where (a button inside
+ *  another tree's shadow root, say). */
+function PopoverAnchor(
+  props: React.ComponentProps<typeof PopoverPrimitive.Anchor>,
+): React.JSX.Element {
+  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />
+}
+
 function PopoverContent({
   className,
   align = 'center',
@@ -46,4 +55,4 @@ function PopoverContent({
   )
 }
 
-export { Popover, PopoverContent, PopoverTrigger }
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger }

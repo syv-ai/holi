@@ -49,7 +49,7 @@ export {
 } from './DropdownMenu'
 export { Input } from './Input'
 export { Kbd } from './Kbd'
-export { Popover, PopoverContent, PopoverTrigger } from './Popover'
+export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'
 export {

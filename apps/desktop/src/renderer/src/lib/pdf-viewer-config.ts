@@ -11,6 +11,7 @@
  * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
  * consumes this, `test/pdf-viewer-config.test.ts` pins it.
  */
+import { ASK_AGENT_ALL, ASK_AGENT_THREAD } from './pdf-comments'
 import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
 
 /**
@@ -352,20 +353,48 @@ const HOLI_BUTTONS: readonly PdfToolbarItem[] = [
   },
 ]
 
+/** Ask agent (D106), after the viewer's comments button because it asks about
+ *  what that panel lists. Two commands, one visible at a time: a command's
+ *  label is fixed, and the label says whether it is this comment or all. */
+const ASK_BUTTONS: readonly PdfToolbarItem[] = [
+  {
+    type: 'command-button',
+    id: 'ask-agent-thread-button',
+    commandId: ASK_AGENT_THREAD,
+    variant: 'icon',
+  },
+  {
+    type: 'command-button',
+    id: 'ask-agent-all-button',
+    commandId: ASK_AGENT_ALL,
+    variant: 'icon',
+  },
+]
+
+/** The viewer's own button for the comments panel, in the right-hand group. */
+const COMMENTS_BUTTON = 'comment-button'
+
 /**
- * The main toolbar's items with Holi's buttons at the top level, first in the
- * right-hand group beside Search and Comment: Signatures, which the viewer
- * keeps in the Insert tab's secondary bar (at a narrow pane itself inside the
- * tab overflow menu), and the read-only toggle (`lib/pdf-read-only.ts`). Fed to
- * `ui.mergeSchema`, which replaces a toolbar's item list wholesale, so this
- * returns the whole list; applying it twice changes nothing.
+ * The main toolbar's items with Holi's buttons at the top level of the
+ * right-hand group: first, before Search and Comment, Signatures, which the
+ * viewer keeps in the Insert tab's secondary bar (at a narrow pane itself inside
+ * the tab overflow menu), Add comment and the read-only toggle
+ * (`lib/pdf-read-only.ts`); and Ask agent right after the comments button, or
+ * last if the viewer has none. Fed to `ui.mergeSchema`, which replaces a
+ * toolbar's item list wholesale, so this returns the whole list; applying it
+ * twice changes nothing.
  */
 export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
   return items.map((item) => {
     if (item.id !== 'right-group' || item.items === undefined) return item
     const present = new Set(item.items.map((child) => child.id))
     const missing = HOLI_BUTTONS.filter((button) => !present.has(button.id))
-    return missing.length === 0 ? item : { ...item, items: [...missing, ...item.items] }
+    const asks = ASK_BUTTONS.filter((button) => !present.has(button.id))
+    if (missing.length === 0 && asks.length === 0) return item
+    const children = [...missing, ...item.items]
+    const comments = children.findIndex((child) => child.id === COMMENTS_BUTTON)
+    const at = comments === -1 ? children.length : comments + 1
+    return { ...item, items: [...children.slice(0, at), ...asks, ...children.slice(at)] }
   })
 }
 
@@ -397,7 +426,7 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
  * unlocked. The viewer's own spacers are empty too, on purpose, so the rule
  * names Holi's items and nothing else.
  */
-export const PDF_TOOLBAR_CSS = `:is(${HOLI_BUTTONS.map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
+export const PDF_TOOLBAR_CSS = `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
 
 /**
  * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
@@ -507,6 +536,13 @@ const lucideIcon = (...d: string[]) => ({
 export const PDF_ICONS = {
   'holi-lock': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 10 0v4'),
   'holi-lock-open': lucideIcon(LOCK_BODY, 'M7 11V7a5 5 0 0 1 9.9-1'),
+  // lucide's `sparkles`, the agent's mark elsewhere in Holi (the palette, mail).
+  'holi-sparkles': lucideIcon(
+    'M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z',
+    'M20 2v4',
+    'M22 4h-4',
+    'M6 20a2 2 0 1 1-4 0a2 2 0 1 1 4 0',
+  ),
 }
 
 /**

@@ -352,12 +352,35 @@ describe('withHoliButtons', () => {
       'make-editable-button',
       'search-button',
       'comment-button',
+      'ask-agent-thread-button',
+      'ask-agent-all-button',
     ])
     expect(right.items.map((i) => i.commandId).slice(0, 4)).toEqual([
       'insert:add-signature',
       'holi:add-comment',
       'holi:make-marks-read-only',
       'holi:make-marks-editable',
+    ])
+  })
+
+  it('puts Ask agent right after the comments button, whatever follows it', () => {
+    const withMore = items.map((i) =>
+      'items' in i && i.id === 'right-group'
+        ? { ...i, items: [...i.items, { type: 'command-button', id: 'later' }] }
+        : i,
+    )
+    const right = withHoliButtons(withMore).find((i) => i.id === 'right-group') as {
+      items: { id: string; commandId?: string }[]
+    }
+    expect(right.items.map((i) => i.id).slice(-4)).toEqual([
+      'comment-button',
+      'ask-agent-thread-button',
+      'ask-agent-all-button',
+      'later',
+    ])
+    expect(right.items.slice(-3, -1).map((i) => i.commandId)).toEqual([
+      'holi:ask-agent-thread',
+      'holi:ask-agent-all',
     ])
   })
 
@@ -377,7 +400,7 @@ describe('PDF_TOOLBAR_CSS', () => {
     // empty wrapper is still a flex item: one more 8px gap on one side of the
     // lock, which swapped sides with the read-only state.
     expect(PDF_TOOLBAR_CSS).toContain(
-      ':is([data-epdf-i="signature-button"], [data-epdf-i="add-comment-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"]):empty { display: none; }',
+      ':is([data-epdf-i="signature-button"], [data-epdf-i="add-comment-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"], [data-epdf-i="ask-agent-thread-button"], [data-epdf-i="ask-agent-all-button"]):empty { display: none; }',
     )
   })
 })
@@ -526,9 +549,9 @@ describe('commentToolActive', () => {
 })
 
 describe('PDF_ICONS', () => {
-  it("carries Holi's lock glyphs as path data only", () => {
-    // lucide's lock and lock-open, the set the rest of Holi draws from.
-    expect(Object.keys(PDF_ICONS).sort()).toEqual(['holi-lock', 'holi-lock-open'])
+  it("carries Holi's glyphs as path data only", () => {
+    // lucide's lock, lock-open and sparkles, the set the rest of Holi draws from.
+    expect(Object.keys(PDF_ICONS).sort()).toEqual(['holi-lock', 'holi-lock-open', 'holi-sparkles'])
     for (const icon of Object.values(PDF_ICONS)) {
       for (const path of icon.paths) expect(path.d).toMatch(/^M[\d\s.,a-zA-Z-]+$/)
     }

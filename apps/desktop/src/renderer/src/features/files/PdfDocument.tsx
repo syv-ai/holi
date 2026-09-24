@@ -54,7 +54,7 @@
  *   capped; both happen before the first page paints, so there is no visible
  *   second resize.
  */
-import { useAtomValue } from 'jotai'
+import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -76,7 +76,19 @@ import '@fontsource/caveat/400.css'
 import '@fontsource/dancing-script/400.css'
 import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
+import { formatCommentThreads } from '@holi/shared'
+import { AskAgentPopover } from '@/composites/AskAgentPopover'
+import { askPrompt } from '@/editor/askAgent'
 import { cn } from '@/lib/cn'
+import {
+  ASK_AGENT_ALL,
+  ASK_AGENT_THREAD,
+  selectedAnnotationId,
+  threadOf,
+  threadsForAsk,
+  threadsInViewer,
+  type GlyphEngine,
+} from '@/lib/pdf-comments'
 import { PdfCommentField } from './PdfCommentField'
 import { playSidebarLeaves } from './pdf-sidebar-leave'
 import {
@@ -110,6 +122,8 @@ import {
   withoutReadOnly,
 } from '@/lib/pdf-read-only'
 import { trpc } from '@/lib/trpc'
+import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
+import { sendToAgentAtom } from '@/state/agent-send'
 import { activeModeAtom } from '@/state/color-scheme'
 import { sessionAtom } from '@/state/session'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -285,6 +299,16 @@ export function PdfDocument({
   const [signatureColumn, setSignatureColumn] = useState<Element | null>(null)
   /** The comment rows Holi's field is portalled into (`PdfCommentField`). */
   const [commentRows, setCommentRows] = useState<CommentRow[]>([])
+  /** An open Ask agent popover (D106): where its button is, and what it asks
+   *  about, one thread by its mark's id or every thread. */
+  const [ask, setAsk] = useState<{
+    anchor: DOMRect
+    documentId: string
+    threadId: string | null
+  } | null>(null)
+  const sendToAgent = useSetAtom(sendToAgentAtom)
+  const askTargets = useAtomValue(askTargetsAtom)
+  const defaultTarget = useAtomValue(defaultAgentTargetAtom)
 
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewerRef>(null)
@@ -514,6 +538,41 @@ export function PdfDocument({
         })
       }
 
+      // Ask agent (D106), about the selected comment's thread or about all of
+      // them: two commands whose `visible` swaps, like the read-only pair,
+      // because a command's label is fixed. Each opens Holi's popover under its
+      // own button, found in the shadow root by the id the toolbar CSS uses.
+      if (commands !== null) {
+        const selected = ({ state, documentId }: CommandContext) =>
+          threadOf(threadsInViewer(state, documentId), selectedAnnotationId(state, documentId))
+        const openAsk = (documentId: string, buttonId: string, threadId: string | null) => {
+          const item = viewerRef.current?.container?.shadowRoot?.querySelector(
+            `[data-epdf-i="${buttonId}"]`,
+          )
+          const box = (
+            item?.querySelector('button') ??
+            item ??
+            hostRef.current
+          )?.getBoundingClientRect()
+          if (box !== undefined) setAsk({ anchor: box, documentId, threadId })
+        }
+        commands.registerCommand({
+          id: ASK_AGENT_THREAD,
+          label: 'Ask agent about this comment',
+          icon: 'holi-sparkles',
+          visible: (c) => selected(c) !== null,
+          action: (c) => openAsk(c.documentId, 'ask-agent-thread-button', selected(c)?.id ?? null),
+        })
+        commands.registerCommand({
+          id: ASK_AGENT_ALL,
+          label: 'Ask agent about all comments',
+          icon: 'holi-sparkles',
+          visible: (c) => selected(c) === null,
+          disabled: (c) => threadsInViewer(c.state, c.documentId).length === 0,
+          action: (c) => openAsk(c.documentId, 'ask-agent-all-button', null),
+        })
+      }
+
       const ui = provided(registry, 'ui')
       // Signatures, Add comment and the read-only toggle on the top bar
       // (D104, D105), merged after the commands exist so the buttons can
@@ -667,6 +726,31 @@ export function PdfDocument({
       {commentRows.map(({ row, input, send }) =>
         createPortal(<PdfCommentField input={input} send={send} />, row, rowKey(row)),
       )}
+      <AskAgentPopover
+        anchor={ask?.anchor ?? null}
+        label={
+          ask?.threadId == null ? 'Ask agent about all comments' : 'Ask agent about this comment'
+        }
+        targets={{ sessions: askTargets, initial: defaultTarget }}
+        onClose={() => setAsk(null)}
+        onSend={async (instruction, target) => {
+          const registry = registryRef.current
+          if (ask === null || registry === null) return { ok: false, message: 'The PDF is closed.' }
+          // Read now, from the viewer's store, so a mark made a moment ago is
+          // in the ask before its save.
+          const all = await threadsForAsk(
+            registry.getStore().getState(),
+            ask.documentId,
+            registry.getEngine() as unknown as GlyphEngine,
+          )
+          const threads = ask.threadId === null ? all : all.filter((t) => t.id === ask.threadId)
+          if (ask.threadId !== null && threads.length === 0) {
+            return { ok: false, message: 'That comment is not in the PDF any more.' }
+          }
+          const text = askPrompt(instruction, formatCommentThreads(path, threads))
+          return sendToAgent({ text, target })
+        }}
+      />
       {signatureColumn !== null &&
         createPortal(<p className="holi-signature-note">{PDF_SIGNATURE_NOTE}</p>, signatureColumn)}
     </div>

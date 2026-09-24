@@ -48,7 +48,20 @@ const seam = vi.hoisted(() => ({
   } | null,
   /** The viewer's shadow root, as the real container has one. */
   shadow: null as ShadowRoot | null,
+  /** What the viewer's store holds, for a read at send time. */
+  store: {} as unknown,
+  /** The agent seam: an ask handed to `sendToAgentAtom`. */
+  send: vi.fn(),
 }))
+
+vi.mock('@/state/agent-send', async () => {
+  const { atom } = await import('jotai')
+  return {
+    sendToAgentAtom: atom(null, (_get, _set, args: { text: string; target: string }) =>
+      seam.send(args),
+    ),
+  }
+})
 
 vi.mock('@/lib/trpc', () => ({
   trpc: {
@@ -143,6 +156,9 @@ vi.mock('@embedpdf/react-pdf-viewer', () => {
   }
   const registry = {
     getPlugin: (id: string) => (id in plugins ? { provides: () => plugins[id] } : null),
+    getStore: () => ({ getState: () => seam.store }),
+    // No glyphs: the ask falls back to what the store has.
+    getEngine: () => null,
   }
   const PDFViewer = forwardRef(function FakeViewer(
     {
@@ -231,6 +247,8 @@ beforeEach(() => {
   seam.savedSignatures.mockReset().mockResolvedValue('[]')
   seam.saveSignatures.mockReset().mockResolvedValue({ ok: true })
   seam.requestZoom.mockReset()
+  seam.store = {}
+  seam.send.mockReset().mockResolvedValue({ ok: true })
   urlCounter = 0
   // jsdom has no object URLs.
   URL.createObjectURL = vi.fn(() => `blob:holi/${++urlCounter}`)
@@ -390,6 +408,9 @@ test('puts Signatures on the top bar', async () => {
     'make-read-only-button',
     'make-editable-button',
     'search-button',
+    // After the comments button, which this trimmed toolbar does not have.
+    'ask-agent-thread-button',
+    'ask-agent-all-button',
   ])
   // The commands those buttons name exist before the toolbar asks for them.
   expect(seam.registerCommand.mock.invocationCallOrder[0]).toBeLessThan(
@@ -774,4 +795,162 @@ test('unmounting revokes the object URL', async () => {
   await screen.findByTestId('pdf')
   unmount()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:holi/1')
+})
+
+test('asks the agent about the selected comment, or about all of them, pasting and never submitting', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  type Cmd = {
+    id: string
+    label: string
+    visible: (c: unknown) => boolean
+    disabled?: (c: unknown) => boolean
+    action: (c: unknown) => void
+  }
+  const cmd = (id: string) =>
+    (seam.registerCommand.mock.calls.map((c) => c[0]) as Cmd[]).find((c) => c.id === id)!
+  const at = (iso: string) => new Date(iso)
+  const rect = (y: number) => ({ origin: { x: 10, y }, size: { width: 50, height: 10 } })
+  const objects = [
+    {
+      id: 'h',
+      type: 9,
+      pageIndex: 3,
+      rect: rect(100),
+      author: 'Ada Holm',
+      created: at('2026-09-22T14:10:00'),
+      contents: 'Should be 30 days.',
+      custom: { text: 'payment within 60 days' },
+    },
+    {
+      id: 'r',
+      type: 1,
+      pageIndex: 3,
+      rect: rect(100),
+      author: 'Bo Lind',
+      created: at('2026-09-22T15:02:00'),
+      contents: 'Agreed.',
+      inReplyToId: 'h',
+    },
+    {
+      id: 'n',
+      type: 1,
+      pageIndex: 6,
+      rect: rect(50),
+      author: 'Bo Lind',
+      created: at('2026-09-23T09:41:00'),
+      contents: 'Is this standard?',
+    },
+    { id: 'l', type: 2, pageIndex: 0, rect: rect(0) },
+  ]
+  const stateWith = (selected: string | null, objs = objects) => ({
+    plugins: {
+      annotation: {
+        documents: {
+          doc: {
+            byUid: Object.fromEntries(objs.map((o) => [`uid-${o.id}`, { object: o }])),
+            selectedUids: selected === null ? [] : [`uid-${selected}`],
+          },
+        },
+      },
+    },
+  })
+  const ctx = (state: unknown) => ({ documentId: 'doc', state })
+  const thread = cmd('holi:ask-agent-thread')
+  const all = cmd('holi:ask-agent-all')
+  expect(thread.label).toBe('Ask agent about this comment')
+  expect(all.label).toBe('Ask agent about all comments')
+
+  // Nothing selected: the button asks about all, and is off with no comments.
+  expect(thread.visible(ctx(stateWith(null)))).toBe(false)
+  expect(all.visible(ctx(stateWith(null)))).toBe(true)
+  expect(all.disabled!(ctx(stateWith(null)))).toBe(false)
+  expect(all.disabled!(ctx(stateWith(null, [objects[3]!])))).toBe(true)
+  // A comment selected, or a reply in its thread: this comment.
+  expect(thread.visible(ctx(stateWith('h')))).toBe(true)
+  expect(all.visible(ctx(stateWith('h')))).toBe(false)
+  // A link is not a comment.
+  expect(thread.visible(ctx(stateWith('l')))).toBe(false)
+
+  // All: the instruction first, then every thread.
+  seam.store = stateWith(null)
+  act(() => all.action(ctx(seam.store)))
+  const field = await screen.findByLabelText(/Instructions for the agent/)
+  fireEvent.change(field, { target: { value: 'Resolve these.' } })
+  fireEvent.keyDown(field, { key: 'Enter', metaKey: true })
+  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(1))
+  const sent = seam.send.mock.calls[0]![0] as { text: string; target: string }
+  expect(sent.target).toBe('new')
+  expect(sent.text).toBe(
+    [
+      'Resolve these.',
+      '',
+      '[From docs/case.pdf, 2 comments]',
+      '',
+      'Page 4, highlight on "payment within 60 days"',
+      '  Ada Holm, 2026-09-22 14:10',
+      '  > Should be 30 days.',
+      '  Reply, Bo Lind, 2026-09-22 15:02',
+      '  > Agreed.',
+      '',
+      'Page 7, note',
+      '  Bo Lind, 2026-09-23 09:41',
+      '  > Is this standard?',
+    ].join('\n'),
+  )
+  await waitFor(() =>
+    expect(screen.queryByLabelText(/Instructions for the agent/)).not.toBeInTheDocument(),
+  )
+
+  // This comment, with a reply selected: only its thread, and an empty
+  // instruction sends the comments alone.
+  seam.store = stateWith('r')
+  act(() => thread.action(ctx(seam.store)))
+  fireEvent.keyDown(await screen.findByLabelText(/Instructions for the agent/), {
+    key: 'Enter',
+    metaKey: true,
+  })
+  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(2))
+  expect((seam.send.mock.calls[1]![0] as { text: string }).text).toMatch(
+    /^\[From docs\/case\.pdf, 1 comment\]\n\nPage 4, highlight/,
+  )
+})
+
+test('keeps the text and says why when an ask is refused', async () => {
+  mount()
+  await screen.findByTestId('pdf')
+  const all = (
+    seam.registerCommand.mock.calls.map((c) => c[0]) as {
+      id: string
+      action: (c: unknown) => void
+    }[]
+  ).find((c) => c.id === 'holi:ask-agent-all')!
+  seam.store = {
+    plugins: {
+      annotation: {
+        documents: {
+          doc: {
+            byUid: {
+              u: {
+                object: {
+                  id: 'n',
+                  type: 1,
+                  pageIndex: 0,
+                  rect: { origin: { x: 0, y: 0 }, size: { width: 1, height: 1 } },
+                  contents: 'Hi.',
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  }
+  seam.send.mockResolvedValue({ ok: false, message: 'That session has ended.' })
+  act(() => all.action({ documentId: 'doc', state: seam.store }))
+  const field = await screen.findByLabelText(/Instructions for the agent/)
+  fireEvent.change(field, { target: { value: 'Look at this' } })
+  fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })
+  expect(await screen.findByRole('alert')).toHaveTextContent('That session has ended.')
+  expect(field).toHaveValue('Look at this')
 })
