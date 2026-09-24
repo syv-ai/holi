@@ -318,6 +318,23 @@ class FrontmatterWidget extends WidgetType {
     row.appendChild(host)
     wrap.appendChild(row)
 
+    // The collapsed line's width, kept while expanded. Invisible and zero-high,
+    // it is what a centred note sizes the open block to (`index.css` §Solo note
+    // column), so opening the frontmatter does not make it wider. Hidden
+    // everywhere else. Its text is the summary as it was when the block opened:
+    // this widget is not rebuilt per keystroke while expanded (see `eq`).
+    const sizer = document.createElement('div')
+    sizer.className = 'cm-fm-pill cm-fm-sizer'
+    sizer.setAttribute('aria-hidden', 'true')
+    // Built like the pill, mark and summary as two spans, so the pill's gap is
+    // measured too rather than approximated by a space.
+    const sizerMark = document.createElement('span')
+    sizerMark.textContent = '▸'
+    const sizerSummary = document.createElement('span')
+    sizerSummary.textContent = frontmatterSummary(this.chars, this.commit)
+    sizer.append(sizerMark, sizerSummary)
+    wrap.appendChild(sizer)
+
     // Rows, when this file has a schema and its frontmatter is a mapping. Both
     // halves matter: `.claude/` and `AGENTS.md` have no schema because their
     // frontmatter is somebody else's contract, and a document that will not
@@ -520,6 +537,7 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
   '.cm-fm-body': { flex: '1', minWidth: '0' },
+  '.cm-fm-sizer': { display: 'none' },
   // See `caretInBlock`: a caret whose head is inside the replaced region would
   // render as tall as the whole block.
   '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },

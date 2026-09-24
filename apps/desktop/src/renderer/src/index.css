@@ -610,19 +610,31 @@
   margin-inline: auto;
 }
 /* The frontmatter sits in the middle of a centred column rather than on the
- * text's left edge: the collapsed summary is inline, so it centres as text;
- * expanded, the fields take a compact width and the row (chevron included) is
- * centred. `text-align` is put back inside so the fields read as they always
- * do. Left-anchored, it keeps the text's edge like everything else. */
+ * text's left edge. Collapsed, the summary is inline, so it centres as text.
+ * Expanded, the block keeps the collapsed line's width rather than growing:
+ * `.cm-fm-sizer` (frontmatter.ts) is an invisible, zero-high copy of that line,
+ * and it alone sizes the one grid column. The fields row contributes nothing
+ * to that size (`width: 0`) and then fills it (`min-width: 100%`). Left-anchored,
+ * the frontmatter keeps the text's edge like everything else. */
 [data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm {
   text-align: center;
 }
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-reveal {
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm:has(> .cm-fm-reveal) {
+  display: grid;
+  grid-template-columns: max-content;
   justify-content: center;
   text-align: start;
 }
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-body {
-  flex: 0 1 28rem;
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-reveal {
+  width: 0;
+  min-width: 100%;
+}
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-sizer {
+  display: flex;
+  height: 0;
+  padding-block: 0;
+  overflow: hidden;
+  visibility: hidden;
 }
 .holi-column-sliding > .cm-editor > .cm-scroller > .cm-content {
   animation: holi-column-slide var(--motion-slide) var(--ease-slide);
