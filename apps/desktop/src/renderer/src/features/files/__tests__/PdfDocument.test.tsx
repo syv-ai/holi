@@ -843,7 +843,7 @@ test('asks the agent about the selected comment, or about all of them, pasting a
     },
     { id: 'l', type: 2, pageIndex: 0, rect: rect(0) },
   ]
-  const stateWith = (selected: string | null, objs = objects) => ({
+  const stateWith = (selected: string | null, objs: { id: string }[] = objects) => ({
     plugins: {
       annotation: {
         documents: {
@@ -871,6 +871,13 @@ test('asks the agent about the selected comment, or about all of them, pasting a
   expect(all.visible(ctx(stateWith('h')))).toBe(false)
   // A link is not a comment.
   expect(thread.visible(ctx(stateWith('l')))).toBe(false)
+  // Replace Text's struck words are grouped under its caret: selecting them
+  // asks about the replacement.
+  const replacement = [
+    { id: 'c', type: 14, pageIndex: 0, rect: rect(10), contents: '30 days' },
+    { id: 's', type: 12, pageIndex: 0, rect: rect(10), inReplyToId: 'c', replyType: 2 },
+  ]
+  expect(thread.visible(ctx(stateWith('s', replacement)))).toBe(true)
 
   // All: the instruction first, then every thread.
   seam.store = stateWith(null)

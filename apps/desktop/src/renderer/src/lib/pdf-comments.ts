@@ -89,11 +89,14 @@ export function threadsInViewer(state: unknown, documentId: string): PdfCommentT
   return commentThreads(objectsIn(state, documentId).map((a) => toInput(a, savedText(a))))
 }
 
-/** The id of the selected annotation, if one is selected. */
+/** The id of the selected annotation, if one is selected; a mark grouped under
+ *  another (Replace Text's strikeout) answers with its leader's. */
 export function selectedAnnotationId(state: unknown, documentId: string): string | null {
   const doc = docState(state, documentId)
   const uid = doc?.selectedUids?.[0]
-  return uid === undefined ? null : (doc?.byUid?.[uid]?.object?.id ?? null)
+  const object = uid === undefined ? undefined : doc?.byUid?.[uid]?.object
+  if (object === undefined) return null
+  return object.replyType === 2 && object.inReplyToId !== undefined ? object.inReplyToId : object.id
 }
 
 /** The thread the annotation with `id` belongs to, as its mark or a reply. */

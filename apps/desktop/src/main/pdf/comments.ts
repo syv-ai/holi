@@ -42,6 +42,7 @@ const arrayBuffer = (b: Buffer): ArrayBuffer =>
   b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer
 
 let enginePromise: Promise<PdfiumNative> | null = null
+let opened = 0
 
 function engine(): Promise<PdfiumNative> {
   enginePromise ??= (async () => {
@@ -83,7 +84,9 @@ export async function readPdfComments(absPath: string): Promise<PdfCommentsResul
   try {
     doc = await pdfium
       .openDocumentBuffer({
-        id: `comments:${absPath}`,
+        // Unique per call: PDFium keeps one document per id, so two reads of
+        // one file at once must not share one.
+        id: `comments:${++opened}:${absPath}`,
         content: arrayBuffer(bytes),
       })
       .toPromise()

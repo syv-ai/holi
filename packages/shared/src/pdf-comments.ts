@@ -118,6 +118,16 @@ export function commentThreads(annotations: PdfAnnotationInput[]): PdfCommentThr
     return a.subtype !== TEXT && a.replyType !== REPLY_GROUP
   })
 
+  // A mark grouped under another is part of it (embedpdf's Replace Text is a
+  // caret leading a strikeout of the words it replaces), so what the member
+  // covers is what its leader is about.
+  const groupText = new Map<string, string>()
+  for (const a of annotations) {
+    if (a.replyType !== REPLY_GROUP || a.inReplyToId === undefined) continue
+    if (a.markedText === undefined || a.markedText.trim() === '') continue
+    if (!groupText.has(a.inReplyToId)) groupText.set(a.inReplyToId, a.markedText)
+  }
+
   roots.sort(
     (a, b) =>
       a.pageIndex - b.pageIndex ||
@@ -130,7 +140,10 @@ export function commentThreads(annotations: PdfAnnotationInput[]): PdfCommentThr
     ...comment(a),
     page: a.pageIndex + 1,
     kind: KINDS[a.subtype]!,
-    markedText: a.markedText !== undefined && a.markedText.trim() !== '' ? a.markedText : null,
+    markedText:
+      a.markedText !== undefined && a.markedText.trim() !== ''
+        ? a.markedText
+        : (groupText.get(a.id) ?? null),
     replies: (replies.get(a.id) ?? [])
       .slice()
       .sort((x, y) => time(x.created) - time(y.created))

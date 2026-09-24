@@ -57,8 +57,14 @@ export function AskAgentPopover({
     if (sending.current) return
     sending.current = true
     setNotice('')
-    const res = await onSend(text, target)
-    sending.current = false
+    let res: AskResult
+    try {
+      res = await onSend(text, target)
+    } catch {
+      res = { ok: false }
+    } finally {
+      sending.current = false
+    }
     if (res.ok) onClose()
     else setNotice(res.message ?? 'That could not be sent.')
   }
@@ -110,7 +116,7 @@ export function AskAgentPopover({
           onChange={(e) => setText(e.target.value)}
           placeholder="Ask the agent, ⌘↵ to send"
           aria-label="Instructions for the agent, Command Enter to send"
-          className="max-h-[40vh] min-h-0 resize-none rounded-none border-none bg-transparent px-3 py-2 shadow-none focus-visible:border-none dark:bg-transparent"
+          className="max-h-[40vh] min-h-0 resize-none rounded-none border-none bg-transparent px-3 py-2 shadow-none dark:bg-transparent"
           onKeyDown={(e) => {
             // ⌘/Ctrl + Enter, so a plain Enter is still a newline.
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {

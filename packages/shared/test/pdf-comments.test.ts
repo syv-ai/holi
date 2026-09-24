@@ -81,6 +81,15 @@ describe('commentThreads', () => {
     expect(threads.map((t) => t.id)).toEqual(['leader'])
   })
 
+  it('gives a replacement the words it replaces, from the struck mark grouped under it', () => {
+    const [thread, ...rest] = commentThreads([
+      ann({ id: 'caret', subtype: 14, contents: '30 days' }),
+      ann({ id: 'struck', subtype: 12, inReplyToId: 'caret', replyType: 2, markedText: '60 days' }),
+    ])
+    expect(rest).toEqual([])
+    expect(thread).toMatchObject({ kind: 'caret', markedText: '60 days', text: '30 days' })
+  })
+
   it('leaves out links and anything else the comments panel does not list', () => {
     const threads = commentThreads([ann({ subtype: LINK }), ann({ subtype: 20 })])
     expect(threads).toEqual([])
