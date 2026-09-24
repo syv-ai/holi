@@ -176,15 +176,6 @@ that earns an offscreen window is what has not been decided.
 makes a team consistent *within* a vault and does nothing across five of them. A shared brand repo
 cloned as a vault is the obvious answer and has not been designed.
 
-**PDF comments reach the agent.** Designed and agreed 2026-09-24
-([`specs/2026-09-24-pdf-comments-to-agent-design.md`](specs/2026-09-24-pdf-comments-to-agent-design.md)),
-not built. An "Ask agent" button on the viewer's top bar pastes the selected comment thread, or
-every comment, with page, marked text, author and date, into a session; and
-`holi pdf comments <path> [--json]` lets the agent read the comments of any vault PDF itself,
-through PDFium in main, with a slim managed skill. The agent can already read comments that Holi
-saved by parsing the raw file, but not reliably those written by other tools (compressed object
-streams, UTF-16), which is why both exist.
-
 ## Daily notes
 
 **Templates / configurable seed content.** The seed is `type: daily-note` frontmatter plus a title
