@@ -353,7 +353,6 @@ describe('withHoliButtons', () => {
       'search-button',
       'comment-button',
       'ask-agent-thread-button',
-      'ask-agent-all-button',
       'ask-agent-pdf-button',
     ])
     expect(right.items.map((i) => i.commandId).slice(0, 4)).toEqual([
@@ -373,16 +372,14 @@ describe('withHoliButtons', () => {
     const right = withHoliButtons(withMore).find((i) => i.id === 'right-group') as {
       items: { id: string; commandId?: string }[]
     }
-    expect(right.items.map((i) => i.id).slice(-5)).toEqual([
+    expect(right.items.map((i) => i.id).slice(-4)).toEqual([
       'comment-button',
       'ask-agent-thread-button',
-      'ask-agent-all-button',
       'ask-agent-pdf-button',
       'later',
     ])
-    expect(right.items.slice(-4, -1).map((i) => i.commandId)).toEqual([
+    expect(right.items.slice(-3, -1).map((i) => i.commandId)).toEqual([
       'holi:ask-agent-thread',
-      'holi:ask-agent-all',
       'holi:ask-agent-pdf',
     ])
   })
@@ -403,7 +400,7 @@ describe('PDF_TOOLBAR_CSS', () => {
     // empty wrapper is still a flex item: one more 8px gap on one side of the
     // lock, which swapped sides with the read-only state.
     expect(PDF_TOOLBAR_CSS).toContain(
-      ':is([data-epdf-i="signature-button"], [data-epdf-i="add-comment-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"], [data-epdf-i="ask-agent-thread-button"], [data-epdf-i="ask-agent-all-button"], [data-epdf-i="ask-agent-pdf-button"]):empty { display: none; }',
+      ':is([data-epdf-i="signature-button"], [data-epdf-i="add-comment-button"], [data-epdf-i="make-read-only-button"], [data-epdf-i="make-editable-button"], [data-epdf-i="ask-agent-thread-button"], [data-epdf-i="ask-agent-pdf-button"]):empty { display: none; }',
     )
   })
 })

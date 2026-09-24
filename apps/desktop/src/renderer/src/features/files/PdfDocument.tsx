@@ -76,12 +76,11 @@ import '@fontsource/caveat/400.css'
 import '@fontsource/dancing-script/400.css'
 import '@fontsource/great-vibes/400.css'
 import '@fontsource/pacifico/400.css'
-import { formatCommentThreads } from '@holi/shared'
+import { formatCommentThreads, pdfAskHeader } from '@holi/shared'
 import { AskAgentPopover } from '@/composites/AskAgentPopover'
 import { askPrompt } from '@/editor/askAgent'
 import { cn } from '@/lib/cn'
 import {
-  ASK_AGENT_ALL,
   ASK_AGENT_PDF,
   ASK_AGENT_THREAD,
   selectedAnnotationId,
@@ -541,12 +540,12 @@ export function PdfDocument({
         })
       }
 
-      // Ask agent (D106), about the selected comment's thread, about all of
-      // them, or with none about the PDF itself, so the button is always a way
-      // into a chat: three commands whose `visible` swaps, like the read-only
-      // pair, because a command's label is fixed. Each opens Holi's popover
-      // under its own button, found in the shadow root by the id the toolbar
-      // CSS uses.
+      // Ask agent (D106): about the selected comment's thread, or with none
+      // selected about the PDF itself, so the button is always a way into a
+      // chat about the file. Two commands whose `visible` swaps, like the
+      // read-only pair, because a command's label is fixed. Each opens Holi's
+      // popover under its own button, found in the shadow root by the id the
+      // toolbar CSS uses.
       if (commands !== null) {
         const selected = ({ state, documentId }: CommandContext) =>
           threadOf(threadsInViewer(state, documentId), selectedAnnotationId(state, documentId))
@@ -580,18 +579,10 @@ export function PdfDocument({
             ),
         })
         commands.registerCommand({
-          id: ASK_AGENT_ALL,
-          label: 'Ask agent about all comments',
-          icon: 'holi-sparkles',
-          visible: (c) => selected(c) === null && threadsInViewer(c.state, c.documentId).length > 0,
-          action: (c) =>
-            openAsk(c.documentId, 'ask-agent-all-button', null, 'Ask agent about all comments'),
-        })
-        commands.registerCommand({
           id: ASK_AGENT_PDF,
           label: 'Ask agent about this PDF',
           icon: 'holi-sparkles',
-          visible: (c) => threadsInViewer(c.state, c.documentId).length === 0,
+          visible: (c) => selected(c) === null,
           action: (c) =>
             openAsk(c.documentId, 'ask-agent-pdf-button', null, 'Ask agent about this PDF'),
         })
@@ -758,22 +749,28 @@ export function PdfDocument({
         onSend={async (instruction, target) => {
           const registry = registryRef.current
           if (ask === null || registry === null) return { ok: false, message: 'The PDF is closed.' }
+          const state = registry.getStore().getState()
+          // Nothing selected: the PDF, and how many comments it has with the
+          // command that reads them, not the comments themselves. An ask about
+          // the document is not about its marks, and the agent reads them when
+          // it is.
+          if (ask.threadId === null) {
+            const count = threadsInViewer(state, ask.documentId).length
+            return sendToAgent({ text: askPrompt(instruction, pdfAskHeader(path, count)), target })
+          }
           // Read now, from the viewer's store, so a mark made a moment ago is
           // in the ask before its save.
-          const all = await threadsForAsk(
-            registry.getStore().getState(),
-            ask.documentId,
-            registry.getEngine() as unknown as GlyphEngine,
-          )
-          const threads = ask.threadId === null ? all : all.filter((t) => t.id === ask.threadId)
-          if (ask.threadId !== null && threads.length === 0) {
+          const threads = (
+            await threadsForAsk(
+              state,
+              ask.documentId,
+              registry.getEngine() as unknown as GlyphEngine,
+            )
+          ).filter((t) => t.id === ask.threadId)
+          if (threads.length === 0) {
             return { ok: false, message: 'That comment is not in the PDF any more.' }
           }
-          // No comments: the PDF alone, named the way a note's ask names its
-          // note, so the chat starts from the file.
-          const about =
-            threads.length === 0 ? `[From ${path}]` : formatCommentThreads(path, threads)
-          const text = askPrompt(instruction, about)
+          const text = askPrompt(instruction, formatCommentThreads(path, threads))
           return sendToAgent({ text, target })
         }}
       />

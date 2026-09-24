@@ -4,6 +4,7 @@ import {
   commentThreadsJson,
   formatCommentThreads,
   glyphRuns,
+  pdfAskHeader,
   type PdfAnnotationInput,
 } from '../src/pdf-comments'
 
@@ -251,5 +252,23 @@ describe('glyphRuns', () => {
       { start: 0, count: 1 },
       { start: 3, count: 1 },
     ])
+  })
+})
+
+describe('pdfAskHeader', () => {
+  it('names the PDF, and when it has comments, how many and how to read them', () => {
+    expect(pdfAskHeader('docs/msa.pdf', 0)).toBe('[From docs/msa.pdf]')
+    expect(pdfAskHeader('docs/msa.pdf', 1)).toBe(
+      '[From docs/msa.pdf, 1 comment: holi pdf comments docs/msa.pdf]',
+    )
+    expect(pdfAskHeader('docs/msa.pdf', 3)).toBe(
+      '[From docs/msa.pdf, 3 comments: holi pdf comments docs/msa.pdf]',
+    )
+  })
+
+  it('quotes a path the shell would split', () => {
+    expect(pdfAskHeader("client docs/Bo's msa.pdf", 2)).toBe(
+      "[From client docs/Bo's msa.pdf, 2 comments: holi pdf comments 'client docs/Bo'\\''s msa.pdf']",
+    )
   })
 })

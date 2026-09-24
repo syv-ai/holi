@@ -199,6 +199,22 @@ export function formatCommentThreads(
   return [`[From ${path}, ${count}]`, ...blocks].join('\n\n')
 }
 
+/** A path as one shell word: bare when it is safe, single-quoted otherwise. */
+const shellWord = (path: string): string =>
+  /^[\w./-]+$/.test(path) ? path : `'${path.replace(/'/g, `'\\''`)}'`
+
+/**
+ * The header of an ask about a whole PDF: the file, and when it has comments,
+ * how many and the command that reads them. The comments themselves are not
+ * pasted: an ask about the document ("summarise this") is not about its marks,
+ * and the agent reads them when the ask is.
+ */
+export function pdfAskHeader(path: string, commentCount: number): string {
+  if (commentCount === 0) return `[From ${path}]`
+  const count = commentCount === 1 ? '1 comment' : `${commentCount} comments`
+  return `[From ${path}, ${count}: holi pdf comments ${shellWord(path)}]`
+}
+
 const iso = (d: Date | null): string | null => (d === null ? null : d.toISOString())
 
 const commentJson = (c: PdfComment) => ({

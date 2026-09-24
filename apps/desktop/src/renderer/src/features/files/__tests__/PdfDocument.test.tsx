@@ -410,7 +410,6 @@ test('puts Signatures on the top bar', async () => {
     'search-button',
     // After the comments button, which this trimmed toolbar does not have.
     'ask-agent-thread-button',
-    'ask-agent-all-button',
     'ask-agent-pdf-button',
   ])
   // The commands those buttons name exist before the toolbar asks for them.
@@ -798,7 +797,7 @@ test('unmounting revokes the object URL', async () => {
   expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:holi/1')
 })
 
-test('asks the agent about the selected comment, or about all of them, pasting and never submitting', async () => {
+test('asks the agent about the selected comment, or about the PDF, pasting and never submitting', async () => {
   mount()
   await screen.findByTestId('pdf')
   type Cmd = {
@@ -858,25 +857,18 @@ test('asks the agent about the selected comment, or about all of them, pasting a
   })
   const ctx = (state: unknown) => ({ documentId: 'doc', state })
   const thread = cmd('holi:ask-agent-thread')
-  const all = cmd('holi:ask-agent-all')
-  expect(thread.label).toBe('Ask agent about this comment')
-  expect(all.label).toBe('Ask agent about all comments')
-
   const pdf = cmd('holi:ask-agent-pdf')
+  expect(thread.label).toBe('Ask agent about this comment')
   expect(pdf.label).toBe('Ask agent about this PDF')
 
-  // Nothing selected: the button asks about all.
+  // Nothing selected: the PDF, comments or not, and never off.
   expect(thread.visible(ctx(stateWith(null)))).toBe(false)
-  expect(all.visible(ctx(stateWith(null)))).toBe(true)
-  expect(pdf.visible(ctx(stateWith(null)))).toBe(false)
-  // No comments at all (a link is not one): still a way in, about the PDF.
-  const none = stateWith(null, [objects[3]!])
-  expect(all.visible(ctx(none))).toBe(false)
-  expect(pdf.visible(ctx(none))).toBe(true)
+  expect(pdf.visible(ctx(stateWith(null)))).toBe(true)
   expect(pdf.disabled).toBeUndefined()
   // A comment selected, or a reply in its thread: this comment.
   expect(thread.visible(ctx(stateWith('h')))).toBe(true)
-  expect(all.visible(ctx(stateWith('h')))).toBe(false)
+  expect(thread.visible(ctx(stateWith('r')))).toBe(true)
+  expect(pdf.visible(ctx(stateWith('h')))).toBe(false)
   // A link is not a comment.
   expect(thread.visible(ctx(stateWith('l')))).toBe(false)
   // Replace Text's struck words are grouped under its caret: selecting them
@@ -887,72 +879,68 @@ test('asks the agent about the selected comment, or about all of them, pasting a
   ]
   expect(thread.visible(ctx(stateWith('s', replacement)))).toBe(true)
 
-  // All: the instruction first, then every thread.
+  // The PDF: the instruction, then the file with how many comments it has and
+  // the command that reads them. The comments themselves stay out of an ask
+  // about the document.
   seam.store = stateWith(null)
-  act(() => all.action(ctx(seam.store)))
+  act(() => pdf.action(ctx(seam.store)))
   const field = await screen.findByLabelText(/Instructions for the agent/)
-  fireEvent.change(field, { target: { value: 'Resolve these.' } })
+  fireEvent.change(field, { target: { value: 'Summarise this.' } })
   fireEvent.keyDown(field, { key: 'Enter', metaKey: true })
   await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(1))
-  const sent = seam.send.mock.calls[0]![0] as { text: string; target: string }
-  expect(sent.target).toBe('new')
-  expect(sent.text).toBe(
+  expect(seam.send.mock.calls[0]![0]).toEqual({
+    text: 'Summarise this.\n\n[From docs/case.pdf, 2 comments: holi pdf comments docs/case.pdf]',
+    target: 'new',
+  })
+  await waitFor(() =>
+    expect(screen.queryByLabelText(/Instructions for the agent/)).not.toBeInTheDocument(),
+  )
+
+  // With no comments, just the file.
+  seam.store = stateWith(null, [objects[3]!])
+  act(() => pdf.action(ctx(seam.store)))
+  fireEvent.keyDown(await screen.findByLabelText(/Instructions for the agent/), {
+    key: 'Enter',
+    metaKey: true,
+  })
+  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(2))
+  expect((seam.send.mock.calls[1]![0] as { text: string }).text).toBe('[From docs/case.pdf]')
+  await waitFor(() =>
+    expect(screen.queryByLabelText(/Instructions for the agent/)).not.toBeInTheDocument(),
+  )
+
+  // This comment, with a reply selected: its thread in full, after what was
+  // typed.
+  seam.store = stateWith('r')
+  act(() => thread.action(ctx(seam.store)))
+  const again = await screen.findByLabelText(/Instructions for the agent/)
+  fireEvent.change(again, { target: { value: 'Resolve this.' } })
+  fireEvent.keyDown(again, { key: 'Enter', metaKey: true })
+  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(3))
+  expect((seam.send.mock.calls[2]![0] as { text: string }).text).toBe(
     [
-      'Resolve these.',
+      'Resolve this.',
       '',
-      '[From docs/case.pdf, 2 comments]',
+      '[From docs/case.pdf, 1 comment]',
       '',
       'Page 4, highlight on "payment within 60 days"',
       '  Ada Holm, 2026-09-22 14:10',
       '  > Should be 30 days.',
       '  Reply, Bo Lind, 2026-09-22 15:02',
       '  > Agreed.',
-      '',
-      'Page 7, note',
-      '  Bo Lind, 2026-09-23 09:41',
-      '  > Is this standard?',
     ].join('\n'),
   )
-  await waitFor(() =>
-    expect(screen.queryByLabelText(/Instructions for the agent/)).not.toBeInTheDocument(),
-  )
-
-  // This comment, with a reply selected: only its thread, and an empty
-  // instruction sends the comments alone.
-  seam.store = stateWith('r')
-  act(() => thread.action(ctx(seam.store)))
-  fireEvent.keyDown(await screen.findByLabelText(/Instructions for the agent/), {
-    key: 'Enter',
-    metaKey: true,
-  })
-  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(2))
-  expect((seam.send.mock.calls[1]![0] as { text: string }).text).toMatch(
-    /^\[From docs\/case\.pdf, 1 comment\]\n\nPage 4, highlight/,
-  )
-
-  // No comments: the PDF alone, after what was typed, into a session of your
-  // choosing, and landing there is sendToAgent's job.
-  seam.store = none
-  act(() => pdf.action(ctx(seam.store)))
-  const empty = await screen.findByLabelText(/Instructions for the agent/)
-  fireEvent.change(empty, { target: { value: 'What does this say about pricing?' } })
-  fireEvent.keyDown(empty, { key: 'Enter', metaKey: true })
-  await waitFor(() => expect(seam.send).toHaveBeenCalledTimes(3))
-  expect(seam.send.mock.calls[2]![0]).toEqual({
-    text: 'What does this say about pricing?\n\n[From docs/case.pdf]',
-    target: 'new',
-  })
 })
 
 test('keeps the text and says why when an ask is refused', async () => {
   mount()
   await screen.findByTestId('pdf')
-  const all = (
+  const pdf = (
     seam.registerCommand.mock.calls.map((c) => c[0]) as {
       id: string
       action: (c: unknown) => void
     }[]
-  ).find((c) => c.id === 'holi:ask-agent-all')!
+  ).find((c) => c.id === 'holi:ask-agent-pdf')!
   seam.store = {
     plugins: {
       annotation: {
@@ -975,7 +963,7 @@ test('keeps the text and says why when an ask is refused', async () => {
     },
   }
   seam.send.mockResolvedValue({ ok: false, message: 'That session has ended.' })
-  act(() => all.action({ documentId: 'doc', state: seam.store }))
+  act(() => pdf.action({ documentId: 'doc', state: seam.store }))
   const field = await screen.findByLabelText(/Instructions for the agent/)
   fireEvent.change(field, { target: { value: 'Look at this' } })
   fireEvent.keyDown(field, { key: 'Enter', ctrlKey: true })

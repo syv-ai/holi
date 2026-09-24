@@ -16,9 +16,8 @@ import {
 } from '@holi/shared'
 
 export const ASK_AGENT_THREAD = 'holi:ask-agent-thread'
-export const ASK_AGENT_ALL = 'holi:ask-agent-all'
-/** With no comments at all the button is still the way into a chat about the
- *  PDF, so it names the PDF rather than going dark. */
+/** With no comment selected the button asks about the PDF itself: the way
+ *  into a chat about the file, whatever it is marked with. */
 export const ASK_AGENT_PDF = 'holi:ask-agent-pdf'
 
 interface Rect {
