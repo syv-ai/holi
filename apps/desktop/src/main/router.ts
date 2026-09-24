@@ -38,6 +38,7 @@ import { ensureSeeded } from './agent/seed-content'
 import { initAppOp, renameAppOp, type AppInitResult, type AppRenameResult } from './apps/app-ops'
 import { migrateAppManifests } from './apps/migrate-manifests'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
+import { fileHistory, linksOut, type FileHistory } from './vault/file-facts'
 import { copyNotes } from './vault/copy'
 import { importFiles } from './vault/import-files'
 import { exportFiles } from './vault/export-files'
@@ -1191,15 +1192,31 @@ export function createRouter(deps: RouterDeps) {
         return text
       }),
 
-    /** The file's last commit — author + date — for the collapsed frontmatter
-     *  summary. Null when the file has no history yet (new/untracked). Resolved
-     *  against the active vault's live repo; the editor only shows the active
-     *  vault, so a remote is not needed. */
-    lastCommit: t.procedure
+    /** The file's history (`fileHistory`): its last commit for the summary's
+     *  "last updated", its first for "created", and how many touched it. Null
+     *  when the file has no history yet (new/untracked). Resolved against the
+     *  active vault's live repo; the editor only shows the active vault, so a
+     *  remote is not needed. One `log --follow` per file open, never limited:
+     *  the first commit is the far end of it. */
+    fileHistory: t.procedure
       .input(fields({ path: 'string' }))
-      .query(async ({ input }): Promise<{ date: string; author: string } | null> => {
-        const [commit] = await activeOrThrow().repo.log({ path: safe(input.path), limit: 1 })
-        return commit === undefined ? null : { date: commit.date, author: commit.author }
+      .query(async ({ input }): Promise<FileHistory | null> =>
+        fileHistory(await activeOrThrow().repo.log({ path: safe(input.path) })),
+      ),
+
+    /** How the file is linked: files linking here (the same scan the delete
+     *  preview uses, a read of every note, so the block asks only when opened)
+     *  and distinct targets it links to, read from disk. */
+    links: t.procedure
+      .input(fields({ remote: 'string', path: 'string' }))
+      .query(async ({ input }): Promise<{ in: number; out: number }> => {
+        const root = await rootFor(input.remote)
+        const path = safe(input.path)
+        const [inbound, text] = await Promise.all([
+          scanBackrefs(root, path),
+          readFile(absPathFor(root, path), 'utf8').catch(() => ''),
+        ])
+        return { in: inbound.length, out: linksOut(text, path) }
       }),
 
     /**

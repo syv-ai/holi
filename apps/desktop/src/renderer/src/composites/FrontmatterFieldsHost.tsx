@@ -43,7 +43,12 @@ function FrontmatterBlock({ portal }: { portal: FrontmatterPortal }): React.JSX.
   useLayoutEffect(() => playOnce(portal.el, 'motion-in-fade'), [portal.el])
 
   return createPortal(
-    <FrontmatterFields path={portal.path} yaml={portal.yaml} onWrite={portal.write} />,
+    <FrontmatterFields
+      path={portal.path}
+      yaml={portal.yaml}
+      chars={portal.chars}
+      onWrite={portal.write}
+    />,
     portal.el,
   )
 }

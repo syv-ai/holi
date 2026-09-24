@@ -437,6 +437,7 @@ class FrontmatterWidget extends WidgetType {
         el: slot,
         path: this.path,
         yaml: this.body,
+        chars: this.chars,
         write: (next) => {
           this.writeBack(view, next.replace(/\n$/, ''))
           if (this.chevron !== null) paintChevron(this.chevron, next)

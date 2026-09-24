@@ -240,11 +240,11 @@ export function EditorPane({
       // (new/untracked file) just leaves the summary at the char count. Guarded
       // so a fast tab switch can't write into a torn-down or replaced view.
       if (!plain) {
-        void trpc.notes.lastCommit
+        void trpc.notes.fileHistory
           .query({ path })
-          .then((commit) => {
+          .then((history) => {
             if (disposed || viewRef.current !== view) return
-            view.dispatch({ effects: setFrontmatterCommit.of(commit) })
+            view.dispatch({ effects: setFrontmatterCommit.of(history?.last ?? null) })
           })
           .catch(() => {})
       }

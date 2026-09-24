@@ -18,7 +18,7 @@ function publish(yaml = 'status: todo\n') {
   document.body.appendChild(el)
   let id = 0
   act(() => {
-    id = openFrontmatterPortal({ el, path: 'tasks/ship.md', yaml, write: () => {} })
+    id = openFrontmatterPortal({ el, path: 'tasks/ship.md', yaml, chars: 0, write: () => {} })
   })
   opened.push(id)
   return { el, id }
