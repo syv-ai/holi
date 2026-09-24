@@ -609,6 +609,21 @@
 [data-solo-column] > .cm-editor > .cm-scroller > .cm-content {
   margin-inline: auto;
 }
+/* The frontmatter sits in the middle of a centred column rather than on the
+ * text's left edge: the collapsed summary is inline, so it centres as text;
+ * expanded, the fields take a compact width and the row (chevron included) is
+ * centred. `text-align` is put back inside so the fields read as they always
+ * do. Left-anchored, it keeps the text's edge like everything else. */
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm {
+  text-align: center;
+}
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-reveal {
+  justify-content: center;
+  text-align: start;
+}
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-body {
+  flex: 0 1 28rem;
+}
 .holi-column-sliding > .cm-editor > .cm-scroller > .cm-content {
   animation: holi-column-slide var(--motion-slide) var(--ease-slide);
 }
