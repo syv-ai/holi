@@ -592,60 +592,28 @@
 }
 
 /* ── Solo note column (#13) ───────────────────────────────────────────
- * When a note is alone in the window, the notes editor centres its column
- * (`isSoloNote`; `EditorPane` sets `data-solo-column`). Otherwise it is anchored
- * left, for the reason `editor/theme.ts` gives at `.cm-content`.
+ * When a note is alone in the window (`isSoloNote`; `EditorPane` sets
+ * `data-solo-column`), the notes editor centres its column. Otherwise it is
+ * anchored left, for the reason `editor/theme.ts` gives at `.cm-content`.
+ *
+ * No motion: the change happens on a split or an unsplit, a layout event big
+ * enough to carry it, and inside CodeMirror only paint may move.
  *
  * The child combinators are load-bearing: the frontmatter widget nests a whole
- * CodeMirror inside the note, and its `.cm-content` must not centre too.
- *
- * The change between the two is A, a slide on the `--motion-slide` pace: the
- * column travels up to half a wide pane, which is the distance that token was
- * chosen for. It is a FLIP, played by `EditorPane`: the margin changes at once
- * and this transform brings the column in from where it was, because inside
- * CodeMirror only paint may move. The caret and selection layers are drawn
- * from measured positions, so they are hidden for the trip and redrawn where
- * the column lands. Reduced motion never adds the class (JS gate). */
+ * CodeMirror inside the note, and its `.cm-content` must not centre too. */
 [data-solo-column] > .cm-editor > .cm-scroller > .cm-content {
   margin-inline: auto;
 }
-/* The frontmatter sits in the middle of a centred column rather than on the
- * text's left edge. Collapsed, the summary is inline, so it centres as text.
- * Expanded, the block keeps the collapsed line's width rather than growing:
- * `.cm-fm-sizer` (frontmatter.ts) is an invisible, zero-high copy of that line,
- * and it alone sizes the one grid column. The fields row contributes nothing
- * to that size (`width: 0`) and then fills it (`min-width: 100%`). Left-anchored,
- * the frontmatter keeps the text's edge like everything else. */
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm {
+/* The frontmatter sits in the middle of a centred column, one width open or
+ * closed so opening it never makes it wider: the collapsed summary centres in
+ * that width and the fields fill it. Left-anchored, it keeps the text's edge. */
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content > .cm-fm {
+  width: min(24rem, 100% - 2 * var(--editor-inset));
+  margin-inline: auto;
   text-align: center;
 }
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm:has(> .cm-fm-reveal) {
-  display: grid;
-  grid-template-columns: max-content;
-  justify-content: center;
+[data-solo-column] > .cm-editor > .cm-scroller > .cm-content > .cm-fm .cm-fm-reveal {
   text-align: start;
-}
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-reveal {
-  width: 0;
-  min-width: 100%;
-}
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content .cm-fm-sizer {
-  display: flex;
-  height: 0;
-  padding-block: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-.holi-column-sliding > .cm-editor > .cm-scroller > .cm-content {
-  animation: holi-column-slide var(--motion-slide) var(--ease-slide);
-}
-.holi-column-sliding > .cm-editor > .cm-scroller > .cm-layer {
-  visibility: hidden;
-}
-@keyframes holi-column-slide {
-  from {
-    transform: translateX(var(--column-from));
-  }
 }
 
 /* ── K · acknowledge ──────────────────────────────────────────────────
