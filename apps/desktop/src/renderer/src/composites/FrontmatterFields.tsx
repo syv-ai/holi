@@ -319,7 +319,7 @@ export function FrontmatterFields({
   path,
   yaml,
   onWrite,
-  chars,
+  facts = false,
 }: {
   /** The file, which is what decides the schema. */
   path: string
@@ -327,8 +327,9 @@ export function FrontmatterFields({
   yaml: string
   /** The whole YAML body to write back. */
   onWrite: (yaml: string) => void
-  /** The body's char count, for the facts rows. Omitted, they are not drawn. */
-  chars?: number
+  /** Draw the read-only facts under the rows (`FileFactsRows`), which ask
+   *  main for the file's history and links. */
+  facts?: boolean
 }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const complete = useSetAtom(completeTaskAtom)
@@ -465,7 +466,7 @@ export function FrontmatterFields({
         </FieldRow>
       ))}
       <AddFieldRow existing={Object.keys(values)} schema={schema} onAdd={set} />
-      {chars !== undefined && <FileFactsRows path={path} chars={chars} />}
+      {facts && <FileFactsRows path={path} />}
     </div>
   )
 }

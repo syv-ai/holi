@@ -28,8 +28,6 @@ export interface FrontmatterPortal {
   readonly path: string
   /** The YAML between the fences, as the document currently has it. */
   readonly yaml: string
-  /** The body's char count when the block was built, for the facts rows. */
-  readonly chars: number
   /** Hand back the whole YAML body; the widget writes it into the document. */
   readonly write: (yaml: string) => void
 }

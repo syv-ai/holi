@@ -308,66 +308,142 @@ function paintChevron(el: HTMLElement, body: string): void {
   el.title = valid ? `frontmatter · ${n} field${n === 1 ? '' : 's'}` : 'frontmatter — invalid YAML'
 }
 
-/** Two commits are the same for the summary if both are null or share both
- *  fields — cheap value equality for the widget's `eq`. */
+/** Two commits are the same for the summary if both are null or share every
+ *  field — cheap value equality for the widget's `eq`. */
 function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boolean {
   if (a === null || b === null) return a === b
   return a.date === b.date && a.author === b.author && a.revisions === b.revisions
 }
 
-class FrontmatterWidget extends WidgetType {
-  private nested: EditorView | null = null
-  /** The live portal id while this widget is drawing fields, else null. */
-  private portal: number | null = null
+/**
+ * What a drawn block holds while it is on screen, keyed by its DOM.
+ *
+ * **On the DOM, not the widget instance**, because CodeMirror does not keep
+ * the instance: a rebuilt decoration whose widget compares equal, or one that
+ * `updateDOM` accepts, hands the existing DOM to the NEW instance and drops the
+ * old one. State on the instance was stranded there, so after typing in the
+ * body of an open note the nested editor and the portal belonged to an object
+ * nothing would ever call `destroy` on. `destroy(dom)` and `updateDOM(dom)`
+ * both receive the element, so the element is where this lives.
+ */
+interface LiveBlock {
   /**
-   * What the region holds *now*, which is not always what this widget was built
+   * What the region holds *now*, which is not always what the widget was built
    * with: our own write-back maps the decoration rather than rebuilding it, so
-   * the instance outlives the text it was constructed from. `eq` compares
+   * the block outlives the text it was constructed from. `updateDOM` compares
    * against this, or the next unrelated edit to the body would look like an
    * external change and tear the block down mid-interaction.
    */
-  private live: string | null
-  /** The revealed chevron, kept so a nested edit can recolour it in place — the
-   *  widget maps rather than rebuilds on its own write (to keep the nested caret),
-   *  so nothing else would refresh the invalid-YAML cue live. */
-  private chevron: HTMLElement | null = null
+  body: string | null
+  nested: EditorView | null
+  /** The live portal id while the block is drawing fields, else null. */
+  portal: number | null
+  /** The header, replaced whole when the summary changes (`updateDOM`). */
+  header: HTMLElement | null
+  /** The chevron mark, kept so a nested edit can recolour it in place: the
+   *  write-back maps rather than rebuilds, so nothing else would refresh the
+   *  invalid-YAML cue live. */
+  mark: HTMLElement | null
+}
 
+const liveBlocks = new WeakMap<HTMLElement, LiveBlock>()
+
+class FrontmatterWidget extends WidgetType {
   constructor(
     readonly expanded: boolean,
     /** The YAML between the fences, or **null when the file has no frontmatter
      *  at all**. Null is the whole difference between the two things this widget
      *  is: a block that collapses, and a bar that only reports. */
     readonly body: string | null,
-    /** Body char count, for the collapsed summary. */
+    /** Body char count, for the summary. */
     readonly chars: number,
-    /** The file's last commit, for the collapsed summary (null until fetched). */
+    /** The file's last commit, for the summary (null until fetched). */
     readonly commit: FrontmatterCommit | null,
     /** The file, which is what decides whether this block has a schema. */
     readonly path: string,
   ) {
     super()
-    this.live = body
   }
 
-  /** Reuse the DOM (and the live nested editor) when nothing relevant changed.
-   *  The write-back skips rebuild entirely; a genuine rebuild (toggle, external
-   *  reload) makes a widget that differs here and so replaces the DOM.
-   *
-   *  The collapsed-only summary fields (`chars`, `commit`) are compared ONLY
-   *  when collapsed: while expanded they must not force a remount, or every body
-   *  keystroke (which changes the char count) would tear down the nested editor
-   *  and drop its caret. */
+  /** Plain value equality. Reuse beyond it (the summary changed, or our own
+   *  write moved the body on) is `updateDOM`'s call, which can see the block. */
   override eq(other: FrontmatterWidget): boolean {
-    if (other.path !== this.path) return false
-    if (other.expanded !== this.expanded || other.body !== this.live) return false
-    if (this.expanded) return true
-    return other.chars === this.chars && commitEq(other.commit, this.commit)
+    return (
+      other.path === this.path &&
+      other.expanded === this.expanded &&
+      other.body === this.body &&
+      other.chars === this.chars &&
+      commitEq(other.commit, this.commit)
+    )
+  }
+
+  /**
+   * Keep the block and repaint only its header, when the block itself is the
+   * same: same file, same state, and a body equal to what the block holds now.
+   *
+   * This is what lets the header stay on top of an OPEN block. Its char count
+   * changes with every keystroke in the note, and redrawing the block for that
+   * would tear down the fields or the nested editor and drop its caret. Any
+   * other difference (a toggle, an external rewrite of the frontmatter) returns
+   * false and the block is drawn afresh.
+   */
+  override updateDOM(dom: HTMLElement, view: EditorView, from: FrontmatterWidget): boolean {
+    const live = liveBlocks.get(dom)
+    if (live === undefined || live.header === null) return false
+    if (from.path !== this.path || from.expanded !== this.expanded || live.body !== this.body)
+      return false
+    const header = this.header(view, dom, live)
+    live.header.replaceWith(header)
+    live.header = header
+    return true
+  }
+
+  /**
+   * The summary line, the same open or closed: "N chars · Last updated
+   * DD/MM/YY, Author · v.N". A block with a collapsed state leads it with the
+   * chevron that toggles it (▸ closed, ▾ open), which reddens when the YAML is
+   * invalid (the field count is in its tooltip). A file with no frontmatter,
+   * and a task, whose block has no collapsed state, get the line bare.
+   */
+  private header(view: EditorView, wrap: HTMLElement, live: LiveBlock): HTMLElement {
+    if (this.body === null || frontmatterAlwaysOpen(this.path)) {
+      live.mark = null
+      const bare = document.createElement('span')
+      bare.className = 'cm-fm-bare'
+      return summaryLine(view, bare, this.chars, this.commit)
+    }
+    const pill = document.createElement('button')
+    pill.type = 'button'
+    pill.className = 'cm-fm-pill'
+    pill.setAttribute(this.expanded ? 'data-frontmatter-header' : 'data-frontmatter-pill', '')
+    const mark = document.createElement('span')
+    mark.className = 'cm-fm-mark'
+    mark.textContent = this.expanded ? '▾' : '▸'
+    paintChevron(mark, live.body ?? this.body)
+    live.mark = mark
+    pill.append(mark)
+    const open = !this.expanded
+    pill.onmousedown = (e) => {
+      e.preventDefault()
+      pressToggle(view, wrap, open)
+    }
+    return summaryLine(view, pill, this.chars, this.commit)
   }
 
   override toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'cm-fm'
-    wrap.setAttribute('data-frontmatter', this.expanded ? 'expanded' : 'collapsed')
+    const live: LiveBlock = {
+      body: this.body,
+      nested: null,
+      portal: null,
+      header: null,
+      mark: null,
+    }
+    liveBlocks.set(wrap, live)
+
+    live.header = this.header(view, wrap, live)
+    wrap.appendChild(live.header)
 
     if (this.body === null) {
       // No frontmatter in the file. The bar is still shown, because "N chars ·
@@ -377,56 +453,21 @@ class FrontmatterWidget extends WidgetType {
       // and nothing here writes one, since `normalize-md` adds frontmatter on
       // the next commit anyway and two ways to do it is one too many.
       wrap.setAttribute('data-frontmatter', 'none')
-      const bare = document.createElement('span')
-      bare.className = 'cm-fm-bare'
-      wrap.appendChild(summaryLine(view, bare, this.chars, this.commit))
       return wrap
     }
 
     if (!this.expanded) {
-      // Collapsed: a chevron followed by a one-line summary — "N chars · Last
-      // updated DD/MM/YY, Author". The chevron mark reddens if the YAML is
-      // invalid (the field count is in its tooltip); the summary stays neutral.
-      const pill = document.createElement('button')
-      pill.type = 'button'
-      pill.className = 'cm-fm-pill'
-      pill.setAttribute('data-frontmatter-pill', '')
-
-      const mark = document.createElement('span')
-      mark.className = 'cm-fm-mark'
-      mark.textContent = '▸'
-      paintChevron(mark, this.body)
-
-      pill.append(mark)
-      pill.onmousedown = (e) => {
-        e.preventDefault()
-        pressToggle(view, wrap, true)
-      }
-      wrap.appendChild(summaryLine(view, pill, this.chars, this.commit))
+      wrap.setAttribute('data-frontmatter', 'collapsed')
       playResize(view, wrap, false)
       return wrap
     }
 
-    // Expanded reads as ONE widget: a collapse chevron sitting to the left of the
-    // YAML, no "frontmatter" title, no border, no box — just the fields.
+    // Expanded: the same header, then the fields under it. No "frontmatter"
+    // title, no border, no box.
+    wrap.setAttribute('data-frontmatter', 'expanded')
+    const body = this.body
     const row = document.createElement('div')
     row.className = 'cm-fm-reveal'
-
-    if (!frontmatterAlwaysOpen(this.path)) {
-      const chevron = document.createElement('button')
-      chevron.type = 'button'
-      chevron.className = 'cm-fm-chevron'
-      chevron.setAttribute('data-frontmatter-header', '')
-      chevron.textContent = '▾'
-      paintChevron(chevron, this.body)
-      this.chevron = chevron
-      chevron.onmousedown = (e) => {
-        e.preventDefault()
-        pressToggle(view, wrap, false)
-      }
-      row.appendChild(chevron)
-    }
-
     const host = document.createElement('div')
     host.className = 'cm-fm-body'
     row.appendChild(host)
@@ -440,19 +481,18 @@ class FrontmatterWidget extends WidgetType {
     // parse has no rows to draw. Either way the answer is the same one, the
     // YAML itself, which is why the editor below is the fallback rather than a
     // separate feature.
-    if (frontmatterSchema(this.path) !== null && readYamlMapping(this.body) !== null) {
+    if (frontmatterSchema(this.path) !== null && readYamlMapping(body) !== null) {
       wrap.setAttribute('data-frontmatter', 'fields')
       const slot = document.createElement('div')
       slot.className = 'cm-fm-fields'
       host.appendChild(slot)
-      this.portal = openFrontmatterPortal({
+      live.portal = openFrontmatterPortal({
         el: slot,
         path: this.path,
-        yaml: this.body,
-        chars: this.chars,
+        yaml: body,
         write: (next) => {
-          this.writeBack(view, next.replace(/\n$/, ''))
-          if (this.chevron !== null) paintChevron(this.chevron, next)
+          writeBack(view, live, next.replace(/\n$/, ''))
+          if (live.mark !== null) paintChevron(live.mark, next)
         },
       })
       return wrap
@@ -468,9 +508,9 @@ class FrontmatterWidget extends WidgetType {
     // grammar and the same `codeHighlighting` a `.yaml` file opens with. A key
     // and its value looking alike is what made a task's whole record read as
     // one grey block.
-    this.nested = new EditorView({
+    live.nested = new EditorView({
       parent: host,
-      doc: this.body.replace(/\n$/, ''),
+      doc: body.replace(/\n$/, ''),
       extensions: [
         yaml(),
         codeHighlighting,
@@ -480,12 +520,12 @@ class FrontmatterWidget extends WidgetType {
         keymap.of([...defaultKeymap, ...historyKeymap]),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged) return
-          const body = u.state.doc.toString()
-          this.writeBack(view, body)
+          const next = u.state.doc.toString()
+          writeBack(view, live, next)
           // Recolour the chevron here: the write-back is our own edit, so the
           // widget maps instead of rebuilding and the cue would otherwise stay
           // frozen — the invalid-YAML feedback has to be live while you type.
-          if (this.chevron !== null) paintChevron(this.chevron, body)
+          if (live.mark !== null) paintChevron(live.mark, next)
         }),
         EditorView.theme({
           '&': { backgroundColor: 'transparent' },
@@ -496,25 +536,12 @@ class FrontmatterWidget extends WidgetType {
     return wrap
   }
 
-  /** Push the nested body back to the root over the current region, fences
-   *  rebuilt, marked as our own edit so the plugin does not remount us. */
-  private writeBack(view: EditorView, body: string): void {
-    const region = frontmatterRegion(view.state.doc.toString())
-    if (region === null) return
-    this.live = body
-    if (this.portal !== null) updateFrontmatterPortal(this.portal, body)
-    view.dispatch({
-      changes: { from: region.from, to: region.to, insert: regionTextFrom(body) },
-      annotations: frontmatterEdit.of(true),
-    })
-  }
-
-  override destroy(): void {
-    this.nested?.destroy()
-    this.nested = null
-    this.chevron = null
-    if (this.portal !== null) closeFrontmatterPortal(this.portal)
-    this.portal = null
+  override destroy(dom: HTMLElement): void {
+    const live = liveBlocks.get(dom)
+    if (live === undefined) return
+    liveBlocks.delete(dom)
+    live.nested?.destroy()
+    if (live.portal !== null) closeFrontmatterPortal(live.portal)
   }
 
   override ignoreEvent(): boolean {
@@ -522,6 +549,19 @@ class FrontmatterWidget extends WidgetType {
     // are the widget's own — the root must not treat them as its input.
     return true
   }
+}
+
+/** Push the nested body back to the root over the current region, fences
+ *  rebuilt, marked as our own edit so the plugin does not remount the block. */
+function writeBack(view: EditorView, live: LiveBlock, body: string): void {
+  const region = frontmatterRegion(view.state.doc.toString())
+  if (region === null) return
+  live.body = body
+  if (live.portal !== null) updateFrontmatterPortal(live.portal, body)
+  view.dispatch({
+    changes: { from: region.from, to: region.to, insert: regionTextFrom(body) },
+    annotations: frontmatterEdit.of(true),
+  })
 }
 
 /**
@@ -689,32 +729,15 @@ const frontmatterTheme = EditorView.baseTheme({
     lineHeight: '1.2',
     color: '#6b6b6b',
   },
-  // Expanded: one borderless unit — the chevron sits to the left of the YAML,
-  // no title, no box. The chevron aligns to the first line.
-  '.cm-fm-reveal': {
-    display: 'flex',
-    alignItems: 'flex-start',
-    gap: '0.4rem',
-    textAlign: 'start',
-  },
-  '.cm-fm-chevron': {
-    padding: '0',
-    paddingTop: '0.05rem',
-    fontSize: '0.8rem',
-    lineHeight: '1.4',
-    color: '#6b6b6b',
-    background: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-  },
-  '.cm-fm-pill:hover, .cm-fm-chevron:hover': { color: '#a3a3a3' },
-  '.cm-fm-body': { flex: '1', minWidth: '0' },
+  // Expanded: the header, then the fields under it, one borderless unit.
+  '.cm-fm-reveal': { paddingTop: '0.5rem', textAlign: 'start' },
+  '.cm-fm-pill:hover': { color: '#a3a3a3' },
   // See `caretInBlock`: a caret whose head is inside the replaced region would
   // render as tall as the whole block.
   '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },
   // Invalid YAML reddens the chevron mark — the only status cue, and it wins on
   // hover (an explicit colour on the mark overrides the inherited hover colour).
-  '.cm-fm-mark.cm-fm-invalid, .cm-fm-chevron.cm-fm-invalid': { color: '#f87171' },
+  '.cm-fm-mark.cm-fm-invalid': { color: '#f87171' },
 })
 
 /** Where the editable body starts — just past the frontmatter block, or 0 when

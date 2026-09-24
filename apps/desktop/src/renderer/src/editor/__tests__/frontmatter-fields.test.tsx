@@ -125,6 +125,49 @@ it('a note keeps its chevron and still collapses', () => {
   )
 })
 
+it('an open note keeps its header on top, with the chevron pointing down', () => {
+  const v = mount('---\ntags: [ops]\n---\n\nprose\n', 'notes/meeting.md')
+  v.dispatch({ effects: toggleFrontmatter.of(true) })
+  const header = v.dom.querySelector('[data-frontmatter-header]')
+  expect(header?.querySelector('.cm-fm-mark')?.textContent).toBe('▾')
+  expect(header?.querySelector('.cm-fm-summary')?.textContent).toBe('5 chars')
+  // Above the fields, not beside them.
+  expect(v.dom.querySelector('.cm-fm')?.firstElementChild?.contains(header!)).toBe(true)
+})
+
+it('a task shows the header bare: the facts, with nothing to collapse', () => {
+  const v = mount('---\nstatus: todo\n---\n\n# Fix the tap\n', TASK)
+  expect(v.dom.querySelector('.cm-fm-bare .cm-fm-summary')?.textContent).toBe('13 chars')
+})
+
+it('typing in the note repaints the open header and keeps the fields', () => {
+  // The header counts the body, so it changes on every keystroke. Redrawing
+  // the block for that would unmount the fields under the pointer.
+  const v = mount('---\ntags: [ops]\n---\n\nprose\n', 'notes/meeting.md')
+  v.dispatch({ effects: toggleFrontmatter.of(true) })
+  const slot = v.dom.querySelector('.cm-fm-fields')
+  const portals = frontmatterPortals().length
+
+  v.dispatch({ changes: { from: v.state.doc.length, insert: 'more' } })
+
+  expect(v.dom.querySelector('.cm-fm-summary')?.textContent).toBe('10 chars')
+  expect(v.dom.querySelector('.cm-fm-fields')).toBe(slot)
+  expect(frontmatterPortals().length).toBe(portals)
+})
+
+it('after typing, closing the editor still closes the fields portal', () => {
+  // CodeMirror hands the kept DOM to the NEW widget instance; state held on
+  // the old one used to be stranded, so the portal outlived its editor.
+  const v = mount('---\ntags: [ops]\n---\n\nprose\n', 'notes/meeting.md')
+  v.dispatch({ effects: toggleFrontmatter.of(true) })
+  const before = frontmatterPortals().length
+  v.dispatch({ changes: { from: v.state.doc.length, insert: 'x' } })
+
+  view!.destroy()
+  view = null
+  expect(frontmatterPortals().length).toBe(before - 1)
+})
+
 it('a bare caret cannot rest in the block — it lands on the first body line', () => {
   const doc = '---\nstatus: todo\n---\n\n# Fix the tap\n'
   const v = mount(doc, TASK)
