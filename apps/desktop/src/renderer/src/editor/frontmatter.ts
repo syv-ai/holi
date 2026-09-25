@@ -84,6 +84,7 @@ function summaryLine(
   lead: HTMLElement,
   chars: number,
   commit: FrontmatterCommit | null,
+  path: string,
 ): HTMLElement {
   const { text, author, version } = frontmatterSummaryParts(chars, commit)
   const summary = document.createElement('span')
@@ -109,10 +110,34 @@ function summaryLine(
     line.appendChild(link)
     const tail = document.createElement('span')
     tail.className = 'cm-fm-version'
-    tail.textContent = `· ${version}`
+    tail.append('· ', versionLink(view, version ?? '', path))
     line.appendChild(tail)
   }
   return line
+}
+
+/**
+ * The `v.N` after the name, as a link that opens the history sidebar, whose
+ * list is those N commits.
+ *
+ * Plain text where that sidebar cannot open: a task file (the sidebar follows
+ * notes only, `historyTargetPathAtom`) and an editor that offers no
+ * `openHistory`, such as a task's body editor. A link that does nothing is
+ * worse than none.
+ */
+function versionLink(view: EditorView, version: string, path: string): HTMLElement | string {
+  const openHistory = view.state.facet(linkNavFacet)?.().openHistory
+  if (openHistory === undefined || isTaskFilePath(path)) return version
+  const link = document.createElement('a')
+  link.className = 'cm-fm-history'
+  link.href = '#'
+  link.textContent = version
+  link.onmousedown = (e) => {
+    e.preventDefault()
+    openHistory()
+  }
+  link.onclick = (e) => e.preventDefault()
+  return link
 }
 
 function pressToggle(view: EditorView, wrap: HTMLElement, open: boolean): void {
@@ -410,7 +435,7 @@ class FrontmatterWidget extends WidgetType {
       live.mark = null
       const bare = document.createElement('span')
       bare.className = 'cm-fm-bare'
-      return summaryLine(view, bare, this.chars, this.commit)
+      return summaryLine(view, bare, this.chars, this.commit, this.path)
     }
     const pill = document.createElement('button')
     pill.type = 'button'
@@ -427,7 +452,7 @@ class FrontmatterWidget extends WidgetType {
       e.preventDefault()
       pressToggle(view, wrap, open)
     }
-    return summaryLine(view, pill, this.chars, this.commit)
+    return summaryLine(view, pill, this.chars, this.commit, this.path)
   }
 
   override toDOM(view: EditorView): HTMLElement {
@@ -719,7 +744,8 @@ const frontmatterTheme = EditorView.baseTheme({
     lineHeight: '1.2',
     color: '#6b6b6b',
   },
-  '.cm-fm-author:hover': { color: '#a3a3a3', textDecoration: 'underline' },
+  '.cm-fm-history': { color: 'inherit', textDecoration: 'none', cursor: 'pointer' },
+  '.cm-fm-author:hover, .cm-fm-history:hover': { color: '#a3a3a3', textDecoration: 'underline' },
   // The bar a file with no frontmatter gets (#17). The pill's type and colour
   // without the pill: there is nothing to press, so it is not a button.
   '.cm-fm-bare': {

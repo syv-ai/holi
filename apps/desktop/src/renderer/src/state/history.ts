@@ -55,6 +55,13 @@ export interface FileDiff {
 
 export const historyOpenAtom = atom(false)
 export const versionsAtom = atom<Version[]>([])
+/**
+ * How many commits touched the file, for the panel header. Not
+ * `versions.length`: the list is capped (`HISTORY_LIMIT`), and this is the same
+ * uncapped count the frontmatter header's `v.N` shows, so the two agree. Null
+ * until it arrives.
+ */
+export const revisionCountAtom = atom<number | null>(null)
 export const selectedShaAtom = atom<string | null>(null)
 /** The selected commit's diff for the focused file, or null while none is picked
  *  / still loading. */
@@ -65,10 +72,15 @@ export const diffAtom = atom<FileDiff | null>(null)
 export const loadVersionsAtom = atom(null, async (get, set) => {
   const path = get(historyTargetPathAtom)
   if (!path) return
-  const versions = await trpc.history.list.query({ path })
+  const [versions, history] = await Promise.all([
+    trpc.history.list.query({ path }),
+    trpc.notes.fileHistory.query({ path }).catch(() => undefined),
+  ])
   // Focus may have moved to another file while this was in flight — don't stamp
   // one file's timeline over another's.
-  if (get(historyTargetPathAtom) === path) set(versionsAtom, versions)
+  if (get(historyTargetPathAtom) !== path) return
+  set(versionsAtom, versions)
+  if (history !== undefined) set(revisionCountAtom, history?.revisions ?? 0)
 })
 
 /** Load the diff a commit made to the focused file (vs its parent). */
@@ -101,6 +113,7 @@ export const restoreVersionAtom = atom(null, async (get, set, sha: string) => {
 /** Opening a different note must not leave the last one's versions on screen. */
 export const resetHistoryAtom = atom(null, (_get, set) => {
   set(versionsAtom, [])
+  set(revisionCountAtom, null)
   set(selectedShaAtom, null)
   set(diffAtom, null)
 })

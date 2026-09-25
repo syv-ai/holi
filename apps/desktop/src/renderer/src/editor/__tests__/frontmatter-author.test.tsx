@@ -19,7 +19,11 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
-function mount(doc: string, openExternal: (url: string) => void): EditorView {
+function mount(
+  doc: string,
+  openExternal: (url: string) => void,
+  { openHistory, notePath = 'notes/plan.md' }: { openHistory?: () => void; notePath?: string } = {},
+): EditorView {
   const parent = document.createElement('div')
   document.body.appendChild(parent)
   view = new EditorView({
@@ -30,8 +34,8 @@ function mount(doc: string, openExternal: (url: string) => void): EditorView {
         taskByPath: () => null,
         readNote: async () => null,
         mentionData: () => ({ notes: [], tasks: [] }),
-        nav: () => ({ openNote: () => {}, openExternal }),
-        notePath: 'notes/plan.md',
+        nav: () => ({ openNote: () => {}, openExternal, openHistory }),
+        notePath,
         askAgent: {
           targets: () => ({ sessions: [], initial: 'new' as const }),
           onAsk: () => Promise.resolve({ ok: true }),
@@ -83,4 +87,32 @@ it('shows no link while the last commit is unknown', () => {
   const v = mount(DOC, () => {})
   v.dispatch({ effects: setFrontmatterCommit.of(null) })
   expect(v.dom.querySelector('.cm-fm-author')).toBeNull()
+})
+
+const press = (el: Element) =>
+  el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+
+it('the version opens the history sidebar, and leaves the block closed', () => {
+  const openHistory = vi.fn()
+  const v = mount(DOC, () => {}, { openHistory })
+  const link = v.dom.querySelector('.cm-fm-history')
+  expect(link?.textContent).toBe('v.14')
+
+  press(link!)
+  expect(openHistory).toHaveBeenCalledOnce()
+  expect(v.state.field(frontmatterExpandedField)).toBe(false)
+})
+
+it('the version is plain text on a task, whose history the sidebar does not show', () => {
+  const v = mount('---\nstatus: todo\n---\n\n# Fix\n', () => {}, {
+    openHistory: vi.fn(),
+    notePath: 'projects/task.fix.md',
+  })
+  expect(v.dom.querySelector('.cm-fm-history')).toBeNull()
+  expect(v.dom.querySelector('.cm-fm-version')?.textContent).toBe('· v.14')
+})
+
+it('the version is plain text where no sidebar can be opened', () => {
+  const v = mount(DOC, () => {})
+  expect(v.dom.querySelector('.cm-fm-history')).toBeNull()
 })

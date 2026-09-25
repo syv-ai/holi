@@ -20,6 +20,7 @@ import {
   loadVersionsAtom,
   resetHistoryAtom,
   restoreVersionAtom,
+  revisionCountAtom,
   selectedShaAtom,
   versionsAtom,
   type Version,
@@ -40,6 +41,7 @@ export function HistoryPanel() {
   const targetPath = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const versions = useAtomValue(versionsAtom)
+  const revisions = useAtomValue(revisionCountAtom)
   const diff = useAtomValue(diffAtom)
   const [selectedSha] = useAtom(selectedShaAtom)
   const loadVersions = useSetAtom(loadVersionsAtom)
@@ -125,7 +127,11 @@ export function HistoryPanel() {
   )
 
   return (
-    <SidePanel title="History" subtitle={targetPath}>
+    <SidePanel
+      title="History"
+      subtitle={targetPath}
+      aside={revisions === null ? undefined : `${revisions} revision${revisions === 1 ? '' : 's'}`}
+    >
       <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
         {versions.length === 0 && (
           <p className="px-2 py-1 text-xs text-muted-foreground">

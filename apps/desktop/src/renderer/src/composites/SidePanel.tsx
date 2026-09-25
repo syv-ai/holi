@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn'
 export function SidePanel({
   title,
   subtitle,
+  aside,
   actions,
   onClose,
   className,
@@ -28,6 +29,9 @@ export function SidePanel({
   title: string
   /** A dim, truncating second line of context (History's target path). */
   subtitle?: React.ReactNode
+  /** A dim fact at the header's right edge, before any actions (History's
+   *  revision count). Read, not pressed: controls go in `actions`. */
+  aside?: React.ReactNode
   /** Right-aligned header controls, before the close (structured, not raw JSX). */
   actions?: HeaderAction[]
   /** Renders a ghost close button when present; omit for panels toggled elsewhere. */
@@ -52,6 +56,9 @@ export function SidePanel({
         <span className="font-medium text-foreground">{title}</span>
         {subtitle !== undefined && (
           <span className="min-w-0 flex-1 truncate text-muted-foreground">{subtitle}</span>
+        )}
+        {aside !== undefined && (
+          <span className="ml-auto shrink-0 text-muted-foreground">{aside}</span>
         )}
       </PanelHeader>
       <div className="flex min-h-0 flex-1 flex-col">{children}</div>

@@ -33,6 +33,7 @@ import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
 import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
+import { historyOpenAtom } from '@/state/history'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -105,6 +106,7 @@ export function EditorPane({
     })),
   }
   const sendToAgent = useSetAtom(sendToAgentAtom)
+  const setHistoryOpen = useSetAtom(historyOpenAtom)
   const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
   /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on
@@ -125,6 +127,15 @@ export function EditorPane({
     openNote: (target) =>
       (docPaths.current.has(target) || tasksByPath.current.has(target)) && onOpenNote(target),
     openExternal: (url) => void window.holi.openExternal(url),
+    // Open, never toggle: the header's `v.N` asks to see the history, and a
+    // second press on it must not be what hides it. Focus first: the sidebar
+    // follows the ACTIVE pane's note, a pane becomes active on focus, and the
+    // link's mousedown is prevented, so in a split the press alone would open
+    // the other pane's history.
+    openHistory: () => {
+      viewRef.current?.focus()
+      setHistoryOpen(true)
+    },
   }
 
   useEffect(() => {

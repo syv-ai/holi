@@ -36,6 +36,10 @@ export interface LinkNav {
    *  No-op if nothing is there. */
   openNote: (path: string) => void
   openExternal: (url: string) => void
+  /** Open the history sidebar for the focused note (the frontmatter header's
+   *  `v.N`). Absent where there is no sidebar to open, and the version is then
+   *  plain text. */
+  openHistory?: () => void
 }
 
 /**
