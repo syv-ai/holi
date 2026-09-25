@@ -66,7 +66,12 @@ import {
   workspaceAtom,
   type Tab,
 } from '../state/panes'
-import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
+import {
+  historyLeavingAtom,
+  historyOpenAtom,
+  historyTargetPathAtom,
+  setHistoryOpenAtom,
+} from '../state/history'
 import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
 import type { PaneDropZone } from '@/lib/tab-drop'
@@ -139,8 +144,12 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
-  const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const setHistoryOpen = useSetAtom(setHistoryOpenAtom)
   const historyOpen = useAtomValue(historyOpenAtom)
+  // A sidebar sliding out is closing, so the button reopens it rather than
+  // closing it a second time.
+  const historyLeaving = useAtomValue(historyLeavingAtom)
+  const historyShown = historyOpen && !historyLeaving
   const turnReviewOpen = useAtomValue(turnReviewOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
@@ -641,7 +650,7 @@ export function Shell() {
                                 variant="ghost"
                                 size="icon-xs"
                                 className="ml-1 shrink-0 text-muted-foreground"
-                                onClick={() => setHistoryOpen((v) => !v)}
+                                onClick={() => setHistoryOpen(!historyShown)}
                               >
                                 <History size={16} />
                               </Button>

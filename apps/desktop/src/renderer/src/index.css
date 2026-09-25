@@ -473,6 +473,17 @@
 @utility motion-out-fade {
   animation: motion-out-fade var(--motion-leave) var(--ease-settle) both;
 }
+/* A side panel's content arriving at and leaving its edge: the slide pace
+ * (`--motion-slide`, `--ease-slide`, see :root), slower than a menu's arrive
+ * and eased in and out, and the SAME pace both ways, so opening and closing
+ * read as one motion reversed (a design call, 2026-09-25). The panel's width
+ * does not move; only what is in it. */
+@utility motion-slide-in-right {
+  animation: motion-in-right var(--motion-slide) var(--ease-slide) both;
+}
+@utility motion-slide-out-right {
+  animation: motion-out-right var(--motion-slide) var(--ease-slide) both;
+}
 
 @keyframes motion-in-right {
   from {
@@ -766,7 +777,9 @@
   .motion-out-top,
   .motion-out-bottom,
   .motion-out-origin,
-  .motion-out-fade {
+  .motion-out-fade,
+  .motion-slide-in-right,
+  .motion-slide-out-right {
     animation-duration: 1ms;
   }
 }

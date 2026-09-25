@@ -14,6 +14,7 @@ import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
   diffAtom,
+  historyLeavingAtom,
   historyOpenAtom,
   historyTargetPathAtom,
   loadDiffAtom,
@@ -38,6 +39,7 @@ const when = (iso: string) =>
 
 export function HistoryPanel() {
   const open = useAtomValue(historyOpenAtom)
+  const leaving = useAtomValue(historyLeavingAtom)
   const targetPath = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const versions = useAtomValue(versionsAtom)
@@ -130,6 +132,7 @@ export function HistoryPanel() {
     <SidePanel
       title="History"
       subtitle={targetPath}
+      leaving={leaving}
       aside={revisions === null ? undefined : `${revisions} revision${revisions === 1 ? '' : 's'}`}
     >
       <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">

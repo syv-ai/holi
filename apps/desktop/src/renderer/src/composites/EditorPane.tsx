@@ -33,7 +33,7 @@ import { applyReload } from '@/lib/apply-reload'
 import { registerBuffer } from '@/lib/buffer-registry'
 import { decideReload, type ConflictResolvers } from '@/lib/editor-reload'
 import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
-import { historyOpenAtom } from '@/state/history'
+import { setHistoryOpenAtom } from '@/state/history'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
@@ -106,7 +106,7 @@ export function EditorPane({
     })),
   }
   const sendToAgent = useSetAtom(sendToAgentAtom)
-  const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const setHistoryOpen = useSetAtom(setHistoryOpenAtom)
   const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
   /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on

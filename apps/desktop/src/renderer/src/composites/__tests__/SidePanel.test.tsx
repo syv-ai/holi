@@ -53,3 +53,26 @@ test('renders structured header actions when provided', () => {
   )
   expect(screen.getByRole('button', { name: 'Restart' })).toBeInTheDocument()
 })
+
+test('slides in at the slide pace, and out while leaving', () => {
+  const { container, rerender } = render(<SidePanel title="History">x</SidePanel>)
+  const panel = container.querySelector('[data-slot="side-panel"]')!
+  expect(panel).toHaveClass('motion-slide-in-right')
+
+  rerender(
+    <SidePanel title="History" leaving>
+      x
+    </SidePanel>,
+  )
+  expect(panel).toHaveClass('motion-slide-out-right')
+  expect(panel).not.toHaveClass('motion-slide-in-right')
+})
+
+test('the aside sits in the header as a plain fact', () => {
+  render(
+    <SidePanel title="History" aside="45 revisions">
+      x
+    </SidePanel>,
+  )
+  expect(screen.getByText('45 revisions')).toBeInTheDocument()
+})

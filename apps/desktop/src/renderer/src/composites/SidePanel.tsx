@@ -21,6 +21,7 @@ export function SidePanel({
   title,
   subtitle,
   aside,
+  leaving = false,
   actions,
   onClose,
   className,
@@ -32,6 +33,8 @@ export function SidePanel({
   /** A dim fact at the header's right edge, before any actions (History's
    *  revision count). Read, not pressed: controls go in `actions`. */
   aside?: React.ReactNode
+  /** Playing its exit: the owner holds the unmount for `--motion-slide`. */
+  leaving?: boolean
   /** Right-aligned header controls, before the close (structured, not raw JSX). */
   actions?: HeaderAction[]
   /** Renders a ghost close button when present; omit for panels toggled elsewhere. */
@@ -44,10 +47,15 @@ export function SidePanel({
       data-slot="side-panel"
       // Every side panel in the app arrives from the edge it lives on, which is
       // the right-hand one for all three of them (history, the last turn, the
-      // agent). On the panel's CONTENT rather than on the `ResizablePanel`
-      // around it: animating the panel itself fights the group's sizing maths
-      // and the persisted layout, because the group is what decides its width.
-      className={cn('motion-in-right flex h-full min-w-0 flex-col', className)}
+      // agent), and leaves the same way, at the slower slide pace. On the
+      // panel's CONTENT rather than on the `ResizablePanel` around it:
+      // animating the panel itself fights the group's sizing maths and the
+      // persisted layout, because the group is what decides its width.
+      className={cn(
+        leaving ? 'motion-slide-out-right' : 'motion-slide-in-right',
+        'flex h-full min-w-0 flex-col',
+        className,
+      )}
     >
       <PanelHeader
         actions={actions}
