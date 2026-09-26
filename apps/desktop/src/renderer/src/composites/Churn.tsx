@@ -1,15 +1,9 @@
 /**
- * `+40 −3` — how much a commit changed, at a glance.
+ * `+40 −3`: how much a commit changed. A composite because both history lists
+ * show it (the vault's sums a whole commit, a note's just that file).
  *
- * In `composites/` rather than in either history feature because both lists
- * show it and a feature may not import another one. The two mean subtly
- * different things and that is fine: the vault's history sums a whole commit,
- * a note's own history sums just that file, because `log` was given a path.
- *
- * **Nothing is drawn when both are zero**, which is not a tidiness rule. A
- * merge commit has no diff of its own for `--numstat` to report, so it would
- * otherwise read as `+0 −0` and look like a commit that did nothing rather than
- * one whose changes came from somewhere else.
+ * Nothing is drawn when both are zero: a merge commit has no diff of its own
+ * for `--numstat`, and `+0 −0` would read as a commit that did nothing.
  */
 export function Churn({
   added,

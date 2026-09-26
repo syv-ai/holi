@@ -1,13 +1,10 @@
 /**
- * The FR-12 delete preview, generalized to a set. Names how many external links
- * across how many files will be left dangling (they become tombstones — no
- * cascade), so deleting a file, a folder, or a multi-selection is a decision made
- * with the fallout in view. The caller passes a human `label` and the external
- * `refs` (folder-internal links are already excluded by `backrefsMany`).
+ * The delete preview for a set of paths (docs/features/file-tree.md). Names how
+ * many external links across how many files will be left dangling (no
+ * cascade). The caller passes a human `label` and the external `refs`
+ * (folder-internal links are already excluded by `backrefsMany`).
  *
- * A composite rather than part of the explorer, because it has two callers now:
- * the file tree deletes paths, the Apps section deletes an app directory, and a
- * feature may only import from its own feature.
+ * A composite because the file tree and the Apps section both use it.
  */
 import { Button, Dialog } from '@/primitives'
 
@@ -23,13 +20,8 @@ export function DeleteConfirm({
   onCancel: () => void
   onConfirm: () => void
   /**
-   * What the confirm button is about to do.
-   *
-   * Moving a file OUT of the vault removes it from the vault, so it earns this
-   * same warning — the links left dangling are identical either way. But it is
-   * not a delete, and a dialog that says so would describe the wrong outcome to
-   * someone who asked for a move. Defaulted, so every existing caller is
-   * unchanged.
+   * What the confirm button is about to do. Moving a file out of the vault
+   * leaves the same dangling links but is not a delete, so it says so.
    */
   verb?: 'Delete' | 'Move'
 }) {
@@ -38,11 +30,8 @@ export function DeleteConfirm({
     <Dialog open onClose={onCancel} size="sm">
       <div data-delete-dialog={label} className="grid min-w-0 gap-4 [&>*]:min-w-0">
         <Dialog.Header>
-          {/* `break-all`, not `break-words`: this is a path, and every character
-              is a place it may legitimately break. `break-words` keeps a long
-              unbroken run intact until it has to give, which for
-              `AI_&_ML_Anbefalingsbrev_udkast_William_Hvid_Larsen.pdf` means
-              one enormous line. */}
+          {/* `break-all`, not `break-words`: a path may break anywhere, and
+              `break-words` leaves a long unbroken filename as one line. */}
           {verb} <span className="break-all font-mono">{label}</span>?
         </Dialog.Header>
         <Dialog.Body>

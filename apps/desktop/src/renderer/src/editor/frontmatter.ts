@@ -1,19 +1,15 @@
 /**
- * Frontmatter as one in-editor widget (FR-2 hide / FR-16 reveal).
+ * Frontmatter as one in-editor widget (docs/features/frontmatter.md).
  *
  * Modelled on the table widget (`codemirror-markdown-tables`): an atomic
- * block-`replace` decoration over the region, hosting its own nested
- * `EditorView`, whose edits are **dispatched back to the root** over the
- * region's range with a marker annotation so the plugin does not rebuild (and
- * so lose the nested caret) on its own write. The difference from the table is
- * two render states — a collapsed pill (this is the FR-2 hide) and, on reveal, a
- * nested *plain* editor (no markdown stack, so `⌘B` cannot corrupt a key).
+ * block-`replace` decoration over the region, hosting fields or a nested
+ * `EditorView`, whose edits are dispatched back to the root with a marker
+ * annotation so the decoration maps rather than rebuilds (and loses the nested
+ * caret). The nested editor is plain YAML, so `⌘B` cannot corrupt a key.
  *
- * The region is **always** replaced by the widget: the root frontmatter text is
- * never edited directly, only through the nested editor's write-back. Because
- * the write-back reconstructs the `---` fences every time, breaking the YAML
- * body never dissolves the block — it only turns the status dot red (and, via
- * `frontmatterValid`, holds off the save).
+ * The root frontmatter text is never edited directly. The write-back rebuilds
+ * the `---` fences every time, so broken YAML never dissolves the block: it
+ * reddens the chevron and, via `frontmatterValid`, holds off the save.
  */
 import {
   Annotation,
@@ -57,27 +53,20 @@ import { prefersReducedMotion } from '@/lib/motion'
 export const toggleFrontmatter = StateEffect.define<boolean>()
 
 /**
- * The block's height when its pill or chevron was pressed, for the next build
- * to open or close from.
- *
- * A toggle does not change this widget, it replaces it (`eq` differs on
- * `expanded`), so there is no element whose height a transition could run on.
- * The press records what was on screen, and `toDOM` animates the new block
- * from that height to its own (`.cm-fm-resizing`, below). Keyed by view: two
- * panes toggling at once must not hand each other a height.
+ * The block's height when its chevron was pressed, for the next build to
+ * animate from. A toggle replaces the widget (`eq` differs on `expanded`), so
+ * there is no element for a transition to run on. Keyed by view so two panes
+ * cannot hand each other a height.
  */
 const toggledFrom = new WeakMap<EditorView, number>()
 
 /**
  * The summary as one line: `lead` (the collapse button, or the bare bar) with
- * the text in it, the author beside it as a link to their GitHub profile, and
- * the file's version (`v.<revisions>`) after the name.
+ * the text, the author as a GitHub profile link, then the version.
  *
- * The git author name is used as the GitHub username, which it is for anyone
- * whose git identity is their GitHub one. The link sits BESIDE the button, not
- * in it: a link inside a button is not valid HTML, and pressing the name would
- * toggle the block too. One line, never wrapped: in a narrow pane the text
- * truncates and the name stays whole.
+ * The git author name is assumed to be the GitHub username. The link sits
+ * beside the button, not in it: a link inside a button is invalid HTML and
+ * would toggle the block too.
  */
 function summaryLine(
   view: EditorView,
@@ -117,13 +106,9 @@ function summaryLine(
 }
 
 /**
- * The `v.N` after the name, as a link that opens the history sidebar, whose
- * list is those N commits.
- *
- * Plain text where that sidebar cannot open: a task file (the sidebar follows
- * notes only, `historyTargetPathAtom`) and an editor that offers no
- * `openHistory`, such as a task's body editor. A link that does nothing is
- * worse than none.
+ * The `v.N` after the name, as a link that opens the history sidebar. Plain
+ * text where that sidebar cannot open: a task file (it follows notes only,
+ * `historyTargetPathAtom`) or an editor with no `openHistory`.
  */
 function versionLink(view: EditorView, version: string, path: string): HTMLElement | string {
   const openHistory = view.state.facet(linkNavFacet)?.().openHistory
@@ -146,14 +131,12 @@ function pressToggle(view: EditorView, wrap: HTMLElement, open: boolean): void {
 }
 
 /**
- * Open or close from the height the last block had (A, D98: it enters or
- * leaves the layout, so leaving is the faster token).
+ * Open or close from the height the last block had (D98: leaving uses the
+ * faster token).
  *
- * The one place inside a note where height moves, and why that is affordable
- * here: it is one block widget at the top of the document, the text under it
- * reflows as ordinary DOM with nothing for CodeMirror to redo per frame, and
- * CodeMirror is asked to measure once, when the block has landed, so its height
- * map catches up with what the animation left behind.
+ * The one place inside a note where height moves. Affordable because it is one
+ * block widget at the top, the text under it reflows as ordinary DOM, and
+ * CodeMirror is asked to measure once when the block has landed.
  */
 function playResize(view: EditorView, wrap: HTMLElement, opening: boolean): void {
   const from = toggledFrom.get(view)
@@ -170,68 +153,43 @@ function playResize(view: EditorView, wrap: HTMLElement, opening: boolean): void
   wrap.addEventListener('animationend', done)
 }
 
-/** Marks a transaction as the widget's own write-back, so the view plugin maps
- *  its decorations through it rather than rebuilding and remounting the nested
- *  editor mid-keystroke — the table widget's `table.edit` annotation, renamed. */
+/** Marks a transaction as the widget's own write-back, so the decorations map
+ *  through it rather than remounting the nested editor mid-keystroke (the
+ *  table widget's `table.edit` annotation, renamed). */
 const frontmatterEdit = Annotation.define<boolean>()
 
 /**
- * Whether a file's frontmatter is the point of the file.
- *
- * FR-2 hides frontmatter because in a *note* it is metadata about prose someone
- * came here to read — a title, a date, a type. Under `.claude/` it is the
- * opposite: a skill's `name` and `description` are what the agent matches
- * against when it decides whether to load the thing at all, an agent definition
- * is little else, and the body is the elaboration. Collapsing that to
- * "5051 chars · Last updated 20/08/26" hides the half of the file you opened it
- * to edit, and offers a chevron as the way back — discoverable only if you
- * already knew there was something behind it.
- *
- * So the reveal default is per-file, not global. Nothing else changes: the same
- * widget, the same nested plain-YAML editor, the same collapse chevron. A note
- * still opens to its prose.
- */
-/**
- * Whether a file's frontmatter block has a collapsed state at all.
- *
- * A task's does not. FR-2's pill answers "what is in this file?" with a body
- * char count and a last-edited line, which for a task is a summary of the half
- * that is *not* the point: the fields are. There is nothing worth showing in
- * place of them, so there is no reason to offer the swap — a chevron that only
- * ever makes the view worse is a control with one wrong setting.
+ * Whether a file's frontmatter block has a collapsed state at all. A task's
+ * does not: its fields are the point, and the collapsed summary would describe
+ * the other half.
  */
 export function frontmatterAlwaysOpen(path: string): boolean {
   return isTaskFilePath(path)
 }
 
+/**
+ * Whether a file opens with its frontmatter revealed. A note's frontmatter is
+ * metadata over prose and starts collapsed. Under `.claude/` a skill's `name`
+ * and `description` are what the agent matches on, and a task's frontmatter is
+ * half of what it is, so both start revealed.
+ */
 export function frontmatterStartsRevealed(path: string): boolean {
-  // A task joins `.claude/` as the second case, and for the same reason read the
-  // other way round: its frontmatter is not metadata over prose someone came to
-  // read, it is half of what the file IS. Collapsing a task's status and due
-  // date behind "0 chars · Last updated" hides the task.
   return path.startsWith('.claude/') || isTaskFilePath(path)
 }
 
-/** Revealed or collapsed. A note starts collapsed (FR-2); a file whose
- *  frontmatter IS its interface starts revealed (`frontmatterStartsRevealed`).
- *  The path comes off `notePathFacet`, which the notes stack already provides —
- *  reading it in `create` is what makes the default per-file rather than a
- *  constant, and there is nothing to thread through. */
+/** Revealed or collapsed. The default is per-file, read off `notePathFacet` in
+ *  `create`. */
 export const frontmatterExpandedField = StateField.define<boolean>({
   create: (state) => frontmatterStartsRevealed(state.facet(notePathFacet)),
   update(value, tr) {
-    // A file with no collapsed state cannot be toggled into one, whatever
-    // dispatches the effect. Enforced here rather than by hiding the chevron
-    // alone: the rule is about the file, not about one control.
+    // Enforced here, not only by hiding the chevron: the rule is about the file.
     if (frontmatterAlwaysOpen(tr.state.facet(notePathFacet))) return true
     for (const e of tr.effects) if (e.is(toggleFrontmatter)) return e.value
     return value
   },
 })
 
-/** The file's last commit, for the collapsed summary — the author is the "last
- *  edited by" and the date its "last updated" — and how many commits touched
- *  the file, its version. */
+/** The file's last commit and commit count, for the summary line. */
 export interface FrontmatterCommit {
   /** ISO 8601 (git author date). */
   date: string
@@ -272,9 +230,8 @@ export function formatCharCount(n: number): string {
   return String(n)
 }
 
-/** The summary line in parts: the text, the author on their own so the widget
- *  can make the name a link, and the version after it. "1.8K chars · Last
- *  updated DD/MM/YY", then the author and "v.14" once the last commit is known. */
+/** The summary line in parts, the author separate so the widget can link it.
+ *  Author and version are null until the last commit is known. */
 export function frontmatterSummaryParts(
   chars: number,
   commit: FrontmatterCommit | null,
@@ -318,14 +275,13 @@ export function regionTextFrom(body: string): string {
   return `---\n${inner}---\n`
 }
 
-/** Count top-level `key:` lines — the pill's "N fields". Best-effort, never throws. */
+/** Count top-level `key:` lines for the chevron's tooltip. Best-effort. */
 function keyCount(body: string): number {
   return body.split('\n').filter((l) => /^\S.*:/.test(l)).length
 }
 
-/** The chevron IS the status indicator now — no separate orb. Neutral normally,
- *  red when the YAML won't parse; the field count lives in its tooltip. Shared by
- *  the initial render and the live refresh so the two can never disagree. */
+/** The chevron is the status indicator: red when the YAML won't parse. Shared
+ *  by the initial render and the live refresh so the two cannot disagree. */
 function paintChevron(el: HTMLElement, body: string): void {
   const valid = frontmatterYamlValid(regionTextFrom(body))
   el.classList.toggle('cm-fm-invalid', !valid)
@@ -333,8 +289,6 @@ function paintChevron(el: HTMLElement, body: string): void {
   el.title = valid ? `frontmatter · ${n} field${n === 1 ? '' : 's'}` : 'frontmatter — invalid YAML'
 }
 
-/** Two commits are the same for the summary if both are null or share every
- *  field — cheap value equality for the widget's `eq`. */
 function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boolean {
   if (a === null || b === null) return a === b
   return a.date === b.date && a.author === b.author && a.revisions === b.revisions
@@ -343,21 +297,17 @@ function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boo
 /**
  * What a drawn block holds while it is on screen, keyed by its DOM.
  *
- * **On the DOM, not the widget instance**, because CodeMirror does not keep
- * the instance: a rebuilt decoration whose widget compares equal, or one that
- * `updateDOM` accepts, hands the existing DOM to the NEW instance and drops the
- * old one. State on the instance was stranded there, so after typing in the
- * body of an open note the nested editor and the portal belonged to an object
- * nothing would ever call `destroy` on. `destroy(dom)` and `updateDOM(dom)`
- * both receive the element, so the element is where this lives.
+ * On the DOM, not the widget instance: when a rebuilt widget compares equal or
+ * `updateDOM` accepts it, CodeMirror hands the existing DOM to the new instance
+ * and drops the old one, stranding any state on it where `destroy` never runs.
+ * `destroy(dom)` and `updateDOM(dom)` both receive the element.
  */
 interface LiveBlock {
   /**
-   * What the region holds *now*, which is not always what the widget was built
-   * with: our own write-back maps the decoration rather than rebuilding it, so
-   * the block outlives the text it was constructed from. `updateDOM` compares
-   * against this, or the next unrelated edit to the body would look like an
-   * external change and tear the block down mid-interaction.
+   * What the region holds now. Our own write-back maps the decoration rather
+   * than rebuilding it, so this can differ from what the widget was built
+   * with. `updateDOM` compares against this, or the next unrelated edit would
+   * look like an external change and tear the block down.
    */
   body: string | null
   nested: EditorView | null
@@ -366,8 +316,7 @@ interface LiveBlock {
   /** The header, replaced whole when the summary changes (`updateDOM`). */
   header: HTMLElement | null
   /** The chevron mark, kept so a nested edit can recolour it in place: the
-   *  write-back maps rather than rebuilds, so nothing else would refresh the
-   *  invalid-YAML cue live. */
+   *  write-back maps rather than rebuilds, so nothing else would refresh it. */
   mark: HTMLElement | null
 }
 
@@ -376,22 +325,20 @@ const liveBlocks = new WeakMap<HTMLElement, LiveBlock>()
 class FrontmatterWidget extends WidgetType {
   constructor(
     readonly expanded: boolean,
-    /** The YAML between the fences, or **null when the file has no frontmatter
-     *  at all**. Null is the whole difference between the two things this widget
-     *  is: a block that collapses, and a bar that only reports. */
+    /** The YAML between the fences, or null when the file has no frontmatter:
+     *  then the widget is a bar that only reports. */
     readonly body: string | null,
-    /** Body char count, for the summary. */
     readonly chars: number,
-    /** The file's last commit, for the summary (null until fetched). */
+    /** Null until fetched. */
     readonly commit: FrontmatterCommit | null,
-    /** The file, which is what decides whether this block has a schema. */
+    /** Decides whether this block has a schema. */
     readonly path: string,
   ) {
     super()
   }
 
-  /** Plain value equality. Reuse beyond it (the summary changed, or our own
-   *  write moved the body on) is `updateDOM`'s call, which can see the block. */
+  /** Plain value equality. Reuse beyond it is `updateDOM`'s call, which can
+   *  see the block. */
   override eq(other: FrontmatterWidget): boolean {
     return (
       other.path === this.path &&
@@ -403,14 +350,9 @@ class FrontmatterWidget extends WidgetType {
   }
 
   /**
-   * Keep the block and repaint only its header, when the block itself is the
-   * same: same file, same state, and a body equal to what the block holds now.
-   *
-   * This is what lets the header stay on top of an OPEN block. Its char count
-   * changes with every keystroke in the note, and redrawing the block for that
-   * would tear down the fields or the nested editor and drop its caret. Any
-   * other difference (a toggle, an external rewrite of the frontmatter) returns
-   * false and the block is drawn afresh.
+   * Keep the block and repaint only its header when file, state and live body
+   * match. The char count changes with every keystroke in the note, and a
+   * redraw would tear down the fields or nested editor and drop its caret.
    */
   override updateDOM(dom: HTMLElement, view: EditorView, from: FrontmatterWidget): boolean {
     const live = liveBlocks.get(dom)
@@ -424,11 +366,9 @@ class FrontmatterWidget extends WidgetType {
   }
 
   /**
-   * The summary line, the same open or closed: "N chars · Last updated
-   * DD/MM/YY, Author · v.N". A block with a collapsed state leads it with the
-   * chevron that toggles it (▸ closed, ▾ open), which reddens when the YAML is
-   * invalid (the field count is in its tooltip). A file with no frontmatter,
-   * and a task, whose block has no collapsed state, get the line bare.
+   * The summary line, the same open or closed. A block with a collapsed state
+   * leads it with the toggling chevron; a file with no frontmatter, and a
+   * task, get the line bare.
    */
   private header(view: EditorView, wrap: HTMLElement, live: LiveBlock): HTMLElement {
     if (this.body === null || frontmatterAlwaysOpen(this.path)) {
@@ -471,12 +411,9 @@ class FrontmatterWidget extends WidgetType {
     wrap.appendChild(live.header)
 
     if (this.body === null) {
-      // No frontmatter in the file. The bar is still shown, because "N chars ·
-      // Last updated …" is a fact about a markdown file rather than a fact about
-      // having metadata — it used to disappear only as a side effect of there
-      // being nothing to collapse (#17). No chevron: there is no block to open,
-      // and nothing here writes one, since `normalize-md` adds frontmatter on
-      // the next commit anyway and two ways to do it is one too many.
+      // No frontmatter: the bar still shows, since its facts are about the file.
+      // No chevron and nothing here writes a block: `normalize-md` adds
+      // frontmatter on the next commit anyway.
       wrap.setAttribute('data-frontmatter', 'none')
       return wrap
     }
@@ -487,8 +424,6 @@ class FrontmatterWidget extends WidgetType {
       return wrap
     }
 
-    // Expanded: the same header, then the fields under it. No "frontmatter"
-    // title, no border, no box.
     wrap.setAttribute('data-frontmatter', 'expanded')
     const body = this.body
     const row = document.createElement('div')
@@ -500,12 +435,9 @@ class FrontmatterWidget extends WidgetType {
 
     playResize(view, wrap, true)
 
-    // Rows, when this file has a schema and its frontmatter is a mapping. Both
-    // halves matter: `.claude/` and `AGENTS.md` have no schema because their
-    // frontmatter is somebody else's contract, and a document that will not
-    // parse has no rows to draw. Either way the answer is the same one, the
-    // YAML itself, which is why the editor below is the fallback rather than a
-    // separate feature.
+    // Rows, when this file has a schema and its frontmatter is a mapping.
+    // `.claude/` and `AGENTS.md` have no schema (somebody else's contract), and
+    // an unparseable document has no rows: both fall back to the YAML editor.
     if (frontmatterSchema(this.path) !== null && readYamlMapping(body) !== null) {
       wrap.setAttribute('data-frontmatter', 'fields')
       const slot = document.createElement('div')
@@ -523,16 +455,9 @@ class FrontmatterWidget extends WidgetType {
       return wrap
     }
 
-    // A PLAIN editor over the YAML body: basic editing + history only. No
-    // markdown, no live-preview, no formatting keymap — that is the whole point
-    // of a separate surface (notes-editor.md §Frontmatter reveal control).
-    //
-    // **Plain does not mean colourless.** The one thing this surface knows for
-    // certain is that its content is YAML — it is the only editor in the app
-    // whose language is settled before the document is read — so it gets the
-    // grammar and the same `codeHighlighting` a `.yaml` file opens with. A key
-    // and its value looking alike is what made a task's whole record read as
-    // one grey block.
+    // A plain editor over the YAML body: basic editing and history, no markdown
+    // stack or formatting keymap. It does get YAML highlighting, so keys and
+    // values do not read as one grey block.
     live.nested = new EditorView({
       parent: host,
       doc: body.replace(/\n$/, ''),
@@ -547,9 +472,8 @@ class FrontmatterWidget extends WidgetType {
           if (!u.docChanged) return
           const next = u.state.doc.toString()
           writeBack(view, live, next)
-          // Recolour the chevron here: the write-back is our own edit, so the
-          // widget maps instead of rebuilding and the cue would otherwise stay
-          // frozen — the invalid-YAML feedback has to be live while you type.
+          // Recolour the chevron here: our own write-back maps instead of
+          // rebuilding, so the invalid-YAML cue would otherwise stay frozen.
           if (live.mark !== null) paintChevron(live.mark, next)
         }),
         EditorView.theme({
@@ -570,8 +494,7 @@ class FrontmatterWidget extends WidgetType {
   }
 
   override ignoreEvent(): boolean {
-    // Events inside the widget (typing in the nested editor, clicking the pill)
-    // are the widget's own — the root must not treat them as its input.
+    // Events inside the widget are its own; the root must not treat them as input.
     return true
   }
 }
@@ -590,30 +513,24 @@ function writeBack(view: EditorView, live: LiveBlock, body: string): void {
 }
 
 /**
- * The decoration set — pure over the state, so it is unit-testable without a DOM
- * exactly as `buildDecorations` is. One atomic block-replace over the region, or
- * nothing when the document has no frontmatter.
+ * The decoration set, pure over the state so it is unit-testable without a
+ * DOM. One atomic block-replace over the region, or a bare bar widget when the
+ * document has no frontmatter.
  */
 export function frontmatterDecorations(state: EditorState): DecorationSet {
   const doc = state.doc.toString()
   // `frontmatterBlockRange`, not `frontmatterRegion`: the decoration stops at
-  // the closing fence's line END, so the first body position stays on the first
-  // body line rather than being swallowed into the widget's row. See the long
-  // comment there — this one character is the whole of the stray-caret bug.
+  // the closing fence's line end, so the first body position stays on the
+  // first body line (see the comment there).
   const block = frontmatterBlockRange(doc)
   const expanded = state.field(frontmatterExpandedField, false) ?? false
-  // Body-only char count (everything past the frontmatter region), trimmed so a
-  // trailing newline isn't counted. `bodyStart` is 0 when there is no block, so
-  // this is already right for both shapes. Only shown collapsed, but computed
-  // here so the widget stays a pure render of what it is handed.
+  // Body-only char count, trimmed. `bodyStart` is 0 when there is no block.
   const chars = doc.slice(bodyStart(doc)).trim().length
   const commit = state.field(frontmatterCommitField, false) ?? null
   const path = state.facet(notePathFacet)
   if (block === null) {
-    // A markdown file with no frontmatter still gets the bar (#17) — inserted
-    // above the first line rather than replacing anything, since there is
-    // nothing here to replace. `side: -1` puts it before the line's own content
-    // so the caret at position 0 lands in the body, not against the widget.
+    // No frontmatter: insert the bar above the first line. `side: -1` so the
+    // caret at position 0 lands in the body, not against the widget.
     const bare = Decoration.widget({
       widget: new FrontmatterWidget(false, null, chars, commit, path),
       block: true,
@@ -630,15 +547,13 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
 }
 
 /**
- * The block-replace lives in a **StateField**, not a ViewPlugin: CodeMirror
- * forbids block decorations from plugins (`RangeError: Block decorations may not
- * be specified via plugins`), which aborts EditorView construction — so a note
- * with frontmatter would open blank. The table widget provides its block decos
- * the same way (a StateField), and this is the difference between the two.
+ * The block-replace lives in a StateField, not a ViewPlugin: CodeMirror forbids
+ * block decorations from plugins (`RangeError: Block decorations may not be
+ * specified via plugins`), which aborts EditorView construction and opens the
+ * note blank.
  *
- * The map-don't-rebuild rule is preserved: our own write-back maps the existing
- * set through the change so the nested editor keeps its caret; a genuine change
- * (edit from the root, toggle, external reload) recomputes from scratch.
+ * Our own write-back maps the set so the nested editor keeps its caret; any
+ * other change (root edit, toggle, external reload) recomputes.
  */
 const frontmatterDecoField = StateField.define<DecorationSet>({
   create: (state) => frontmatterDecorations(state),
@@ -646,33 +561,24 @@ const frontmatterDecoField = StateField.define<DecorationSet>({
     const ownEdit = tr.annotation(frontmatterEdit)
     const toggled = tr.effects.some((e) => e.is(toggleFrontmatter))
     const commitSet = tr.effects.some((e) => e.is(setFrontmatterCommit))
-    // Our own write-back: map, do not rebuild, so the nested editor lives.
     if (ownEdit && !toggled) return deco.map(tr.changes)
-    // A commit arriving (async, from EditorPane) refreshes the collapsed summary.
     if (tr.docChanged || toggled || commitSet) return frontmatterDecorations(tr.state)
     return deco
   },
   provide: (f) => [
     EditorView.decorations.from(f),
-    // Atomic: the caret cannot land inside the replaced region; it is edited
-    // only through the nested editor. The guard the table widget relies on too.
+    // Atomic: the caret cannot land inside the replaced region.
     EditorView.atomicRanges.of((view) => view.state.field(f, false) ?? Decoration.none),
   ],
 })
 
 const frontmatterTheme = EditorView.baseTheme({
-  // The space under it is air between the note's metadata and the note, and it
-  // is the same open or closed so toggling moves nothing but the block itself.
-  // PADDING, not margin: CodeMirror measures a block widget by its border box,
-  // so a bottom margin is height it does not know about, and every line below
-  // then sits that much lower than CodeMirror thinks. At 2.5rem a click on the
-  // first heading landed on the line under it.
+  // PADDING, not margin, below: CodeMirror measures a block widget by its
+  // border box, so a vertical margin is height it does not know about and
+  // clicks below land a line off. Horizontal auto margins are harmless.
   //
-  // Middle-aligned over the text, in every layout: one width open or closed,
-  // so opening it never makes it wider, centred in the column by auto side
-  // margins (horizontal margins are harmless to CodeMirror; only vertical ones
-  // escape its measure). The collapsed summary centres in that width and the
-  // fields fill it. A column narrower than the width keeps the text's inset.
+  // One width open or closed, centred in the column; a narrower column keeps
+  // the text's inset.
   '.cm-fm': {
     width: 'min(24rem, 100% - 2 * var(--editor-inset))',
     margin: '0 auto',
@@ -680,12 +586,9 @@ const frontmatterTheme = EditorView.baseTheme({
     textAlign: 'center',
   },
   /**
-   * Opening and closing (`playResize`). An ANIMATION rather than a transition,
-   * because the element is new on each toggle and has no "before" to transition
-   * from; `--fm-from` is that before. `interpolate-size` is what lets it end at
-   * `auto`, the block's own height, which nothing here has to measure, the same
-   * device the heading slide uses for width. The fields fade in on the way, so
-   * they do not appear at full strength inside a block still opening.
+   * Opening and closing (`playResize`). An animation, not a transition: the
+   * element is new on each toggle, so `--fm-from` supplies the "before".
+   * `interpolate-size` lets it end at `auto` without measuring.
    */
   '.cm-fm-resizing': { interpolateSize: 'allow-keywords', overflow: 'clip' },
   '.cm-fm-opening': {
@@ -699,7 +602,6 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '@keyframes cm-fm-resize': { from: { height: 'var(--fm-from)' } },
   '@keyframes cm-fm-fields-in': { from: { opacity: '0' } },
-  // Collapsed: a chevron mark + a muted one-line summary, inline.
   '.cm-fm-pill': {
     display: 'inline-flex',
     alignItems: 'baseline',
@@ -712,8 +614,7 @@ const frontmatterTheme = EditorView.baseTheme({
     border: 'none',
     cursor: 'pointer',
   },
-  // The summary line (`summaryLine`): never wrapped. The text gives way with an
-  // ellipsis in a narrow pane and the author's name stays whole beside it.
+  // Never wrapped: in a narrow pane the text truncates and the name stays whole.
   '.cm-fm-line': {
     display: 'flex',
     justifyContent: 'center',
@@ -737,7 +638,6 @@ const frontmatterTheme = EditorView.baseTheme({
     textDecoration: 'none',
     cursor: 'pointer',
   },
-  // After the name, never truncated with it: the version is part of the fact.
   '.cm-fm-version': {
     flexShrink: '0',
     fontSize: '0.8rem',
@@ -746,8 +646,7 @@ const frontmatterTheme = EditorView.baseTheme({
   },
   '.cm-fm-history': { color: 'inherit', textDecoration: 'none', cursor: 'pointer' },
   '.cm-fm-author:hover, .cm-fm-history:hover': { color: '#a3a3a3', textDecoration: 'underline' },
-  // The bar a file with no frontmatter gets (#17). The pill's type and colour
-  // without the pill: there is nothing to press, so it is not a button.
+  // The bar for a file with no frontmatter or no collapsed state: not a button.
   '.cm-fm-bare': {
     display: 'flex',
     padding: '0.05rem 0.15rem',
@@ -755,36 +654,29 @@ const frontmatterTheme = EditorView.baseTheme({
     lineHeight: '1.2',
     color: '#6b6b6b',
   },
-  // Expanded: the header, then the fields under it, one borderless unit.
   '.cm-fm-reveal': { paddingTop: '0.5rem', textAlign: 'start' },
   '.cm-fm-pill:hover': { color: '#a3a3a3' },
   // See `caretInBlock`: a caret whose head is inside the replaced region would
   // render as tall as the whole block.
   '&.cm-fm-caret-hidden .cm-cursor': { display: 'none' },
-  // Invalid YAML reddens the chevron mark — the only status cue, and it wins on
-  // hover (an explicit colour on the mark overrides the inherited hover colour).
+  // Explicit on the mark, so it wins over the inherited hover colour.
   '.cm-fm-mark.cm-fm-invalid': { color: '#f87171' },
 })
 
-/** Where the editable body starts — just past the frontmatter block, or 0 when
- *  there is none. EditorPane seeds the initial caret here so it never opens to
- *  the left of the widget. */
+/** Where the editable body starts: past the frontmatter block, or 0. EditorPane
+ *  seeds the initial caret here. */
 export function bodyStart(doc: string): number {
   return frontmatterRegion(doc)?.to ?? 0
 }
 
 /**
- * The block is edited only through the nested editor — never from the root. Two
- * guards make that true, because the atomic-range facet alone leaves the
- * top-of-document boundary reachable (caret to the left of the widget) and lets
- * a Backspace at the edge delete the whole block as an atomic unit:
+ * The block is edited only through the nested editor. The atomic range alone
+ * leaves the caret reachable left of the widget and lets Backspace at the edge
+ * delete the whole block, so two guards:
  *
- *  - a **change filter** drops any *user* edit that touches the region. It keys
- *    on `userEvent`, so programmatic reloads/merges (no userEvent) and our own
- *    write-back (`frontmatterEdit`) pass untouched — the load-bearing
- *    external-reload machinery is not affected.
- *  - a **transaction filter** pushes any root caret that lands at or before the
- *    block down to just after it. There is nothing to edit above the frontmatter.
+ *  - a change filter drops any user edit touching the region. It keys on
+ *    `userEvent`, so programmatic reloads/merges and our own write-back pass.
+ *  - a transaction filter pushes a caret at or before the block to just after it.
  */
 const protectFrontmatter = EditorState.changeFilter.of((tr) => {
   const region = frontmatterRegion(tr.startState.doc.toString())
@@ -798,32 +690,17 @@ const caretBelowFrontmatter = EditorState.transactionFilter.of((tr) => {
   const region = frontmatterRegion(tr.newDoc.toString())
   if (region === null) return tr
   const sel = tr.newSelection
-  // Only nudge a bare caret that lands at or before the block; a real selection
-  // (select-all, a drag) is left alone so those still work — the block just
-  // cannot be edited, via the change filter.
+  // Only a bare caret; a real selection (select-all, a drag) is left alone.
   if (!(sel.ranges.length === 1 && sel.main.empty && sel.main.from < region.to)) return tr
-  // `assoc: 1` — bind the caret to the character AFTER it. `region.to` is the
-  // seam between the widget's last line and the first body line, and a caret
-  // that associates backwards there renders on the widget's side of it.
+  // `assoc: 1`: `region.to` is the seam between widget and body, and a caret
+  // associating backwards there renders on the widget's side.
   return [tr, { selection: EditorSelection.cursor(region.to, 1) }]
 })
 
 /**
- * No caret against the block.
- *
- * `caretBelowFrontmatter` keeps a bare cursor out, and deliberately lets a
- * *range* through so select-all and a drag still take the frontmatter with
- * them. That leaves one case: a range whose head is inside the block. The block
- * is a single element as tall as all its rows, so `drawSelection` draws the
- * caret from those coordinates and you get a 230px bar blinking against its
- * edge, which reads as a broken text cursor rather than as the end of a
- * selection.
- *
- * So the caret is hidden while its head is in there. It is not a workaround for
- * the geometry: the region is atomic and cannot be typed into, so a caret
- * claiming an insertion point inside it was never telling the truth. The
- * selection itself is untouched — the highlight still covers the block, and
- * copy still takes it.
+ * No caret against the block. A range whose head is inside the block would get
+ * a caret as tall as the whole widget from `drawSelection`. The region cannot
+ * be typed into anyway, so the caret is hidden; the selection is untouched.
  */
 const caretInBlock = ViewPlugin.fromClass(
   class {

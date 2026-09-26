@@ -4,13 +4,11 @@
  * DOM and cannot be this component, so they copy its width, motion, header and
  * edge through the stylesheet Holi injects (`lib/pdf-viewer-config.ts`).
  *
- * **It pushes.** A drawer slides its whole width in from the edge it docks on
- * and the content beside it moves over, then back out the same way: the
- * column's width runs 0 → w (`index.css`, `[data-slot='drawer']`), at the slide
- * pace, eased in and out and the same both ways. A transition rather than an
- * animation, so a press halfway through reverses it from where it is. The
- * content inside sits at the full width w, anchored to the far edge, so it
- * travels in whole rather than being squeezed.
+ * **It pushes.** The column's width runs 0 → w (`index.css`,
+ * `[data-slot='drawer']`) and the content beside it moves over. A transition,
+ * not an animation, so a press halfway through reverses it. The content inside
+ * sits at the full width, anchored to the far edge, so it travels in whole
+ * rather than being squeezed.
  *
  * **It owns its column**, outside `react-resizable-panels`. The library has no
  * way to animate a panel's size, and a transition on its inline sizing would be
@@ -22,20 +20,15 @@
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).
  *
- * **A rail** is what a drawer can close to instead of nothing (the nav's:
- * the show button, the running sessions, the apps). Its width is then the
- * rail's, `DRAWER_RAIL_WIDTH`, so opening and closing move one width
- * continuously between the two. A rail beside the drawer, mounted only while
- * it was closed, made the panes jump by its width at the start of each slide.
- * The rail sits over the collapsed column. It fades in as the drawer lands at
- * its width, not when the close starts (it arrived first and the drawer slid
- * away under it), and out as soon as an open starts.
+ * **A rail** is what a drawer can close to instead of nothing (the nav's).
+ * The closed width is then `DRAWER_RAIL_WIDTH`, so one width moves continuously
+ * between the two; a separate rail mounted beside the drawer made the panes
+ * jump. The rail sits over the collapsed column, fading in as the drawer lands
+ * and out as soon as an open starts.
  *
- * **An edge control** (the nav's show/hide toggle) is pinned to the drawer's
- * moving edge in the header row, outside the content that goes inert. So it
- * travels with the slide and lands in the rail's top slot when the drawer
- * closes, one button sliding into place rather than one disappearing and
- * another blinking in; the rest of the rail fades in under it.
+ * **An edge control** (the nav's toggle) is pinned to the drawer's moving
+ * edge, outside the content that goes inert, so it slides into the rail's top
+ * slot rather than one button vanishing and another blinking in.
  *
  * **The edge** is `--drawer-edge`, a vault theme token, transparent by default:
  * a drawer lies flat on the page. The handle shows `--divider` under the

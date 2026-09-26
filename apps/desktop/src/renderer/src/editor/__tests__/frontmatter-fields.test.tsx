@@ -49,7 +49,7 @@ function mount(doc: string, notePath: string): EditorView {
 const TASK = 'projects/task.fix-the-tap.md'
 
 it('a task file opens with its frontmatter already showing', () => {
-  // `frontmatterStartsRevealed`: FR-2 hides a note's frontmatter because it is
+  // `frontmatterStartsRevealed`: a note's frontmatter starts hidden because it is
   // metadata over prose. A task's frontmatter is half of what the file IS.
   const v = mount('---\nstatus: todo\n---\n\n# Fix the tap\n', TASK)
   expect(v.dom.querySelector('[data-frontmatter]')?.getAttribute('data-frontmatter')).toBe('fields')

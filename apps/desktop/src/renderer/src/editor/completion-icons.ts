@@ -1,16 +1,10 @@
 /**
- * The popup's glyphs, as plain SVG fragments.
+ * The popup's glyphs, as plain SVG fragments, matching the explorer's
+ * `lucide-react` icons (`features/explorer/icons.tsx`).
  *
- * **Hand-copied, and guarded rather than imported.** The explorer draws the
- * same task glyphs from `lucide-react` (`features/explorer/icons.tsx`), so a
- * task in this list should look like the same task in the tree. But a
- * CodeMirror option is built with `document.createElement`, and no React lives
- * inside CodeMirror anywhere in this app; `lucide-react` exports components,
- * not geometry, and its per-icon `__iconNode` is reachable only by a deep
- * import into `dist/`, which would break on any repackaging without saying so.
- *
- * So the geometry is copied here and `__tests__/completion-rows.test.tsx`
- * renders the real component and fails if the two ever diverge. Copied from
+ * Hand-copied rather than imported: a CodeMirror option is plain DOM, and
+ * lucide's geometry (`__iconNode`) is reachable only by a deep `dist/` import.
+ * `__tests__/completion-rows.test.tsx` fails if the two diverge. Copied from
  * lucide-react 1.27.0.
  */
 

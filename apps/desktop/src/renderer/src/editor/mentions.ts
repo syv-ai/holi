@@ -1,11 +1,10 @@
 /**
- * @-mention autocomplete (notes-editor PRD FR-8). The pure core is a headless
- * function over a CompletionContext → CompletionResult, so it is unit-testable
- * without a view; `mentionSource` wraps it as a CodeMirror CompletionSource fed
- * live data (closures over the renderer's atoms).
+ * @-mention autocomplete. The pure core is a headless function over a
+ * CompletionContext → CompletionResult; `mentionSource` wraps it as a
+ * CompletionSource fed live data.
  *
- * A task mention is an ordinary path wiki-link to the task file — there is no
- * opaque id and no `related[]` edge to maintain (D27/D60).
+ * A task mention is an ordinary path wiki-link to the task file: no opaque id
+ * and no `related[]` edge (D27/D60).
  */
 import type {
   CompletionContext,
@@ -37,12 +36,9 @@ const TASK_TYPE: Record<TaskStatus, string> = {
 /**
  * Trigger: `@` and any following path/word chars, anchored at the `@`.
  *
- * **`\p{L}` and the `u` flag, not `\w`.** `\w` is ASCII-only in JavaScript, so
- * `@mø` stopped matching at the `ø`, this source returned null, and CodeMirror
- * closed the popup — reported in the running app, where a Danish note name
- * dismissed the list as you typed it. CodeMirror's `matchBefore` rebuilds the
- * expression through `ensureAnchor`, which carries the flags over, so `u`
- * survives.
+ * `\p{L}` and the `u` flag, not `\w`, which is ASCII-only: `@mø` would stop
+ * matching at the `ø` and close the popup. `matchBefore` rebuilds the
+ * expression through `ensureAnchor`, which keeps the flags.
  */
 const MENTION_RE = /@[\p{L}\p{N}_.\-/]*/u
 
@@ -60,8 +56,7 @@ export function mentionCompletions(
   // `from` sits at the `@`, so CM's own fuzzy filter would match the `@`-prefixed
   // text against the labels and drop everything.
   const query = match.text.slice(1).toLowerCase()
-  // `isHiddenPath` is the file tree's own rule — any `/`-segment starting with a
-  // dot. Without it `@c` offered `.claude/settings.json` beside your notes.
+  // `isHiddenPath` is the file tree's rule, so dot-paths like `.claude/` stay out.
   const noteOptions: HoliCompletion[] = data.notes
     .filter((n) => !isHiddenPath(n.path) && n.path.toLowerCase().includes(query))
     .map((n) => ({
@@ -71,15 +66,11 @@ export function mentionCompletions(
       ...(n.icon === undefined ? {} : { emoji: n.icon }),
       apply: formatWikiLink(n.path),
     }))
-  // A finished task is not something you are still linking to. It stays
-  // reachable by typing its path as an ordinary `[[link]]`; it just does not
-  // crowd the list.
+  // Done tasks are left out; an ordinary `[[link]]` still reaches them.
   const taskOptions: HoliCompletion[] = data.tasks
     .filter((t) => t.status !== 'done' && t.title.toLowerCase().includes(query))
     .map((t) => ({
       label: t.title,
-      // No `detail: t.status` any more: the glyph on the left says the status,
-      // and a row should not say one thing twice.
       type: TASK_TYPE[t.status],
       section: TASKS,
       ...(t.due === undefined ? {} : { meta: `due ${shortStamp(t.due)}` }),
@@ -88,8 +79,7 @@ export function mentionCompletions(
   return { from: match.from, options: [...noteOptions, ...taskOptions], filter: false }
 }
 
-/** The CodeMirror source: pulls live data on each `@`. A picked task inserts a
- * plain path link like any note — no side-effect to fire. */
+/** The CodeMirror source: pulls live data on each `@`. */
 export function mentionSource(getData: () => MentionData): CompletionSource {
   return (context) => mentionCompletions(context, getData())
 }

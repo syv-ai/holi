@@ -1,13 +1,9 @@
 /**
  * Live preview: a pure decoration builder over the syntax tree + wiki-link
- * grammar. The ELEMENT the selection touches renders RAW (no concealing
- * decorations on it); everything else renders, including the rest of its own
- * line. Rebuilds on docChanged/selectionSet/viewport — a plain recompute.
- *
- * D91, which narrows D22. D22 revealed whole LINES, so a caret anywhere on a
- * line stripped every chip, image and pair of `**` on it back to source at once.
- * The unit is now the element, and `revealedSpans` below is the whole of the new
- * rule: touched edges included, innermost only.
+ * grammar. The ELEMENT the selection touches renders raw; everything else
+ * renders, including the rest of its line (D91, narrowing D22's whole-line
+ * reveal). `revealedSpans` is the rule: touched edges included, innermost only.
+ * Rebuilds on docChanged/selectionSet/viewport.
  */
 import { syntaxTree } from '@codemirror/language'
 import type { SyntaxNode, SyntaxNodeRef } from '@lezer/common'
@@ -27,14 +23,14 @@ import { ImageWidget } from './imageWidget'
 import { vaultAssetUrl } from '../lib/vault-asset'
 import { WikiLinkChip } from './wikiLinkChips'
 
-/** Doc-path existence lookup for chip styling; wired from server metadata. */
+/** Doc-path existence lookup for chip styling, wired from the vault snapshot's
+ *  paths via `EditorDeps.docExists`. */
 export const docExistsFacet = Facet.define<(path: string) => boolean, (path: string) => boolean>({
   combine: (values) => values[0] ?? (() => true),
 })
 
-/** The open note's vault path, so live-preview can resolve note-relative image
- *  targets (`![](img.png)`). Static per editor instance — the view is rebuilt
- *  per doc (EditorPane), so there is nothing to keep live here. */
+/** The open note's vault path, for note-relative image targets. Static: the
+ *  view is rebuilt per document. */
 export const notePathFacet = Facet.define<string, string>({
   combine: (values) => values[0] ?? '',
 })
@@ -57,19 +53,10 @@ export const taskByPathFacet = Facet.define<
 })
 
 /**
- * Set on a table cell's editor, and nowhere else.
- *
- * A cell is a document with no blocks in it. `codemirror-markdown-tables`
- * already removes `ATXHeading`, `Blockquote`, `BulletList`, `FencedCode`,
- * `HorizontalRule`, `IndentedCode`, `OrderedList` and `SetextHeading` from the
- * parser it gives a cell, so most of what this gates cannot occur there anyway —
- * but that removal is the plugin's list rather than ours, and a cell that
- * quietly grew a horizontal rule would be a poor way to discover it changed.
- *
- * Two things it gates are not covered by that list at all: the alphabetic-list
- * scan below, which is a regex over lines and would indent a cell reading
- * `a. thing`, and images, which markdown counts as inline and this file draws as
- * a picture. A picture is not a table cell's business.
+ * Set on a table cell's editor only: a cell has no blocks. The plugin already
+ * strips most block nodes from a cell's parser, but that list is theirs, not
+ * ours. Not covered by it: the alphabetic-list regex scan, and images, which
+ * markdown counts as inline.
  */
 export const inlineOnlyFacet = Facet.define<boolean, boolean>({
   combine: (values) => values[0] ?? false,
@@ -101,13 +88,9 @@ const inlineCode = Decoration.mark({ class: 'cm-inline-code' })
 const quoteMark = Decoration.mark({ class: 'cm-quote-mark' })
 const linkText = Decoration.mark({ class: 'cm-md-link' })
 /**
- * The heading's line, and the state its `#` reads.
- *
- * `raw` is on the LINE rather than on the mark on purpose. It is what lets the
- * `#` slide: the mark decoration below never changes, so CodeMirror keeps the
- * same DOM element across a selection move and a CSS transition has something to
- * run on. Flipping a class on the mark itself would rebuild it, and a transition
- * cannot cross a node that was destroyed and made again.
+ * `raw` lives on the LINE, not the mark, so the `#` can slide: the unchanged
+ * mark keeps its DOM element across a selection move. A class flip on the mark
+ * would rebuild it, and a transition cannot cross a recreated node.
  */
 const headingLine = (level: number, raw: boolean) =>
   Decoration.line({ class: `cm-heading cm-heading-${level}${raw ? ' cm-heading-raw' : ''}` })
@@ -117,14 +100,9 @@ const headingMark = Decoration.mark({ class: 'cm-heading-mark' })
 const codeLine = Decoration.line({ class: 'cm-code-line' })
 
 /**
- * A list line's indent, as its nesting depth. The length itself is in `theme.ts`.
- *
- * Depth is the only number that crosses, deliberately. An earlier version also
- * boxed the marker to a measured width so that a wrapped bullet could hang under
- * its own text; that needed the rendered width of `- ` in the vault's font,
- * which no CSS unit knows and only a layout measurement could supply. It was
- * more machinery than the result was worth. A wrapped line comes back to the
- * marker, as it always has.
+ * A list line's indent, as its nesting depth; the length is in `theme.ts`.
+ * Hanging a wrapped line under its text was rejected: it needs the measured
+ * width of `- ` in the vault's font, too much machinery for the result.
  */
 const listLine = (depth: number) =>
   Decoration.line({ class: 'cm-list', attributes: { style: `--list-depth:${depth}` } })
@@ -133,16 +111,11 @@ const listLine = (depth: number) =>
  *  requires is not much of a gap in a proportional face. */
 const listMark = Decoration.mark({ class: 'cm-list-mark' })
 /** A bullet marker, raw. Same box as the dot below, so swapping one for the
- *  other on the active line moves nothing (FR-3b). */
+ *  other on the active line moves nothing. */
 const listBullet = Decoration.mark({ class: 'cm-list-mark cm-list-bullet' })
 
-/**
- * `-`, `*` and `+` are three spellings of one thing, so they draw as one thing.
- *
- * The ladder is the browser's own disc / circle / square, which is what a nested
- * list looks like everywhere else, so the glyph says the depth a second time.
- * Ordered markers are left alone: a number carries meaning that a dot cannot.
- */
+/** `-`, `*` and `+` draw alike, in the browser's disc / circle / square ladder
+ *  by depth. Ordered markers are left alone. */
 const BULLETS = ['•', '◦', '▪']
 
 class BulletWidget extends WidgetType {
@@ -163,17 +136,12 @@ class BulletWidget extends WidgetType {
 }
 
 /**
- * A task's `[ ]`, as something you can click.
+ * A task's `[ ]`, as a clickable box. Unconditional, unlike every other swap
+ * here: a control that vanished with the caret on its line could not be
+ * clicked from there.
  *
- * Unconditional, unlike every other swap in this file: it is a control, not a
- * rendering of text, and a control that disappeared whenever the caret was on
- * its line could not be clicked from there at all. Being unconditional is also
- * what keeps the line still (FR-3b) — there is no second state to move to.
- *
- * The position comes from the DOM at click time rather than from a field, so an
- * edit elsewhere in the line cannot leave a stale offset behind, and the source
- * is checked before it is written: a widget that has outlived its text writes
- * nothing.
+ * The position is read from the DOM at click time, and the source is checked
+ * before writing, so a widget that outlived its text writes nothing.
  */
 class TaskCheckWidget extends WidgetType {
   constructor(readonly checked: boolean) {
@@ -191,8 +159,7 @@ class TaskCheckWidget extends WidgetType {
     box.setAttribute('aria-checked', String(this.checked))
     box.textContent = this.checked ? '✓' : ''
     box.addEventListener('mousedown', (event) => {
-      // Keep the caret where it is. A click that moved it would put the caret on
-      // this line, and the line the caret is on renders its marker raw.
+      // Keep the caret where it is.
       event.preventDefault()
       if (view.state.readOnly) return
       const pos = view.posAtDOM(box)
@@ -216,41 +183,31 @@ class HrWidget extends WidgetType {
   }
 }
 
-/** A range in the document. The unit live preview reveals, and the unit D91
- *  replaced D22's whole line with. */
+/** A range in the document: the unit live preview reveals (D91). */
 export interface Span {
   from: number
   to: number
 }
 
-/** Spans are compared by value, never by identity: they are built twice, once
- *  to decide what the caret is on and once to decorate. */
+/** Spans are compared by value: they are built twice, once to decide what the
+ *  caret is on and once to decorate. */
 export function spanKey(span: Span): string {
   return `${span.from}:${span.to}`
 }
 
 /**
- * Does the selection touch this span? EDGE-INCLUSIVE, deliberately.
- *
- * A caret resting at either end counts as being on the element, so the `**` you
- * have just finished typing stay on screen until you move off the word. Excluding
- * the edges would close them the instant you type the second one and shift the
- * rest of the line four characters left under your fingers.
+ * Does the selection touch this span? Edge-inclusive, so the `**` you just
+ * typed stay visible until you move off the word instead of closing and
+ * shifting the line under your fingers.
  */
 export function touches(sel: Span, span: Span): boolean {
   return sel.from <= span.to && sel.to >= span.from
 }
 
 /**
- * Of the spans the selection touches, the ones with nothing smaller inside them.
- *
- * This is what "the element the caret is on" means once elements nest.
- * `**bold with [[a link]] inside**` is two spans, and with the caret on the link
- * only the link comes back raw: you are not on the bold, you are on the thing
- * inside it. Containment is the whole rule, and it is STRICT, so two elements
- * that happen to share a range do not cancel each other out.
- *
- * Pure, and on numbers — the spans come from the tree in the caller.
+ * Of the spans the selection touches, the ones with nothing smaller inside them:
+ * with the caret on a link inside bold text, only the link comes back raw.
+ * Containment is strict, so two elements sharing a range do not cancel out.
  */
 export function revealedSpans(spans: Span[], sel: Span): Set<string> {
   const touched = spans.filter((s) => touches(sel, s))
@@ -266,15 +223,11 @@ export function revealedSpans(spans: Span[], sel: Span): Set<string> {
 
 /**
  * The range that, when the selection touches it, shows an element's source.
+ * Usually the element itself; a heading's `#` and a list marker belong to their
+ * LINE, so the caret need not land on the marker itself.
  *
- * Usually the element itself. The exceptions are the marks that belong to a LINE
- * rather than to a word — a heading's `#` and a list item's marker — because
- * scoping those to the two columns they occupy would mean the caret had to land
- * on the marker itself before you could edit the heading, which is not what "the
- * heading you are on" means to anybody.
- *
- * `null` for everything live preview does not conceal conditionally: fenced code,
- * quote marks, the frontmatter block, a list's leading indent.
+ * `null` for everything not concealed conditionally: fenced code, quote marks,
+ * the frontmatter block, a list's leading indent.
  */
 function revealSpan(
   state: EditorState,
@@ -315,19 +268,13 @@ function revealSpan(
 }
 
 export function buildDecorations(state: EditorState, from: number, to: number): DecorationSet {
-  // What the selection is on, worked out BEFORE anything is decorated: an
-  // element cannot know whether a smaller one inside it is the one being edited
-  // until the whole span list exists, so the tree is walked twice. The first
-  // walk collects ranges and nothing else.
+  // The tree is walked twice: an element cannot know whether a smaller one
+  // inside it is being edited until the whole span list exists.
   const visible = state.sliceDoc(from, to)
-  // The wiki-link grammar is not part of the markdown tree, so its links are
-  // parsed up here to join the span list. The same parse is reused at the foot
-  // of this function rather than run twice.
+  // Wiki-links are not in the markdown tree; parsed once here, reused below.
   const wikiLinks = parseWikiLinks(visible)
   const spans: Span[] = wikiLinks.map((link) => ({ from: from + link.start, to: from + link.end }))
   const wikiSpans = [...spans]
-  // A table cell's editor runs this same builder over a document that has no
-  // blocks in it (see `inlineOnlyFacet`).
   const inlineOnly = state.facet(inlineOnlyFacet)
   syntaxTree(state).iterate({
     from,
@@ -335,25 +282,20 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     enter(node) {
       const span = revealSpan(state, node, inlineOnly)
       if (span === null) return
-      // A wiki-link owns its own range and the markdown parser does not know it
-      // exists: it reads the inner `[notes/plan.md]` of `[[notes/plan.md]]` as a
-      // shortcut Link, and a `|**Label**` as strong text. Those nodes are not
-      // elements, and left in the list they would shadow the link they sit in —
-      // the chip would never open. Same rule the frontmatter region gets below.
+      // The markdown parser reads the inner `[x]` of `[[x]]` as a shortcut Link
+      // and a `|**Label**` as strong text. Left in, those would shadow the
+      // wiki-link and its chip would never open.
       if (wikiSpans.some((w) => span.from >= w.from && span.to <= w.to)) return
       spans.push(span)
     },
   })
   const revealed = revealedSpans(spans, state.selection.main)
   const isActive = (span: Span | null) => span !== null && revealed.has(spanKey(span))
-  // The frontmatter widget owns [0, fmEnd) as one atomic block-replace, so
-  // nothing here may decorate inside it — GFM parses the leading `---` lines as
-  // thematic breaks, and an HR (or a stray heading/paragraph mark) fighting the
-  // block is exactly the mess the widget exists to remove.
+  // The frontmatter widget owns [0, fmEnd), so nothing may decorate inside it:
+  // GFM parses the leading `---` lines as thematic breaks.
   const fmEnd = frontmatterRegion(state.doc.toString())?.to ?? 0
   // Collect first (tree iteration + regex scan), sort, then feed the builder
   const ranges: { from: number; to: number; deco: Decoration }[] = []
-  // The open note's path, so `![](img.png)` resolves note-relative in the walk below.
   const notePath = state.facet(notePathFacet)
 
   syntaxTree(state).iterate({
@@ -379,15 +321,12 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           const end = state.sliceDoc(node.to, node.to + 1) === ' ' ? node.to + 1 : node.to
           const heading = node.node.parent
           if (heading !== null && heading.name.startsWith('ATXHeading')) {
-            // Marked, never replaced, and marked unconditionally: a replace takes
-            // the text out of the DOM, so there is no element left to transition
-            // and the swap can only blink. The open/closed state rides on the
-            // line's `cm-heading-raw` instead (see `headingLine`).
+            // Marked unconditionally, never replaced: a replace removes the
+            // element a transition needs. State rides on the line (`headingLine`).
             ranges.push({ from: node.from, to: end, deco: headingMark })
             break
           }
-          // A setext underline has no heading line to carry that state, so it
-          // keeps the plain swap it has always had.
+          // A setext underline has no heading line to carry that state: plain swap.
           if (!activeHere) ranges.push({ from: node.from, to: end, deco: conceal })
           break
         }
@@ -429,40 +368,27 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           break
         }
         case 'ListItem': {
-          // Only the line the marker is on. A `ListItem` spans its children too
-          // — a nested list, a lazy continuation, a fenced block — and those
-          // lines carry their own indentation in the source; padding them as
-          // well would double it, and would shift a fenced block away from the
-          // code it is aligned with.
+          // Only the marker's line: a `ListItem` spans its children too, whose
+          // lines carry their own source indentation.
           const mark = node.node.firstChild
           if (mark === null || mark.name !== 'ListMark') break
-          // A marker with nothing after it is still a list item to the parser,
-          // so `- ` and `1.` indent the line the moment they are typed and it
-          // jumps out from under you. Wait for the space that makes it a list
-          // you can put something in.
+          // Wait for the space after the marker, or the line jumps the moment a
+          // bare `-` or `1.` is typed.
           if (!/[ \t]/.test(state.sliceDoc(mark.to, mark.to + 1))) break
-          // Depth from the tree, never from the leading spaces: `BulletList` and
-          // `OrderedList` nest around each `ListItem`, so the parent chain says
-          // how deep this is no matter how the author typed it. `-`, `*` and
-          // `1.` all arrive here the same way.
+          // Depth from the tree's parent chain, never from the leading spaces.
           let depth = 0
           for (let p = node.node.parent; p !== null; p = p.parent) {
             if (p.name === 'BulletList' || p.name === 'OrderedList') depth++
           }
           const line = state.doc.lineAt(node.from)
           ranges.push({ from: line.from, to: line.from, deco: listLine(depth) })
-          // The author's own indentation goes away, or it would be added to the
-          // padding and a four-space list would sit twice as far in as a
-          // two-space one. Only the whitespace immediately before the marker: a
-          // list inside a blockquote has a `> ` in front of it, and that is
-          // styled, not hidden. Concealed on the active line too, so the line
-          // sits in the same place with the caret on it as without (FR-3b).
+          // Conceal the author's indentation, always, so the depth alone places
+          // the line. Only the whitespace right before the marker: a blockquote's
+          // `> ` is styled, not hidden.
           let lead = mark.from
           while (lead > line.from && /[ \t]/.test(state.sliceDoc(lead - 1, lead))) lead--
           if (lead < mark.from) ranges.push({ from: lead, to: mark.from, deco: conceal })
-          // A task's checkbox IS its marker, so the `- ` in front of it goes,
-          // space and all, and the box lands where a bullet would have. Drawing
-          // both would say "list item" twice.
+          // A task's checkbox is its marker, so the `- ` in front of it goes.
           const task = mark.nextSibling
           const taskMark = task?.name === 'Task' ? task.firstChild : null
           if (taskMark !== null && taskMark !== undefined && taskMark.name === 'TaskMarker') {
@@ -476,9 +402,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
             })
             break
           }
-          // The marker draws as a bullet, except on the line the caret is on,
-          // where every other mark in this file shows its source too. The two
-          // wear the same box, so the swap costs no movement.
+          // A bullet glyph, except on the active line; both wear the same box.
           const isBullet = /^[-*+]$/.test(state.sliceDoc(mark.from, mark.to))
           const glyph = BULLETS[Math.min(depth, BULLETS.length) - 1] ?? BULLETS[0]!
           ranges.push({
@@ -522,8 +446,7 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
           break
         }
         case 'Image': {
-          // ![alt](target). Rendered as the image unless the cursor is on this
-          // line (then the raw markdown shows, like every other widget).
+          // ![alt](target). Rendered unless the selection touches it.
           if (activeHere) break
           const text = state.sliceDoc(node.from, node.to)
           const m = /^!\[([^\]]*)\]\(([^)]+)\)$/.exec(text)
@@ -543,11 +466,8 @@ export function buildDecorations(state: EditorState, from: number, to: number): 
     },
   })
 
-  // Alphabetic ordered lists, which the parser does not report at all — the
-  // predicate, and the reasoning behind how strict it is, live in `lists.ts`
-  // beside the Enter that continues them. A regex over lines, so unlike the
-  // block nodes above it is not removed from a cell's grammar and has to be
-  // switched off by hand.
+  // Alphabetic ordered lists, which the parser does not report (predicate in
+  // `lists.ts`). A regex over lines, so it is switched off by hand in a cell.
   const lastLine = inlineOnly ? 0 : state.doc.lineAt(to).number
   for (let n = state.doc.lineAt(from).number; n <= lastLine; n++) {
     const line = state.doc.line(n)
@@ -609,7 +529,7 @@ export const livePreview = ViewPlugin.fromClass(
     }
 
     private build(): DecorationSet {
-      // visible ranges only (PRD §reveal logic: performance)
+      // Visible ranges only, for performance.
       const sets: DecorationSet[] = []
       for (const range of this.view.visibleRanges) {
         sets.push(buildDecorations(this.view.state, range.from, range.to))

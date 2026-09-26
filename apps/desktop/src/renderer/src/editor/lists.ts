@@ -1,11 +1,7 @@
 /**
- * Alphabetic ordered lists: `a.`, `A.`, `a)`.
- *
- * CommonMark's ordered list is decimal only, so the parser reads these as an
- * ordinary paragraph and the syntax tree has nothing to say about them. Live
- * preview has to find them by reading lines, and Enter has to continue them by
- * hand for the same reason. Both go through the one predicate here, so what
- * renders as a list and what continues as one cannot come to disagree.
+ * Alphabetic ordered lists: `a.`, `A.`, `a)`. CommonMark's ordered list is
+ * decimal only, so the tree has nothing for these. Live preview and Enter both
+ * go through the one predicate here, so they cannot disagree.
  */
 import { syntaxTree } from '@codemirror/language'
 import { EditorSelection, Prec, type EditorState, type Line, type StateCommand } from '@codemirror/state'
@@ -30,14 +26,10 @@ export interface AlphaListItem {
 }
 
 /**
- * The alphabetic list item this line is, or null.
- *
- * Deliberately fussy, because a marker the parser does not know is a marker
- * this file has to judge for itself. The line has to either sit inside a list
- * already — `a.` under `1.`, which is what these are nearly always for — or
- * begin a block, which is the same rule markdown puts on an ordered list
- * interrupting a paragraph. So a paragraph opening "A. Smith said" stays a
- * sentence, and `a) hello` inside a fence stays code.
+ * The alphabetic list item this line is, or null. Deliberately fussy: the line
+ * must sit inside a list already (`a.` under `1.`) or begin a block, markdown's
+ * rule for an ordered list interrupting a paragraph. So "A. Smith said" stays
+ * a sentence, and `a) hello` inside a fence stays code.
  */
 export function alphaListAt(state: EditorState, line: Line): AlphaListItem | null {
   const m = ALPHA_MARKER.exec(line.text)
@@ -56,10 +48,8 @@ export function alphaListAt(state: EditorState, line: Line): AlphaListItem | nul
     if (node.name === 'FencedCode' || node.name === 'CodeBlock') fenced = true
   }
   if (fenced) return null
-  // "Begins a block" is a property of the whole run, not of this line: the
-  // second item of a list is preceded by the first, not by a blank. So walk back
-  // over the markers at this indent and ask the question of the run's first
-  // line. A run that starts mid-paragraph is prose all the way down.
+  // "Begins a block" is a property of the whole run: walk back over markers at
+  // this indent and ask it of the run's first line.
   let first = line.number
   while (first > 1) {
     const above = state.doc.line(first - 1)
@@ -89,12 +79,9 @@ function nextLetter(letter: string): string {
 }
 
 /**
- * Enter on an alphabetic list line writes the next letter.
- *
- * `markdown()` installs `insertNewlineContinueMarkup`, which does this for every
- * list the parser knows and cannot do it for the one it does not. An empty item
- * ends the list instead of continuing it, which is the same bargain that keymap
- * strikes: the second Enter is how you get out.
+ * Enter on an alphabetic list line writes the next letter, as
+ * `insertNewlineContinueMarkup` does for parsed lists. An empty item ends the
+ * list instead.
  */
 export const continueAlphaList: StateCommand = ({ state, dispatch }) => {
   const range = state.selection.main
@@ -127,6 +114,5 @@ export const continueAlphaList: StateCommand = ({ state, dispatch }) => {
   return true
 }
 
-/** High precedence, so it is asked before the markdown keymap's own Enter. It
- *  declines on every line that is not one of these, so nothing else changes. */
+/** High precedence, before the markdown keymap's Enter; it declines elsewhere. */
 export const alphaListKeymap = Prec.high(keymap.of([{ key: 'Enter', run: continueAlphaList }]))

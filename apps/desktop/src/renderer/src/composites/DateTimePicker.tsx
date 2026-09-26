@@ -1,21 +1,11 @@
 /**
- * A date, an optional time, and the shortcuts to both (D79).
+ * A date, an optional time, and the shortcuts to both (D79): one control for
+ * `due`, `reminder` and a recurrence rule's `until`.
  *
- * One control for every date a task carries — `due`, `reminder`, and the
- * recurrence rule's `until` — which is what makes them read as one system
- * rather than three fields that happen to hold dates.
- *
- * **It knows nothing about tasks.** A stamp goes in, a stamp comes out, and the
- * preset rail is a list of `{label, value}` the *caller* computed: "1 day
- * before" means nothing without a due date, and a composite that knew what a
- * due date was would not be a composite. That is also what lets the has-due and
- * no-due vocabularies live in the tasks feature, where `task.due` is in scope.
- *
- * **It holds no date arithmetic either.** `monthGrid` draws the month,
- * `withTime`/`stampTime`/`stampDate` make every edit, `parseStamp` reads the
- * value for the trigger — all from `@holi/shared`, all pure, all tested without
- * a DOM. If this file ever needs `new Date(...)` for anything but "what is
- * today", the helper it wants is missing from `dates.ts`.
+ * It knows nothing about tasks: a stamp goes in and out, and the preset rail is
+ * computed by the caller. It holds no date arithmetic either: that lives in
+ * `@holi/shared` (`dates.ts`). Beyond "what is today", a `new Date(...)` here
+ * means a helper is missing there.
  */
 import {
   ANCHOR_HOUR,
@@ -32,13 +22,12 @@ import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from 
 import { FIELD_CONTROL } from './FieldRow'
 import { cn } from '@/lib/cn'
 
-/** The selected day's treatment. A const because the hover half repeats the
- *  base half, and the whole thing does not fit in 100 columns inline. */
+/** The selected day's treatment. */
 const SELECTED_DAY =
   'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground'
 
-/** A rail entry: what it says, the finished stamp it writes, and — because a
- *  shortcut should never be a guess — where that lands, shown beside it. */
+/** A rail entry: its label, the finished stamp it writes, and a hint saying
+ *  where that lands. */
 export interface DatePreset {
   label: string
   value: string
@@ -76,13 +65,8 @@ function partsOf(date: string): { year: number; month: number; day: number } {
   return { year: y!, month: m!, day: d! }
 }
 
-/**
- * What the trigger says.
- *
- * A value that is not a stamp comes back **verbatim** — a legacy `1d` survives
- * in a hand-written file, and the field has to show what is actually there
- * rather than a crash or a date it made up.
- */
+/** What the trigger says. A value that is not a stamp (a hand-written `1d`)
+ *  comes back verbatim. */
 function humanise(value: string | null): string | null {
   if (value === null) return null
   const parsed = parseStamp(value)
@@ -119,12 +103,9 @@ export function DateTimePicker({
   dateOnly?: boolean
   placeholder?: string
   /**
-   * What an empty field SHOWS, when that is not what it should be CALLED.
-   *
-   * `placeholder` is both by default, which is right for a field standing on
-   * its own. In a labelled row it is not: the row already says `due`, so a
-   * trigger that also says `due` says it twice, and naming the control `none`
-   * instead would leave every date field in the block with the same name.
+   * What an empty field SHOWS, when that differs from what it is CALLED
+   * (`placeholder` is both by default). In a labelled row the row already says
+   * `due`, but the control still needs `due` as its accessible name.
    */
   emptyText?: string
   'data-testid'?: string
@@ -133,23 +114,16 @@ export function DateTimePicker({
   const time = value === null ? null : stampTime(value)
   const today = todayLocal()
 
-  // The visible month is state rather than derived: derived-per-render would
-  // snap back to the selection the moment anything else re-rendered, and paging
-  // is the thing you do most in a calendar. It is seeded when the popover OPENS
-  // (see `startAt`), not once at mount — the picker outlives the value it was
-  // mounted with, because selecting another task swaps `value` under a detail
-  // panel that is never remounted.
+  // The visible month is state, not derived, or paging would snap back on any
+  // re-render. Seeded when the popover opens (`startAt`), not at mount: the
+  // picker outlives its value when another task is selected.
   const [view, setView] = useState(() => partsOf(selected ?? today))
   const grid = monthGrid(view.year, view.month)
 
   /**
-   * The grid's roving focus: one cell is tabbable, the arrows move which.
-   *
-   * The date is the state rather than an index, because a move is allowed to
-   * leave the month — `gridFocusMove` answers in dates, and the view pages onto
-   * whatever comes back. `moved` gates the focus call so that only a *key* pulls
-   * focus into the grid: without it, opening the popover or typing in the time
-   * row would yank the caret onto a day cell.
+   * The grid's roving focus: one cell is tabbable, the arrows move which. A
+   * date, not an index, because a move may leave the month. `moved` makes sure
+   * only a key pulls focus into the grid, not opening or typing a time.
    */
   const [focusDate, setFocusDate] = useState(selected ?? today)
   const moved = useRef(false)
@@ -173,8 +147,8 @@ export function DateTimePicker({
     if (at.year !== view.year || at.month !== view.month) setView(at)
   }
 
-  // The tabbable cell has to exist, or the grid drops out of the tab order
-  // entirely: paging with the chevrons can leave `focusDate` in another month.
+  // The tabbable cell must exist, or the grid drops out of the tab order:
+  // paging can leave `focusDate` in another month.
   const inGrid = grid.flat().some((c) => c.date === focusDate)
   const tabDate = inGrid ? focusDate : (grid.flat().find((c) => c.inMonth)?.date ?? null)
 
@@ -192,20 +166,13 @@ export function DateTimePicker({
 
   const rail = presets ?? []
 
-  // Controlled, for one reason: a preset is a COMPLETE answer, so choosing one
-  // closes the popover. Picking a day is not — you may want to put a time on
-  // what you just chose — so the calendar and the time row leave it open.
+  // Controlled: a preset is a complete answer and closes the popover; picking a
+  // day leaves it open for a time.
   const [open, setOpen] = useState(false)
 
   /**
-   * Opening starts a fresh navigation from the value: the month on show and the
-   * cell the arrows start from both begin where the value is.
-   *
-   * This is what keeps paging and a changing value from fighting. Inside one
-   * session the two are left alone — the chevrons page freely, and clicking a
-   * trailing day does not yank the grid into the next month under the cursor —
-   * while the next open answers to whatever the value is by then, whether that
-   * is another task's due date or an agent's rewrite.
+   * Opening starts a fresh navigation from the value. Within one session paging
+   * is left alone; the next open follows whatever the value is by then.
    */
   const startAt = (next: boolean) => {
     if (next) {
@@ -222,27 +189,17 @@ export function DateTimePicker({
           <Button
             variant="ghost"
             data-testid={testId}
-            // The visible text is the VALUE, so without this the field's
-            // accessible name is "25 Aug 2026, 14:00" and nothing says which
-            // field that is. The tooltip cannot do the job: Radix wires
-            // `content` as a description, not as the name.
+            // The visible text is the value, so name the field. The tooltip
+            // cannot: Radix wires `content` as a description, not a name.
             aria-label={placeholder}
             className={cn(
-              // The field treatment the rows beside it wear, so a picker and a
-              // Select read as the same kind of control. It comes from
-              // `FIELD_CONTROL` rather than being spelled out here, because
-              // "the same as the others" is a fact about the set, not about
-              // this control.
+              // The same field treatment as the Selects beside it.
               FIELD_CONTROL,
               'justify-end gap-2',
               //
-              // `min-w-0 shrink` is load-bearing, not tidiness. The Button
-              // primitive's base is `shrink-0`, so `w-full` inside the label+
-              // control flex row resolves to 100% of the ROW and then refuses to
-              // shrink back — the field overhung the panel's right edge by the
-              // width of its own label. The Selects beside it were fine because
-              // they are not Buttons. Measured in the app: 285px wide ending
-              // 66px past the panel, against the Select's 197px.
+              // `shrink` is load-bearing: the Button primitive's base is
+              // `shrink-0`, so `w-full` in the label+control row would take the
+              // whole row and overhang the panel by the label's width.
               'shrink hover:bg-transparent focus-visible:border-ring',
               value === null && 'text-muted-foreground',
             )}

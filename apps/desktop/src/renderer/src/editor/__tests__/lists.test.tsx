@@ -100,7 +100,7 @@ it('writes the document when the checkbox is clicked, and back again', () => {
   expect(v.state.doc.toString()).toBe('- [ ] feed the cat\n')
 })
 
-// A reconcile holds the file read-only (FR-19), and a control that wrote anyway
+// A reconcile holds the file read-only (docs/features/vaults-sync.md), and a control that wrote anyway
 // would be the one way round a lock the rest of the editor honours.
 it('refuses to toggle while the document is locked', () => {
   const v = mount('- [ ] feed the cat\n', true)

@@ -1,21 +1,14 @@
 /**
- * One note, one buffer, one file.
+ * One note, one buffer, one file: an autosave that writes the buffer, and
+ * `decideReload` for when the file changes underneath. Concurrent editing is
+ * deferred (`vision.md`).
  *
- * The CRDT is gone and nothing replaced it: `yCollab`, the awareness channel
- * and the presence colours all served concurrent editing, which is deferred
- * (`vision.md`). What replaced it is much smaller — an autosave that writes the
- * buffer, and `decideReload` for when the file changes underneath.
+ * `base` is the text this editor last loaded or saved. Advancing it on save
+ * makes the editor's own write a non-event: by the time the watcher reports
+ * it, `disk === base`. The decision lives in `lib/editor-reload.ts`.
  *
- * **`base` is the text this editor last loaded or saved**, and advancing it on
- * save is what makes the editor's own write a non-event: by the time the
- * watcher reports it, `disk === base`. See `lib/editor-reload.ts`, which is
- * where that decision actually lives.
- *
- * Task mentions are **not** wired here. The mention layer still writes
- * `[[task:<id>]]`, and a task link is an ordinary path wiki-link now
- * (`glossary.md` §Task — "there are no opaque task ids"). Rather than emit
- * links in a grammar the product has abandoned, `@` completes notes only until
- * the tasks surface returns.
+ * `@` completes notes and open tasks; either inserts an ordinary path
+ * wiki-link.
  */
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
@@ -54,36 +47,33 @@ export function EditorPane({
   path: string | null
   onOpenNote: (path: string) => void
   onConflict: (path: string, resolve: ConflictResolvers) => void
-  /** Fired the first time the buffer changes for this open note — the rule that
-   *  promotes a preview tab to pinned (FR-15), so editing never loses your place. */
+  /** Fired the first time the buffer changes for this open note: editing
+   *  promotes a preview tab to pinned (docs/features/tabs-panes.md). */
   onEdit?: () => void
   /** A non-markdown text file: swap in the plain editing stack, open the caret at
    *  the top, and never hold off the save on frontmatter (it has none). The
    *  save/flush/reload machinery is otherwise identical. */
   plain?: boolean
-  /** A reconcile is resolving this file (`../../../main/vault/active-vault`
-   *  FR-19). The document opens locked — the markers in it belong to the merge,
-   *  and a keystroke landing between the agent's read and its write is a
-   *  resolution built on a file that moved. */
+  /** A reconcile is resolving this file (docs/features/vaults-sync.md). The
+   *  document opens locked: a keystroke between the agent's read and its write
+   *  would build a resolution on a file that moved. */
   readOnly?: boolean
   /** The note is alone in the window (`isSoloNote`), so its column centres
-   *  (#13). The centring is CSS keyed on the attribute this sets: `index.css`
-   *  §Solo note column. It changes only on a split or an unsplit, and both
-   *  change the editor's width, which is what makes CodeMirror re-measure and
-   *  redraw its caret and selection where the text now is. */
+   *  (CSS keyed on the attribute: `index.css` §Solo note column). It changes
+   *  only on a split or unsplit, which also changes the editor's width, so
+   *  CodeMirror re-measures and redraws its caret. */
   centred?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
   const hostRef = useRef<HTMLDivElement>(null)
 
-  /** The text last loaded or saved. The whole write-attribution design rests on
-   *  this being advanced by the save, before the watcher reports it. */
+  /** The text last loaded or saved; advanced by the save before the watcher
+   *  reports it. */
   const baseRef = useRef('')
   const viewRef = useRef<EditorView | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** Whether `onEdit` has fired for this open note — reset per open, so the
-   *  promote-on-edit rule fires once, not once per keystroke. */
+  /** Whether `onEdit` has fired for this open note; reset per open. */
   const editedRef = useRef(false)
 
   // Read on demand by the editor's pull-based seams, so a snapshot arriving
@@ -109,9 +99,8 @@ export function EditorPane({
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
-  /** Held in a ref, exactly as `nav` is: the extension list must not rebuild on
-   *  every render, and a seam that closed over a stale list would offer the tabs
-   *  that were open three selections ago. */
+  /** In a ref, like `nav`: the extensions must not rebuild on every render, and
+   *  a closure over a stale list would offer sessions that have gone. */
   const askAgentRef = useRef<AskAgentSeam>({
     targets: () => ({ sessions: [], initial: 'new' }),
     onAsk: () => Promise.resolve({ ok: true }),
@@ -122,16 +111,13 @@ export function EditorPane({
   }
   const navRef = useRef<LinkNav>({ openNote: () => {}, openExternal: () => {} })
   navRef.current = {
-    // A link can point at a note or task that does not exist yet; the chip renders
-    // missing and the click no-ops rather than inventing a file.
+    // A link to a missing note or task no-ops rather than inventing a file.
     openNote: (target) =>
       (docPaths.current.has(target) || tasksByPath.current.has(target)) && onOpenNote(target),
     openExternal: (url) => void window.holi.openExternal(url),
-    // Open, never toggle: the header's `v.N` asks to see the history, and a
-    // second press on it must not be what hides it. Focus first: the sidebar
-    // follows the ACTIVE pane's note, a pane becomes active on focus, and the
-    // link's mousedown is prevented, so in a split the press alone would open
-    // the other pane's history.
+    // Open, never toggle. Focus first: the sidebar follows the active pane, a
+    // pane activates on focus, and the link's mousedown is prevented, so in a
+    // split the press alone would open the other pane's history.
     openHistory: () => {
       viewRef.current?.focus()
       setHistoryOpen(true)
@@ -144,11 +130,10 @@ export function EditorPane({
     editedRef.current = false
     const host = hostRef.current
 
-    /** Write the buffer if it differs from disk, advancing `base` in the same
-     *  breath — the order is the point. **Unconditional:** used by the flush
-     *  registry (quit, and rename's pre-flush) and the unmount below, where
-     *  losing keystrokes is worse than a note with temporarily-invalid
-     *  frontmatter — git has it either way (notes-editor.md §Frontmatter). */
+    /** Write the buffer if it differs from disk, advancing `base` first.
+     *  Unconditional: used by the flush registry (quit, rename's pre-flush) and
+     *  the unmount below, where losing keystrokes is worse than temporarily
+     *  invalid frontmatter. */
     const flush = async (): Promise<void> => {
       const view = viewRef.current
       if (view === null || disposed) return
@@ -158,22 +143,16 @@ export function EditorPane({
       await trpc.notes.write.mutate({ remote, path, text })
     }
 
-    /** The gated save behind autosave and ⌘S: hold off entirely while the
-     *  frontmatter YAML is invalid (the FR-16 dot is red), so a half-typed
-     *  `tags: [` is never the autosaved — or "committed" — state. Returns
-     *  whether the caller may proceed (true when valid, false when held off);
-     *  a valid buffer that simply had nothing new to write still returns true,
-     *  so ⌘S on it still commits (FR-4). */
+    /** The gated save behind autosave and ⌘S. Returns false when held off; a
+     *  valid buffer with nothing new to write still returns true, so ⌘S on it
+     *  still commits. */
     const save = async (): Promise<boolean> => {
       const view = viewRef.current
       if (view === null || disposed) return false
       const text = view.state.doc.toString()
       // Hold the save while the buffer is syntactically broken, so a half-typed
-      // config is never the autosaved — or committed — state. Markdown gates on
-      // its frontmatter YAML (FR-16); a plain file gates on its own language
-      // (`syntaxValid`: JSON/YAML only, everything else always valid). Both let
-      // the unconditional `flush` through — a blur or quit still writes, because
-      // losing keystrokes is worse than a file with temporarily-invalid syntax.
+      // `tags: [` is never the committed state. Markdown gates on its
+      // frontmatter YAML; a plain file on its own language (`syntaxValid`).
       if (plain ? !syntaxValid(path, text) : !frontmatterValid(view.state)) return false
       if (text !== baseRef.current) {
         baseRef.current = text
@@ -193,10 +172,8 @@ export function EditorPane({
       const view = new EditorView({
         state: EditorState.create({
           doc: text,
-          // Open the caret in the body, never to the left of the frontmatter
-          // widget (there is nothing to edit above it). `assoc: 1` binds it to
-          // the body line rather than to the widget's side of the seam. A plain
-          // file has no frontmatter widget, so open at the top.
+          // Open the caret in the body, below the frontmatter widget. `assoc: 1`
+          // binds it to the body side of the seam.
           selection: EditorSelection.cursor(plain ? 0 : bodyStart(text), 1),
           extensions: [
             ...(plain
@@ -234,22 +211,14 @@ export function EditorPane({
         parent: host,
       })
       viewRef.current = view
-      // Arrive when the DOCUMENT does, not when the tab changed.
-      //
-      // The pane's own fade fires the moment you pick a different tab, but this
-      // editor is built after an IPC read — so on a file that was not already
-      // open, the fade played out over an empty container and the text appeared
-      // afterwards, at full opacity, with nothing to see. Switching between
-      // notes already open looked right only because their buffers were warm.
-      // Opacity only: this wraps CodeMirror, and anything that changes the
-      // layout box drags its measure loop into every frame.
+      // Fade in when the document arrives, after the IPC read, not when the
+      // tab changed. Opacity only: anything that changes the layout box drags
+      // CodeMirror's measure loop into every frame.
       playOnce(host, 'motion-in-fade')
       view.focus()
 
-      // The collapsed frontmatter summary needs the file's last commit (author +
-      // date). Fetch it after the view exists and dispatch it in; a null result
-      // (new/untracked file) just leaves the summary at the char count. Guarded
-      // so a fast tab switch can't write into a torn-down or replaced view.
+      // The frontmatter summary's last commit. Null for an untracked file.
+      // Guarded so a fast tab switch can't write into a replaced view.
       if (!plain) {
         void trpc.notes.fileHistory
           .query({ path })
@@ -265,15 +234,13 @@ export function EditorPane({
       }
     })
 
-    // FR-6: window blur is a flush point. So is the unmount below, which covers
-    // tab close and vault switch. Both use the unconditional flush — a blur or a
-    // tab-close must not drop keystrokes just because the YAML is mid-edit.
+    // Window blur is a flush point, as is the unmount below (tab close, vault
+    // switch). Both use the unconditional flush.
     const onBlur = () => void flush()
     window.addEventListener('blur', onBlur)
 
-    // Both writers: the unconditional one for FR-6's flush points, and the
-    // gated one for ⌘S, which the Shell fires for every open buffer at once
-    // (FR-4). The gate is what keeps a half-typed `tags: [` out of a commit.
+    // The unconditional writer for flush points, and the gated one for ⌘S,
+    // which the Shell fires for every open buffer at once.
     const unregister = registerBuffer(flush, async () => void (await save()))
 
     return () => {
@@ -281,8 +248,7 @@ export function EditorPane({
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
-      // Flush before tearing down: this fires on tab close and vault switch,
-      // and the buffer is the one thing that does not survive either.
+      // Flush before tearing down: the buffer does not survive a tab close.
       const view = viewRef.current
       if (view !== null) {
         const text = view.state.doc.toString()
@@ -291,19 +257,14 @@ export function EditorPane({
       }
       viewRef.current = null
     }
-    // `readOnly` rebuilds the view, which is the honest behaviour: entering a
-    // reconcile re-reads the file, so the markers the agent is working on are
-    // what you see. The teardown flushes first, so a dirty buffer is written
-    // before the lock rather than lost to it.
+    // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
+    // you see the markers the agent is working on. The teardown flushes first.
   }, [path, remote, plain, readOnly])
 
   /**
-   * The vault changed somewhere. Re-read our own file and decide.
-   *
-   * The snapshot push carries no path — it is the whole vault, every time — so
-   * this runs on every change to anything. That is cheap and it is correct:
-   * `decideReload` returns `none` for the overwhelming majority, including this
-   * editor's own save.
+   * The vault changed somewhere: re-read our own file and decide. The snapshot
+   * carries no path, so this runs on every change; `decideReload` returns
+   * `none` for nearly all of them, including this editor's own save.
    */
   useEffect(() => {
     if (path === null || remote === null) return
@@ -314,8 +275,8 @@ export function EditorPane({
       const decision = decideReload(baseRef.current, view.state.doc.toString(), disk, path)
       if (decision.kind === 'none') return
       if (decision.kind === 'conflict') {
-        // Both ways out are closed over the two texts that actually disagreed,
-        // so neither has to re-read anything that may have moved on since.
+        // Both ways out close over the two texts that disagreed, so neither
+        // re-reads anything that may have moved since.
         return onConflict(path, {
           keepMine: async () => {
             const mine = view.state.doc.toString()
@@ -328,17 +289,15 @@ export function EditorPane({
           },
         })
       }
-      // Our own commit-time tidy. `base` catches up to disk so the invariant
-      // holds again, and the buffer is deliberately NOT touched: the keystrokes
-      // that arrived while the hook ran are the whole thing worth protecting
-      // here. The pending save writes them, and the next commit re-tidies.
+      // Our own commit-time tidy. `base` catches up to disk; the buffer is not
+      // touched, so keystrokes typed while the hook ran survive. The pending
+      // save writes them.
       if (decision.kind === 'rebase') {
         baseRef.current = decision.text
         return
       }
-      // A clean reload and a successful merge both replace the buffer and both
-      // advance `base` — the merged text is now what this editor last saw, even
-      // though it is not yet what is on disk. The pending save writes it.
+      // A clean reload and a merge both replace the buffer and advance `base`;
+      // a merge is then written back.
       baseRef.current = decision.text
       applyReload(view, decision.text)
       if (decision.kind === 'merged') {

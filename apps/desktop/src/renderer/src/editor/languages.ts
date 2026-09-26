@@ -1,23 +1,14 @@
 /**
- * Syntax highlighting for the plain-text editor, chosen by file name.
+ * Syntax highlighting for the plain-text editor, chosen by file name. Not a
+ * general code editor, two narrow sets:
  *
- * The vault is mostly markdown (its own editor) plus two narrow sets that are
- * *not* a general code editor:
+ * - config: `.holi/settings/app.yaml`, a `.yaml`, a `.env`, the odd `.toml`.
+ * - the web three: a vault app under `.holi/apps/` is unbuilt HTML, CSS and JS.
+ *   TypeScript is left out on purpose: nothing compiles it.
  *
- * - **config** — `.holi/settings/theme.yaml`, a `.yaml`, a `.env`, the odd `.toml`.
- * - **the web three** — an app under `.holi/apps/` is unbuilt HTML, CSS and JS
- *   the browser runs as-is, so those are the only source files the editor
- *   actually meets. TypeScript is left out on purpose: nothing compiles it, so
- *   highlighting `.ts` would advertise a language the runtime does not have.
- *
- * JSON also gets a validity linter (`theme.json` is agent-written, and a red
- * squiggle beats a silent parse failure the resolver quietly falls back from).
- * The web three get none — there is no cheap, correct parse for a half-typed
- * document, and a squiggle that cries wolf mid-keystroke is worse than silence.
- *
- * The decision — which language a path is — is `languageIdForPath`, a pure
- * string classifier that is the only part worth testing. `languageForPath` is
- * the thin glue from that id to CodeMirror extensions.
+ * JSON and YAML also get a validity linter, since agent-written config fails
+ * silently otherwise. The web three get none: no cheap, correct parse exists
+ * for a half-typed document.
  */
 import { css } from '@codemirror/lang-css'
 import { colorPicker, wrapperClassName } from '@replit/codemirror-css-color-picker'
@@ -60,17 +51,13 @@ const BY_EXT: Record<string, LangId> = {
 }
 
 /**
- * Which language a vault path is, or `null` for none (edit as plain text).
- *
- * Dotfiles need care: `.env`, `.bashrc` and friends have no extension in the
- * `basename.ext` sense — the leading dot is not an extension separator — so they
- * are matched by name. `.env.local` (a real local-override name) is caught by the
- * `.env` prefix, not the `local` suffix.
+ * Which language a vault path is, or `null` for plain text. Dotfiles (`.env`,
+ * `.bashrc`) have no extension in the `name.ext` sense and are matched by name;
+ * `.env.local` is caught by the `.env` prefix.
  */
 export function languageIdForPath(path: string): LangId | null {
   const base = path.slice(path.lastIndexOf('/') + 1).toLowerCase()
 
-  // Dotfiles: no `name.ext` split to make, so classify by the whole name.
   if (base.startsWith('.')) {
     if (base === '.env' || base.startsWith('.env.')) return 'ini'
     if (
@@ -92,10 +79,8 @@ const LEGACY: Record<'toml' | 'ini' | 'shell', StreamLanguage<unknown>> = {
   shell: StreamLanguage.define(shell),
 }
 
-/** A linter squiggle for YAML — `@codemirror/lang-yaml` ships no linter, so this
- *  mirrors `jsonParseLinter` by parsing with the same `yaml` the frontmatter gate
- *  uses. `YAMLParseError` carries a precise `[from, to]`, so the underline lands
- *  on the offending span rather than the whole file. */
+/** A YAML linter: `@codemirror/lang-yaml` ships none. `YAMLParseError`
+ *  carries a precise `[from, to]` for the underline. */
 function yamlLinter(): Extension {
   return linter((view): Diagnostic[] => {
     const text = view.state.doc.toString()
@@ -129,21 +114,17 @@ function yamlLinter(): Extension {
 }
 
 /**
- * The swatch, without the extension's own outline.
- *
- * `@replit/codemirror-css-color-picker` paints `outline: 1px solid #eee` on its
- * wrapper — a light-mode hairline that reads as a bright ring on a near-black
- * editor. `EditorView.theme` beats the extension's `baseTheme`, which is the
- * documented way to restyle it and the reason `wrapperClassName` is exported.
+ * The swatch without the extension's `outline: 1px solid #eee`, a bright ring
+ * on a dark editor. `EditorView.theme` beats its `baseTheme`, the documented
+ * way to restyle it.
  */
 const colorSwatchLook = EditorView.theme({
   [`.${wrapperClassName}`]: { outline: 'none', borderRadius: '2px' },
 })
 
 /**
- * The CodeMirror extensions that highlight (and, for JSON/YAML, lint) a given
- * path. Empty when the path has no known language — the plain stack then renders
- * it as undecorated text.
+ * The extensions that highlight (and, for JSON/YAML, lint) a path. Empty when
+ * the path has no known language.
  */
 export function languageForPath(path: string): Extension[] {
   const id = languageIdForPath(path)
@@ -151,34 +132,22 @@ export function languageForPath(path: string): Extension[] {
   if (id === 'json') return [json(), linter(jsonParseLinter())]
   if (id === 'yaml') return [yaml(), yamlLinter()]
   if (id === 'javascript') return [javascript()]
-  // `html()` already nests JS and CSS for `<script>`/`<style>` blocks, which is
-  // most of what an app's `index.html` contains.
-  // `colorPicker` finds colours through the CSS grammar — `ColorLiteral`,
-  // `CallExpression`, `ValueName` — so it belongs with the two languages that
-  // HAVE that grammar and nowhere else. `html()` mounts CSS inside `<style>`
-  // and `style=`, which the extension walks through its `Styles` overlay, so a
-  // vault app's inline colours get a swatch too.
+  // `colorPicker` finds colours through the CSS grammar, so it belongs only with
+  // the two languages that have it; `html()` nests CSS in `<style>` and
+  // `style=`, so inline colours get a swatch too.
   //
-  // **The swatch sits to the LEFT of the value, and that is a decision.** The
-  // extension places it with `.range(from)`, and that same `from` is the range
-  // a pick replaces, so moving it would mean owning the tree walk. Left is also
-  // what VS Code and every CodeMirror colour extension do, and it is why a
-  // column of declarations gets a column of swatches instead of a ragged edge
-  // following each value's width. Asked and answered; do not re-litigate.
+  // The swatch sits LEFT of the value, deliberately: the extension places it at
+  // the `from` a pick replaces, moving it means owning the tree walk, and a
+  // column of declarations gets an aligned column of swatches.
   if (id === 'html') return [html(), colorPicker, colorSwatchLook]
   if (id === 'css') return [css(), colorPicker, colorSwatchLook]
   return [LEGACY[id]]
 }
 
 /**
- * Does the file's content parse as its language? The save gate (EditorPane)
- * reads this to hold off autosave and ⌘S while it is false — the plain-text
- * analogue of `frontmatterValid` for notes.
- *
- * Only the formats we can cheaply parse are gated (JSON, YAML); everything else
- * — toml/ini/shell, the web three, unknown text — has no gate (always valid),
- * and an empty buffer is valid: there is nothing yet to be invalid, matching the
- * frontmatter gate.
+ * Does the content parse as its language? EditorPane's save gate, the plain
+ * analogue of `frontmatterValid`. Only JSON and YAML are gated; everything else,
+ * and an empty buffer, is valid.
  */
 export function syntaxValid(path: string, text: string): boolean {
   if (text.trim() === '') return true
@@ -194,15 +163,9 @@ export function syntaxValid(path: string, text: string): boolean {
 }
 
 /**
- * An always-visible validity dot for the gated formats — the plain-text twin of
- * the frontmatter chevron. A bottom status strip carrying a dot + the format
- * name: neutral while it parses, red the moment it doesn't (and the autosave is
- * held). Only the formats `syntaxValid` actually gates (JSON, YAML) get one — a
- * dot on a format we never gate would be a status that means nothing.
- *
- * It lives in a CodeMirror panel, not the React tree, so it stays pinned while
- * the doc scrolls (the whole point — the squiggle can scroll away, a held save
- * should not) and matches the rest of the editor's self-contained hex styling.
+ * A validity strip for the formats `syntaxValid` gates: neutral while it
+ * parses, red while the autosave is held. A CodeMirror panel, so it stays
+ * pinned while the doc scrolls.
  */
 export function validityStatus(path: string): Extension {
   const id = languageIdForPath(path)

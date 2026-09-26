@@ -1,6 +1,6 @@
 /**
  * The revealed frontmatter is a YAML editor, and it should look like one
- * (`notes-editor.md` §Frontmatter reveal control).
+ * (docs/features/frontmatter.md).
  *
  * It is a *nested* CodeMirror inside the widget, which is why it missed out:
  * the outer stack's language never reached it, so the block that carries a

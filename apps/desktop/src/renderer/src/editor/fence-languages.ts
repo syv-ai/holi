@@ -1,30 +1,14 @@
 /**
- * The language inside a markdown fence.
+ * The language inside a markdown fence. `markdown()` parses a fence's body as
+ * plain text unless handed `codeLanguages`.
  *
- * ````
- * ```python
- * def f(): ...
- * ```
- * ````
+ * Not `@codemirror/language-data`: ~40 extra packages as dynamic-import chunks,
+ * and a deferred load that re-parses once the grammar lands. Every grammar here
+ * is already a dependency and resolves synchronously. An unlisted language
+ * renders untokenised; adding one is a line here.
  *
- * `markdown()` parses a fence's body as **plain text** unless it is handed a
- * `codeLanguages`, so every fence in every note rendered as one flat grey slab
- * (`.cm-code-line`) with no tokens in it. This is the table that was missing.
- *
- * **Not `@codemirror/language-data`,** which is the canonical answer to exactly
- * this and was the first thing considered. It resolves ~100 languages, and it
- * pays for them: ~40 new packages in the tree, each arriving as its own
- * dynamic-import chunk, and a *deferred* load — the fence parses as text, then
- * re-parses once the grammar lands. Every grammar below is already a dependency
- * (`legacy-modes` came in for the plain editor's toml/ini/shell) and resolves
- * synchronously, so a fence is highlighted in the first parse. The cost is that
- * the table is finite: an unlisted language is not an error, it is the grey
- * block we had before, and adding one is a line here.
- *
- * This is a **different question** from `languages.ts`, which is deliberately
- * narrow — the vault holds config and the unbuilt web three, so those are the
- * only *files* the editor meets. A note quotes whatever its author was working
- * on that day, and guessing that set narrowly is how you get a grey slab.
+ * Broader than `languages.ts` on purpose: a note quotes whatever its author was
+ * working on, while the editor only opens config and web files.
  */
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
@@ -62,11 +46,8 @@ import { toml } from '@codemirror/legacy-modes/mode/toml'
 
 /**
  * The fence's language token: the first word of the info string, lowercased.
- *
- * A fence carries more than a name in the wild — ` ```js title="a.js" `,
- * ` ```python {1,3} `, ` ```{r setup} ` (knitr), ` ```.ts `. Everything after
- * the first whitespace is metadata for some other tool, and the leading `.` and
- * `{` are punctuation those tools chose, not part of the name.
+ * Handles ` ```js title="a.js" `, ` ```python {1,3} `, ` ```{r setup} ` and
+ * ` ```.ts `.
  */
 export function fenceLanguageId(info: string): string {
   return (info.trim().split(/[\s,{}]+/).find((w) => w !== '') ?? '')
@@ -74,8 +55,8 @@ export function fenceLanguageId(info: string): string {
     .toLowerCase()
 }
 
-/** A legacy stream mode, wrapped once and reused — `StreamLanguage.define` builds
- *  a parser, and a fence lookup runs on every parse of every note. */
+/** A legacy stream mode, wrapped once and reused: a fence lookup runs on every
+ *  parse. */
 const stream = (() => {
   const cache = new Map<StreamParser<unknown>, Language>()
   return (parser: StreamParser<unknown>): Language => {
@@ -87,8 +68,7 @@ const stream = (() => {
   }
 })()
 
-/** Same idea for the Lezer grammars: `javascript()` builds a `LanguageSupport`
- *  each call, and we only ever want the `Language` inside it. */
+/** Same for the Lezer grammars, which build a `LanguageSupport` each call. */
 const lezer = (() => {
   const cache = new Map<string, Language>()
   return (key: string, make: () => Language): Language => {
@@ -100,11 +80,8 @@ const lezer = (() => {
   }
 })()
 
-/**
- * Fence name → grammar. Aliases are spelled out rather than normalised by rule,
- * because the rules disagree with each other: `sh` and `console` are both shell,
- * `rs` is rust, `rb` is ruby, and `r` is R.
- */
+/** Fence name → grammar. Aliases are spelled out: no rule covers `console`
+ *  being shell or `r` being R. */
 const FENCE: Record<string, () => Language> = {
   // ── The web, from real Lezer grammars ────────────────────────────────
   javascript: () => lezer('js', () => javascript().language),
@@ -113,9 +90,7 @@ const FENCE: Record<string, () => Language> = {
   cjs: () => lezer('js', () => javascript().language),
   node: () => lezer('js', () => javascript().language),
   jsx: () => lezer('jsx', () => javascript({ jsx: true }).language),
-  // TypeScript is absent from `languages.ts` on purpose — nothing in the vault
-  // compiles a `.ts` file. A fence is a *quotation*, not something the runtime
-  // is expected to run, so that argument does not reach here.
+  // Unlike `languages.ts`: a fence is a quotation, not something the vault runs.
   typescript: () => lezer('ts', () => javascript({ typescript: true }).language),
   ts: () => lezer('ts', () => javascript({ typescript: true }).language),
   tsx: () => lezer('tsx', () => javascript({ typescript: true, jsx: true }).language),
@@ -192,13 +167,10 @@ const FENCE: Record<string, () => Language> = {
 }
 
 /**
- * The grammar for a fence's info string, or `null` for one we don't know (which
- * renders exactly as it did before: the grey block, no tokens).
+ * The grammar for a fence's info string, or `null` (untokenised).
  *
- * Handed to `markdown({ codeLanguages })` as a **function** rather than a list of
- * `LanguageDescription`s. Both are accepted; the function form returns a
- * `Language` on the spot, and the description form goes through an async `load`
- * whose whole purpose is deferring a dynamic import we are not doing.
+ * A function rather than `LanguageDescription`s, which go through an async
+ * `load` for a dynamic import we are not doing.
  */
 export function fenceLanguage(info: string): Language | null {
   const make = FENCE[fenceLanguageId(info)]

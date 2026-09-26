@@ -56,11 +56,8 @@ type IconCmp = ComponentType<any>
 /** [glyph, colour] per extension. Colours are dark-friendly, loosely tracking
  *  each type's identity (JS yellow, TS/CSS blue, Rust orange, …). */
 const BY_EXT: Record<string, [IconCmp, string]> = {
-  // `FileText`, not simple-icons' Markdown mark: that mark is the wide "M↓"
-  // logo, and at a shared height it is nearly twice the width of every square
-  // glyph beside it, so the column of icons went ragged on the one extension
-  // this app is mostly made of. It is also the glyph the `@`-mention list
-  // already draws a note with.
+  // `FileText`, not simple-icons' wide "M↓" mark, which is nearly twice the
+  // width of the square glyphs beside it. Also the `@`-mention list's glyph.
   md: [FileText, '#6b9fff'],
   markdown: [FileText, '#6b9fff'],
   mdx: [SiMdx, '#f9ac00'],
@@ -127,18 +124,12 @@ const BY_EXT: Record<string, [IconCmp, string]> = {
 }
 
 /**
- * The leaf icon for a vault file path.
- *
- * An icon from `.holi/settings/icons.yaml` wins outright: the whole point of the feature
- * is to override the type glyph, so the two never appear together. `icon` is
- * already validated to be exactly one emoji when the map is resolved — nothing
- * longer can reach here and stretch the row.
+ * The leaf icon for a vault file path. An icon from `.holi/settings/icons.yaml`
+ * replaces the type glyph; it is validated to be exactly one emoji upstream.
  */
 export function fileIconFor(path: string, icon?: string): JSX.Element {
-  // `text-sm` is 14px — the same size the glyphs are rendered at. Measured
-  // against them in the running app: 13px reads thin next to the filled `.md`
-  // badge, and 15px+ crowds the row. `leading-none` is what centres it, since
-  // the default line box is taller than the slot.
+  // `text-sm` (14px) matches the glyphs. `leading-none` centres it: the default
+  // line box is taller than the slot.
   if (icon) return <span className="text-sm leading-none">{icon}</span>
 
   const base = path.slice(path.lastIndexOf('/') + 1)

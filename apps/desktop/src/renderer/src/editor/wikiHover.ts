@@ -1,13 +1,10 @@
 /**
- * Hover preview for wiki-links (notes-editor PRD FR-6). A `hoverTooltip` that finds
- * the `[[path]]` under the cursor (rendered chip or raw text — both are the same
- * token to `parseWikiLinks`) and shows a card: a task's status orb + title + due
- * from the task store, or a note's title + first lines read fresh, or a
- * "doesn't exist yet" line for a missing target.
+ * Hover preview for wiki-links: a card for the `[[path]]` under the pointer
+ * (chip or raw text). A task shows its status, title and due date from the
+ * snapshot; a note its title and first lines; a missing target says so.
  *
- * Note content is read on each hover rather than cached — a hover fires once per
- * settle, and reading fresh matches the app's no-index ethos (a stale peek would be
- * a small lie). Task data is already in the snapshot, so those need no read.
+ * Note content is read fresh on each hover rather than cached: no index, and
+ * no stale peek.
  */
 import type { EditorState, Extension } from '@codemirror/state'
 import { hoverTooltip, type Tooltip } from '@codemirror/view'

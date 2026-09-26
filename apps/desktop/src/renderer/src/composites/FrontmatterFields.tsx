@@ -1,21 +1,13 @@
 /**
- * A file's frontmatter as rows you can edit, rather than YAML you must type.
+ * A file's frontmatter as editable rows (docs/features/frontmatter.md).
  *
- * The document is still the truth. This reads the YAML between the fences,
- * draws a row per key, and writes the whole body back through
- * `editYamlMapping`, which preserves comments, key order and any nested
- * structure nobody here understands. Nothing is stored in React: a value comes
- * from the document and an edit goes straight back to it.
+ * The document is the truth: rows are read from the YAML and every edit writes
+ * the whole body back through `editYamlMapping`, which preserves comments, key
+ * order and nested structure. Nothing is stored in React.
  *
- * **The schema decides the control, never the contents.** `frontmatterSchema`
- * says a task has a `status` that is one of three words and a `due` that is a
- * moment, so those get a `Select` and the `DateTimePicker`. A key the schema
- * has never heard of is not an error and is never dropped — it gets a text row
- * and is written back verbatim.
- *
- * **Rows are not keys.** Every field the schema names is drawn whether the file
- * has it or not, so a due date can be set without knowing that `due` is the
- * word; nothing reaches the file until a value is actually given.
+ * The schema decides the control, never the contents. An unknown key gets a
+ * text row and is written back verbatim. Every schema field is drawn whether
+ * the file has it or not; nothing reaches the file until a value is given.
  */
 import {
   type FieldSpec,
@@ -47,24 +39,16 @@ import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
 import { completeTaskAtom, nowAtom } from '@/state/tasks'
 
-/** The sentinel for "not set" in a Radix Select, which forbids an empty value. */
-/** The VALUE that means "unset" in a Radix Select, which forbids ''. It is a
- *  real option in the list so a set field can be cleared, but an unset field
- *  shows nothing at all — see `UNSET_LABEL`. */
+/** The VALUE that means "unset" in a Radix Select, which forbids ''. A real
+ *  option so a set field can be cleared; an unset field shows nothing. */
 const UNSET = '—'
 
-/** What an unset field READS as: nothing. A field with no value should look
- *  empty rather than say a word about being empty. */
+/** What an unset field READS as: nothing. */
 const UNSET_LABEL = ''
 
 /**
- * A list value as chips, with somewhere to type more: ONE control.
- *
- * It used to be a field-shaped box with a 64px input hidden inside it, so the
- * box you pressed was not the thing that took the typing and most of it did
- * nothing. Now the box is the field: the input is bare and takes all the width
- * the chips leave, and a press anywhere else in the box (the gaps between
- * chips) puts the caret in it. Focus shows as the row's own tint, held.
+ * A list value as chips with somewhere to type more, as ONE control: the bare
+ * input takes the width the chips leave, and a press in the gaps focuses it.
  *
  * Not `ChipInput`: that is a mail-address field with validation and
  * suggestions, and a tag is any short string.
@@ -90,9 +74,7 @@ function TagsField({
     <div
       className={cn(
         FIELD_CONTROL,
-        // `h-auto min-h-8` rather than a fixed height: this is the one control
-        // whose content grows, and six tags must wrap inside its box rather
-        // than out of it.
+        // `h-auto min-h-8`: tags must wrap inside the box.
         'flex h-auto min-h-8 cursor-text flex-wrap items-center justify-end gap-1 py-1',
         'motion-respond focus-within:bg-muted/40',
       )}
@@ -109,10 +91,8 @@ function TagsField({
         value={draft}
         aria-label="add a tag"
         placeholder=""
-        // `flex-1` is what makes the box one control: the input owns every
-        // pixel the chips do not, so there is no dead part of the field. It
-        // comes BEFORE the chips so they stay at the right edge, in the column
-        // every other value ends in, and what you type lands beside them.
+        // `flex-1`: the input owns every pixel the chips do not. Before the
+        // chips so they stay at the right edge, where other values end.
         className="w-auto min-w-8 flex-1 text-right text-xs"
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
@@ -172,10 +152,9 @@ function TextField({
       value={draft ?? shown}
       aria-label={label}
       placeholder=""
-      // `dark:bg-transparent`: the Input primitive carries `dark:bg-input/30`,
-      // a variant, which outranks FIELD_CONTROL's bare `bg-transparent`, so the
-      // text rows were the one value in the block drawn as a filled box. With
-      // no edge to light, focus takes the app's one focus ring, the Button's.
+      // `dark:bg-transparent`: the Input primitive's `dark:bg-input/30` variant
+      // outranks FIELD_CONTROL's bare `bg-transparent`. Focus takes the
+      // Button's focus ring.
       className={cn(
         FIELD_CONTROL,
         'text-right dark:bg-transparent focus-visible:ring-1 focus-visible:ring-ring',
@@ -192,12 +171,9 @@ function TextField({
 }
 
 /**
- * A key this block may add: one plain YAML word, not one already there.
- *
- * Plain means what a person would type as a field name and nothing YAML would
- * read as syntax: no colon, no leading `#`, `-`, `?` or quote, no newline. The
- * schema's own keys are refused too, since each already has a row, and so is
- * a hidden one (`order`), which would otherwise be a back door to editing it.
+ * A key this block may add: one plain YAML word (no colon, no leading `#`,
+ * `-`, `?` or quote, no newline), not already present. Schema keys are refused
+ * too, including hidden ones (`order`), which would otherwise be a back door.
  */
 export function addableKey(
   raw: string,
@@ -211,14 +187,9 @@ export function addableKey(
 }
 
 /**
- * The last row: any key, free text (the schema's keys keep their typed rows).
- *
- * Closed, it is a quiet "add field" line. Open, it is a row of two inputs in the
- * same two columns as the rows above it, so the new pair appears where it will
- * then live. Enter in the key moves to the value; Enter in the value writes the
- * pair; Escape, or leaving the row with nothing typed, closes it. A value is
- * required: a key with no value is a `null` in the file, which nothing here
- * would draw as anything but an empty box.
+ * The last row: any key, free text. Open, it is two inputs in the same columns
+ * as the rows above. Enter moves key to value, then writes; Escape or leaving
+ * empty closes. A value is required: a bare key is a `null` in the file.
  */
 function AddFieldRow({
   existing,
@@ -344,8 +315,7 @@ export function FrontmatterFields({
 
   const schema = frontmatterSchema(path)
   const values = readYamlMapping(yaml)
-  // Both are the same signal: there is nothing here to draw as rows, and the
-  // widget shows the YAML instead. It asks first, so this is belt and braces.
+  // Nothing to draw as rows; the widget shows the YAML instead (it checks first).
   if (schema === null || values === null) return null
 
   const set = (key: string, next: unknown): void => {
@@ -353,9 +323,8 @@ export function FrontmatterFields({
   }
 
   const isTask = isTaskFilePath(path)
-  // **`lastIndexOf` returns -1 for a file at the vault root**, and `slice(0, -1)`
-  // is then the path minus its last character — so a root-level task showed a
-  // row labelled `folder` whose value was its own filename, one letter short.
+  // `lastIndexOf` is -1 at the vault root, and `slice(0, -1)` would then be the
+  // path minus its last character.
   const slash = path.lastIndexOf('/')
   const folder = slash === -1 ? '' : path.slice(0, slash)
   const due = typeof values.due === 'string' ? values.due : undefined
@@ -367,19 +336,15 @@ export function FrontmatterFields({
         const options = field.kind.options
         const chosen = typeof value === 'string' && options.includes(value) ? value : UNSET
         return (
-          // **Undefined, not the sentinel, when nothing is set.** Radix renders
-          // the SELECTED ITEM's text, so passing `UNSET` here would print the
-          // `—` from its option row however empty the placeholder is. Leaving
-          // the value undefined is what lets the trigger render as blank, while
-          // the `—` option stays in the list as the way to clear a set field.
+          // Undefined, not the sentinel, when unset: Radix renders the selected
+          // item's text, so `UNSET` would print its `—`.
           <Select
             value={chosen === UNSET ? undefined : chosen}
             onValueChange={(v) => {
               if (v === UNSET) return set(field.key, undefined)
-              // The one thing a field edit cannot do by writing text. `done` on
-              // a recurring task is not a status, it is a roll-forward to the
-              // next occurrence — a bare write would end the series wherever
-              // somebody happened to set it (features/tasks.md).
+              // `done` on a recurring task is a roll-forward to the next
+              // occurrence, not a status write, which would end the series
+              // (docs/features/tasks.md).
               if (field.key === 'status' && v === 'done' && isTask) return void complete(path)
               set(field.key, v as TaskStatus)
             }}
@@ -452,11 +417,7 @@ export function FrontmatterFields({
 
   return (
     <div
-      // NOT a panel. It used to carry a border and a `bg-muted/30` fill, which
-      // made the top of every note a grey card sitting on the page. These rows
-      // are the note's own metadata, so they read in the note's own colour on
-      // the note's own ground, and the space around them is what separates them
-      // from the prose.
+      // Not a panel: the note's own metadata, on the note's own ground.
       className="flex flex-col bg-transparent px-1 py-1.5 text-foreground"
       data-frontmatter-fields={path}
     >

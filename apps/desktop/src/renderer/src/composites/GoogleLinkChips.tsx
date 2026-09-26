@@ -1,15 +1,9 @@
 /**
- * The chips for mail/calendar links found in a body (D67).
+ * The chips for mail/calendar links found in a body (D67). A composite so more
+ * than one feature can use it.
  *
- * A **composite**, not a feature, for a structural reason: both the task editor
- * and (later) note surfaces want it, and a feature may not import another
- * feature. It needs nothing but primitives and a pure function from
- * `@holi/shared`, which is exactly what this layer is for.
- *
- * It renders **nothing of its own state**. The links live in the body text; this
- * is a view of them. That is the whole representation decision — no frontmatter
- * field, no index, no write-back — so deleting the markdown link in the body is
- * how you remove the chip.
+ * No state of its own: the links live in the body text, with no frontmatter
+ * field or index, so deleting the markdown link removes the chip.
  */
 import { CalendarDays, Mail } from 'lucide-react'
 import { googleLinksIn, type GoogleLinkKind } from '@holi/shared'

@@ -1,28 +1,14 @@
 /**
- * Click-to-navigate for links (notes-editor PRD FR-6 wiki-links, FR-7 markdown links).
+ * Click-to-navigate for links (docs/features/wiki-links.md). Wiki-links and
+ * markdown links behave differently, because one is a widget and the other is
+ * text:
  *
- * The chip widget was always built for this — it sets `data-wiki-target` and returns
- * `ignoreEvent() → false` so clicks reach the editor — but nothing ever listened. This is
- * the missing consumer.
+ *  - A wiki-link chip is a `Decoration.replace`, with no caret position inside
+ *    it, so a plain click means go there. Once the selection touches it, live
+ *    preview shows the raw `[[path]]`, where clicks are text clicks again.
  *
- * Wiki-links and markdown links deliberately behave differently, because one is a widget
- * and the other is text:
- *
- *  - A **wiki-link chip** is a `Decoration.replace` — there is no caret position "inside"
- *    it to want. Clicking it can only sensibly mean *go there*. And a chip only exists on
- *    a non-active line: the moment your caret is on that line the live-preview reveal
- *    un-renders it to raw `[[path]]`, where clicks are ordinary text clicks again. So
- *    "click navigates" never fights "click to edit" — the two never coexist.
- *
- *    That un-rendering is also why navigation is handled on `mousedown`: the press that
- *    navigates is the press that makes the line active, and the DOM it started on is gone
- *    before a `click` event could be dispatched. See `linkClickHandler`.
- *
- *  - A **markdown link** is a `Decoration.mark` over real, editable text. A plain click
- *    there means *put my caret in it*, so navigation takes ⌘/Ctrl-click — the same bargain
- *    VS Code strikes, and the only one that leaves the link text editable. `data-href` is
- *    only present on a non-active (rendered) line, so ⌘-click the link while your caret is
- *    elsewhere; clicking into its line first reveals the raw `[text](url)` to edit.
+ *  - A markdown link is a `Decoration.mark` over editable text. A plain click
+ *    places the caret, so navigation takes ⌘/Ctrl-click, as in VS Code.
  */
 import { EditorView, ViewPlugin } from '@codemirror/view'
 import { Facet, type Extension } from '@codemirror/state'
@@ -32,8 +18,8 @@ import { Facet, type Extension } from '@codemirror/state'
 const MOD_HELD = 'cm-mod-held'
 
 export interface LinkNav {
-  /** Open a note (or task file — both are paths now) by its vault-relative path.
-   *  No-op if nothing is there. */
+  /** Open a note or task file by its vault-relative path. No-op if nothing is
+   *  there. */
   openNote: (path: string) => void
   openExternal: (url: string) => void
   /** Open the history sidebar for the focused note (the frontmatter header's
@@ -43,17 +29,14 @@ export interface LinkNav {
 }
 
 /**
- * The editor's way out to a note or a URL, for widgets that are not document
- * text and so are not routed through `linkClickHandler`'s decision (the
- * frontmatter summary's author link). The same seam the handler is given, so
- * there is one path to `openExternal`, not two.
+ * The same `nav` seam, for widgets that are not document text (the frontmatter
+ * summary's links), so there is one path to `openExternal`.
  */
 export const linkNavFacet = Facet.define<() => LinkNav, (() => LinkNav) | null>({
   combine: (values) => values[0] ?? null,
 })
 
-/** What a click resolves to. `null` — the common case — means "not a link, leave it
- * alone", which is what keeps ordinary clicks placing the caret. */
+/** What a click resolves to. `null` means not a link: the click places the caret. */
 export type LinkAction = { kind: 'note'; path: string } | { kind: 'external'; url: string } | null
 
 export interface ClickTargets {
@@ -65,35 +48,21 @@ export interface ClickTargets {
   modifier: boolean
 }
 
-/** The pure routing decision — a headless core, per the slash-command shape. The DOM
- * lookup is the adapter's problem; the branches worth being sure about are here. */
+/** The pure routing decision; the DOM lookup is the adapter's job. */
 export function resolveLinkClick({ wikiTarget, href, modifier }: ClickTargets): LinkAction {
-  // A chip wins over any enclosing link: it is the innermost thing you clicked, and it
-  // is a widget, so there is no caret to place inside it.
+  // A chip wins over any enclosing link: it is the innermost thing clicked.
   if (wikiTarget) return { kind: 'note', path: wikiTarget }
-  // A markdown link is editable text, so navigation takes ⌘/Ctrl-click; a plain click
-  // keeps placing the caret.
   if (!href || !modifier) return null
-  // Only http(s) leaves the app. A relative href is a vault path, so it routes internally
-  // like a wiki-link rather than handing the OS something it cannot open.
+  // Only http(s) leaves the app. A relative href is a vault path and routes internally.
   return /^https?:\/\//i.test(href) ? { kind: 'external', url: href } : { kind: 'note', path: href }
 }
 
 /**
- * Mark the editor while ⌘/Ctrl is held, so the cursor can tell the truth.
+ * Mark the editor while ⌘/Ctrl is held, so a markdown link shows a pointer only
+ * when a click would navigate.
  *
- * A markdown link only navigates on ⌘/Ctrl-click (see the header), but the theme
- * gave it `cursor: pointer` unconditionally — so plain hover advertised a click
- * that does nothing, on text whose plain click actually means *place the caret*.
- * The cursor now changes exactly when the click would.
- *
- * Listens on `window`, not on the editor: the pointer matters while you are
- * *hovering*, which does not require the editor to have focus. `blur` is not
- * optional — ⌘-Tab away and the keyup never arrives, which would leave every
- * link stuck showing a pointer until the next ⌘ press.
- *
- * Wiki-link chips are deliberately untouched: they navigate on a plain click, so
- * their pointer was already honest.
+ * Listens on `window`: hovering does not need editor focus. `blur` matters:
+ * after ⌘-Tab away the keyup never arrives.
  */
 const modifierHeldClass = ViewPlugin.fromClass(
   class {
@@ -103,9 +72,8 @@ const modifierHeldClass = ViewPlugin.fromClass(
       window.addEventListener('blur', this.clear)
     }
 
-    // Read off the event rather than tracked per-key: a `keyup` for some other
-    // key while ⌘ is still down must not clear it, and `metaKey`/`ctrlKey` are
-    // on every keyboard event precisely so this can be a single question.
+    // Read off the event, not tracked per key: a `keyup` for another key while
+    // ⌘ is still down must not clear it.
     sync = (e: KeyboardEvent): void => {
       this.view.dom.classList.toggle(MOD_HELD, e.metaKey || e.ctrlKey)
     }
@@ -123,24 +91,13 @@ const modifierHeldClass = ViewPlugin.fromClass(
 )
 
 /**
- * `nav` is a thunk, read at click time — the renderer's atoms move under us, and the
- * editor is rebuilt per doc (the docExistsFacet/mentionData pattern).
+ * `nav` is a thunk, read at click time, since the renderer's state moves.
  *
- * **Bound to `mousedown`, not `click`, and it has to be.**
- *
- * Live preview un-renders whichever line holds the caret, so the press that is
- * supposed to navigate is also the press that makes that line active — and
- * CodeMirror rebuilds the line's DOM between `mousedown` and `mouseup`. The
- * browser only fires `click` when both halves share a target, so with the chip
- * or link element replaced underneath it, **no `click` event is ever
- * dispatched**. The handler sat on `click` and simply never ran: measured, a
- * press on a wiki chip reported `mousedown` on `.cm-wikilink`, `mouseup` on a
- * different span, and no `click` at all. Links appeared dead with and without
- * the modifier.
- *
- * `mousedown` is the last moment the rendered decoration still exists, which is
- * exactly the moment the decision needs to be made. Returning `true` also stops
- * CodeMirror moving the caret into a link we are navigating away from.
+ * Bound to `mousedown`, not `click`, and it has to be. The press moves the
+ * selection, live preview un-renders the element, and CodeMirror rebuilds its
+ * DOM before `mouseup`. The browser fires `click` only when both halves share a
+ * target, so no `click` is ever dispatched. Returning `true` also stops
+ * CodeMirror moving the caret into a link we are leaving.
  */
 export function linkClickHandler(nav: () => LinkNav): Extension {
   return [
@@ -148,8 +105,7 @@ export function linkClickHandler(nav: () => LinkNav): Extension {
     linkNavFacet.of(nav),
     EditorView.domEventHandlers({
       mousedown(event) {
-        // Primary button only: a right-click wants its context menu and a
-        // middle-click paste is not a navigation.
+        // Primary button only.
         if (event.button !== 0) return false
         const el = event.target as HTMLElement | null
         if (!el?.closest) return false
@@ -158,8 +114,7 @@ export function linkClickHandler(nav: () => LinkNav): Extension {
           href: el.closest<HTMLElement>('[data-href]')?.dataset['href'],
           modifier: event.metaKey || event.ctrlKey,
         })
-        // Not a link, or a plain press on a markdown link: fall through so the
-        // press keeps placing the caret and starting a selection as usual.
+        // Not a link, or a plain press on a markdown link: place the caret as usual.
         if (!action) return false
         if (action.kind === 'note') nav().openNote(action.path)
         else nav().openExternal(action.url)

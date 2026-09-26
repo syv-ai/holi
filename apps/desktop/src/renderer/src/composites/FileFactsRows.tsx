@@ -1,16 +1,10 @@
 /**
- * What the frontmatter block knows about a file that is not in it and that its
- * header does not already say: when it was created and by whom, and how it is
- * linked. Last updated, version and size are the header's, which stays on top
- * of the open block, so they are not repeated here.
+ * Read-only facts about a file under its frontmatter rows: when it was created
+ * and by whom, and how it is linked. Last updated, version and size are in the
+ * header and not repeated.
  *
- * Read-only rows in the fields' own two columns, under them, so the block reads
- * as one list of facts about the note with the editable ones first. They never
- * tint under the pointer, because nothing here can be pressed but a name.
- *
- * The rows are drawn from the first frame with their values empty, and fill in
- * when main answers: a block that grew rows a moment after it opened would jump
- * under the pointer.
+ * The rows are drawn from the first frame with empty values and fill in when
+ * main answers, so the block does not jump under the pointer.
  */
 import { useFileFacts, type CommitFact } from '@/state/file-facts'
 import { formatCommitDate } from '@/editor/frontmatter'

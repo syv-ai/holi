@@ -1,56 +1,31 @@
 /**
  * A label on the left, its control on the right, wrapping when it must.
  *
- * The wrapping rule is `SettingRow`'s, deliberately: the top line is a wrap
- * container and the label column has a real `basis`, so a control drops to its
- * own line exactly when its natural width stops fitting beside the label. No
- * breakpoint and no container query — a frontmatter block renders in a pane
- * that can be any width at all, including a narrow split beside a board, and
- * each row then answers for itself rather than all of them switching at one
- * number somebody had to pick.
- *
- * `basis-24` rather than the settings row's `basis-48`: a frontmatter key is one
- * word, not a question with a sentence underneath it.
+ * `SettingRow`'s wrapping rule: a wrap container with a real label `basis`, so
+ * a control drops to its own line exactly when it stops fitting. No breakpoint
+ * or container query: a pane can be any width, and each row answers for
+ * itself. `basis-24` because a frontmatter key is one word.
  */
 import { cn } from '@/lib/cn'
 import { Tooltip } from '@/primitives'
 
 /**
- * What every control in a field row looks like.
- *
- * A row is a label and an answer, and the answers only read as one column when
- * they are the same shape: same height, same type size, same edge, same inset.
- * They were not — a `Select` came out of its primitive at 14px and 32px tall, a
- * date picker at 12px and 32px, and the tag field at 14px, 24px and no edge at
- * all, which made a block of six rows look like six different kinds of control.
- *
- * A constant rather than a wrapper component: `Select`, `Button` and `Input`
- * each need it on a different element (a trigger, a trigger, the input itself),
- * so the shared thing is the treatment, not a box to put them in.
+ * What every control in a field row looks like: same height, type size, edge
+ * and inset, so the answers read as one column. A constant rather than a
+ * wrapper, because `Select`, `Button` and `Input` each need it on a different
+ * element.
  */
 export const FIELD_CONTROL =
-  // `md:text-xs` as well as the bare one: the `Input` primitive's base carries
-  // `md:text-sm`, and a responsive variant outranks an unprefixed override — so
-  // the one control in the block that is an input rendered its text at 14px
-  // while every button beside it rendered at 12.
+  // `md:text-xs` too: the `Input` primitive's base carries `md:text-sm`, and a
+  // responsive variant outranks an unprefixed override.
   'h-8 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-xs font-normal md:text-xs ' +
-  // **No edge inside a note's frontmatter**, the one place fields go without
-  // it. The app keeps a dimmed edge on form fields, but these rows are the
-  // note's metadata sitting on the note's page, and six outlined boxes made
-  // the top of every note a form. The row's hover tint (`FieldRow`'s `hover`)
-  // is what says a value can be pressed. Scoped by where the control IS rather
-  // than by a prop, because the date picker and recurrence field are shared
-  // with the create-task dialog, which keeps its edges.
+  // No edge inside a note's frontmatter, the one place form fields go without
+  // it: the row's hover tint says a value can be pressed. Scoped by where the
+  // control is, not a prop, because the create-task dialog shares these
+  // controls and keeps its edges.
   'in-data-frontmatter-fields:border-transparent'
 
-/**
- * A value that is not set.
- *
- * Muted is how this app says "empty", and it has to mean that everywhere in the
- * block or it means nothing: the date pickers muted themselves when empty and
- * the `Select` did not, so an unset `reminder` was grey while an unset
- * `priority` sat there in full-strength white looking like an answer.
- */
+/** A value that is not set: muted, consistently across every control. */
 export const FIELD_UNSET = 'text-muted-foreground'
 
 /** The same, for a value that is read rather than edited: no edge, no height of
@@ -83,16 +58,9 @@ export function FieldRow({
           {label}
         </span>
       </Tooltip>
-      {/* **The control column grows, the label does not.** With the label
-          growing instead, every control was only as wide as its own contents,
-          so a block of six rows had six different box widths all ending at the
-          same right edge and starting wherever their text happened to begin.
-          `flex-1` gives them one width, which is what makes them read as a
-          column of answers.
-
-          `min-w-32` is what still makes the row wrap: below it the control goes
-          to its own line rather than being squeezed to something unusable — the
-          `SettingRow` rule, with a floor instead of a breakpoint. */}
+      {/* The control column grows, the label does not, so every control gets
+          one width and they read as a column. `min-w-32` is the floor below
+          which the control wraps to its own line. */}
       <div className="flex min-w-32 flex-1 items-center justify-end gap-1">{children}</div>
     </div>
   )

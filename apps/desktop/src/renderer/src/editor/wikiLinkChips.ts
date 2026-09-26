@@ -2,13 +2,11 @@ import { WidgetType } from '@codemirror/view'
 import type { TaskStatus } from '@holi/shared'
 
 /**
- * Inline chip for a `[[path]]` / `[[path|Label]]` wiki-link (notes-editor PRD FR-6).
+ * Inline chip for a `[[path]]` / `[[path|Label]]` wiki-link.
  *
- * Every chip routes by path — a task is a file like any other (D27/D60), so there is
- * one grammar and one click target. A chip is a task chip when `task` is present: it
- * carries the task's status, which draws a coloured orb and strikes the title when done,
- * so it reads as a task rather than a note. `label` arrives already resolved (the caller
- * folds in `|Label` and, for a task, the path→title join).
+ * Every chip routes by path: a task is a file like any other (D27/D60). With
+ * `task` present it draws a status orb and strikes the title when done.
+ * `label` arrives resolved (`|Label`, or a task's title).
  */
 export class WikiLinkChip extends WidgetType {
   constructor(
@@ -41,7 +39,7 @@ export class WikiLinkChip extends WidgetType {
     ]
       .filter(Boolean)
       .join(' ')
-    // The dataset key `resolveLinkClick` routes on. Always a path now.
+    // The dataset key `resolveLinkClick` routes on.
     el.dataset['wikiTarget'] = this.target
     if (this.task) {
       const orb = document.createElement('span')

@@ -1,36 +1,23 @@
 /**
- * Slash-command autocomplete (notes-editor PRD FR-9). Pure, headless cores over a
- * CompletionContext → CompletionResult; `slashCommands` is the command list and
- * `tableSizes` is the second level `/table` opens. `/task` (task creation) is
- * deferred until the create-from-editor UX is settled.
+ * Slash-command autocomplete (docs/features/editor.md). Pure, headless cores over
+ * a CompletionContext → CompletionResult; `slashCommands` is the command list and
+ * `tableSizes` is the second level `/table` opens. There is no `/task`.
  */
 import { pickedCompletion, startCompletion } from '@codemirror/autocomplete'
 import type { Completion, CompletionContext, CompletionResult } from '@codemirror/autocomplete'
 import type { EditorView } from '@codemirror/view'
 import type { HoliCompletion } from './completion'
 
-/** A markdown checkbox line.
- *
- * Called `/subtask` until it wasn't: the name promised a parent task to be a subtask *of*,
- * and there is never one. This editor only ever opens notes — a task's description is a
- * plain textarea, not CodeMirror — so the command could not mean what it said anywhere it
- * could actually be typed. It inserts a checkbox; it is now called one. (Real task
- * creation is `/task`, still deferred.)
- */
+/** A markdown checkbox line. Not a subtask: a checkbox has no parent task. */
 const TODO = '- [ ] '
 
-/**
- * A table's shape, as columns by BODY rows. The header row is implied, because
- * every GFM table has one — which is why "3×2 with a header" is not an option
- * here: there is no table without one.
- */
+/** A table's shape, as columns by BODY rows. Every GFM table has a header row. */
 export interface TableSize {
   cols: number
   rows: number
 }
 
-/** `2 × 1` first, deliberately: it is exactly the skeleton `/table` used to
- *  insert outright, so `/table` Enter Enter is the behaviour people had. */
+/** `2 × 1` first, so `/table` Enter Enter gives the smallest skeleton. */
 export const TABLE_SIZES: TableSize[] = [
   { cols: 2, rows: 1 },
   { cols: 2, rows: 3 },
@@ -59,10 +46,9 @@ const COMMANDS: HoliCompletion[] = [
     label: '/table',
     detail: 'pick a size…',
     type: 'holi-table',
-    // **Not a string.** Picking this types the argument and re-opens the popup
-    // on `tableSizes`, which is what the second level is: the panel stays and
-    // its contents change. A flyout was rejected — see the design of record,
-    // `docs/features/editor.md`.
+    // Not a string: picking this types the argument and re-opens the popup on
+    // `tableSizes`, so the panel stays and its contents change. A flyout was
+    // rejected (docs/features/editor.md).
     apply: (view: EditorView, completion: Completion, from: number, to: number) => {
       view.dispatch({
         changes: { from, to, insert: COMMAND_PREFIX },
@@ -76,8 +62,8 @@ const COMMANDS: HoliCompletion[] = [
 ]
 
 export function slashCommands(context: CompletionContext): CompletionResult | null {
-  // `\p{L}` with the `u` flag rather than `\w`, which is ASCII-only: `/æ` used
-  // to return null and dismiss the menu instead of simply matching nothing.
+  // `\p{L}` with the `u` flag rather than `\w`, which is ASCII-only: `/æ` would
+  // return null and dismiss the menu.
   const match = context.matchBefore(/\/[\p{L}\p{N}_-]*/u)
   if (!match) return null
   // Only a `/` that starts a line or follows whitespace is a command — otherwise

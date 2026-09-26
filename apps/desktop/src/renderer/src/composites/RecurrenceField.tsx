@@ -1,19 +1,13 @@
 /**
- * The recurrence rule, as one control.
+ * The recurrence rule, as one control. A builder rather than a text field: a
+ * `Recurrence` is a map with no text form in `shared`, and inventing one would
+ * mean a second parser.
  *
- * A builder rather than a text field, unlike `reminder` which is a stamp with a
- * parser. That is not inconsistency: a reminder IS a string with a grammar,
- * while a `Recurrence` is a **map** — `{frequency, interval, weekdays?,
- * endDate?}` — with no text form anywhere in `shared`. Inventing one here would
- * mean inventing a parser too, and a second way to say something the model
- * already says structurally.
+ * One row, not four: the controls sit in a popover behind a trigger that states
+ * the rule in words, since `recurrence` is a single frontmatter key.
  *
- * **One row, not four.** The four controls sit in a popover behind a trigger
- * that states the rule in words, because `recurrence` is a single frontmatter
- * key and a block that draws a row per key cannot let one of them occupy four.
- *
- * Roll-forward happens on complete (`nextDueCatchup`, in the router), so nothing
- * here computes a date; this only states the rule.
+ * Roll-forward happens on complete (`nextDueCatchup`, in the router); nothing
+ * here computes a date.
  */
 import {
   type Recurrence,
@@ -47,8 +41,8 @@ export function RecurrenceField({
 }: {
   value: Recurrence | undefined
   onChange: (next: Recurrence | undefined) => void
-  /** The task this rule belongs to has no `due` date (features/tasks.md).
-   *  Worth saying, because the rule looks set and simply would not fire. */
+  /** The task has no `due` date, so the rule would never fire
+   *  (docs/features/tasks.md). */
   warnNoDue?: boolean
   'data-testid'?: string
 }): React.JSX.Element {
@@ -66,17 +60,15 @@ export function RecurrenceField({
           variant="ghost"
           data-testid={testId}
           className={cn(
-            // The field treatment every control in a row wears, so a picker, a
-            // Select and this read as the same kind of thing.
+            // The shared field treatment.
             FIELD_CONTROL,
             'shrink justify-end hover:bg-transparent focus-visible:border-ring',
             value === undefined && 'text-muted-foreground',
           )}
         >
           <span className="truncate">
-            {/* Empty when there is no recurrence. "never" is the SENTINEL the
-                Select below needs (Radix forbids ''), not a thing to read: a
-                task that does not repeat should say nothing about repeating. */}
+            {/* Empty when there is no recurrence; "never" is only the Select's
+                sentinel. */}
             {value === undefined ? '' : describeRecurrence(value)}
           </span>
         </Button>
@@ -125,10 +117,8 @@ export function RecurrenceField({
               </span>
             </FieldRow>
 
-            {/* Weekdays are a weekly-only field in the model, and an empty list
-                means "no weekday constraint" — `nextWeeklyWeekday` returns null
-                on an empty set, which would silently stop the recurrence. So
-                none-selected is stored as absent. */}
+            {/* Weekly only. None selected is stored as absent: an empty set makes
+                `nextWeeklyWeekday` return null and stop the recurrence. */}
             {value.frequency === 'weekly' && (
               <FieldRow label="on">
                 <span className="flex gap-0.5">

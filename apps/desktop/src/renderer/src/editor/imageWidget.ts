@@ -26,10 +26,8 @@ export class ImageWidget extends WidgetType {
     img.style.maxWidth = '100%'
     img.style.maxHeight = '320px'
     img.style.display = 'block'
-    // Arrive: an image pops in the moment it decodes, which on a note full of
-    // them reads as the page flickering. Fading is PAINT — opacity only — so it
-    // costs CodeMirror's measure loop nothing, and `maxWidth`/`maxHeight` above
-    // already bound the box, so nothing on the line shifts as it lands.
+    // Fade in on decode rather than pop, which flickers on an image-heavy note.
+    // Opacity only, so CodeMirror's measure loop is untouched.
     img.style.opacity = '0'
     img.style.transition = 'opacity var(--motion-arrive, 300ms) var(--ease-settle, ease-out)'
     const reveal = (): void => {

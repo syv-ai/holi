@@ -1,28 +1,17 @@
 /**
- * The one completion popup.
- *
- * `autocompletion()` is installed in three places — the notes stack, the mail
- * composer, and settings files — and before this module each of them wore
- * CodeMirror's own chrome. They all go through `holiCompletion` now, which is
- * what makes "the popup is ours" true by construction rather than by
- * remembering to style a fourth call site later. `test/completion.test.ts`
- * fails if one appears.
+ * The one completion popup. Every `autocompletion()` (notes stack, mail
+ * composer, settings files) goes through `holiCompletion`, so the chrome is
+ * ours by construction. `test/completion.test.ts` fails on a new call site.
  */
 import { autocompletion, type Completion, type CompletionSource } from '@codemirror/autocomplete'
 import type { Extension } from '@codemirror/state'
 import { GLYPHS, SVG_ATTRS } from './completion-icons'
 
 /**
- * Stamped on the popup element by `tooltipClass`, and the whole reason the
- * chrome in `theme.ts` can win the cascade.
- *
- * **Measured, 2026-09-13.** Base themes all land under one generated prefix,
- * which cancels, so a rule wins on its own weight. CodeMirror writes
- * `.cm-tooltip.cm-tooltip-autocomplete > ul` at (0,2,1). The block this
- * replaced wrote `.cm-tooltip-autocomplete > ul` at (0,1,1) and therefore did
- * nothing at all: read out of the running app's stylesheets, the popup's font,
- * height, padding and selected row were every one of them CodeMirror's. A
- * third class on every selector is what stops that happening again, and
+ * Stamped on the popup by `tooltipClass` so the chrome in `theme.ts` wins the
+ * cascade. Base themes share one generated prefix, so a rule wins on its own
+ * weight, and CodeMirror writes `.cm-tooltip.cm-tooltip-autocomplete > ul` at
+ * (0,2,1). A third class on every selector beats it;
  * `test/completion.test.ts` asserts each selector carries it.
  */
 export const COMPLETION_CLASS = 'cm-holi-completion'
@@ -37,8 +26,7 @@ export const HOLI_TYPE_PREFIX = 'holi-'
 /** A `Completion` with the two extra fields our renderers read. CodeMirror
  *  ignores both and carries them through untouched. */
 export interface HoliCompletion extends Completion {
-  /** The trailing pill: a task's due date, and nothing that the glyph already
-   *  says. */
+  /** Trailing text: a task's due date. */
   meta?: string
   /** Drawn instead of the type glyph, for a note whose vault gave it one. */
   emoji?: string
@@ -51,12 +39,9 @@ export function holiOptionClass(completion: Completion): string {
 const SVG_NS = 'http://www.w3.org/2000/svg'
 
 /**
- * The row's left glyph: the note's own emoji when its vault gave it one,
- * otherwise the glyph its `type` names. `null` for any row we do not author,
- * which leaves CodeMirror's icon showing — the table menu needs it.
- *
- * Built through `DOMParser` rather than `innerHTML`, so nothing here ever
- * parses a string as HTML into the live document.
+ * The row's left glyph: the note's emoji, else the glyph its `type` names.
+ * `null` for rows we do not author, leaving CodeMirror's icon (the table menu
+ * needs it). Built through `DOMParser`, never `innerHTML` into the document.
  */
 export function holiIcon(completion: Completion): Node | null {
   const { emoji } = completion as HoliCompletion
@@ -74,15 +59,13 @@ export function holiIcon(completion: Completion): Node | null {
   )
   const svg = document.createElementNS(SVG_NS, 'svg')
   for (const [name, value] of Object.entries(SVG_ATTRS)) svg.setAttribute(name, value)
-  // The type rides on the element so the chrome can colour a task's glyph by
-  // its status without the renderer knowing what a status looks like.
+  // The type rides on the element so the chrome can colour a task by status.
   svg.setAttribute('class', `cm-holi-icon cm-holi-icon-${completion.type}`)
   for (const child of [...parsed.documentElement.children]) svg.appendChild(child)
   return svg
 }
 
-/** The trailing pill. Only what the glyph does not already say: a task's status
- *  is drawn on the left, so this carries its due date or nothing. */
+/** The trailing meta text, when there is one. */
 export function holiMeta(completion: Completion): Node | null {
   const { meta } = completion as HoliCompletion
   if (meta === undefined || meta === '') return null
@@ -93,12 +76,9 @@ export function holiMeta(completion: Completion): Node | null {
 }
 
 /**
- * The `↵` on the selected row.
- *
- * Rendered on every row of ours and revealed by CSS, because CodeMirror moves
- * the selection by toggling `aria-selected` WITHOUT re-rendering the rows: a
- * hint rendered for the selected option only would be drawn once and then go
- * stale on the first arrow key.
+ * The `↵` on the selected row. Rendered on every row and revealed by CSS:
+ * CodeMirror moves the selection by toggling `aria-selected` without
+ * re-rendering rows.
  */
 export function holiEnterHint(completion: Completion): Node | null {
   if (holiOptionClass(completion) === '') return null
@@ -109,11 +89,9 @@ export function holiEnterHint(completion: Completion): Node | null {
 }
 
 /**
- * **`icons` stays on, and that is not an oversight.** Turning it off deletes
- * `.cm-completionIcon`, which is the element every one of
- * `codemirror-markdown-tables`' rules hangs from — its menu would silently lose
- * its look. CodeMirror keeps rendering the element and `theme.ts` hides it on
- * our rows only.
+ * `icons` stays on: turning it off deletes `.cm-completionIcon`, which every
+ * `codemirror-markdown-tables` menu rule hangs from. `theme.ts` hides it on our
+ * rows only.
  */
 export function holiCompletion(sources: CompletionSource[]): Extension {
   return autocompletion({

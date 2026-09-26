@@ -1,7 +1,6 @@
 /**
- * The content peek behind a wiki-link hover (notes-editor PRD FR-6). Pure and
- * framework-free so it is unit-testable without a view — the CM tooltip in
- * `wikiHover.ts` renders what this returns.
+ * The content peek behind a wiki-link hover. Pure, so it is testable without a
+ * view; `wikiHover.ts` renders what this returns.
  */
 
 /** A leading YAML frontmatter block, if present. Non-greedy to the first closing

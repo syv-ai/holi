@@ -41,8 +41,7 @@ export function AskAgentPopover({
   const [target, setTarget] = useState<string | 'new'>('new')
   const sending = useRef(false)
 
-  // Chosen as it opens: sessions come and go between two asks, and a default
-  // that has ended is a new session rather than a name pointing at nothing.
+  // Chosen as it opens; a default that has ended falls back to a new session.
   useEffect(() => {
     if (!open) return
     const { sessions, initial } = targets

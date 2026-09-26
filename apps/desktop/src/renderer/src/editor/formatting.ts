@@ -1,8 +1,7 @@
 /**
- * Toggle-aware inline formatting (notes-editor PRD FR-3). Pure functions over
- * EditorState → TransactionSpec so they are headless-testable; the keymap
- * wraps them as commands. Edits flow through the normal transaction path, so
- * the Yjs binding syncs them like any keystroke.
+ * Toggle-aware inline formatting. Pure functions over EditorState →
+ * TransactionSpec so they are headless-testable; the keymap wraps them as
+ * commands.
  */
 import type { EditorState, TransactionSpec } from '@codemirror/state'
 import { keymap } from '@codemirror/view'
