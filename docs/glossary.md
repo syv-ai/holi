@@ -119,8 +119,8 @@ The marker is the whole rule.
 
 ### Vault app
 
-A web app the agent writes into `.holi/apps/<id>/`, opened as a tab in its own origin and reaching
-the vault only through the `holi.*` bridge. See [vault-apps](features/vault-apps.md).
+A web app the agent writes as a `<name>.app` folder anywhere in the vault, opened as a tab in its
+own origin and reaching the vault only through the `holi.*` bridge. See [vault-apps](features/vault-apps.md).
 
 ### Per-turn context
 

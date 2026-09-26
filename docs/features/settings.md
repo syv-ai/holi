@@ -15,7 +15,7 @@ A vault's settings are two YAML files it carries itself: `.holi/settings/app.yam
 | `colorScheme`                  | local     | yes            | `system`                     |
 | `editorFont`                   | committed | no             | `mono`                       |
 
-`landing` is one target: `daily`, `board`, `agenda`, `mail`, `{kind: note, path}` or `{kind: app, appId}`. The daily is named by kind, not by path, so it does not rot overnight. The ritual and the tab offer only the first four; a note or an app is a file edit. A target that no longer exists re-resolves as if `landing` were unset, which in a vault without daily notes is an empty pane.
+`landing` is one target: `daily`, `board`, `agenda`, `mail`, `{kind: note, path}` or `{kind: app, path}` (an app's bundle; an older `appId` reads as `<appId>.app`). The daily is named by kind, not by path, so it does not rot overnight. The ritual and the tab offer only the first four; a note or an app is a file edit. A target that no longer exists re-resolves as if `landing` were unset, which in a vault without daily notes is an empty pane.
 
 **Reading.** `resolveVaultSettings` parses both files, applies the local one per key (the `hooks` block per flag), validates every field, and answers the default for anything absent or malformed with a warning. It never throws. It builds a fresh narrow value per key and never returns what it parsed. Unknown top-level keys are ignored without a warning, because the reminder watermark lives in the local file.
 

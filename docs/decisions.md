@@ -5,7 +5,7 @@ decided and which page now holds it. The pages carry the reasoning; the numbers 
 code and in git history (`git log -p docs/decisions.md` has every original write-up).
 
 A new decision gets the next free number, a line here, and its substance written straight into the
-page that owns it. **Next free: D107.**
+page that owns it. **Next free: D108.**
 
 ## D60 onward
 
@@ -58,6 +58,7 @@ page that owns it. **Next free: D107.**
 | D104 | Signatures in the PDF viewer                                                        | [pdf](features/pdf.md)                                                       |
 | D105 | A PDF's marks can be made read-only                                                 | [pdf](features/pdf.md)                                                       |
 | D106 | PDF comments reach the agent through the `holi` CLI                                 | [pdf](features/pdf.md), [agent-config](features/agent-config.md)             |
+| D107 | An app is a `.app` bundle anywhere in the vault, named by its path                  | [vault-apps](features/vault-apps.md), [file-tree](features/file-tree.md)     |
 
 ## D1 to D59
 

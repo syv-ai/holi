@@ -38,9 +38,9 @@ encrypting shared state protects against nobody. Open: whether shared state is w
 document (last writer wins) or a log (merge keeps both). Until this lands there is no `holi.data`
 and no bridge write, and a retro board or a poll cannot be built.
 
-**The rest of the bridge and manifest.** `holi.open` opens only a vault path, not another app by
-id. No `holi.tasks` writes or subscriptions, no theme-change event. `app.yaml`'s `name`, `icon` and
-`description` are written but never read: every surface shows the directory id.
+**The rest of the bridge and manifest.** `holi.open` opens a vault path as a note, so it cannot
+open another app, even by its bundle path. No `holi.tasks` writes or subscriptions, no theme-change
+event. `app.yaml`'s `description` is written but never read.
 
 **Backend, personal apps, hot reload.** A `utilityProcess` backend (`server.mjs`), personal apps in
 `userData/apps/`, and reloading an open app when its files change (today reload is a button).

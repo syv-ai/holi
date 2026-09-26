@@ -1,34 +1,44 @@
 # Vault apps
 
 A vault app is a small web app the vault agent writes on request (a dashboard, a burndown, a CSV
-explorer) into `.holi/apps/<id>/`. It syncs with the vault like any other content and opens inside
+explorer) as a `<name>.app` folder anywhere in the vault, usually beside the notes it is about. It
+syncs with the vault like any other content, shows in the file tree as one row, and opens inside
 Holi as a tab, where it can read the vault's documents and tasks through a narrow bridge.
 
 ## How it works
 
-- **An app is a directory holding `index.html` and `app.yaml`**, both at its root. The id is the
-  directory name. `app.yaml` is the registration marker: an agent writes an app file by file, so
-  the manifest is written last and means "finished". Every key (`name`, `icon`, `description`) is
-  optional and an empty file registers the app. The parser never throws; a typo costs a field,
-  never the app.
-- **Discovery is the snapshot.** `.holi/apps/**` files are already in `snapshot.files`, so the
-  app list is derived in the renderer with no extra IPC, and an app appears on the next rescan.
-  `.holi/` keeps them out of the file tree.
-- **Launchers.** The nav's Apps section sits under the tree and is hidden when there are no apps.
-  The rail shows the apps as a menu while the nav is hidden, and the
-  [command palette](command-palette.md) lists them too. A directory with `index.html` and no
-  manifest shows dimmed, with **Finish this app** (writes the manifest only). The row menu is
-  Open, Open in a New Pane, Edit Source, Rename, Delete, Copy Path, Reveal in Finder.
-- **Tabs.** An app opens as an ordinary tab keyed by `appId`, deduped across panes like a note is
-  by path (see [tabs and panes](tabs-panes.md)). Reload is a button in the tab that remounts the
-  frame. If the directory disappears under an open tab (a teammate's pull), the tab stays as a
-  tombstone saying the app was deleted. Deleting from the menu removes the files and closes the
-  tab instead.
-- **Rename** is one `rename` of the directory, then a second pass rewriting inbound `[[links]]`,
-  then the open tab is retargeted by id. Buffers are flushed first. Main re-checks the target id
-  and returns a refusal as a value.
-- **Serving.** `holi-app://<appId>/<path>` is served by a protocol handler rooted at that app's own
-  directory. Only the entry document is rewritten: Holi injects a `<style>` of theme tokens
+- **An app is a bundle (D107): a directory named `<name>.app` holding `index.html` and
+  `app.yaml`**, both at its root, anywhere in the vault except the agent surface, and not inside
+  another bundle. Like a note it is identified by its vault-relative path (`Finance/Budget.app`);
+  its name is the folder name without `.app`, as a note drops `.md`. `app.yaml` is the "finished"
+  marker: an agent writes an app file by file, so the manifest is written last. Its one key is
+  `description`, optional, and an empty file finishes the app. The icon is the vault icon map's,
+  as for any row. The parser never throws; a typo costs a field, never the app.
+- **Discovery is the snapshot.** A bundle's files are in `snapshot.files`, so the app list is
+  derived in the renderer with no extra IPC, and an app appears on the next rescan.
+- **In the file tree** a bundle is one row with an app glyph that opens the app with a note's
+  gestures (click, double click, ⌘-click for a new pane, Enter). → or **Show Contents** expands it
+  in place so its files are edited as ordinary files; the chevron shows only while it is expanded.
+  Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
+  the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
+  it, not among its files. See [file tree](file-tree.md).
+- **Launchers.** The nav's Apps section sits under the tree and lists every app in the vault by
+  name, with the path as its tooltip; it is hidden when there are no apps. The rail shows the apps
+  as a menu while the nav is hidden, and the [command palette](command-palette.md) lists them
+  with their folder. A bundle with `index.html` and no manifest shows dimmed, with **Finish this
+  app** (writes the manifest only). The Apps row menu is Open, Open in a New Pane, Edit Source
+  (opens `index.html` and reveals it in the tree), Rename, Delete, Copy Path, Reveal in Finder.
+- **Tabs.** An app opens as an ordinary tab keyed by its bundle path, deduped across panes like a
+  note (see [tabs and panes](tabs-panes.md)). Reload is a button in the tab that remounts the
+  frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
+  tombstone saying the app was deleted. Deleting from a menu removes the files and closes the tab
+  instead. A move of the bundle carries its tab along, like a note's.
+- **Serving.** `holi-app://<host>/<path>` is served by a protocol handler rooted at that app's own
+  bundle. The host is the bundle path's UTF-8 bytes in hex, split into DNS-sized labels, then a
+  fixed `app` label (`appHost`): a path cannot be a host (slashes, case folding), and encoding
+  rather than hashing lets main decode the host with no lookup and no collision. The fixed last
+  label stops a URL parser reading hex such as `41` as an IPv4 address. Only the entry document is
+  rewritten: Holi injects a `<style>` of theme tokens
   (Holi's base palette, `APP_BASE_TOKENS`, with the vault's resolved theme laid over it) and the
   `window.holi` bridge script. Every other file is served byte for byte.
 - **The bridge** is `postMessage` from the frame to `AppFrame`, which forwards into the `apps.*`
@@ -36,13 +46,15 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   `holi.open(path)`, which opens a vault file in Holi. The theme is ambient CSS variables, not a
   call. There is no write method and no state store: an app holds nothing across a reload.
 - **The authoring loop.** A seeded skill (`.claude/skills/vault-apps/SKILL.md`) documents the
-  contract. The `holi` CLI gives the agent `holi app open <id>` and `holi app init <id>` (never
-  overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write under
-  `.holi/apps/`, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
+  contract. The `holi` CLI gives the agent `holi app open <path>` and `holi app init <path>`
+  (never overwrites). A `PostToolUse` hook (`vault-app-check.mjs`) reports, on every write inside
+  a `<name>.app` folder below the session's cwd, a syntax error and its line, a `.ts`/`.tsx`/`.jsx` file nothing will build, a
   `localStorage` call, a missing manifest, and a hard-coded colour. It is advisory, exits 0, and is
   silent when nothing is wrong. See [agent config](agent-config.md) for the CLI and hooks.
-- **Migration.** On vault open, before the first snapshot, `migrate-manifests.ts` writes an
-  `app.yaml` for any valid app directory that has an entry document and no manifest.
+- **Migration.** Apps used to live in `.holi/apps/<id>/`, hidden with the other dotfiles. On
+  vault open, before the first snapshot, `migrate-apps.ts` moves each to `<id>.app/` at the root
+  with one `rename`, then rewrites inbound `[[links]]`; the autosave commits it. An app whose
+  destination exists is left in place. A `landing` setting naming an app id reads as that bundle.
 
 ## Rules
 
@@ -56,13 +68,13 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - The frame is `sandbox="allow-scripts"` and never also `allow-same-origin`. Both together let the
   frame drop its own sandbox. The opaque origin is also why `localStorage` throws.
 - `AppFrame` identifies a message by `event.source === contentWindow`, never by origin (it is the
-  string `"null"`), and the app never names itself: every call carries the id the frame was mounted
-  with. It answers with an exhaustive switch over `APP_METHODS`; never turn that into a passthrough,
-  since `apps.*` also holds Holi's own `rename` and `register`.
-- `appId` is `[a-z0-9-]+`. It becomes a URL host, and hosts are case-folded; anything else is not
-  an app. Migration skips an invalid directory rather than renaming it.
+  string `"null"`), and the app never names itself: every call carries the bundle the frame was
+  mounted with. It answers with an exhaustive switch over `APP_METHODS`; never turn that into a passthrough,
+  since `apps.*` also holds Holi's own `register`.
+- The host decodes only to a path `isAppBundlePath` accepts, so a crafted host cannot name the
+  agent surface or a folder that is not a bundle.
 - One app cannot reach another's files or the vault's: the handler resolves only under its own
-  directory, and `holi-vault://` sends no CORS header, so a frame cannot fetch it.
+  bundle, and `holi-vault://` sends no CORS header, so a frame cannot fetch it.
 - The network is allowed and there is no CSP. An app is therefore an exfiltration channel for
   whatever the bridge hands it; the agent-surface rule keeps a prompt-injected app from reaching
   the assistant. If a CSP is ever added it must name `holi-app:`, since `'self'` matches nothing in
@@ -74,8 +86,18 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - Reload is manual. Auto-reload fires on the half-written state while the agent is still writing.
 - Personal apps, when they exist, are told apart by location (`userData`), not by the `.local.`
   marker, which is a basename rule and cannot mark a directory.
+- An app inside another app is just files of the outer one; otherwise the outer app could serve
+  the inner one's code as its own.
 
 ## Rejected
+
+- Keeping apps in `.holi/apps/`: hidden with the dotfiles, so an app the agent wrote was invisible
+  in the tree by default.
+- A single `name.app.html` file: every existing app is several files, and the agent would write
+  one large one.
+- A manifest file in the tree pointing at a source folder elsewhere: two places for one app.
+- A hashed host with a lookup in main: encoding the path is reversible and cannot collide.
+- A generated app id in the manifest: an invented id, where a path already identifies it.
 
 - A per-app shared Yjs doc on a relay: there is no relay.
 - Reusing `holi-vault://`: one shared origin with no `.local.` exclusion, so any app could read
@@ -91,12 +113,14 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 
 ## Code
 
-- `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init/rename
-  ops and the manifest migration.
+- `apps/desktop/src/main/apps/`: the protocol helpers, bridge shim, base tokens, open/init ops and
+  the move out of `.holi/apps`.
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.
 - `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, `AppsSection`, `AppsMenu`.
 - `apps/desktop/src/renderer/src/state/apps.ts`: the app lists and actions.
-- `packages/shared/src/app-manifest.ts`, `packages/shared/src/path-safety.ts` (`APPS_DIR`,
-  `isValidAppId`, `isAgentSurfacePath`).
+- `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the app row.
+- `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appName`, `appHost`),
+  `packages/shared/src/app-manifest.ts`, `packages/shared/src/path-safety.ts`
+  (`isAgentSurfacePath`).
