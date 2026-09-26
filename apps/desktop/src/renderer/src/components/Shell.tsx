@@ -27,7 +27,7 @@ import {
   type PanelImperativeHandle,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
-import { SessionsMenu } from '@/features/agent/SessionsMenu'
+import { SessionOrbs } from '@/features/agent/SessionOrbs'
 import { TurnReview } from '@/features/agent/TurnReview'
 import { AppsMenu } from '@/features/apps/AppsMenu'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
@@ -562,6 +562,39 @@ export function Shell() {
             </div>
           </DrawerShell>
 
+          {/* The nav, hidden, leaves a rail in its place: the way back, then an
+              orb per running session (its status, a press to open it), then
+              the apps. The nav was the only place any of them could be clicked,
+              and the orbs are also where you see which session needs you. */}
+          {!navOpen && (
+            <nav
+              aria-label="Sidebar rail"
+              className="motion-in-fade flex w-11 shrink-0 flex-col items-center gap-1 pb-2"
+            >
+              <div className="flex h-11 shrink-0 items-center">
+                <Tooltip
+                  content={
+                    <span className="inline-flex items-center gap-1.5">
+                      Show sidebar
+                      <Kbd>⌥⌘S</Kbd>
+                    </span>
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-muted-foreground"
+                    aria-label="Show sidebar"
+                    onClick={() => setNavOpen(true)}
+                  >
+                    <PanelLeftOpen size={16} />
+                  </Button>
+                </Tooltip>
+              </div>
+              <SessionOrbs />
+              <AppsMenu />
+            </nav>
+          )}
 
           <div className="flex min-w-60 flex-1 flex-col">
             {/* The panes. One `ResizablePanelGroup` nested inside the editor
@@ -629,37 +662,6 @@ export function Shell() {
                       }
                       onDropEdge={(t, side) =>
                         setWorkspace((w) => moveTabToNewPane(w, t, side === 'before' ? i : i + 1))
-                      }
-                      // With the nav hidden, the way back for the mouse sits where
-                      // the nav's edge was: the start of the first pane's strip.
-                      // Sessions and apps come with it, since the nav was the
-                      // only place either could be clicked.
-                      leading={
-                        i === 0 &&
-                        !navOpen && (
-                          <>
-                          <Tooltip
-                            content={
-                              <span className="inline-flex items-center gap-1.5">
-                                Show sidebar
-                                <Kbd>⌥⌘S</Kbd>
-                              </span>
-                            }
-                          >
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="shrink-0 text-muted-foreground"
-                              aria-label="Show sidebar"
-                              onClick={() => setNavOpen(true)}
-                            >
-                              <PanelLeftOpen size={16} />
-                            </Button>
-                          </Tooltip>
-                          <SessionsMenu />
-                          <AppsMenu />
-                          </>
-                        )
                       }
                       trailing={
                         <>

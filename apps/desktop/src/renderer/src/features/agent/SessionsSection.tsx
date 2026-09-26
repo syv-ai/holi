@@ -48,16 +48,14 @@ import {
   Tooltip,
 } from '@/primitives'
 import { cn } from '@/lib/cn'
-import { agentIndicator, agentThemeNote } from '@/lib/agent-notices'
 import {
   activeSessionAtom,
   activeSessionIdAtom,
-  agentModeAtSpawnAtom,
   agentSessionsAtom,
   agentSessionsSectionOpenAtom,
   type AgentSession,
 } from '@/state/agent'
-import { activeModeAtom } from '@/state/color-scheme'
+import { useSessionIndicator } from './session-indicator'
 import { openSession, workspaceAtom } from '@/state/panes'
 import {
   duplicateSessionAtom,
@@ -75,20 +73,10 @@ export function SessionsSection(): React.JSX.Element {
   const duplicateSession = useSetAtom(duplicateSessionAtom)
   const restartSession = useSetAtom(restartSessionAtom)
   const renameSession = useSetAtom(renameSessionAtom)
-  const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
-  const mode = useAtomValue(activeModeAtom)
   const [open, setOpen] = useAtom(agentSessionsSectionOpenAtom)
   const [confirming, setConfirming] = useState<AgentSession | null>(null)
 
-  const indicatorFor = (session: AgentSession) =>
-    agentIndicator({
-      ...session,
-      themeNote: agentThemeNote({
-        running: !session.exited,
-        modeAtSpawn: modeAtSpawn[session.id] ?? null,
-        mode,
-      }),
-    })
+  const indicatorFor = useSessionIndicator()
 
   /** Show this session: its tab opens, or comes forward if it is already open
    *  (D101). The one thing a card does that the footer door cannot, which is why

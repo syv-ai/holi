@@ -1,7 +1,7 @@
 /**
  * The vault's apps as a menu, for while the nav is hidden: the nav's apps
- * section out of reach of the mouse otherwise (⌥⌘S). Beside the show-sidebar
- * button at the start of the first pane's strip. Registered apps only, opened
+ * section out of reach of the mouse otherwise (⌥⌘S). At the foot of the rail
+ * that stands in for the nav, opening to its right. Registered apps only, opened
  * as their row opens them; an unregistered one has no manifest to open.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -36,7 +36,7 @@ export function AppsMenu(): React.JSX.Element | null {
           </Button>
         </DropdownMenuTrigger>
       </Tooltip>
-      <DropdownMenuContent align="start" className="max-w-72">
+      <DropdownMenuContent side="right" align="start" className="max-w-72">
         {appIds.map((appId) => (
           <DropdownMenuItem
             key={appId}
