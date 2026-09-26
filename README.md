@@ -1,41 +1,39 @@
-# better-holi-final
+# Holi
 
-The rebuild of **Holi** — Syv.ai's document-management system and vault assistant.
+Syv.ai's document and task system with a Claude Code assistant living in the vault.
 
-A vault is a **GitHub repository** of markdown, cloned locally. Holi is an Electron app over that clone: a CodeMirror live-preview editor, a task board built from `task.*.md` files, and an in-app **Claude Code vault assistant** running in an interactive terminal drawer. Sync is git — pulled automatically, published when you say so. There is no server.
+A vault is a GitHub repository of markdown, cloned locally. Holi is an Electron app over that clone:
+a CodeMirror live-preview editor, a task board built from `task.*.md` files, Gmail and Calendar, PDF
+export, and Claude Code sessions running in terminal tabs. Sync is git, committed, pulled and pushed
+automatically. There is no server.
 
 ## Where to start
 
-1. [`docs/vision.md`](docs/vision.md) — what Holi is, product principles, the shape of v1.
-2. [`docs/architecture.md`](docs/architecture.md) — the whole system: the vault as a repo, sync, the agent, security.
-3. [`docs/decisions.md`](docs/decisions.md) — the decision inbox. D60 is the pivot that produced the current shape; read it if a choice elsewhere looks arbitrary.
-4. [`docs/glossary.md`](docs/glossary.md) — canonical terms. When a word is ambiguous ("vault", "publish", "reconcile"), this wins.
-5. [`docs/prd/`](docs/prd) — one PRD per product pillar, plus phase-2 stubs.
+1. [`docs/vision.md`](docs/vision.md): what Holi is and why.
+2. [`docs/architecture.md`](docs/architecture.md): how the system fits together.
+3. [`docs/features/`](docs/features): one page per feature.
+4. [`docs/glossary.md`](docs/glossary.md): canonical terms.
+5. [`AGENTS.md`](AGENTS.md): conventions and checks for anyone (or any agent) changing the code.
 
 ## Repo layout
 
 ```
-better-holi-final/
-  apps/
-    desktop/     Electron + React client — the whole product
-  packages/
-    shared/      Domain rules: task file grammar, wiki-links, path-safety,
-                 recurrence/reminder math
-  docs/          The living documentation
-  pnpm-workspace.yaml
+apps/desktop/     Electron + React app: the whole product
+packages/shared/  Browser-safe domain rules: paths, task files, wiki-links,
+                  dates, recurrence, themes, text merge
+docs/             Living documentation
 ```
-
-## Status
-
-**Mid-pivot, and deliberately not running.** The docs describe the local, git-backed architecture (D60); the code has had the server and CRDT stack removed and is being rebuilt against it. `apps/desktop` does not compile until main's router is reimplemented file-backed.
 
 ## Dev
 
 ```sh
 pnpm install
-pnpm dev        # desktop app
+pnpm dev          # run the desktop app
 pnpm test
 pnpm typecheck
+pnpm lint
+pnpm --filter @holi/desktop build
 ```
 
-No database, no Docker.
+Requires Node `>=20.19`, pnpm, the system `git`, and Claude Code installed and signed in. No
+database, no Docker.

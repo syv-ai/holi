@@ -12,7 +12,7 @@ assistant. There is no Holi server or database.
   Radix/shadcn components, tRPC over IPC, xterm, and Vitest 4.
 - `packages/shared`: browser-safe TypeScript rules and types for vault paths,
   task files, wiki-links, dates, recurrence/reminders, themes, and text merging.
-- `docs/`: living architecture and product documentation, PRDs, and dated records.
+- `docs/`: architecture, one short page per feature, glossary, and the D-number index.
 
 Within the desktop app, `src/main` owns filesystem/git/GitHub/Google work, the
 vault store, sync, and the Claude PTY. `src/preload` is the narrow
@@ -23,22 +23,18 @@ Electron dependencies out of code that should remain testable under plain Node.
 ## Authoritative documentation
 
 Start with [`docs/README.md`](docs/README.md), then read
-[`docs/architecture.md`](docs/architecture.md) and the relevant PRD in
-[`docs/prd/`](docs/prd/). The glossary is canonical for domain terms.
-Living docs describe the product and current design. Code is the authority for
-what is actually implemented and for implementation/status claims: verify a PRD
-against the code rather than trusting a stale status sentence.
+[`docs/architecture.md`](docs/architecture.md) and the relevant page in
+[`docs/features/`](docs/features/). The glossary is canonical for domain terms,
+and [`docs/ui-system.md`](docs/ui-system.md) holds the renderer's design rules.
+The docs describe the current design and why. Code is the authority for what is
+actually implemented: verify a page against the code rather than trusting it.
 
-`docs/specs/`, `docs/plans/`, `docs/notes/`, `docs/handoffs/`, and
-`docs/verification/` are dated
-history, not current requirements. `docs/decisions.md` is a staging inbox; its
-agreed decisions must be consolidated into living docs. `docs/not-built.md`
-tracks designed-but-absent work, not every non-goal or open question. GitHub
-issues are backlog/history and are non-authoritative
-unless current code and living docs support them.
-
-The root README contains useful orientation but its old “mid-pivot” and “does
-not compile” status is stale; use the current code and the checks below.
+`docs/not-built.md` tracks designed-but-absent work, not every non-goal or open
+question. `docs/decisions.md` maps each D-number cited in code to the page that
+holds it; a new decision takes the next free number there and its substance goes
+straight into the owning page. The docs carry no dated history; git holds it.
+GitHub issues are backlog/history and are non-authoritative unless current code
+and the docs support them.
 
 ## Install, develop, and build
 
@@ -163,7 +159,7 @@ legacy alias with the same behavior as `pnpm lint`.
 
 Keep main/preload/renderer changes on their respective sides of the IPC seam,
 and put pure domain rules in `packages/shared` rather than duplicating them in
-UI or main. When a feature changes a documented contract, update the relevant
-living PRD or architecture text; do not treat a dated plan or an issue body as
+UI or main. When a feature changes a documented contract, update its
+feature page or the architecture text; do not treat a plan or an issue body as
 an implementation specification. Before finishing, run the narrow checks for
 the touched package and the root checks above.
