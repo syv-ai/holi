@@ -21,7 +21,7 @@ scrollback. Holi never reads Claude Code's sign-in state. A leftover shared `age
 renamed whole into the slot of the vault whose path appears in its `.claude.json` `projects{}`.
 
 **Shared layer, committed.** `.claude/` (settings, hooks, skills), `AGENTS.md` (the vault's
-instructions, which the seeded `CLAUDE.md` shim imports as `@AGENTS.md`), and `memory/`
+instructions, which Claude Code reads natively, so no `CLAUDE.md` is seeded), and `memory/`
 ([agent-memory.md](agent-memory.md)). Claude Code reads them from the cwd. **Personal layer:**
 `CLAUDE.local.md` and anything `*.local.*`, gitignored. A change to `.claude/settings.json`,
 `CLAUDE.md` or `AGENTS.md` (`AGENT_CONFIG_FILES`) marks running sessions stale until restarted.
@@ -34,7 +34,7 @@ finds itself with `Glob`, `grep` and `git`.
 **Seeding.** `ensureSeeded` runs on create, adopt and every open. It writes `.gitignore`'s
 `*.local.*` line first, line-wise, then three classes:
 
-- **Once files**: `AGENTS.md`, `CLAUDE.md`, `memory/index.md`, `.holi/vault`,
+- **Once files**: `AGENTS.md`, `memory/index.md`, `.holi/vault`,
   `.holi/settings/app.yaml` and `app.local.yaml`, `theme.css`, `theme.local.css`, `icons.yaml`,
   `.holi/document-templates/**`. Created if absent, then the user's.
 - **Managed files**: `.claude/hooks/**` and `.claude/skills/**`. Refreshed on open only when the

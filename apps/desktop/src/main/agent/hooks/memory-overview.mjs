@@ -179,8 +179,8 @@ function render({ descriptions }) {
   // The two older shapes. Only when there is something in one to split: an
   // empty `MEMORY.md` is not worth suggesting work on.
   //
-  // `USER.local.md` is auto-loaded by nothing (the `CLAUDE.md` shim imports only
-  // `AGENTS.md`) and appears in no index, whereas a `memory/<name>.local.md` is
+  // `USER.local.md` is auto-loaded by nothing (Claude Code reads `AGENTS.md`,
+  // not it) and appears in no index, whereas a `memory/<name>.local.md` is
   // printed here at the start of every session.
   const legacy = ['MEMORY.md', 'USER.local.md'].filter((name) => {
     const text = readOr(join(root, name))

@@ -1,7 +1,7 @@
 /**
  * The managed files every vault carries: the `.gitignore` that keeps private
- * files private, the CLAUDE.md shim, the shared agent instructions, and the
- * per-turn context hook.
+ * files private, the shared agent instructions (`AGENTS.md`, which Claude Code
+ * reads natively, so there is no `CLAUDE.md`), and the per-turn context hook.
  *
  * **Seeding runs on vault creation, adoption AND every open** (`vaults.add`/
  * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70).
@@ -62,10 +62,6 @@ import proposalManifest from './templates/proposal/template.json?raw'
 import proposalTyp from './templates/proposal/template.typ?raw'
 import reportManifest from './templates/report/template.json?raw'
 import reportTyp from './templates/report/template.typ?raw'
-
-/** The shim: CLAUDE.md is the file the CLI reads; AGENTS.md is the file humans
- * and other agents edit. One import keeps them in sync. */
-const CLAUDE_MD = '<rules>\n@AGENTS.md\n</rules>\n'
 
 const AGENTS_MD = `# Agent rules
 
@@ -348,7 +344,6 @@ export const ONCE_FILES: Record<string, string> = {
   // in `ensureSeeded`, so these are ignored before they land.
   [THEME_LOCAL_FILE]: THEME_SKELETON,
   [SETTINGS_LOCAL_FILE]: HOLI_SETTINGS_LOCAL,
-  'CLAUDE.md': CLAUDE_MD,
   'AGENTS.md': AGENTS_MD,
   /**
    * The memory directory exists and is tracked from a vault's first commit

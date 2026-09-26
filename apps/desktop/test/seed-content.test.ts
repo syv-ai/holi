@@ -96,7 +96,6 @@ describe('SEED_FILES', () => {
       '.holi/settings/theme.local.css',
       '.holi/vault',
       'AGENTS.md',
-      'CLAUDE.md',
       'memory/index.md',
     ])
   })
@@ -202,8 +201,8 @@ describe('SEED_FILES', () => {
     expect(VAULT_MARKER_FILE.includes('.json')).toBe(false)
   })
 
-  it('CLAUDE.md is exactly the AGENTS.md import shim', () => {
-    expect(SEED_FILES['CLAUDE.md']).toBe('<rules>\n@AGENTS.md\n</rules>\n')
+  it('seeds no CLAUDE.md: Claude Code reads AGENTS.md itself', () => {
+    expect(SEED_FILES['CLAUDE.md']).toBeUndefined()
   })
 
   it('AGENTS.md grants the agent git (coexistence), not the old prohibition', () => {
@@ -305,7 +304,7 @@ describe('ensureSeeded', () => {
     expect(written.sort()).toEqual(
       [GITIGNORE, ...Object.keys(SEED_FILES), ...Object.keys(BRAND_BINARIES)].sort(),
     )
-    expect(await readFile(join(root, 'CLAUDE.md'), 'utf8')).toBe(SEED_FILES['CLAUDE.md'])
+    expect(await readFile(join(root, 'AGENTS.md'), 'utf8')).toBe(SEED_FILES['AGENTS.md'])
     expect(await readFile(join(root, '.claude/hooks/user-prompt-submit.mjs'), 'utf8')).toBe(
       SEED_FILES['.claude/hooks/user-prompt-submit.mjs'],
     )
@@ -728,7 +727,7 @@ describe('the managed / once split (D75)', () => {
     // commit that touches a memory. Seeding runs on every vault OPEN, so the two
     // would fight and the vault's real index would be replaced by the empty stub
     // roughly once a session.
-    for (const rel of ['AGENTS.md', 'CLAUDE.md', 'memory/index.md', '.holi/settings/theme.css']) {
+    for (const rel of ['AGENTS.md', 'memory/index.md', '.holi/settings/theme.css']) {
       expect(ONCE_FILES[rel]).toBeDefined()
       expect(MANAGED_FILES[rel]).toBeUndefined()
     }
