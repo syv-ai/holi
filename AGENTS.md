@@ -58,7 +58,7 @@ no Docker, database, or compose setup.
 pnpm test
 pnpm typecheck
 pnpm lint
-pnpm exec prettier --check AGENTS.md CLAUDE.md
+pnpm exec prettier --check AGENTS.md
 ```
 
 Do not run the repository-wide `pnpm format` for a scoped change: the existing
@@ -117,9 +117,8 @@ legacy alias with the same behavior as `pnpm lint`.
   run `node apps/desktop/scripts/gen-brand-assets.mjs` and include the generated
   result when appropriate.
 - Holi seeds a vault's root `AGENTS.md` and `CLAUDE.md` as user-owned vault
-  content. That pair is distinct from this repository guide: the seeded
-  `CLAUDE.md` is a Claude Code shim for the vault's instructions, while this
-  repo's `CLAUDE.md` is deliberately just `@AGENTS.md`. Treat seeded files as
+  content. That pair is distinct from this repository guide, which has no
+  `CLAUDE.md`: Claude Code reads `AGENTS.md` directly. Treat seeded files as
   user content once present; do not overwrite them casually.
 - **A seeded `ONCE_FILE` is frozen from the moment it exists, so changing its
   text in `seed-content.ts` reaches new vaults only.** `AGENTS.md` is the one
