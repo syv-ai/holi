@@ -28,6 +28,7 @@ import { APP_METHODS, type AppMethod, type AppResponse } from '@holi/shared'
 import { Button, Tooltip } from '@/primitives'
 import { trpc } from '../../lib/trpc'
 import { appIdsAtom, closeAppAtom } from '../../state/apps'
+import { activeModeAtom } from '../../state/color-scheme'
 import { openNoteTabAtom } from '../../state/panes'
 import { activeRemoteAtom } from '../../state/vaults'
 
@@ -45,6 +46,7 @@ function pathOf(params: unknown): string | null {
 export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
   const appIds = useAtomValue(appIdsAtom)
   const remote = useAtomValue(activeRemoteAtom)
+  const mode = useAtomValue(activeModeAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const closeApp = useSetAtom(closeAppAtom)
   const [reloads, setReloads] = useState(0)
@@ -134,7 +136,9 @@ export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
         // fresh start, and it is the only way a frame sheds what it has loaded.
         key={reloads}
         ref={frameRef}
-        src={`holi-app://${appId}/index.html`}
+        // The mode in force goes in the URL, since main themes the document and
+        // cannot see the renderer. A mode change reloads the frame.
+        src={`holi-app://${appId}/index.html?mode=${mode}`}
         // The frame's accessible name. `title` is the usual attribute for an
         // iframe and is the one the gate bans (it is a browser tooltip on every
         // other element), so the label goes on aria-label.

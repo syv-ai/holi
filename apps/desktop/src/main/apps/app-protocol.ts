@@ -30,7 +30,9 @@ import { APP_BASE_TOKENS } from './app-tokens'
  * fold here makes the two agree, so `isValidAppId` sees the same string in the
  * running app as it does in a test.
  */
-export function parseAppUrl(url: string): { appId: string; rel: string } | null {
+export function parseAppUrl(
+  url: string,
+): { appId: string; rel: string; mode: 'light' | 'dark' } | null {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -46,7 +48,9 @@ export function parseAppUrl(url: string): { appId: string; rel: string } | null 
   } catch {
     return null
   }
-  return { appId, rel: rel === '' ? 'index.html' : rel }
+  // The renderer's mode in force, which main cannot know: the frame's URL says it.
+  const mode = parsed.searchParams.get('mode') === 'light' ? 'light' : 'dark'
+  return { appId, rel: rel === '' ? 'index.html' : rel, mode }
 }
 
 /**

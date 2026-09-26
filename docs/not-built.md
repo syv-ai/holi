@@ -40,8 +40,7 @@ and no bridge write, and a retro board or a poll cannot be built.
 
 **The rest of the bridge and manifest.** `holi.open` opens only a vault path, not another app by
 id. No `holi.tasks` writes or subscriptions, no theme-change event. `app.yaml`'s `name`, `icon` and
-`description` are written but never read: every surface shows the directory id. An app's injected
-theme is always the dark block.
+`description` are written but never read: every surface shows the directory id.
 
 **Backend, personal apps, hot reload.** A `utilityProcess` backend (`server.mjs`), personal apps in
 `userData/apps/`, and reloading an open app when its files change (today reload is a button).

@@ -310,8 +310,8 @@ async function main(): Promise<void> {
       const html = await readFile(abs, 'utf8').catch(() => null)
       if (html === null) return new Response(null, { status: 404 })
       const theme = await readVaultTheme(vault.root)
-      // Always the dark block: main does not know the renderer's light/dark mode.
-      const block = theme.dark
+      // The renderer's mode rides in on the URL (`?mode=`).
+      const block = theme[parsed.mode]
       return new Response(injectAppHead(html, appHeadHtml(block)), {
         headers: { 'content-type': appMimeFor(abs) },
       })

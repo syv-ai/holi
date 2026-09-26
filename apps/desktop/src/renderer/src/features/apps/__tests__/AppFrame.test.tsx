@@ -60,7 +60,7 @@ function fromFrame(data: unknown, source: Window | null = frameOf().contentWindo
 
 test('serves the app from its own origin', async () => {
   render(<AppFrame appId="retro" />)
-  expect(frameOf().getAttribute('src')).toBe('holi-app://retro/index.html')
+  expect(frameOf().getAttribute('src')).toBe('holi-app://retro/index.html?mode=dark')
 })
 
 test('is sandboxed WITHOUT allow-same-origin', () => {

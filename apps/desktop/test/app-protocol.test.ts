@@ -15,24 +15,38 @@ const APPS = `${ROOT}${sep}.holi${sep}apps`
 
 describe('parseAppUrl', () => {
   it('reads the app id off the HOST and the file off the path', () => {
-    expect(parseAppUrl('holi-app://retro/index.html')).toEqual({ appId: 'retro', rel: 'index.html' })
-    expect(parseAppUrl('holi-app://retro/sub/app.js')).toEqual({ appId: 'retro', rel: 'sub/app.js' })
+    expect(parseAppUrl('holi-app://retro/index.html')).toMatchObject({
+      appId: 'retro',
+      rel: 'index.html',
+    })
+    expect(parseAppUrl('holi-app://retro/sub/app.js')).toMatchObject({
+      appId: 'retro',
+      rel: 'sub/app.js',
+    })
+  })
+
+  // The renderer knows the mode in force; main does not. The frame's URL says it.
+  it('reads the colour mode off the query, dark when absent or unknown', () => {
+    expect(parseAppUrl('holi-app://retro/index.html?mode=light')?.mode).toBe('light')
+    expect(parseAppUrl('holi-app://retro/index.html?mode=dark')?.mode).toBe('dark')
+    expect(parseAppUrl('holi-app://retro/index.html')?.mode).toBe('dark')
+    expect(parseAppUrl('holi-app://retro/index.html?mode=pink')?.mode).toBe('dark')
   })
 
   it('treats a bare host as the entry document', () => {
-    expect(parseAppUrl('holi-app://retro/')).toEqual({ appId: 'retro', rel: 'index.html' })
-    expect(parseAppUrl('holi-app://retro')).toEqual({ appId: 'retro', rel: 'index.html' })
+    expect(parseAppUrl('holi-app://retro/')).toMatchObject({ appId: 'retro', rel: 'index.html' })
+    expect(parseAppUrl('holi-app://retro')).toMatchObject({ appId: 'retro', rel: 'index.html' })
   })
 
   it('decodes the path', () => {
-    expect(parseAppUrl('holi-app://retro/a%20b.css')).toEqual({ appId: 'retro', rel: 'a b.css' })
+    expect(parseAppUrl('holi-app://retro/a%20b.css')).toMatchObject({ appId: 'retro', rel: 'a b.css' })
   })
 
   it('folds the host to lower case, deliberately rather than by accident', () => {
     // Chromium case-folds the host of a `standard:` scheme; Node's URL does not
     // fold a non-special one. Folding here makes the two agree, so the same URL
     // means the same app whichever parser produced the string.
-    expect(parseAppUrl('holi-app://Retro/index.html')).toEqual({ appId: 'retro', rel: 'index.html' })
+    expect(parseAppUrl('holi-app://Retro/index.html')).toMatchObject({ appId: 'retro', rel: 'index.html' })
   })
 
   it('is null for an id that could not be a directory name', () => {
