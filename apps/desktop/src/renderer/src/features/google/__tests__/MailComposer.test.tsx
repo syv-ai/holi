@@ -419,6 +419,26 @@ describe('a draft written outside Holi', () => {
     expect(screen.queryByText(/read.only/i)).toBeNull()
   })
 
+  it('shows the loaded body in the editor', async () => {
+    // The body arrives after the editor has mounted, so the editor has to take it.
+    draftQuery.mockResolvedValue({
+      draftId: 'd-7',
+      threadId: null,
+      to: [],
+      cc: [],
+      subject: 'Written in Gmail',
+      markdown: 'Hello from the draft',
+      html: null,
+      foreign: false,
+    })
+    mount({ intent: { kind: 'new' }, draftId: 'd-7' })
+
+    await waitFor(() => expect(subjectField()).toHaveValue('Written in Gmail'))
+    await waitFor(() =>
+      expect(screen.getByTestId('mail-body')).toHaveTextContent('Hello from the draft'),
+    )
+  })
+
   it('does not save a loaded draft back over itself before it is touched', async () => {
     // Loading is not an edit: saving would replace a foreign draft's original
     // formatting before the user did anything.

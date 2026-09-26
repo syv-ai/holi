@@ -111,6 +111,9 @@ export function MailComposer({
   const [showCc, setShowCc] = useState(opening.cc.length > 0)
   const [subject, setSubject] = useState(opening.subject)
   const [markdown, setMarkdown] = useState(opening.body)
+  /** Bumped when a draft loads: the editor reads its text only at mount, so a
+   *  loaded body reaches it by remounting it (`key`). */
+  const [loads, setLoads] = useState(0)
   const [tab, setTab] = useState<'edit' | 'preview'>('edit')
   const [foreign, setForeign] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>('pristine')
@@ -143,6 +146,7 @@ export function MailComposer({
     setShowCc(draft.cc.length > 0)
     setSubject(draft.subject)
     setMarkdown(draft.markdown)
+    setLoads((n) => n + 1)
     setForeign(draft.foreign)
     if (draft.threadId !== undefined) setThreadId(draft.threadId)
     // Loading is not an edit: marking it dirty would save a foreign draft back
@@ -458,6 +462,7 @@ export function MailComposer({
 
       {tab === 'edit' ? (
         <MarkdownEditor
+          key={loads}
           value={markdown}
           onChange={(next) => {
             setMarkdown(next)
