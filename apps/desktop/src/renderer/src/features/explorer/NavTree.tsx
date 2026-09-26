@@ -153,13 +153,14 @@ export function NavTree({
 
   /**
    * What a row leads with: a folder's chevron, or a file's type glyph in the
-   * chevron's column, so the two read apart at a glance.
-   * `!` beats Button's own svg sizing.
+   * chevron's column, so the two read apart at a glance. On the open file's
+   * path it is brand, file and every folder above it, so the chevrons trace
+   * the way down alongside the connector. `!` beats Button's own svg sizing.
    */
-  const lead = (id: string, node: TreeItemData, isOpen: boolean, active: boolean) => {
+  const lead = (id: string, node: TreeItemData, isOpen: boolean) => {
     const slot = cn(
       'motion-respond flex w-3.5 shrink-0 justify-center [&_svg]:size-3.5!',
-      active ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
+      onPath(id) ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
     )
     const emoji = iconByPath.get(id)
     if (!node.isFolder) {
@@ -225,7 +226,7 @@ export function NavTree({
                 )}
                 style={{ height: ROW }}
               >
-                {lead(id, node, isOpen, active)}
+                {lead(id, node, isOpen)}
                 <span
                   className={cn(
                     'truncate',
@@ -297,7 +298,7 @@ export function NavTree({
                     ignored.has(id) && 'opacity-50',
                   )}
                 >
-                  {lead(id, node, isOpen, id === activePath)}
+                  {lead(id, node, isOpen)}
                   <span className="truncate">{label(id, node)}</span>
                 </Button>
                 {node.isFolder && (
