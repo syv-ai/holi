@@ -2,19 +2,12 @@
  * Run the enabled pre-commit transforms, restage what they rewrote, and let the
  * commit through whatever happens.
  *
- * **A transform never vetoes a commit, and that is the load-bearing rule.**
- * Holi auto-commits, non-interactively, and that commit IS the user's save. A
- * transform is an opinion about formatting or link hygiene; an opinion does not
- * get to outrank someone's words. So a transform that throws is caught, logged,
- * pushed to the agent, and the commit proceeds. Only a future *integrity* check
- * could earn the right to stop a commit, and it would still need a UI surface
- * rather than a silent refusal (D76).
+ * **A transform never vetoes a commit.** Holi's auto-commit IS the user's save,
+ * and a transform is only an opinion about tidiness. A transform that throws is
+ * caught and logged, and the commit proceeds (D76).
  *
- * **The vault's settings choose which transforms run — never what one is.**
- * `core.hooksPath` pointed into the tracked tree would mean a teammate's push
- * runs their code on your laptop, on every commit, with your filesystem. That
- * is D74's escalation argument with a different filename. The script body ships
- * in the binary; `.holi/settings/app.yaml` carries booleans and nothing else.
+ * **Settings choose which transforms run, never what one is** (D74, D76): the
+ * script body ships in the binary and `.holi/settings/app.yaml` carries booleans.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -25,11 +18,8 @@ import type { TransformResult } from './relink'
 
 const exec = promisify(execFile)
 
-/** Re-exported, never restated. This union was written out here as well until a
- *  fourth transform was added and only one of the two copies knew about it —
- *  the settings resolver and the runner disagreeing about which transforms exist
- *  is a mapping table that exists only to be got wrong once, which is the same
- *  argument the names themselves already carry. */
+/** Re-exported, never restated, so the settings resolver and the runner cannot
+ *  disagree about which transforms exist. */
 export type { TransformName } from '@holi/shared'
 
 export interface Transform {
@@ -40,8 +30,7 @@ export interface Transform {
 }
 
 /** The committed enable list. Keys ARE the `TransformName` values, kebab and
- *  all: a camelCase settings key beside a kebab transform name is a mapping
- *  table that exists only to be got wrong once. */
+ *  all, so there is no name mapping to get wrong. */
 export type HookSettings = Partial<Record<TransformName, boolean>>
 
 export interface HookRun {
@@ -128,7 +117,7 @@ export async function runPreCommit(
     try {
       opts.notify(notes.join('\n'))
     } catch {
-      // No agent listening. Normal, and never an error — an error here would
+      // No agent listening. Normal, and never an error: an error here would
       // become the failure it was trying to report.
     }
   }

@@ -40,10 +40,8 @@ async function exists(abs: string): Promise<boolean> {
  * The free name for `name` inside `destDir`.
  *
  * `freeCopyPath` asks a SYNCHRONOUS predicate and existence on disk is async,
- * so this walks the candidate sequence the rule generates, probing each one and
- * feeding what it found back in as the `taken` set. The rule stays the single
- * authority on what " copy 2" means — a second implementation of that naming
- * here would be one too many, and would drift from Duplicate.
+ * so this probes each candidate the rule generates and feeds it back as the
+ * `taken` set, keeping the rule the single authority on " copy 2" naming.
  */
 async function freeNameIn(destDir: string, name: string): Promise<string> {
   const taken = new Set<string>()

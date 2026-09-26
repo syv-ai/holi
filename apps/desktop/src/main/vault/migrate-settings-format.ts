@@ -1,17 +1,10 @@
 /**
- * `.holi/settings/*.json` becomes `*.yaml`, once, per vault.
+ * `.holi/settings/*.json` becomes its current format (settings and icons YAML,
+ * theme CSS), once, per vault. A conversion, not a rename, which is why it is
+ * not in `migrate-layout.ts`.
  *
- * **A conversion, not a rename, which is why it is not in `migrate-layout.ts`.**
- * That module's `MOVES` table is a list of paths whose left column is a
- * deliberately dead literal; this one has to read each file, re-serialise it,
- * and write it somewhere else. Mixing the two would put a parser inside a table
- * of strings.
- *
- * **Every file is rewritten through its own writer**, so the result is not JSON
- * with a new extension: it comes out as block YAML carrying the explanations
- * generated from `VAULT_SETTINGS` and the theme token notes. That is the whole
- * point of the format change, and a vault that only got renamed would keep none
- * of it until somebody happened to touch a control.
+ * **Every file is rewritten through its own writer**, so it gains the
+ * explanations generated from `VAULT_SETTINGS` and the theme token notes.
  *
  * **Never throws, and never clobbers.** This runs on the way into a vault; a
  * file that is absent, unreadable, or already converted is skipped. A `.yaml`
@@ -37,12 +30,8 @@ import {
 type Convert = (text: string) => string
 
 /**
- * `<old .json>` → `<new .yaml>`, with the writer that owns that file's shape.
- *
- * The left column is a dead literal for the same reason `migrate-layout.ts`
- * says: written in terms of today's constants it would describe a move from a
- * place to itself, and a project-wide rename has already done exactly that to
- * one such table.
+ * `<old path>` → `<new path>`, with the writer that owns that file's shape.
+ * The left column is a literal for the same reason as in `migrate-layout.ts`.
  */
 const CONVERSIONS: readonly (readonly [string, string, Convert])[] = [
   // Settings: parsed to values and written fresh, so every key gains its
@@ -63,9 +52,7 @@ const CONVERSIONS: readonly (readonly [string, string, Convert])[] = [
   // `applyThemePatch` — the live reader speaks CSS, so handing it a YAML theme
   // would read as empty and quietly replace a vault's colours with defaults.
   //
-  // Both hops are listed. A vault may sit at `.json` (never opened since the
-  // YAML change) or at `.yaml` (opened once in between), and a table that knew
-  // only the older one would strand every vault caught in the middle.
+  // Both old shapes are listed: a vault may sit at `.json` or at `.yaml`.
   ['.holi/settings/theme.json', THEME_FILE, themeFromLegacy],
   ['.holi/settings/theme.local.json', THEME_LOCAL_FILE, themeFromLegacy],
   ['.holi/settings/theme.yaml', THEME_FILE, themeFromLegacy],
@@ -76,7 +63,7 @@ const CONVERSIONS: readonly (readonly [string, string, Convert])[] = [
   ['.holi/settings/icons.local.json', ICONS_LOCAL_FILE, (t) => stringifyYaml(parseYaml(t) ?? {})],
 ]
 
-/** Convert whatever is still JSON. Returns what it converted. */
+/** Convert whatever is still in an old format. Returns what it converted. */
 export async function migrateSettingsFormat(root: string): Promise<string[]> {
   const converted: string[] = []
   for (const [from, to, convert] of CONVERSIONS) {

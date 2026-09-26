@@ -1,7 +1,7 @@
 /**
  * The vault registry: which repos this machine has cloned, and where.
  *
- * Machine-local by design (auth PRD FR-9). It is not an account fact and must
+ * Machine-local by design (docs/features/auth.md). It is not an account fact and must
  * never be synced — a second laptop starts empty and adds its own vaults. The
  * identity of a vault is its `remote`; `path` is just where this machine put it.
  */

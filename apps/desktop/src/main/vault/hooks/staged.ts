@@ -1,12 +1,9 @@
 /**
  * What git says is about to be committed.
  *
- * **Rename detection is the whole reason the transforms live at the commit
- * boundary.** `git diff --cached -M` hands over the `from → to` map for free,
- * and that map does not exist anywhere else in Holi: to the watcher a move is a
- * delete plus an add, arriving as two unrelated events with no way to pair
- * them. A `relink` built on the watcher would be guessing; one built here is
- * reading git's own answer.
+ * **Rename detection is why the transforms live at the commit boundary.**
+ * `git diff --cached -M` gives the `from → to` map; to the watcher a move is an
+ * unpaired delete plus add.
  */
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -18,17 +15,7 @@ export interface StagedChanges {
   modified: string[]
   /** Paired by git's own similarity detection, not by us. */
   renamed: { from: string; to: string }[]
-  /**
-   * Paths this commit removes.
-   *
-   * **Dropped until D89, and the reason it was dropped is worth keeping.** The
-   * first four transforms all rewrite the changed file itself, and there is
-   * nothing to rewrite in a file that is going away. `memory-index` is the
-   * first whose output depends on a file's ABSENCE: deleting a memory has to
-   * rebuild `memory/index.md`, or the index goes on listing a file that is no
-   * longer there. So this is populated, and a transform is free to keep
-   * ignoring it — the other four do.
-   */
+  /** Paths this commit removes. Only `memory-index` reads it (D89). */
   deleted: string[]
 }
 
@@ -38,8 +25,8 @@ export interface StagedChanges {
  * `-z` is not optional: a vault has paths with spaces and non-ASCII in them
  * (`nøter/æøå.md`), and without it git quotes and backslash-escapes those, so
  * every transform downstream is handed a path that does not exist. With `-z`
- * the records are NUL-separated and verbatim — and a rename spends **three**
- * fields rather than two, which is the only fiddly part of the parse.
+ * the records are NUL-separated and verbatim, and a rename spends **three**
+ * fields rather than two.
  */
 export async function stagedChanges(root: string): Promise<StagedChanges> {
   const { stdout } = await exec(
@@ -55,9 +42,8 @@ export async function stagedChanges(root: string): Promise<StagedChanges> {
     const status = fields[i]
     if (status === undefined || status === '') continue
 
-    // **Match the letter, never the whole field.** A rename is `R087`, not
-    // `R100` — the digits are a similarity score, and an equality test against
-    // `R` sees a rename-with-edits as an add plus a delete.
+    // **Match the letter, never the whole field.** A rename is `R087`: the
+    // digits are a similarity score.
     const kind = status[0]
     if (kind === 'R' || kind === 'C') {
       const from = fields[i + 1]

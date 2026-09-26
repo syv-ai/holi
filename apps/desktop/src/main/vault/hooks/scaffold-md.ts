@@ -1,34 +1,17 @@
 /**
- * `scaffold-md` — a note gets its frontmatter however it arrived.
+ * `scaffold-md`: a note gets its frontmatter however it arrived (agent `Write`,
+ * import, another editor), not only via the file-tree `+`.
  *
- * Only one creation path used to scaffold: the file-tree `+`. An agent writing
- * a note through its own `Write`, a drag-and-drop import, a file made in another
- * editor in the same directory — all of them landed a `.md` with no `tags`, and until #17 that also cost the file its "N chars · Last
- * updated" bar, since the bar was the collapsed frontmatter widget.
+ * **Added files only, never modified ones.** A pulled file is committed by the
+ * pull and never staged here, and an old note is `modified`, so only local
+ * creations are shaped. Which files count is `wantsScaffold` in `@holi/shared`:
+ * frontmatter in `CLAUDE.md` would be prompt text, not metadata.
  *
- * **Added files only, never modified ones.** That is the whole answer to the
- * question #17 raised about rewriting a note somebody else wrote: a file arriving
- * on `git pull` is committed by the pull and never appears in a staged set, and
- * one that has been in the vault for a year is `modified`, not `added`. What is
- * left is exactly the list the issue asked for — agent write, import, external
- * editor — all of which are creations, all of them local, and all of them ours to
- * shape.
- *
- * Which files count is `wantsScaffold` in `@holi/shared`, and it is the part
- * worth reading — `CLAUDE.md` is markdown too, and frontmatter there is prompt
- * text rather than metadata.
- *
- * **The window this leaves open, stated rather than hidden.** A transform
- * rewrites a file after the editor's save, which breaks the invariant
- * `editor-reload.ts` rests on, and unlike `normalize-md`'s tidy this one lands
- * on line 1. `decideReload` is not taught to recognise it, because a file in the
- * ADDED set is a file whose very first commit this is: the agent and the import
- * are not writing into something the user has open, and a note made with the
- * tree's `+` arrives already scaffolded and comes through here as a no-op. What
- * remains is someone creating a `.md` in another editor and typing into it in
- * Holi before the first autosave commit — where `merge3` handles a prepend
- * cleanly unless they are typing on line 1, and the conflict banner is the
- * result if they are.
+ * **The window this leaves open.** The prepend lands after the editor's save,
+ * which `editor-reload.ts`'s `decideReload` does not recognise. That only bites
+ * someone typing in Holi into a `.md` made elsewhere before its first commit:
+ * `merge3` handles the prepend unless they are on line 1, where the conflict
+ * banner shows.
  */
 import { readFile } from 'node:fs/promises'
 import { scaffoldFrontmatter, vaultRelPath, wantsScaffold } from '@holi/shared'

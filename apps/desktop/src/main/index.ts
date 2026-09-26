@@ -1,19 +1,12 @@
 /**
  * The app: one window, one signed-in GitHub session, one open vault.
  *
- * Read the order in `whenReady` as a dependency chain — the session must exist
- * before the host, because the host hands git a closure over its token; the
- * host must exist before the router, because half the router is about the open
- * vault; and the window must exist before anything pushes to it.
+ * Read the order in `whenReady` as a dependency chain: the session before the
+ * host (the host hands git a closure over its token), the host before the
+ * router, and the window before anything pushes to it.
  *
- * **Nothing here may import a module that no longer exists.** `electron-vite`
- * resolves imports even though it does not typecheck, so an unresolvable import
- * anywhere on this path is the one thing that stops a window opening at all.
- *
- * The agent is wired here: `createAgentManager` over the vault `host`, its
- * `agent-pty:*`/`agent:*` seam registered alongside the tRPC one. It sits after
- * the router because it shares the host, and before the window because its
- * `getWindow` closure reads `mainWindow` lazily.
+ * `electron-vite` resolves imports without typechecking, so an unresolvable
+ * import anywhere on this path stops the window opening at all.
  */
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -74,26 +67,13 @@ import { ensureTypst, resolveTypstBin } from './pdf/typst-bin'
 import { registerAgentIpc } from './agent-ipc'
 
 // Declared before the launch check below, which starts `main()` synchronously:
-// a `let` referenced from inside it while still in its temporal dead zone would
-// throw during startup, which is the worst possible place for one.
+// a `let` still in its temporal dead zone would throw during startup.
 let mainWindow: BrowserWindow | null = null
 
 // Held at module scope, not inside `main()`: a `Tray` that gets garbage-collected
 // vanishes from the menu bar, so it must outlive the setup closure.
 let tray: Tray | null = null
 
-/**
- * A second launch must not happen at all.
- *
- * `features/vaults-sync.md` names the hazard as "the app opened twice would race on
- * commits" and asks for a lock on the clone — but one Holi process owns every
- * vault, so excluding a second *app* is exactly excluding a second writer on
- * every clone, and it covers vaults that are not even open, which a per-clone
- * lock could not. A lockfile would also need stale-lock handling, and getting
- * that wrong locks someone out of their own vault after a single crash.
- *
- * Must be claimed BEFORE `whenReady`.
- */
 // Privileged custom scheme for vault binary assets (images). `standard` so URLs
 // parse with a host + path; `secure`/`supportFetchAPI`/`stream` so <img> and
 // fetch treat it like https and can stream large files. Must be declared before
@@ -112,6 +92,9 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
+// A second launch must not happen at all: one Holi process owns every vault,
+// so excluding a second app excludes a second writer on every clone, without a
+// per-clone lockfile's stale-lock handling. Must be claimed BEFORE `whenReady`.
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -148,7 +131,7 @@ function createWindow(): BrowserWindow {
 
 async function main(): Promise<void> {
   app.on('second-instance', () => {
-    // Someone tried to launch Holi again — show them the one they have.
+    // Someone tried to launch Holi again: show them the one they have.
     if (mainWindow === null) return
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.focus()
@@ -158,33 +141,30 @@ async function main(): Promise<void> {
 
   // After whenReady: the keychain is not available before it.
   const session = await createSession()
-  // The Google connector (D67) — independent of the GitHub session on purpose:
+  // The Google connector (D67) is independent of the GitHub session on purpose:
   // it is a data connector, not identity, and neither sign-out affects the other.
   const userDataDir = app.getPath('userData')
-  // D87: the shared machine-wide cache belongs to an account no vault is pointed
-  // at any more. Deleted rather than renamed: it holds one account's mail, and
-  // leaving it on disk is worse than the re-fetch. A no-op on a fresh install.
+  // A machine-wide cache left from before per-account caches (D87). Deleted
+  // rather than renamed: it holds one account's mail.
   await rm(join(userDataDir, 'google-cache.db'), { force: true })
   const googleAccounts = await createGoogleAccountsManager()
   // One file, two readers: the agenda panel (via the router) and the agent (via
-  // the ops server below). Plain JSON — it holds calendar ids, not a credential.
+  // the ops server below). Plain JSON: it holds calendar ids, not a credential.
   const calendarPrefs = createCalendarPrefs(
     join(app.getPath('userData'), 'google-calendars.json'),
   )
   /**
    * Senders whose remote images always load.
    *
-   * In `userData` beside the calendar choices, not in a vault: this is a
-   * decision about the connected *account*, and a vault is a shared git repo —
-   * pushing "this newsletter may be told the account holder read it" to
-   * teammates is not a preference, it is a disclosure.
+   * In `userData`, not in a vault: this is a decision about the connected
+   * *account*, and a vault is a shared git repo. Pushing it to teammates would
+   * be a disclosure, not a preference.
    */
   const imagePrefs = createImagePrefs(join(app.getPath('userData'), 'google-image-senders.json'))
   /** The PDF viewer's saved signatures: `userData` too, never a vault. */
   const signatures = createSignatureStore(join(app.getPath('userData'), 'pdf-signatures.json'))
-  // Bound to the session's token *getter*, never a token: the getter refreshes
-  // and single-flights, so every call goes through the one authority.
-  /** The active vault's Google client (D87). Resolved inside the getter so the
+  /** The active vault's Google client (D87), bound to a token *getter* so every
+   *  call goes through the one refreshing authority. Resolved inside the getter so the
    *  object cannot outlive a vault switch, and so a vault with no account fails
    *  at the point of use with a message naming the fix. */
   const googleApiFor = () =>
@@ -198,15 +178,11 @@ async function main(): Promise<void> {
     })
 
   /**
-   * The UI's Google cache (D67, amended; D87). In `userData` rather than in a
-   * vault: mail is **account** data, and a vault is a shared git repo — caching
-   * a client's inbox there would push it to teammates on the next sync.
+   * The UI's Google cache (D67, D87). In `userData` rather than in a vault: mail
+   * is **account** data, and a vault is a shared git repo.
    *
-   * **One file per account**, memoized. Accounts used to be kept apart by a wipe
-   * inside `useAccount`, which was right for one connection that never changed;
-   * per vault it fired on every switch and charged a full re-fetch of mail and
-   * calendar — worst exactly where two vaults are used side by side, which is
-   * the case D87 exists for.
+   * **One file per account**, memoized, so switching between two vaults does
+   * not re-fetch mail and calendar.
    */
   const googleDataBySub = new Map<string, GoogleData>()
   const googleDataForSub = (sub: string): GoogleData => {
@@ -218,7 +194,7 @@ async function main(): Promise<void> {
       const cache = openGoogleCache(join(userDataDir, `google-cache-${sub}.db`))
       cache.ensureShape()
       data = createGoogleData({
-        // Bound to THIS account's session, not to whatever vault is active —
+        // Bound to THIS account's session, not to whatever vault is active:
         // the cache and the client it fills from have to be the same account.
         api: () =>
           new GoogleApi({
@@ -241,21 +217,11 @@ async function main(): Promise<void> {
   }
 
   /**
-   * Keep the cache scoped to whoever is actually connected.
-   *
-   * Hung off `onChange` rather than off the disconnect procedure, because
-   * `onChange` also fires for a **dead grant** — a revoked or expired
-   * connection is just as much "this mail is no longer yours to hold" as a
-   * button press, and wiring only the button would leave it behind.
-   */
-  /**
    * Keep a removed account's cache off the disk.
    *
    * Hung off `onChange` rather than off the disconnect procedure, because
-   * `onChange` also fires for a **dead grant** — a revoked or expired connection
-   * is just as much "this mail is no longer yours to hold" as a button press,
-   * and wiring only the button would leave it behind. It now forgets the cache
-   * of the account that changed rather than the only cache there was.
+   * `onChange` also fires for a **dead grant**: a revoked or expired connection
+   * is just as much "this mail is no longer yours to hold" as a button press.
    */
   googleAccounts.onChange((sub) => {
     if (sub === null) return // a vault unlinked; the account and its cache live on
@@ -325,11 +291,10 @@ async function main(): Promise<void> {
    * the bridge's job, and the bridge refuses the agent surface in `apps.*`.
    *
    * **No `Content-Security-Policy` header, deliberately.** Network is allowed
-   * (vault-apps.md §Trust & isolation) — an app may `fetch` anywhere, which is
-   * Nicolai's explicit choice and its cost is written down rather than hidden.
-   * If a policy is ever added it must name `holi-app:` explicitly: `'self'`
-   * matches NOTHING in an opaque origin, so `default-src 'self'` would block the
-   * app's own `app.js` and read as a path bug rather than as a policy.
+   * (`docs/features/vault-apps.md`): an app may `fetch` anywhere. If a policy is
+   * ever added it must name `holi-app:` explicitly: `'self'` matches NOTHING in
+   * an opaque origin, so `default-src 'self'` would block the app's own `app.js`
+   * and read as a path bug rather than as a policy.
    */
   protocol.handle('holi-app', async (request) => {
     const vault = host.active()
@@ -345,8 +310,7 @@ async function main(): Promise<void> {
       const html = await readFile(abs, 'utf8').catch(() => null)
       if (html === null) return new Response(null, { status: 404 })
       const theme = await readVaultTheme(vault.root)
-      // Dark unless the document is in light mode — mirrors `state/theme.ts`'s
-      // `activeMode`, which is dark-first because `data-theme` is unstamped.
+      // Always the dark block: main does not know the renderer's light/dark mode.
       const block = theme.dark
       return new Response(injectAppHead(html, appHeadHtml(block)), {
         headers: { 'content-type': appMimeFor(abs) },
@@ -389,45 +353,31 @@ async function main(): Promise<void> {
   registerIpc({ router })
 
   // The vault agent: any number of live `claude` sessions (D100), all in the
-  // active vault's clone, all ended when that vault closes.
-  // `getWindow` is lazy — the window is created just below and is up long before
-  // the agent streams anything, so registering the seam here is safe.
+  // active vault's clone, all ended when that vault closes. `getWindow` is lazy,
+  // so registering the seam before the window exists is safe.
   //
-  // Git coexistence: the hook server learns turn start/end from the agent's own
-  // Claude Code hooks and drives the manager's pause/resume. The forward ref is
-  // safe — its callbacks fire only at runtime, long after `agent` is assigned.
+  // The hook server learns turn start/end from the agent's own Claude Code hooks
+  // and drives the manager's pause/resume. The forward ref is safe: its
+  // callbacks fire only at runtime, long after `agent` is assigned.
   let agent: AgentManager
   /**
-   * The agent's door to Google (D67): a loopback server that serves calendar
-   * and mail RESULTS, with main making the API calls using the token only it
-   * holds. Plus the generated `holi-google` command the seeded skill invokes.
+   * The agent's door to Google (D67, D70): a loopback server serving calendar
+   * and mail results, with main making the API calls using the token only it
+   * holds, plus the generated `holi-google` command. No MCP server.
    *
-   * This is why the pillar ships no MCP server — the agent reaches external
-   * data with `Bash` and a documented command, like everything else.
+   * The reads are the raw fetchers, which take no cache and so cannot read one:
+   * the agent gets current data, structurally.
+   *
+   * The **label writes go through `googleData`'s bound methods**, the same ones
+   * the router calls, so an agent's archive lands in the cache the UI paints
+   * from. Passing the four methods rather than the object keeps the server
+   * unable to read the cache.
+   *
+   * `send`/`draft`/`reply` and the calendar writes are raw functions: they have
+   * no cache entry to patch.
    */
   /**
-   * The agent's door to Google — **still not `googleData`, only more functions**
-   * (D70).
-   *
-   * The reads are the raw fetchers, which take no cache and therefore cannot
-   * read one. The agent asks for current data (D67, "Do not cache"), so that
-   * exclusion is structural rather than a rule someone has to remember when
-   * editing this file later.
-   *
-   * The **label writes go through `googleData`'s bound methods** — the same
-   * functions the router calls. That is the opposite direction to the reads and
-   * it is deliberate: a write the agent makes must land in the cache the UI
-   * paints from, or Holi's own list keeps showing a thread the agent archived
-   * until the next delta sync. Passing the four methods rather than the object
-   * keeps D68 §6's structural exclusion intact — this server still cannot read
-   * a cached anything.
-   *
-   * `send`/`draft`/`reply` and the calendar writes are raw functions, because
-   * they have no cache entry to patch: a new message reaches the list through
-   * the next `history.list` delta, and the agenda always refetches.
-   */
-  /**
-   * The data layer for the vault whose bearer made the request (D87) — never
+   * The data layer for the vault whose bearer made the request (D87), never
    * the active vault. An agent session outlives a vault switch, so resolving by
    * what is on screen would have a backgrounded agent write to another vault's
    * mailbox.
@@ -449,28 +399,25 @@ async function main(): Promise<void> {
     })
 
   const googleOps = createGoogleOpsServer((remote) => ({
-    // Through the SAME overrides file the panel writes. A calendar the user
-    // switched off is not fetched for the agent either — otherwise "turn Jane's
-    // calendar off" would hide her day from the panel while the agent kept
-    // reading it, which is the opposite of what switching it off means.
+    // Through the SAME overrides file the panel writes: a calendar the user
+    // switched off is not fetched for the agent either.
     agenda: async (window) =>
       listAgenda(agentGoogleApi(remote), window, { overrides: await calendarPrefs.read() }),
-    // The agent gets the list itself, not the page envelope: it asks a question
-    // once and reads the answer, and `nextPageToken` is a UI affordance with
-    // nothing to click on the other side of a shell command.
+    // The agent gets the list itself, not the page envelope: `nextPageToken` is
+    // a UI affordance.
     threads: async (query) => (await listThreads(agentGoogleApi(remote), { query })).threads,
     // `textOnly` is the asymmetry, and it is deliberate: the UI renders
     // sanitized HTML, the agent gets prose. See `google/gmail.ts`.
     thread: async (id) => textOnly(await readThread(agentGoogleApi(remote), id)),
 
-    // Label writes — through the vault's `GoogleData`, so the UI's cached list
+    // Label writes, through the vault's `GoogleData`, so the UI's cached list
     // learns about them at the same moment Gmail does.
     setRead: async (id, read) => (await agentGoogleData(remote)).setRead(id, read),
     star: async (id, on) => (await agentGoogleData(remote)).setStarred(id, on),
     archive: async (id) => (await agentGoogleData(remote)).archive(id),
     trash: async (id) => (await agentGoogleData(remote)).trash(id),
 
-    // New messages and events — nothing cached to patch.
+    // New messages and events: nothing cached to patch.
     draft: ({ threadId, ...mail }) => createDraft(agentGoogleApi(remote), mail, threadId),
     send: (input) =>
       'draftId' in input
@@ -488,19 +435,13 @@ async function main(): Promise<void> {
   // in a shell of its own and the vault's config directory names it absolutely.
   const holiCliPath = await installHoliCli(app.getPath('userData'))
 
-  /** Every ops route acts on the vault that is open right now. There is
-   *  exactly one, and the agent's cwd IS its root, so taking a remote as an
-   *  argument would only create a way for the two to disagree. */
   /**
    * The clone the caller's vault lives in.
    *
-   * Resolved from the **caller's remote**, not from `host.active()`. The old
-   * version took no argument and read whatever was on screen, on the reasoning
-   * that there is exactly one vault open and the agent's cwd is its root. D87
-   * found the premise false: an agent session outlives a vault switch, and a
-   * `git commit` in one clone fires that clone's hook whatever Holi is showing.
-   * The pre-commit transforms then ran against the wrong repository — a write,
-   * not merely a wrong read.
+   * Resolved from the **caller's remote**, not from `host.active()` (D87): an
+   * agent session outlives a vault switch, and a `git commit` in one clone fires
+   * that clone's hook whatever Holi is showing. Resolving by what is on screen
+   * would run the pre-commit transforms against the wrong repository.
    *
    * The registry is the source, so a vault that is not currently open still
    * resolves: its clone is on disk either way, and its git hook can fire.
@@ -542,10 +483,9 @@ async function main(): Promise<void> {
       runPreCommitHooks: async () => {
         const root = await rootFor(remote)
         if (root === null) return { changed: [], failed: [] }
-        // No `notify` — Holi has no push seam into a live Claude Code session,
+        // No `notify`: Holi has no push seam into a live Claude Code session,
         // and typing into the agent's PTY is not one. The run log
-        // (`.holi/state/hooks.local.log`) is the agent-readable surface, and it reads
-        // it when asked. Tracked in not-built.md.
+        // (`.holi/state/hooks.local.log`) is the agent-readable surface.
         const result = await runPreCommit(root, await stagedChanges(root), {
           settings: await readHookSettings(root),
           transforms: VAULT_TRANSFORMS,
@@ -569,16 +509,14 @@ async function main(): Promise<void> {
   })
   await hookServer.start()
   // D86: the vault agent runs on THIS VAULT's config directory, not the machine's
-  // `~/.claude` and no longer one shared across every vault — `plugins/` and
-  // user-scope `settings.json` are keyed by nothing, so sharing a directory
-  // shared capability.
+  // `~/.claude` or one shared across vaults: `plugins/` and user-scope
+  // `settings.json` are keyed by nothing, so sharing a directory shares
+  // capability.
   //
-  // The shared directory D72 left behind goes to the vault that actually ran the
-  // agent in it — which the directory itself records, and which is NOT the same
-  // as the most recently opened vault. Awaited before the manager exists, or a
-  // fast first spawn provisions an empty directory beside the one being moved.
-  // A fresh install has neither an old directory nor a registry entry, and both
-  // halves no-op.
+  // A leftover shared directory (D72) goes to the vault that actually ran the
+  // agent in it, which the directory itself records. Awaited before the manager
+  // exists, or a fast first spawn provisions an empty directory beside the one
+  // being moved.
   const movedTo = await migrateSharedAgentConfig(userDataDir, await registry.list()).catch(
     (err) => {
       console.warn('[agent] config migration skipped:', err)
@@ -626,8 +564,8 @@ async function main(): Promise<void> {
 
   /**
    * Reminders: a tray-resident evaluator sweeps every registered vault each
-   * minute (and once at launch — the launch run is the catch-up for fires missed
-   * while quit) and raises native notifications.
+   * minute (and once at launch, the catch-up for fires missed while quit) and
+   * raises native notifications.
    *
    * `clonePaths` is refreshed at the head of every `corpus.all()`, before `sweep`
    * reads or the runtime marks the watermark, so the sync `DeliveredLog` resolver
@@ -653,9 +591,9 @@ async function main(): Promise<void> {
   /**
    * A clicked reminder brings the window forward and hands the task to the
    * renderer, which owns the vault switch (so `activeRemoteAtom` stays truthful).
-   * The window may be gone entirely — closed on macOS, or tray-resident once
-   * keep-alive lands — so recreate it and deliver on `did-finish-load`, or the
-   * push arrives before any renderer can hear it.
+   * The window may be gone entirely (tray-resident), so recreate it and
+   * deliver on `did-finish-load`, or the push arrives before any renderer can
+   * hear it.
    */
   const focusTask = (remote: string, path: string): void => {
     const payload = { remote, path }
@@ -678,12 +616,12 @@ async function main(): Promise<void> {
   reminders.start()
 
   const win = createWindow()
-  // FR-9: pull on focus. The interval exists for the case where the window
-  // never loses focus at all.
+  // Pull on focus. The interval exists for the case where the window never
+  // loses focus at all.
   win.on('focus', () => host.active()?.onFocus())
 
-  // Create-or-focus the one window — the dock/`activate` path and the tray's
-  // Open Holi both funnel through here, so keep-alive has a single way back in.
+  // Create-or-focus the one window: the dock/`activate` path and the tray's
+  // Open Holi both funnel through here.
   const openWindow = (): void => {
     const existing = mainWindow
     if (existing !== null && !existing.isDestroyed()) {
@@ -701,19 +639,17 @@ async function main(): Promise<void> {
   })
 
   // Tray-resident: the sweep keeps running with the window closed, and the tray
-  // is the way back in (Open Holi) and the way out (Quit — ⌘W no longer is one).
+  // is the way back in (Open Holi) and the way out (Quit, since ⌘W is not).
   tray = createTray({ openWindow })
   // After the first window: the Developer menu sends to whatever window is
   // current, and there has to be one for the send to land.
   installAppMenu(() => mainWindow)
 
   /**
-   * First-run only: ask once whether to launch Holi at login — reminders fire
-   * only while it is running. The answer is applied via `setLoginItemSettings`;
-   * the "asked" flag lives in userData (never a vault, never committed), so a
-   * later launch never re-asks, whatever the answer was. Fire-and-forget so the
-   * modal does not hold up the rest of startup. (A settings toggle to change the
-   * choice later is out of scope — a follow-up.)
+   * First-run only: ask once whether to launch Holi at login, since reminders
+   * fire only while it is running. The "asked" flag lives in userData (never a
+   * vault), so a later launch never re-asks. Fire-and-forget so the modal does
+   * not hold up startup.
    */
   const appSettingsFile = join(app.getPath('userData'), 'settings.json')
   void (async () => {
@@ -749,48 +685,44 @@ async function main(): Promise<void> {
    * Quit has to WAIT for the flush.
    *
    * `before-quit` is synchronous: fire the teardown unawaited and the app can
-   * exit before it finishes, losing whatever the commit debounce was still
-   * holding — which is precisely the edit the user just made. So veto the first
-   * quit, flush, then quit for real. `quitting` makes the second pass fall
-   * through, or this vetoes forever.
+   * exit before it finishes, losing the edit the commit debounce was holding.
+   * So veto the first quit, flush, then quit for real. `quitting` makes the
+   * second pass fall through, or this vetoes forever.
    */
   let quitting = false
   app.on('before-quit', (event) => {
     if (quitting) return
     event.preventDefault()
     quitting = true
-    reminders.close() // stop the sweep timer at once — no tick into a teardown
+    reminders.close() // stop the sweep timer at once: no tick into a teardown
     tray?.destroy() // let go of the menu-bar item as we leave
     tray = null
     void (async () => {
       try {
         // Kill the agent's PTY (and its process group) before we flush and
-        // commit — nothing the session was mid-writing should race the teardown.
+        // commit: nothing the session was mid-writing should race the teardown.
         await agent.dispose().catch((err) => console.error('[quit] agent dispose failed:', err))
         await hookServer.stop().catch((err) => console.error('[quit] hook server stop failed:', err))
-        // FR-6's flush points are a flush THEN a commit, and only the renderer
-        // can do the first half — `host.close()` commits what is on disk, and
-        // the editor's newest words are not there until it writes them. Every
-        // other flush point is renderer-initiated; quit is the one main starts,
-        // so it is the one that has to ask.
+        // A flush point is a flush THEN a commit, and only the renderer can do
+        // the first half: the editor's newest words are not on disk until it
+        // writes them. Quit is the one flush point main starts, so it asks.
         await requestFlush(flushChannel(mainWindow))
         // Quit is a leave point (D61): commit the flushed buffer, then get it
-        // off-machine before the window closes. Best-effort with a 1s budget —
-        // `pushNow` never rejects, and an unreachable remote must not hang quit;
-        // the work is committed on disk, and the next launch drains what did not
-        // make it out. Order is flush -> commit -> push -> close.
+        // off-machine before the window closes. Best-effort with a 1s budget:
+        // an unreachable remote must not hang quit, and the next launch drains
+        // what did not make it out. Order is flush -> commit -> push -> close.
         const vault = host.active()
         if (vault !== null) {
           await vault.commitNow().catch((err) => console.error('[quit] commit failed:', err))
           await Promise.race([vault.pushNow(), new Promise((r) => setTimeout(r, 1_000))])
         }
         // `close()` commits the open vault again (a clean no-op) before letting
-        // go of it (FR-6).
+        // go of it.
         await host.close()
       } catch (err) {
         console.error('[quit] teardown failed:', err)
       } finally {
-        // Always quit, even if the flush threw — a failed teardown must not
+        // Always quit, even if the flush threw: a failed teardown must not
         // trap someone in an app they are trying to leave.
         app.quit()
       }
@@ -822,10 +754,10 @@ function flushChannel(win: BrowserWindow | null): FlushChannel {
   }
 }
 
-// Keep-alive on every platform: closing the last window no longer quits, so the
-// reminder sweep keeps running tray-resident (macOS already behaved this way).
-// A real quit is the tray's Quit or ⌘Q → `before-quit`. The handler must stay
-// registered and empty — with none, Electron's default quits on Windows/Linux.
+// Keep-alive on every platform: closing the last window does not quit, so the
+// reminder sweep keeps running tray-resident. A real quit is the tray's Quit or
+// ⌘Q → `before-quit`. The handler must stay registered and empty: with none,
+// Electron's default quits on Windows/Linux.
 app.on('window-all-closed', () => {
   // intentionally does not quit
 })

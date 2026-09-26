@@ -1,9 +1,9 @@
 /**
- * The agent's IPC seam — distinct from the tRPC seam in `ipc.ts`. A session is a
+ * The agent's IPC seam, distinct from the tRPC seam in `ipc.ts`. A session is a
  * live byte stream: PTY data/exit and the session list are pushed out to the
  * renderer by the manager (`agent-pty:data`, `agent-pty:exit`, `agent:sessions`);
  * keystrokes, resize and focus are pushed in; start/kill/attach/sessions are
- * request/response. Channel names mirror the wire shape in features/agent-sessions.md.
+ * request/response.
  *
  * **Every route but focus names a session (D100).** A vault runs several, so
  * "write to the agent" is not an address. Focus is the exception because the
@@ -17,8 +17,8 @@ import type { FocusInput } from './agent/context-snapshot'
 export function registerAgentIpc(deps: { agent: AgentManager }): void {
   const { agent } = deps
 
-  // The manager throws on a bad start (no CLI, vault not active). The drawer
-  // wants a message it can print in red, not an IPC rejection — so tag it.
+  // The manager throws on a bad start (no CLI, vault not active). The renderer
+  // wants a message it can print, not an IPC rejection, so tag it.
   ipcMain.handle(
     'agent-pty:start',
     async (
@@ -48,7 +48,7 @@ export function registerAgentIpc(deps: { agent: AgentManager }): void {
     agent.paste(msg.id, msg.text),
   )
 
-  // A spawn, so it can fail the same ways `start` can — and one more: the
+  // A spawn, so it can fail the same ways `start` can, and one more: the
   // listing may not yet know which conversation this session is.
   ipcMain.handle('agent:duplicate', (_e, id: string) => agent.duplicate(id))
   // Also a spawn, at the pane's geometry: the renderer knows what size the

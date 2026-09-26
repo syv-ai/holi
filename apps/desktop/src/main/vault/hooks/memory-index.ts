@@ -1,27 +1,11 @@
 /**
- * `memory-index` — `memory/index.md` lands in the same commit as the memory it
- * describes (D89).
+ * `memory-index`: `memory/index.md` lands in the same commit as the memory it
+ * describes (D89). It runs at the commit boundary so the index is never a
+ * follow-up commit, and a burst of memory writes yields one correct index.
  *
- * **Why the commit boundary, given it does not need a rename map.** `relink`
- * lives here because `git diff --cached -M` is the only place a rename's
- * `from → to` pairing exists; an index regenerated from the tree needs no such
- * thing. It is here for the other two reasons:
- *
- * - **The restage.** The index must be part of the *same* commit as the memory
- *   file. Anywhere else and every commit is followed by an index commit, forever.
- * - **Coalescing.** A burst of memory writes in one agent turn produces one
- *   commit with its index already correct, rather than N commits of index churn
- *   pushed to every member.
- *
- * **Gated on the diff, but indexed from the tree.** `StagedChanges` decides
- * *whether* to run — this fires on every commit and most commits are edits, so
- * the common path has to cost nothing. `listFiles` then decides *what* goes in,
- * because indexing from the diff alone would drop every memory an unrelated
- * commit did not happen to touch.
- *
- * **It cannot block a commit** (FR-9). The runner catches, logs and lets the
- * commit through; three consecutive failures sit it out for the session. Holi's
- * auto-commit IS the user's save, and an index is an opinion about tidiness.
+ * **Gated on the diff, but indexed from the tree.** The staged set decides
+ * *whether* to run, so the common edit-only commit costs nothing; `listFiles`
+ * decides *what* goes in, or unrelated memories would drop out.
  */
 import { readFile } from 'node:fs/promises'
 import {
@@ -42,11 +26,9 @@ import type { TransformResult } from './relink'
  * A personal `.local.md` is deliberately not one: it never appears in the
  * index, so a commit that could only contain one has nothing to regenerate for.
  *
- * **`deleted` matters here and nowhere else in the hook set.** The other four
- * transforms rewrite the changed file itself, so a file going away is nothing
- * to them; this one's output is a list of what EXISTS, and a deletion that did
- * not re-index would leave `memory/index.md` naming a file that is gone. It is
- * why `StagedChanges` carries deletions at all.
+ * **`deleted` matters here and nowhere else in the hook set**: this output lists
+ * what EXISTS, so a deletion that did not re-index would leave the index naming
+ * a file that is gone.
  */
 function touchesSharedMemory(staged: StagedChanges): boolean {
   return (
@@ -75,9 +57,8 @@ export async function memoryIndex(root: string, staged: StagedChanges): Promise<
   const rel = vaultRelPath(MEMORY_INDEX)
   const current = await readFile(absPathFor(root, rel), 'utf8').catch(() => null)
 
-  // **Only when it differs.** A `changed` entry the runner dutifully restages
-  // for a file nothing rewrote is an empty commit, on every memory edit that
-  // did not move a title.
+  // **Only when it differs**, or every memory edit that did not move a title
+  // would restage an unchanged index.
   if (current === next) {
     return {
       changed: [],

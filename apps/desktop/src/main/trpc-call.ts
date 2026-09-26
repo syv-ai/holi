@@ -3,11 +3,10 @@
  * that survives `structuredClone`.
  *
  * **Why an envelope rather than letting the promise reject.** An Error thrown
- * across Electron's IPC boundary arrives at the renderer as a string with
- * `Error invoking remote method` glued to the front and every property gone —
- * so a `NOT_FOUND` and a genuine crash become indistinguishable at exactly the
- * point the UI has to tell them apart. Encoding the failure as data keeps the
- * code, and `ipcLink` on the other side turns it back into a `TRPCClientError`.
+ * across Electron's IPC boundary arrives at the renderer as a string with every
+ * property gone, so a `NOT_FOUND` and a genuine crash become indistinguishable.
+ * Encoding the failure as data keeps the code, and `ipcLink` on the other side
+ * turns it back into a `TRPCClientError`.
  *
  * Deliberately free of Electron imports: this is the half worth testing.
  */
@@ -26,7 +25,7 @@ export type TrpcEnvelope =
 type Caller = Record<string, unknown>
 
 /**
- * Resolve `vaults.open` against the router's caller and invoke it.
+ * Resolve a dotted path (`vaults.open`) against the router's caller and invoke it.
  *
  * Subscriptions are refused rather than attempted: `ipcMain.handle` is
  * request/response, so a subscription would resolve once and silently never

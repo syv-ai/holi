@@ -10,7 +10,7 @@
  *   through, and reading one as utf8 corrupts it silently.
  * - **The name is not chosen by the person dropping** — it comes from whatever
  *   folder the file was in — so a collision is the common case rather than the
- *   careless one. The vault's standing rule applies (FR-11): refuse rather than
+ *   careless one. The vault's standing rule applies: refuse rather than
  *   overwrite. Per file, though, not per drop: dropping six files and getting
  *   nothing because the fourth clashed is what makes people drop one at a time.
  */
@@ -37,21 +37,16 @@ const REASONS: Record<string, string> = {
   EPERM: 'folders are not imported yet',
   EACCES: 'no permission to read it',
   // A local copy cannot time out. `ETIMEDOUT` means the bytes are not on this
-  // Mac and the filesystem went to fetch them — a Google Drive or iCloud mirror
-  // holding a placeholder, or a network share. Measured from a real drop: a PDF
-  // in a Google Drive mirror, 2026-08-22. Shown as a code it reads like a fault
-  // in Holi; it is a fact about the file, and the person can fix it in Finder.
+  // Mac and the filesystem went to fetch them: a Google Drive or iCloud mirror
+  // holding a placeholder, or a network share. Shown as a code it reads like a
+  // fault in Holi; it is a fact about the file, fixable in Finder.
   ETIMEDOUT: 'not downloaded to this Mac yet',
 }
 
 /**
- * The sentence shown for a failed copy.
- *
- * Split out from the loop because a timeout cannot be manufactured on disk —
- * the mapping is the part worth testing, and it is a pure decision about a
- * code. Anything unmapped CARRIES its code rather than being paraphrased away:
- * "could not be copied" tells the person only that the thing they watched not
- * happen did not happen, which is nothing to act on and nothing to report.
+ * The sentence shown for a failed copy. Split out so the mapping is testable
+ * (a timeout cannot be manufactured on disk). Anything unmapped CARRIES its
+ * code: a bare "could not be copied" is nothing to act on or report.
  */
 export function reasonFor(code: string | undefined): string {
   const known = REASONS[code ?? '']

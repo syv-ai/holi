@@ -1,20 +1,14 @@
 /**
- * `archive-done` — move long-finished tasks under `archive/`, links and all.
+ * `archive-done`: move long-finished tasks under `archive/`, links and all.
+ * Off by default, because it changes what the board shows.
  *
- * **Off by default** (see the seeded `.holi/settings/app.yaml`). It moves task
- * files, which changes what the board shows, and a transform that rearranges
- * someone's work has to be asked for rather than assumed.
+ * **The completion date comes from git.** `Task` carries no `completedAt` and a
+ * checkout resets mtime, so the file's last commit is the only durable clock. It
+ * is an approximation (last edit, normally the one that marked it done), and the
+ * log line says so.
  *
- * **The completion date comes from git.** `Task` carries no `completedAt`, and
- * mtime is reset by a checkout — so the last commit that touched the file is
- * the only durable answer available. It is an approximation: the file's last
- * commit is when it was last *edited*, which for a done task is normally the
- * commit that marked it done, but is not guaranteed to be. The log line says
- * which clock was used so the approximation is legible rather than implied.
- *
- * The link rewrite is not optional. `sweepDaily` has a backref guard for
- * exactly this: a moved file with a stranded `[[link]]` is the harm, and there
- * is no orphan-rescue net in this vault.
+ * The link rewrite is not optional: a moved file with a stranded `[[link]]` is
+ * the harm, and nothing rescues orphans.
  */
 import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
@@ -86,8 +80,7 @@ export async function archiveDone(
   if (moves.length === 0) return { changed: [], notes: [] }
 
   // `moveNotes` moves the files AND rewrites every inbound `[[link]]` in one
-  // read-all-then-write pass — the same primitive `relink` uses, and the reason
-  // this transform does not hand-roll either half.
+  // read-all-then-write pass.
   const { rewritten } = await moveNotes(root, moves)
 
   notes.push(
@@ -96,11 +89,9 @@ export async function archiveDone(
   )
 
   /**
-   * Everything the runner has to restage: both ends of each move — git needs to
-   * see the deletion as well as the addition — **and every file whose inbound
-   * links were rewritten**. Leaving those out is the subtle version of this bug:
-   * the commit ships the moved task with the referring notes still pointing at
-   * its old path, and the fix lands one commit later.
+   * Restage both ends of each move **and every file whose inbound links were
+   * rewritten**, or the commit ships referring notes still pointing at the old
+   * path.
    */
   const changed = [
     ...new Set([

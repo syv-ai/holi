@@ -1,16 +1,11 @@
 /**
- * Reads a vault's settings off disk and resolves them.
+ * Reads a vault's settings off disk and resolves them (docs/features/settings.md).
  *
- * Two files, both optional: `.holi/settings/app.yaml` (committed, shared with
- * everyone who clones the vault) and `.holi/settings/app.local.yaml` (gitignored,
- * this machine only). The pure `resolveVaultSettings` (in `@holi/shared`) does
- * the merge + validation + defaulting; this module is only the disk half — a
- * missing or unreadable file degrades to `null`, never an error, so a vault with
- * no settings resolves to the defaults and the app behaves as it always did.
- *
- * Deliberately the same shape as `vault/theme.ts`, which does exactly this for
- * `.holi/settings/theme.yaml`. Two files that differ only in which resolver they
- * call should not differ in anything else.
+ * Two optional files: `.holi/settings/app.yaml` (committed) and
+ * `.holi/settings/app.local.yaml` (this machine only). `resolveVaultSettings` in
+ * `@holi/shared` merges, validates and defaults; this module is only the disk
+ * half, where a missing or unreadable file degrades to `null`, never an error.
+ * Deliberately the same shape as `vault/theme.ts`.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -27,12 +22,9 @@ import {
 } from '@holi/shared'
 
 /**
- * The committed, shared settings and the personal override beside it.
- *
- * **Re-exported, not redeclared.** These were a second copy of the literal, and
- * a path declared twice is a path that gets moved once. The local file is also
- * where the reminder delivery watermark lives, which is why the resolver
- * ignores keys it does not know rather than warning about them.
+ * The committed settings and the personal override beside it. The local file
+ * also holds the reminder delivery watermark, which is why the resolver ignores
+ * keys it does not know rather than warning about them.
  */
 export { SETTINGS_FILE, SETTINGS_LOCAL_FILE }
 
@@ -67,13 +59,10 @@ async function mergeInto(
   target: SettingTarget,
 ): Promise<void> {
   const text = await readFile(abs, 'utf8').catch(() => null)
-  // Read twice, for two different things: the VALUES, to merge `hooks` against,
-  // and the TEXT, so the write can keep the document. A file that is unusable
-  // reads as `{}` rather than refusing the write forever.
+  // A file that is unusable reads as `{}` rather than refusing the write forever.
   const existing = parseSettingsText(text)
-  // **The whole file, not the patch.** `writeSettingsText` generates the
-  // document rather than merging into it (see its docstring), so a key it is
-  // not handed is a key that disappears — including `reminders`, which is
+  // **The whole file, not the patch.** `writeSettingsText` regenerates the
+  // document, so a key it is not handed disappears, including `reminders`,
   // machine state this module knows nothing about.
   const next: Record<string, unknown> = { ...existing, ...patch }
 
@@ -93,14 +82,9 @@ async function mergeInto(
   }
 
   await mkdir(dirname(abs), { recursive: true })
-  // Atomic rename, copied from `reminders/delivered-log.ts`: a half-written
-  // settings file is a vault that will not open the way it was asked to, and a
-  // surviving `.tmp` in `.holi` would be committed and synced to everyone.
-  //
-  // **The document, not the values.** `writeSettingsText` merges into the file
-  // as it was written, so the explanations above each key survive the write —
-  // and so does anything the user or the agent added. Stringifying `next` would
-  // delete all of it, once, permanently.
+  // Atomic rename: a half-written settings file is a vault that will not open
+  // the way it was asked to. `writeSettingsText` emits the whole document from
+  // `VAULT_SETTINGS`, so a comment a person wrote in the file does not survive.
   const tmp = `${abs}.tmp`
   await writeFile(tmp, writeSettingsText(next, target), 'utf8')
   await rename(tmp, abs)
@@ -109,11 +93,9 @@ async function mergeInto(
 /**
  * Write answers into a vault's settings.
  *
- * **One merge-then-rename per file, never per key.** The onboarding step answers
- * four things at once, and four renames would be four chances to leave a vault
- * half-configured. Siblings this module knows nothing about survive because the
- * merge is over the file as it was read — `reminders`, written into the local
- * file by the delivery watermark, is the one that already exists.
+ * **One merge-then-rename per file, never per key**, so a multi-answer write
+ * cannot leave a vault half-configured. Keys this module does not know (the
+ * local file's `reminders`) survive because the merge is over the values as read.
  */
 export async function writeVaultSettings(root: string, write: VaultSettingsWrite): Promise<void> {
   const jobs: Promise<void>[] = []

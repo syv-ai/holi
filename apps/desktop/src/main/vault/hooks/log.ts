@@ -1,20 +1,13 @@
 /**
  * What the pre-commit transforms did, in a file the agent can read.
  *
- * **There was no agent-readable log surface in Holi before this one.** It
- * exists because a transform that rewrites files silently is indistinguishable
- * from a bug: the user sees a diff they did not make, and has nowhere to look.
- * The agent is the fast path — it reads this file and can say what happened —
- * and the sync status bar is the floor for when no session is open.
+ * A transform that rewrites files silently is indistinguishable from a bug, so
+ * this log is where the agent can look to say what happened.
  *
- * **Machine-local** (`.local.`, D65): it is a record of what happened on this
- * clone. Committing it would put one machine's transform history in everyone's
- * repo and, worse, make every commit dirty the log that the next commit then
- * has to include.
+ * **Machine-local** (`.local.`, D65): committing it would make every commit
+ * dirty the log the next commit then has to include.
  *
- * **Capped, keeping the newest.** The oldest entries are the ones nobody will
- * ever ask about, and a log that grows forever is one the agent cannot read in
- * a single tool call.
+ * **Capped, keeping the newest**, so the agent can read it in one tool call.
  */
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -48,9 +41,8 @@ export async function readHookLog(root: string): Promise<string> {
   return readFile(join(root, HOOKS_LOG_FILE), 'utf8').catch(() => '')
 }
 
-/** Rewrite the file with only its last `MAX_LINES` lines, when it has grown
- *  past them. Read-and-rewrite rather than anything cleverer: this runs at most
- *  once per commit, on a file measured in kilobytes. */
+/** Keep only the last `MAX_LINES` lines. Read-and-rewrite is fine: this runs
+ *  at most once per commit, on a file measured in kilobytes. */
 async function trim(abs: string): Promise<void> {
   const text = await readFile(abs, 'utf8')
   const lines = text.split('\n')

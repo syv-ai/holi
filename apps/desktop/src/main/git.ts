@@ -1,17 +1,14 @@
 /**
- * The git engine — Holi's sync, run against the system `git` binary.
+ * The git engine: Holi's sync, run against the system `git` binary.
  *
- * **Why the binary and not a JS implementation** (`features/vaults-sync.md`):
- * merge-with-honest-conflict-reporting is the load-bearing operation in
- * the whole sync design — FR-12 and the entire reconcile path rest on git
- * *refusing* rather than guessing — and that is precisely isomorphic-git's
- * weakest area. Shelling out also inherits credential helpers, hooks, and
- * `.gitignore` semantics, and behaves identically to what the user and the agent
- * see in a terminal, which is where they both end up when a merge goes wrong.
+ * **Why the binary and not a JS implementation** (`docs/features/vaults-sync.md`):
+ * the whole reconcile path rests on git *refusing* a merge rather than guessing,
+ * which is isomorphic-git's weakest area. Shelling out also inherits credential
+ * helpers, hooks and `.gitignore` semantics, and behaves like the terminal the
+ * user and agent end up in when a merge goes wrong.
  *
  * **The rule that contains the cost:** parse only plumbing commands and
- * `--porcelain=v2`. Human-readable porcelain is explicitly not a stable
- * interface, and a locale or git-version change would silently alter it.
+ * `--porcelain=v2`. Human-readable output is not a stable interface.
  */
 import { execFile } from 'node:child_process'
 import { appendFile, mkdir, mkdtemp, readdir, writeFile } from 'node:fs/promises'
@@ -31,8 +28,7 @@ export class GitError extends Error {
 }
 
 /** There is no `git` on this machine. Its own type because the response is
- * advice — install git — not a stack trace. The product assumes every user is a
- * developer, but assuming is not the same as failing well when wrong. */
+ * advice (install git), not a stack trace. */
 export class GitMissingError extends Error {
   constructor(readonly gitPath: string) {
     super(`\`${gitPath}\` was not found. Holi needs the git command-line tool installed.`)
@@ -100,29 +96,23 @@ export function ensureAskpass(): Promise<string> {
 
 export interface RunOpts extends Pick<GitDeps, 'token' | 'gitPath' | 'env'> {
   /**
-   * Written to the command's stdin, which is then closed.
-   *
-   * For the commands that take a path LIST. `check-ignore` is the one today:
-   * a vault can hold thousands of files and passing them as arguments hits
-   * `E2BIG` — silently, and only on the vaults big enough to matter.
+   * Written to the command's stdin, which is then closed. For commands that take
+   * a path list (`check-ignore`): thousands of paths as arguments hit `E2BIG`.
    */
   input?: string
 }
 
 export interface RepoStatus {
   branch: string
-  /** `origin/HEAD`'s target, or null when the remote has none. FR-2: Holi syncs
-   * this branch and no other. */
+  /** `origin/HEAD`'s target, or null when the remote has none. Holi syncs this
+   * branch and no other. */
   defaultBranch: string | null
   ahead: number
   behind: number
   dirty: boolean
   /**
    * Vault-relative paths of everything changed, untracked or unmerged. Empty
-   * exactly when `dirty` is false.
-   *
-   * FR-4's commit message is built from this: `Update <path>` for one file, a
-   * count for several. Without it the loop knows only *that* something changed.
+   * exactly when `dirty` is false. The autosave commit message is built from it.
    */
   dirtyPaths: string[]
   /** A merge is in progress — the state a reconcile runs inside. */
@@ -149,9 +139,8 @@ export interface Commit {
   /** ISO 8601, author date. */
   date: string
   author: string
-  /** Lines added across the commit, summed over its files — or over the ONE
-   *  file when `log` was given a path, which is the more useful number there.
-   *  Named to match `RangeFile`, which counts the same thing. */
+  /** Lines added across the commit, summed over its files, or over the ONE
+   *  file when `log` was given a path. */
   added: number
   removed: number
 }
@@ -169,10 +158,8 @@ export interface RangeFile {
 export interface GitRepo {
   readonly root: string
   status(): Promise<RepoStatus>
-  /** The current commit, or **null** on an unborn branch — a vault that has been
-   *  cloned or initialised and has no commits yet. Null rather than a throw
-   *  because that is a real state of a real vault, which `RepoStatus.unborn`
-   *  already names. */
+  /** The current commit, or **null** on an unborn branch (no commits yet): a
+   *  real state of a real vault, not an error. */
   head(): Promise<string | null>
   /** The paths changed across `from..to`, with line counts.
    *
@@ -201,9 +188,9 @@ export interface GitRepo {
   remerge(): Promise<PullResult>
   /** Push local commits to the default branch. The caller recovers from a
    * non-fast-forward rejection by pulling and retrying (`active-vault.ts`
-   * §pushNow) — there is no publish combinator, because push is automatic. */
+   * `pushNow`). */
   push(): Promise<PushResult>
-  /** FR-20. A no-op when no merge is in progress. */
+  /** A no-op when no merge is in progress. */
   abortMerge(): Promise<void>
   /** Stage everything and commit. Returns the new sha, or **null** when the tree
    * was already clean — "nothing to commit" is the normal outcome of an idle
@@ -218,20 +205,16 @@ export interface GitRepo {
 }
 
 /**
- * Why a push was refused — or `null` when we genuinely cannot tell.
+ * Why a push was refused, or `null` when we genuinely cannot tell.
  *
- * **Returning null matters as much as the two answers.** The caller renders this
- * to the user, and FR-16 is specifically that a permission failure must never be
- * confused with a network or merge failure. The inverse is just as bad: calling
- * a full disk or a DNS failure "you no longer have write access" sends someone
- * to their GitHub settings to fix a problem that is not there. An unrecognised
- * failure stays an unrecognised failure.
+ * **Returning null matters as much as the two answers.** A permission failure
+ * must never be confused with a network or merge failure, and the inverse
+ * (calling a full disk "you no longer have write access") sends someone to fix
+ * a problem that is not there.
  *
- * The permission case is matched on stderr rather than porcelain because a
- * transport-level auth failure kills the push before any ref is negotiated, so
- * there is no porcelain line to read. That is the one documented exception to
- * the "plumbing and porcelain only" rule, and it exists because the information
- * is nowhere else.
+ * The permission case is matched on stderr because a transport-level auth
+ * failure kills the push before any ref is negotiated, so there is no porcelain
+ * line to read: the one exception to the "plumbing and porcelain only" rule.
  */
 export function classifyPushFailure(
   stdout: string,
@@ -292,43 +275,36 @@ export async function runGit(cwd: string, args: string[], opts: RunOpts = {}): P
 /**
  * Did this command lose the race for `.git/index.lock`?
  *
- * Worth naming rather than matching inline, because the *caller* has to be able
- * to tell this apart from the failures that share its shape. A merge that
- * cannot take the index reports no unmerged paths, which is indistinguishable
- * from a merge that was refused for any other reason — and calling either one a
- * conflict latches FR-12's sticky pause on a race that will be over in 200 ms.
+ * The caller must tell this apart from failures of the same shape: a merge that
+ * cannot take the index reports no unmerged paths, and calling it a conflict
+ * latches the sticky sync pause on a race that will be over in 200 ms.
  */
 export function isIndexLockFailure(outcome: { ok: boolean; stderr: string }): boolean {
   return !outcome.ok && INDEX_LOCK.test(outcome.stderr)
 }
 
-/** The same question, asked of a `GitError` that was thrown rather than an
- *  outcome that was returned — which is the form it reaches a `catch` in. */
+/** The same question, asked of a thrown `GitError`. */
 export function isIndexLockError(err: unknown): boolean {
   return err instanceof GitError && INDEX_LOCK.test(err.stderr)
 }
 
 const INDEX_LOCK = /index\.lock/
 
-/** Long enough to outlast a commit — measured at ~215 ms on an 800-file vault —
- *  and short enough that a stale lock is reported rather than waited on. */
+/** Long enough to outlast a commit (~215 ms on an 800-file vault) and short
+ *  enough that a stale lock is reported rather than waited on. */
 const LOCK_ATTEMPTS = 5
 const LOCK_BACKOFF_MS = 80
 
 /**
- * Run one git command and report how it went without throwing.
- *
- * Failure is an ordinary outcome for several operations here — a merge that
- * conflicts, a push that is rejected — and each carries information in its exit
- * code that an exception would flatten into a message.
+ * Run one git command and report how it went without throwing. Failure is an
+ * ordinary outcome here (a conflicting merge, a rejected push) and its exit code
+ * carries information an exception would flatten.
  *
  * **Except losing `index.lock`, which is retried rather than reported.** The
- * vault clone is deliberately legible and the agent has `Bash`, so a git the
- * user ran can hold the index while this one wants it — and git itself does not
- * retry, it fails. Measured: `git status` neither takes the lock nor fails on
- * it, so the contended window is only the commit and the merge. Waiting it out
- * here is the direction we control; the reverse direction (our loop failing the
- * user's `git checkout`) is accepted and documented.
+ * user's or the agent's own git can hold the index, and git does not retry.
+ * `git status` neither takes the lock nor fails on it, so the contended window
+ * is only the commit and the merge. The reverse direction (our loop failing the
+ * user's `git checkout`) is accepted.
  */
 export async function tryGit(cwd: string, args: string[], opts: RunOpts = {}): Promise<GitOutcome> {
   for (let attempt = 1; ; attempt++) {
@@ -390,14 +366,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   const opts: RunOpts = { token: deps.token, gitPath: deps.gitPath, env: deps.env }
 
   /**
-   * Identity flags for a commit — **only** when the machine has none.
+   * Identity flags for a commit, **only** when the machine has none.
    *
    * `-c user.email=…` overrides rather than defaults, so passing it
-   * unconditionally would author every commit as Holi and throw away the user's
-   * real name in the shared history. But a machine that has never run
-   * `git config --global user.email` cannot commit at all, and requiring that
-   * setup before Holi works would be a bad first run. So: ask, and fill in only
-   * the gap.
+   * unconditionally would author every commit as Holi. But a machine with no
+   * configured identity cannot commit at all, so fill in only the gap.
    */
   async function identityArgs(): Promise<string[]> {
     const configured = await runGit(root, ['config', '--get', 'user.email'], opts).catch(() => '')
@@ -407,22 +380,16 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   /**
-   * Fetch, then merge — the inbound half of sync (FR-9, FR-10, FR-12).
+   * Fetch, then merge: the inbound half of sync.
    *
    * **Merge, never rebase.** With dozens of unpushed autosave commits a rebase
-   * replays each one and can conflict *repeatedly on the same hunk* — a failure
-   * mode manufactured entirely by autosave granularity. Merge resolves the
-   * divergence once. Non-linear history is the accepted price.
+   * replays each one and can conflict *repeatedly on the same hunk*. Merge
+   * resolves the divergence once; non-linear history is the accepted price.
    *
-   * (Note it is `git merge`, not `git pull --no-rebase`: fetch and merge are two
-   * observable steps, and `git merge` rejects `--no-rebase` outright since a
-   * merge is already not a rebase.)
-   *
-   * **A conflict aborts before this returns.** A conflicted tree holds files
-   * full of `<<<<<<<` markers, and autosave would commit them without hesitating.
-   * Aborting means the failure is *announced* rather than *inflicted*: ignore the
-   * banner and you keep working on an unbroken vault. The conflict is then
-   * re-created deliberately, once, when someone chooses to deal with it.
+   * **A conflict aborts before this returns.** Autosave would otherwise commit
+   * files full of `<<<<<<<` markers. Aborting means the failure is announced
+   * rather than inflicted; `remerge` re-creates it when someone chooses to deal
+   * with it.
    */
   async function pull(): Promise<PullResult> {
     const target = (await defaultBranch()) ?? 'HEAD'
@@ -481,14 +448,11 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   /**
-   * The file's — or the vault's — history. There is no snapshot store; git's
-   * object store is the snapshot store, and autosave commits are what give it
-   * resolution.
+   * The file's, or the vault's, history. Git's object store is the snapshot
+   * store, and autosave commits give it resolution.
    *
-   * Fields are delimited with **US (0x1f)** and records with NUL, neither of
-   * which a human can type into a commit subject. A subject is arbitrary user
-   * text, so delimiting on anything typeable — a tab, a pipe — would let a
-   * commit message corrupt the parse of the log it appears in.
+   * Fields are delimited with **US (0x1f)**, which nobody types into a commit
+   * subject, so a commit message cannot corrupt the parse.
    */
   async function log(o: { path?: string; limit?: number } = {}): Promise<Commit[]> {
     // **RS (0x1e) leads each record, rather than `-z` separating them.**
@@ -516,7 +480,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
         // `<added>\t<removed>\t<path>`. The path is deliberately not read: it
         // is the one field git may quote, and the counts are all this needs.
         // A BINARY file reports `-` for both, which `Number` makes NaN and `||`
-        // makes 0 — an image has no lines, and calling that zero is right.
+        // makes 0: an image has no lines.
         let added = 0
         let removed = 0
         for (const line of stats) {
@@ -530,12 +494,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       })
   }
 
-  /** A file's content at a commit — `git show <sha>:<path>`. The output is the
-   * raw blob, not porcelain, so capturing it whole does not break the "parse only
-   * plumbing" rule — and unlike `runGit`, this must **not** trim: restore writes
-   * the result back verbatim, and a stripped trailing newline is a real edit.
-   * Rejects (a `GitError`) when the path does not exist at that commit, which is
-   * the signal the caller wants. */
+  /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
+   * restore writes the result back verbatim, and a stripped trailing newline is
+   * a real edit. Rejects (a `GitError`) when the path does not exist at `sha`. */
   async function show(sha: string, path: string): Promise<string> {
     const res = await tryGit(root, ['show', `${sha}:${path}`], opts)
     if (!res.ok) {
@@ -548,9 +509,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return res.stdout
   }
 
-  /** The paths a commit changed vs its first parent (`--root` so the initial
-   * commit lists its files). Plumbing (`diff-tree`), so the newline-separated
-   * output is a stable interface. */
   async function changedFiles(sha: string): Promise<string[]> {
     const out = await runGit(
       root,
@@ -571,10 +529,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   /**
    * `from..to`, as paths with line counts.
    *
-   * **Two calls, not one.** `--numstat` and `--name-status` cannot be combined:
-   * passing both to one `git diff` silently drops the counts — the last flag
-   * wins and you get name-status output with no error and no complaint. That was
-   * found by running it, and it is why this joins two results on the path.
+   * **Two calls, not one.** Passing `--numstat` and `--name-status` to one
+   * `git diff` silently drops the counts (the last flag wins), so this joins two
+   * results on the path.
    */
   async function rangeFiles(from: string, to: string): Promise<RangeFile[]> {
     const range = `${from}..${to}`
@@ -624,29 +581,22 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return out
   }
 
-  /** FR-20. A no-op when no merge is in progress, so the control can be pressed
-   * twice without turning into an error. */
+  /** A no-op when no merge is in progress, so the control can be pressed twice
+   * without turning into an error. */
   async function abortMerge(): Promise<void> {
     if (await isMerging()) await runGit(root, ['merge', '--abort'], opts)
   }
 
   /**
-   * The outbound half — and the only thing that leaves the machine (FR-13).
-   *
-   * `--porcelain` keeps the containment rule: the per-ref result comes back as
-   * `<flag>\t<from>:<to>\t<summary>` rather than as the prose git prints for
-   * humans. A transport-level auth failure is the one case with no porcelain
-   * representation — the push dies before any ref is negotiated — so that is
-   * matched on stderr, which is the only place the information exists.
+   * The outbound half, and the only thing that leaves the machine. `--porcelain`
+   * gives the per-ref result as `<flag>\t<from>:<to>\t<summary>`; see
+   * `classifyPushFailure` for the stderr exception.
    */
   async function push(): Promise<PushResult> {
     const target = (await defaultBranch()) ?? (await status()).branch
-    // A repo created empty (`auto_init: false`, then pushed to) has no
-    // `origin/<target>` ref yet, so `origin/<target>..HEAD` *errors* — which
-    // means "this branch does not exist upstream", i.e. every local commit is
-    // waiting, NOT "nothing to push". Swallowing that error as 0 is what left
-    // brand-new vaults silently unpushed and unclonable. Distinguish the two by
-    // checking the ref exists before counting against it.
+    // A repo created empty has no `origin/<target>` ref yet, so
+    // `origin/<target>..HEAD` *errors*, meaning every local commit is waiting,
+    // NOT "nothing to push". Check the ref exists before counting against it.
     const hasUpstream = await runGit(
       root,
       ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${target}`],
@@ -692,12 +642,6 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return runGit(root, ['rev-parse', 'HEAD'], opts)
   }
 
-  /**
-   * "Commit anyway" for a held-back file: stage exactly this path and commit it
-   * with `--no-verify` — the one deliberate bypass of the large-file pre-commit
-   * hook, for a file the user has decided belongs in git. Returns null when the
-   * path is not dirty (nothing to stage), never an empty commit.
-   */
   async function commitFileNoVerify(path: string): Promise<string | null> {
     await runGit(root, ['add', '--', path], opts)
     if ((await tryGit(root, ['diff', '--cached', '--quiet'], opts)).ok) return null
@@ -705,12 +649,9 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     return runGit(root, ['rev-parse', 'HEAD'], opts)
   }
 
-  /**
-   * "Keep local" for a held-back file: append it to `.git/info/exclude` — git's
-   * machine-local ignore, uncommitted, so it never touches the shared `.gitignore`
-   * (another clone decides for itself). An untracked file listed here stops
-   * showing as dirty, so it leaves the held-back set on its own.
-   */
+  /** Uses `.git/info/exclude`, not the shared `.gitignore`: another clone
+   * decides for itself. An untracked file listed here stops being dirty, so it
+   * leaves the held-back set on its own. */
   async function excludeLocally(path: string): Promise<void> {
     const excludeFile = join(root, '.git', 'info', 'exclude')
     await mkdir(dirname(excludeFile), { recursive: true })
@@ -718,12 +659,8 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
   }
 
   /**
-   * `git status --porcelain=v2 --branch -z`, and nothing else.
-   *
-   * Porcelain v2's `# branch.*` headers carry everything the vault indicator
-   * needs, and the entry lines that follow are the dirtiness. `-z` makes the
-   * record separator NUL, which matters: a path containing a newline would
-   * corrupt a line-based parse, and git will happily track one.
+   * `git status --porcelain=v2 --branch -z`, and nothing else. `-z` matters:
+   * a path containing a newline would corrupt a line-based parse.
    */
   async function status(): Promise<RepoStatus> {
     const raw = await runGit(
@@ -744,11 +681,7 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
       const record = records[i]!
       if (record === '') continue
       if (!record.startsWith('# ')) {
-        // Any entry at all — changed, untracked or unmerged — means dirty.
-        //
-        // The path is the remainder after a fixed number of space-separated
-        // fields, counted rather than found by the last space: git tracks paths
-        // containing spaces and a `lastIndexOf(' ')` would truncate them.
+        // Any entry at all (changed, untracked or unmerged) means dirty.
         const kind = record[0]
         if (kind === '1') dirtyPaths.push(pathAfter(record, 8))
         else if (kind === '2') {
@@ -842,23 +775,17 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
 }
 
 /**
- * `owner/repo` -> the HTTPS URL git clones from.
- *
- * Owned here so no caller ever hand-builds one — which is how a token ends up
- * embedded in a remote URL and then persisted into `.git/config`. The credential
- * arrives via GIT_ASKPASS instead, and this URL stays clean enough to show a
- * user or paste into a terminal.
+ * `owner/repo` -> the HTTPS URL git clones from. Owned here so no caller
+ * hand-builds one with a token embedded, which would persist into `.git/config`.
+ * The credential arrives via GIT_ASKPASS instead.
  */
 export function remoteUrl(remote: string): string {
   return `https://github.com/${remote}.git`
 }
 
 /**
- * Clone a vault.
- *
- * `url` rather than `owner/repo` so tests can point at a local bare repo;
- * production callers pass `remoteUrl(remote)`. The Holi-managed root that
- * `dest` lives under is the registry's business, not this module's (FR-1).
+ * Clone a vault. `url` rather than `owner/repo` so tests can point at a local
+ * bare repo; production callers pass `remoteUrl(remote)`.
  */
 export async function cloneRepo(
   args: { url: string; dest: string },

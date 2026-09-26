@@ -1,8 +1,7 @@
 /**
- * Daily notes, main-side (`daily-notes.md`). The server going away made this
- * small: creating today's note is `if (!exists) write(seed)`, and the guarantee
- * that two of your devices don't mint two notes for one day is the deterministic
- * path + deterministic seed, not a server upsert.
+ * Daily notes, main-side (docs/features/daily-notes.md). Creating today's note
+ * is `if (!exists) write(seed)`; two devices never mint two notes for one day
+ * because the path and the seed are both deterministic.
  *
  * The sweep is the only place a background process rewrites the vault's shape,
  * so it reuses the standard rename move (link rewrite included) and its caller
@@ -21,7 +20,7 @@ import { renameNote } from './rename'
 import { absPathFor, listFiles, removeDocFile, writeAtomic } from './vault-files'
 
 /** Create today's `DD-MM-YYYY.md` at the root if absent, else return it. The
- *  seed is byte-for-byte deterministic (FR-3), so two offline devices write an
+ *  seed is byte-for-byte deterministic, so two offline devices write an
  *  identical blob at an identical path and git merges them with no conflict. */
 export async function getOrCreateDaily(
   root: string,

@@ -1,23 +1,14 @@
 /**
- * `normalize-md` — safe, idempotent, invisible changes only.
+ * `normalize-md`: safe, idempotent, invisible changes only.
  *
- * **No prose reflow, ever.** The editor autosaves and Holi auto-commits, so
- * this fires on a file the user has open, mid-sentence, while they are typing
- * in it. Anything that moves text moves their cursor. This repo's own memory
- * records that `prettier --write` corrupts it; a vault's notes deserve more
- * caution than a codebase, not less.
+ * **No prose reflow, ever.** Autosave plus auto-commit means this fires on a
+ * file the user is typing in, and anything that moves text moves their cursor.
+ * The list is trailing whitespace, a missing final newline, and a task file's
+ * canonical frontmatter; a fourth item has to argue for itself.
  *
- * Everything here is a change the author would not have noticed themselves
- * making, and would not notice being made: trailing whitespace, a missing final
- * newline, and a task file's frontmatter key order. That is the entire list, and
- * a fourth item should have to argue for itself against this paragraph.
- *
- * It works on the **staged set only**, never the whole vault — a transform that
- * rewrites files nobody was editing turns one save into a hundred-file diff.
- *
- * The rule itself lives in `@holi/shared` (`normalizeText`), because the editor
- * has to recognise this transform's own output to avoid reading it as a foreign
- * edit. This module is the filesystem around it.
+ * **Staged set only**, never the whole vault, so one save is never a
+ * hundred-file diff. The rule lives in `@holi/shared` (`normalizeText`) because
+ * the editor must recognise this transform's output as not a foreign edit.
  */
 import { readFile } from 'node:fs/promises'
 import { normalizeText, vaultRelPath } from '@holi/shared'

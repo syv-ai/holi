@@ -5,8 +5,7 @@
  * The frontmatter block shows these beside the fields, read-only. None of them
  * is written into the file, because each already has an authority that a copy
  * could only drift from: git's history for the first three, the vault's
- * wiki-links for the last. `created` used to be a frontmatter date for exactly
- * that reason's opposite, and stopped being one.
+ * wiki-links for the last.
  */
 import { parseWikiLinks } from '@holi/shared'
 import type { Commit } from '../git'

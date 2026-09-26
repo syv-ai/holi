@@ -1,15 +1,10 @@
 /**
- * The router — main's typed API, and the seam the renderer calls.
- *
- * It used to proxy to the Syv server; it now reads and writes the clone. The
- * *shape* survives that change on purpose (architecture §9): the renderer keeps
- * calling a typed router over IPC, so the pivot is an implementation swap rather
- * than a rewrite of every call site. The signatures do change — identity is a
- * path now, not a `docId` — and that is the part call sites feel.
+ * The router: main's typed API, and the seam the renderer calls over IPC.
+ * Documents are identified by vault-relative path.
  *
  * There is deliberately **no authorization here**, and there must never be one:
  * with no server, a check running on the machine of the person it restricts is
- * theatre. GitHub decides what leaves, at push time (auth PRD §Access model).
+ * theatre. GitHub decides what leaves, at push time (docs/features/auth.md).
  */
 import { readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -105,8 +100,8 @@ import { ensureTypst } from './pdf/typst-bin'
 const t = initTRPC.create()
 
 /**
- * What the renderer is allowed to know about who is signed in — FR-5, and
- * nothing beyond it.
+ * What the renderer is allowed to know about who is signed in, and nothing
+ * beyond it.
  *
  * Hand-written rather than `Omit<StoredAuth, 'token'>`, because an `Omit` would
  * silently re-include whatever gets added to `StoredAuth` later. `accountId` is
@@ -125,21 +120,20 @@ export interface RouterDeps {
   /**
    * The Google connector (D67), when configured.
    *
-   * Optional so every existing router test keeps constructing deps without it —
-   * and so the app still runs when the Google client id has not been filled in.
-   * The `google.*` procedures refuse with a clear precondition failure rather
-   * than pretending to be connected.
+   * Optional so the app still runs when the Google client id has not been
+   * filled in. The `google.*` procedures refuse with a clear precondition
+   * failure rather than pretending to be connected.
    */
   googleAccounts?: GoogleAccountsManager
   /**
-   * Which calendars the user has switched on. Optional for the same reason as
-   * `googleSession`; absent means every calendar follows the default rule, and
+   * Which calendars the user has switched on. Optional like `googleAccounts`;
+   * absent means every calendar follows the default rule, and
    * `google.setCalendar` refuses rather than pretending to remember.
    */
   calendarPrefs?: CalendarPrefsStore
   /**
    * The UI's cached Google data. Optional like the two above; absent means
-   * every read goes to Google, which is exactly how the pillar shipped.
+   * every read goes to Google.
    *
    * **The agent's ops server is deliberately not given this** — it asks for
    * current data and must not be handed a stale answer (D67).
@@ -175,21 +169,19 @@ export interface RouterDeps {
    * Electron's `shell.openExternal`, injected rather than imported so this
    * module keeps typechecking and testing under plain Node.
    *
-   * Two requirements need it: FR-2 opens `github.com/login/device` in the
-   * **system** browser, so the grant reuses the user's existing GitHub session
-   * and no credential enters the app's web context; and FR-11 deep-links to the
-   * repo's collaborator settings, because Holi does not implement invitation.
+   * Sign-in opens `github.com/login/device` in the **system** browser, so the
+   * grant reuses the user's existing GitHub session and no credential enters
+   * the app's web context; sharing deep-links to the repo's collaborator
+   * settings, because Holi does not implement invitation.
    */
   openExternal: (url: string) => Promise<void>
   /**
    * Move a directory to the OS trash (Electron's `shell.trashItem`), injected
-   * for the same reason as `openExternal` — the router stays electron-free and
-   * testable under plain Node.
+   * for the same reason as `openExternal`.
    *
-   * Sign-out's "also delete local clones" (FR-15) uses this rather than a hard
-   * `rm`, on purpose: a clone removed by mistake — or the user's private vault —
-   * is recoverable from the trash and can be re-ingested. A destructive account
-   * action should be undoable.
+   * Sign-out's "also delete local clones" uses this rather than a hard `rm`, on
+   * purpose: a clone removed by mistake is recoverable from the trash. A
+   * destructive account action should be undoable.
    */
   trashItem: (path: string) => Promise<void>
   /** Absolute dir the Convert-to-PDF output is written to (the user's Downloads).
@@ -206,8 +198,7 @@ export interface RouterDeps {
    *
    * Separate from `now()` rather than sliced off it: `now()` is a UTC instant,
    * and for anyone west of Greenwich its date reads as yesterday for part of the
-   * evening. With no server left, the machine's local time is the only frame
-   * there is — and it is the one the reminder anchor already uses.
+   * evening. The machine's local time is the only frame there is.
    */
   today?: () => string
 }
@@ -250,12 +241,8 @@ type Parsed<T extends Record<string, FieldKind>> = {
 }
 
 /**
- * Booleans are **checked, never coerced.**
- *
- * This validator was string-only for a reason worth keeping now that it is not:
- * a coerced `"false"` reads as true, which is how a calendar silently switches
- * back on. So a `boolean` field demands an actual boolean and throws on
- * anything else, rather than accepting the string form and guessing.
+ * Booleans are **checked, never coerced**: a coerced `"false"` reads as true,
+ * which is how a calendar silently switches back on.
  */
 function fields<T extends Record<string, FieldKind>>(spec: T) {
   return (raw: unknown): Parsed<T> => {
@@ -291,9 +278,8 @@ const MAIL_CATEGORIES: readonly MailCategory[] = [
  * object. Validated for **shape** only — the semantic rules stay in
  * `buildRfc822`, which is the last thing to see the message and already refuses
  * a newline in any header and an empty `html` that had body text to render.
- * Duplicating those here would mean two places to disagree, and the plan's
- * stricter "reject any empty html" would have re-broken sending an empty
- * message.
+ * Duplicating those here would mean two places to disagree, and a stricter
+ * "reject any empty html" would break sending an empty message.
  */
 function composeInput(raw: unknown): {
   draftId?: string
@@ -367,7 +353,7 @@ function composeInput(raw: unknown): {
   }
 }
 
-/** A category arrives as a string (`fields` is string-only) and is narrowed
+/** A category arrives as a string and is narrowed
  *  here. An unknown value means "no category", not an error: the worst it can
  *  do is compose a query Gmail answers nothing to. */
 function asMailCategory(value: string | undefined): MailCategory | undefined {
@@ -382,7 +368,7 @@ function asMailbox(value: string | undefined): MailboxName | undefined {
   return value === 'sent' ? 'sent' : undefined
 }
 
-/** Batch inputs the string-only `fields` helper cannot express. Each throws on a
+/** Batch inputs the `fields` helper cannot express. Each throws on a
  *  bad shape; tRPC turns that into a BAD_REQUEST. The RETURN type is the client's
  *  input contract (tRPC infers it), so the keys here are what callers pass. */
 function pairsOf(raw: unknown, key: 'moves' | 'copies'): { from: string; to: string }[] {
@@ -426,11 +412,10 @@ function pathsInput(raw: unknown): { remote: string; paths: string[] } {
   return { remote, paths: paths as string[] }
 }
 
-/** The Convert-to-PDF render input. The three string fields ride the string-only
- * `fields` helper; `meta` (the template's declared fields → user values) and the
- * optional `outPath` (an absolute destination the native save dialog chose) do
- * not, so they are validated here — the same split `movesInput`/`pathsInput` use.
- * `outPath` absent → the procedure defaults to Downloads (the agent path). */
+/** The Convert-to-PDF render input. `meta` (the template's declared fields to
+ * user values) is not something `fields` can express, so it is validated here.
+ * `outPath` is an absolute destination the native save dialog chose; absent,
+ * the procedure writes to Downloads. */
 function renderPdfInput(raw: unknown): {
   remote: string
   path: string
@@ -466,19 +451,13 @@ export function createRouter(deps: RouterDeps) {
   /**
    * A write must be visible to the very next read.
    *
-   * `vaults.snapshot` answers from `ActiveVault`'s cache, and that cache was
-   * refreshed only by the filesystem watcher — which is documented as a *hint*
-   * and genuinely drops `add` events on macOS. So the renderer's create-then-
-   * re-read (`createNoteAtom`) raced a debounce it could not see: the new note
-   * did not appear, creating it again failed with "already exists" for a file
-   * the user had no way to know was there, and it finally surfaced on a later
-   * heal tick.
+   * `vaults.snapshot` answers from `ActiveVault`'s cache, and the filesystem
+   * watcher is only a *hint* that genuinely drops `add` events on macOS, so a
+   * create-then-re-read would race a debounce the renderer cannot see.
    *
-   * Rescanning here rather than in `vaults.snapshot` keeps the read cheap and
-   * the cache meaningful — a read is answered from memory, and a *write* is what
-   * invalidates it. That is also why this is a middleware and not a line at the
-   * end of each mutation: the next write procedure gets it without remembering
-   * to.
+   * Rescanning here rather than in `vaults.snapshot` keeps the read cheap: a
+   * read is answered from memory, and a *write* is what invalidates it. A
+   * middleware, so the next write procedure gets it without remembering to.
    *
    * It refreshes even when the mutation failed, on purpose. "Already exists" is
    * precisely the case where the caller's picture of the vault is wrong, so that
@@ -560,9 +539,8 @@ export function createRouter(deps: RouterDeps) {
    *
    * Runs wherever `ensureSeeded` does and always **ahead of `host.open`**, for
    * the seed's reason and a sharper one: the renderer keys registration on
-   * `app.yaml`, so an app written before the manifest existed is missing from
-   * the first snapshot and arrives only on the next rescan — a slice-1 app
-   * blinking out of the sidebar and back on every single open.
+   * `app.yaml`, so an app without one would be missing from the first snapshot
+   * and blink into the sidebar only on the next rescan.
    */
   async function migrateApps(root: string): Promise<void> {
     const migrated = await migrateAppManifests(root)
@@ -588,8 +566,7 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /** Every path from the renderer or the agent re-validates here. This is the
-   * only thing between an input and the user's filesystem now that server-side
-   * authorization is gone (architecture §10). */
+   * only thing between an input and the user's filesystem (architecture §8). */
   function safe(path: string): VaultRelPath {
     try {
       return vaultRelPath(path)
@@ -608,7 +585,7 @@ export function createRouter(deps: RouterDeps) {
     }
   }
 
-  /** The renderer-facing projection of the session (FR-5). */
+  /** The renderer-facing projection of the session. */
   function publicViewer(): PublicViewer | null {
     const v = deps.session.viewer
     return v === null ? null : { login: v.login, name: v.name, avatarUrl: v.avatarUrl }
@@ -630,8 +607,8 @@ export function createRouter(deps: RouterDeps) {
    * Every GitHub call goes through here, so the mapping from *which kind of no*
    * to what the renderer is told lives in one place.
    *
-   * The SSO URL rides in the message because it is advice for a human — a
-   * `FORBIDDEN` with no URL is the dead end the PRD calls out by name.
+   * The SSO URL rides in the message because it is advice for a human: a
+   * `FORBIDDEN` with no URL is a dead end.
    */
   async function gh<T>(fn: () => Promise<T>): Promise<T> {
     // Refuse before the request rather than sending an unauthenticated one and
@@ -698,7 +675,7 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     signOut: t.procedure.mutation(async () => {
-      // FR-15: the keychain entry goes, the clones stay. `vaults.remove` is a
+      // The keychain entry goes, the clones stay. `vaults.remove` is a
       // separate, deliberate act.
       await deps.session.signOut()
       return { ok: true as const }
@@ -728,8 +705,7 @@ export function createRouter(deps: RouterDeps) {
     openCollaboratorSettings: t.procedure
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }) => {
-        // FR-11. Holi does not implement invitation; it points at the flow
-        // that does.
+        // Holi does not implement invitation; it points at the flow that does.
         await deps.openExternal(`https://github.com/${safeRemote(input.remote)}/settings/access`)
         return { ok: true as const }
       }),
@@ -752,18 +728,12 @@ export function createRouter(deps: RouterDeps) {
         // than from a second read that could already disagree with it.
         const root = await rootFor(input.remote)
         /**
-         * Seed on **open**, not only on clone (D70).
+         * Seed on **open**, not only on clone (D70), so a vault created before
+         * a managed file existed still receives it. Without this the mail send
+         * gate would be absent from every established vault.
          *
-         * `ensureSeeded` has always said it is "safe to run on every vault
-         * activation", and was wired only to `addVault` — so a vault created
-         * before a managed file existed never received it. That is not a
-         * cosmetic gap: it is how the send gate would have been absent from
-         * every established vault, with `send` reaching a real mailbox and
-         * nothing asking first.
-         *
-         * Before `host.open`, for `addVault`'s reason — the seed lands before
-         * the vault goes live, so nothing can be committed ahead of the
-         * `.gitignore`.
+         * Before `host.open`, for `addVault`'s reason: nothing can be committed
+         * ahead of the `.gitignore`.
          */
         await ensureSeeded(root)
         await migrateApps(root)
@@ -776,15 +746,15 @@ export function createRouter(deps: RouterDeps) {
 
     add: t.procedure
       .input(fields({ remote: 'string', url: 'string?' }))
-      // FR-7: clone the chosen repo into the managed root and open it — but only
-      // if it is already a vault (see `addVault`'s `requireVault`).
+      // Clone the chosen repo into the managed root and open it, but only if it
+      // is already a vault (see `addVault`'s `requireVault`).
       .mutation(({ input }) =>
         addVault(safeRemote(input.remote), input.url, { requireVault: true }),
       ),
 
     create: t.procedure
       .input(fields({ name: 'string', owner: 'string?', url: 'string?' }))
-      // FR-8: a private repo, seeded, committed, pushed, opened.
+      // A private repo, seeded, committed, pushed, opened.
       .mutation(async ({ input }): Promise<VaultSnapshot> => {
         const repo = await gh(() =>
           deps.session.api.createRepo({ name: input.name, owner: repoOwner(input.owner) }),
@@ -792,18 +762,17 @@ export function createRouter(deps: RouterDeps) {
         const snapshot = await addVault(repo.remote, input.url)
         // The seed is the repo's first commit, and it has to leave the machine:
         // a "vault" that exists only locally is not one anybody can be invited
-        // to. Push is automatic now, but a brand-new repo should not wait out the
-        // coalesce timer to become shareable, so kick it explicitly.
+        // to. A brand-new repo should not wait out the coalesce timer to become
+        // shareable, so kick the push explicitly.
         const active = deps.host.active()
         if (active !== null) {
           await active.commitNow()
           await active.pushNow()
         }
-        // Mark it a vault ONLY here — after its content has been pushed. The
-        // topic is what the picker filters on, so setting it before the push
-        // (as this once did) is exactly what leaves a topic'd-but-empty repo in
-        // everyone's "join" list that the adopt guard then rightly refuses. A
-        // repo carrying the topic now means a repo with a vault on the remote.
+        // Mark it a vault ONLY here, after its content has been pushed. The
+        // topic is what the picker filters on, so setting it earlier would leave
+        // a topic'd-but-empty repo in everyone's "join" list that the adopt
+        // guard then refuses.
         await gh(() => deps.session.api.markVault(repo.remote))
         return snapshot
       }),
@@ -815,10 +784,10 @@ export function createRouter(deps: RouterDeps) {
     remove: t.procedure
       .input(fields({ remote: 'string' }))
       // Deregisters the vault; the clone stays on disk. Deleting someone's files
-      // — which may hold unpublished commits — is never a side effect here.
+      // — which may hold unpushed commits — is never a side effect here.
       .mutation(({ input }) => deps.registry.remove(input.remote)),
 
-    // What "also delete local clones" would throw away (FR-15 / Open-Q3). One
+    // What "also delete local clones" would throw away. One
     // entry per registered clone with commits that never reached the remote, so
     // the sign-out dialog can warn before deleting. Advisory and best-effort: a
     // clone whose status can't be read (a local-fixture repo, a broken clone) is
@@ -837,9 +806,9 @@ export function createRouter(deps: RouterDeps) {
       return out
     }),
 
-    // Sign-out's optional "also delete local clones" (FR-15). **Recoverable on
+    // Sign-out's optional "also delete local clones". **Recoverable on
     // purpose:** each clone goes to the OS trash, not `rm -rf`, so a vault
-    // deleted by mistake — or a private one — can be restored and re-ingested.
+    // deleted by mistake can be restored.
     //
     // Close the active vault first: its watcher and autosave/push timers run on
     // the clone dir, and trashing it out from under them would fire events into a
@@ -938,14 +907,11 @@ export function createRouter(deps: RouterDeps) {
             status: patch.status ?? 'todo',
             tags: [],
             // The title goes in as the body's first heading, because that is
-            // where the format keeps it — `create` is the only writer that has
-            // a title and no document to have written it in.
+            // where the format keeps it.
             //
-            // `description` is optional and empty for every existing caller. The
-            // agenda's create-from-event uses it to seed the body with the
-            // event's markdown link — which under D67 *is* the whole
-            // representation of the link, so dropping it would defeat the
-            // feature silently. The heading lands above it.
+            // The agenda's create-from-event uses `description` to seed the body
+            // with the event's markdown link, which under D67 *is* the whole
+            // representation of the link. The heading lands above it.
             description: setFirstHeading(input.description ?? '', input.title),
           }),
         )
@@ -960,8 +926,8 @@ export function createRouter(deps: RouterDeps) {
       .mutation(async ({ input }): Promise<Task> => {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
-        // Read-modify-write. There is no record to patch — the file is the task,
-        // so an edit is a parse, a merge and a full rewrite. The merge SPREADS
+        // Read-modify-write: the file is the task, so an edit is a parse, a
+        // merge and a full rewrite. The merge SPREADS
         // rather than testing for undefined: a key present-and-undefined is how
         // `parseTaskPatch` spells "clear this field".
         const next = { ...(await readTask(root, rel)), ...input.patch }
@@ -991,21 +957,19 @@ export function createRouter(deps: RouterDeps) {
 
     /**
      * The horizontal drag axis: moving a card to another lane moves the
-     * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`
-     * — a task's path is its identity, so a lane change IS a rename, reusing the
-     * one link-rewriting pass notes already own (`renameNote`), never a second
-     * (D63).
+     * `task.<name>.md` file into that folder and rewrites inbound `[[wiki-links]]`.
+     * A task's path is its identity, so a lane change IS a rename, reusing
+     * `renameNote`'s link-rewriting pass, never a second (D63).
      *
      * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
      * it is written in place first, so the single `renameNote` carries the final
-     * content to the destination — one route call, one write burst, one autosave
-     * commit, and a card is never half-dropped (features/tasks.md). `done`
-     * routes through `rollForward`, never a bare `status: done`, so a recurring
-     * task advances instead of persisting done.
+     * content to the destination and a card is never half-dropped
+     * (docs/features/tasks.md). `done` routes through `rollForward`, so a
+     * recurring task advances instead of persisting done.
      *
      * The basename rides along unchanged (identity slug preserved, not re-slugged
      * from `title`), and a destination that already exists is refused rather than
-     * silently suffixed — that would change an existing task's identity.
+     * silently suffixed, which would change an existing task's identity.
      */
     move: vaultMutation
       .input(fields({ remote: 'string', path: 'string', folder: 'string', status: 'string?' }))
@@ -1047,7 +1011,7 @@ export function createRouter(deps: RouterDeps) {
    *
    * A recurrence with no `due` has nothing to advance from, and one that has run
    * past its `endDate` has nowhere left to go — both end the series rather than
-   * looking set and never firing again (features/tasks.md).
+   * looking set and never firing again (docs/features/tasks.md).
    */
   function rollForward(task: Task): Task {
     const rolled =
@@ -1056,9 +1020,8 @@ export function createRouter(deps: RouterDeps) {
         : null
     if (rolled === null) return { ...task, status: 'done' }
 
-    // An ABSOLUTE reminder is a wall-clock instant tied to the old occurrence, so
-    // it moves by the same delta the due date did. A relative one (`1d`) already
-    // re-resolves against the new `due`, so shifting it would double-count.
+    // A reminder is a wall-clock stamp tied to the old occurrence, so it moves
+    // by the same whole-day delta the due date did.
     const reminder =
       task.reminder === undefined
         ? undefined
@@ -1078,11 +1041,10 @@ export function createRouter(deps: RouterDeps) {
    * frame it mounted, so an app cannot address a vault or a file by claim.
    *
    * Read-only, and narrower than `notes`: the agent surface (`AGENTS.md`,
-   * `CLAUDE.md`, `MEMORY.md`, `USER.local.md`, `.claude/`) is refused outright,
+   * `CLAUDE.md`, `USER.local.md`, `.claude/`, `memory/`) is refused outright,
    * because `.claude/hooks/google-send-gate.mjs` IS the mail send gate and
-   * MEMORY.md is what the user told the assistant.
-   */
-  /**
+   * `memory/` is what the user told the assistant.
+   *
    * Two audiences, and the split matters.
    *
    * `read` / `docs` / `tasks` are what a **vault app** reaches, through the
@@ -1147,10 +1109,10 @@ export function createRouter(deps: RouterDeps) {
    * Bytes for a file the renderer renders itself (D103: the PDF viewer). The
    * `holi-vault://` protocol serves the same bytes to `<img>`, but a renderer
    * `fetch` of it fails on CORS, and giving the protocol a permissive header
-   * would open it to the sandboxed vault-app frames too — a packaged `file://`
+   * would open it to the sandboxed vault-app frames too: a packaged `file://`
    * renderer sends the same `null` origin they do, so no origin check could tell
    * them apart. So bytes cross the IPC seam instead, as a `Uint8Array` that
-   * structured clone carries verbatim; nothing base64 here either.
+   * structured clone carries verbatim.
    */
   const files = t.router({
     read: t.procedure
@@ -1192,12 +1154,10 @@ export function createRouter(deps: RouterDeps) {
         return text
       }),
 
-    /** The file's history (`fileHistory`): its last commit for the summary's
-     *  "last updated", its first for "created", and how many touched it. Null
-     *  when the file has no history yet (new/untracked). Resolved against the
-     *  active vault's live repo; the editor only shows the active vault, so a
-     *  remote is not needed. One `log --follow` per file open, never limited:
-     *  the first commit is the far end of it. */
+    /** The file's last commit, first commit and commit count. Null when the
+     *  file has no history yet. Resolved against the active vault's repo, since
+     *  the editor only shows the active vault. The log is never limited: the
+     *  first commit is the far end of it. */
     fileHistory: t.procedure
       .input(fields({ path: 'string' }))
       .query(async ({ input }): Promise<FileHistory | null> =>
@@ -1225,7 +1185,7 @@ export function createRouter(deps: RouterDeps) {
      * The map rather than the note's frontmatter, whatever the path is: one
      * gesture with one destination is what makes the menu item explicable, and
      * the map is the only home that can serve a folder or a PDF. A note whose
-     * own frontmatter names an icon still outranks whatever lands here — the
+     * own frontmatter names an icon still outranks whatever lands here; the
      * dialog says so rather than letting the write look like it did nothing.
      */
     setIcon: vaultMutation
@@ -1253,9 +1213,9 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
         // Refuse rather than overwrite: "create" that clobbers an existing note
-        // is indistinguishable from losing it. (A task, by contrast, takes a
-        // numeric suffix — see freeTaskPath. The difference is that a note's path
-        // is chosen by the user and a task's is derived from its title.)
+        // is indistinguishable from losing it. A task takes a numeric suffix
+        // instead (freeTaskPath), because its path is derived from its title
+        // rather than chosen by the user.
         if (await exists(root, rel)) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${rel}` })
         }
@@ -1270,7 +1230,7 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const }
       }),
 
-    // FR-12: what links here, so a delete can name what it will turn into
+    // What links here, so a delete can name what it will turn into
     // tombstones rather than silently dangling. The same scan rename rewrites.
     backrefs: t.procedure
       .input(fields({ remote: 'string', path: 'string' }))
@@ -1278,10 +1238,10 @@ export function createRouter(deps: RouterDeps) {
         return scanBackrefs(await rootFor(input.remote), safe(input.path))
       }),
 
-    // FR-11: move the file AND rewrite every inbound [[link]] in one pass. The
+    // Move the file AND rewrite every inbound [[link]] in one pass. The
     // move-half alone silently breaks links, so the two are one procedure. The
     // rewrite runs before the move, so a mid-run failure leaves the source in
-    // place and visible in `git status` (there is no transaction — prd §Rename).
+    // place and visible in `git status` (there is no transaction).
     // Commits are the renderer's job (it flushes and commits around this call).
     rename: vaultMutation
       .input(fields({ remote: 'string', from: 'string', to: 'string' }))
@@ -1298,8 +1258,8 @@ export function createRouter(deps: RouterDeps) {
     // Batch move: one commit-pair from the renderer, one single-pass link
     // rewrite here. The renderer expands a folder to its file list before
     // calling; each `to` outside the moved set must be free (a swap-shaped chain,
-    // where a `to` IS another move's `from`, is allowed — that is the whole
-    // reason it is one procedure).
+    // where a `to` IS another move's `from`, is allowed, which is why it is one
+    // procedure).
     move: vaultMutation
       .input(movesInput)
       .mutation(async ({ input }): Promise<{ rewritten: { path: string; count: number }[] }> => {
@@ -1315,7 +1275,7 @@ export function createRouter(deps: RouterDeps) {
         return moveNotes(root, input.moves)
       }),
 
-    // Batch copy: verbatim, no link rewrite (spec §Cut/Copy). Refuses to clobber
+    // Batch copy: verbatim, no link rewrite. Refuses to clobber
     // and reports a missing source rather than writing an empty file.
     copy: vaultMutation
       .input(copiesInput)
@@ -1345,8 +1305,8 @@ export function createRouter(deps: RouterDeps) {
     }),
 
     /**
-     * A drop from Finder (FR-13). `sources` are absolute paths OUTSIDE the
-     * vault — that is the point of the operation — so only the destination is
+     * A drop from Finder. `sources` are absolute paths OUTSIDE the vault,
+     * which is the point of the operation, so only the destination is
      * checked; the copy itself refuses a clobber per file and reports it.
      */
     importFiles: vaultMutation
@@ -1361,8 +1321,8 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /**
-     * Vault content out to a folder on disk (FR-13) — the exact inverse of the
-     * import above, and the checks invert with it. `dest` is absolute, outside
+     * Vault content out to a folder on disk: the inverse of the import above,
+     * and the checks invert with it. `dest` is absolute, outside
      * the vault, and deliberately unvalidated: it comes from the native folder
      * chooser, so it is the user's own choice, and second-guessing it here
      * would only refuse places they can already write to from Finder. The
@@ -1378,7 +1338,7 @@ export function createRouter(deps: RouterDeps) {
         return exportFiles(root, input.paths.map(safe), input.dest)
       }),
 
-    // FR-12 generalized: the delete preview for a folder or multi-selection.
+    // The delete preview for a folder or multi-selection.
     backrefsMany: t.procedure
       .input(pathsInput)
       .query(async ({ input }): Promise<{ path: string; count: number }[]> => {
@@ -1388,7 +1348,7 @@ export function createRouter(deps: RouterDeps) {
         )
       }),
 
-    // FR-4: create today's daily note if absent and hand back its path. The
+    // Create today's daily note if absent and hand back its path. The
     // personal-vault gate lives in the renderer (it owns the collaborators
     // call); this proc just does the deterministic if-not-exists-write.
     getOrCreateDaily: vaultMutation
@@ -1397,8 +1357,8 @@ export function createRouter(deps: RouterDeps) {
         return getOrCreateDaily(await rootFor(input.remote), today())
       }),
 
-    // FR-5: archive prior-day dailies into journal/ and GC untouched stubs. Does
-    // not commit — the renderer batches the sweep into one commit (§Archiving).
+    // Archive prior-day dailies into journal/ and GC untouched stubs. Does not
+    // commit: the renderer batches the sweep into one commit.
     sweepDaily: vaultMutation
       .input(fields({ remote: 'string' }))
       .mutation(async ({ input }): Promise<{ archived: number; deleted: number }> => {
@@ -1410,22 +1370,22 @@ export function createRouter(deps: RouterDeps) {
     /** The push channel carries changes; this is the initial read. */
     state: t.procedure.query((): SyncState => activeOrThrow().syncState()),
 
-    /** ⌘S. FR-4 calls it a real commit point rather than a placebo. */
+    /** ⌘S: a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
-    /** ⌘S's second half: push the just-committed work now (`features/vaults-sync.md`).
-     *  Best-effort — a non-fast-forward recovers into the conflict
+    /** ⌘S's second half: push the just-committed work now (docs/features/vaults-sync.md).
+     *  Best-effort: a non-fast-forward recovers into the conflict
      *  path, a network failure surfaces as `offline`; the renderer only kicks it. */
     pushNow: t.procedure.mutation(async () => {
       await activeOrThrow().pushNow()
       return { ok: true as const }
     }),
 
-    /** FR-18: re-materialise the conflict for the agent and return the conflicted
+    /** Re-materialise the conflict for the agent and return the conflicted
      *  paths for its seed prompt. `{paths:[]}` when the merge now applies cleanly. */
     reconcile: t.procedure.mutation(() => activeOrThrow().reconcile()),
 
-    /** FR-20: take the merge back out of the tree. The conflict is still a
+    /** Take the merge back out of the tree. The conflict is still a
      *  conflict afterwards, so the banner comes back with it. */
     abandon: t.procedure.mutation(async () => {
       await activeOrThrow().abandon()
@@ -1433,7 +1393,7 @@ export function createRouter(deps: RouterDeps) {
     }),
   })
 
-  // The vault's history IS git history (`features/history.md`): no snapshot
+  // The vault's history IS git history (docs/features/history.md): no snapshot
   // store, git's object store is the timeline. `--follow` (in `repo.log`) tracks a
   // file through renames; `HISTORY_LIMIT` caps a long-lived file's timeline.
   const HISTORY_LIMIT = 200
@@ -1469,9 +1429,9 @@ export function createRouter(deps: RouterDeps) {
         return { before, after }
       }),
 
-    /** Restore writes the old content as a **new commit** — never a rewrite of
-     *  history (`features/history.md`). Lands as an autosave `Update`
-     *  commit; a labelled landmark is a later refinement. */
+    /** Restore writes the old content as a **new commit**, never a rewrite of
+     *  history (docs/features/history.md). Lands as an autosave `Update`
+     *  commit. */
     restore: vaultMutation
       .input(fields({ remote: 'string', path: 'string', sha: 'string' }))
       .mutation(async ({ input }) => {
@@ -1485,15 +1445,15 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * What the agent's last turns changed (D88), toward #4.
+   * What the agent's last turns changed (D88).
    *
    * A turn is a COMMIT RANGE, so nothing here stores a file list: `files` asks
    * git each time. Storing the paths as well would be a second copy of an answer
    * git already holds, and one that goes stale the moment anything else touches
    * the tree.
    *
-   * `revert` is a write and a new commit, never a rewrite — the same rule
-   * `history.restore` follows, and for the same reason (`features/history.md`).
+   * `revert` is a write and a new commit, never a rewrite, the same rule
+   * `history.restore` follows (docs/features/history.md).
    */
   const turns = t.router({
     /** This machine's turn records for the open vault, newest first. */
@@ -1534,13 +1494,9 @@ export function createRouter(deps: RouterDeps) {
   })
 
   // Per-vault theming: the resolved (merged + validated) colour/chrome tokens
-  // the renderer writes onto the document root.
-  //
-  // It gained a `write` when the settings tab gained real controls (#16). The
-  // note that used to sit here said the files are authored by hand or by the
-  // agent and never through the router — that is still true of how most themes
-  // get written, and the writer merges per key per mode precisely so those two
-  // authors keep their tokens.
+  // the renderer writes onto the document root. Most themes are written by hand
+  // or by the agent; the settings pane's `write` merges per key per mode so
+  // those authors keep their tokens.
   const theme = t.router({
     read: t.procedure
       .input(fields({ remote: 'string' }))
@@ -1551,7 +1507,7 @@ export function createRouter(deps: RouterDeps) {
      *
      * **Takes a JSON string and parses it HERE**, exactly as `settings.write`
      * does and for its reason: `fields` validates `string` and `boolean` only,
-     * so the patch arrives as text and goes through `parseThemePatch` — the
+     * so the patch arrives as text and goes through `parseThemePatch`: the
      * same whitelist and the same per-token value check that guard a committed
      * file a teammate wrote. A write cannot reach these files by a route that
      * skips the check, and D64's promise that a theme is structurally incapable
@@ -1581,9 +1537,8 @@ export function createRouter(deps: RouterDeps) {
   // The vault's own settings: what it opens on, whether it keeps a daily note,
   // which pre-commit transforms run, and how it should look — resolved from
   // `.holi/settings/app.yaml` under its per-key `.holi/settings/app.local.yaml`
-  // override. A read, like `theme.read`: the files are authored by the user or
-  // the agent with ordinary file tools. The one write is the onboarding step,
-  // which arrives with it.
+  // override. The files are also authored by the user or the agent with
+  // ordinary file tools.
   const settings = t.router({
     read: t.procedure
       .input(fields({ remote: 'string' }))
@@ -1592,10 +1547,11 @@ export function createRouter(deps: RouterDeps) {
       ),
 
     /**
-     * The onboarding step's answers, and the only write to these files.
+     * The router's write to these files, used by onboarding and the settings
+     * pane.
      *
      * **Takes JSON strings, and that is a feature.** `fields` above validates
-     * `string` and `boolean` only — there is no object kind — so the patches
+     * `string` and `boolean` only, with no object kind, so the patches
      * arrive as text and are parsed HERE, through `parseSettingsPatch`: the same
      * validator that guards a committed file a teammate wrote. A write cannot
      * reach these files by a route that skips the check, and cannot introduce a
@@ -1646,8 +1602,7 @@ export function createRouter(deps: RouterDeps) {
         return { ok: true as const }
       }),
 
-    // The vault's templates, for the Convert picker + its metadata inputs.
-    // `fields` drives slice 2's per-template inputs, so it is no longer stripped.
+    // The vault's templates, for the Convert picker and its metadata inputs.
     templates: t.procedure
       .input(fields({ remote: 'string' }))
       .query(
@@ -1677,8 +1632,8 @@ export function createRouter(deps: RouterDeps) {
 
     // Render `path` through `template` to a PDF and return its path. Writes to
     // `outPath` when given (the native save dialog's choice); otherwise defaults
-    // to Downloads (the agent path). Not a vaultMutation — the output goes
-    // outside the vault, so there is no snapshot to refresh.
+    // to Downloads. Not a vaultMutation: the output goes outside the vault, so
+    // there is no snapshot to refresh.
     render: t.procedure
       .input(renderPdfInput)
       .mutation(async ({ input }): Promise<{ pdfPath: string }> => {
@@ -1710,15 +1665,14 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * The Google connection (D67) — a **data connector**, not identity.
+   * The Google connection (D67): a **data connector**, not identity.
    *
    * Deliberately its own sub-router rather than a branch of `auth`: signing out
    * of GitHub must not drop your mail/calendar connection, and disconnecting
    * Google must not touch your vaults. Two independent grants, two surfaces.
    *
-   * Same two-phase shape as `auth.signIn` and for the same reason — a tRPC
-   * procedure returns once, but the grant lands later, so `connect` stashes the
-   * flow and `awaitConnect` waits on it.
+   * Same two-phase shape as `auth.signIn`: `connect` stashes the flow and
+   * `awaitConnect` waits on it.
    */
   let connectFlow: GoogleFlow | null = null
 
@@ -1727,9 +1681,8 @@ export function createRouter(deps: RouterDeps) {
      * Who is connected, and whether that grant is still wide enough.
      *
      * `missingScopes` is not diagnostics. Widening `GOOGLE_SCOPES` leaves an
-     * existing grant working *and* insufficient — mail still lists, every write
-     * 403s — so without this the only symptom is a feature that looks broken.
-     * It is what lets settings offer the one action that fixes it.
+     * existing grant working *and* insufficient (mail still lists, every write
+     * 403s), so without this the only symptom is a feature that looks broken.
      */
     status: t.procedure.query(async () => {
       const remote = activeRemoteOrNull()
@@ -1774,8 +1727,8 @@ export function createRouter(deps: RouterDeps) {
     /**
      * Every account connected on this machine, and the one this vault uses.
      *
-     * The picker's whole point: a second vault reusing an account already in the
-     * store costs a mapping and no consent round trip, because the grant exists.
+     * A second vault reusing an account already in the store costs a mapping
+     * and no consent round trip, because the grant exists.
      */
     accounts: t.procedure.query(async () => {
       const manager = googleAccounts()
@@ -1794,9 +1747,8 @@ export function createRouter(deps: RouterDeps) {
      * Revoke an account at Google and drop it everywhere, including from every
      * vault pointing at it.
      *
-     * The destructive half of what used to be one `disconnect`. It takes a `sub`
-     * rather than acting on the active vault, so removing an account is always
-     * an explicit choice of WHICH account.
+     * Takes a `sub` rather than acting on the active vault, so removing an
+     * account is always an explicit choice of WHICH account.
      */
     removeAccount: t.procedure.input(fields({ sub: 'string' })).mutation(async ({ input }) => {
       await googleAccounts().removeAccount(input.sub)
@@ -1806,10 +1758,7 @@ export function createRouter(deps: RouterDeps) {
     /**
      * Unlink **this vault**. The account and its tokens survive, and any other
      * vault using it keeps working.
-     *
-     * Renamed rather than repurposed (D87): the destructive half is
-     * `removeAccount`, and a caller that still says `disconnect` should fail to
-     * typecheck rather than silently revoke someone's grant.
+     * The destructive counterpart is `removeAccount` (D87).
      */
     disconnectVault: t.procedure.mutation(async () => {
       await googleAccounts().unlinkVault(activeRemote())
@@ -1821,10 +1770,10 @@ export function createRouter(deps: RouterDeps) {
      *
      * Main never computes "today": the machine's local date is the renderer's
      * fact, and a main-side `new Date()` would silently disagree with it across
-     * a timezone or a midnight boundary — the same rule daily notes follow.
+     * a timezone or a midnight boundary.
      *
      * **Always fetched, never served from the cache.** A stale agenda is worse
-     * than a slow one — `agendaCached` is the separate, explicit way to paint
+     * than a slow one; `agendaCached` is the separate, explicit way to paint
      * the last one while this is in flight.
      */
     agenda: t.procedure
@@ -1866,7 +1815,7 @@ export function createRouter(deps: RouterDeps) {
      * Switch one calendar on or off.
      *
      * Persisted in main rather than held in the renderer, because the **agent**
-     * resolves its agenda through the same file — otherwise turning a
+     * resolves its agenda through the same file. Otherwise turning a
      * colleague's calendar off would hide it from the panel while the agent
      * carried on reading their day.
      */
@@ -1888,7 +1837,7 @@ export function createRouter(deps: RouterDeps) {
      *
      * A **page**, not a list: Gmail returns 25 at a time and the list foot has
      * a "load more" that passes the token back. `category` composes into the
-     * same query grammar rather than filtering here — one way to narrow a list,
+     * same query grammar rather than filtering here: one way to narrow a list,
      * not two that can disagree.
      */
     threads: t.procedure
@@ -1919,15 +1868,12 @@ export function createRouter(deps: RouterDeps) {
      * The meeting a thread is about, or `null`.
      *
      * Asked by the reader, and only for a thread whose summary says it carries
-     * an invite — so the two or three requests behind this are paid for by
-     * someone who opened a meeting, never by drawing a list. `null` is the
-     * answer for "no invite", "not on your calendar" and "already over" alike;
-     * see `resolveThreadMeeting` for why they are deliberately not
-     * distinguished.
+     * an invite, so the requests behind this are never paid for by drawing a
+     * list. `null` covers "no invite", "not on your calendar" and "already
+     * over" alike; see `resolveThreadMeeting`.
      *
-     * **Not cached.** A join link is exactly the kind of fact that gets
-     * rewritten when a meeting is moved, and a stale one sends the user to an
-     * empty room. Same reasoning as `agenda` above.
+     * **Not cached.** A join link gets rewritten when a meeting is moved, and
+     * a stale one sends the user to an empty room.
      */
     meeting: t.procedure
       .input(fields({ id: 'string' }))
@@ -1951,34 +1897,21 @@ export function createRouter(deps: RouterDeps) {
       .query(({ input }): Promise<MailThread> => readThread(googleApi(), input.id)),
 
     /**
-     * The four writes (D68) — the only procedures here that change anything at
-     * Google.
+     * The mailbox writes (D68): `setRead`, `setStarred`, `archive`, `trash`.
      *
      * Each goes through `googleData` rather than calling `gmail.ts` directly,
      * because the cache has to move with the mailbox: a thread marked read at
      * Google and still bold on disk is a list that disagrees with itself until
      * the next full sync. `googleData` owns that ordering.
      *
-     * **The agent reaches these same four methods** (D70) — the decision D68 §6
-     * left untaken has been taken. `createGoogleOpsServer` is handed the
-     * methods, never `googleData` itself, so it still cannot read a cached
-     * anything; and it calls the identical function this procedure calls, which
-     * is what keeps the UI's list and the agent's view of the mailbox from
-     * disagreeing. What the agent does *not* get here is any route to `send`
-     * without the hook that always asks.
-     */
-    /**
-     * Read, in **both** directions — like `setStarred` below it.
+     * **The agent reaches these same four methods** (D70).
+     * `createGoogleOpsServer` is handed the methods, never `googleData` itself,
+     * so it cannot read a cached anything, and it calls the identical function
+     * this procedure calls. What the agent does *not* get here is any route to
+     * `send` without the hook that always asks.
      *
-     * It was `markRead`, one-way, because the only caller was "opening a thread
-     * marks it read". Marking something unread again is a real triage move (it
-     * is how a thread gets put back on the pile), and main has always supported
-     * it: `setThreadRead` takes the direction, and the agent already uses both.
-     * The renderer simply had no way to ask.
-     *
-     * `fields()` checks booleans and never coerces — the same reason the note on
-     * `setStarred` gives, and the same failure it prevents: a coerced "false"
-     * reads as true, so the un-direction silently does nothing.
+     * `setRead` goes in **both** directions: marking unread again is a real
+     * triage move.
      */
     setRead: t.procedure
       .input(fields({ id: 'string', read: 'boolean' }))
@@ -2011,7 +1944,7 @@ export function createRouter(deps: RouterDeps) {
     /**
      * The composer (D71).
      *
-     * The reads go straight to Google like `thread` does — a drafts list is not
+     * The reads go straight to Google like `thread` does: a drafts list is not
      * cached, and `readDraft` is the one call that answers "is this ours?".
      * The writes go through `googleWrites()` so a draft appearing or leaving
      * moves the cached thread with it.
@@ -2026,7 +1959,7 @@ export function createRouter(deps: RouterDeps) {
      * Every address this account may send from.
      *
      * Through `googleData` so it is fetched once per account, with a direct
-     * fetch as the fallback — same shape as `contacts`. Unlike `contacts` this
+     * fetch as the fallback, like `contacts`. Unlike `contacts` this
      * one can refuse: `listSendAs` throws on a missing scope rather than
      * answering an empty list, because an empty list would silently turn every
      * reply-all into one that copies the user on their own message.
@@ -2055,9 +1988,8 @@ export function createRouter(deps: RouterDeps) {
      * **This is deliberately not hook-gated, and the omission is the design.**
      * D70's gate intercepts the *agent's* `Bash`, because an agent sending mail
      * is an act the user did not individually authorise. A user pressing Send
-     * has already authorised it — prompting here would be a dialog asking
-     * permission for the click that opened it. The next reader will otherwise
-     * assume this was forgotten.
+     * has already authorised it; prompting here would be a dialog asking
+     * permission for the click that opened it.
      */
     send: t.procedure.input(composeInput).mutation(async ({ input }) => {
       return await (await googleWrites()).sendMail(input).catch(rethrowGoogle)
@@ -2066,10 +1998,8 @@ export function createRouter(deps: RouterDeps) {
     /**
      * How much mail there is, for the list footer.
      *
-     * **Exact**, from Gmail's own per-label bookkeeping — not the
-     * `resultSizeEstimate` the category picker refuses to show, which is
-     * approximate and so would put a number people trust in front of them and
-     * be wrong. `null` when the request fails: the footer then says nothing
+     * **Exact**, from Gmail's own per-label bookkeeping, not the approximate
+     * `resultSizeEstimate`. `null` when the request fails: the footer then says nothing
      * rather than guessing.
      */
     mailCounts: t.procedure.query((): Promise<MailCounts | null> => fetchMailCounts(googleApi())),
@@ -2077,11 +2007,10 @@ export function createRouter(deps: RouterDeps) {
     /**
      * The address book, for `@`-completion.
      *
-     * A corpus to filter locally, not a search endpoint — so it is fetched
-     * whole, and `googleData` holds it for the life of the connected account.
-     * Without that hold every `MailView` mount cost up to four People requests
-     * for a dropdown. Falls back to a direct fetch when the cache is absent,
-     * like every other read here. `listContacts` never throws, so a cold or
+     * A corpus to filter locally, not a search endpoint, so it is fetched
+     * whole and `googleData` holds it for the life of the connected account.
+     * Falls back to a direct fetch when the cache is absent, like every other
+     * read here. `listContacts` never throws, so a cold or
      * unpermitted contacts API leaves completion running off the senders in
      * loaded threads instead of breaking the dropdown.
      */
@@ -2106,7 +2035,7 @@ export function createRouter(deps: RouterDeps) {
      * The senders whose remote images always load.
      *
      * Read by the mail reader to decide whether to block, and by settings to
-     * say how many standing exceptions exist — a permission the user cannot
+     * say how many standing exceptions exist: a permission the user cannot
      * see is not one they can revoke.
      */
     imageSenders: t.procedure.query(
@@ -2128,16 +2057,11 @@ export function createRouter(deps: RouterDeps) {
    * Google's own verdict, in a code that survives the trip to the renderer.
    *
    * `GoogleApiError.code` distinguishes "that scope was never granted" from
-   * "you are rate limited" — the difference between an action the user can take
+   * "you are rate limited": the difference between an action the user can take
    * and one they must not be sent on. It does not survive serialization: an
    * error crossing the IPC seam keeps only its message and its tRPC code
    * (`main/trpc-call.ts`), so without this mapping the renderer is left
-   * matching on prose. This codebase has made that mistake once already, in
-   * `ipc-link.ts`'s own note — vault settings blamed a missing sign-in for what
-   * was really a 404.
-   *
-   * The messages still say what they said, so a caller that has not been taught
-   * the codes reads the same sentence it read before.
+   * matching on prose (see `ipc-link.ts`).
    */
   function rethrowGoogle(error: unknown): never {
     if (!(error instanceof GoogleApiError)) throw error
@@ -2167,19 +2091,17 @@ export function createRouter(deps: RouterDeps) {
     return (await deps.calendarPrefs?.read()) ?? {}
   }
 
-  /**
-   * The write surface, or a refusal.
-   *
-   * Reads degrade gracefully when `googleData` is absent — they go straight to
-   * Google, which is how the pillar shipped. A write cannot: without the cache
-   * there is nothing to keep in step, and succeeding at Google while the list on
-   * screen still says otherwise is worse than saying no.
-   */
-  /** The active vault's data layer, or null — reads degrade to Google directly. */
+  /** The active vault's data layer, or null: reads degrade to Google directly. */
   async function googleReads(): Promise<GoogleData | null> {
     return (await deps.googleDataFor?.(activeRemote())) ?? null
   }
 
+  /**
+   * The write surface, or a refusal. Unlike a read, a write cannot fall back to
+   * Google directly: without the cache there is nothing to keep in step, and
+   * succeeding at Google while the list on screen says otherwise is worse than
+   * saying no.
+   */
   async function googleWrites(): Promise<GoogleData> {
     const data = await googleReads()
     if (data === null) {
@@ -2219,14 +2141,13 @@ export function createRouter(deps: RouterDeps) {
    * vault open is not an error for them**: the renderer asks once on mount, and
    * at startup that can land before the vault has finished opening. A throw
    * there is a transient failure the renderer records as an answer, and the
-   * picker then stays empty until a reload — which is exactly how it behaved
-   * when this was written the other way.
+   * picker then stays empty until a reload.
    */
   function activeRemoteOrNull(): string | null {
     return deps.host.active()?.remote ?? null
   }
 
-  /** The active vault's session, or a precondition failure — the same refusal
+  /** The active vault's session, or a precondition failure: the same refusal
    *  an unconfigured connector gives, because "this vault has no account" is
    *  the same thing to a caller that needs one. */
   async function activeGoogleSession(): Promise<GoogleSession> {
@@ -2245,7 +2166,7 @@ export function createRouter(deps: RouterDeps) {
    *
    * Built per call rather than held: the object is nothing but a closure, and a
    * cached one would outlive a disconnect. The getter is what refreshes and
-   * single-flights (D67 — main is the sole token authority).
+   * single-flights (D67: main is the sole token authority).
    */
   function googleApi(): GoogleApi {
     // Resolved inside the getter, not here: that keeps every call site

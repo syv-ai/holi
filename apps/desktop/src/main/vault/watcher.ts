@@ -1,16 +1,13 @@
 /**
  * The vault watcher: it says *when* the vault changed, and nothing else.
  *
- * No path, no kind, no payload — deliberately (plan 4 decision 6). `scanVault`
- * is a walk and a parse, cheap at this scale, and the snapshot it produces is
- * the truth. An unaddressed "something changed" is therefore everything the
- * loop needs, and being coarse is what makes the design survive a dropped
- * event: nothing downstream is holding state that only an event could repair.
+ * No path, no kind, no payload, deliberately. `scanVault` is cheap and its
+ * snapshot is the truth, so being coarse is what survives a dropped event:
+ * nothing downstream holds state that only an event could repair.
  *
  * **This watcher is a hint, never a guarantee.** The macOS backend genuinely
- * drops add/unlink events — measured, the raw event never fires — so correctness
- * belongs to the caller's periodic rescan, not to event delivery. See the long
- * comment in `vitest.config.ts`.
+ * drops add/unlink events, so correctness belongs to the caller's periodic
+ * rescan. See the comment in `vitest.config.ts`.
  */
 import { watch, type FSWatcher } from 'chokidar'
 import { isIgnoredPath } from './vault-files'
@@ -34,8 +31,7 @@ export async function watchVault(args: {
   const watcher: FSWatcher = watch(args.root, {
     // Without this, opening a vault fires once per file already in it.
     ignoreInitial: true,
-    // chokidar 4 dropped glob support in `ignored`; a function is the only
-    // form now. It receives an ABSOLUTE path, and is called for directories
+    // chokidar 4 takes only a function in `ignored`. It receives an ABSOLUTE path, and is called for directories
     // too — returning true for one prunes the whole subtree, which is what
     // keeps `.git` from being walked at all rather than merely filtered.
     ignored: (abs: string) => {

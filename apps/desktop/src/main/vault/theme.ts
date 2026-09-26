@@ -1,12 +1,10 @@
 /**
- * Reads a vault's theme off disk and resolves it.
+ * Reads a vault's theme off disk and resolves it (D64).
  *
- * Two files, both optional: `.holi/settings/theme.yaml` (committed, shared with everyone
- * who clones the vault) and `.holi/settings/theme.local.yaml` (gitignored, this machine
- * only). The pure `resolveTheme` (in `@holi/shared`) does the merge + whitelist
- * + validation; this module is only the disk half — a missing or unreadable
- * file degrades to `null`, never an error, so a vault with no theme resolves to
- * the empty theme and the app falls back to its defaults.
+ * Two optional files: `.holi/settings/theme.css` (committed) and
+ * `.holi/settings/theme.local.css` (this machine only). `resolveTheme` in
+ * `@holi/shared` does the merge, whitelist and validation; this module is only
+ * the disk half, where a missing or unreadable file degrades to `null`.
  */
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -19,10 +17,8 @@ import {
   type ThemePatch,
 } from '@holi/shared'
 
-/** Re-exported from `@holi/shared`, where they are declared once: main writes
- *  these files and the renderer names them, and a path declared in three places
- *  is a path that gets moved in two. The local one is gitignored (`*.local.*`);
- *  the watcher is taught to see it despite the local-only filter. */
+/** The local one is gitignored (`*.local.*`); the watcher is taught to see it
+ *  despite the local-only filter. */
 export { THEME_FILE, THEME_LOCAL_FILE }
 
 async function readOrNull(abs: string): Promise<string | null> {
@@ -44,8 +40,8 @@ export async function readVaultTheme(root: string): Promise<ResolvedTheme> {
 
 /**
  * Reset the vault to the standard look by removing both theme files. The
- * committed `theme.json` going away is a real deletion that syncs to
- * collaborators; `theme.local.json` is this machine's alone. Idempotent
+ * committed file going away is a real deletion that syncs to collaborators;
+ * the local one is this machine's alone. Idempotent
  * (`force`), so resetting an already-standard vault is a no-op. The running app
  * reverts on its own: the unlink fires the watcher → rescan → the renderer
  * re-reads and finds nothing to apply.
@@ -65,11 +61,8 @@ export type ThemeLayer = 'committed' | 'local'
 /**
  * Apply a patch to one of a vault's theme files.
  *
- * **Read, merge, write, rename** — the shape `writeVaultSettings` uses, for its
- * reason: the file may carry tokens this pane never touched, written by hand or
- * by the agent, and a whole-file replace would eat them. The merge itself is
- * pure (`applyThemePatch`), so this module stays the disk half of the pair, as
- * the header says.
+ * **Read, merge, write, rename**: the file may carry tokens this pane never
+ * touched, set by hand or by the agent, and a patch-only write would drop them.
  *
  * The running app follows on its own: the write fires the watcher, the renderer
  * re-reads, `useVaultTheme` re-applies. No channel, and no reload.

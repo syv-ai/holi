@@ -1,11 +1,6 @@
 /**
- * Which of these paths does git ignore?
- *
- * The tree shows gitignored files — that is deliberate, they are real files in
- * the directory — but until now it showed them looking exactly like committed
- * content. A vault can ignore anything: `*.local.*` is seeded, and an older
- * vault carries a bare `USER.md` line, so **the name does not tell you**. The
- * established answer, and VS Code's, is to dim them.
+ * Which of these paths does git ignore? The tree shows gitignored files, dimmed.
+ * A vault can ignore anything, so **the name does not tell you**.
  *
  * **`git check-ignore` rather than reading `.gitignore` ourselves.** Ignore
  * rules nest, negate (`!keep.md`), and are spread across every directory plus
@@ -41,10 +36,8 @@ export async function ignoredPaths(root: string, paths: string[]): Promise<strin
     input: `${paths.join('\0')}\0`,
   }).catch(() => null)
 
-  // **Exit 1 means "none of them", not "it failed".** Treating a non-zero exit
-  // as an error here would make an ordinary vault — one where nothing at all is
-  // ignored — look like a broken one. Only 0 and 1 are answers; 128 is a real
-  // failure and falls through to the empty list with everything else.
+  // **Exit 1 means "none of them", not "it failed".** Only 0 and 1 are
+  // answers; 128 is a real failure and falls through to the empty list.
   if (outcome === null || (outcome.code !== 0 && outcome.code !== 1)) return []
 
   return outcome.stdout.split('\0').filter((p) => p !== '')

@@ -1,15 +1,9 @@
 /**
- * The IPC surface — the ONLY seam between renderer and main (architecture §8).
- *
- * Three things live on it, deliberately: one request/response channel carrying
- * the whole tRPC router, one escape hatch for opening a URL in the system
- * browser, and — registered by `index.ts` rather than here — two push channels
- * out of the active vault.
- *
- * Everything the previous version carried is gone: `collab:*`, `docs:event`,
- * `tasks:event`, `tasks:presence`, `vaults:event`, `stream:resync` and
- * `reminders:open` all rode an SSE connection to a server that no longer
- * exists, and `holi:auth:*` moved into the router when GitHub became identity.
+ * The IPC surface, the ONLY seam between renderer and main
+ * (`docs/architecture.md` §3): one request/response channel carrying the whole
+ * tRPC router, plus the few native affordances only main can provide (system
+ * browser, file manager, OS drag, native dialogs). Push channels out of main are
+ * sent from `index.ts`.
  */
 import type { AnyRouter } from '@trpc/server'
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, shell } from 'electron'
@@ -31,18 +25,16 @@ export function registerIpc(deps: { router: AnyRouter }): void {
     (_event, op: TrpcOp): Promise<TrpcEnvelope> => toEnvelope(callProcedure(deps.router, op)),
   )
 
-  // The SYSTEM browser, not a window. FR-2's device-flow page has to reuse the
-  // user's existing GitHub session, and no credential should ever enter the
-  // app's web context; FR-11 deep-links to collaborator settings because Holi
-  // does not implement invitation.
+  // The SYSTEM browser, not a window: the sign-in page has to reuse the user's
+  // existing GitHub session, and no credential should ever enter the app's web
+  // context.
   ipcMain.handle('holi:openExternal', async (_event, url: string) => {
     await shell.openExternal(url)
   })
 
-  // The system FILE manager, not the browser. `openExternal` is URL-only and
-  // will not reveal a path on disk; this is its sibling for a vault's local
-  // clone (FR-15). It *reveals* — opens the parent with the folder selected —
-  // rather than opening the folder itself, so the user sees the vault in place.
+  // The system FILE manager. `openExternal` is URL-only and will not reveal a
+  // path on disk. It *reveals* (opens the parent with the item selected) so the
+  // user sees the vault in place.
   ipcMain.handle('holi:openPath', (_event, path: string) => {
     shell.showItemInFolder(path)
   })
@@ -50,30 +42,24 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   /**
    * Hand a vault file to the OS as a drag (`features/file-tree.md`).
    *
-   * A web drag never tells the operating system a file is involved — it carries
-   * MIME data, not a pasteboard file promise — so dropping a tree row into
-   * Finder did nothing at all. `startDrag` is the only thing that can, and it
-   * **replaces** the HTML drag rather than joining it: once this is called the
-   * renderer stops receiving drag events, and the OS owns the gesture until the
-   * user lets go. That is why the tree's own move now rides the same drag,
-   * arriving back at the window as an ordinary file drop.
+   * A web drag carries MIME data, not a file, so the OS never sees one.
+   * `startDrag` **replaces** the HTML drag rather than joining it: the renderer
+   * stops receiving drag events and the OS owns the gesture until release. That
+   * is why the tree's own move rides the same drag, arriving back at the window
+   * as an ordinary file drop.
    *
    * `on`, not `handle`: this has to run while the mouse is still down, and a
-   * round trip through a promise the renderer awaits is a round trip the drag
-   * may not survive. The icon is prebuilt for the same reason — `getFileIcon`
-   * is async, and a drag that has to wait for an icon is a drag that starts
-   * late or not at all.
+   * promise round trip is one the drag may not survive. The icon is prebuilt for
+   * the same reason: `getFileIcon` is async.
    */
   ipcMain.on('holi:startDrag', (event, paths: string[]) => {
     if (paths.length === 0) return
     event.sender.startDrag({ files: paths, file: paths[0]!, icon: DRAG_ICON })
   })
 
-  // The native SAVE sheet for Convert-to-PDF (slice 2). Only main can present a
-  // native dialog, so the renderer asks here, gets back an absolute path (or
-  // null on cancel), and hands it to `pdf.render`. Defaults to the note's name
-  // under Downloads; tied to the calling window so it is a sheet, not a floating
-  // dialog.
+  // The native SAVE sheet for Convert-to-PDF. The renderer gets back an
+  // absolute path (or null on cancel) and hands it to `pdf.render`. Tied to the
+  // calling window so it is a sheet, not a floating dialog.
   ipcMain.handle(
     'holi:showSaveDialog',
     async (event, defaultName: string): Promise<string | null> => {
@@ -88,12 +74,9 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   )
 
   /**
-   * Pick a folder on disk — where Copy to Folder… / Move to Folder… land
-   * (FR-13). A folder rather than a save sheet because the same action serves a
-   * single file, a multi-selection and a folder target, and the last two have
-   * no single name to type. `createDirectory` so a destination can be made in
-   * the sheet; tied to the calling window so it is a sheet, not a floating
-   * dialog — the same shape as the save sheet above.
+   * Pick a folder on disk, where Copy to Folder… / Move to Folder… land. A
+   * folder rather than a save sheet because a multi-selection or a folder target
+   * has no single name to type.
    */
   ipcMain.handle('holi:chooseFolder', async (event): Promise<string | null> => {
     const win = BrowserWindow.fromWebContents(event.sender)

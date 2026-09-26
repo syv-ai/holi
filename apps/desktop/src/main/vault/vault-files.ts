@@ -1,6 +1,6 @@
 /** Disk plumbing for the working copy. Every write is tmp+rename in the same
- * directory so the agent's Read never sees a torn file (spec §VaultMirror);
- * every path from disk re-validates through vaultRelPath (architecture §9). */
+ * directory so the agent's Read never sees a torn file; every path from disk
+ * re-validates through vaultRelPath. */
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
@@ -11,11 +11,9 @@ const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
 
 /** Directories that are never vault content, matched on any path segment.
  *
- * `.git` is the load-bearing one and it is new with D60: the vault is a clone
- * now, so the repo's own database sits inside the tree the watcher walks. Left
- * unignored it would be thousands of files, it would fire the watcher on every
- * commit Holi itself makes (an autosave loop), and a stray `.md` under
- * `.git/` would surface as a note. */
+ * `.git` is the load-bearing one (D60): left unignored it would fire the
+ * watcher on every commit Holi itself makes (an autosave loop), and a stray
+ * `.md` under `.git/` would surface as a note. */
 const IGNORED_DIRS = new Set(['.git', 'node_modules'])
 
 export function absPathFor(root: string, rel: VaultRelPath): string {

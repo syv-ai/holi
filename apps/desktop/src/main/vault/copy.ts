@@ -1,7 +1,7 @@
 /**
  * Batch copy: each source read and written to its destination verbatim. NO link
- * rewrite — a copy's `[[links]]` keep pointing where the original's did, matching
- * VS Code and the spec (§Cut/Copy/Paste). Callers refuse clobbers before calling
+ * rewrite: a copy's `[[links]]` keep pointing where the original's did, matching
+ * VS Code. Callers refuse clobbers before calling
  * (the router checks each `to`), so this is pure read-and-write.
  */
 import { readFile } from 'node:fs/promises'

@@ -1,14 +1,9 @@
 /**
- * The single inbound-link scan.
+ * The single inbound-link scan, used by the delete preview and by rename.
+ * There is no link index: a grep across the vault's markdown is enough for an
+ * interactive one-shot, and it cannot drift out of sync the way an index can.
  *
- * Both `notes.backrefs` (the delete preview, FR-12) and `notes.rename` (finding
- * which files to rewrite, FR-11) consume this. There is no link index — a grep
- * across the vault's markdown is enough for an interactive one-shot, and it
- * cannot drift out of sync with the files the way an index can.
- *
- * A note linking to *itself* is not a backref to preview or rewrite, so the
- * target file is excluded. Task chips (`[[task:<id>]]`) are a different grammar
- * and never match a note path.
+ * A note linking to *itself* is not a backref, so the target file is excluded.
  */
 import { readFile } from 'node:fs/promises'
 import { parseWikiLinks } from '@holi/shared'
@@ -35,7 +30,7 @@ export async function scanBackrefs(
 
 /**
  * Files OUTSIDE `targets` that link INTO the set, with how many such links each
- * has — the delete preview for a folder or multi-selection (FR-12 generalized).
+ * has: the delete preview for a folder or multi-selection.
  *
  * Links that ORIGINATE from within the set are excluded: an internal link
  * between two notes being deleted together is not a tombstone anyone is left

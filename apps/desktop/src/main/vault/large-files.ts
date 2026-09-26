@@ -47,26 +47,12 @@ export function partitionBySize(
 }
 
 /**
- * Install (or regenerate) the machine-local pre-commit hook that is the same
- * gate for the agent's own commits (and any direct `git`). Holi's selective-add
- * never stages an oversized file so never trips this; the agent commits in the
- * same clone, so it does. Git hooks live in `.git/hooks/` and are not committed,
- * so this is written per clone on open — the resolved limit is baked in, so a
- * `.holi/settings/app.yaml` change re-installs with the new number.
- *
- * Bounded, not a prison: `git commit --no-verify` bypasses it, matching the
- * agent-security stance (guard accidents, don't blocklist git). POSIX `sh`; the
- * line-based read is a backstop (a filename with a newline is not handled), fine
- * because Holi's own commit path uses NUL and this only catches direct-git slips.
- */
-/**
  * Where Holi tells its own git hook how to reach it: **port on line 1, token on
  * line 2**, and nothing else.
  *
  * Two lines rather than JSON because the reader is POSIX `sh` inside a
  * TypeScript template literal, where every backslash has to survive two
- * readers — a `sed` backreference does not, and the first version of this
- * silently produced a script that matched nothing.
+ * readers, and a `sed` backreference does not.
  *
  * **Machine-local** (`.local.`, D65): it holds this instance's ephemeral port
  * and per-instance token, both meaningless on another machine and one of them a
@@ -96,6 +82,19 @@ export async function writeHookEndpoint(
   })
 }
 
+/**
+ * Install (or regenerate) the machine-local pre-commit hook that is the same
+ * gate for the agent's own commits (and any direct `git`). Holi's selective-add
+ * never stages an oversized file so never trips this; the agent commits in the
+ * same clone, so it does. Git hooks live in `.git/hooks/` and are not committed,
+ * so this is written per clone on open — the resolved limit is baked in, so a
+ * `.holi/settings/app.yaml` change re-installs with the new number.
+ *
+ * Bounded, not a prison: `git commit --no-verify` bypasses it, matching the
+ * agent-security stance (guard accidents, don't blocklist git). POSIX `sh`; the
+ * line-based read is a backstop (a filename with a newline is not handled), fine
+ * because Holi's own commit path uses NUL and this only catches direct-git slips.
+ */
 export async function installGitHook(root: string, threshold: number): Promise<void> {
   const hooksDir = join(root, '.git', 'hooks')
   await mkdir(hooksDir, { recursive: true })

@@ -1,15 +1,8 @@
 /**
- * The large-file gate's view of the vault's settings.
- *
- * One key, named here so the gate does not have to know that `.holi/settings/app.yaml`
- * holds anything else. The parsing, merging and defaulting all live in
- * `@holi/shared`'s `resolveVaultSettings` — this used to hand-roll its own
- * `JSON.parse`, which was the second of two independent readers of the same file
- * and no schema between them.
- *
- * Anything wrong — no file, bad JSON, a non-positive or non-numeric value —
- * still yields the default, because a corrupt config must never break the commit
- * path. That contract is now the resolver's, and is tested there.
+ * The large-file gate's view of the vault's settings: one key, so the gate does
+ * not have to know the file holds anything else. Parsing and defaulting live in
+ * `resolveVaultSettings`, which yields the default for anything wrong, because
+ * a corrupt config must never break the commit path.
  */
 import { readVaultSettings } from './settings'
 

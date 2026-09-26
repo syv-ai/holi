@@ -1,10 +1,6 @@
 /**
- * The vault store: the filesystem, read as a vault.
- *
- * This replaces the VaultMirror, and it is a fraction of it. The mirror existed
- * to keep a CRDT store and a working copy in step; there is one representation
- * now, so a "scan" is a directory walk and a parse, and the watcher's job is
- * only to say *when* to do it again.
+ * The vault store: the filesystem, read as a vault. A "scan" is a directory
+ * walk and a parse; the watcher only says *when* to do it again.
  *
  * Two rules the tests pin, both of which cost data if broken:
  *
@@ -119,7 +115,7 @@ export async function scanVault(root: string): Promise<VaultSnapshot> {
     // not a note, so it stays out of `docs` and the link-aware ops
     // (backrefs/rename/mentions) never see it. Local-only markdown (USER.local.md,
     // CLAUDE.local.md) is content the tree shows but the note graph must not
-    // absorb — it is personal config, not a linkable note (spec §Arbitrary files).
+    // absorb: it is personal config, not a linkable note.
     if (!path.endsWith('.md') || isLocalOnlyPath(path)) {
       snapshot.files.push({ path, updatedAt: await mtime() })
       continue
