@@ -23,12 +23,11 @@ import { useTreeProjection } from './useTreeProjection'
 /** `single` keeps one path open, as the reference does; `multi` lets folders stay open. */
 export type NavTreeExpansion = 'single' | 'multi'
 
-const ROW = 24
+const ROW = 22
 const MID = ROW / 2
 const RADIUS = 6
 /** The elbow's run from the rail to where the icon starts. */
 const ELBOW = 20
-/** A tree row is a Button with none of a button's chrome: no fill, no press. */
 /**
  * A row's name, boxed from its x-height to its baseline (`text-box`), so the
  * row's centring puts the icon on the middle of the letters rather than of
@@ -37,8 +36,13 @@ const ELBOW = 20
  */
 const LABEL =
   'min-w-0 overflow-x-clip text-ellipsis whitespace-nowrap [text-box:trim-both_ex_alphabetic]'
+/**
+ * A tree row is a Button with none of a button's chrome: no fill, no press.
+ * Block-level `flex`, not the Button's `inline-flex`: an inline row sits on a
+ * line box, whose baseline strut adds a few pixels under a row with no glyph.
+ */
 const ROW_RESET =
-  'h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
+  'flex h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
 
 /** A folder's contents, rendered while open and through the closing transition. */
 function Disclose({ open, children }: { open: boolean; children: ReactNode }) {
@@ -301,7 +305,7 @@ export function NavTree({
                   onDoubleClick={() => !node.isFolder && onOpenPinned(id)}
                   className={cn(
                     ROW_RESET,
-                    'group h-8 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
+                    'group h-7 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
                     focused || onPath(id)
                       ? 'text-foreground'
                       : 'text-muted-foreground/70 hover:text-foreground',
