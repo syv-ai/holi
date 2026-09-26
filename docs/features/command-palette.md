@@ -33,7 +33,7 @@ app-level action is one row of one command table that keys, palette and menu all
   the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.
   Rows today: open today's daily (⌘⇧D), save and sync (⌘S), split pane (⌘\), toggle sidebar
   (⌥⌘S), go to the agent (⌘J), new session, new task (⌘T), new task with details (⌘⇧T), close
-  tab (⌘W), open each of the five surfaces, new note (untitled, at the root), quick open (⌘P),
+  tab (⌘W), go home, open each of the five surfaces, new note (untitled, at the root), quick open (⌘P),
   command palette (⌘⇧P), and one "switch to" per other vault.
 - Pane exit animation and the vault-switch confirm live in atoms, so close tab, split and switch
   vault behave the same from a key, the menu or the palette.

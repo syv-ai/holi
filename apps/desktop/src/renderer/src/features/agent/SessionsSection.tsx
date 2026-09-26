@@ -2,13 +2,13 @@
  * The sidebar's list of the vault's agent sessions (D100, D101): with no tab
  * open, this is the only place a session shows.
  *
- * Always present, unlike the apps section, which hides itself when the vault has
- * none: otherwise a vault whose sessions have all ended would have no way to
- * start one but ⌘J. Headed "chats" rather than "sessions" because that is what
- * the rows are to the person reading the sidebar.
+ * Always present, even empty: otherwise a vault whose sessions have all ended
+ * would have no way to start one but ⌘J. Headed "chats" rather than "sessions"
+ * because that is what the rows are to the person reading the sidebar. It sits
+ * on the row directly above the nav menu (D108).
  *
- * Its rows are tree rows, not chips, for `AppsSection`'s reason, and take the
- * tree row's metrics so they line up with the file icons above.
+ * Its rows are tree rows, not chips, and take the tree row's metrics so they
+ * line up with the file icons above.
  *
  * Rename does not keep a Holi-side name: it pastes `/rename ` into the session,
  * because the name is Claude Code's own (`--name` at spawn, `/rename` inside),

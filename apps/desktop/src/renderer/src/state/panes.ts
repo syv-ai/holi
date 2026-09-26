@@ -34,7 +34,7 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
  *
  *  Settings and history are tabs rather than modals so they can sit split beside
  *  the note they concern. */
-export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
+export type SingletonTab = 'home' | 'board' | 'agenda' | 'mail' | 'settings' | 'history'
 
 /**
  * A tab is either *of* something (a note or app by path, a session by id) or
@@ -57,8 +57,8 @@ export type Tab =
    * it. A tab is a view, and a view is free to close.
    */
   | { kind: 'session'; id: string }
-  /** The board, the Google agenda, mail (D67), settings and history — one of
-   *  each, ever. */
+  /** Home, the board, the Google agenda, mail (D67), settings and history — one
+   *  of each, ever. */
   | { kind: SingletonTab }
 
 export interface Pane {
@@ -137,6 +137,12 @@ export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspa
   const existing = findTab(workspace, { kind })
   if (existing !== null) return focusExisting(workspace, existing)
   return updatePane(workspace, (pane) => ({ tabs: [{ kind }, ...pane.tabs], active: 0 }))
+}
+
+/** Home (D108): a surface of its own rather than "no tab", so what it shows
+ *  can grow without changing what opening it means. */
+export function openHome(workspace: Workspace): Workspace {
+  return openSingleton(workspace, 'home')
 }
 
 export function openBoard(workspace: Workspace): Workspace {

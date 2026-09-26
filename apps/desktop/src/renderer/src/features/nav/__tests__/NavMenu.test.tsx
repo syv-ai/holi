@@ -1,0 +1,128 @@
+/**
+ * The nav menu's items do what their names say, and the ones that depend on
+ * something (apps, Google) appear only when it is there. Driven through the
+ * expanded list: jsdom lays nothing out, so the dock has no room and holds only
+ * More, which is every item's labelled home anyway.
+ */
+import { render, screen, within } from '@/test/render'
+import userEvent from '@testing-library/user-event'
+import { Provider, atom, createStore } from 'jotai'
+import { expect, test, vi } from 'vitest'
+import { googleAccountAtom } from '@/state/google'
+import { paletteAtom } from '@/state/palette'
+import { activeTab, workspaceAtom } from '@/state/panes'
+import { NavMenu } from '../NavMenu'
+
+const { apps, tasks } = vi.hoisted(() => ({
+  apps: { current: [] as string[] },
+  tasks: { current: 0 },
+}))
+vi.mock('@/state/apps', () => ({ appPathsAtom: atom(() => apps.current) }))
+vi.mock('@/state/tasks', () => ({ openTaskCountAtom: atom(() => tasks.current) }))
+
+type Account = { email: string } | null | undefined
+
+function setup({
+  appPaths = [],
+  openTasks = 0,
+  account = null,
+}: { appPaths?: string[]; openTasks?: number; account?: Account } = {}) {
+  apps.current = appPaths
+  tasks.current = openTasks
+  const store = createStore()
+  store.set(googleAccountAtom, account as never)
+  render(
+    <Provider store={store}>
+      <NavMenu />
+    </Provider>,
+  )
+  return { store, user: userEvent.setup() }
+}
+
+/** The expanded list, opened from More. */
+async function openList(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'More' }))
+  return screen.getByRole('button', { name: 'Home' }).parentElement!
+}
+
+test('the items are in their order, without apps or Google when there are none', async () => {
+  const { user } = setup()
+  const list = await openList(user)
+  expect(
+    within(list)
+      .getAllByRole('button')
+      .map((b) => b.textContent),
+  ).toEqual(['Home', 'Search', 'Board', 'Settings'])
+})
+
+test('Home opens the home surface', async () => {
+  const { store, user } = setup()
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Home' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'home' })
+})
+
+test('Search opens the palette', async () => {
+  const { store, user } = setup()
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Search' }))
+  expect(store.get(paletteAtom).open).toBe(true)
+})
+
+test('Board opens the board and carries the open-task count', async () => {
+  const { store, user } = setup({ openTasks: 12 })
+  await openList(user)
+  const board = screen.getByRole('button', { name: /Board/ })
+  expect(board).toHaveTextContent('12')
+  await user.click(board)
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'board' })
+})
+
+test('Settings opens settings', async () => {
+  const { store, user } = setup()
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'settings' })
+})
+
+test('Apps drills into the apps by name, and picking one opens it', async () => {
+  const { store, user } = setup({ appPaths: ['char-count.app', 'Areas/tasks-by-area.app'] })
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Apps' }))
+  const group = screen.getByRole('generic', { name: 'Apps' })
+  expect(
+    within(group)
+      .getAllByRole('button')
+      .map((b) => b.textContent),
+  ).toEqual(['Back', 'char-count', 'tasks-by-area'])
+  await user.click(within(group).getByRole('button', { name: 'tasks-by-area' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({
+    kind: 'app',
+    path: 'Areas/tasks-by-area.app',
+  })
+})
+
+test('Email and Agenda appear once Google is connected, and open their panes', async () => {
+  const { store, user } = setup({ account: { email: 'ada@syv.ai' } })
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Email' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'mail' })
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Agenda' }))
+  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'agenda' })
+})
+
+test('before Google has been asked about, Email and Agenda stay hidden', async () => {
+  const { user } = setup({ account: undefined })
+  await openList(user)
+  expect(screen.queryByRole('button', { name: 'Email', hidden: true })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Agenda', hidden: true })).toBeNull()
+})
+
+test('the active surface reads as the current page', async () => {
+  const { user } = setup()
+  await openList(user)
+  await user.click(screen.getByRole('button', { name: 'Settings' }))
+  await openList(user)
+  expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+})

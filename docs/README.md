@@ -36,6 +36,7 @@ other rather than repeating each other.
 | [pdf](features/pdf.md)                         | Typst export, templates, the PDF viewer                                  |
 | [vault-apps](features/vault-apps.md)           | Agent-written apps in their own origin                                   |
 | [command-palette](features/command-palette.md) | Quick open and the one table of commands                                 |
+| [nav-menu](features/nav-menu.md)               | The morphing menu at the sidebar's foot, and Home                        |
 | [onboarding](features/onboarding.md)           | First run, creating or joining a vault                                   |
 
 ## Rules for these docs

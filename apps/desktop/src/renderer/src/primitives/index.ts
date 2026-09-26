@@ -49,6 +49,7 @@ export {
 } from './DropdownMenu'
 export { Input } from './Input'
 export { Kbd } from './Kbd'
+export { MorphingMenu, type MorphingMenuAction, type MorphingMenuItem } from './MorphingMenu'
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'
 export type { PanelImperativeHandle } from './Resizable'

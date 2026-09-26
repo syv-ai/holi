@@ -4,7 +4,7 @@
  * atoms. An agent session is an ordinary tab (D101).
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelLeftClose, PanelLeftOpen, PanelRight, Settings } from 'lucide-react'
+import { History, PanelLeftClose, PanelLeftOpen, PanelRight } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { fileKind, isAppBundlePath, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
@@ -19,7 +19,6 @@ import {
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { SessionOrbs } from '@/features/agent/SessionOrbs'
 import { TurnReview } from '@/features/agent/TurnReview'
-import { AppsMenu } from '@/features/apps/AppsMenu'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
@@ -30,8 +29,8 @@ import { PaneView } from './PaneView'
 import { DrawerShell, EditorPane } from '@/composites'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { AppFrame } from '@/features/apps/AppFrame'
-import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
+import { NavMenu } from '@/features/nav/NavMenu'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { syncLabel } from '../lib/sync-label'
@@ -45,12 +44,8 @@ import {
   isSoloNote,
   moveTab,
   moveTabToNewPane,
-  openAgenda,
   openApp,
-  openBoard,
   openHistory,
-  openMail,
-  openSettings,
   openPinned,
   openInNewPane,
   openPreview,
@@ -61,7 +56,7 @@ import {
 } from '../state/panes'
 import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
-import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
+import { tickNowAtom } from '../state/tasks'
 import type { PaneDropZone } from '@/lib/tab-drop'
 import type { ConflictResolvers } from '@/lib/editor-reload'
 import { ConflictBanner } from '@/composites/ConflictBanner'
@@ -89,7 +84,6 @@ import { sessionsWorthAsking } from '@/lib/agent-notices'
  *  `allowed` reference between renders. */
 const NO_ZONES: PaneDropZone[] = []
 import { navOpenAtom, usePanelLayout } from '../state/preferences'
-import { appsSectionOpenAtom, hasAppsAtom } from '../state/apps'
 import { useVaultTheme } from '../state/theme'
 import {
   activeRemoteAtom,
@@ -100,8 +94,8 @@ import {
   vaultsAtom,
 } from '../state/vaults'
 
-/** The apps and sessions sections' header row, in px: what a panel collapses
- *  to, so the control that reopens it stays. Both share tree-row metrics. */
+/** The sessions section's header row, in px: what its panel collapses to, so
+ *  the control that reopens it stays. It shares tree-row metrics. */
 const SECTION_HEADER_HEIGHT = 22
 
 // warn is a named amber utility: there is no warning token yet, and named
@@ -132,10 +126,9 @@ export function Shell() {
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
-  const openTaskCount = useAtomValue(openTaskCountAtom)
-  // The one place that asks main whether Google is connected; settings shares
-  // this atom.
-  const { account: googleAccount } = useGoogleAccount()
+  // The one place that asks main whether Google is connected; settings and the
+  // nav menu share this atom.
+  useGoogleAccount()
   const reconcile = useSetAtom(reconcileAtom)
   const abandonReconcile = useSetAtom(abandonReconcileAtom)
   const [heldBack, setHeldBack] = useAtom(heldBackAtom)
@@ -153,33 +146,27 @@ export function Shell() {
 
   // For the vault-switch confirm and the sessions panel's default size.
   const agentSessions = useAtomValue(agentSessionsAtom)
-  // The sidebar's own vertical split: the tree, then the apps and sessions
-  // sections under it.
+  // The sidebar's own vertical split: the tree, then the sessions section
+  // under it, which sits on the nav menu.
   const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
-  const hasApps = useAtomValue(hasAppsAtom)
-  const [appsOpen, setAppsOpen] = useAtom(appsSectionOpenAtom)
   const hasSessions = agentSessions.length > 0
   const [sessionsOpen, setSessionsOpen] = useAtom(agentSessionsSectionOpenAtom)
-  /** Handles on the collapsible sections, so the persisted open flags drive
-   *  collapse/expand rather than each panel owning a second copy. */
-  const appsPanelRef = useRef<PanelImperativeHandle | null>(null)
+  /** A handle on the collapsible section, so the persisted open flag drives
+   *  collapse/expand rather than the panel owning a second copy. */
   const sessionsPanelRef = useRef<PanelImperativeHandle | null>(null)
 
-  // Drive the panels from their open flags, one frame late: until the group
+  // Drive the panel from its open flag, one frame late: until the group
   // registers the panel's constraints, `isCollapsed()` throws and takes the
   // Shell down.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      const drive = (panel: PanelImperativeHandle | null, want: boolean) => {
-        if (!panel) return
-        if (want && panel.isCollapsed()) panel.expand()
-        else if (!want && !panel.isCollapsed()) panel.collapse()
-      }
-      drive(appsPanelRef.current, appsOpen)
-      drive(sessionsPanelRef.current, sessionsOpen)
+      const panel = sessionsPanelRef.current
+      if (!panel) return
+      if (sessionsOpen && panel.isCollapsed()) panel.expand()
+      else if (!sessionsOpen && !panel.isCollapsed()) panel.collapse()
     })
     return () => cancelAnimationFrame(id)
-  }, [appsOpen, hasApps, sessionsOpen, hasSessions])
+  }, [sessionsOpen, hasSessions])
   // Paint the active vault's colour/chrome theme onto the document root.
   useVaultTheme()
   // The session list and its whole-set effects. Mounted here because the shell
@@ -326,9 +313,9 @@ export function Shell() {
           side="left"
           open={navOpen}
           label="Sidebar"
-          // Hidden, the nav closes to a rail: session orbs and the apps, which
-          // are otherwise only clickable in the nav. The toggle rides the
-          // drawer's moving edge and lands in the rail's top slot.
+          // Hidden, the nav closes to a rail: session orbs, then the nav menu
+          // on its side at the foot. The toggle rides the drawer's moving edge
+          // and lands in the rail's top slot.
           edgeControl={
             <Tooltip
               content={
@@ -352,7 +339,7 @@ export function Shell() {
           rail={
             <>
               <SessionOrbs />
-              <AppsMenu />
+              <NavMenu orientation="vertical" />
             </>
           }
           header={
@@ -380,9 +367,8 @@ export function Shell() {
                 />
               )}
 
-              {/* The sidebar's own vertical group. The apps panel is absent
-              rather than empty without apps: an empty panel still claims a
-              slice and draws a handle. */}
+              {/* The sidebar's own vertical group: the tree, then the sessions
+              on the row directly above the nav menu. */}
               <ResizablePanelGroup
                 orientation="vertical"
                 className="min-h-0 flex-1"
@@ -396,7 +382,6 @@ export function Shell() {
                   // Ask the panel, not `layout`: a layout value is a flexGrow
                   // weight, not a pixel height.
                   if (!meta.isUserInteraction) return
-                  setAppsOpen(appsPanelRef.current?.isCollapsed() === false)
                   setSessionsOpen(sessionsPanelRef.current?.isCollapsed() === false)
                 }}
               >
@@ -415,23 +400,6 @@ export function Shell() {
                     }
                   />
                 </ResizablePanel>
-                {hasApps && (
-                  <>
-                    <ResizableHandle />
-                    <ResizablePanel
-                      id="apps"
-                      collapsible
-                      // Collapsed leaves the header row, which re-expands it.
-                      collapsedSize={SECTION_HEADER_HEIGHT}
-                      defaultSize={160}
-                      minSize={66}
-                      maxSize="60"
-                      panelRef={appsPanelRef}
-                    >
-                      <AppsSection />
-                    </ResizablePanel>
-                  </>
-                )}
                 {/* Present even with no sessions: its `+` is the only mouse
                     path to a first one (D101). */}
                 <ResizableHandle />
@@ -448,68 +416,10 @@ export function Shell() {
                 </ResizablePanel>
               </ResizablePanelGroup>
 
-              {/* Two rows, and `min-w-0` on each chip: a flex item's
-              `min-width: auto` would otherwise scroll the narrow sidebar
-              sideways. */}
-              {/* `mt-auto` keeps the chips on the sidebar's floor. */}
-              <div className="mt-auto flex shrink-0 flex-col gap-1.5 p-2">
-                <div className="flex items-center gap-2">
-                  <Tooltip content={`task board — ${openTaskCount} open`}>
-                    <Button
-                      variant="secondary"
-                      size="xs"
-                      className="min-w-0 flex-1 gap-1.5"
-                      onClick={() => setWorkspace((w) => openBoard(w))}
-                    >
-                      board
-                      {openTaskCount > 0 && (
-                        <span className="rounded-full bg-foreground/15 px-1.5 text-[10px] leading-4 text-foreground">
-                          {openTaskCount}
-                        </span>
-                      )}
-                    </Button>
-                  </Tooltip>
-                  {/* The gear opens the settings tab. */}
-                  <Tooltip content="settings">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="shrink-0 text-muted-foreground"
-                      aria-label="settings"
-                      onClick={() => setWorkspace((w) => openSettings(w))}
-                    >
-                      <Settings size={16} />
-                    </Button>
-                  </Tooltip>
-                </div>
-
-                {/* Agenda and mail are account-wide (D67) and appear only once
-                Google is connected. `undefined` (not asked yet) hides them
-                too, so they never flash. */}
-                {googleAccount != null && (
-                  <div className="flex items-center gap-2">
-                    <Tooltip content={`${googleAccount.email} — agenda`}>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        className="min-w-0 flex-1 gap-1.5"
-                        onClick={() => setWorkspace((w) => openAgenda(w))}
-                      >
-                        agenda
-                      </Button>
-                    </Tooltip>
-                    <Tooltip content={`${googleAccount.email} — mail`}>
-                      <Button
-                        variant="secondary"
-                        size="xs"
-                        className="min-w-0 flex-1 gap-1.5"
-                        onClick={() => setWorkspace((w) => openMail(w))}
-                      >
-                        mail
-                      </Button>
-                    </Tooltip>
-                  </div>
-                )}
+              {/* The nav menu on the sidebar's floor (D108). It opens upward
+              over the sessions and the tree. */}
+              <div className="flex shrink-0 p-2">
+                <NavMenu />
               </div>
             </div>
           </DrawerShell>

@@ -117,7 +117,13 @@ export function parseTabPayload(text: string): Tab | null {
   if (kind === 'app') {
     return typeof path === 'string' && path !== '' ? { kind: 'app', path } : null
   }
-  if (kind === 'board' || kind === 'agenda' || kind === 'mail' || kind === 'settings') {
+  if (
+    kind === 'home' ||
+    kind === 'board' ||
+    kind === 'agenda' ||
+    kind === 'mail' ||
+    kind === 'settings'
+  ) {
     return { kind }
   }
   return null

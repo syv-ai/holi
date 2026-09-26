@@ -20,7 +20,7 @@ import {
   DropdownMenuTrigger,
   Tooltip,
 } from '@/primitives'
-import { CalendarDays, ChevronLeft, ChevronRight, Mail, SquareKanban } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, House, Mail, SquareKanban } from 'lucide-react'
 import { appName, type TaskStatus } from '@holi/shared'
 import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
@@ -45,6 +45,7 @@ import { snapshotAtom } from '@/state/vaults'
 /** The singleton tabs' pill text and tooltip. Notes, apps and sessions are
  *  named from what the tab carries, not its kind. */
 const TAB_NAME = {
+  home: 'home',
   board: 'board',
   agenda: 'agenda',
   mail: 'mail',
@@ -52,6 +53,7 @@ const TAB_NAME = {
   history: 'history',
 } as const
 const TAB_LABEL: Partial<Record<string, string>> = {
+  home: 'home',
   board: 'task board',
   agenda: 'your Google agenda',
   mail: 'your Gmail',
@@ -117,6 +119,7 @@ function tabIcon(tab: Tab, marks: PathMarks, sessions: AgentSession[]): ReactNod
   if (tab.kind === 'note' || tab.kind === 'app') {
     return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
   }
+  if (tab.kind === 'home') return <House size={14} />
   if (tab.kind === 'agenda') return <CalendarDays size={14} />
   if (tab.kind === 'mail') return <Mail size={14} />
   // A session's glyph is its state: the same dot, from the same derivation, as

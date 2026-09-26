@@ -50,6 +50,7 @@ export interface Command {
 }
 
 const SURFACES: readonly { kind: SingletonTab; label: string }[] = [
+  { kind: 'home', label: 'Go home' },
   { kind: 'board', label: 'Open board' },
   { kind: 'agenda', label: 'Open agenda' },
   { kind: 'mail', label: 'Open mail' },

@@ -22,12 +22,11 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
   Rename, move, drag, copy, duplicate and delete are the tree's folder operations: a rename edits
   the name without `.app`, and Duplicate makes `Budget copy.app`. A drop on the row lands beside
   it, not among its files. See [file tree](file-tree.md).
-- **Launchers.** The nav's Apps section sits under the tree and lists every app in the vault by
-  name, with the path as its tooltip; it is hidden when there are no apps. The rail shows the apps
-  as a menu while the nav is hidden, and the [command palette](command-palette.md) lists them
-  with their folder. A bundle with `index.html` and no manifest shows dimmed, with **Finish this
-  app** (writes the manifest only). The Apps row menu is Open, Open in a New Pane, Edit Source
-  (opens `index.html` and reveals it in the tree), Rename, Delete, Copy Path, Reveal in Finder.
+- **Launchers.** The tree's app row, the [nav menu](nav-menu.md)'s Apps drill-down (every
+  finished app by name, in the sidebar and on the rail; absent when there are none), and the
+  [command palette](command-palette.md), which lists them with their folder. There is no separate
+  Apps section. Its Finish this app is on the tree's app row, and its Edit Source gave way to the
+  row's Show Contents, which expands the bundle so `index.html` opens like any file.
 - **Tabs.** An app opens as an ordinary tab keyed by its bundle path, deduped across panes like a
   note (see [tabs and panes](tabs-panes.md)). Reload is a button in the tab that remounts the
   frame. If the bundle disappears under an open tab (a teammate's pull), the tab stays as a
@@ -118,7 +117,7 @@ Holi as a tab, where it can read the vault's documents and tasks through a narro
 - `apps/desktop/src/main/index.ts`: scheme registration and the `holi-app` handler.
 - `apps/desktop/src/main/router.ts`: the `apps` namespace.
 - `apps/desktop/src/main/agent/hooks/vault-app-check.mjs`, `apps/desktop/src/main/agent/cli.ts`.
-- `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`, `AppsSection`, `AppsMenu`.
+- `apps/desktop/src/renderer/src/features/apps/`: `AppFrame`.
 - `apps/desktop/src/renderer/src/state/apps.ts`: the app lists and actions.
 - `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`, `RowMenu.tsx`: the app row.
 - `packages/shared/src/app-bundle.ts` (`isAppBundlePath`, `appBundleOf`, `appName`, `appHost`),

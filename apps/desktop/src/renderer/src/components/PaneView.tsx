@@ -25,6 +25,7 @@ import { TurnChip } from '@/features/agent/TurnChip'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { PdfViewer } from '@/features/files/PdfViewer'
+import { HomeView } from '@/features/home/HomeView'
 import type { Pane, Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
 import { TabStrip, tabKey } from './TabStrip'
@@ -165,6 +166,8 @@ export function PaneView({
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'app' ? (
               <AppFrame path={tab.path} />
+            ) : tab?.kind === 'home' ? (
+              <HomeView />
             ) : tab?.kind === 'board' ? (
               <BoardView />
             ) : tab?.kind === 'agenda' ? (

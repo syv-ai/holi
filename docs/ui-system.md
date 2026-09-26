@@ -74,8 +74,10 @@ component pasted from shadcn upstream with the 3px halo fails before it is mount
   images, the table widget and frontmatter rows respond; text does not. Inside CodeMirror all of it
   is paint only (see [editor](features/editor.md)).
 - **Reduced motion reduces, not removes:** F stops, A becomes instant, R and painting K survive.
-- **No overshoot.** `--ease-spring` and spring keyframes exist only in
-  `features/onboarding/onboarding-ritual.css`.
+- **Overshoot belongs to springs.** `--ease-spring` and spring keyframes exist only in
+  `features/onboarding/onboarding-ritual.css`; the one other spring is the
+  [nav menu](features/nav-menu.md)'s morph, on `motion`, which keeps its bounce. The vocabulary's
+  curves stay overshoot-free.
 
 ## Drawers
 
@@ -86,7 +88,7 @@ editor beside it reflows during the slide. It owns its column rather than living
 `react-resizable-panels`, which cannot animate a size. Each opens at 320px and resizes between 150
 and 560 (`lib/drawer.ts`) by pointer (1:1, transition off) or arrow keys, remembering its own
 width. The nav closes to a 44px rail holding its toggle (an `edgeControl` that slides with the
-edge), an orb per running session and the apps menu. The PDF viewer's sidebars are that library's
+edge), an orb per running session and the [nav menu](features/nav-menu.md) on its side. The PDF viewer's sidebars are that library's
 DOM: they copy width, motion, header and edge through the injected stylesheet and cannot resize.
 
 ## Per-vault theming

@@ -16,17 +16,10 @@
  * rescans.
  */
 import { atom } from 'jotai'
-import { atomWithStorage } from 'jotai/utils'
-import { APP_MANIFEST_FILE, APP_SUFFIX, appBundleOf, appName, isAppBundlePath } from '@holi/shared'
+import { APP_MANIFEST_FILE, appBundleOf, appName } from '@holi/shared'
 import { trpc } from '../lib/trpc'
 import { closeTab, workspaceAtom } from './panes'
-import {
-  activeRemoteAtom,
-  deleteManyAtom,
-  loadSnapshotAtom,
-  moveNotesAtom,
-  snapshotAtom,
-} from './vaults'
+import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 const ENTRY_FILE = 'index.html'
 
@@ -78,82 +71,9 @@ export const closeAppAtom = atom(null, (_get, set, path: string) => {
   })
 })
 
-/** Every file inside each bundle: what a delete removes. */
-export const appFilesAtom = atom((get) => {
-  const byBundle = new Map<string, string[]>()
-  for (const file of get(snapshotAtom).files) {
-    const bundle = appBundleOf(file.path)
-    if (bundle === null) continue
-    const list = byBundle.get(bundle)
-    if (list) list.push(file.path)
-    else byBundle.set(bundle, [file.path])
-  }
-  return byBundle
-})
-
-/**
- * Is there an apps section at all?
- *
- * Shell asks before it builds the sidebar's panel group, because an empty
- * collapsible panel still takes a slice of the column and draws a handle. With
- * no apps the panel and its handle must be absent, not merely empty.
- */
-export const hasAppsAtom = atom(
-  (get) => get(appPathsAtom).length > 0 || get(unregisteredAppPathsAtom).length > 0,
-)
-
-/**
- * Is the apps panel expanded? Persisted, and global rather than per vault: it is
- * a statement about how you like the sidebar, not about this vault's contents.
- *
- * The panel's collapsed state is driven FROM this atom, never the reverse: a
- * panel-level callback cannot tell a real drag from the reflow that mounting a
- * sibling causes, so only the group-level `isUserInteraction` drag writes back.
- */
-export const appsSectionOpenAtom = atomWithStorage<boolean>('holi:appsSectionOpen', true)
-
-/** A refusal is a value, not a throw: the caller is an inline rename field with
- *  somewhere to put the reason. */
+/** A refusal is a value, not a throw: the caller has somewhere to put the
+ *  reason. */
 export type AppActionResult = { ok: true } | { ok: false; error: string }
-
-/**
- * Rename an app: the tree's folder move of its bundle to `<name>.app` beside
- * it, so links are rewritten and open tabs follow as for any other move.
- *
- * Why a name cannot be used comes back as a value, for the inline field; main
- * refuses an overwrite too, and is the authority, since a teammate's pull can
- * create the destination between the keypress and the move.
- */
-export const renameAppAtom = atom(
-  null,
-  async (
-    get,
-    set,
-    { bundle, name }: { bundle: string; name: string },
-  ): Promise<AppActionResult> => {
-    const slash = bundle.lastIndexOf('/')
-    const dest = `${slash === -1 ? '' : bundle.slice(0, slash + 1)}${name}${APP_SUFFIX}`
-    if (dest === bundle) return { ok: true }
-    if (name.includes('/') || !isAppBundlePath(dest)) {
-      return { ok: false, error: `${name} cannot name an app` }
-    }
-    const snapshot = get(snapshotAtom)
-    const taken = [...snapshot.files.map((f) => f.path), ...snapshot.dirs].some(
-      (p) => p === dest || p.startsWith(`${dest}/`),
-    )
-    if (taken) return { ok: false, error: `${name} already exists` }
-    const moves = (get(appFilesAtom).get(bundle) ?? []).map((from) => ({
-      from,
-      to: `${dest}${from.slice(bundle.length)}`,
-    }))
-    try {
-      await set(moveNotesAtom, { moves })
-    } catch (error) {
-      return { ok: false, error: (error as Error).message }
-    }
-    return { ok: true }
-  },
-)
 
 /**
  * Write the manifest that turns a half-finished directory into an app.
@@ -172,19 +92,3 @@ export const registerAppAtom = atom(
     return { ok: true }
   },
 )
-
-/**
- * Delete an app: every file inside it, then its tab.
- *
- * The tab is closed rather than left to show `AppFrame`'s tombstone, which is
- * for an app that vanished *from under* you (a teammate's pull).
- *
- * The now-empty directory is left behind, as when deleting a folder in the
- * tree; with no entry document it appears in neither list.
- */
-export const deleteAppAtom = atom(null, async (get, set, bundle: string) => {
-  const paths = get(appFilesAtom).get(bundle) ?? []
-  if (paths.length === 0) return
-  await set(deleteManyAtom, { paths })
-  set(closeAppAtom, bundle)
-})
