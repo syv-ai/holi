@@ -57,7 +57,9 @@ and the `scaffold-md` transform does not prepend frontmatter to a memory or to t
 - Nothing in the indexer can fail a commit.
 - `memory/index.md` is a once file, never managed: a managed refresh would fight the transform on
   every open.
-- Edits to `memory/index.md` are discarded on the next memory commit. Edit the memory files.
+- Edits to `memory/index.md` are discarded on the next memory commit. A seeded `PreToolUse` hook
+  (`memory-index-guard.mjs`) refuses them up front with that reason; `AGENTS.md` says it too, for
+  agents other than Claude Code.
 - Duplicating `x.local.md` yields `x copy.local.md`, keeping the marker. A copy name that breaks the
   marker publishes the file.
 - No unattended edits to shared memory: consolidation or splitting is agent work the user asks for.

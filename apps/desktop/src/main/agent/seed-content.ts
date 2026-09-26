@@ -41,6 +41,7 @@ import userPromptSubmitHook from './hooks/user-prompt-submit.mjs?raw'
 import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
 import memoryOverviewHook from './hooks/memory-overview.mjs?raw'
+import memoryIndexGuardHook from './hooks/memory-index-guard.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -165,6 +166,12 @@ const SETTINGS_JSON =
             matcher: 'mcp__.*[Gg]mail.*',
             hooks: [{ type: 'command', command: hookCommand('google-send-gate') }],
           },
+          // `memory/index.md` is regenerated on every commit, so an edit to it
+          // is always lost. Refused up front, with the reason.
+          {
+            matcher: 'Write|Edit|MultiEdit',
+            hooks: [{ type: 'command', command: hookCommand('memory-index-guard') }],
+          },
         ],
       },
       /**
@@ -284,6 +291,7 @@ export const MANAGED_FILES: Record<string, string> = {
   '.claude/hooks/google-send-gate.mjs': googleSendGateHook,
   '.claude/hooks/vault-app-check.mjs': vaultAppCheckHook,
   '.claude/hooks/memory-overview.mjs': memoryOverviewHook,
+  '.claude/hooks/memory-index-guard.mjs': memoryIndexGuardHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -453,7 +461,20 @@ export function settingsWithRequired(existing: string | null): string | null {
   const preToolUse = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : []
   const hasGate = JSON.stringify(preToolUse).includes('google-send-gate')
   if (!hasGate) {
-    hooks.PreToolUse = [...preToolUse, ...required.hooks.PreToolUse]
+    hooks.PreToolUse = [
+      ...preToolUse,
+      ...required.hooks.PreToolUse.filter((e) => JSON.stringify(e).includes('google-send-gate')),
+    ]
+    settings.hooks = hooks
+    changed = true
+  }
+
+  // The memory index guard, merged and matched the same way.
+  if (!JSON.stringify(hooks.PreToolUse ?? []).includes('memory-index-guard')) {
+    hooks.PreToolUse = [
+      ...(hooks.PreToolUse ?? []),
+      ...required.hooks.PreToolUse.filter((e) => JSON.stringify(e).includes('memory-index-guard')),
+    ]
     settings.hooks = hooks
     changed = true
   }
