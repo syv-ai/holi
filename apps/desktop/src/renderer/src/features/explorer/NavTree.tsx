@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
-import { File, FileText, Folder, FolderOpen } from 'lucide-react'
-import { fileKind } from '@holi/shared'
+import { ChevronRight } from 'lucide-react'
+import { fileIconFor } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import { Button } from '@/primitives'
 import { ROOT_ID, type TreeItemData } from '@/lib/tree-data'
@@ -143,17 +143,36 @@ export function NavTree({
     setBar(row ? { top: row.offsetTop, height: row.offsetHeight } : null)
   }, [focusRoot, data, open])
 
-  const icon = (id: string, node: TreeItemData, isOpen: boolean) => {
+  /**
+   * What a row leads with: a folder's chevron, or a file's type glyph in the
+   * chevron's column, so the two read apart at a glance.
+   * `!` beats Button's own svg sizing.
+   */
+  const lead = (id: string, node: TreeItemData, isOpen: boolean, active: boolean) => {
+    const slot = cn(
+      'motion-respond flex w-3.5 shrink-0 justify-center [&_svg]:size-3.5!',
+      active ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
+    )
     const emoji = iconByPath.get(id)
-    if (emoji) return <span className="text-sm leading-none">{emoji}</span>
-    if (node.isFolder)
-      return isOpen ? <FolderOpen className="size-3.5" /> : <Folder className="size-3.5" />
-    const task = taskByPath.get(id)
-    if (task) return <TaskIcon status={task.status} />
-    return fileKind(id) === 'markdown' ? (
-      <FileText className="size-3.5" />
-    ) : (
-      <File className="size-3.5" />
+    if (!node.isFolder) {
+      const task = taskByPath.get(id)
+      return (
+        <span className={slot}>
+          {task && !emoji ? <TaskIcon status={task.status} /> : fileIconFor(id, emoji)}
+        </span>
+      )
+    }
+    return (
+      <>
+        <span className={slot}>
+          <ChevronRight
+            className="motion-respond size-3!"
+            style={{ transform: isOpen ? 'rotate(90deg)' : 'none' }}
+          />
+        </span>
+        {/* A chosen icon still shows; the plain folder glyph would repeat the chevron. */}
+        {emoji && <span className={slot}>{fileIconFor(id, emoji)}</span>}
+      </>
     )
   }
 
@@ -192,14 +211,7 @@ export function NavTree({
                 )}
                 style={{ height: ROW }}
               >
-                <span
-                  className={cn(
-                    'motion-respond flex w-3.5 shrink-0 justify-center',
-                    active ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
-                  )}
-                >
-                  {icon(id, node, isOpen)}
-                </span>
+                {lead(id, node, isOpen, active)}
                 <span
                   className={cn(
                     'truncate',
@@ -210,7 +222,7 @@ export function NavTree({
                 </span>
               </Button>
               {node.isFolder && (
-                // Hangs from the centre of the icon above it.
+                // Hangs from the centre of the chevron above it.
                 <div style={{ marginLeft: 7 }}>
                   <Disclose open={isOpen}>{group(id)}</Disclose>
                 </div>
@@ -264,18 +276,19 @@ export function NavTree({
                   onDoubleClick={() => !node.isFolder && onOpenPinned(id)}
                   className={cn(
                     ROW_RESET,
-                    'h-9 pl-8 pr-3 text-[15px] font-medium tracking-tight',
+                    'group h-9 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
                     focused || onPath(id)
                       ? 'text-foreground'
                       : 'text-muted-foreground/70 hover:text-foreground',
                     ignored.has(id) && 'opacity-50',
                   )}
                 >
+                  {lead(id, node, isOpen, id === activePath)}
                   <span className="truncate">{node.name}</span>
                 </Button>
                 {node.isFolder && (
-                  // Hangs from where the heading's text starts.
-                  <div className="ml-8">
+                  // Hangs from the centre of the heading's chevron.
+                  <div style={{ marginLeft: 31 }}>
                     <Disclose open={isOpen}>{group(id)}</Disclose>
                   </div>
                 )}
