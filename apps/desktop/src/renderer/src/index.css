@@ -87,6 +87,9 @@
      modes: the light block re-states `--border`/`--background` on this same
      element, so the substitution resolves per theme. */
   --divider: color-mix(in srgb, var(--border) 55%, var(--background));
+  /* A drawer's inner edge and header rule (DrawerShell). None by default: a
+     drawer lies flat on the page, colour not borders. A vault theme draws it. */
+  --drawer-edge: transparent;
   /* Selection follows the brand by default, so recolouring --primary alone
      recolours the selection; a theme can still set --selection outright. */
   --selection: color-mix(in srgb, var(--primary) 30%, transparent);
@@ -291,6 +294,7 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-divider: var(--divider);
+  --color-drawer-edge: var(--drawer-edge);
   /* The diff hues as TEXT utilities, so a churn count beside a commit reads in
      the same green and red as the diff it summarises. The tint tokens are not
      exposed here: nothing outside `DiffView` paints with them. */
@@ -473,16 +477,30 @@
 @utility motion-out-fade {
   animation: motion-out-fade var(--motion-leave) var(--ease-settle) both;
 }
-/* A side panel's content arriving at and leaving its edge: the slide pace
- * (`--motion-slide`, `--ease-slide`, see :root), slower than a menu's arrive
- * and eased in and out, and the SAME pace both ways, so opening and closing
- * read as one motion reversed (a design call, 2026-09-25). The panel's width
- * does not move; only what is in it. */
-@utility motion-slide-in-right {
-  animation: motion-in-right var(--motion-slide) var(--ease-slide) both;
+/* A drawer (`composites/DrawerShell.tsx`): the nav, history, the last turn.
+ * It pushes: its column's width runs 0 → --drawer-w and back, moving what is
+ * beside it, at the slide pace (`--motion-slide`, `--ease-slide`, see :root),
+ * eased in and out and the SAME both ways, so opening and closing read as one
+ * motion reversed (a design call, 2026-09-25/26). A TRANSITION, so a press
+ * mid-slide reverses from where it is. Off while the handle is dragged: direct
+ * manipulation tracks the pointer and is never eased. Width is the one layout
+ * property animated anywhere outside CodeMirror, and it is outside it: the
+ * editor beside a drawer reflows during the slide, which was the accepted cost
+ * of pushing rather than covering. */
+[data-slot='drawer'] {
+  width: var(--drawer-w);
+  transition: width var(--motion-slide) var(--ease-slide);
 }
-@utility motion-slide-out-right {
-  animation: motion-out-right var(--motion-slide) var(--ease-slide) both;
+[data-slot='drawer'][data-state='closed'] {
+  width: 0;
+}
+[data-slot='drawer'][data-resizing] {
+  transition: none;
+}
+@starting-style {
+  [data-slot='drawer'][data-appear] {
+    width: 0;
+  }
 }
 
 @keyframes motion-in-right {
@@ -777,10 +795,11 @@
   .motion-out-top,
   .motion-out-bottom,
   .motion-out-origin,
-  .motion-out-fade,
-  .motion-slide-in-right,
-  .motion-slide-out-right {
+  .motion-out-fade {
     animation-duration: 1ms;
+  }
+  [data-slot='drawer'] {
+    transition-duration: 1ms;
   }
 }
 

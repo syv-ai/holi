@@ -2,7 +2,7 @@
  * The open note's history sidebar: its header counts the file's revisions, the
  * same uncapped count the frontmatter header's `v.N` shows.
  */
-import { render, screen } from '@/test/render'
+import { act, render, screen } from '@/test/render'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
 import { HistoryPanel } from '../HistoryPanel'
@@ -32,6 +32,7 @@ function setup() {
       <HistoryPanel />
     </Provider>,
   )
+  return store
 }
 
 test('the header counts the revisions, beyond the list it shows', async () => {
@@ -51,4 +52,18 @@ test('a file never committed has none', async () => {
   fileHistory.mockResolvedValue(null)
   setup()
   expect(await screen.findByText('0 revisions')).toBeInTheDocument()
+})
+
+test('closing slides it out rather than removing it at once', async () => {
+  // It used to return null the moment it closed, before the drawer could
+  // play its exit, so the sidebar vanished instead of sliding away.
+  fileHistory.mockResolvedValue({ last: {}, first: {}, revisions: 3 })
+  const store = setup()
+  await screen.findByText('3 revisions')
+
+  act(() => store.set(historyOpenAtom, false))
+  const drawer = document.querySelector('[data-drawer="history"]')
+  expect(drawer).toHaveAttribute('data-state', 'closed')
+  // It slides out with what it showed, rather than emptying on the way.
+  expect(screen.getByText('3 revisions')).toBeInTheDocument()
 })

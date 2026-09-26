@@ -27,7 +27,6 @@ import {
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
 import { TurnReview } from '@/features/agent/TurnReview'
-import { turnReviewOpenAtom } from '@/state/turns'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
@@ -35,7 +34,7 @@ import { MailView } from '@/features/google/MailView'
 import { DialogHost } from './DialogHost'
 import { FrontmatterFieldsHost } from '@/composites/FrontmatterFieldsHost'
 import { PaneView } from './PaneView'
-import { EditorPane } from '@/composites'
+import { DrawerShell, EditorPane } from '@/composites'
 import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { AppFrame } from '@/features/apps/AppFrame'
 import { AppsSection } from '@/features/apps/AppsSection'
@@ -66,12 +65,7 @@ import {
   workspaceAtom,
   type Tab,
 } from '../state/panes'
-import {
-  historyLeavingAtom,
-  historyOpenAtom,
-  historyTargetPathAtom,
-  setHistoryOpenAtom,
-} from '../state/history'
+import { historyOpenAtom, historyTargetPathAtom } from '../state/history'
 import { useGoogleAccount } from '../state/google'
 import { openTaskCountAtom, tickNowAtom } from '../state/tasks'
 import type { PaneDropZone } from '@/lib/tab-drop'
@@ -100,7 +94,7 @@ import { sessionsWorthAsking } from '@/lib/agent-notices'
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
 const NO_ZONES: PaneDropZone[] = []
-import { usePanelLayout } from '../state/preferences'
+import { navOpenAtom, usePanelLayout } from '../state/preferences'
 import { appsSectionOpenAtom, hasAppsAtom } from '../state/apps'
 import { useVaultTheme } from '../state/theme'
 import {
@@ -144,13 +138,8 @@ export function Shell() {
   const openVault = useSetAtom(openVaultAtom)
   const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
-  const setHistoryOpen = useSetAtom(setHistoryOpenAtom)
-  const historyOpen = useAtomValue(historyOpenAtom)
-  // A sidebar sliding out is closing, so the button reopens it rather than
-  // closing it a second time.
-  const historyLeaving = useAtomValue(historyLeavingAtom)
-  const historyShown = historyOpen && !historyLeaving
-  const turnReviewOpen = useAtomValue(turnReviewOpenAtom)
+  const setHistoryOpen = useSetAtom(historyOpenAtom)
+  const navOpen = useAtomValue(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
@@ -176,7 +165,6 @@ export function Shell() {
   // the footer no longer reduces the set to a dot. What each session is doing is
   // the sidebar's to say, per card.
   const agentSessions = useAtomValue(agentSessionsAtom)
-  const shellLayout = usePanelLayout(activeRemote, 'shell')
   // The sidebar's own vertical split: the tree, then the apps and sessions
   // sections under it.
   const sidebarLayout = usePanelLayout(activeRemote, 'sidebar')
@@ -374,31 +362,25 @@ export function Shell() {
   return (
     <div className="flex h-screen flex-col bg-background text-foreground">
       <div className="flex min-h-0 flex-1">
-        <ResizablePanelGroup
-          orientation="horizontal"
-          className="min-w-0 flex-1"
-          defaultLayout={shellLayout.defaultLayout}
-          onLayoutChanged={(layout, meta) => {
-            shellLayout.onLayoutChanged(layout, meta)
-            // Reconcile a genuine handle drag of the agent panel back into its
-            // `open` atom. Only `isUserInteraction` drags count: opening the
-            // settings or history panel inserts a sibling and makes the library
-            // recompute every size (isUserInteraction:false), which used to trip
-            // the agent panel's own onResize into flipping open. The panel-level
-            // callback can't tell a drag from a reflow; this one can.
-            if (!meta.isUserInteraction) return
-          }}
+        {/* The nav is a drawer like every other sidebar (DrawerShell): it slides
+            in from the left and pushes the editor, hides with ⌥⌘S, and keeps its
+            content mounted while hidden, so the tree's expansion survives. */}
+        <DrawerShell
+          id="nav"
+          side="left"
+          open={navOpen}
+          keepMounted
+          label="Sidebar"
+          header={
+            <VaultPicker
+              vaults={vaults}
+              activeRemote={activeRemote}
+              onSelect={switchVault}
+              onAddVault={addVault}
+            />
+          }
         >
-          <ResizablePanel id="nav" defaultSize={256} minSize={180} maxSize={440}>
-            <aside className="relative flex h-full flex-col border-r border-divider">
-              <div className="flex h-11 shrink-0 items-center px-2">
-                <VaultPicker
-                  vaults={vaults}
-                  activeRemote={activeRemote}
-                  onSelect={switchVault}
-                  onAddVault={addVault}
-                />
-              </div>
+          <div className="relative flex min-h-0 flex-1 flex-col">
               {showAdd && <OnboardingRitual mode="add-vault" onDismiss={() => setShowAdd(false)} />}
               {leaving !== null && (
                 <VaultSwitchConfirm
@@ -565,12 +547,11 @@ export function Shell() {
                   </div>
                 )}
               </div>
-            </aside>
-          </ResizablePanel>
+            </div>
+          </DrawerShell>
 
-          <ResizableHandle />
 
-          <ResizablePanel id="editor" minSize={360}>
+          <div className="flex min-w-60 flex-1 flex-col">
             {/* The panes. One `ResizablePanelGroup` nested inside the editor
                 slot, so the split resizes against itself and the sidebars and
                 the history panel are untouched by it.
@@ -650,7 +631,7 @@ export function Shell() {
                                 variant="ghost"
                                 size="icon-xs"
                                 className="ml-1 shrink-0 text-muted-foreground"
-                                onClick={() => setHistoryOpen(!historyShown)}
+                                onClick={() => setHistoryOpen((v) => !v)}
                               >
                                 <History size={16} />
                               </Button>
@@ -679,30 +660,14 @@ export function Shell() {
                 </Fragment>
               ))}
             </ResizablePanelGroup>
-          </ResizablePanel>
+          </div>
 
-          {historyOpen && historyTarget !== null && (
-            <>
-              <ResizableHandle />
-              <ResizablePanel id="history" defaultSize={384} minSize={220}>
-                <HistoryPanel />
-              </ResizablePanel>
-            </>
-          )}
-
-          {/* What the assistant's last turn changed (D88). A sibling of history
-              because it is the same kind of reading — a diff over a commit
-              range rather than over one commit. It renders nothing unless the
-              footer chip has something to open. */}
-          {turnReviewOpen && (
-            <>
-              <ResizableHandle />
-              <ResizablePanel id="turn-review" defaultSize={384} minSize={220}>
-                <TurnReview />
-              </ResizablePanel>
-            </>
-          )}
-        </ResizablePanelGroup>
+          {/* The right-hand drawers. Each decides for itself whether it is open,
+              and slides in and out of this row (DrawerShell). History follows
+              the focused note; the last turn (D88) is the same kind of reading,
+              a diff over a commit range rather than over one commit. */}
+          <HistoryPanel />
+          <TurnReview />
 
         <DialogHost />
         <CommandPalette />

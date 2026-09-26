@@ -9,7 +9,6 @@
 import { fileKind, isTaskFilePath } from '@holi/shared'
 import { atom } from 'jotai'
 import { flushAllBuffers } from '../lib/buffer-registry'
-import { motionDurationMs, prefersReducedMotion } from '../lib/motion'
 import { trpc } from '../lib/trpc'
 import { workspaceAtom } from './panes'
 import { activeRemoteAtom } from './vaults'
@@ -56,39 +55,6 @@ export interface FileDiff {
 
 export const historyOpenAtom = atom(false)
 
-/** The sidebar is playing its exit, and is still mounted until it ends. */
-export const historyLeavingAtom = atom(false)
-
-/** Held across calls so a reopen mid-exit cancels the pending close. */
-let leaveTimer: ReturnType<typeof setTimeout> | null = null
-
-/**
- * Open or close the history sidebar, closing with its exit (the pane-exit
- * pattern, `state/pane-exit.ts`): React unmounts the moment the state says
- * closed, so the close is held for `--motion-slide` while the content slides
- * out, the wait read off the token so the two cannot drift. Opening during an
- * exit cancels it. Reduced motion has nothing to wait for.
- */
-export const setHistoryOpenAtom = atom(null, (get, set, open: boolean): void => {
-  if (leaveTimer !== null) {
-    clearTimeout(leaveTimer)
-    leaveTimer = null
-  }
-  if (open || !get(historyOpenAtom) || prefersReducedMotion()) {
-    set(historyLeavingAtom, false)
-    set(historyOpenAtom, open)
-    return
-  }
-  set(historyLeavingAtom, true)
-  leaveTimer = setTimeout(
-    () => {
-      leaveTimer = null
-      set(historyOpenAtom, false)
-      set(historyLeavingAtom, false)
-    },
-    motionDurationMs('--motion-slide', 400),
-  )
-})
 export const versionsAtom = atom<Version[]>([])
 /**
  * How many commits touched the file, for the panel header. Not

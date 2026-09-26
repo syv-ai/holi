@@ -12,7 +12,7 @@
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { DiffView, SidePanel } from '@/composites'
+import { DiffView, DrawerShell, DrawerTitle } from '@/composites'
 import { Button } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useAck } from '@/lib/use-ack'
@@ -71,7 +71,9 @@ export function TurnReview(): React.JSX.Element | null {
   // Above the early return, because every hook must run on every render.
   const { ref: keepRef, ack } = useAck<HTMLButtonElement>()
 
-  if (!open || turn === null) return null
+  // Nothing to say about no turn. While one is open and then goes (a vault
+  // switch), the drawer still slides out, empty.
+  const shown = open && turn !== null
 
   // The house busy/error wrapper (HistoryPanel, VaultSection) — reused.
   const guard = (fn: () => Promise<unknown>) => async () => {
@@ -111,51 +113,64 @@ export function TurnReview(): React.JSX.Element | null {
   )
 
   return (
-    <SidePanel title="Last turn" subtitle={when(turn.at)} onClose={() => setOpen(false)}>
-      <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
-        {files.length === 0 ? (
-          // Not "it changed nothing": a turn that changed nothing is never
-          // recorded, so an empty list against a real turn means the commits it
-          // names are no longer reachable (a reset, a re-clone).
-          <p className="px-2 py-1 text-xs text-muted-foreground">
-            This turn&rsquo;s history is gone. The commits it recorded are no longer in the vault,
-            so there is nothing left to compare.
-          </p>
-        ) : (
-          files.map(row)
-        )}
-      </div>
+    <DrawerShell
+      id="turn-review"
+      side="right"
+      open={shown}
+      label="Last turn"
+      header={
+        <DrawerTitle title="Last turn" subtitle={turn === null ? undefined : when(turn.at)} />
+      }
+      onClose={() => setOpen(false)}
+    >
+      {turn !== null && (
+        <>
+          <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
+            {files.length === 0 ? (
+              // Not "it changed nothing": a turn that changed nothing is never
+              // recorded, so an empty list against a real turn means the commits it
+              // names are no longer reachable (a reset, a re-clone).
+              <p className="px-2 py-1 text-xs text-muted-foreground">
+                This turn&rsquo;s history is gone. The commits it recorded are no longer in the
+                vault, so there is nothing left to compare.
+              </p>
+            ) : (
+              files.map(row)
+            )}
+          </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden">
-        {selected === null ? (
-          <p className="p-3 text-xs text-muted-foreground">Pick a file to see what changed.</p>
-        ) : diff === null ? (
-          <p className="p-3 text-xs text-muted-foreground">Loading…</p>
-        ) : (
-          <DiffView before={diff.before} after={diff.after} onResolve={setResolved} />
-        )}
-      </div>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {selected === null ? (
+              <p className="p-3 text-xs text-muted-foreground">Pick a file to see what changed.</p>
+            ) : diff === null ? (
+              <p className="p-3 text-xs text-muted-foreground">Loading…</p>
+            ) : (
+              <DiffView before={diff.before} after={diff.after} onResolve={setResolved} />
+            )}
+          </div>
 
-      {error !== null && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
-      <div className="border-t border-divider p-2">
-        {/* Acknowledge: keeping a resolution writes a revert COMMIT, so it
+          {error !== null && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
+          <div className="border-t border-divider p-2">
+            {/* Acknowledge: keeping a resolution writes a revert COMMIT, so it
             gets a beat. Fired on the way in rather than after the await — the
             ack is feedback that the act was taken, and an 800ms bloom must not
             wait on git. */}
-        <Button
-          ref={keepRef}
-          variant="secondary"
-          size="sm"
-          disabled={busy || resolved === null}
-          onClick={() => {
-            ack('bloom')
-            void onKeep()
-          }}
-          className="w-full"
-        >
-          Keep this resolution
-        </Button>
-      </div>
-    </SidePanel>
+            <Button
+              ref={keepRef}
+              variant="secondary"
+              size="sm"
+              disabled={busy || resolved === null}
+              onClick={() => {
+                ack('bloom')
+                void onKeep()
+              }}
+              className="w-full"
+            >
+              Keep this resolution
+            </Button>
+          </div>
+        </>
+      )}
+    </DrawerShell>
   )
 }

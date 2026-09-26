@@ -44,6 +44,7 @@ export const APP_BASE_TOKENS: ThemeBlock = {
   // Derived, like `selection` below: a vault that recolours `border` or
   // `background` gets a divider that matches, without setting this.
   divider: 'color-mix(in srgb, var(--border) 55%, var(--background))',
+  'drawer-edge': 'transparent',
   input: 'oklch(26.9% 0 0)',
   ring: 'oklch(50% 0.134 242.749)',
   'scrollbar-thumb': 'oklch(37.1% 0 0)',

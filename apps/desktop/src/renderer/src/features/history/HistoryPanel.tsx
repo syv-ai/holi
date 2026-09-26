@@ -9,12 +9,11 @@
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useEffect, useState } from 'react'
-import { Churn, DiffView, SidePanel } from '@/composites'
+import { Churn, DiffView, DrawerShell, DrawerTitle } from '@/composites'
 import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 import {
   diffAtom,
-  historyLeavingAtom,
   historyOpenAtom,
   historyTargetPathAtom,
   loadDiffAtom,
@@ -39,7 +38,6 @@ const when = (iso: string) =>
 
 export function HistoryPanel() {
   const open = useAtomValue(historyOpenAtom)
-  const leaving = useAtomValue(historyLeavingAtom)
   const targetPath = useAtomValue(historyTargetPathAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const versions = useAtomValue(versionsAtom)
@@ -55,9 +53,12 @@ export function HistoryPanel() {
 
   // History is per-file and follows focus: switching to another note must swap the
   // log, not leave the last one's commits up.
+  // Not on close: the drawer slides out with what it showed, rather than
+  // emptying on the way.
   useEffect(() => {
+    if (!open || !targetPath) return
     reset()
-    if (open && targetPath) void loadVersions()
+    void loadVersions()
   }, [open, targetPath, loadVersions, reset])
 
   // The house busy/error wrapper (VaultSection) — reused, not reinvented.
@@ -72,8 +73,6 @@ export function HistoryPanel() {
       setBusy(false)
     }
   }
-
-  if (!open || targetPath === null) return null
 
   // The commit on the remote — GitHub is the vault's host (D60). Opens in the browser.
   const openCommit = (sha: string) => {
@@ -129,10 +128,14 @@ export function HistoryPanel() {
   )
 
   return (
-    <SidePanel
-      title="History"
-      subtitle={targetPath}
-      leaving={leaving}
+    <DrawerShell
+      id="history"
+      side="right"
+      // Open while asked AND while there is a note to show: focusing the board
+      // closes it the same way the button does, sliding out.
+      open={open && targetPath !== null}
+      label="History"
+      header={<DrawerTitle title="History" subtitle={targetPath} />}
       aside={revisions === null ? undefined : `${revisions} revision${revisions === 1 ? '' : 's'}`}
     >
       <div className="max-h-56 shrink-0 overflow-y-auto border-b border-divider p-2">
@@ -170,6 +173,6 @@ export function HistoryPanel() {
           Restore this version
         </Button>
       </div>
-    </SidePanel>
+    </DrawerShell>
   )
 }

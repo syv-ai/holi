@@ -34,6 +34,10 @@ export const globalPanelLayoutsAtom = atomWithStorage<Record<string, PanelLayout
 )
 
 /** What a `ResizablePanelGroup` needs to restore and record its layout. */
+/** Whether the nav drawer is showing (⌥⌘S, `nav.toggle`). Remembered across
+ *  launches and vaults: it is about the screen, not the notes. */
+export const navOpenAtom = atomWithStorage('holi:navOpen', true)
+
 export interface PanelLayoutBinding {
   defaultLayout: PanelLayout | undefined
   onLayoutChanged: (layout: PanelLayout, meta: { isUserInteraction: boolean }) => void

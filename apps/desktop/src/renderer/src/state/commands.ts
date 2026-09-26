@@ -30,6 +30,7 @@ import { openTodaysDailyAtom } from './daily'
 import { openDialogAtom } from './dialogs'
 import { closeActiveTabWithExitAtom } from './pane-exit'
 import { openPaletteAtom } from './palette'
+import { navOpenAtom } from './preferences'
 import { touchRecentAtom } from './recents'
 import { openPinned, openSingleton, splitPane, workspaceAtom, type SingletonTab } from './panes'
 import { activeRemoteAtom, createNoteAtom, snapshotAtom, vaultsAtom } from './vaults'
@@ -106,6 +107,14 @@ export const STATIC_COMMANDS: readonly Command[] = [
     label: 'Split pane',
     hotkey: '⌘\\',
     run: (_get, set) => set(workspaceAtom, (w) => splitPane(w)),
+  },
+  // The nav is a drawer (DrawerShell) and hides like one. ⌥⌘S is the macOS
+  // "show/hide sidebar" key (Finder, Mail, Notes); ⌘B stays bold, ⌘S save.
+  {
+    id: 'nav.toggle',
+    label: 'Toggle sidebar',
+    hotkey: '⌥⌘S',
+    run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
   // Bound here now that there is no drawer to own it: a session tab is mounted
   // only while it is open, so the shortcut that OPENS one cannot live inside it.

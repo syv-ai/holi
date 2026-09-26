@@ -86,6 +86,10 @@ export const THEME_COLOR_TOKENS = [
   // popover). Defaults to `border` faded toward `background`, so a vault that
   // recolours either gets a matching divider without setting this at all.
   'divider',
+  // The line on a drawer's inner edge (DrawerShell: the nav, history, the last
+  // turn, the PDF sidebars) and under its header. Transparent by default: a
+  // drawer lies flat on the page. A vault that wants the seam drawn sets it.
+  'drawer-edge',
   'input',
   'ring',
   // Chrome colours that live on their own tokens (see index.css).
@@ -354,7 +358,7 @@ export const THEME_TOKEN_GROUPS: readonly ThemeTokenGroup[] = [
   {
     title: 'Edges',
     blurb: 'What separates one thing from another.',
-    tokens: ['border', 'divider', 'input'],
+    tokens: ['border', 'divider', 'drawer-edge', 'input'],
   },
   {
     title: 'Scrollbars',
@@ -380,6 +384,7 @@ export const THEME_TOKEN_NOTES: Readonly<Record<string, string>> = Object.freeze
   brand: 'The same brand as TEXT. A fill dark enough to carry pale text is too dark to be text.',
   accent: 'The subtle hover surface, not the brand.',
   divider: 'The seam between two panes. `border` is the edge of an object.',
+  'drawer-edge': 'The line beside a sidebar and under its header. Transparent unless set.',
   selection: 'Highlighted text. Follows the brand unless you set it.',
 })
 
