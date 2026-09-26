@@ -1,6 +1,5 @@
-/** The reminder event, produced locally by `sweep` (apps/desktop/src/main/reminders/sweep.ts).
- * Tasks are identified by their vault `remote` + file `path` — the one identity vocabulary
- * that carries file → notification → click, with no `taskId` residue from the deleted server bus. */
+/** The reminder event, produced locally by `sweep`. Tasks are identified by their vault
+ * `remote` + file `path`, the one identity that carries file → notification → click. */
 
 export interface ReminderFire {
   /** The owning vault, `owner/repo`. */

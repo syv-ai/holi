@@ -3,27 +3,23 @@
  *
  * **The record is a range and nothing else.** No path list, no content, no
  * queue: `base` at turn start, `end` at the turn's settle commit, and the files
- * come from `git diff base..end` when someone asks. Storing the paths as well
- * would be a second copy of an answer git already holds, and one that goes stale
- * the moment anything else touches the tree.
+ * come from `git diff base..end` when someone asks. Storing paths as well would
+ * duplicate what git holds, and go stale.
  *
- * **`.local.`, so it never syncs.** A turn is a thing that happened on this
- * machine; a teammate pulling your agent's turn boundaries would be reading your
- * session, not the vault's content. D65's marker plus the seeded `*.local.*`
- * ignore do the whole of that.
+ * **`.local.`, so it never syncs** (D65). A turn happened on this machine, not
+ * in the vault's content.
  *
- * **A broken log must never break a turn.** Every read failure — missing,
- * unparseable, hand-edited into nonsense — answers `[]`, and every write is
- * best-effort at the call site. The turn bracket this hangs off also resumes
- * sync, and losing a record is a smaller failure than a vault left paused.
+ * **A broken log must never break a turn.** Every read failure answers `[]`, and
+ * every write is best-effort at the call site: the turn bracket this hangs off
+ * also resumes sync, and a lost record beats a vault left paused.
  *
  * No Electron import: this loads under plain Node like the rest of `agent/`.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-/** Machine state, so it lives with the rest of it (#16). Gitignored by the
- *  `.local.` marker, which is why the name keeps it under `state/`. */
+/** Machine state, with the rest of it under `state/`. Gitignored by the
+ *  `.local.` marker. */
 export const TURNS_FILE = '.holi/state/turns.local.json'
 
 export interface TurnRecord {
@@ -33,12 +29,11 @@ export interface TurnRecord {
   end: string
   /** ISO timestamp of the turn's end. */
   at: string
-  /** Which of the vault's agent sessions ran it (D100). Absent on every record
-   *  written before a vault could run more than one. */
+  /** Which of the vault's agent sessions ran it (D100). May be absent. */
   sessionId?: string
   /** Another session's turn was open at the same instant, so this range contains
    *  work this turn did not do — they shared a settle commit and therefore an
-   *  `end` sha. Absent reads as false, which is what every older record is. */
+   *  `end` sha. Absent reads as false. */
   overlapped?: boolean
 }
 
@@ -55,8 +50,7 @@ export interface TurnLog {
  *  is read and rewritten on each append without anyone noticing. */
 const CAP = 50
 
-/** The three original fields and nothing else: a record written before D100
- *  carries no session and no overlap, and must keep reading. */
+/** The three required fields only: `sessionId` and `overlapped` are optional. */
 function isRecord(value: unknown): value is TurnRecord {
   if (value === null || typeof value !== 'object') return false
   const r = value as Record<string, unknown>

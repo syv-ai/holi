@@ -9,22 +9,17 @@
  * **The command, never the files.** The state lives in
  * `$CLAUDE_CONFIG_DIR/sessions/<pid>.json`, and Anthropic's documentation says
  * those files are not a stable interface and that `claude agents --json` is. So
- * the directory is an **edge trigger** — `watch` says *something moved*, and
- * `readRows` says *what*. Nothing here parses a format we were told not to
- * depend on, and a change to that format costs a wasted read rather than a
- * wrong answer.
+ * the directory is an **edge trigger**: `watch` says *something moved*, and
+ * `readRows` says *what*.
  *
- * **Scoped by the config directory, not by a filter.** D86 gave every vault its
- * own `CLAUDE_CONFIG_DIR`, and the listing is per directory, so asking the
- * vault's directory already asks about the vault's sessions. The `cwd` check in
- * `readRows` is belt to those braces: a row acted on for the wrong tree is D87's
- * mistake, and the guard makes it impossible rather than unlikely.
+ * **Scoped by the config directory, not by a filter.** Every vault has its own
+ * `CLAUDE_CONFIG_DIR` (D86), and the listing is per directory. The `cwd` check
+ * in `readRows` is a second guard against acting on a row for the wrong tree.
  *
- * **It is allowed to answer nothing.** Every failure — no binary, a non-zero
- * exit, malformed output, a timeout — resolves to an empty map. The caller's
- * floor is the turn bracket the hooks already provide, so a vault whose CLI is
- * too old or too slow still reports `working`; it just never reports needs-you.
- * This runs on a watcher edge and must never become the thing that blocks a turn.
+ * **It is allowed to answer nothing.** Every failure (no binary, non-zero exit,
+ * malformed output, timeout) resolves to an empty map. The caller's floor is the
+ * hook turn bracket, so a vault whose CLI is too old or slow still reports
+ * `working`; it just never reports needs-you.
  *
  * No Electron import: this loads under plain Node like the rest of `agent/`.
  */
@@ -45,11 +40,9 @@ const WATCH_DEBOUNCE_MS = 150
 /**
  * How often to try again for a `sessions/` directory that does not exist yet.
  *
- * Holi deliberately does not create it (`agent-config-dir.ts`: Claude Code owns
- * that schema), and Claude Code creates it at `SessionStart`, measured at 0.94 s
- * after the spawn. So the **first** watch in a vault always fails, and a watch
- * attempted "lazily on the first spawn" is attempted at the one moment the
- * directory is still missing. Retrying is the only thing that actually takes.
+ * Holi deliberately does not create it (Claude Code owns that schema), and
+ * Claude Code creates it at `SessionStart`, about a second after the spawn. So
+ * the **first** watch in a vault always fails, and retrying is what takes.
  */
 const WATCH_RETRY_MS = 500
 
@@ -64,24 +57,18 @@ export interface SessionRow {
    * What Claude Code calls the session. Either something a person chose (`--name`
    * at spawn, `/rename` inside it) or the **default display name** Claude Code
    * gives an unnamed one: the working directory's name plus a two-character
-   * suffix, `privat-d9`. That is unique per session but it is not a label — it
-   * says nothing about the conversation, and Claude Code documents it as not
-   * being a resume handle either.
+   * suffix, `privat-d9`. That is unique per session but it is not a label.
    *
-   * **The listing does not say which**, verified against 2.1.278: the underlying
-   * file carries `nameSource`, the supported command does not. So the caller
-   * cannot read the difference out of a row, and must know it another way: it
-   * spawned the session, so it knows whether it passed `--name`, and it can see
-   * the name change afterwards. See `nameSource` below.
+   * **The listing does not say which**: the underlying file carries
+   * `nameSource`, the supported command does not. The caller infers it instead
+   * (see `deriveName` in `agent-manager.ts`).
    */
   name: string
   /**
    * `'user'` when someone named the session, absent or `'derived'` otherwise.
    *
-   * **Currently never present**, because `claude agents --json` does not emit it
-   * and this module refuses to read the file that does. Parsed anyway, because
-   * the day the command starts emitting it is the day this becomes the direct
-   * answer to a question the caller currently infers.
+   * **Currently never present**, because `claude agents --json` does not emit
+   * it. Parsed anyway, so it becomes the direct answer once it does.
    */
   nameSource?: string
   status: SessionStatus
@@ -92,9 +79,8 @@ export interface SessionRow {
    * Claude Code's own id for the conversation, when the listing carries one.
    *
    * **Read, never stored** (D101's Duplicate): it is what `--resume <id>
-   * --fork-session` takes, and it is the id D100 refuses to key a session by,
-   * because it changes under one terminal on `/clear`. Taking it at the moment
-   * of the fork is the difference between those two statements.
+   * --fork-session` takes, and it changes under one terminal on `/clear`
+   * (D100).
    */
   sessionId?: string
 }
@@ -104,17 +90,14 @@ export interface SessionRegistry {
   readRows(args: { configDir: string; vaultRoot: string }): Promise<Map<number, SessionRow>>
   /**
    * Call `onChange` when the config directory's session state moves. Debounced,
-   * and retried until `sessions/` exists — it is created by Claude Code shortly
-   * after the first spawn, not by Holi, so the first watch in a vault is always
-   * one the directory is not ready for. The returned unsubscribe stops the
-   * retries too.
+   * and retried until `sessions/` exists (see `WATCH_RETRY_MS`). The returned
+   * unsubscribe stops the retries too.
    */
   watch(configDir: string, onChange: () => void): () => void
 }
 
 export interface SessionRegistryDeps {
-  /** Injected so tests never shell out, and so the binary search is the one
-   *  `AgentRuntime` already does rather than a second copy of it. */
+  /** Injected so tests never shell out. */
   resolveBin?: () => string | null
   run?: (bin: string, args: string[], env: NodeJS.ProcessEnv) => Promise<string>
   log?: (msg: string) => void

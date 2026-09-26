@@ -8,8 +8,7 @@
  *
  * **This is not the renderer's `window.holi`.** That one is the preload bridge
  * (`window.holi.trpc`), in a different document, in a trusted origin. The two
- * objects never meet; the shared name is a coincidence of both being "the way
- * out of this document".
+ * objects never meet.
  *
  * `postMessage(..., '*')` is correct rather than lazy: the frame's origin is
  * opaque, so there is no origin string it could target instead. Identity is

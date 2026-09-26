@@ -1,21 +1,17 @@
 /**
  * The palette an app starts from, before the vault's theme is laid over it.
  *
- * Without this, `appHeadHtml` injects only what `.holi/settings/theme.yaml` *overrides* —
- * and a vault with no theme (the common case; the seeded file is `{}`) gives an
- * app **no tokens at all**. Every `var(--foreground)` then resolves to nothing,
- * the browser falls back to black text on a transparent page, and the app is
- * unreadable. That is not a styling nicety: the seeded authoring skill tells
- * authors to use exactly these tokens, so the default has to be a real palette
- * rather than an empty block. (Found by hand, in the app — every unit test
- * passed with `:root{}`.)
+ * Without this, `appHeadHtml` injects only what the vault's theme files
+ * (`.holi/settings/theme.css` / `theme.local.css`) *override*, and a vault with
+ * no theme (the common case) gives an app **no tokens at all**: every
+ * `var(--foreground)` resolves to nothing and the app is unreadable. The seeded
+ * authoring skill tells authors to use exactly these tokens.
  *
  * The values reproduce the renderer's dark defaults from `index.css`, with the
- * Tailwind palette references resolved to literals: `var(--color-neutral-950)`
- * means nothing inside an app frame, which has no Tailwind build. **`index.css`
- * is the source of truth** — if a default there changes, an app is off by a
- * shade until this is updated, which is cosmetic. What is NOT cosmetic is a
- * token going missing, so a test pins that every themeable token has a value.
+ * Tailwind palette references resolved to literals, since an app frame has no
+ * Tailwind build. **`index.css` is the source of truth**: drift here is a
+ * cosmetic shade, but a missing token is not, so a test pins that every
+ * themeable token has a value.
  */
 import { THEME_TOKENS, type ThemeBlock } from '@holi/shared'
 

@@ -12,14 +12,14 @@ export const TYPST_VERSION = '0.14.1'
 
 export interface ResolveTypstOpts {
   /** Where a downloaded binary is cached (userData/typst). Omitted in tests that
-   *  only exercise the PATH branch; wired up in the download task. */
+   *  only exercise the PATH branch. */
   cacheDir?: string
 }
 
 /**
  * Absolute path to a usable typst binary, or null. Resolution order:
  *   1. `TYPST_BIN` env override (tests, power users, the agent front door).
- *   2. a cached download under `cacheDir` (added in the download-on-first-use task).
+ *   2. a cached download under `cacheDir`.
  *   3. `PATH` (dev — `which typst`).
  * This finds an EXISTING binary only; `ensureTypst` adds the download.
  */
@@ -95,8 +95,7 @@ async function isExecutable(p: string): Promise<boolean> {
  * `cacheDir` is given, fetch + cache the pinned release for the host platform.
  * Returns null if the download/extraction/verification fails (the UI surfaces a
  * clear "typst is not available" error). Network + extraction are NOT unit-
- * tested here (a 30 MB fetch) — the pure helpers above are, and the end-to-end
- * download is verified manually until a packaged build exists.
+ * tested (a 30 MB fetch); the pure helpers above are.
  */
 export async function ensureTypst(opts: ResolveTypstOpts = {}): Promise<string | null> {
   const existing = await resolveTypstBin(opts)
@@ -120,9 +119,9 @@ async function downloadTypst(cacheDir: string): Promise<string | null> {
     await copyFile(join(scratch, asset.binInArchive), dest)
     await chmod(dest, 0o755)
 
-    // Functional integrity check: it runs and reports the pinned version.
-    // (A sha256 pin of the archive is the stronger check — see the spec's open
-    // questions; deferred so we don't maintain a per-platform checksum table.)
+    // Functional integrity check: it runs and reports the pinned version. A
+    // sha256 pin of the archive would be stronger but needs a per-platform
+    // checksum table.
     const { stdout } = await exec(dest, ['--version'])
     if (!stdout.includes(TYPST_VERSION)) {
       await rm(dest, { force: true })
@@ -137,8 +136,7 @@ async function downloadTypst(cacheDir: string): Promise<string | null> {
 }
 
 /** Extract a typst release archive. `tar` autodetects xz on macOS/Linux;
- *  Windows uses PowerShell's Expand-Archive. Windows is unverified until a
- *  packaged build exists (spec open question). */
+ *  Windows uses PowerShell's Expand-Archive (unverified). */
 async function extract(archivePath: string, into: string, format: 'tar.xz' | 'zip'): Promise<void> {
   if (format === 'zip') {
     await exec('powershell', [

@@ -5,11 +5,9 @@
  * these are filesystem questions about a specific vault, and they are the part
  * worth testing against real files.
  *
- * **Every refusal names the fix.** The agent is the caller, and the failure
- * mode slice 1 proved worst is silence — an app that does not appear, with
- * nothing anywhere saying why. "not registered" is only marginally better than
- * nothing; "no app.yaml — write one, or run holi app init retro" is a next
- * step.
+ * **Every refusal names the fix.** The agent is the caller, and the worst
+ * failure is an app that does not appear with nothing saying why. "no app.yaml,
+ * write one, or run holi app init retro" is a next step.
  */
 import { readFile, rename, stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -71,8 +69,7 @@ export async function openAppOp(root: string, appId: string): Promise<AppOpResul
  *
  * **Never overwrites.** `created` lists only what was newly written, so running
  * it on a finished app is `{ok:true, created:[]}` rather than an error: the
- * agent's intent ("make sure this app exists") is satisfied, and refusing would
- * push it towards checking first with a read it does not need.
+ * agent's intent ("make sure this app exists") is satisfied.
  */
 export async function initAppOp(root: string, appId: string): Promise<AppInitResult> {
   if (!isValidAppId(appId)) return { ok: false, error: `${appId}: ${ID_RULE}` }
@@ -94,11 +91,9 @@ export async function initAppOp(root: string, appId: string): Promise<AppInitRes
  * Rename an app — which is to say, rename its directory, because the id **is**
  * the directory name and also the host of its `holi-app://` URL.
  *
- * **One `rename` of the directory, not a file-by-file move.** The app is a tree
- * with nested directories and binary assets in it; walking it into a list of
- * `from`→`to` pairs would drop the empty directories and cost N syscalls to do
- * worse. It also means the move is atomic on the same filesystem: either the app
- * is at the old id or the new one, never half at each.
+ * **One `rename` of the directory, not a file-by-file move.** A file walk would
+ * drop empty directories, and one rename is atomic on the same filesystem: the
+ * app is at the old id or the new one, never half at each.
  *
  * The link rewrite is a second pass, and it comes **after** the directory has
  * moved: a crash between the two leaves the app renamed with stale links —
@@ -164,10 +159,9 @@ function manifestFor(appId: string): string {
   return lines.join('\n')
 }
 
-/** A placeholder that renders something rather than a blank tab — a blank tab
- *  is indistinguishable from the app being broken, which is the exact confusion
- *  this slice exists to remove. It carries no bridge script: the bridge is
- *  injected on serve, and a hand-added one is what the validator refuses. */
+/** A placeholder that renders something rather than a blank tab, which is
+ *  indistinguishable from a broken app. It carries no bridge script: the bridge
+ *  is injected on serve, and a hand-added one is what the validator refuses. */
 function entryFor(appId: string): string {
   return `<!doctype html>
 <meta charset="utf-8" />

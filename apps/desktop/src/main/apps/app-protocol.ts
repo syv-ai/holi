@@ -28,8 +28,7 @@ import { APP_BASE_TOKENS } from './app-tokens'
  * **The host is folded to lower case explicitly.** Chromium folds the host of a
  * `standard:` scheme; Node's `URL` leaves a non-special scheme's host alone. The
  * fold here makes the two agree, so `isValidAppId` sees the same string in the
- * running app as it does in a test — and the folding is an intended rule rather
- * than a property of whichever parser happened to run.
+ * running app as it does in a test.
  */
 export function parseAppUrl(url: string): { appId: string; rel: string } | null {
   let parsed: URL
@@ -112,15 +111,13 @@ function cssSafe(value: string): string {
  * see `APP_BASE_TOKENS` for why the base cannot be left out.
  *
  * The theme arrives this way rather than through a `holi.theme()` call because
- * it is **ambient** — an app styles with `var(--primary)` and inherits a vault's
- * palette without knowing there is such a thing as a theme. A getter would be a
- * second source for the same fact.
+ * it is **ambient**: an app styles with `var(--primary)` and inherits a vault's
+ * palette without knowing there is such a thing as a theme.
  */
 export function appHeadHtml(block: ThemeBlock): string {
-  // Base first, the vault's overrides second — same rule, so the later
-  // declaration wins. A vault with no theme (the seeded file is empty) still
-  // gets a full palette, which is what makes `var(--primary)` advice in the
-  // authoring skill true rather than aspirational.
+  // Base first, the vault's overrides second, so the later declaration wins. A
+  // vault with no theme still gets a full palette, which is what makes the
+  // authoring skill's `var(--primary)` advice true.
   const vars = Object.entries(themeBlockToVars({ ...APP_BASE_TOKENS, ...block }))
     .map(([name, value]) => `${cssSafe(name)}:${cssSafe(value)}`)
     .join(';')

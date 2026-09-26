@@ -6,8 +6,8 @@ import { SETTINGS_LOCAL_FILE } from '@holi/shared'
  * lives behind this interface, not in the evaluator.
  *
  * Backed by each vault's `.holi/settings/app.local.yaml` under a `reminders` key —
- * gitignored by the seeded `*.local.*` rule, so a fire is never a commit. Siblings
- * (e.g. a future login-item flag) share the file, so writes merge rather than clobber.
+ * gitignored by the seeded `*.local.*` rule, so a fire is never a commit. Other
+ * local settings share the file, so writes merge rather than clobber.
  * Synchronous by design: the sweep tick reads and marks inline.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'

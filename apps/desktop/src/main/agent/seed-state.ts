@@ -1,27 +1,18 @@
 /**
  * What Holi last wrote, so it can tell its own file from an edited one (D75).
  *
- * `ensureSeeded` used to be create-if-missing for everything, which is what
- * made it safe to run on every vault open — and also what made a managed file
- * impossible to improve. Slice 1 shipped a `vault-apps` skill with four gaps in
- * it; the fix reached only vaults that had never been opened. The authoring
- * skill is the main lever the feature has for being usable, and it was
- * write-once per vault.
+ * Holi refreshes a managed file **only when it can prove nobody touched it**:
+ * the sha256 of what it wrote, per path, compared against what is on disk now.
+ * A hash that differs means a human or an agent changed the file: leave it, and
+ * say so.
  *
- * So Holi refreshes a managed file **only when it can prove nobody touched
- * it**: the sha256 of what it wrote, per path, compared against what is on disk
- * now. A hash that differs means a human or an agent changed the file — leave
- * it, and say so.
- *
- * **A hash rather than a version marker in the file.** A `<!-- holi-seed: v2 -->`
- * comment is visible in a document people read, can be edited around, and
- * answers "which version" rather than "was this touched". The hash answers
- * exactly the question being asked, and is invisible.
+ * **A hash rather than a version marker in the file.** A marker is visible,
+ * can be edited around, and answers "which version" rather than "was this
+ * touched".
  *
  * **Machine-local, and the `.local.` in the name is the whole enforcement**
- * (D65). This is a fact about *this clone*: a committed copy would travel to a
- * teammate and claim their file was untouched when Holi has never written it on
- * their machine — which is the one way this mechanism could destroy work.
+ * (D65). A committed copy would travel to a teammate and claim their file was
+ * untouched when Holi never wrote it there, which could destroy work.
  *
  * Only managed files are recorded. The hash exists to answer "may I overwrite
  * this?", and that question is never asked about `AGENTS.md`.
@@ -69,9 +60,9 @@ export async function recordSeeded(root: string, rel: string, content: string): 
 /**
  * May Holi overwrite `rel`, given what is on disk there now?
  *
- * **No record means no**, and that is the load-bearing case: every vault that
- * exists today predates these hashes, so a `true` here would rewrite everyone's
- * edited skills once, silently, the next time they opened Holi.
+ * **No record means no**, and that is the load-bearing case: a vault seeded
+ * before the hashes existed would otherwise have its edited skills silently
+ * rewritten.
  */
 export async function mayRefresh(root: string, rel: string, onDisk: string): Promise<boolean> {
   const recorded = (await readSeedState(root))[rel]

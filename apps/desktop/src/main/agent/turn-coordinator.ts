@@ -4,24 +4,18 @@
  *
  * A vault runs several `claude` sessions (D100) but has exactly one sync loop,
  * so the pause is the **vault's** while the turn bracket is each **session's**.
- * That mismatch is the whole of this module: the vault pauses once, when the
- * working set goes from empty to non-empty, and resumes once, when it empties.
- * Two sessions that each pause and resume for themselves would have the first
- * one to finish resume the loop under the other, and put Holi's committer back
- * on `.git/index.lock` beside a live agent — which is the contention the bracket
- * exists to prevent.
+ * The vault pauses once, when the working set goes from empty to non-empty, and
+ * resumes once, when it empties. Per-session pause/resume would let the first
+ * session to finish resume the loop under the other, putting Holi's committer
+ * back on `.git/index.lock` beside a live agent.
  *
  * Every turn that ended inside one pause therefore shares **one settle commit**,
- * and so shares its `end` sha. A turn whose span was open at the same instant as
- * another session's records `overlapped`, because its range then contains work
- * it did not do, and the reviewer deserves to be told rather than to infer it
- * from two identical shas.
+ * and so its `end` sha. A turn whose span overlapped another session's records
+ * `overlapped`, because its range then contains work it did not do.
  *
  * A session leaves the set on `Stop`, on a confirmed registry `idle`, on exit,
- * or on its own safety cap. The cap is a backstop rather than the mechanism:
- * escaping a permission prompt fires no `Stop` hook at all (measured over 166 s),
- * and before the registry existed that turn ran out the full ten minutes with
- * the vault paused behind it.
+ * or on its own safety cap. The cap is a backstop: escaping a permission prompt
+ * fires no `Stop` hook at all.
  *
  * NOTE: no runtime `electron` import — this loads under vitest like the rest of
  * `agent/`.
@@ -56,26 +50,20 @@ export interface TurnCoordinator {
   /**
    * Claude Code's own session listing reports this session `idle`.
    *
-   * Confirmed, not acted on at once: the listing reports `busy` throughout tool
-   * execution and `waiting` during a prompt, so `idle` really does mean no turn
-   * — but a single reading is one flap away from resuming the vault mid-turn,
-   * and a second reading a second later costs nothing. The caller is expected to
-   * take that second reading rather than wait for a watcher edge that a quiet
-   * session will never produce.
+   * Confirmed, not acted on at once: a single reading is one flap away from
+   * resuming the vault mid-turn. The caller takes the second reading itself,
+   * because a quiet session produces no watcher edge.
    */
   noteIdle(sessionId: string): void
   /**
    * The listing reports this session as anything but `idle`.
    *
-   * This is what makes the confirmation two **consecutive** readings rather
-   * than any two: without it, one spurious `idle` would sit as half a pair for
-   * the rest of the turn, and the next one — however many `busy` readings
-   * later — would resume the vault and take a settle commit mid-turn.
+   * This is what makes the confirmation two **consecutive** readings: without
+   * it, one spurious `idle` would sit as half a pair for the rest of the turn.
    */
   noteBusy(sessionId: string): void
-  /** The session died. It leaves the set at once, and records nothing: a turn
-   *  killed part-way has no end of its own, and the teardown path has always
-   *  resumed the vault without writing one. */
+  /** The session died. It leaves the set at once and records nothing: a turn
+   *  killed part-way has no end of its own. */
   forget(sessionId: string): void
   /** The sessions currently mid-turn. A snapshot; mutating it changes nothing. */
   readonly working: ReadonlySet<string>
@@ -85,8 +73,8 @@ export interface TurnCoordinator {
 interface Turn {
   sessionId: string
   /** The vault it began in, or null if none was open. A record is written only
-   *  while that is still the vault on screen: attributing a turn to whichever
-   *  vault is open now is the mistake D87 caught in D86's migration. */
+   *  while that is still the active vault, never attributed to whichever vault
+   *  is open now (D87). */
   remote: string | null
   base: string | null
   /** `head()` is async and `begin` is not, so the end of the turn waits on the
@@ -200,10 +188,8 @@ export function createTurnCoordinator(deps: TurnCoordinatorDeps): TurnCoordinato
         safety: null,
         idleSince: null,
       }
-      // Captured BEFORE the pause. It is the same sha either way today; the
-      // ordering states the intent, which is that the base is the tree the turn
-      // started against rather than the tree it was allowed to touch. Skipped
-      // entirely with no log to record into: nothing would ever read it.
+      // Captured BEFORE the pause: the base is the tree the turn started
+      // against. Skipped with no log to record into.
       if (vault !== null && deps.turnLogFor !== undefined) {
         turn.basePending = vault.repo
           .head()

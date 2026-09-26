@@ -1,10 +1,9 @@
 /**
- * The `claude` session itself (spec §AgentRuntime): one interactive CLI in a
- * node-pty PTY, its bytes forwarded to the renderer's xterm.
+ * The `claude` session itself: one interactive CLI in a node-pty PTY, its bytes
+ * forwarded to the renderer's xterm.
  *
  * node-pty is an Electron-ABI native module, so it loads lazily inside the
- * real spawn path only (plan decision 6) — tests inject a fake PTY and never
- * touch it. Everything above the PTY (env, args, binary discovery) is a pure
+ * real spawn path only; tests inject a fake PTY and never touch it. Everything above the PTY (env, args, binary discovery) is a pure
  * function.
  */
 import { execFileSync } from 'node:child_process'
@@ -71,15 +70,8 @@ export const defaultProbePid = (pid: number): PidState => {
  * The child's env. Strips the nested-session guards (`claude` refuses to run
  * inside another Claude Code session) and keeps PATH/HOME.
  *
- * It no longer hands the child an endpoint or a bearer: there is no MCP server
- * to reach (D60). The one surviving hook, `user-prompt-submit`, reads the
- * vault's own files and needs nothing from us.
- *
- * `CLAUDE_CODE_NO_FLICKER=1` is forced on for every in-app session: the default
- * full-screen-redraw renderer flickers badly inside an embedded xterm.js, and
- * NO_FLICKER swaps in a patch-only virtual viewport (docs:
- * code.claude.com/docs/en/terminal-config). Set here rather than in the user's
- * `~/.claude/settings.json`, which the PRD says Holi never touches.
+ * `CLAUDE_CODE_NO_FLICKER=1` is forced on here rather than in the user's
+ * `~/.claude/settings.json`, which Holi never touches.
  */
 export interface AgentEnvOpts {
   /** The local hook server's port (git coexistence). The seeded curl hooks read
@@ -103,24 +95,18 @@ export interface AgentEnvOpts {
   /**
    * The directory holding Holi's generated commands, **prepended to `PATH`**.
    *
-   * It exists for the send gate rather than for convenience (D70). The gate is
-   * a `PreToolUse` hook matching the command *text*, so the text has to be
-   * something a rule can match — and `"$HOLI_GOOGLE_BIN" send` contains no
-   * `holi-google` at all. That is precisely why D67 §5's planned
-   * `Bash(holi-google send:*)` rule would never have fired.
-   *
-   * `holi` is generated into the same directory, so it is on `PATH` for the
-   * same reason without a second mechanism.
+   * It exists for the send gate (D70). The gate is a `PreToolUse` hook matching
+   * the command *text*, and `"$HOLI_GOOGLE_BIN" send` contains no `holi-google`
+   * at all, so the agent has to type the bare name. `holi` lives in the same
+   * directory.
    */
   binDir?: string | null
   /**
    * Holi's own Claude Code config directory, as `$CLAUDE_CONFIG_DIR` (D72).
    *
    * This is the whole of the isolation: the variable relocates *every*
-   * `~/.claude` path — settings, skills, plugins, marketplaces, MCP — and
-   * `~/.claude.json` with them, so a vault session sees Holi's config and the
-   * vault's, and nothing from the machine. Absolute path only; the agent's cwd
-   * is the vault and Claude Code resolves this against nothing useful.
+   * `~/.claude` path, and `~/.claude.json` with them, so a vault session sees
+   * nothing from the machine's config. Absolute path only.
    */
   configDir?: string | null
 }
@@ -134,11 +120,9 @@ export function buildAgentEnv(
     if (value !== undefined) env[key] = value
   }
   // The parent session's identity, when Holi itself was launched from a Claude
-  // Code terminal. Every one of these rides in on `process.env` and none of them
-  // is true of the vault agent: `CHILD_SESSION` makes it disable transcript
-  // saving (found in the running app, where the panel printed exactly that), and
-  // the messaging pair is a live channel back into the parent, which a vault
-  // agent must not be holding.
+  // Code terminal. None of it is true of the vault agent: `CHILD_SESSION`
+  // disables transcript saving, and the messaging pair is a live channel back
+  // into the parent.
   //
   // Named individually rather than stripped by prefix: several other
   // `CLAUDE_CODE_*` variables are documented configuration, and swallowing those
@@ -157,18 +141,12 @@ export function buildAgentEnv(
    * The classic renderer redraws the whole screen and visibly flickers inside
    * the embedded xterm.js; this one patches a virtual viewport instead.
    *
-   * **The `delete` is the load-bearing half.** Claude Code decides in this
-   * order: an explicit "off" is checked BEFORE our "on", and its "off" is
-   * `CLAUDE_CODE_NO_FLICKER=false` OR `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`
-   * being set at all. So an inherited `DISABLE_ALTERNATE_SCREEN` — from a shell
-   * profile, or from the terminal Holi was launched out of — silently wins over
-   * the line above and the flicker comes back with nothing said about it.
+   * **The `delete` is the load-bearing half.** Claude Code checks an explicit
+   * "off" BEFORE our "on", and `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` being set
+   * at all counts as off, so an inherited one would silently win.
    *
-   * This is the one `CLAUDE_CODE_*` variable stripped for a reason other than
-   * session identity, and it earns it by being the exact inverse of a setting
-   * Holi is forcing. `CLAUDE_CODE_ACCESSIBILITY` is deliberately NOT stripped:
-   * it disables this renderer too, and a screen-reader user asking for flat
-   * output outranks our preference about flicker.
+   * `CLAUDE_CODE_ACCESSIBILITY` is deliberately NOT stripped: it disables this
+   * renderer too, and a screen-reader user's choice outranks ours.
    */
   delete env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN
   env.CLAUDE_CODE_NO_FLICKER = '1'
@@ -180,9 +158,8 @@ export function buildAgentEnv(
   delete env.HOLI_GOOGLE_TOKEN
   delete env.HOLI_GOOGLE_BIN
   delete env.HOLI_BIN
-  // Reserved for the same reason and more strongly (D72): an inherited value
-  // would put the agent straight back on the machine's `~/.claude`, which is the
-  // one thing this variable exists to prevent.
+  // Reserved for the same reason (D72): an inherited value would put the agent
+  // back on the machine's `~/.claude`.
   delete env.CLAUDE_CONFIG_DIR
   if (opts.configDir) env.CLAUDE_CONFIG_DIR = opts.configDir
   if (opts.hookPort != null) env.HOLI_HOOK_PORT = String(opts.hookPort)
@@ -193,8 +170,7 @@ export function buildAgentEnv(
   if (opts.googleBin) env.HOLI_GOOGLE_BIN = opts.googleBin
   if (opts.holiBin) env.HOLI_BIN = opts.holiBin
   // Prepended, never appended: an earlier `holi-google` or `holi` on the
-  // inherited PATH would otherwise win, and the agent would be talking to
-  // something else entirely under a name the gate trusts.
+  // inherited PATH would otherwise win under a name the gate trusts.
   if (opts.binDir) {
     env.PATH = env.PATH ? `${opts.binDir}:${env.PATH}` : opts.binDir
   }
@@ -206,14 +182,13 @@ export interface AgentArgs {
    * What to call this session (D100).
    *
    * **Claude Code's own name, not a label Holi keeps beside one.** It shows in
-   * the prompt box, the `/resume` picker and the terminal title, and it comes
-   * back in `claude agents --json`, which is where Holi's tabs and cards read
-   * it from. A session started with no name carries a placeholder built from
-   * the cwd, identical for every session in one vault, so Holi says "New
-   * session" instead of showing it.
+   * the prompt box, the `/resume` picker and the terminal title, and comes back
+   * in Claude Code's session listing, which Holi's tabs read. A session started
+   * with no name gets a default display name (the cwd's name plus a short
+   * suffix) that says nothing about the conversation, so Holi shows "New
+   * session" instead.
    *
-   * Normalised here rather than at the call sites: this goes into argv, and the
-   * natural source is the first line of whatever the user asked for.
+   * Normalised here rather than at the call sites, because it goes into argv.
    */
   name?: string
   /** Bare `--resume` — the CLI shows its own session picker in the terminal. */
@@ -226,23 +201,12 @@ export interface AgentArgs {
    * Claude Code's own session id to **fork**: `--resume <id> --fork-session`
    * copies that conversation into a new session and leaves the original alone.
    *
-   * The id is Claude Code's, read out of its listing at the moment of the fork
-   * and never stored — D100 keys a session by its terminal precisely because
-   * this id changes under one terminal on `/clear`, and a copy Holi kept would
-   * name a conversation that had moved on.
+   * Read out of the listing at the moment of the fork and never stored: the id
+   * changes under one terminal on `/clear` (D100).
    */
   forkOf?: string
 }
 
-/**
- * The interactive `claude` invocation — deliberately bare. This is a normal
- * terminal session, not a headless/`--print` run. Holi builds no prompt content,
- * so there is NO `--append-system-prompt`: vault conventions live in `AGENTS.md`,
- * which Claude Code reads natively from the cwd (features/agent-config.md). And no
- * `--mcp-config`/`--strict-mcp-config` — Holi declares no MCP servers, and
- * `--strict-mcp-config` would additionally suppress any the *vault* configures
- * natively in `.claude/`, which it is entitled to do.
- */
 /** The longest a session name is worth being: a tab is narrow, and the source is
  *  usually the first line of a sentence someone typed at an editor selection. */
 const MAX_NAME = 60
@@ -261,6 +225,13 @@ export function sessionName(raw: string | undefined): string | null {
   return clean === '' ? null : clean
 }
 
+/**
+ * The interactive `claude` invocation, deliberately bare. NO
+ * `--append-system-prompt`: vault conventions live in `AGENTS.md`, which Claude
+ * Code reads natively (docs/features/agent-config.md). And no
+ * `--strict-mcp-config`, which would suppress MCP servers the *vault* configures
+ * in `.claude/`.
+ */
 export function buildAgentArgs({ name, resume, forkOf, prompt }: AgentArgs = {}): string[] {
   const label = sessionName(name)
   return [
@@ -313,16 +284,15 @@ export function resolveClaudeBin(env: NodeJS.ProcessEnv = process.env): string |
 
 /**
  * There is deliberately **no login probe** (D72). Claude Code asks for the login
- * itself, in the terminal the panel is already showing; a second copy of that
- * state in Holi's chrome has to be kept in sync with a `/login` that fires none
- * of the events Holi has — so it was correct exactly until it mattered.
+ * itself, in the terminal; a copy of that state in Holi's chrome cannot be kept
+ * in sync, because `/login` fires none of the events Holi sees.
  */
 
 export interface AgentRuntimeDeps {
   spawnPty?: SpawnPty
   /** Liveness/ownership probe used before every signal (see `signal()`). */
   probePid?: (pid: number) => PidState
-  /** SIGTERM → grace → SIGKILL (the old app's 2s). */
+  /** SIGTERM → grace → SIGKILL. */
   killGraceMs?: number
   /** Cap on waiting for the exit event after SIGKILL. */
   killBackstopMs?: number
@@ -369,9 +339,8 @@ export class AgentRuntime {
    *
    * **The join key to Claude Code's own session listing** (D100): a row there is
    * keyed by pid, and this is how Holi says which of its sessions a row is
-   * about. Derived from `this.pty` rather than held separately, because `onExit`
-   * already clears that before it emits — so a dead session reports null without
-   * a second piece of state to keep in step.
+   * about. Derived from `this.pty`, which `onExit` clears before it emits, so a
+   * dead session reports null.
    */
   get pid(): number | null {
     return this.pty?.pid ?? null
@@ -442,25 +411,15 @@ export class AgentRuntime {
    * Signal the child, choosing the target from what the pid IS right now.
    *
    * ┌─ READ THIS BEFORE TOUCHING THE KILL PATH ────────────────────────────┐
-   * This used to be an unconditional `process.kill(-pty.pid, signal)`, and on
-   * 2026-09-09 that took down unrelated applications on the developer's
-   * machine — Warp, Cursor and the host Electron app all died at once with
-   * SIGTERM and no crash report.
+   * Never an unconditional `process.kill(-pty.pid, signal)`: that once killed
+   * unrelated applications on a developer's machine.
    *
-   * The mechanism: `kill(-pid)` signals an entire process GROUP, and node-pty
-   * reports the child's exit asynchronously. Between the kernel reaping the
-   * child (which frees its pid for reuse *immediately*) and our `onExit`
-   * callback running, `this.pty` still looks live — so both the initial
-   * SIGTERM and the grace-period SIGKILL could fire at a pid the OS had
-   * already handed to somebody else. Signalling the negative of that pid
-   * kills a stranger's whole process group.
-   *
-   * That window is normally microseconds against hours of pid-reuse headroom,
-   * which is why this stood for a long time. It became reproducible when the
-   * machine started churning thousands of short-lived pids a minute (a runaway
-   * Spotlight reindex) while under enough load to delay our own callbacks:
-   * recycling dropped to minutes and the race started landing. Treat "the
-   * window is tiny" as a reason to guard it, not to skip the guard.
+   * `kill(-pid)` signals an entire process GROUP, and node-pty reports the
+   * child's exit asynchronously. Between the kernel reaping the child (which
+   * frees its pid for reuse *immediately*) and our `onExit` running, `this.pty`
+   * still looks live, so a signal could hit a pid the OS already handed to
+   * someone else, and the negative of it kills their whole group. The window is
+   * tiny but lands under heavy pid churn plus load. Guard it anyway.
    *
    * So: never signal a pid on the strength of a JS object still existing. Ask
    * the OS what the pid is, immediately before signalling, every time.

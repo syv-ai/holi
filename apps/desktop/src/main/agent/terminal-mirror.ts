@@ -4,9 +4,8 @@
  *
  * The renderer's xterm is a *view*; this is the record. Every PTY chunk is fed
  * here, so main can always answer "what does this terminal look like right
- * now" — which the panel replays on attach. Without it, anything the session
- * printed before the panel mounted (or across a renderer reload) is simply
- * gone: the bytes were sent to a window that wasn't listening.
+ * now", which the panel replays on attach. Without it, anything printed before
+ * the panel mounted (or across a renderer reload) is gone.
  *
  * @xterm/headless has no DOM dependency, so this loads under vitest.
  */

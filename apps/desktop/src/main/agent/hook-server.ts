@@ -1,7 +1,7 @@
 /**
- * The turn-signal transport (features/agent-sessions.md): a tiny localhost
+ * The turn-signal transport (docs/features/agent-sessions.md): a tiny localhost
  * HTTP server the agent's Claude Code hooks POST to, so Holi learns when a turn
- * starts and ends WITHOUT parsing PTY output (see [[holi-no-custom-cc-state-monitoring]]).
+ * starts and ends WITHOUT parsing PTY output.
  *
  * The seeded `UserPromptSubmit`/`Stop` hooks `curl` this on `127.0.0.1:$HOLI_HOOK_PORT`,
  * guarded so they no-op for a bare `claude` opened outside Holi. A per-instance
@@ -28,23 +28,18 @@ export interface HookServerDeps {
    * This session's status line asked what to print (D101).
    *
    * The whole of Claude Code's status JSON arrives as the body, and what comes
-   * back is the one line the session's footer shows. Holi does the parsing
-   * because the alternative is a shell script picking fields out of JSON with
-   * `sed`, and because main wants two of those fields for itself: the model and
-   * the context reading go on the wire with the session list, and `session_name`
-   * carries the title Claude Code's own small-model pass wrote.
+   * back is the one line the session's footer shows. Main parses it because it
+   * wants fields for itself, notably `session_name`.
    */
   onStatus?: (sessionId: string, status: unknown) => string
   log?: (msg: string) => void
   /**
-   * The agent-ops routes for **one vault**, if this instance has them. Absent —
-   * in tests, and before main wires them — leaves every ops path a 404 rather
-   * than a crash.
+   * The agent-ops routes for **one vault**, if this instance has them. Absent
+   * leaves every ops path a 404 rather than a crash.
    *
-   * Resolved from the caller's token rather than from the active vault (D87's
-   * lesson, applied here): a `git commit` in one vault used to run its staged
-   * pre-commit transforms against whichever vault was on screen, which is a
-   * write to the wrong repository rather than merely a wrong read.
+   * Resolved from the caller's token rather than from the active vault (D87),
+   * so a `git commit` in one vault never runs its pre-commit transforms against
+   * whichever vault is on screen.
    */
   opsFor?: (remote: string) => AgentOps
 }
@@ -131,8 +126,7 @@ export function createHookServer(deps: HookServerDeps): HookServer {
     req.on('end', () => {
       if (isStatus) {
         // A status line belongs to exactly one session, and the bearer says
-        // which — so nothing here has to guess, and the vault's standing token
-        // (which names no session) simply prints nothing.
+        // which. The vault's standing token names no session and prints nothing.
         let line = ''
         if (bearer.sessionId !== undefined && deps.onStatus !== undefined) {
           try {
@@ -148,9 +142,8 @@ export function createHookServer(deps: HookServerDeps): HookServer {
       }
       if (isTurn) {
         // A turn signal on the vault's standing token names no session, and with
-        // several running there is no honest guess: applying it to an arbitrary
-        // one would pause and resume the vault under a session that never ran.
-        // Dropped, but still answered empty — a body enters Claude's context.
+        // several running there is no honest guess, so it is dropped (still
+        // answered empty).
         if (bearer.sessionId !== undefined) {
           if (url.pathname === '/turn/start') deps.onTurnStart(bearer.sessionId)
           else deps.onTurnEnd(bearer.sessionId)

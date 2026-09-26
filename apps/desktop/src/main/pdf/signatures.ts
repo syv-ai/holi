@@ -1,8 +1,8 @@
 /**
  * The signatures a person has made in the PDF viewer, kept between openings.
  *
- * embedpdf's signature plugin holds its entries in memory, so a signature made
- * in one PDF was gone when that PDF closed. The renderer hands the list here in
+ * embedpdf's signature plugin holds its entries in memory only, so without this
+ * a signature would be gone when its PDF closed. The renderer hands the list here in
  * the library's own serialized form (`serializeEntries`: image bytes as base64)
  * and loads it back into each viewer it opens.
  *

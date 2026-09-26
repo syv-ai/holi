@@ -5,20 +5,15 @@
  *
  * **Seeding runs on vault creation, adoption AND every open** (`vaults.add`/
  * `vaults.create`/`vaults.open` → `ensureSeeded`; the open case is D70).
- * Create-if-missing is what makes running it that often safe, and it is also
- * what makes a NEW managed file reach vaults that predate it with no migration:
- * the next open writes the one file that is absent and touches nothing else. A
- * member who edits a managed file keeps that change; one who deletes it gets it
- * back on the next open, which is the price of the send gate being present in
- * every vault.
+ * Running it that often is what makes a NEW seeded file reach older vaults with
+ * no migration. A member who deletes a seeded file gets it back on the next
+ * open, which is the price of the send gate being present in every vault.
  *
- * **`.gitignore` is the exception, and the reason this module matters.** An
- * adopted repo usually already has one, so create-if-missing would silently
- * never write ours — and the sync engine commits with `git add -A`, so the
- * first commit would carry a `*.local.*` file to every collaborator. Its lines
- * are therefore appended individually, and they come from
- * `LOCAL_ONLY_IGNORE_LINES` rather than being copied here, so the ignore file
- * and the vault store's notion of "machine-local" cannot drift apart.
+ * **`.gitignore` is the exception.** An adopted repo usually already has one,
+ * and the sync engine commits with `git add -A`, so create-if-missing would let
+ * the first commit carry a `*.local.*` file to every collaborator. Its lines are
+ * appended individually, from `LOCAL_ONLY_IGNORE_LINES`, so the ignore file and
+ * the vault store's notion of "machine-local" cannot drift apart.
  *
  * `USER.local.md` is deliberately NOT seeded: it is machine-local (its name says
  * so), and the agent creates it when it first learns something about the user.
@@ -68,8 +63,8 @@ import proposalTyp from './templates/proposal/template.typ?raw'
 import reportManifest from './templates/report/template.json?raw'
 import reportTyp from './templates/report/template.typ?raw'
 
-/** The old bootstrap's shim: CLAUDE.md is the file the CLI reads; AGENTS.md is
- * the file humans and other agents edit. One import keeps them in sync. */
+/** The shim: CLAUDE.md is the file the CLI reads; AGENTS.md is the file humans
+ * and other agents edit. One import keeps them in sync. */
 const CLAUDE_MD = '<rules>\n@AGENTS.md\n</rules>\n'
 
 const AGENTS_MD = `# Agent rules
@@ -112,13 +107,11 @@ Use the **memory** skill when writing one.
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
 
 /**
- * A turn-bracket hook: POST to Holi's local hook server so it learns turn
- * start/end (git coexistence — pause sync while the agent works). Guarded by
- * `[ -n "$HOLI_HOOK_PORT" ]` so it is a silent no-op for a bare `claude` opened
- * in this vault outside Holi (no server, no port). The port + token are read
- * live from the child env Holi injects, so this shared/committed command needs
- * no per-session rewrite. NOT gated by `permissions.ask` — hook commands run
- * directly, they are not the agent's Bash tool.
+ * A turn-bracket hook: POST to Holi's local hook server so it can pause sync
+ * while the agent works. Guarded by `[ -n "$HOLI_HOOK_PORT" ]` so it is a silent
+ * no-op for a bare `claude` opened outside Holi. Port and token come from the
+ * child env, so this committed command needs no per-session rewrite. Hook
+ * commands are not the agent's Bash tool, so `permissions.ask` does not gate it.
  */
 const turnHook = (endpoint: 'start' | 'end') =>
   `[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/${endpoint}?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1`
@@ -128,11 +121,8 @@ const SETTINGS_JSON =
     {
       hooks: {
         // UserPromptSubmit injects the focused-note context AND signals turn
-        // start; Stop signals turn end. Together they bracket a turn for git
-        // coexistence (the hook-server signal, not PTY parsing). PreToolUse was
-        // deliberately absent for that purpose — the UserPromptSubmit→Stop
-        // bracket already spans all tool use — and arrived later for an
-        // unrelated one: gating send (D70), below.
+        // start; Stop signals turn end. That bracket already spans all tool use,
+        // so PreToolUse is only for gating send (D70), below.
         UserPromptSubmit: [
           {
             hooks: [
@@ -143,13 +133,12 @@ const SETTINGS_JSON =
         ],
         Stop: [{ hooks: [{ type: 'command', command: turnHook('end') }] }],
         // What this vault remembers, once per session (D89). Fires on startup,
-        // resume AND compact — the third is the one that matters most, being
-        // exactly when the agent has just forgotten it has memory at all.
+        // resume AND compact: after a compact the agent has just forgotten it
+        // has memory at all.
         SessionStart: [{ hooks: [{ type: 'command', command: hookCommand('memory-overview') }] }],
-        // The vault-app validator. Advisory only — it reports and exits 0 —
-        // because slice 1's authoring loop had no feedback in it at all: the
-        // agent wrote an app blind and asked the user to go and look, so a
-        // syntax error surfaced as a blank tab and a puzzled user.
+        // The vault-app validator. Advisory only (it reports and exits 0), so
+        // the agent gets feedback instead of a syntax error surfacing as a
+        // blank tab.
         //
         // Matched on the writing tools rather than on the path, because the
         // matcher grammar cannot see a path; the hook returns immediately for
@@ -171,15 +160,11 @@ const SETTINGS_JSON =
             matcher: 'Bash',
             hooks: [{ type: 'command', command: hookCommand('google-send-gate') }],
           },
-          // The same gate, over Gmail's *MCP* tools (2026-08-14).
-          //
-          // A `Bash` matcher sees only Bash. When a claude.ai Gmail connector is
-          // available the agent will happily reach for it instead of
-          // `holi-google` — observed in real use — and every one of those calls
-          // sailed past this gate, because an MCP tool call is not a shell
-          // command. `disableClaudeAiConnectors` below is the real fix; this is
-          // the belt to its braces, for a vault whose settings regress or whose
-          // user re-enables the connector deliberately.
+          // The same gate, over Gmail's *MCP* tools. A `Bash` matcher sees only
+          // Bash, and the agent will reach for a claude.ai Gmail connector
+          // instead of `holi-google` when one is available.
+          // `disableClaudeAiConnectors` below is the real fix; this covers a
+          // vault whose user re-enables the connector.
           {
             matcher: 'mcp__.*[Gg]mail.*',
             hooks: [{ type: 'command', command: hookCommand('google-send-gate') }],
@@ -187,13 +172,12 @@ const SETTINGS_JSON =
         ],
       },
       /**
-       * No claude.ai cloud connectors in a vault (2026-08-14).
+       * No claude.ai cloud connectors in a vault.
        *
-       * The agent used a claude.ai **Gmail** connector to write a draft, in
-       * preference to `holi-google` — which routes around every guarantee this
-       * app makes about mail: main is the sole token authority (D67), the send
-       * gate is a hook on `Bash` (D70), and the cache is patched by Holi's own
-       * writes (D68). None of those apply to a tool Holi never sees.
+       * A claude.ai **Gmail** connector routes around every guarantee Holi
+       * makes about mail: main is the sole token authority (D67), the send gate
+       * is a hook on `Bash` (D70), and the cache is patched by Holi's own writes
+       * (D68). None of those apply to a tool Holi never sees.
        *
        * Settable in any scope, and `true` in *any* source wins, so this checked-in
        * project file opts the vault out and a user-level `false` cannot undo it.
@@ -204,36 +188,24 @@ const SETTINGS_JSON =
       /**
        * One memory surface, not two (D89).
        *
-       * Claude Code keeps its own auto-memory under
-       * `~/.claude/projects/<sanitized-cwd>/memory/`. That directory is outside
-       * the vault, never syncs, is invisible to teammates, and the agent reaches
-       * for it in preference to the vault's because it is the surface its own
-       * system prompt describes. `memory/` is the vault's answer; this key
-       * closes the other door so there is one place to look.
+       * Claude Code's own auto-memory lives outside the vault, never syncs, and
+       * is the surface its system prompt steers the agent to. This key closes
+       * that door so `memory/` is the one place to look.
        *
-       * **Off rather than redirected.** `autoMemoryDirectory` could point Claude
-       * Code at `memory/`, and is the wrong lever twice: it is explicitly
-       * ignored when set in projectSettings, so Holi could only set it per
-       * clone; and its format is Anthropic's, with `[[slug]]` links that address
-       * memories by name where Holi's address them by vault path. Holi would be
-       * committing a format it does not control to every member of a shared
-       * repository.
-       *
-       * Verified live against 2.1.267 rather than read out of the binary: with
-       * this key in a project `.claude/settings.json`, a session reports no
-       * memory directory at all; with `{}` it reports one.
+       * **Off rather than redirected.** `autoMemoryDirectory` is ignored in
+       * projectSettings, and its format addresses memories by `[[slug]]` where
+       * Holi's address them by vault path.
        */
       autoMemoryEnabled: false,
       permissions: {
-        // seeded egress gating (PRD §Security posture) — the user still
-        // approves each one, they just don't slip through unasked
+        // Seeded egress gating: the user still approves each one, they just
+        // don't slip through unasked.
         //
         // The holi-google entries are the *undoable* tier (D70) and are NOT the
-        // wall: a user can allow-always their way past any of them, which is
-        // fine, because each has a one-click undo in Gmail or Google Calendar.
-        // The wall for send/reply is the PreToolUse hook above, which overrides
-        // both this list and a prior "don't ask again". The send/reply entries
-        // here are belt-and-braces for a vault whose hook file was removed.
+        // wall: allow-always past them is fine, each has a one-click undo. The
+        // wall for send/reply is the PreToolUse hook above, which overrides both
+        // this list and a prior "don't ask again". The send/reply entries here
+        // cover a vault whose hook file was removed.
         ask: [
           'Bash(curl:*)',
           'Bash(wget:*)',
@@ -253,24 +225,14 @@ const SETTINGS_JSON =
   ) + '\n'
 
 /**
- * The durable, in-repo marker that a repo is a Holi vault. Its GitHub twin is
- * the `holi-vault` topic (github/api.ts) — the topic is the cheap discovery
- * index the picker filters on; this file is the record that travels with the
- * clone, and the natural home for vault-level metadata as it accrues.
- */
-/**
  * The vault's own settings, seeded once and then the user's.
  *
- * **Built from `VAULT_SETTING_DESCRIPTORS`, not written out here.** The same
- * list drives the onboarding step that asks about these, so the file a vault is
- * born with and the questions it was asked cannot drift apart — and adding a
- * setting later is adding a descriptor, not editing two places that have to
- * agree.
+ * Built from `VAULT_SETTING_DESCRIPTORS`, the same list that drives the
+ * onboarding questions, so the two cannot drift apart.
  *
  * The `hooks` block says **which** pre-commit transforms run, and can never say
  * what one is (D76): the script body ships in the binary and lives in
- * `.git/hooks/`, where nothing can push it onto anyone's laptop. Keys are the
- * transform names, kebab and all.
+ * `.git/hooks/`, where nothing can push it onto anyone's laptop.
  *
  * `archive-done` is off because it moves task files, which changes what the
  * board shows; a transform that rearranges someone's work is opt-in.
@@ -278,10 +240,8 @@ const SETTINGS_JSON =
 const HOLI_SETTINGS = seedSettingsText(seedSettings('committed'), 'committed')
 
 /**
- * The machine-local half — today, which appearance this machine follows.
- *
- * Gitignored by the seeded `*.local.*` rule, exactly like `theme.local.yaml`
- * beside it, so a personal choice is never pushed to anyone.
+ * The machine-local half, such as which appearance this machine follows.
+ * Gitignored by the seeded `*.local.*` rule, like `theme.local.css`.
  */
 const HOLI_SETTINGS_LOCAL = seedSettingsText(seedSettings('local'), 'local')
 
@@ -290,11 +250,9 @@ const HOLI_SETTINGS_LOCAL = seedSettingsText(seedSettings('local'), 'local')
  *  `VAULT_MARKER_FILE` for why an extensionless flag rather than a document. */
 const VAULT_MARKER = '1\n'
 
-/** The Plain template's manifest — a clean, unbranded layout with two optional
- * metadata fields (Date, Recipient) that the Convert dialog renders as inputs
- * and template.typ prints as a small header. Committed vault content under
- * `.holi/document-templates/plain/`. Built via `JSON.stringify` (like VAULT_MARKER) so
- * there is no `.json?raw` import dependency. */
+/** The Plain template's manifest: an unbranded layout with two optional fields
+ * (Date, Recipient) that the Convert dialog renders as inputs and template.typ
+ * prints as a small header. */
 const PLAIN_MANIFEST =
   JSON.stringify(
     {
@@ -311,31 +269,19 @@ const PLAIN_MANIFEST =
 
 /**
  * The vault's colour/chrome theme (D64). Both files ship in every vault so
- * theming is discoverable — a member opens the vault, finds them under
- * show-hidden, and knows where shared (`theme.yaml`, committed) vs personal
- * (`theme.local.yaml`, gitignored) overrides go.
+ * theming is discoverable: shared overrides go in `theme.css` (committed),
+ * personal ones in `theme.local.css` (gitignored).
  *
- * **Seeded with the whole vocabulary commented out, not empty.** Two empty
- * blocks were discoverable only in the sense that the FILES were: they named
- * none of the forty tokens, so knowing what could go in one meant leaving for
- * the settings pane or the `theme` skill. Every token is now a commented line
- * in its group, and setting one is deleting its `# `.
+ * **Seeded with the whole token vocabulary commented out, not empty**, so the
+ * file itself names what can be set.
  */
 const THEME_SKELETON = applyThemePatch(null, {})
 
-/** Written only when absent. Never updated, so a member's edit survives. */
 /**
  * **Holi owns these after writing them** (D75). Documentation and code Holi
  * ships: refreshed on every open, but only when the file on disk is still
- * byte-for-byte what Holi last wrote there (see `seed-state.ts`).
- *
- * Create-if-missing is what made `ensureSeeded` safe to run on every open, and
- * it is also what made a managed file impossible to improve. Slice 1 shipped a
- * `vault-apps` skill; reading it back the same day found four gaps, three of
- * which an agent gets *wrong* rather than merely misses — and the fix could
- * reach only vaults that had never been opened. A skill that cannot be
- * corrected is a skill whose first draft is permanent on every machine that
- * ever ran it.
+ * byte-for-byte what Holi last wrote there (see `seed-state.ts`). Without that,
+ * a shipped skill's first draft would be permanent in every vault.
  */
 export const MANAGED_FILES: Record<string, string> = {
   '.claude/hooks/user-prompt-submit.mjs': userPromptSubmitHook,
@@ -351,12 +297,8 @@ export const MANAGED_FILES: Record<string, string> = {
    * How to write a memory (D89).
    *
    * **A skill rather than more `AGENTS.md` prose, because `AGENTS.md` is a
-   * ONCE_FILE and cannot be corrected.** A vault seeded before D65 still tells
-   * the agent that `USER.md` is machine-local — a claim Holi made and then
-   * invalidated — and nothing has ever been able to reach it. Skills are
-   * managed, so this one lands in every vault on the next open and can be
-   * improved later, which is exactly the argument D75 already made about the
-   * vault-apps skill.
+   * ONCE_FILE and cannot be corrected.** Skills are managed, so this one lands
+   * in every vault on the next open and can be improved later (D75).
    */
   '.claude/skills/memory/SKILL.md': memorySkill,
   /** `holi pdf comments` (D106): what it prints, and that it only reads. */
@@ -364,34 +306,29 @@ export const MANAGED_FILES: Record<string, string> = {
 }
 
 /**
- * **The user’s the moment they exist.** Create-if-missing, forever: a hash
- * match is not permission to rewrite one of these, because the question a hash
- * answers ("did anyone touch it?") is not the question that matters here.
- * `AGENTS.md` seeded with our words is still the file the user was handed to
- * write in, and re-asserting our draft over an identical copy would be Holi
- * arguing with them once a session.
- *
- * `.claude/settings.json` sits here but keeps its own third rule: it is MERGED
- * key-wise rather than created-if-missing (see `settingsWithRequired`),
- * because a seed that only runs at creation is a migration that never happens.
- */
-/**
- * `.holi/settings/icons.yaml` — path → emoji, for the things that cannot carry an icon
- * in their own frontmatter: folders, non-markdown files, and the agent-surface
- * files where frontmatter would become prompt text. Seeded empty so the file is
- * discoverable (and so the agent has somewhere obvious to write) rather than
- * being a convention you have to be told about.
+ * The icons file: path to emoji, for things that cannot carry an icon in their
+ * own frontmatter (folders, non-markdown files, agent-surface files where
+ * frontmatter would become prompt text). Seeded empty so it is discoverable.
  */
 const ICONS_SKELETON = '{}\n'
 
+/**
+ * **The user's the moment they exist.** Create-if-missing, forever: a hash
+ * match is not permission to rewrite one of these, because `AGENTS.md` seeded
+ * with our words is still the file the user was handed to write in.
+ *
+ * `.claude/settings.json` sits here but keeps its own third rule: it is MERGED
+ * key-wise (see `settingsWithRequired`), because a seed that only runs at
+ * creation is a migration that never happens.
+ */
 export const ONCE_FILES: Record<string, string> = {
   [VAULT_MARKER_FILE]: VAULT_MARKER,
   [SETTINGS_FILE]: HOLI_SETTINGS,
   '.holi/document-templates/plain/template.json': PLAIN_MANIFEST,
   '.holi/document-templates/plain/template.typ': plainTemplateTyp,
-  // The branded set and its shared brand foundation (D66 rename, spec
-  // 2026-08-04). `_brand/` is skipped by the template picker (underscore prefix);
-  // its binary fonts + logo are seeded separately from BRAND_BINARIES below.
+  // The branded set and its shared brand foundation (D66). `_brand/` is skipped
+  // by the template picker (underscore prefix); its binary fonts + logo are
+  // seeded separately from BRAND_BINARIES below.
   '.holi/document-templates/_brand/brand.typ': brandTyp,
   '.holi/document-templates/_brand/figures.typ': figuresTyp,
   '.holi/document-templates/proposal/template.json': proposalManifest,
@@ -415,27 +352,22 @@ export const ONCE_FILES: Record<string, string> = {
   'AGENTS.md': AGENTS_MD,
   /**
    * The memory directory exists and is tracked from a vault's first commit
-   * (D89), in its empty-state form — after that the `memory-index` transform
+   * (D89), in its empty-state form; after that the `memory-index` transform
    * owns the file.
    *
-   * A ONCE_FILE and emphatically not a MANAGED_FILE: managed means "rewritten
-   * when the shipped version changes", and this one is rewritten by a transform
-   * on every commit that touches a memory. The two would fight, and the seed
-   * runs on every vault OPEN, so the vault's real index would be replaced by the
-   * empty stub roughly once a session.
+   * A ONCE_FILE and emphatically not a MANAGED_FILE: the transform rewrites it
+   * on every commit that touches a memory, so a managed refresh on every open
+   * would fight it.
    *
-   * `MEMORY.md` is no longer seeded. Vaults that have one keep it, it is still
-   * read, and nothing here moves it — that is content the user wrote, and
-   * relocating it automatically is exactly the unattended shared-layer edit
-   * `not-built.md` rules against. `AGENTS.md` names it as the older shape and
-   * the session overview offers to split it when asked.
+   * A vault's existing `MEMORY.md` is user content and is never moved
+   * automatically; the session overview offers to split it when asked.
    */
   [MEMORY_INDEX]: MEMORY_INDEX_EMPTY,
   '.claude/settings.json': SETTINGS_JSON,
 }
 
-/** Both classes together — kept because a caller that only needs to know "is
- *  this a file Holi seeds?" should not have to ask which class it is in. */
+/** Both classes together, for callers that only ask "is this a file Holi
+ *  seeds?". */
 export const SEED_FILES: Record<string, string> = { ...ONCE_FILES, ...MANAGED_FILES }
 
 export const GITIGNORE = '.gitignore'
@@ -445,9 +377,8 @@ export const GITIGNORE = '.gitignore'
  * every line it needs.
  *
  * Line-wise rather than whole-file, because an adopted repo's existing ignores
- * are not ours to replace — and because appending to a file with no trailing
- * newline would otherwise produce `node_modules*.local.*`, which ignores nothing
- * while looking like it ignores something.
+ * are not ours to replace. A missing trailing newline is added first, or the
+ * append would produce `node_modules*.local.*`, which ignores nothing.
  */
 export function gitignoreWithLocalOnly(existing: string | null): string | null {
   const present = new Set((existing ?? '').split('\n').map((l) => l.trim()))
@@ -467,21 +398,16 @@ export const SETTINGS = '.claude/settings.json'
  * The `.claude/settings.json` this vault should have, or **null** if it already
  * carries everything Holi requires (or cannot be parsed).
  *
- * **Merged rather than skipped, and that distinction is a security property.**
- * The seed loop is write-if-absent, and every vault opened before D70 already
- * has a `settings.json` — so the send gate would have arrived as a *file* and
- * never been wired: the hook script present, nothing invoking it, and `send`
- * reaching a real mailbox with no confirmation at all. Exactly D68's stale-grant
- * shape, where a capability widened in code while the stored artifact still
- * reflected the old one.
+ * **Merged rather than skipped, and that is a security property.** Most vaults
+ * already have a `settings.json`, so write-if-absent would ship the send gate
+ * (D70) as a hook script nothing invokes.
  *
- * Key-wise, the way `.gitignore` is line-wise, and for the same reason: an
- * adopted vault's own hooks and permission rules are not ours to replace. Holi
- * adds what it needs and touches nothing else.
+ * Key-wise, the way `.gitignore` is line-wise: an adopted vault's own hooks and
+ * permission rules are not ours to replace. Holi adds what it needs and touches
+ * nothing else.
  *
- * A malformed file returns `null` — it is the user's, and unparseable JSON is
- * not something to "fix" by overwriting. The cost is an ungated vault, which is
- * why `ensureSeeded`'s caller can see that nothing was written.
+ * A malformed file returns `null`: it is the user's, and unparseable JSON is not
+ * something to "fix" by overwriting. The cost is an ungated vault.
  */
 export function settingsWithRequired(existing: string | null): string | null {
   if (existing === null || existing.trim() === '') return SETTINGS_JSON
@@ -504,17 +430,11 @@ export function settingsWithRequired(existing: string | null): string | null {
   let changed = false
 
   /**
-   * No claude.ai cloud connectors (2026-08-14).
+   * No claude.ai cloud connectors. Merged as well as seeded, because **a seed
+   * that only runs at creation is a migration that never happens**.
    *
-   * Merged here as well as seeded, because **a seed that only runs at creation
-   * is a migration that never happens** — D70's own lesson, and the reason the
-   * send gate was absent from every established vault when it shipped. Every
-   * vault that exists today has a `settings.json`, so the creation path would
-   * have reached none of them.
-   *
-   * Only ever set to `true`, and only when absent: a user who deliberately set
-   * it `false` has said something, and re-asserting it on every vault open would
-   * be Holi arguing with them once a session.
+   * Only when absent: a user who deliberately set it `false` is not overruled
+   * on every open.
    */
   if (settings.disableClaudeAiConnectors === undefined) {
     settings.disableClaudeAiConnectors = required.disableClaudeAiConnectors
@@ -522,14 +442,10 @@ export function settingsWithRequired(existing: string | null): string | null {
   }
 
   /**
-   * One memory surface (D89), merged here for `disableClaudeAiConnectors`'s
-   * reason: every vault that exists today already has a `settings.json`, so the
-   * creation path would reach none of them.
+   * One memory surface (D89), merged for `disableClaudeAiConnectors`'s reason.
    *
-   * **Only when absent.** A user who set it `true` has said something — they
-   * want Claude Code's own auto-memory as well — and Holi does not argue with
-   * them once a session. The vault's `memory/` works either way; what the key
-   * buys is that there is one place to look rather than two.
+   * **Only when absent.** A user who set it `true` wants Claude Code's own
+   * auto-memory as well; the vault's `memory/` works either way.
    */
   if (settings.autoMemoryEnabled === undefined) {
     settings.autoMemoryEnabled = required.autoMemoryEnabled
@@ -547,10 +463,7 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
-  // The vault-app validator, merged for the gate's reason: every vault that
-  // exists today already has a settings.json, so the creation path reaches none
-  // of them. Matched by the script it runs, so a user who reordered or
-  // annotated the entry does not get a duplicate.
+  // The vault-app validator, merged and matched the same way as the gate.
   const postToolUse = Array.isArray(hooks.PostToolUse) ? hooks.PostToolUse : []
   if (!JSON.stringify(postToolUse).includes('vault-app-check')) {
     hooks.PostToolUse = [...postToolUse, ...required.hooks.PostToolUse]
@@ -558,9 +471,7 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
-  // The session overview (D89), matched by the script it runs rather than by
-  // deep-equality, the way the two gates above are: a user who reordered or
-  // annotated the entry does not get a duplicate.
+  // The session overview (D89), matched the same way.
   const sessionStart = Array.isArray(hooks.SessionStart) ? hooks.SessionStart : []
   if (!JSON.stringify(sessionStart).includes('memory-overview')) {
     hooks.SessionStart = [...sessionStart, ...required.hooks.SessionStart]
@@ -578,8 +489,7 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
-  // And the read-only commands that need no prompt, for the same reason: a rule
-  // seeded only at creation would reach no vault that exists today.
+  // And the read-only commands that need no prompt.
   const allow = Array.isArray(permissions.allow) ? (permissions.allow as string[]) : []
   const missingAllow = required.permissions.allow.filter((rule) => !allow.includes(rule))
   if (missingAllow.length > 0) {
@@ -594,10 +504,8 @@ export function settingsWithRequired(existing: string | null): string | null {
 /**
  * What one run of `ensureSeeded` did.
  *
- * Three lists rather than one, because "Holi wrote this file" now covers three
- * different events and the caller can act on only some of them. `skipped` is
- * the one that has to be visible: a managed file left alone is Holi declining
- * to ship an improvement, and the user is entitled to know which.
+ * `skipped` has to be visible: a managed file left alone is Holi declining to
+ * ship an improvement, and the user is entitled to know which.
  */
 export interface SeedResult {
   /** Created because it was absent. */
@@ -611,9 +519,8 @@ export interface SeedResult {
 /**
  * Write whatever managed file is missing, and refresh the ones Holi still owns.
  *
- * Idempotent, and safe to run on every vault activation — which is the whole
- * point, since a seed that only runs at creation is a migration that never
- * happens. Three rules, one per class:
+ * Idempotent, and safe to run on every vault activation. Three rules, one per
+ * class:
  *
  *   - **once** (`ONCE_FILES`) — created if absent, never touched again.
  *   - **managed** (`MANAGED_FILES`) — created if absent, and rewritten when the
@@ -636,9 +543,8 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
   }
 
   for (const [rel, content] of Object.entries(ONCE_FILES)) {
-    // `settings.json` is the one file that is MERGED rather than skipped when
-    // present — see `settingsWithRequired`, and the block below. Skipping it is
-    // how the send gate would ship as an inert file in every existing vault.
+    // `settings.json` is MERGED rather than skipped when present: see
+    // `settingsWithRequired` and the block below.
     if (rel === SETTINGS) continue
     const onDisk = await readFile(join(root, rel), 'utf8').catch(() => null)
     if (onDisk !== null) continue
@@ -655,18 +561,15 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
       continue
     }
     if (onDisk === content) {
-      // Already exactly what we ship, however it got there — so it is ours, and
-      // recording it is what lets the NEXT version reach this vault. Without
-      // this line every vault seeded before the hashes existed stays frozen
-      // forever, which is the problem D75 was written to solve.
+      // Already exactly what we ship, however it got there, so it is ours.
+      // Recording it is what lets the NEXT version reach this vault.
       await recordSeeded(root, rel, content)
       continue
     }
     const state = await readSeedState(root)
     if (state[rel] === undefined) {
-      // Predates the hashes. Assume the user's: this is the state every vault
-      // in the world is in today, and guessing the other way rewrites their
-      // edited skills once, silently.
+      // No recorded hash. Assume the user's: guessing the other way would
+      // silently rewrite their edited skills.
       result.skipped.push({ path: rel, reason: 'unrecorded' })
       continue
     }
@@ -700,16 +603,12 @@ export async function ensureSeeded(root: string): Promise<SeedResult> {
 /**
  * `holi seed refresh [path] [--force]` — rewrite the managed files Holi wrote.
  *
- * The on-demand half of D75. `ensureSeeded` refreshes on open and declines
- * whenever it cannot prove the file is still its own; this is how the agent
- * asks for the one it just noticed is stale, and `--force` is how a user says
- * "I edited it, give me your copy back".
+ * The on-demand half of D75: `ensureSeeded` declines whenever it cannot prove
+ * the file is still its own, and `--force` is how a user says "I edited it,
+ * give me your copy back".
  *
- * **`--force` reaches managed files only.** A once-file is the user's — no
- * flag changes that, because the flag is about overriding an *edit check*, and
- * a once-file was never Holi's to check. Asking for one comes back as
- * `not managed` rather than as an error: the agent asked a reasonable
- * question and deserves the actual answer.
+ * **`--force` reaches managed files only.** A once-file is the user's, so
+ * asking for one comes back as `not managed` rather than as an error.
  */
 export async function refreshManaged(
   root: string,

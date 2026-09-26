@@ -54,34 +54,18 @@ function readStdin() {
 }
 
 /**
- * Does this command line invoke `holi-google send` or `holi-google reply`?
- *
- * Matched on the *invocation*, not on the presence of the word: `grep send
- * notes.md` is not a send, and a gate that prompts on it teaches the user to
- * click through prompts — which is how a real one gets approved by reflex.
- *
- * Three spellings are live, and all three must match. The bare name (what the
- * skill now teaches, resolved via PATH), `$HOLI_GOOGLE_BIN` (what it used
- * before D70, still exported and still working), and an absolute path to the
- * generated script. Missing any one of them is how a gate gets believed in
- * while never firing — see D67 §5, whose rule matched none of them.
- */
-/**
  * Who this command reaches, as far as the command itself can say.
  *
  * The prompt is the entire consent surface, and consenting to a send means
- * knowing *to whom*. The body is on stdin and genuinely cannot be shown here —
- * but the recipients usually can be, and "this sends mail" alone asks the user
- * to approve something they cannot see.
+ * knowing *to whom*. The body is on stdin and cannot be shown here, but the
+ * recipients usually can.
  *
- * A `reply` is the honest exception: its recipients are derived from the thread
- * inside Holi, so they are nowhere in the command. Saying so plainly is better
- * than a reassuring sentence that implies the prompt showed them.
+ * A `reply` is the exception: its recipients are derived from the thread inside
+ * Holi, so they are nowhere in the command, and the prompt says so plainly.
  */
 function audienceOf(command) {
-  // `send --draft <id>` is the second honest exception. The draft carries its
-  // own recipients inside Gmail, so like a reply they are nowhere in the
-  // command — and unlike a reply, the user can go and look at the draft.
+  // `send --draft <id>` is the second exception: the draft carries its own
+  // recipients inside Gmail, and the user can go and look at it.
   if (/--draft\b/.test(command)) {
     return (
       'It sends a draft that already exists in Gmail. The recipients are in the ' +
@@ -105,6 +89,17 @@ function audienceOf(command) {
   return `It goes to: ${recipients.join(', ')}.`
 }
 
+/**
+ * Does this command line invoke `holi-google send` or `holi-google reply`?
+ *
+ * Matched on the *invocation*, not on the presence of the word: `grep send
+ * notes.md` is not a send, and a gate that prompts on it teaches the user to
+ * click through prompts.
+ *
+ * Three spellings are live, and all three must match: the bare name (resolved
+ * via PATH), `$HOLI_GOOGLE_BIN` (still exported), and an absolute path to the
+ * generated script. Missing any one of them is a gate that never fires.
+ */
 function isSend(command) {
   // The command word, however it was spelled, followed by the subcommand.
   // `[^|;&]*` keeps the two adjacent within one pipeline stage, so
@@ -131,24 +126,16 @@ if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
 }
 
 /**
- * A claude.ai Gmail **connector** call (2026-08-14).
+ * A claude.ai Gmail **connector** call.
  *
- * The agent reached for one of these in preference to `holi-google`, and every
- * such call used to sail straight past this gate — an MCP tool call is not a
- * shell command, so the `Bash` matcher never saw it. `disableClaudeAiConnectors`
- * in the seeded settings is the real fix; this is the fallback for a vault whose
- * settings regress or whose user turns the connector back on deliberately.
- *
- * Matched on the tool *name*, which the harness supplies — there is no command
- * string to parse and nothing to spell three ways.
+ * An MCP tool call is not a shell command, so the `Bash` matcher never sees it.
+ * `disableClaudeAiConnectors` in the seeded settings is the real fix; this is
+ * the fallback for a vault whose user turns the connector back on. Matched on
+ * the tool *name*, which the harness supplies.
  *
  * **Two loose tests rather than one exact one**, because the point of a
- * fallback is the connector nobody enumerated. Keying on the server being
- * called `Gmail` and the tool *starting* with `send` describes the one
- * connector that existed when this was written; `send_email` on a Workspace
- * server, or `messages_send` on any of them, is the same irreversible act under
- * a name this rule never learned. A false match costs one extra prompt; a miss
- * costs a mail that reached a person unasked.
+ * fallback is the connector nobody enumerated (`send_email`, `messages_send`).
+ * A false match costs one extra prompt; a miss costs a mail sent unasked.
  */
 /** A sending verb standing alone in the name — so `messages_send` matches and
  *  `resend_webhook` does not. */

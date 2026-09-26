@@ -2,12 +2,10 @@
  * Session orchestration: owns the vault's live `claude` sessions — each one's
  * PTY, its terminal mirror, its bearers — and ties them to the active vault.
  *
- * **A vault runs any number of them (D100).** What used to be one session and a
- * restart is now a map: `start` adds, `kill` removes the one it is given, and
- * every route in and out carries the session's id. The three things that stay
- * singular are the ones that belong to the *vault* rather than to a session: the
- * focus file the per-turn hook reads, the sync pause (which the turn coordinator
- * owns), and the Claude Code config directory D86 gave each vault.
+ * **A vault runs any number of them (D100).** Every route in and out carries the
+ * session's id. Three things stay singular because they belong to the *vault*:
+ * the focus file the per-turn hook reads, the sync pause (owned by the turn
+ * coordinator), and the vault's Claude Code config directory (D86).
  *
  * **Holi does not decide what a session is doing.** Whether one is working,
  * waiting for you, or idle, and what it is called, are facts Claude Code
@@ -47,19 +45,14 @@ import { TerminalMirror } from './terminal-mirror'
 
 /**
  * Printed into the terminal record the first time Holi spawns an agent in a
- * vault's config directory (§6 of the isolation spec, unbuilt until D86).
+ * vault's config directory (D86).
  *
  * First-spawn rather than a read of Claude Code's sign-in state, because that
- * state cannot be read honestly — see `takeFirstSpawn`. A directory Holi has
- * never spawned in cannot hold a credential, since credentials are keyed to the
- * directory, so the proxy is exact where it matters.
+ * state cannot be read honestly (see `takeFirstSpawn`). Credentials are keyed to
+ * the directory, so one Holi has never spawned in cannot hold one.
  *
- * **In the scrollback, not the panel header**, and that is D72's own argument
- * rather than a walk-back of it: a header notice is duplicate state, and `/login`
- * fires no spawn, no turn and no exit, so the copy in Holi's chrome goes stale
- * the moment it matters. A line printed at spawn is a log entry, and stays true
- * about that spawn.
- *
+ * **In the scrollback, not the panel header** (D72): `/login` fires no spawn, no
+ * turn and no exit, so a header notice would go stale the moment it matters.
  * It says the per-vault part out loud, because a second `/login` on a machine
  * that already has one otherwise reads as a bug.
  */
@@ -73,9 +66,8 @@ const SIGN_IN_NOTICE =
  *
  * Claude Code gives an unnamed session a **default display name**: the working
  * directory's name plus a two-character suffix, `privat-d9`. It is unique per
- * session — this used to say it was one string for the whole vault, measured
- * before the suffix existed — but it is still not a label. It says nothing about
- * the conversation, and Claude Code does not even accept it as a resume handle.
+ * session but still not a label: it says nothing about the conversation, and
+ * Claude Code does not accept it as a resume handle.
  * See `deriveName` for how the two are told apart.
  */
 const NEW_SESSION = 'New session'
@@ -98,14 +90,11 @@ const bracketedPaste = (text: string): string => `\x1b[200~${text}\x1b[201~`
 /**
  * How long a session is treated as not yet ready to be pasted into.
  *
- * Ready means the registry has sighted it, which happens because Claude Code
- * writes its session file at `SessionStart` — measured 0.94 s after the spawn,
- * and measured as the point where a paste lands in the composer rather than into
- * a TUI that is not reading stdin yet. This is the backstop for a listing that
- * never answers at all: the registry degrades honestly everywhere else, and text
- * the user has already written is not the thing to lose to it. After it elapses
- * a session is called ready on the grounds that 5 s is five times the measured
- * figure, so a paste is never delayed twice.
+ * Ready means the registry has sighted it: Claude Code writes its session file
+ * at `SessionStart` (about 0.94 s after the spawn), which is also the point where
+ * a paste lands in the composer rather than in a TUI not yet reading stdin. This
+ * is the backstop for a listing that never answers, so text the user already
+ * wrote is not lost to it. 5 s is about five times the measured figure.
  */
 const PASTE_BACKSTOP_MS = 5_000
 
@@ -114,11 +103,8 @@ export type SessionState = 'needs-you' | 'working' | 'idle'
 export interface SessionSummary {
   id: string
   /**
-   * The registry's name when it is a real one, else 'New session'. It is real if
-   * Holi passed `--name` at spawn, or if the row's name has changed since the
-   * first read after that spawn, which is what a `/rename` looks like from
-   * outside. The listing does not carry `nameSource` (2.1.278), so that
-   * inference is the discriminator until it does.
+   * The session's real name, else 'New session'. See `deriveName` for which
+   * names count as real.
    */
   name: string
   state: SessionState
@@ -142,17 +128,14 @@ export interface AgentManagerDeps {
   resolveBin?: () => string | null
   killGraceMs?: number
   /** Cap on waiting for the exit event after SIGKILL. Forwarded to
-   *  `AgentRuntime`, which is the whole reason it is here: `killGraceMs` was
-   *  threaded and this was not, so a test that set the grace to 20ms still
-   *  waited out the 5s backstop on every kill. */
+   *  `AgentRuntime` so tests that shorten `killGraceMs` can shorten this too. */
   killBackstopMs?: number
   /** The live hook-server port/token, injected into the child so its seeded
    *  curl hooks can reach us. Read per-spawn (the server outlives sessions). */
   hookPort?: () => number | null
   /** Mint the hook bearer for **this vault, this session**, and revoke it on
-   *  teardown — the same reason as the Google one: the ops behind it act on a
-   *  vault's files, and a session outlives a vault switch. The session id is
-   *  what a turn signal on that token reports back. */
+   *  teardown, for the same reason as the Google one: a session outlives a vault
+   *  switch. The session id is what a turn signal on that token reports back. */
   mintHookToken?: (remote: string, sessionId: string) => string | null
   revokeHookToken?: (token: string) => void
   /** Force-resume if a turn never ends (Stop is not guaranteed on interrupt).
@@ -186,10 +169,9 @@ export interface AgentManagerDeps {
    * on teardown.
    *
    * Not a getter, deliberately: a getter answers for whatever vault is active
-   * *now*, and an agent session outlives a vault switch — it keeps running
-   * against its original vault's cwd while Holi shows another. A bearer that
-   * drifted with the screen would have a backgrounded agent read and write
-   * another vault's mail, which is D87's own complaint arriving late.
+   * *now*, and an agent session outlives a vault switch. A bearer that drifted
+   * with the screen would let a backgrounded agent read and write another
+   * vault's mail.
    */
   mintGoogleToken?: (remote: string) => string | null
   revokeGoogleToken?: (token: string) => void
@@ -201,10 +183,9 @@ export interface AgentManagerDeps {
   /** The vault's own Claude Code config directory (D86), handed to the child as
    *  `$CLAUDE_CONFIG_DIR`, plus whether it has been signed into.
    *
-   *  Called **per spawn**, not per app launch: the active vault changes while the
-   *  app runs, and the theme it stamps tracks a setting the user can flip without
-   *  restarting. Omitted (tests, and only tests) → the agent runs on the machine
-   *  config and no sign-in notice is printed. */
+   *  Called **per spawn**: the active vault changes while the app runs, and the
+   *  theme it stamps tracks a setting the user can flip without restarting.
+   *  Omitted only in tests: the agent then runs on the machine config. */
   resolveConfigDir?: (vault: {
     remote: string
     root: string
@@ -276,12 +257,10 @@ interface Session {
   /**
    * Does Claude Code have a conversation for it yet?
    *
-   * True once a prompt has been submitted in it (the hook bracket's start), or
-   * from birth for a fork, which is a copy of a conversation that exists. Before
-   * that the listing already carries a session id — Claude Code mints one at
-   * `SessionStart` — but there is no transcript under it, and `--resume` of that
-   * id fails with "No conversation found". So this, not the id, is what says
-   * whether there is anything to duplicate.
+   * True once a prompt has been submitted, or from birth for a fork. Before that
+   * the listing already carries a session id (minted at `SessionStart`) but no
+   * transcript, and `--resume` of it fails with "No conversation found". So this,
+   * not the id, says whether there is anything to duplicate.
    */
   hadTurn: boolean
   /** Spawned with bare `--resume`: Claude Code's picker is the first thing in
@@ -322,14 +301,12 @@ interface Session {
   /** The backstop. Cleared when it becomes ready, or when it dies. */
   readyTimer: ReturnType<typeof setTimeout> | null
   /**
-   * The last reading from this session's own status line: what Claude Code says
-   * it is called, which model it is on, and how full the context is.
+   * The last reading from this session's own status line: its name, model and
+   * context fill.
    *
-   * `statusName` is the better answer to "what is this session called" than the
-   * listing's, and not by a little: Claude Code documents it as the name set
-   * with `--name` or `/rename` **when one exists, otherwise the AI-generated
-   * session title** — so a value here is always a real name and needs none of
-   * `deriveName`'s inference.
+   * `statusName` beats the listing's name: Claude Code documents it as the
+   * `--name`/`/rename` name when one exists, otherwise the AI-generated session
+   * title, so a value here is always real and needs no `deriveName` inference.
    */
   statusName: string | null
   model: string | null
@@ -364,19 +341,16 @@ async function fingerprintAgentConfig(root: string): Promise<string> {
 /**
  * Which of the two names a row is carrying.
  *
- * The listing gives one `name` field and does not say where it came from, so the
- * caller has to know another way. It knows two things the listing does not: it
- * spawned the session, so it knows whether it passed `--name`; and it has seen
- * the row before, so a name that has since changed can only be a `/rename` typed
- * inside the session — or the title Claude Code writes when a plan is accepted,
- * which is a real description of the work and equally worth showing. Anything
+ * The listing gives one `name` field and does not say where it came from. The
+ * caller knows two things it does not: whether it passed `--name`, and the row's
+ * earlier name, so a name that has since changed is a `/rename` (or the title
+ * Claude Code writes when a plan is accepted, equally worth showing). Anything
  * else is the default display name, which describes nothing.
  */
 function deriveName(session: Session, row: SessionRow | undefined): string {
-  // The status line's answer, when it has given one, ends the question: Claude
-  // Code puts a real name there or the title its own small-model pass wrote, and
-  // never the default display name. Everything below is the inference that was
-  // needed before there was a status line to ask.
+  // The status line's answer ends the question: it is a real name or the
+  // generated title, never the default display name. Below is the fallback
+  // inference for when the status line has not reported yet.
   if (session.statusName !== null) return session.statusName
   if (row === undefined || row.name === '') {
     return session.lastName ?? session.nameAtSpawn ?? NEW_SESSION
@@ -392,11 +366,8 @@ function deriveName(session: Session, row: SessionRow | undefined): string {
 /**
  * What a session's status line prints.
  *
- * Two facts and no decoration: which model is answering, and how much of the
- * context window is gone. Both are questions you ask mid-task and neither has
- * another home in the terminal — Claude Code's own footer hints are what a
- * custom status line replaces, so anything put here has to be worth more than
- * `esc to interrupt` was.
+ * Model and context fill only. A custom status line replaces Claude Code's own
+ * footer hints, so anything here has to be worth more than `esc to interrupt`.
  */
 function statusLineText(model: string | null, percent: number | null): string {
   const parts = [model === null ? null : model, percent === null ? null : `${percent}% context`]
@@ -635,9 +606,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
    * Spawns are serialised, one chain for the whole manager.
    *
    * Two concurrent ones race two unlocked read-modify-writes inside
-   * `ensureAgentConfigDir` — `settings.json` (`agent-config-dir.ts:143-146`) and
-   * the stat-then-write `takeFirstSpawn` (`:172-177`) — which loses one session's
-   * settings and prints the sign-in notice twice.
+   * `ensureAgentConfigDir` (the `settings.json` merge and the stat-then-write
+   * `takeFirstSpawn`), which loses one session's settings and prints the sign-in
+   * notice twice.
    */
   let spawnChain: Promise<unknown> = Promise.resolve()
 
@@ -733,12 +704,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     runtime.onExit((e) => {
       if (dropped) return
       log(`session ${id} exited (code ${e.exitCode})`)
-      // A resume picker escaped before anything was picked. Claude Code exits
-      // non-zero, and what that means is that nothing happened: no conversation
-      // was opened and none is lost. So there is nothing to read, and the
-      // honest answer is to leave nothing behind — no "[session ended]" in a
-      // dead tab, no card in the sidebar. The renderer closes the tab of a
-      // session that has left the list, and this session leaves it.
+      // A resume picker escaped before anything was picked: Claude Code exits
+      // non-zero and no conversation was opened, so leave nothing behind. The
+      // renderer closes the tab of a session that has left the list.
       if (session.resumePick && !session.hadTurn && e.exitCode !== 0) {
         dropped = true
         void teardown(session)
@@ -881,9 +849,8 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     async attach(id) {
       const session = sessions.get(id)
       if (session === undefined) return ''
-      // The drawer is opening on this session, which is one of the moments the
-      // design says to re-read the listing: a watcher edge is not guaranteed to
-      // have fired since anything last looked.
+      // Re-read the listing on attach: a watcher edge is not guaranteed to have
+      // fired since anything last looked.
       void refreshRows()
       const state = await session.mirror.serialize()
       if (!session.exited) session.attached = true
@@ -891,15 +858,11 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     },
 
     /**
-     * A session that has gone is a refusal, not a silent drop: the text is in a
-     * box the user typed it into, and the honest answer is to leave it there and
-     * say why.
+     * A session that has gone is a refusal, not a silent drop: the text stays in
+     * the box the user typed it into.
      *
-     * One that simply is not up yet is neither. It is a real session, it is in
-     * the drawer, it is the tab an ask defaults to from the moment it appears —
-     * and a paste written into it before its TUI reads stdin would be accepted
-     * here and land nowhere. So it joins the queue the spawn's own paste is
-     * already in.
+     * One that is not up yet is queued with the spawn's own paste, because a
+     * paste written before its TUI reads stdin would land nowhere.
      */
     paste: (id, text) => {
       const session = sessions.get(id)
@@ -915,29 +878,22 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
      * Copy a conversation into a session of its own.
      *
      * `--resume <id> --fork-session`, where the id is **Claude Code's**, read
-     * out of the listing here and passed straight to the spawn. Holi keys a
-     * session by its terminal (D100) exactly because that id moves under one
-     * terminal on `/clear`; reading it at the moment of the fork is what keeps
-     * this from being a copy that goes stale.
-     *
-     * The new session is its own process with its own conversation from that
-     * point: neither sees the other's turns, and the original is untouched.
+     * out of the listing at the moment of the fork. Holi keys a session by its
+     * terminal (D100) because that id moves under one terminal on `/clear`.
      */
     duplicate: async (id) => {
       const session = sessions.get(id)
       if (session === undefined) return { ok: false, message: 'That session has ended.' }
-      // Before the listing check, because it is the more useful answer: a fresh
-      // session IS listed, with an id, and forking that id is what printed "No
-      // conversation found with session ID" into the copy. See `hadTurn`.
+      // Before the listing check: a fresh session IS listed, with an id, but
+      // forking it prints "No conversation found". See `hadTurn`.
       if (!session.hadTurn) {
         return { ok: false, message: 'Nothing to copy yet: this session has not had a turn.' }
       }
       const pid = session.runtime.pid
       const row = pid === null ? undefined : rows.get(pid)
       if (row?.sessionId === undefined) {
-        // No listing, or a session it has not caught up with. Refusing is the
-        // honest answer: a fork with no conversation to fork is a new session
-        // wearing the word "duplicate".
+        // No listing, or one that has not caught up. A fork with no
+        // conversation would just be a new session, so refuse.
         return {
           ok: false,
           message: 'Claude Code has not said which conversation this is yet. Try again shortly.',
@@ -960,13 +916,9 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
     /**
      * End one session and start another in its place.
      *
-     * A genuinely new session rather than the same one reborn — restarting a
-     * process is what this is, and saying otherwise would pretend a
-     * conversation survived that did not. What does carry over is the name:
-     * it was chosen for the work, not for the process, and a rename lost to a
-     * restart was the thing the person noticed first. Read here, in main,
-     * where the rule for which names are real already lives; the renderer only
-     * ever sees the derived string.
+     * A genuinely new session: no conversation survives. The name carries
+     * over, because it was chosen for the work, not the process. It is read
+     * here in main, where the rule for which names are real lives.
      */
     restart: async (id, geometry = {}) => {
       const session = sessions.get(id)
@@ -1032,14 +984,10 @@ export function createAgentManager(deps: AgentManagerDeps): AgentManager {
       if (typeof name === 'string' && name !== '') session.statusName = name
 
       /**
-       * The status line fires on every event in a session, far more often than
-       * anything else here, so this pushes only when something derived actually
-       * moved — which `pushSessions` decides by comparing the encoded list.
-       *
-       * That is also why the model and the context reading stay on the Session
-       * and out of the summary: they move constantly, nothing in Holi's own UI
-       * shows them (the footer does, which is where they were asked for), and a
-       * list pushed on every token would re-render every tab to say nothing new.
+       * The status line fires on every event, so `pushSessions` pushes only when
+       * the encoded list changed. Model and context stay off the summary for the
+       * same reason: they move constantly and only the terminal footer shows
+       * them.
        */
       pushSessions()
       return statusLineText(session.model, session.contextPercent)

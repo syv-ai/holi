@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 // Holi SessionStart hook — tell the agent what this vault remembers, once per
-// session, before it answers anything. See features/agent-memory.md (D89).
+// session, before it answers anything. See docs/features/agent-memory.md (D89).
 //
 // SessionStart rather than UserPromptSubmit: memory is session state, and 3k
-// characters injected into every turn is a cost paid over and over. It fires on
-// `startup`, `resume` AND `compact`, and the third is the one that matters most
-// — a compaction is precisely the moment the agent has forgotten it has memory
-// at all, so this prints on all three without looking at which.
+// characters injected into every turn is a cost paid over and over. It prints on
+// `startup`, `resume` AND `compact`: after a compaction the agent has forgotten
+// it has memory at all.
 //
 // Reads only: `memory/index.md` (which the memory-index transform already
 // generated, so nothing is parsed twice), a scan for personal `*.local.md`
@@ -178,15 +177,11 @@ function render({ descriptions }) {
   if (log.length > 0) out.push('', '## recent', '', ...log.map((l) => `- ${l}`))
 
   // The two older shapes. Only when there is something in one to split: an
-  // empty `MEMORY.md` is the old seed's own leftover, and suggesting work on it
-  // would be noise.
+  // empty `MEMORY.md` is not worth suggesting work on.
   //
-  // `USER.local.md` is named here for a reason of its own. It is auto-loaded by
-  // nothing — the `CLAUDE.md` shim imports `AGENTS.md` and only that — and it
-  // appears in no index and in no overview, so a fact in it is one the agent has
-  // to remember to go and look for. A `memory/<name>.local.md` is printed right
-  // here at the start of every session. That is the whole difference, and it is
-  // why this line exists rather than the file simply carrying on.
+  // `USER.local.md` is auto-loaded by nothing (the `CLAUDE.md` shim imports only
+  // `AGENTS.md`) and appears in no index, whereas a `memory/<name>.local.md` is
+  // printed here at the start of every session.
   const legacy = ['MEMORY.md', 'USER.local.md'].filter((name) => {
     const text = readOr(join(root, name))
     return text !== null && text.trim() !== ''

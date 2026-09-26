@@ -2,23 +2,16 @@
 // Holi PostToolUse hook — tell the agent immediately when an app it just wrote
 // cannot work.
 //
-// Slice 1's authoring loop was: write the files, then ask the user to go and
-// look. There was no console, no screenshot and no way to open the app, so a
-// syntax error showed up as a blank tab and a puzzled user. `holi app open`
-// gives the agent the second half of that loop; this gives it the first — the
-// class of mistake that a look at the running app would have caught anyway,
-// caught at the moment it is made, while the file is still in mind.
+// Without it a syntax error shows up as a blank tab. This catches the mistake
+// at the moment it is made, while the file is still in mind; `holi app open`
+// covers the rest of the loop.
 //
-// **Advisory, never blocking.** It reports and exits 0. The one hook here that
-// says no is `google-send-gate`, and it says no about mail reaching a person
-// who cannot un-receive it. A lint opinion does not get that power: the cost of
-// a wrong refusal here is the agent unable to write a file, and the cost of a
-// missed report is a sentence nobody read.
+// **Advisory, never blocking.** It reports and exits 0. Only `google-send-gate`
+// says no; a wrong refusal here would leave the agent unable to write a file.
 //
-// **Silence is the design.** It says nothing at all about a correct write, and
-// nothing about a half-written app that is merely unfinished. A hook that talks
-// every time is one the agent learns to skim, and then it is not a feedback
-// loop, it is noise.
+// **Silence is the design.** Nothing about a correct write, and nothing about a
+// half-written app that is merely unfinished: a hook that talks every time is
+// one the agent learns to skim.
 //
 // It never uses a dependency: Node's own parser does the syntax check, and
 // everything else is a regex over the file the tool just wrote.
@@ -53,8 +46,8 @@ function main(payload) {
   ]
 }
 
-/** There is no bundler, so these can never load — which today shows up as a
- *  blank tab and nothing else. */
+/** There is no bundler, so these can never load; they show up as a blank tab
+ *  and nothing else. */
 function unbuildable(ext) {
   if (!['.ts', '.tsx', '.jsx'].includes(ext)) return []
   return [
@@ -96,10 +89,8 @@ function syntax(source, ext) {
  * after the module syntax is taken out.
  *
  * `export const a = 1` is a script-parse error and a perfectly good
- * `type="module"`. Reporting it would be this hook inventing a rule the
- * platform does not have — but simply giving up on module files would blind it
- * to every real syntax error in one, so the import/export lines come out and
- * the rest is checked.
+ * `type="module"`, but skipping module files would miss every real syntax error
+ * in one, so the import/export lines come out and the rest is checked.
  */
 function check(source, lineOffset) {
   const error = parse(source)

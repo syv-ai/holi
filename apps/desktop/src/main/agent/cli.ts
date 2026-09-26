@@ -4,20 +4,13 @@
  * A generated shell script rather than a shipped binary, for the reasons
  * `holi-google` is one (D67): no build step or packaging entry, readable by the
  * person whose machine it is on, and it re-reads `$HOLI_HOOK_PORT` /
- * `$HOLI_HOOK_TOKEN` at every invocation — so it survives an app restart, which
- * moves the ephemeral port. Baking either in produces a CLI that works exactly
- * until Holi is restarted once, and then fails in a way that looks like a
- * network bug.
+ * `$HOLI_HOOK_TOKEN` at every invocation, so it survives an app restart, which
+ * moves the ephemeral port.
  *
- * It exists because slice 1 left the agent writing an app blind: it could not
- * see the result, so its only move was to ask the user to go and look. `app
- * open` closes that loop.
- *
- * `holi-google` sorts its subcommands by reversibility, because some of them
- * reach another person. **All three of these are reversible** — opening a tab,
- * scaffolding a directory, rewriting a file Holi itself wrote and can rewrite
- * again — which is why none of them is gated. That is the same rule (D70)
- * reaching the opposite conclusion, not a different one.
+ * **Every command is reversible or read-only** (opening a tab, scaffolding a
+ * directory, rewriting a file Holi itself wrote, printing PDF comments), which
+ * is why none of them is gated. That is D70's rule reaching the opposite
+ * conclusion from `holi-google send`.
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -155,19 +148,12 @@ esac
  * `holi-statusline` — what a session's footer prints, asked of Holi.
  *
  * **It parses nothing.** Claude Code writes its status JSON to this script's
- * stdin, the script posts that straight through, and Holi answers with the line
- * to print. The alternative was picking fields out of JSON in POSIX sh: `jq` is
- * not installed on a stock macOS, and hand-rolled `sed` over another program's
- * output is a parser that breaks on the version that adds a field.
+ * stdin, the script posts it straight through, and Holi answers with the line
+ * to print. `jq` is not installed on a stock macOS, and it means main SEES the
+ * status (notably `session_name`).
  *
- * It also means main SEES the status, which is the point: the model and the
- * context reading go on the wire with the session list, and `session_name`
- * carries the title Claude Code's own small-model pass wrote for the session.
- *
- * Silent on every failure. A status line that printed `curl: (7) failed to
- * connect` into the footer of every session would be worse than an empty row,
- * and Holi not running is an ordinary state for a `claude` the user started
- * themselves.
+ * Silent on every failure: a curl error in every session's footer would be
+ * worse than an empty row, and Holi not running is an ordinary state.
  */
 const STATUSLINE_SCRIPT = `#!/bin/sh
 # holi-statusline — ask the running Holi app what this session's footer says.

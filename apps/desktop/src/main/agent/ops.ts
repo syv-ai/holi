@@ -2,32 +2,24 @@
  * The routes the `holi` CLI talks to — what the agent can ask Holi to *do*,
  * as opposed to what it can read off the filesystem itself.
  *
- * Mounted on the hook server because that server already owns the two things
- * this needs and neither is worth minting twice: an ephemeral loopback port and
- * a per-instance token. It is the `holi-google` shape (D67) with a smaller
- * surface.
+ * Mounted on the hook server, which already owns an ephemeral loopback port and
+ * a per-instance token. The `holi-google` shape (D67) with a smaller surface.
  *
- * **A turn-signal route and an ops route answer differently, and the difference
- * matters.** A hook route replies with an empty body, because whatever a
- * Claude Code hook prints is injected into the agent's context — a stray reply
- * there is unattributed text appearing mid-conversation. An ops route is a
- * reply to a command the agent deliberately typed, so it may and should answer.
- * Mixing the two is how CLI output ends up in the context window.
+ * **A turn-signal route and an ops route answer differently.** Whatever a Claude
+ * Code hook prints is injected into the agent's context, so a hook route replies
+ * empty. An ops route replies to a command the agent deliberately typed.
  *
- * **Every refusal is a value, never a status code.** The agent reads stdout; a
- * 500 with an HTML body tells it nothing it can act on, and `--fail-with-body`
- * turns a non-2xx into a non-zero exit that reads like "Holi is broken" rather
- * than "that app has no manifest yet". A thrown dep becomes `{ok:false,error}`
- * for the same reason.
+ * **Every refusal is a value, never a status code.** The agent reads stdout, and
+ * `--fail-with-body` turns a non-2xx into a non-zero exit that reads like "Holi
+ * is broken" rather than "that app has no manifest yet". A thrown dep becomes
+ * `{ok:false,error}` for the same reason.
  *
- * **`/pdf/comments` is the one exception**, and on purpose: its output is the
- * answer itself, text the agent reads, and a refusal (no such file, not a PDF)
- * is an error the command exits non-zero on, the way `cat` does. So it answers
- * `text/plain`, 200 with the comments or 422 with one line, and the script
- * routes the one to stdout and the other to stderr.
+ * **`/pdf/comments` is the one exception**: its output is the answer itself, so
+ * it answers `text/plain`, 200 with the comments or 422 with one line, and the
+ * script routes them to stdout and stderr the way `cat` would.
  *
- * NOTE: no `electron` import, here or in `hook-server.ts` — both load under
- * vitest, and an import of it breaks the suite in a way that looks unrelated.
+ * NOTE: no `electron` import, here or in `hook-server.ts`: both load under
+ * vitest.
  */
 import { commentThreadsJson, formatCommentThreads, type PdfCommentThread } from '@holi/shared'
 
@@ -38,11 +30,11 @@ export interface AgentOpsDeps {
   openApp(appId: string): Promise<{ ok: true } | { ok: false; error: string }>
   /** Scaffold a new app directory: manifest, entry document. */
   initApp(appId: string): Promise<{ ok: true; created: string[] } | { ok: false; error: string }>
-  /** Re-write the managed files Holi still owns (D75). */
   /** Run the enabled pre-commit transforms over the staged set. Called by
-   *  Holi's own git hook, not by the agent — but it lives here because this is
+   *  Holi's own git hook, not by the agent, but it lives here because this is
    *  where the loopback port and its token already are. */
   runPreCommitHooks(): Promise<{ changed: string[]; failed: unknown[] }>
+  /** Re-write the managed files Holi still owns (D75). */
   refreshSeed(input: {
     path?: string
     force?: boolean

@@ -1,29 +1,20 @@
 /**
  * Holi's own Claude Code config directory (D72).
  *
- * A vault agent used to be a plain Claude Code session with the machine's
- * `~/.claude` underneath it, so it inherited that machine's skills, plugins,
- * marketplaces, MCP servers and claude.ai connectors — none of which a vault
- * declared and none of which Holi knows exist. `CLAUDE_CONFIG_DIR` is the only
- * lever that reaches all of them at once (project settings cannot disable
- * user-scope skills or plugins), and this module provisions what it points at.
+ * Without it a vault agent would inherit the machine's `~/.claude`: its skills,
+ * plugins, marketplaces, MCP servers and claude.ai connectors. `CLAUDE_CONFIG_DIR`
+ * is the only lever that reaches all of them at once (project settings cannot
+ * disable user-scope skills or plugins), and this module provisions what it
+ * points at.
  *
  * **One directory per vault** (D86), at `userData/agent-config/<vault-slug>/`.
+ * Transcripts are keyed by cwd anyway, but `plugins/` and user-scope
+ * `settings.json` are keyed by nothing, so a shared directory would let a plugin
+ * installed in one vault reach every vault.
  *
- * This reverses D72's shared directory, and the reversal is narrow. D72 was right
- * that per-vault *history* comes free — Claude Code keys transcripts, prompt
- * history and project config by working directory (`projects/<cwd-slug>/`), so a
- * shared directory never mixed those. What it did not weigh was **capability**:
- * `plugins/` — marketplaces and installed plugins, 444 files on a real install —
- * is keyed by nothing at all, so a plugin installed while working in one vault
- * was reachable by the agent in every vault. So was user-scope `settings.json`.
- *
- * The price is real and unchanged: credentials are keyed to the config directory
- * (a symlinked `.claude.json` does not carry them, and the keychain entry is
- * suffixed per directory), so this costs a `/login` per vault. It is paid
- * **lazily** — the panel asks the first time the agent is opened in that vault,
- * never during onboarding — and it buys a vault agent that gets nothing from
- * another vault except the Claude Code binary.
+ * The price: credentials are keyed to the config directory (the keychain entry
+ * is suffixed per directory), so this costs a `/login` per vault, paid lazily
+ * the first time the agent is opened there.
  */
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
@@ -47,13 +38,10 @@ const SPAWNED_MARKER = '.holi-spawned'
  * Stable and filesystem-safe, because it is the address of a login and of a
  * transcript store: a name that drifts orphans both.
  *
- * The readable half follows Claude Code's own convention for the same problem
- * (`projects/-Users-nicolaibthomsen-Holi-nthomsencph-privat`) — every character
- * outside `[A-Za-z0-9]` becomes a dash. That alone is **not injective**, though:
- * `syv/better-holi` and `syv-better/holi` both sanitize to `syv-better-holi`,
- * and two vaults quietly sharing one config directory is the exact plugin leak
- * this decision exists to close. So eight hex of a hash of the *remote* rides
- * along, and the collision stops being possible rather than merely unlikely.
+ * The readable half follows Claude Code's own `projects/<cwd-slug>` convention:
+ * every character outside `[A-Za-z0-9]` becomes a dash. That alone is **not injective** (`syv/better-holi` and `syv-better/holi` collide),
+ * and two vaults sharing one directory is the plugin leak this exists to close,
+ * so eight hex of a hash of the *remote* rides along.
  */
 export function agentConfigSlug(remote: string): string {
   const readable = remote
@@ -71,13 +59,11 @@ export type AgentTheme = 'dark' | 'light'
 /**
  * A path as one word for `sh`.
  *
- * Claude Code runs a `statusLine` command through a shell — the same runner
- * its hooks use — so the setting is a command line, not a path, and a path is
- * only a command line once it is quoted. Holi's script lives under `userData`,
- * which on macOS is `~/Library/Application Support/…`: written bare, the shell
- * stopped at the space and the footer silently showed Claude Code's default
- * hints instead. Single quotes, because they are the one form under which
- * nothing else in a path needs escaping.
+ * Claude Code runs a `statusLine` command through a shell, so the setting is a
+ * command line, not a path. Holi's script lives under `userData`, which on macOS
+ * is `~/Library/Application Support/…`: unquoted, the shell stops at the space
+ * and the footer silently falls back to the default. Single quotes, because
+ * nothing else in a path then needs escaping.
  */
 function shellQuote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`
@@ -87,24 +73,19 @@ function shellQuote(path: string): string {
  * The settings text this directory should have, or **null** if it already
  * carries what Holi requires (or cannot be parsed).
  *
- * Key-wise, the same rule and for the same reason as the vault's
- * `settingsWithRequired`: this file accumulates the user's own choices — their
- * `/login`, a model preference — and rewriting it wholesale on every launch
- * would discard them. It is a *different* required set, though, and so not that
- * function: the vault's includes hook commands whose paths are relative to a
- * vault, which mean nothing at user scope.
+ * Key-wise, like the vault's `settingsWithRequired`: this file accumulates the
+ * user's own choices, and rewriting it wholesale would discard them. A different
+ * required set, because the vault's hook commands mean nothing at user scope.
  *
  * **Two keys, two rules**, and the difference is what each one is:
  *
  * - `disableClaudeAiConnectors` is a **default**, written only when absent. It is
  *   a second layer under the vault's own copy of the same key, so a vault whose
- *   `.claude/settings.json` was deleted or never merged still gets no cloud
- *   connectors — and a user who deliberately wrote `false` is not overruled.
- * - `theme` **tracks a setting**, so it is written on every spawn and the last
- *   write wins. Claude Code ships `"auto"`, meaning *detect the terminal
- *   background*, and inside Holi's embedded PTY there is nothing reliable to
- *   detect: the agent stayed dark while D85 took the app light. Holi answers the
- *   question instead of leaving it to be guessed.
+ *   `.claude/settings.json` was deleted still gets no cloud connectors, and a
+ *   user who deliberately wrote `false` is not overruled.
+ * - `theme` **tracks a setting**, so it is written on every spawn. Claude Code's
+ *   `"auto"` detects the terminal background, and inside Holi's embedded PTY
+ *   there is nothing reliable to detect.
  */
 function settingsWithRequired(
   existing: string | null,
@@ -138,15 +119,12 @@ function settingsWithRequired(
     changed = true
   }
   /**
-   * The status line **tracks a path**, so it is written whenever it is not
-   * already what Holi is about to run: the script lives under `userData`, which
-   * moves with the app, and a command pointing at where it used to be would
-   * fail silently in a footer nobody reads twice.
+   * The status line **tracks a path**, so it is written whenever it differs:
+   * the script lives under `userData`, which moves with the app, and a stale
+   * command fails silently.
    *
    * Written here rather than into the vault's own `.claude/settings.json`,
-   * which syncs: a path on this machine means nothing on a teammate's, and a
-   * Holi-shaped footer is not something a vault should impose on whoever clones
-   * it.
+   * which syncs: a path on this machine means nothing on a teammate's.
    */
   if (command) {
     const current = settings.statusLine
@@ -166,16 +144,12 @@ function settingsWithRequired(
 /**
  * Create and top up **this vault's** config directory, returning its absolute path.
  *
- * Run on **every spawn**, not on first run and no longer once per app launch: a
- * seed that only runs at creation is a migration that never happens (D70's
- * lesson, learned when the send gate shipped as an inert file in every vault
- * that already existed), and per launch is now simply wrong — the active vault
- * changes while the app runs, and `theme` has to track a setting the user can
- * flip without restarting.
+ * Run on **every spawn**: a seed that only runs at creation is a migration that
+ * never happens, the active vault changes while the app runs, and `theme` has to
+ * track a setting the user can flip without restarting.
  *
- * `projects/`, `sessions/` and `.claude.json` are deliberately NOT created —
- * Claude Code owns those and makes them itself; pre-creating them would be
- * guessing at another program's schema.
+ * `projects/`, `sessions/` and `.claude.json` are deliberately NOT created:
+ * Claude Code owns those, and pre-creating them would guess at its schema.
  */
 export async function ensureAgentConfigDir(
   userDataDir: string,
@@ -200,22 +174,16 @@ export async function ensureAgentConfigDir(
  * Has Holi ever spawned an agent in this config directory? Consumes the answer:
  * true once, false forever after.
  *
- * This is §6 — telling the user a vault needs its own `/login` — and it is
- * deliberately **Holi's own marker rather than a reading of Claude Code's
- * state**. The first version read `oauthAccount` out of `<dir>/.claude.json`, and
- * running it proved that unreliable: a session printed `Not logged in` in a
- * directory whose `.claude.json` carried an `oauthAccount`. The key records **an
- * account**, not whether the credential behind it is reachable right now — the
- * credential lives in the macOS keychain, which can be locked, re-keyed or
- * cleared without that file changing. So the check said "signed in" at the one
- * moment the notice was wanted.
+ * Drives the notice that a vault needs its own `/login`, and is deliberately
+ * **Holi's own marker rather than a reading of Claude Code's state**.
+ * `oauthAccount` in `<dir>/.claude.json` records an account, not whether the
+ * keychain credential behind it is reachable, so it can say "signed in" while
+ * the session prints `Not logged in`.
  *
  * The marker is a **proxy, not a heuristic**: credentials are keyed to the config
- * directory, so a directory Holi has never spawned in cannot be signed in. It is
- * also the honest scope of the message, which is not really "you are logged out"
- * but "this vault is new, and that is why you are being asked again".
+ * directory, so a directory Holi has never spawned in cannot be signed in.
  *
- * Never scrapes the PTY for any of this. Standing decision, and still unnecessary.
+ * Never scrapes the PTY for any of this.
  */
 export async function takeFirstSpawn(configDir: string): Promise<boolean> {
   const marker = join(configDir, SPAWNED_MARKER)
@@ -244,10 +212,9 @@ export interface AgentConfigResolution {
  * directory, stamp the theme it should open in, and say whether this is the first
  * time Holi has spawned there.
  *
- * The mode comes from the same pair D85 uses for `data-theme` — the vault's
- * `colorScheme` setting and what the OS currently reports, through the same pure
- * `resolveColorMode`. Resolving it twice, two ways, is how `system` ends up
- * meaning one thing to the app and another to the agent.
+ * The mode comes from the same pair D85 uses for `data-theme` (the vault's
+ * `colorScheme` and the OS preference), through the same `resolveColorMode`, so
+ * `system` cannot mean one thing to the app and another to the agent.
  *
  * `systemPrefersDark` is **injected** rather than read here: this module sits on
  * `agent-manager`'s path, which must load under vitest, so no runtime `electron`
@@ -278,14 +245,8 @@ const MIGRATING_DIR_NAME = `${AGENT_CONFIG_DIR_NAME}.migrating`
 /**
  * Which registered vault does the shared directory actually belong to?
  *
- * **Not the most recently opened one**, which is what the first version of this
- * asked and what a real install proved wrong: `lastOpenedAt` answers "which vault
- * did you last look at", and looking at a vault does not open an agent in it. On
- * the install this was measured against, the head of the registry was a vault
- * created minutes earlier and never worked in, while the login and every
- * transcript in the directory belonged to one that had been used for days.
- *
- * The directory says so itself. Claude Code keys `.claude.json`'s `projects{}` by
+ * **Not the most recently opened one**: looking at a vault does not open an
+ * agent in it. The directory says so itself. Claude Code keys `.claude.json`'s `projects{}` by
  * **absolute working directory**, so a key matching a registered clone path is
  * that vault having run the agent. Registry order is `lastOpenedAt` descending,
  * so scanning it in order breaks a tie towards the more recent vault.
@@ -316,22 +277,15 @@ function usedByVault(
 /**
  * One-shot: the shared directory D72 left behind becomes a vault's own.
  *
- * `userData/agent-config/` already holds one vault's transcripts and its plugin
- * set. Leaving it stranded would cost the vault someone actually uses both, on
- * upgrade, for nothing. So it is **renamed** into that vault's slot.
+ * `userData/agent-config/` may hold one vault's transcripts and plugin set, so it
+ * is **renamed** into that vault's slot rather than stranded.
  *
- * **What it carries is files.** Transcripts and the plugin set are on disk and
- * move with the directory. The **credential is not in the directory** — it is a
- * macOS keychain entry (`Claude Code-credentials[-<suffix>]`) that Claude Code
- * owns, so whether a login survives a rename is not Holi's to promise. Observed
- * surviving on the install this was built against; treat a re-login as possible
- * rather than as a bug.
+ * **What it carries is files.** The **credential is not in the directory**: it is
+ * a macOS keychain entry that Claude Code owns, so treat a re-login after the
+ * move as possible rather than as a bug.
  *
- * The 2026-08-14 spec refused to *copy* transcripts between directories, on the
- * grounds that rewriting another program's state store is a bad bet. This is a
- * different operation and a much safer one: two same-volume renames of a whole
- * directory, which never open a file inside it. The 444-file `plugins/` tree
- * rides along, which is right — it is where those plugins were installed.
+ * Renames, never copies: two same-volume renames of a whole directory never
+ * open a file inside another program's state store.
  *
  * Idempotent by construction: after a move there is no top-level `settings.json`
  * left to find. Interruptible too — a crash between the renames leaves the
