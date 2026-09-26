@@ -29,6 +29,14 @@ const RADIUS = 6
 /** The elbow's run from the rail to where the icon starts. */
 const ELBOW = 20
 /** A tree row is a Button with none of a button's chrome: no fill, no press. */
+/**
+ * A row's name, boxed from its x-height to its baseline (`text-box`), so the
+ * row's centring puts the icon on the middle of the letters rather than of
+ * the line, which sits a couple of pixels higher. It clips sideways only: a
+ * vertical clip would cut the ascenders the trim leaves outside the box.
+ */
+const LABEL =
+  'min-w-0 overflow-x-clip text-ellipsis whitespace-nowrap [text-box:trim-both_ex_alphabetic]'
 const ROW_RESET =
   'h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
 
@@ -228,10 +236,7 @@ export function NavTree({
               >
                 {lead(id, node, isOpen)}
                 <span
-                  className={cn(
-                    'truncate',
-                    taskByPath.get(id)?.status === 'done' && 'line-through',
-                  )}
+                  className={cn(LABEL, taskByPath.get(id)?.status === 'done' && 'line-through')}
                 >
                   {label(id, node)}
                 </span>
@@ -304,7 +309,7 @@ export function NavTree({
                   )}
                 >
                   {lead(id, node, isOpen)}
-                  <span className="truncate">{label(id, node)}</span>
+                  <span className={LABEL}>{label(id, node)}</span>
                 </Button>
                 {node.isFolder && (
                   // Hangs from the centre of the heading's chevron.
