@@ -1,11 +1,10 @@
 /**
  * What kind of file a vault path is, for choosing an icon and an editor.
  *
- * The vault is "mostly markdown" but holds anything now. `markdown` and `text`
- * open in an editor; `image` / `pdf` / `doc` open a typed placeholder until a
- * real renderer exists. Unknown or extension-less files default to `text` (the
- * forgiving choice — a `.env` or a `Makefile` is editable), so the placeholder
- * is reserved for the known visual/rich formats that would be garbage as UTF-8.
+ * `markdown` and `text` open in an editor, `image` and `pdf` in their viewers,
+ * and `doc` in a typed placeholder. Unknown or extension-less files default to
+ * `text` (the forgiving choice: a `.env` or a `Makefile` is editable), so the
+ * placeholder is reserved for rich formats that would be garbage as UTF-8.
  */
 export type FileKind = 'markdown' | 'text' | 'image' | 'pdf' | 'doc'
 

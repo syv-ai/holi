@@ -5,24 +5,20 @@
  * wrote it, a pull landed it, or another window touched it. `base` is the text
  * last loaded or saved, `mine` is the buffer, `theirs` is what is now on disk.
  *
- * The report is the feature. A merger that silently picks a side would remove
- * it (`features/editor.md`), because the whole point is to
- * route an unmergeable overlap to the same reconcile path a git conflict uses.
+ * The report is the feature: an unmergeable overlap routes to the same
+ * reconcile path a git conflict uses (docs/features/editor.md), so a merger
+ * that silently picked a side would remove it.
  *
  * **Line granularity, not character.** `fast-diff` is used here purely as an
  * LCS engine over lines. Merging two edits *inside one paragraph* at character
- * level produces a sentence neither person wrote, silently — which is worse
- * than a banner, because nobody will look at it again. The cost is real: edit a
- * long paragraph while the agent appends to that same paragraph and this
- * conflicts. That is the right answer anyway.
+ * level silently produces a sentence neither person wrote, which is worse than
+ * a banner.
  *
- * **Adjacent edits merge — a deliberate divergence from git.** Git conflicts
- * when two changed lines are neighbours, because its merge needs an unchanged
- * line between two changes to call them independent hunks. That is an artifact
- * of its three-line context model, not a claim about meaning, and there is no
- * reason to import it: someone typing at line 10 while the agent edits line 11
- * should not get a banner. Hunks here conflict when their base ranges
- * **overlap**, not when they touch.
+ * **Adjacent edits merge, a deliberate divergence from git.** Git conflicts
+ * when two changed lines are neighbours, an artifact of its context model:
+ * someone typing at line 10 while the agent edits line 11 should not get a
+ * banner. Hunks here conflict when their base ranges **overlap**, not when they
+ * touch.
  */
 import diff from 'fast-diff'
 
@@ -30,7 +26,7 @@ import diff from 'fast-diff'
  * A replacement of `base[start, end)` with `lines`.
  *
  * An insertion has `start === end`; a deletion has an empty `lines`.
- * Exported for its tests — `merge3` is the interface callers want.
+ * Exported for its tests; `merge3` is the interface callers want.
  */
 export interface Hunk {
   start: number
@@ -53,8 +49,7 @@ const MAX_CODE_UNIT = 0xffff
  *
  * Returns `null` when the two texts hold more distinct lines than there are
  * code units to encode them with. `merge3` turns that into a whole-document
- * conflict: it routes to reconcile, loses nothing, and never corrupts. A note
- * with sixty thousand distinct lines is not a note anyone is editing.
+ * conflict: it routes to reconcile, loses nothing, and never corrupts.
  */
 export function lineHunks(base: string[], other: string[]): Hunk[] | null {
   const code = new Map<string, string>()
@@ -121,9 +116,7 @@ export function lineHunks(base: string[], other: string[]): Hunk[] | null {
 /**
  * One region where both sides changed overlapping base lines.
  *
- * All three slices are carried, because the reconcile prompt is built from them:
- * "here is what it was, here is what you wrote, here is what arrived" is the
- * question the agent has to answer, and two of the three is not enough of it.
+ * All three slices are carried, because the reconcile prompt is built from them.
  */
 export interface ConflictRegion {
   /** Offsets are 0-based and index each side's **own** line array, so a caller
@@ -134,13 +127,12 @@ export interface ConflictRegion {
 }
 
 /**
- * Mirrors `PullResult`'s shape on purpose — one conflict story, whatever
+ * Mirrors `PullResult`'s shape on purpose: one conflict story, whatever
  * produced it.
  *
- * A conflict carries **no text**. That is the same rule `pull()` follows
- * (vaults-sync FR-12): a conflict must never put markers in a file someone is
- * typing into. The editor keeps the buffer exactly as it is, stops autosaving
- * it, and shows the banner.
+ * A conflict carries **no text**, the same rule `pull()` follows
+ * (docs/features/vaults-sync.md): never put markers in a file someone is typing
+ * into. The editor keeps the buffer, stops autosaving it, and shows the banner.
  */
 export type Merge3Result =
   | { kind: 'merged'; text: string }
@@ -217,9 +209,8 @@ export function merge3(base: string, mine: string, theirs: string): Merge3Result
       const theirsText = applyWithin(b, lo, hi, theirsGroup)
 
       if (sameLines(mineText, theirsText)) {
-        // Both made the identical edit — the common case when you save and the
-        // same content arrives from a pull. A banner here would sit on a file
-        // that is already right.
+        // Both made the identical edit, the common case when you save and the
+        // same content arrives from a pull.
         out.push(...mineText)
       } else {
         regions.push({
@@ -253,10 +244,8 @@ interface Tagged extends Hunk {
  * Ranges must **properly overlap** — merely touching is not enough, which is
  * the divergence from git described at the top of this file.
  *
- * The exception is two insertions at the same point. Both are zero-width, so
- * the range test says no; but there is no defensible order to put them in, and
- * inventing one silently interleaves two people's text. Git calls this add/add
- * and so do we.
+ * The exception is two insertions at the same point: zero-width, but there is
+ * no defensible order to put them in. Git calls this add/add and so do we.
  */
 function overlaps(a: Hunk, b: Hunk): boolean {
   const aEmpty = a.start === a.end

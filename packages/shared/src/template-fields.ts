@@ -1,11 +1,11 @@
 /** The data type a template metadata field declares. Drives the Convert-dialog
  * widget, the native Typst value the template receives, and how it is presented.
- * A curated, closed set — adding a seventh type is one entry per unit. */
+ * A curated, closed set. */
 export type TemplateFieldType = 'text' | 'textarea' | 'date' | 'select' | 'number' | 'checkbox'
 
 /** A template's metadata field, as it travels from the manifest to the dialog.
  * `type` defaults to `text` when a manifest omits or misuses it (see
- * `normalizeFields`), so every legacy untyped field keeps working. */
+ * `parseFields`). */
 export interface TemplateField {
   /** Identifier; becomes `meta.<key>` in the template. */
   key: string
@@ -50,8 +50,8 @@ const FIELD_TYPES: readonly TemplateFieldType[] = [
   'checkbox',
 ]
 
-/** A real calendar date in `YYYY-MM-DD` — rejects e.g. `2026-13-40` (which would
- *  otherwise throw when the template coerces it to a Typst `datetime`). */
+/** A real calendar date in `YYYY-MM-DD`. Rejects e.g. `2026-13-40`, which would
+ *  otherwise throw when the template coerces it to a Typst `datetime`. */
 function isRealISODate(s: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
   if (m === null) return false
@@ -62,12 +62,12 @@ function isRealISODate(s: string): boolean {
 
 /**
  * Normalize a manifest's `fields` array into usable `TemplateField[]`, and report
- * every degradation it had to make. Same resilience as before (a bad manifest
- * never breaks Convert — it degrades), but no longer silent: the Convert dialog
- * shows the warnings so a hand-authored `template.json` says what it got wrong.
+ * every degradation it had to make. A bad manifest never breaks Convert, it
+ * degrades, and the Convert dialog shows the warnings so a hand-authored
+ * `template.json` says what it got wrong.
  *
- * An **absent** `type` becomes `text` with NO warning (the legacy untyped-field
- * path); a `type` that is present but not one of the six DOES warn.
+ * An **absent** `type` becomes `text` with NO warning; a `type` that is present
+ * but not one of the six DOES warn.
  */
 export function parseFields(raw: unknown): ParsedFields {
   const fields: TemplateField[] = []
@@ -106,7 +106,7 @@ export function parseFields(raw: unknown): ParsedFields {
     }
 
     // A string default is kept as-is, except a `date` default that is not
-    // "today"/""/a real YYYY-MM-DD — that would throw at render, so drop + warn.
+    // "today"/""/a real YYYY-MM-DD: that would throw at render, so drop + warn.
     let def: string | undefined = typeof g.default === 'string' ? g.default : undefined
     if (type === 'date' && def !== undefined && def !== 'today' && def !== '' && !isRealISODate(def)) {
       warnings.push(

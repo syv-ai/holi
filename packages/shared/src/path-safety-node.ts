@@ -1,5 +1,5 @@
 /**
- * The fs-canonicalizing half of path safety (Node-only — exported as
+ * The fs-canonicalizing half of path safety (Node-only, exported as
  * `@holi/shared/path-safety-node` so the browser-safe root export never
  * touches node:fs). Guards the file bridge and any agent-supplied path.
  */

@@ -1,6 +1,6 @@
 /**
- * The domain, after D60. Every identity in here is a **path** or a **remote** —
- * there are no server-assigned ids, because there is no server to assign them.
+ * The domain (D60). Every identity in here is a **path** or a **remote**: there
+ * are no generated ids.
  */
 
 export type TaskStatus = 'todo' | 'doing' | 'done'
@@ -10,12 +10,12 @@ export type DocKind = 'note' | 'daily'
 /**
  * A vault: a GitHub repo cloned under the Holi-managed root.
  *
- * `remote` (`owner/repo`) is the identity — two machines cloning the same repo
+ * `remote` (`owner/repo`) is the identity: two machines cloning the same repo
  * hold the same vault at different `path`s. The entry itself is machine-local:
  * a second laptop starts with an empty registry and adds its own.
  */
 export interface VaultEntry {
-  /** `owner/repo` — the identity. */
+  /** `owner/repo`: the identity. */
   remote: string
   /** Absolute path of the clone on this machine. */
   path: string
@@ -25,7 +25,7 @@ export interface VaultEntry {
 }
 
 /**
- * A note. The **path is the identity**, so there is no id and no `vaultId` — a
+ * A note. The **path is the identity**, so there is no id and no `vaultId`: a
  * DocMeta is only ever read in the context of one open vault.
  *
  * `kind` is derived from the file's own frontmatter (`type: daily-note`), never
@@ -36,13 +36,13 @@ export interface DocMeta {
   /** Vault-relative, '/'-separated. */
   path: string
   kind: DocKind
-  /** File mtime, ISO. There is no createdAt — git history is the record of that. */
+  /** File mtime, ISO. There is no createdAt: git history is the record of that. */
   updatedAt: string
 }
 
-/** A non-markdown file the vault carries (spec §Arbitrary files). Not a note —
- *  it has no `kind`, no frontmatter, and never participates in wiki-links; the
- *  scanner keeps it out of `docs` precisely so backrefs/rename stay markdown. */
+/** A non-markdown file the vault carries. Not a note: it has no `kind`, no
+ *  frontmatter, and never participates in wiki-links; the scanner keeps it out
+ *  of `docs` so backrefs/rename stay markdown. */
 export interface FileMeta {
   /** Vault-relative, '/'-separated. */
   path: string
@@ -52,17 +52,15 @@ export interface FileMeta {
 
 /** A repo collaborator, straight from the GitHub API. Holi defines no roles. */
 export interface Collaborator {
-  /** GitHub's numeric account id — stable across a login rename. */
+  /** GitHub's numeric account id, stable across a login rename. */
   accountId: number
   login: string
   avatarUrl?: string
   permission: 'admin' | 'maintain' | 'write' | 'triage' | 'read'
 }
 
-// `SyncState` is not defined here. Main computes the vault's sync state, so the
-// live union lives next to `computeState` in the desktop app
-// (`main/vault/active-vault.ts`); a second copy here only drifted — it still
-// carried the removed `ahead` kind. Deleted 2026-07-25 (D60/D61).
+// `SyncState` is not defined here: main computes it, so the union lives next to
+// `computeState` in `main/vault/active-vault.ts`.
 
 export type RecurrenceFrequency = 'daily' | 'weekly' | 'monthly' | 'yearly'
 export type RecurrenceWeekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
@@ -71,45 +69,43 @@ export interface Recurrence {
   frequency: RecurrenceFrequency
   interval: number
   weekdays?: RecurrenceWeekday[]
-  /** YYYY-MM-DD — occurrences after this date stop the roll-forward. */
+  /** YYYY-MM-DD. Occurrences after this date stop the roll-forward. */
   endDate?: string
 }
 
 /**
  * A task: a `task.<name>.md` file, parsed.
  *
- * The **path is the identity**, and its **containing folder is its swim lane** —
- * which is why there is no `area` field. There is no `id` (nothing to join on),
- * no `version` (nothing to race with; git arbitrates between machines), and no
- * `related[]` (a task links to things by writing wiki-links in its body).
+ * The **path is the identity**, and its **containing folder is its swim lane**,
+ * so there is no `area` field. There is no `id` (nothing to join on), no
+ * `version` (git arbitrates between machines), and no `related[]` (a task links
+ * to things by writing wiki-links in its body).
  */
 export interface Task {
   /** Vault-relative, '/'-separated, e.g. `projects/q2/task.fix-login.md`. */
   path: string
   /** The body's first heading at any level, falling back to the filename.
-   *  Never empty, and never stored — `serializeTaskFile` writes no `title`. */
+   *  Never empty, and never stored: `serializeTaskFile` writes no `title`. */
   title: string
   status: TaskStatus
   /** A stamp: `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM` when the task is due at a
-   *  time. The absence of a time is meaningful — due that day, not at midnight
+   *  time. The absence of a time is meaningful: due that day, not at midnight
    *  on it. */
   due?: string
   priority?: Priority
   tags: string[]
-  /** When to be notified, as a stamp — an absolute moment, never an offset
+  /** When to be notified, as a stamp: an absolute moment, never an offset
    *  from `due` (D79). A stamp with no time fires at `ANCHOR_HOUR`. Anything
    *  that is not a stamp is inert: it is carried through the file untouched and
    *  never fires. */
   reminder?: string
   recurrence?: Recurrence
   /**
-   * The card's rank within its board cell — a sparse number, not a position
-   * (`features/tasks.md`). Absent sorts last, which is where a task the
-   * agent just wrote belongs: at the bottom, not at a random height.
+   * The card's rank within its board cell: a sparse number, not a position
+   * (docs/features/tasks.md). Absent sorts last, which is where a task the
+   * agent just wrote belongs.
    *
-   * It is the one key in a task file that means nothing to a human reading it,
-   * and it is here rather than in a side file because order is a fact about a
-   * task and the file is the whole task.
+   * In the file rather than a side file because the file is the whole task.
    */
   order?: number
   /** The markdown body. */
@@ -119,9 +115,9 @@ export interface Task {
    * untouched.
    *
    * Editing a task rewrites the whole file, so without this a drag would silently
-   * eat a pre-D60 `id`/`area` — or any key a human or another tool put there on
-   * purpose. Absent rather than `{}` when everything was understood: an empty map
-   * must serialize identically to never having had one.
+   * eat any key a human or another tool put there on purpose. Absent rather than
+   * `{}` when everything was understood: an empty map must serialize identically
+   * to never having had one.
    */
   extra?: Record<string, unknown>
 }
@@ -137,7 +133,7 @@ export interface BrokenTask {
  *
  * There is no index and nothing derived: the board, the tree and the editor all
  * read this one shape, so there is no second source to disagree with it.
- * `broken` is part of the snapshot rather than swallowed by the scan — a task
+ * `broken` is part of the snapshot rather than swallowed by the scan: a task
  * file omitted from the board is indistinguishable from data loss.
  */
 export interface VaultSnapshot {
@@ -152,22 +148,18 @@ export interface VaultSnapshot {
    *  no empty directory; the keep-file is what makes an empty one survive a clone. */
   dirs: string[]
   /** `.holi/settings/icons.yaml` resolved: vault-relative path → a single emoji, and the
-   *  only place an icon lives. Covers notes, folders and binaries alike, which
-   *  is why a note's frontmatter is NOT a second source (see `icon-map.ts`). */
+   *  only place an icon lives (see `icon-map.ts`). */
   icons: Record<string, string>
   /**
    * The paths git ignores, so the tree can dim them the way every IDE does.
    *
    * Answered by `git check-ignore` rather than by a rule in the renderer,
    * because **the name does not tell you**: `*.local.*` is only the seeded
-   * rule, a vault may ignore anything, and an older vault carries a bare
-   * `USER.md` line. A file that will never be committed and one that will look
-   * identical otherwise.
+   * rule, and a vault may ignore anything (an older vault carries a bare
+   * `USER.md` line).
    *
-   * Files **and** directories: a wholly-ignored folder that looks like ordinary
-   * content is the same complaint one level up. Empty whenever git could not be
-   * asked, which the tree renders as "nothing known to be ignored" rather than
-   * as an error — this decorates a tree, it does not decide what is in one.
+   * Files **and** directories. Empty whenever git could not be asked, which the
+   * tree renders as "nothing known to be ignored" rather than as an error.
    */
   ignored: string[]
 }
@@ -177,11 +169,9 @@ export interface VaultSnapshot {
  * run and for the many tests that care about one field.
  *
  * A factory rather than a frozen const: every field is a fresh mutable
- * container, and a shared `[]` handed to a caller that pushes to it is a bug
- * that shows up somewhere else entirely. Spread it (`{...emptyVaultSnapshot(),
- * docs}`) rather than writing the shape out — a literal is a list that has to
- * be found and extended every time this interface grows, which is exactly what
- * adding `ignored` had to do to ten of them.
+ * container, so a caller pushing to a shared `[]` cannot corrupt another.
+ * Spread it (`{...emptyVaultSnapshot(), docs}`) rather than writing the shape
+ * out, so a new field does not have to be added to every literal.
  */
 export const emptyVaultSnapshot = (): VaultSnapshot => ({
   docs: [],

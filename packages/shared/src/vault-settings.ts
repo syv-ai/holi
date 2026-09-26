@@ -1,30 +1,25 @@
 /**
- * The vault's own settings — the pure core (parse → merge → validate → default).
+ * The vault's own settings: the pure core (parse → merge → validate → default).
+ * See docs/features/settings.md.
  *
  * Two files, both optional: `.holi/settings/app.yaml` (committed, shared with
  * everyone who clones the vault) and `.holi/settings/app.local.yaml` (gitignored,
  * this machine only), the second overriding the first **per key**. Same layering
- * as `theme.ts` and `icon-map.ts`, for the same reason: a vault can say how it
- * behaves, and you can disagree with it on your own laptop without touching what
- * your collaborators see.
+ * as `theme.ts` and `icon-map.ts`: you can disagree with the vault on your own
+ * laptop without touching what your collaborators see.
  *
- * **This is a trust boundary.** The committed file is written by whoever wrote
- * the vault — which, in a shared one, is not you. Every field is checked and a
- * fresh narrow object is built per kind; the parsed value is never returned.
- * Same rule as `parseTabPayload` in the renderer's `lib/tab-drop.ts`, and for
- * the same reason: whatever else was in that JSON must not ride through.
+ * **This is a trust boundary.** In a shared vault the committed file was written
+ * by somebody else. Every field is checked and a fresh narrow object is built
+ * per kind; the parsed value is never returned, so nothing else in it rides
+ * through.
  *
- * **Nothing here throws.** A missing file, corrupt JSON, an unknown `kind`, a
- * value of the wrong type — each resolves to the default and appends a warning,
- * because a typo in an unrelated key must never break the commit path or stop a
- * vault opening. The warnings exist so that degrading is *diagnosable* rather
- * than silent.
+ * **Nothing here throws.** A missing or corrupt file, an unknown `kind`, a
+ * value of the wrong type: each resolves to the default and appends a warning,
+ * because a typo must never break the commit path or stop a vault opening.
  *
  * **Unknown top-level keys are ignored without a warning.** The local file
- * legitimately carries siblings this module knows nothing about — the reminder
- * delivery watermark writes `reminders` there (`main/reminders/delivered-log.ts`)
- * — and warning about them would fire on every launch of every vault that has
- * ever fired a reminder.
+ * legitimately carries siblings this module knows nothing about (the reminder
+ * watermark writes `reminders` there, `main/reminders/delivered-log.ts`).
  *
  * This module is pure and browser-safe (no fs). The main process reads the two
  * files off disk and hands their text to `resolveVaultSettings`.
@@ -33,8 +28,7 @@
 import { parse as parseYaml } from 'yaml'
 
 /** The pre-commit transforms a vault can enable (D76). Kebab, matching the
- *  transform names themselves — a camelCase settings key beside a kebab
- *  transform name is a mapping table that exists only to be got wrong once. */
+ *  transform names themselves, so there is no mapping table between them. */
 export type TransformName =
   'relink' | 'archive-done' | 'normalize-md' | 'scaffold-md' | 'memory-index'
 
@@ -46,8 +40,8 @@ export const TRANSFORM_NAMES: readonly TransformName[] = [
   'memory-index',
 ]
 
-/** Fully populated, unlike main's `HookSettings` — the resolver's job is to
- *  answer for every transform, so nothing downstream re-applies a default. */
+/** Fully populated: the resolver answers for every transform, so nothing
+ *  downstream re-applies a default. */
 export type VaultHooks = Record<TransformName, boolean>
 
 /** What the app's appearance follows. `system` tracks `prefers-color-scheme`. */
@@ -61,13 +55,9 @@ export const COLOR_SCHEMES: readonly ColorScheme[] = ['dark', 'light', 'system']
  *
  * **A name, never a CSS string.** `.holi/settings/app.yaml` is committed, so in a
  * shared vault this value was written by somebody else; a `font-family` taken
- * from it verbatim is arbitrary CSS crossing a trust boundary, which is the
- * whitelist argument D64 makes about theme tokens, with a different filename.
- * Three names resolve to three stacks this file owns and nothing else gets
- * through — so no sanitizer, and no amendment to D64's promise that a vault
- * cannot re-space anything, because a vault cannot name a font either.
- *
- * `mono` is the default because it is what the editor has always been.
+ * from it verbatim would be arbitrary CSS crossing a trust boundary (the D64
+ * whitelist argument). Three names resolve to three stacks this file owns, so
+ * no sanitizer is needed.
  */
 export type EditorFont = 'mono' | 'sans' | 'serif'
 
@@ -76,11 +66,9 @@ export const EDITOR_FONTS: readonly EditorFont[] = ['mono', 'sans', 'serif']
 /**
  * What each name means, and the only place it means anything.
  *
- * **System stacks, deliberately.** Holi bundles no web fonts — there is no
- * `@font-face` anywhere in the renderer — so a name resolving to a family that
- * happens not to be installed would fall back silently, and a setting that
- * appears to do nothing is worse than one that is not offered. Every family
- * here either ships with the OS or is a generic.
+ * **System stacks, deliberately.** Holi bundles no web fonts for the editor, so
+ * a family that is not installed would fall back silently and the setting would
+ * appear to do nothing. Every family here ships with the OS or is a generic.
  */
 export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.freeze({
   mono: 'ui-monospace, "SF Mono", Menlo, monospace',
@@ -89,7 +77,7 @@ export const EDITOR_FONT_STACKS: Readonly<Record<EditorFont, string>> = Object.f
 })
 
 /** The unique surfaces a vault can land on. Mirrors the renderer's
- *  `SingletonTab` deliberately rather than importing it — see `LandingTarget`. */
+ *  `SingletonTab` deliberately rather than importing it: see `LandingTarget`. */
 export type SingletonLanding = 'board' | 'agenda' | 'mail'
 
 const SINGLETON_LANDINGS: readonly SingletonLanding[] = ['board', 'agenda', 'mail']
@@ -101,10 +89,9 @@ const SINGLETON_LANDINGS: readonly SingletonLanding[] = ['board', 'agenda', 'mai
  * rot overnight; naming the daily by kind means the target keeps pointing at it
  * as the daily note grows into a dashboard.
  *
- * **Not the renderer's `Tab` union**, though it covers the same ground. `Tab`
- * lives in the renderer, and its `SingletonTab` is a *named* literal rather than
- * a derived one precisely so `openSingleton(w, 'app')` cannot typecheck
- * (`state/panes.ts:38-44`). Parse to this, then dispatch per kind, and that
+ * **Not the renderer's `Tab` union**, though it covers the same ground. Its
+ * `SingletonTab` is a *named* literal so `openSingleton(w, 'app')` cannot
+ * typecheck (`state/panes.ts`). Parse to this, then dispatch per kind, and that
  * property survives the crossing.
  */
 export type LandingTarget =
@@ -126,13 +113,9 @@ export interface ResolvedVaultSettings {
 }
 
 /**
- * Parse one file. Anything that is not a mapping reads as "no settings" — a
- * half-written file must not stop a vault opening.
- *
- * **YAML, which also reads the JSON these files used to be.** YAML is a
- * superset of JSON, so a vault whose `app.json` has not been renamed yet still
- * resolves; the migration only has to move the file, never translate it, and a
- * vault caught mid-migration is never unreadable.
+ * Parse one file. Anything that is not a mapping reads as "no settings": a
+ * half-written file must not stop a vault opening. YAML is a superset of JSON,
+ * so this also reads a legacy `app.json` and the renderer's JSON patches.
  */
 function parseFile(text: string | null): Record<string, unknown> {
   if (text === null || text.trim() === '') return {}
@@ -149,10 +132,8 @@ function parseFile(text: string | null): Record<string, unknown> {
 /**
  * Read an untrusted value as a landing target, or `null`.
  *
- * Exported because a *write* has to cross the same boundary a read does: the
- * renderer's onboarding act sends its answers to main as JSON, and main runs
- * them through here before merging, so nothing can reach the file by a route
- * that skips this check.
+ * Exported because a *write* has to cross the same boundary a read does, so
+ * nothing can reach the file by a route that skips this check.
  */
 export function parseLandingTarget(value: unknown): LandingTarget | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
@@ -187,10 +168,9 @@ function pick(files: Record<string, unknown>[], key: string): unknown {
  * Either argument may be `null` (file absent). Local is applied last so it wins
  * key by key. Never throws; every field is answered.
  *
- * **One loop over the schema**, where this was six hand-written readers. A
- * setting added to the list is read here without this function being touched,
- * and — the part that actually mattered — it is read by exactly the check that
- * a write to the same key has to pass.
+ * **One loop over the schema**: a setting added to the list is read here
+ * without this function being touched, by exactly the check that a write to
+ * the same key has to pass.
  */
 export function resolveVaultSettings(
   committedJson: string | null,
@@ -228,8 +208,8 @@ export function resolveVaultSettings(
 }
 
 /** A default, detached from the frozen shared object. Only `landing` and the
- *  flags blocks are objects, so a shallow copy is enough and a deep clone would
- *  be claiming a depth these values do not have. */
+ *  flags blocks are objects, and both are one level deep, so a shallow copy is
+ *  enough. */
 function clone(value: unknown): unknown {
   return typeof value === 'object' && value !== null ? { ...(value as object) } : value
 }
@@ -241,8 +221,8 @@ function clone(value: unknown): unknown {
 /** Which of the two files a row's answer is written to. */
 export type SettingTarget = 'committed' | 'local'
 
-/** One option in a `choice`. `value` is whatever the key holds — a `LandingTarget`
- *  for `landing`, a `ColorScheme` for `colorScheme` — and is written verbatim. */
+/** One option in a `choice`. `value` is whatever the key holds (a `LandingTarget`
+ *  for `landing`, a `ColorScheme` for `colorScheme`) and is written verbatim. */
 export interface VaultSettingOption {
   value: unknown
   label: string
@@ -253,8 +233,8 @@ export interface VaultSettingOption {
 }
 
 /**
- * The shape of a choice. Three, because the four rows need three:
- * a switch, a pick-one, and a set of switches that read as one decision.
+ * The shape of a choice: a switch, a pick-one, or a set of switches that read
+ * as one decision.
  */
 export type VaultSettingControl =
   | { kind: 'toggle' }
@@ -264,16 +244,9 @@ export type VaultSettingControl =
       toggles: readonly { key: TransformName; label: string; explanation: string }[]
     }
 
-/** A key a descriptor can describe — every setting with a control, which the
- *  settings tab renders and which is a superset of what the ritual asks
- *  (`askedAtBirth`).
- *
- *  Every key the resolver answers now has a row. `maxCommittedFileBytes` was
- *  the holdout, and the distinction that let it in is `askedAtBirth`: D85's
- *  argument was about the SEED — freezing a number into every vault means
- *  raising the default later reaches none of them — and a pane is one person
- *  choosing for one vault, which is a different act. Its descriptor is not in
- *  the ritual, so the seed still writes nothing. */
+/** A key a descriptor can describe: every setting the resolver answers, each
+ *  with a row in the settings tab. A superset of what the ritual asks
+ *  (`askedAtBirth`). */
 export type VaultSettingKey =
   'dailyNotes' | 'landing' | 'hooks' | 'colorScheme' | 'editorFont' | 'maxCommittedFileBytes'
 
@@ -282,57 +255,25 @@ export interface VaultSettingDescriptor {
   label: string
   explanation: string
   control: VaultSettingControl
-  /** Read from `VAULT_SETTING_DEFAULTS`, never restated — a second literal is a
-   *  second thing to keep in step. */
+  /** The setting's own default, never restated. */
   default: unknown
   target: SettingTarget
-  /**
-   * Whether the onboarding ritual asks this at a vault's birth, and the seed
-   * therefore writes it.
-   *
-   * **Not every setting is a question for a stranger.** The ritual is four acts
-   * long and every row in it is one more thing between somebody and their first
-   * note, so a preference with a good default and no consequence at birth stays
-   * out of it — `editorFont` is the case that forced the flag (D87 deliberately
-   * gave it no row). The settings pane renders the whole list regardless, which
-   * is the difference between "every setting" and "every question".
-   */
+  /** See `VaultSetting.askedAtBirth`. */
   askedAtBirth: boolean
-  /** Where this lives once the ritual is over. Carried as **data** so a row
-   *  structurally cannot ship without one: a step that changes something and
-   *  does not say where to change it later is a dead end for anyone who wants
-   *  to change their mind. */
+  /** See `VaultSetting.whereToChange`. */
   whereToChange: string
-  /**
-   * Which section of the settings tab this row appears under.
-   *
-   * **Carried here rather than in the renderer's section registry**, so that
-   * "adding a setting is adding a descriptor" stays true of *where it lands*
-   * and not only that it lands. A registry holding its own list of keys would
-   * be a second place to edit, and the failure mode is a new setting that
-   * renders nowhere at all.
-   *
-   * A plain string, not a union of the section ids: the ids live in the
-   * renderer and this package is browser-safe domain rules with no knowledge of
-   * a tab. A renderer test asserts every value here names a real section, which
-   * is the check a union would have given for free but in the layer that
-   * actually owns the list.
-   */
+  /** See `VaultSetting.section`. */
   section: string
 }
 
 /**
  * The two files a setting can live in.
  *
- * **`app.json`, not `settings.json`, and under `settings/`.** Everything a
- * person chooses about a vault now lives in one directory — settings, theme and
- * icons — and `settings/settings.json` was the one path in that layout that
- * read badly. `app` says what it holds: how the app behaves here, as opposed to
- * how it looks (`theme.json`) or what it labels things with (`icons.json`).
+ * Everything a person chooses about a vault lives in `.holi/settings/`. `app`
+ * says what it holds: how the app behaves here, as opposed to how it looks
+ * (`theme.css`) or what it labels things with (`icons.yaml`).
  *
- * Named here and imported everywhere, including by main and the renderer, which
- * both used to declare their own copy. Three string literals agreeing is a
- * coincidence that expires — and it nearly did in this very move.
+ * Named here and imported everywhere, including by main and the renderer.
  */
 export const SETTINGS_FILE = '.holi/settings/app.yaml'
 export const SETTINGS_LOCAL_FILE = '.holi/settings/app.local.yaml'
@@ -342,7 +283,7 @@ const LOCAL_FILE_HINT = `Change it any time in ${SETTINGS_LOCAL_FILE}, which sta
 
 
 /**
- * What a setting's value IS — its validation and, because the two are the same
+ * What a setting's value IS: its validation and, because the two are the same
  * question, the options a control needs.
  *
  * **One field, not two.** A `type` and a separate `control` could disagree: a
@@ -358,8 +299,8 @@ export type SettingType =
   | { kind: 'enum'; options: readonly VaultSettingOption[] }
   /**
    * A positive number. `options` are what the pane OFFERS, not the whole legal
-   * range — a hand-edited file naming a size the pane does not list is a good
-   * answer, and refusing it would make the pane the only way in.
+   * range: a hand-edited file naming a size the pane does not list is a good
+   * answer.
    */
   | { kind: 'number'; options: readonly VaultSettingOption[] }
   /**
@@ -388,9 +329,7 @@ export type SettingType =
  *
  * Everything about a setting lives here and everything else is derived: the
  * defaults object, the reader, the writer's validator, and the row the settings
- * tab renders. Before this, each key was written out four separate times in
- * this file — six to nine mentions apiece — and the reader and the writer had
- * already drifted into wording the same refusal two different ways.
+ * tab renders.
  */
 export interface VaultSetting {
   key: VaultSettingKey
@@ -405,48 +344,41 @@ export interface VaultSetting {
    * Whether the onboarding ritual asks this at a vault's birth, and the seed
    * therefore writes it.
    *
-   * **Not every setting is a question for a stranger.** The ritual is four acts
-   * long and every row in it is one more thing between somebody and their first
-   * note, so a preference with a good default and no consequence at birth stays
-   * out of it — `editorFont` is the case that forced the flag (D87 deliberately
-   * gave it no row). The settings pane renders the whole list regardless, which
-   * is the difference between "every setting" and "every question".
+   * **Not every setting is a question for a stranger.** Every row in the ritual
+   * is one more thing between somebody and their first note, so a preference
+   * with a good default and no consequence at birth stays out of it (D87). The
+   * settings pane renders the whole list regardless.
+   *
+   * It also keeps a default a default (D85): a value the seed does not write
+   * can still be raised later for existing vaults.
    */
   askedAtBirth: boolean
   /** Where this lives once the ritual is over. Carried as **data** so a row
-   *  structurally cannot ship without one: a step that changes something and
-   *  does not say where to change it later is a dead end for anyone who wants
-   *  to change their mind. */
+   *  structurally cannot ship without one. */
   whereToChange: string
   /**
-   * Which section of the settings tab this row appears under.
+   * Which section of the settings tab this row appears under. Carried here
+   * rather than in a renderer registry, so adding a setting is adding one entry.
    *
    * A plain string, not a union of the section ids: the ids live in the
-   * renderer and this package is browser-safe domain rules with no knowledge of
-   * a tab. A renderer test asserts every value here names a real section, which
-   * is the check a union would have given for free but in the layer that
-   * actually owns the list.
+   * renderer. A renderer test asserts every value here names a real section.
    */
   section: string
 }
 
 /**
- * The four rows the onboarding step renders, in order — and the source the seed
- * writes `.holi/settings/app.yaml` from.
+ * Every setting, in the order the settings tab and the onboarding step render
+ * them, and the source the seed writes the settings files from.
  *
- * **One list, two readers.** The act and the seed agreeing is not a convention
- * anyone has to remember; adding a setting later is adding a row here, and both
- * pick it up. The seed reads only the `askedAtBirth` subset, which is what lets
- * a setting have a pane row without being frozen into every new vault —
- * `maxCommittedFileBytes` is the one that needs that and the reason the
- * distinction exists.
+ * **One list, every reader.** Adding a setting is adding a row here. The ritual
+ * and the seed read only the `askedAtBirth` subset.
  */
 export const VAULT_SETTINGS: readonly VaultSetting[] = [
   {
     key: 'dailyNotes',
     label: 'Keep a daily note',
-    // The shared-vault warning lives here, and it is the whole reason this row
-    // exists: Holi used to guess the answer from the GitHub collaborator count.
+    // The shared-vault warning lives here: the answer is asked, never guessed
+    // from the GitHub collaborator count (docs/features/daily-notes.md).
     explanation:
       'A fresh note each morning, with yesterday’s filed away automatically. In a vault you share, everyone writes the same file, which gets messy fast.',
     type: { kind: 'boolean' },
@@ -461,9 +393,9 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     label: 'Open on',
     explanation: 'What you see when you open this vault.',
     type: {
-      // The one escape hatch. A landing target is an OBJECT, and two of its four
-      // shapes (`note`, `app`) are deliberately not offered here at all — see
-      // the options below — so no generic kind can validate it.
+      // The one escape hatch. A landing target is an OBJECT, and two of its
+      // shapes (`note`, `app`) are deliberately not offered here, so no generic
+      // kind can validate it.
       kind: 'parsed',
       parse: parseLandingTarget,
       expected: 'a usable landing target',
@@ -471,9 +403,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
       // yet. Pointing `landing` at either stays a file edit, which is where
       // authoring belongs.
       options: [
-        // Only on offer while the vault actually keeps one. Landing on a daily
-        // note a vault does not make would resolve to an empty pane, which is
-        // coherent but reads as a broken choice.
+        // Only on offer while the vault actually keeps one: landing on a daily
+        // note a vault does not make would read as a broken choice.
         {
           value: { kind: 'daily' },
           label: 'Today’s note',
@@ -496,9 +427,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     explanation: 'Small fixes Holi makes for you when your work is saved.',
     type: {
       kind: 'flags',
-      // **Merged per flag across the two files, not wholesale.** A local file
-      // naming one transform must not silently disable the others, and that is
-      // a property of this setting rather than a special case in the resolver.
+      // **Merged per flag across the two files, not wholesale**: a local file
+      // naming one transform must not silently disable the others.
       flags: [
         {
           key: 'relink',
@@ -543,16 +473,13 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
   {
     key: 'maxCommittedFileBytes',
     label: 'Largest file to commit',
-    // Why there is a cap at all, in the terms the refusal will use. This is the
-    // vault's ONE veto (FR-9): every other pre-commit transform is an opinion
-    // and lets the commit through, because git history is permanent and push is
-    // automatic, so an oversized blob committed once is published forever.
+    // This is the vault's ONE veto: every other pre-commit transform lets the
+    // commit through, but git history is permanent and push is automatic, so an
+    // oversized blob committed once is published forever.
     explanation:
       'Anything bigger is left out of the commit and reported, rather than pushed to everyone. GitHub itself warns at 50 MB and refuses at 100.',
     type: {
       // **Any positive number is legal; the options are only what is OFFERED.**
-      // A hand-edited file saying 7 MB is a perfectly good answer, and refusing
-      // it would make the pane the only way to set a number it does not list.
       kind: 'number',
       options: [
         { value: 5 * 1024 * 1024, label: '5 MB' },
@@ -563,10 +490,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     },
     default: 10 * 1024 * 1024,
     target: 'committed',
-    // **Not asked at birth, and that is the whole of D85's argument surviving.**
-    // The ritual asks what a vault must decide to exist; a size cap is not that,
-    // and a number written into every vault at creation is a default that can
-    // never be raised for the vaults that already have one.
+    // **Not asked at birth (D85):** a number written into every vault at
+    // creation is a default that can never be raised for those vaults.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
     section: 'commits',
@@ -585,8 +510,7 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     },
     default: 'system' as ColorScheme,
     // Machine-local, and the only row that is: a teammate's committed choice
-    // flipping your app to light mode is exactly the failure the `.local` layer
-    // exists to prevent.
+    // must not flip your app to light mode.
     target: 'local',
     askedAtBirth: true,
     whereToChange: LOCAL_FILE_HINT,
@@ -607,9 +531,8 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
     },
     default: 'mono' as EditorFont,
     target: 'committed',
-    // Not asked at birth, deliberately (D87): it has a good default, no
-    // consequence at a vault's first moment, and the ritual is already four acts
-    // long. The settings pane is where a preference like this belongs.
+    // Not asked at birth, deliberately (D87): it has a good default and no
+    // consequence at a vault's first moment.
     askedAtBirth: false,
     whereToChange: SETTINGS_FILE_HINT,
     section: 'editor',
@@ -619,19 +542,15 @@ export const VAULT_SETTINGS: readonly VaultSetting[] = [
 /**
  * What a vault does when it says nothing.
  *
- * **Derived from `VAULT_SETTINGS`, not written out.** It used to be the literal
- * and the schema pointed at it; the direction flipped so that a setting is one
- * entry rather than an entry plus a value somewhere else. Typed by
- * `ResolvedVaultSettings` rather than by inference, so consumers still get
+ * **Derived from `VAULT_SETTINGS`, not written out**, so a setting is one entry.
+ * Typed by `ResolvedVaultSettings` rather than by inference, so consumers get
  * `ColorScheme` and not `unknown`.
  *
  * `archive-done` is off: it moves task files, which changes what the board
  * shows, and a transform that rearranges someone's work is opt-in (D76).
- * `memory-index` is on, with `relink` and `normalize-md`, for their reason: it
- * only ever rewrites `memory/index.md`, a file it generated and that says so on
- * its first line, so it cannot make a change the author would notice making.
- * The 10 MB cap mirrors `main/vault/large-files.ts` — notes-vault assets sit
- * well under it, and GitHub warns at 50.
+ * `memory-index` is on: it only ever rewrites `memory/index.md`, a file it
+ * generated. The 10 MB cap is read by `main/vault/large-files.ts`; notes-vault
+ * assets sit well under it, and GitHub warns at 50.
  */
 export const VAULT_SETTING_DEFAULTS: Omit<ResolvedVaultSettings, 'warnings'> = Object.freeze(
   Object.fromEntries(VAULT_SETTINGS.map((s) => [s.key, s.default])),
@@ -656,10 +575,8 @@ void _keysAgree
 /**
  * The rows the settings tab and the onboarding act render.
  *
- * A **view** of the schema now rather than a second list: `control` is computed
- * from `type`, so a control cannot offer a value its validator refuses. Kept
- * under the old name and the old shape because the renderer and the onboarding
- * act read it, and neither needed to change for any of this.
+ * A **view** of the schema rather than a second list: `control` is computed
+ * from `type`, so a control cannot offer a value its validator refuses.
  */
 export const VAULT_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] = VAULT_SETTINGS.map(
   (s) => ({ ...s, control: controlFor(s.type) }),
@@ -672,7 +589,7 @@ function controlFor(type: SettingType): VaultSettingControl {
     case 'flags':
       return { kind: 'group', toggles: type.flags }
     // enum, number and parsed are all "pick one of these", and differ only in
-    // what ELSE is legal — which is the validator's business, not the control's.
+    // what ELSE is legal, which is the validator's business, not the control's.
     default:
       return { kind: 'choice', options: type.options }
   }
@@ -681,10 +598,8 @@ function controlFor(type: SettingType): VaultSettingControl {
 /**
  * Read one untrusted value for one setting.
  *
- * **The single check the reader and the writer share.** They used to be two
- * hand-written passes per key that had already drifted into different wording
- * for the same refusal; a value the file could hold and the pane could not
- * write was one edit away at any time.
+ * **The single check the reader and the writer share**, so the file can never
+ * hold a value the pane could not write, or the reverse.
  *
  * `flags` is absent here on purpose: it is the one kind whose answer depends on
  * the layers below it, so it is merged rather than validated in isolation. See
@@ -722,9 +637,8 @@ function readValue(
 /**
  * Merge a flags block across the layers, one flag at a time.
  *
- * A local file naming one transform must not silently disable the other four —
- * which is what a whole-block override would do, and the failure would look
- * like "link rewriting randomly stopped working on my laptop".
+ * A local file naming one transform must not silently disable the others, which
+ * is what a whole-block override would do.
  */
 function mergeFlags(
   setting: VaultSetting,
@@ -758,7 +672,7 @@ function mergeFlags(
 }
 
 
-/** The subset the ritual asks and the seed writes — see `askedAtBirth`. */
+/** The subset the ritual asks and the seed writes: see `askedAtBirth`. */
 export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =
   VAULT_SETTING_DESCRIPTORS.filter((d) => d.askedAtBirth)
 
@@ -767,16 +681,13 @@ export const RITUAL_SETTING_DESCRIPTORS: readonly VaultSettingDescriptor[] =
  *
  * Built from the descriptors rather than hand-written, so the file a vault is
  * seeded with and the questions it was asked cannot drift apart. Round-trips
- * through `resolveVaultSettings` to exactly `VAULT_SETTING_DEFAULTS` — a seeded
- * vault behaves identically to one with no settings files at all, which is what
- * makes seeding safe to change.
+ * through `resolveVaultSettings` to exactly `VAULT_SETTING_DEFAULTS`: a seeded
+ * vault behaves identically to one with no settings files at all.
  */
 export function seedSettings(target: SettingTarget): Record<string, unknown> {
   const out: Record<string, unknown> = {}
-  // The ritual's list, not every setting: a vault should be born declaring the
-  // answers it was asked for, and inherit the rest. Freezing a preference nobody
-  // was asked about into every vault means raising its default later reaches none
-  // of them.
+  // The ritual's list, not every setting: a vault is born declaring the answers
+  // it was asked for, and inherits the rest (see `askedAtBirth`).
   for (const d of RITUAL_SETTING_DESCRIPTORS) {
     if (d.target === target) out[d.key] = d.default
   }
@@ -784,7 +695,7 @@ export function seedSettings(target: SettingTarget): Record<string, unknown> {
 }
 
 /**
- * Read an untrusted object as a **patch** — only the keys it actually answered,
+ * Read an untrusted object as a **patch**: only the keys it actually answered,
  * each validated, and nothing else.
  *
  * **Not `resolveVaultSettings`, and the difference matters.** A read *resolves*:
@@ -792,11 +703,10 @@ export function seedSettings(target: SettingTarget): Record<string, unknown> {
  * over keys the user never touched, so a write carries only what was answered.
  *
  * **Asymmetric with the read on unknown keys, on purpose.** A read *tolerates*
- * siblings it does not own — `reminders` lives in the local file and has to
- * survive. A write must not be able to *create* one, or this becomes a route for
- * the renderer to put arbitrary JSON into a committed, synced file. Existing
- * siblings survive because the caller merges the patch into the file it read,
- * not because the patch carries them.
+ * siblings it does not own (`reminders` lives in the local file). A write must
+ * not be able to *create* one, or this becomes a route for the renderer to put
+ * arbitrary data into a committed, synced file. Existing siblings survive
+ * because the caller merges the patch into the file it read.
  */
 export function parseSettingsPatch(json: string | null): {
   patch: Record<string, unknown>
@@ -826,8 +736,7 @@ export function parseSettingsPatch(json: string | null): {
           warnings.push(`refused "${setting.key}.${name}": ${JSON.stringify(flag)}`)
         else block[name] = flag
       }
-      // A block that survived nothing is not a block: writing `{}` would be a
-      // change to the file that says nothing.
+      // A block that survived nothing is not written: `{}` would say nothing.
       if (Object.keys(block).length > 0) patch[setting.key] = block
       continue
     }
@@ -844,9 +753,8 @@ export function parseSettingsPatch(json: string | null): {
  * Split the ritual's answers into one patch per file.
  *
  * Driven by each descriptor's `target`, never by a list of keys written out
- * here — that is what makes "adding a setting is adding a descriptor" true of
- * the write as well as the view. An answer for a key no descriptor claims is
- * dropped: the step can only answer what it asked.
+ * here. An answer for a key no descriptor claims is dropped: the step can only
+ * answer what it asked.
  */
 export function splitAnswersByTarget(answers: Record<string, unknown>): {
   committed: Record<string, unknown>
@@ -866,9 +774,8 @@ export function splitAnswersByTarget(answers: Record<string, unknown>): {
  * The options a choice can offer, given the answers so far.
  *
  * A row can depend on another row: landing on today's note is only on offer
- * while the vault actually keeps one. Filtering rather than disabling, because
- * a greyed-out choice invites the question "why not?" and the answer is already
- * one row up.
+ * while the vault actually keeps one. Filtering rather than disabling: the
+ * reason is already visible one row up.
  *
  * Returns `[]` for anything that is not a choice.
  */
@@ -888,9 +795,9 @@ export function availableOptions(
  * Repair answers that another answer has just invalidated.
  *
  * Turning daily notes off takes "today's note" off the landing row, and the
- * answer sitting there is now something the user cannot see or change. Move it
- * to the first option still on offer, visibly, rather than leaving a row with
- * nothing selected or writing a value that was silently withdrawn.
+ * answer sitting there can no longer be seen or changed. Move it to the first
+ * option still on offer, visibly, rather than leaving a row with nothing
+ * selected or writing a value that was silently withdrawn.
  *
  * Idempotent, and a no-op when every answer is still available.
  */
@@ -898,9 +805,8 @@ export function normaliseAnswers(answers: Record<string, unknown>): Record<strin
   let out = answers
   for (const descriptor of VAULT_SETTING_DESCRIPTORS) {
     if (descriptor.control.kind !== 'choice') continue
-    // Repair only what is there. Filling in an answer nobody gave is
-    // `initialState`'s job, and doing it here would mean this function silently
-    // invents answers whenever it is handed a partial set.
+    // Repair only what is there: filling in an answer nobody gave is
+    // `initialState`'s job.
     if (!(descriptor.key in out)) continue
     const options = availableOptions(descriptor, out)
     if (options.length === 0) continue
@@ -916,10 +822,9 @@ export function normaliseAnswers(answers: Record<string, unknown>): Record<strin
 /**
  * The mode a `colorScheme` setting actually resolves to, right now.
  *
- * `system` is not a third look: it is a deferral to the OS, and the OS answer
- * changes while the app is running. Keeping the resolution pure means the
- * renderer's job is only to say what the OS currently reports and to re-ask when
- * it changes.
+ * `system` is a deferral to the OS, whose answer changes while the app runs.
+ * Keeping this pure leaves the renderer only to report the OS preference and
+ * re-ask when it changes.
  */
 export function resolveColorMode(
   scheme: ColorScheme,

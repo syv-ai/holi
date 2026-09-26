@@ -1,20 +1,14 @@
 /**
  * What a frontmatter key *is*, so an editor can show a control instead of text.
  *
- * The frontmatter block in the editor renders a row per key, and a row needs to
- * know whether it is drawing a word, a moment, or a list. That knowledge is
- * here — pure, browser-safe, and shared — rather than in the widget, because
- * the renderer, main and the tests must agree about it and a second copy would
- * drift the first time a field was added.
+ * Shared rather than in the widget because the renderer, main and the tests must
+ * agree about it. See docs/features/frontmatter.md.
  *
- * **A schema is per file kind, not global.** A task's frontmatter is half the
- * point of the file; a note's is metadata over prose. They carry different keys
- * and there is no reason to pretend otherwise.
+ * **A schema is per file kind, not global**: tasks and notes carry different keys.
  *
  * **It never decides what a file may contain.** A key the schema does not name
- * is not an error and is never dropped — it renders as text and is written back
- * verbatim, exactly as `Task.extra` already promises. The schema adds controls;
- * it does not take keys away.
+ * is never dropped: it renders as text and is written back verbatim, as
+ * `Task.extra` promises. The schema adds controls; it does not take keys away.
  */
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
 import { isTaskFilePath } from './task-file'
@@ -40,25 +34,18 @@ export interface FieldSpec {
   /**
    * Known, editable elsewhere, and not shown as a row.
    *
-   * `order` is the only one: it is a sort rank the board writes by dragging,
-   * and `Task.order`'s own comment says it is the one key in a task file that
-   * means nothing to a human reading it. Hiding it is not hiding data — the row
-   * would be a number you must not hand-edit sitting between two you should.
+   * `order` is the only one: a sort rank the board writes by dragging, which
+   * means nothing to a human and must not be hand-edited.
    */
   readonly hidden?: boolean
 }
 
-/** `todo | doing | done`, and the rest of the task vocabulary. Duplicated from
- *  nothing: `task-file.ts` holds the same lists as runtime validators, and these
- *  are the same words in the shape a control needs. */
+/** `todo | doing | done`, and the rest of the task vocabulary: the same words
+ *  `task-file.ts` validates, in the shape a control needs. */
 const TASK_FIELDS: readonly FieldSpec[] = [
-  // Order is what the widget renders, and it reads top to bottom as the
-  // questions you ask about a task: what state is it in, how much does it
-  // matter, when is it due, when should I hear about it, does it come back, and
-  // finally how is it filed. `folder` is rendered above these by the widget
-  // itself, being derived rather than written. This order is DISPLAY only:
-  // `serializeTaskFile` builds its own object, so changing it here rewrites no
-  // task file.
+  // DISPLAY order only: `serializeTaskFile` builds its own object, so changing
+  // it here rewrites no task file. `folder` is derived and rendered above these
+  // by the widget itself.
   { key: 'status', kind: { kind: 'enum', options: ['todo', 'doing', 'done'] } },
   { key: 'priority', kind: { kind: 'enum', options: ['low', 'medium', 'high'] } },
   { key: 'due', kind: { kind: 'stamp' } },
@@ -68,23 +55,18 @@ const TASK_FIELDS: readonly FieldSpec[] = [
   { key: 'order', kind: { kind: 'text' }, hidden: true },
 ]
 
-/** What `scaffoldNoteText` writes, and nothing more. A note has no `title`
- *  deliberately (see `scaffold-md.ts`), so there is no row for one. Nor a
- *  `created`: that is the file's first commit, shown as read-only metadata
- *  beside the rows, never a date someone could edit into disagreeing with git.
- *  A `created:` an older note still carries is just an unknown key now. */
+/** What `scaffoldNoteText` writes, and nothing more. No `title` (see
+ *  `scaffold-md.ts`) and no `created`: that is the file's first commit, shown as
+ *  read-only metadata, never a date someone could edit into disagreeing with git. */
 const NOTE_FIELDS: readonly FieldSpec[] = [{ key: 'tags', kind: { kind: 'list' } }]
 
 /**
  * The schema for a file, or `null` when its frontmatter is not ours to draw as
  * fields.
  *
- * Null is not "no keys" — it means **show the YAML**. Under `.claude/` the
- * frontmatter is a typed interface with a schema of its own (a skill's `name`
- * and `description` are what the agent matches on), and `AGENTS.md` and its
- * neighbours are read verbatim as prompt text. Rendering those as rows would
- * be this app inventing a shape for someone else's contract. Hidden paths are
- * Holi's own config and the vault apps, which are not prose either.
+ * Null is not "no keys": it means **show the YAML**. Agent-surface files have
+ * their own contract (a skill's `name` and `description` are what the agent
+ * matches on), and hidden paths are Holi's config and vault apps, not prose.
  */
 export function frontmatterSchema(path: string): readonly FieldSpec[] | null {
   if (!path.endsWith('.md')) return null
@@ -98,10 +80,8 @@ export function frontmatterSchema(path: string): readonly FieldSpec[] | null {
  * the file has that it does not.
  *
  * Schema keys come first and come **whether or not the file has them**, so a
- * field can be filled in without knowing its name — the same instinct as the
- * settings files, which list every setting rather than only the ones somebody
- * already set. Nothing is written until a value is actually given, so six rows
- * never mean six keys on disk.
+ * field can be filled in without knowing its name. Nothing is written until a
+ * value is given, so six rows never mean six keys on disk.
  */
 export function frontmatterRows(
   schema: readonly FieldSpec[],

@@ -2,17 +2,11 @@
  * A markdown body's first heading, read and written.
  *
  * This is the title rule. A task's name is the first heading in its body at
- * **any** level, not a `title:` in frontmatter and not the filename — so the
- * name of the thing is written where you are already writing, in the document,
- * and there is no second field to disagree with it.
+ * **any** level, not a `title:` in frontmatter and not the filename, so there
+ * is no second field to disagree with it. Nothing here is task-specific.
  *
- * Generic rather than task-shaped on purpose: nothing here knows what a task is,
- * and a note that wants the same rule later needs no new code.
- *
- * **ATX only** (`# Title`), never setext (`Title` over `=====`). Every heading
- * Holi's own editor writes is ATX, and a setext underline is indistinguishable
- * from a paragraph until the line after it, which is a lookahead this does not
- * need to grow for a spelling nobody here produces.
+ * **ATX only** (`# Title`), never setext (`Title` over `=====`): Holi's editor
+ * writes only ATX, and setext would need a line of lookahead.
  */
 
 /** Up to three leading spaces is still a heading; the fourth makes it code. */
@@ -25,9 +19,8 @@ const TRAILING_HASHES = /\s+#+\s*$/
 /**
  * The first heading's text, or `null` when the body has none.
  *
- * **Fenced code is skipped**, which is the whole reason this is not a one-line
- * regex: a task whose body opens with a shell block would otherwise be called
- * `!/bin/bash` — or worse, renamed by a comment someone pasted.
+ * **Fenced code is skipped**, which is why this is not a one-line regex: a task
+ * whose body opens with a shell block would otherwise be called `!/bin/bash`.
  */
 export function firstHeading(body: string): string | null {
   let fence: string | null = null
@@ -55,10 +48,8 @@ export function firstHeading(body: string): string | null {
 /**
  * The body with `title` as its first heading.
  *
- * Replaces the existing heading's text when there is one, keeping its level —
- * a task whose author wrote `## ` meant that — and prepends an `#` heading when
- * there is not. Used when a task is created; every later rename is someone
- * editing the line.
+ * Replaces the existing heading's text when there is one, keeping its level,
+ * and prepends an `#` heading when there is not.
  */
 export function setFirstHeading(body: string, title: string): string {
   const lines = body.split('\n')

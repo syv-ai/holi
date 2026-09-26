@@ -1,9 +1,9 @@
 /**
  * Minimal pure date helpers over ISO strings (`YYYY-MM-DD`,
  * `YYYY-MM-DDTHH:MM[:SS]`), used by the reminder + recurrence math. All
- * arithmetic runs on UTC epoch numbers so wall-clock DST never bites —
- * "local-naive" datetimes are treated as points on an idealized clock, exactly
- * like the old Rust's chrono::Naive types. No timezone logic lives here.
+ * arithmetic runs on UTC epoch numbers so wall-clock DST never bites:
+ * "local-naive" datetimes are treated as points on an idealized clock. No
+ * timezone logic lives here.
  */
 
 export const DAY_MS = 86_400_000
@@ -59,17 +59,13 @@ export function formatDateTime(epoch: number): string {
 // `YYYY-MM-DDTHH:MM[:SS]`. It is the type a task's `due` and `reminder` both
 // hold (D79).
 //
-// The `timed` flag is carried rather than re-derived at each call site because
-// the absence of a time is *data*, not a formatting choice: a task due
-// `2026-08-25` is due that day, and a task due `2026-08-25T00:00` is due at
-// midnight, and only one of those is a thing anybody means. Everything below is
-// built on the two strict parsers above — they own the validity rules
-// (`isRealDate`, hour and minute bounds), and a third regex that re-stated them
-// would be a third place for them to drift.
+// The `timed` flag is carried because the absence of a time is *data*: a task
+// due `2026-08-25` is due that day, and one due `2026-08-25T00:00` is due at
+// midnight. Everything below is built on the two strict parsers above, which
+// own the validity rules, so they are not restated in a third regex.
 
 const TIME_RE = /^(\d{2}):(\d{2})$/
 
-/** A stamp, parsed. */
 export interface ParsedStamp {
   /** UTC epoch ms. Midnight when the stamp named no time. */
   epoch: number
@@ -117,9 +113,8 @@ export function stampTime(s: string): string | null {
   return formatDateTime(parsed.epoch).slice(11)
 }
 
-/** The same day, with `time` (`HH:MM`) put on it — or taken off, when `time` is
- *  null. The one edit the picker performs on an existing value, so that moving
- *  between the two shapes never goes through a caller's own string surgery. */
+/** The same day, with `time` (`HH:MM`) put on it, or taken off when `time` is
+ *  null. The one edit the picker performs on an existing value. */
 export function withTime(s: string, time: string | null): string | null {
   const date = stampDate(s)
   if (date === null) return null

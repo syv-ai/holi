@@ -1,23 +1,21 @@
 /**
- * Per-vault theming — the pure core (parse → merge → whitelist → validate).
+ * Per-vault theming (D64): the pure core (parse → merge → whitelist → validate).
  *
  * A vault contributes a set of *token values* that re-cascade the app's semantic
  * design tokens (see the renderer's `index.css`). The vocabulary is a fixed
- * whitelist of **colours and chrome only** — there is deliberately no token that
- * can express spacing, size, or position, so a theme (whoever or whatever wrote
- * it) is *structurally* incapable of changing layout. That guarantee is the
- * whole point, and it lives here: nothing outside this whitelist ever reaches
- * the DOM.
+ * whitelist of **colours and chrome only**: there is deliberately no token that
+ * can express spacing, size, or position, so a theme is *structurally* incapable
+ * of changing layout. Nothing outside this whitelist ever reaches the DOM.
  *
  * This module is pure and browser-safe (no fs, no DOM). The main process reads
  * the two theme files off disk and hands their text to `resolveTheme`; the
  * renderer turns a resolved block into custom properties with `themeBlockToVars`
  * and writes them onto `document.documentElement`.
  *
- * Precedence: `.holi/settings/theme.yaml` (committed, shared) is the base; a personal
- * `.holi/settings/theme.local.yaml` (gitignored) overrides it **per key within each
+ * Precedence: `.holi/settings/theme.css` (committed, shared) is the base; a personal
+ * `.holi/settings/theme.local.css` (gitignored) overrides it **per key within each
  * mode**, so a one-line local file can recolour just `primary` and inherit the
- * rest. See the handoff/design notes for the decision trail.
+ * rest.
  */
 
 import { parse as parseYaml } from 'yaml'
@@ -26,8 +24,7 @@ import { parse as parseYaml } from 'yaml'
  * The two files a theme lives in, beside the settings they belong with.
  *
  * Declared here rather than in main, because the renderer names them too (the
- * settings pane offers both as an escape hatch) and main writes them. Three
- * copies of a path is three chances to move two of them.
+ * settings pane offers both as an escape hatch) and main writes them.
  */
 export const THEME_FILE = '.holi/settings/theme.css'
 export const THEME_LOCAL_FILE = '.holi/settings/theme.local.css'
@@ -49,13 +46,13 @@ export interface VaultTheme {
 export interface ResolvedTheme {
   light: ThemeBlock
   dark: ThemeBlock
-  /** Human-readable notes about dropped keys/values — surfaced to the agent/user
+  /** Human-readable notes about dropped keys/values, surfaced to the agent/user
    *  so a typo is diagnosable rather than silent. */
   warnings: string[]
 }
 
 /**
- * The colour tokens — exactly shadcn's semantic vocabulary as mapped in
+ * The colour tokens: shadcn's semantic vocabulary as mapped in
  * `index.css`. Setting `--primary` (etc.) re-cascades every `--color-*` utility
  * because those are `var()` pointers exposed via `@theme inline`.
  */
@@ -81,10 +78,10 @@ export const THEME_COLOR_TOKENS = [
   'destructive',
   'destructive-foreground',
   'border',
-  // The chrome hairline — pane splits, the sidebar's edge, panel-header rules —
-  // as opposed to `border`, which is the edge of an object (card, chip,
-  // popover). Defaults to `border` faded toward `background`, so a vault that
-  // recolours either gets a matching divider without setting this at all.
+  // The chrome hairline (pane splits, panel-header rules), as opposed to
+  // `border`, which is the edge of an object (card, chip, popover). Defaults to
+  // `border` faded toward `background`, so a vault that recolours either gets a
+  // matching divider without setting this at all.
   'divider',
   // The line on a drawer's inner edge (DrawerShell: the nav, history, the last
   // turn, the PDF sidebars) and under its header. Transparent by default: a
@@ -109,8 +106,7 @@ export const THEME_COLOR_TOKENS = [
 export const THEME_LENGTH_TOKENS = ['radius'] as const
 
 /** Shadow-valued chrome tokens (paint-only elevation). These are consumed by the
- *  `.shadow-popover` / `.shadow-dialog` classes in `index.css`; there is no
- *  `shadow-card` token because no surface consumes one today. */
+ *  `.shadow-popover` / `.shadow-dialog` classes in `index.css`. */
 export const THEME_SHADOW_TOKENS = ['shadow-popover', 'shadow-dialog'] as const
 
 /** Every themeable token slug. There is no layout token here, by design. */
@@ -127,10 +123,10 @@ const SHADOW_SET = new Set<string>(THEME_SHADOW_TOKENS)
 /**
  * The security gate every value must pass. A themed value only ever ends up as
  * the *value* of a CSS custom property consumed through `var(...)`, and CSS
- * custom-property substitution cannot open a new declaration or rule — but we
+ * custom-property substitution cannot open a new declaration or rule, but we
  * still refuse anything that looks like an injection or an external fetch, so a
  * hostile theme can't smuggle `url()`, comments, or rule-breaking punctuation
- * past validation (and the value stays readable for humans debugging it).
+ * past validation.
  */
 function isSafeCssValue(v: string): boolean {
   if (typeof v !== 'string') return false
@@ -160,7 +156,7 @@ function isLengthLike(v: string): boolean {
 }
 
 /** Whether `value` is a legal value for token `slug`. Assumes `slug` is a known
- *  token. Shadows are only gated by `isSafeCssValue` — box-shadow syntax is broad
+ *  token. Shadows are only gated by `isSafeCssValue`: box-shadow syntax is broad
  *  and paint-only, so we don't police its grammar, only its safety. */
 function isValidTokenValue(slug: string, value: string): boolean {
   if (!isSafeCssValue(value)) return false
@@ -189,33 +185,26 @@ const SELECTORS: Readonly<Record<string, ThemeMode>> = Object.freeze({
  *  blocks are read so a commented-out declaration stays commented out. */
 const COMMENTS = /\/\*[\s\S]*?\*\//g
 
-/** One `selector { … }`. Braces do not nest in a file this shape, and a nested
- *  one (`@media`, a nested rule) simply fails to match — which is the right
- *  answer, because the whitelist would refuse whatever was inside it anyway. */
+/** One `selector { … }`. A nested block (`@media`, a nested rule) simply fails
+ *  to match, which is right: the whitelist would refuse its contents anyway. */
 const BLOCK = /([^{}]+)\{([^{}]*)\}/g
 
-/** `--slug: value` — the only declaration shape a theme may carry. A plain
- *  property (`color: red`) does not match, which is the structural half of
- *  D64's promise surviving the move from YAML to CSS. */
+/** `--slug: value`, the only declaration shape a theme may carry. A plain
+ *  property (`color: red`) does not match: the structural half of D64's promise. */
 const DECLARATION = /^\s*--([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.+?)\s*$/
 
 /**
  * Parse a theme file's text into a `VaultTheme`, or `null` if it holds no
- * recognisable block. Never throws — a broken file must degrade to "no theme",
+ * recognisable block. Never throws: a broken file must degrade to "no theme",
  * not crash the read.
  *
- * **CSS, because a theme is a set of custom properties and always was.**
- * `themeBlockToVars` has always produced `--primary: #8b5cf6`; the file now says
- * the same thing in the same words. It also means the editor's colour picker —
- * `@replit/codemirror-css-color-picker`, which finds colours through the CSS
- * grammar and only the CSS grammar — works here without anything of ours.
+ * **CSS, because a theme is a set of custom properties.** It also means the
+ * editor's colour picker (`@replit/codemirror-css-color-picker`, which finds
+ * colours only through the CSS grammar) works here without anything of ours.
  *
  * **This is a parser and NOT a stylesheet loader. The file is never injected.**
- * Every declaration is read, whitelisted and validated exactly as the YAML keys
- * were, and only the survivors reach the DOM. That was structurally obvious
- * when the file was data; in a file that looks like CSS it is a rule, so it is
- * written here in capitals: nothing in this module ever hands this text to the
- * document.
+ * Every declaration is read, whitelisted and validated, and only the survivors
+ * reach the DOM. Nothing in this module ever hands this text to the document.
  */
 export function parseVaultTheme(text: string): VaultTheme | null {
   const out: VaultTheme = {}
@@ -268,9 +257,9 @@ function resolveBlock(
 
 /**
  * Resolve the committed + local theme files into a clean, validated theme.
- * Either argument may be `null` (file absent). Malformed JSON degrades to
+ * Either argument may be `null` (file absent). A malformed file degrades to
  * "no theme" for that file. The result contains only whitelisted, validated
- * tokens — it is safe to write straight onto the DOM.
+ * tokens, so it is safe to write straight onto the DOM.
  */
 export function resolveTheme(
   committedJson: string | null,
@@ -303,15 +292,12 @@ export function themeBlockToVars(block: ThemeBlock): Record<string, string> {
  * them.
  *
  * **Grouping is the only thing hand-written here.** A label is derived from the
- * slug (`card-foreground` → "Card foreground") rather than restated: thirty
- * hand-written strings that repeat their own key are thirty chances for one to
- * drift, and the slugs were chosen to be read. A `note` is written only where
- * the name genuinely is not enough — where two tokens sound interchangeable and
- * are not.
+ * slug (`card-foreground` → "Card foreground") rather than restated. A note
+ * (`THEME_TOKEN_NOTES`) is written only where two tokens sound interchangeable
+ * and are not.
  *
  * Every token appears exactly once, which `theme.test.ts` pins against
- * `THEME_TOKENS`: a token added to the whitelist and forgotten here would be
- * settable in the file and invisible in the pane.
+ * `THEME_TOKENS`: a token forgotten here would be invisible in the pane.
  */
 export interface ThemeTokenGroup {
   title: string
@@ -405,26 +391,12 @@ export function themeTokenKind(slug: string): 'color' | 'length' | 'shadow' | nu
 }
 
 /** A theme edit: a token set to a value, or to `null` to clear it and fall back
- *  to Holi's default. Both modes are optional — a pane edits one at a time. */
+ *  to Holi's default. Both modes are optional: a pane edits one at a time. */
 export interface ThemePatch {
   light?: Record<string, string | null>
   dark?: Record<string, string | null>
 }
 
-/**
- * Read an untrusted object as a theme **patch** — only the tokens it names,
- * each validated, and nothing else.
- *
- * The settings pane's counterpart to `parseSettingsPatch`, and it exists for
- * that function's reason: a write must not reach these files by a route that
- * skips the check a hand-written file gets. The same `isValidTokenValue` guards
- * both, so the pane cannot store a value the resolver would later drop —
- * which would read as a control that does nothing.
- *
- * **`null` is a legal value and means "clear it".** Resetting a token to
- * Holi's default is deleting the key, not writing an empty string, which would
- * be dropped as invalid and leave the old value in place.
- */
 /** The renderer's patch object, or `null` if it is not one. Never throws. */
 function parsePatchJson(json: string): VaultTheme | null {
   let parsed: unknown
@@ -437,17 +409,27 @@ function parsePatchJson(json: string): VaultTheme | null {
   return parsed as VaultTheme
 }
 
+/**
+ * Read an untrusted object as a theme **patch**: only the tokens it names, each
+ * validated, and nothing else.
+ *
+ * The settings pane's counterpart to `parseSettingsPatch`: a write must not
+ * reach these files by a route that skips the check a hand-written file gets.
+ * The same `isValidTokenValue` guards both, so the pane cannot store a value
+ * the resolver would later drop.
+ *
+ * **`null` is a legal value and means "clear it"**: resetting a token deletes
+ * the key rather than writing an empty string, which would be dropped as
+ * invalid and leave the old value in place.
+ */
 export function parseThemePatch(json: string | null): { patch: ThemePatch; warnings: string[] } {
   const warnings: string[] = []
   const patch: ThemePatch = {}
   if (json === null || json.trim() === '') return { patch, warnings }
 
   // **JSON, not the file's own format.** This reads the patch the RENDERER
-  // sends over IPC — `{dark: {primary: '#fff'}}` — which has nothing to do with
-  // how the theme is stored. When the file became CSS, `parseVaultTheme` became
-  // a CSS parser, and leaving this pointed at it would have made every write
-  // from the settings pane parse as nothing: a pane whose controls silently did
-  // nothing at all.
+  // sends over IPC (`{dark: {primary: '#fff'}}`), not the CSS the theme is
+  // stored as, so `parseVaultTheme` would read it as nothing.
   const parsed = parsePatchJson(json)
   if (parsed === null) {
     warnings.push('refused a theme patch that is not a JSON object')
@@ -483,14 +465,12 @@ export function parseThemePatch(json: string | null): { patch: ThemePatch; warni
 }
 
 /**
- * Read a theme written in the OLD shape — `{light: {...}, dark: {...}}` as JSON
- * or YAML — and return it as `theme.css`.
+ * Read a theme written in the legacy shape (`{light: {...}, dark: {...}}` as
+ * JSON or YAML) and return it as `theme.css`.
  *
- * **Only the migration calls this, and it exists because the reader moved.**
- * `parseVaultTheme` speaks CSS now, so pointing the migration at it would have
- * read every pre-existing theme as empty and written a file full of commented
- * defaults — a vault silently losing its colours, with no error anywhere. The
- * old parse is nine lines; keeping them is cheaper than the bug.
+ * **Only the migration calls this.** `parseVaultTheme` speaks CSS, so pointing
+ * the migration at it would read every legacy theme as empty and silently lose
+ * the vault's colours.
  *
  * Whitelisting happens on the way through, so a token that was never valid is
  * dropped here rather than surviving the move.
@@ -525,31 +505,19 @@ export function themeFromLegacy(text: string): string {
 }
 
 /**
- * Apply a patch to a theme file's text, returning the new text.
- *
- * Per key per mode, never a replace: the file may carry tokens this pane did
- * not touch, and a vault's theme is as likely to have been written by hand or
- * by the agent as by these controls.
- */
-/**
  * The theme file's text, written out in full every time.
  *
- * **The file lists every token, whether or not this vault sets one.** An empty
- * file was honest and useless: the vocabulary is forty tokens and the file named
- * none of them, so knowing what you could write meant opening the Appearance
- * pane or the `theme` skill. A token this vault has not set is a commented-out
- * declaration, in the group the pane puts it in.
+ * **The file lists every token, whether or not this vault sets one**, so the
+ * vocabulary is discoverable in the file itself. A token this vault has not set
+ * is a commented-out declaration, in the group the pane puts it in.
  *
- * **Generated, not merged, and that is a deliberate reversal** of the rule
- * `app.yaml` still follows. A comment inside a block cannot survive a
- * round trip through a writer that rebuilds the block, and the commented
- * vocabulary IS comments — so re-emitting is what keeps the list complete and
- * current, including tokens added to the whitelist after this vault was made.
- * The cost is that a note written inside this file does not survive a write.
+ * **Generated, not merged.** The commented vocabulary IS comments, so
+ * re-emitting is what keeps the list complete and current, including tokens
+ * added to the whitelist after this vault was made. The cost is that a note
+ * written inside this file does not survive a write.
  *
  * A declaration that is not a known token is kept rather than dropped: the
- * resolver already warns about it, and silently deleting somebody's line
- * because we do not recognise it is a worse answer than leaving it alone.
+ * resolver already warns about it.
  */
 function writeThemeText(values: Record<string, unknown>): string {
   const lines: string[] = [
@@ -570,10 +538,8 @@ function writeThemeText(values: Record<string, unknown>): string {
         // Set and unset differ by the comment wrapper and nothing else, so
         // taking a token over is uncommenting the line.
         //
-        // **Nothing written into a comment may contain a comment marker.**
-        // The preamble first said "delete the slash-star and the star-slash"
-        // using the characters themselves, which closed the comment early and
-        // left the rest of the paragraph sitting in the file as CSS.
+        // **Nothing written into a comment may contain a comment marker**: it
+        // would close the comment early and leave the rest in the file as CSS.
         lines.push(value === undefined ? `  /* --${slug}: ; */` : `  --${slug}: ${value};`)
       }
     }
@@ -604,6 +570,12 @@ const PREAMBLE = [
   'changes and regenerates these notes, so a comment of your own will not last.',
 ]
 
+/**
+ * Apply a patch to a theme file's text, returning the new text.
+ *
+ * Per key per mode, never a replace: the file may carry tokens this pane did
+ * not touch, written by hand or by the agent.
+ */
 export function applyThemePatch(json: string | null, patch: ThemePatch): string {
   const current = json === null ? null : parseVaultTheme(json)
   const next: Record<string, unknown> = { ...(current ?? {}) }
@@ -624,13 +596,11 @@ export function applyThemePatch(json: string | null, patch: ThemePatch): string 
     next[mode] = block
   }
 
-  // Both blocks always present, even when empty: the seeded skeleton has them,
-  // the schema implies them, and a file that loses one reads as half-written.
+  // Both blocks always present, even when empty: a file that loses one reads as
+  // half-written.
   next.light ??= {}
   next.dark ??= {}
-  // **The document, not the values.** A theme file carries the notes explaining
-  // what each token paints, and a person or the agent may have added their own;
-  // stringifying `next` would delete every one of them on the first swatch
-  // anybody touched.
+  // Regenerated whole, so the explanatory notes are re-emitted; comments a
+  // person added are not kept.
   return writeThemeText(next)
 }

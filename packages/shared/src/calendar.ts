@@ -1,17 +1,12 @@
 /**
- * The month grid a date picker draws — pure arithmetic over the same UTC epochs
- * the rest of the date math uses, so a calendar is a data structure here rather
- * than a component's internal state (D79).
+ * The month grid a date picker draws: pure arithmetic over the same UTC epochs
+ * the rest of the date math uses, so it is testable without a DOM (D79).
  *
- * Hand-rolled rather than `react-day-picker`: this repo carries no date library
- * at all, the grid is a small amount of arithmetic on helpers that already
- * exist, and the alternative would bring a second class-name API to theme.
- * Keeping it here rather than in the renderer is what lets the hard part be
- * tested without a DOM.
+ * Hand-rolled rather than `react-day-picker`: the repo carries no date library,
+ * and that one would bring a second class-name API to theme.
  */
 import { DAY_MS, formatDate, lastDayOfMonth, parseDate } from './dates'
 
-/** One cell. */
 export interface GridDay {
   /** `YYYY-MM-DD`. */
   date: string
@@ -31,13 +26,10 @@ const WEEKS = 6
  * changed height as you paged between months would move the controls under the
  * pointer, which is a worse cost than a row of borrowed days.
  *
- * Monday-first to match `WEEKDAYS` in the recurrence editor, which is already
- * `['mon', …]` — one week shape across the app.
+ * Monday-first to match `WEEKDAYS` in the recurrence editor.
  *
  * A `month` outside 1-12 normalises into the neighbouring year (13 → January of
- * the next), rather than throwing. The picker pages by incrementing a number,
- * and December → January is exactly the step that would hit it; normalising is
- * what lets the caller stay arithmetic instead of carrying the wrap itself.
+ * the next) rather than throwing, so the picker can page by incrementing.
  */
 export function monthGrid(year: number, month: number): GridDay[][] {
   const first = Date.UTC(year, month - 1, 1)
@@ -70,9 +62,8 @@ export function monthGrid(year: number, month: number): GridDay[][] {
  * Where the arrow keys move the focus in a month grid, or null for a key this
  * grid does not claim.
  *
- * Returns a date rather than a cell, because the focus is allowed to leave the
- * month it started in — the caller re-pages the view onto whatever comes back,
- * which is what makes a grid navigable at all rather than a box you tab across.
+ * Returns a date rather than a cell, because the focus may leave the month it
+ * started in: the caller re-pages the view onto whatever comes back.
  */
 export function gridFocusMove(date: string, key: string): string | null {
   const epoch = parseDate(date)
@@ -97,9 +88,7 @@ export function gridFocusMove(date: string, key: string): string | null {
 
 /**
  * The same day, `delta` months away, clamped to a day that month has — 31 March
- * back a month is 28 February, not 3 March. The clamp is `nextDue`'s rule, and
- * it is here for the same reason: a paging step that skipped a month whenever
- * the day was too high would be wrong in exactly the months people notice.
+ * back a month is 28 February, not 3 March. The same clamp as `nextDue`.
  */
 function shiftMonth(date: string, delta: number): string {
   const year = Number(date.slice(0, 4))

@@ -1,27 +1,19 @@
 /**
  * Reading and writing a settings file that explains itself.
  *
- * **Why YAML.** `.holi/settings/app.yaml` said nothing about what a key meant.
- * The settings tab knew — every setting carries a label and an explanation in
- * `VAULT_SETTINGS` — but somebody opening the file by hand, or the agent
- * editing it, saw six bare keys. The explanations now go into the file, and
- * they are generated from the same schema the tab renders, so the two cannot
- * disagree.
+ * Every setting's label, explanation and legal values go into the file as
+ * comments, generated from the same `VAULT_SETTINGS` schema the settings tab
+ * renders, so a person or the agent editing the file by hand sees what each key
+ * means and the two cannot disagree.
  *
  * YAML rather than JSONC or a `$schema` key because it is already the vault's
- * idiom for anything a person writes: note frontmatter is YAML, a vault app is
- * described by `app.yaml`, and the editor has a YAML mode. It also costs no new
- * dependency — `yaml` is already a direct dependency of both packages.
+ * idiom for anything a person writes (frontmatter, `app.yaml`).
  *
- * **Two properties this module exists to guarantee:**
+ * **A write regenerates the whole document** (`writeSettingsText`), so a
+ * comment a person wrote inside the file does not survive a write. Values do:
+ * every known key is re-emitted, and an unknown key is kept as written.
  *
- * 1. **A write never destroys a comment**, generated or hand-written. Every
- *    write goes `parseDocument` → `set` → `toString`, so the document survives
- *    the round trip. Stringifying a plain object would silently delete anything
- *    a person had added, once, permanently.
- * 2. **A read accepts the old file too.** YAML is a superset of JSON, so a
- *    `.json` file parses here unchanged. The migration renames; it does not
- *    have to translate, and a vault mid-migration is never unreadable.
+ * YAML is a superset of JSON, so a `.json` settings file also parses here.
  */
 import { parseDocument, stringify as stringifyYaml } from 'yaml'
 import {
@@ -35,8 +27,8 @@ import {
 /**
  * Parse a settings file into a plain object.
  *
- * Anything that is not a mapping reads as "no settings" — a half-written file
- * must not stop a vault opening, which is the same rule the JSON reader had.
+ * Anything that is not a mapping reads as "no settings": a half-written file
+ * must not stop a vault opening.
  */
 export function parseSettingsText(text: string | null): Record<string, unknown> {
   if (text === null || text.trim() === '') return {}
@@ -44,11 +36,7 @@ export function parseSettingsText(text: string | null): Record<string, unknown> 
     const doc = parseDocument(text)
     // **Errors as well as shape.** `parseDocument` does not throw on a broken
     // file; it records the error and still hands back a map, so `{ not json`
-    // reads as the key `not json`. `mergeYamlDocument` used to catch that on
-    // the way out, which stopped being the write path's job when the writer
-    // started generating the document instead of merging into one — and a
-    // reader that returns a key nobody typed was always the more honest place
-    // to refuse it.
+    // would read as the key `not json`.
     if (doc.errors.length > 0) return {}
     const value: unknown = doc.toJS()
     return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -62,10 +50,9 @@ export function parseSettingsText(text: string | null): Record<string, unknown> 
 /**
  * Every legal value for a setting, as the file should show them.
  *
- * **The options, not the type name.** "One of: mono, sans, serif" is what a
- * person or the agent needs at the moment they are typing; "an EditorFont" is
- * a word that sends them somewhere else to find out. Derived from `SettingType`
- * so a control, a validator and this line cannot offer three different answers.
+ * **The options, not the type name**: "One of: mono, sans, serif", not "an
+ * EditorFont". Derived from `SettingType` so a control, a validator and this
+ * line cannot offer three different answers.
  */
 function legalValues(type: SettingType): string[] {
   if (type.kind === 'boolean') return ['One of: true, false']
@@ -75,13 +62,12 @@ function legalValues(type: SettingType): string[] {
   const shown = type.options.map((o) => `${inline(o.value)} (${o.label})`).join(', ')
   if (type.kind === 'number') {
     // The options are what the PANE offers; the validator takes any positive
-    // number, and a file saying 7 MB is a good answer. Saying so here is what
-    // stops this list reading as the whole legal range.
+    // number, so this list must not read as the whole legal range.
     return [`Any positive number of bytes. What the pane offers: ${shown}`]
   }
   if (type.kind === 'enum') return [`One of: ${shown}`]
-  // `parsed` — `landing`, whose value is an object and two of whose four shapes
-  // are deliberately not offered by the pane.
+  // `parsed`: `landing`, whose value is an object and some of whose shapes are
+  // deliberately not offered by the pane.
   return [`One of: ${shown}`, `Or anything else that is ${type.expected}, written by hand.`]
 }
 
@@ -90,7 +76,7 @@ function legalValues(type: SettingType): string[] {
  *
  * **A map has to be written in flow style here, not block.** `stringify` gives
  * a one-entry map back as `kind: daily`, which is correct YAML on its own and
- * becomes `landing: kind: daily` — a parse error — the moment it follows a key.
+ * becomes `landing: kind: daily`, a parse error, the moment it follows a key.
  */
 function inline(value: unknown): string {
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
@@ -118,8 +104,7 @@ function block(value: unknown): string | undefined {
 }
 
 /** Wrapped to something a terminal and a narrow editor pane can both read.
- *  A `{ ... }` is one word: a landing target broken across two comment lines is
- *  a value you have to reassemble by eye before you can copy it. */
+ *  A `{ ... }` is one word, so a landing target is never split across lines. */
 function wrap(text: string, width = 76): string[] {
   const out: string[] = []
   let line = ''
@@ -138,27 +123,18 @@ function wrap(text: string, width = 76): string[] {
 /**
  * A settings file's text, written out in full every time.
  *
- * **The file lists every setting, whether or not this vault answers one.** It
- * used to carry only the questions the birth ritual asked, so `editorFont` and
- * `maxCommittedFileBytes` existed, worked, and appeared in no file anywhere —
- * you could only discover them in the settings tab. A setting this vault has
- * not answered is now a commented line, with its explanation and its legal
- * values above it.
+ * **The file lists every setting, whether or not this vault answers one.** A
+ * setting this vault has not answered is a commented line, with its explanation
+ * and legal values above it, so it is discoverable without the settings tab.
  *
- * **That is also what lets a default stay a default.** D85's argument against
- * seeding `maxCommittedFileBytes` was that a number written into every vault at
- * birth is a default that can never be raised for the vaults that already have
- * one. A commented line is not a value: it is visible to a reader and invisible
- * to the resolver, so the setting can be documented in the file without being
- * frozen into it.
+ * **That is also what lets a default stay a default** (D85): a commented line
+ * is visible to a reader and invisible to the resolver, so a default can still
+ * be raised later for vaults that never pinned it.
  *
- * **Generated, not merged** — the same reversal `writeThemeText` makes, for the
- * same reason and with the same cost. See its docstring: a comment inside a
- * nested block (`hooks`) cannot survive `doc.set`, and re-emitting is what
- * keeps the list complete when a setting is added to `VAULT_SETTINGS` later.
- * A key no setting describes is kept as written — the local file's `reminders`
- * watermark is machine state that has to survive, and deleting a line because
- * we do not recognise it would be worse than leaving it alone.
+ * **Generated, not merged**, like `writeThemeText`: re-emitting keeps the list
+ * complete when a setting is added to `VAULT_SETTINGS`, and the cost is that
+ * hand-written comments are lost. A key no setting describes is kept as written:
+ * the local file's `reminders` watermark is machine state that has to survive.
  */
 export function writeSettingsText(values: Record<string, unknown>, target: SettingTarget): string {
   const committed = target === 'committed'
@@ -185,8 +161,7 @@ export function writeSettingsText(values: Record<string, unknown>, target: Setti
     const value = has ? values[setting.key] : setting.default
     const nested = block(value)
     // A commented line and a live one differ by the `# ` and nothing else, so
-    // uncommenting is the whole edit — including for `hooks`, whose five
-    // switches are each their own line.
+    // uncommenting is the whole edit, including for a nested block like `hooks`.
     const mark = has ? '' : '# '
     if (nested === undefined) lines.push(`${mark}${setting.key}: ${inline(value)}`)
     else {
@@ -215,8 +190,7 @@ export function writeSettingsText(values: Record<string, unknown>, target: Setti
  * A fresh file holding the answers a vault is born with.
  *
  * What the seed writes. Everything else in `VAULT_SETTINGS` still appears,
- * commented — which is the difference between "every setting" and "every
- * question", now visible in the file rather than only in the settings tab.
+ * commented.
  */
 export function seedSettingsText(values: Record<string, unknown>, target: SettingTarget): string {
   return writeSettingsText(values, target)

@@ -1,24 +1,22 @@
 /**
- * Canonical grammar for vault references in note markdown (ports the shape of
- * the old `vaultRefs.ts` — one parser, thin renderers, D12/D22):
+ * Canonical grammar for vault references in note markdown: one parser, thin
+ * renderers (D12/D22, docs/features/wiki-links.md).
  *
  *  - `[[vault-relative/path.md]]` wiki-links, optionally `[[path|Label]]`
  *
- * There is one grammar. A link to a task is a link to its file like any other —
- * the `[[task:<id>]]` token is gone with task ids (D27/D60). Framework-free by
- * design: no React/CodeMirror imports. Consumed by the editor renderer, the
- * rename rewrite, and the agent's link authoring.
+ * There is one grammar: a link to a task is a link to its file like any other.
+ * Framework-free by design: no React/CodeMirror imports. Consumed by the editor
+ * renderer, the rename rewrite, and PDF export.
  */
 
 /**
  * Inner body of a wiki-link: everything between `[[` and `]]` that isn't a
- * closing bracket or a newline. **Greedy** (`+`, not `+?`) — the authoritative
- * behaviour of the old editor's live-typed surface.
+ * closing bracket or a newline. **Greedy** (`+`, not `+?`).
  */
 const WIKI_LINK_BODY = '\\[\\[([^\\]\\n]+)\\]\\]'
 
 /**
- * Fresh `RegExp` (with the `g` flag) per call — a shared module-level instance
+ * Fresh `RegExp` (with the `g` flag) per call: a shared module-level instance
  * would leak `lastIndex` state across `.exec()` loops at different call sites.
  */
 export function wikiLinkRegex(): RegExp {
@@ -62,8 +60,8 @@ export function formatWikiLink(target: string, label?: string): string {
   return label ? `[[${target}|${label}]]` : `[[${target}]]`
 }
 
-/** The prose a wiki-link should read as where there is no chip and no link — a
- *  rendered document (PDF export): the explicit label, else the target's file
+/** The prose a wiki-link should read as where there is no chip and no link (a
+ *  rendered document, PDF export): the explicit label, else the target's file
  *  name without a trailing `.md`. */
 export function wikiLinkDisplay(link: WikiLinkMatch): string {
   if (link.label) return link.label
@@ -72,11 +70,10 @@ export function wikiLinkDisplay(link: WikiLinkMatch): string {
 }
 
 /**
- * Replace every wiki-link with its display text (`wikiLinkDisplay`). For
- * pipelines that render note markdown *outside* the editor — PDF export —
- * where `[[a/b.md|X]]` must read as prose, not raw brackets. One grammar:
- * reuses `parseWikiLinks`, so it can never drift from the chips or the rename
- * rewrite. Returns the input unchanged when there are no links.
+ * Replace every wiki-link with its display text (`wikiLinkDisplay`), for
+ * pipelines that render note markdown *outside* the editor (PDF export), where
+ * `[[a/b.md|X]]` must read as prose. Returns the input unchanged when there are
+ * no links.
  */
 export function wikiLinksToText(text: string): string {
   const links = parseWikiLinks(text)
@@ -92,7 +89,7 @@ export function wikiLinksToText(text: string): string {
 
 /**
  * Rewrite every link targeting `fromPath` to `toPath`, preserving labels
- * (the D12 rename primitive — applied to each affected doc's text). Links to
+ * (the D12 rename primitive, applied to each affected doc's text). Links to
  * other targets are untouched. Matching uses the same trimming as the parser,
  * and rewritten tokens come out normalized.
  */
@@ -117,13 +114,12 @@ export function rewriteWikiLinks(
 
 /**
  * Rewrite every note link whose target is a key of `moves` to that key's value,
- * in ONE pass over the ORIGINAL map — the batch-move primitive (spec §Backend).
+ * in ONE pass over the ORIGINAL map: the batch-move primitive.
  *
- * The single pass is the correctness. A link `[[a.md]]` under a map that also
- * moves `b.md` must resolve to `map.get('a.md')` and stop there, even when that
- * value is itself a key (`a→b`, `b→c`): chaining it on to `c` is precisely the
- * double-rewrite that applying N single-target `rewriteWikiLinks` in sequence
- * produces. Labels are preserved; untargeted links are untouched.
+ * The single pass is the correctness. A link `[[a.md]]` must resolve to
+ * `map.get('a.md')` and stop there, even when that value is itself a key
+ * (`a→b`, `b→c`); applying N single-target `rewriteWikiLinks` in sequence would
+ * chain it on to `c`. Labels are preserved; untargeted links are untouched.
  */
 export function rewriteWikiLinksMulti(
   text: string,

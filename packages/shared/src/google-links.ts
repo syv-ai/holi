@@ -2,15 +2,10 @@
  * Google links in a note or task body — **detected, never stored** (D67).
  *
  * A linked email or calendar event is an ordinary markdown link in the file's
- * body. There is no frontmatter field, no `related[]`, and nothing machine-owned
- * — which is exactly what keeps "the file is the task" true, and keeps
- * "what references this meeting?" a grep rather than an index.
- *
- * The chip a surface renders beside such a link is therefore a *rendering* of
- * the body, computed here at display time. It is the same argument `labels.ts`
- * makes for `overdue`/`p1`: the moment something writes the chip down, a file
- * rewrite (and an autosave commit) happens for a fact that was already in the
- * text, and the field becomes half machine-owned.
+ * body, with no frontmatter field, so "what references this meeting?" stays a
+ * grep. The chip beside such a link is computed at display time, for the same
+ * reason as `labels.ts`: writing it down would rewrite (and commit) a file for
+ * a fact already in the text.
  */
 
 export type GoogleLinkKind = 'mail' | 'calendar'
@@ -22,9 +17,8 @@ export interface GoogleLink {
   url: string
 }
 
-/** `[title](url)` — the only form Holi writes, and the only one worth chipping.
- *  A bare URL is left alone: it is not a link the user *named*, and decorating
- *  it would mean rewriting prose the author chose. */
+/** `[title](url)`: the only form Holi writes, and the only one worth chipping.
+ *  A bare URL is left alone: it is not a link the user *named*. */
 const MARKDOWN_LINK = /\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g
 
 /** Matched on host + path, never on the whole string: a URL mentioning
@@ -48,9 +42,7 @@ export function googleLinkKind(url: string): GoogleLinkKind | null {
 /**
  * Every Google link in a body, in the order they appear.
  *
- * Duplicates are kept: two links to the same thread in one file is a thing a
- * person can legitimately write, and silently collapsing them would make a
- * rendered body disagree with its source.
+ * Duplicates are kept, so a rendered body never disagrees with its source.
  */
 export function googleLinksIn(body: string): GoogleLink[] {
   const links: GoogleLink[] = []

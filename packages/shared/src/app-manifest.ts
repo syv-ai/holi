@@ -1,24 +1,17 @@
 /**
- * `app.yaml` — the file that makes a vault app real.
+ * `app.yaml`: the file that makes a vault app real.
  *
- * D74 rejected a manifest for slice 1 and was right to: nothing needed one, and
- * a `manifest.json` designed before a second field asked for it is a config
- * surface invented to be got wrong. This one has a different job. An app is
- * written file by file by an agent, and without a marker it registers the
- * moment its first byte lands — so a half-written app appears in the sidebar,
- * opens to a broken page, and the agent has no way to say "now". The manifest
- * is written **last**, and registration waits for it.
+ * An app is written file by file by an agent, and without a marker it would
+ * register the moment its first byte lands, so a half-written app would appear
+ * in the sidebar and open to a broken page. The manifest is written **last**,
+ * and registration waits for it.
  *
- * YAML rather than JSON on purpose: the vault's task frontmatter is already
- * YAML, it takes comments, and it does not fail on a trailing comma — which
- * matters for a file whose only job is being written correctly, unattended, by
- * a model.
+ * YAML rather than JSON: it takes comments and does not fail on a trailing
+ * comma, which matters for a file written unattended by a model.
  *
- * The parser is deliberately forgiving in one direction and strict in the
- * other. A typo inside the mapping costs you the label; it never costs you the
- * app, because the failure mode slice 1 proved worst is an app that silently
- * does not appear. Only text that is not a mapping at all — a list, a number, a
- * bare scalar — is refused, and that is a file which is not a manifest.
+ * The parser is forgiving inside the mapping: a typo costs the label, never the
+ * app, because an app that silently does not appear is the worst failure. Only
+ * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
 import { parse as parseYaml } from 'yaml'
 
@@ -44,8 +37,6 @@ const KNOWN_KEYS = ['name', 'icon', 'description'] as const
 export function parseAppManifest(yaml: string): AppManifest | null {
   let raw: unknown
   try {
-    // The same `yaml` parser `parseTaskFile` uses for frontmatter — one YAML
-    // implementation in this package, not two that disagree at the margins.
     raw = parseYaml(yaml)
   } catch {
     return {}

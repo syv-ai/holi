@@ -1,37 +1,28 @@
 /**
- * The task file format — `task.<name>.md`, YAML frontmatter + a markdown body
- * that *is* the task's description (features/tasks.md).
+ * The task file format: `task.<name>.md`, YAML frontmatter + a markdown body
+ * that *is* the task's description (docs/features/tasks.md).
  *
  * **The title is the body's first heading**, at any level, and there is no
- * `title:` key. A name written in frontmatter is a second place for the same
- * fact, and two places drift: the file said one thing and the card another the
- * moment anyone edited the document. `firstHeading` is the whole rule, the
- * filename is the fallback for a body that has none, and a `title:` left over
- * in an older file is carried through as an unknown key — visible in the
- * frontmatter editor, where deleting it is one click.
+ * `title:` key, so there is no second place for the name to drift from.
+ * `firstHeading` is the whole rule, and the filename is the fallback for a body
+ * that has none.
  *
- * The file is the task. There is no record behind it, so this module is not a
- * projection edge any more: it is simply how a `Task` is spelled on disk, and
- * both directions are total.
+ * The file is the task: there is no record behind it, so this module is simply
+ * how a `Task` is spelled on disk.
  *
  *   - parse:     file -> Task   (runs on every task in the vault, on every scan)
  *   - serialize: Task -> file   (a full rewrite; there is nothing to patch)
  *
- * Two rules make it forgiving where it used to be strict, and both are
- * deliberate:
+ * Two deliberately forgiving rules:
  *
  *   - **Frontmatter is optional, and so is every key in it.** The identity is
- *     the filename, so a file the agent created with one `Write` and no
- *     ceremony is a valid task. Requiring frontmatter would make the cheapest
- *     path the broken one.
- *   - **Unknown keys are ignored, never rejected.** Files written before D60
- *     carry `id`/`version`/`area`/`related`. Rejecting them would turn a
- *     migrated vault into a wall of unparseable tasks.
+ *     the filename, so a file the agent created with one `Write` is a valid task.
+ *   - **Unknown keys are carried, never rejected** (`Task.extra`).
  *
- * It still throws `TaskFileError` for a value that is *present and wrong* — a
- * status outside the vocabulary, a due date that is not a date. That distinction
- * is the whole design: absent means "not set", malformed means "you meant
- * something and it did not land", and only the second is worth interrupting for.
+ * It still throws `TaskFileError` for a value that is *present and wrong* (a
+ * status outside the vocabulary, a due date that is not a date): absent means
+ * "not set", malformed means "you meant something and it did not land", and
+ * only the second is worth interrupting for.
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
@@ -54,8 +45,8 @@ export class TaskFileError extends Error {
 }
 
 /** The filename marker. One glob (`**\/task.*.md`) finds every task in a vault,
- * and no note can become one by accident — which is exactly why the marker is
- * in the name rather than in frontmatter a copy-paste could carry. */
+ * and no note can become one by accident, which is why the marker is in the
+ * name rather than in frontmatter a copy-paste could carry. */
 export const TASK_PREFIX = 'task.'
 
 const STATUSES: TaskStatus[] = ['todo', 'doing', 'done']
@@ -66,7 +57,7 @@ const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat',
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** The keys this version understands. Everything else in the frontmatter lands in
- * `Task.extra` and is written back verbatim — see the field's own comment. */
+ * `Task.extra` and is written back verbatim. */
 const KNOWN_KEYS = new Set(['status', 'due', 'priority', 'tags', 'reminder', 'recurrence', 'order'])
 
 const SLUG_MAX = 60
@@ -107,10 +98,9 @@ export function isTaskFilePath(rel: string): boolean {
 /**
  * `projects/q2/task.fix-login.md` -> `Fix login`.
  *
- * The fallback title, for a body that carries no heading. Only
- * the first character is capitalised: the slug has already lost the original
- * casing, and title-casing every word would turn `task.fix-the-ci.md` into
- * "Fix The Ci", which reads worse than the sentence case it replaced.
+ * The fallback title, for a body that carries no heading. Only the first
+ * character is capitalised: the slug has lost the original casing, and
+ * title-casing would turn `task.fix-the-ci.md` into "Fix The Ci".
  */
 export function titleFromTaskPath(rel: string): string {
   const base = rel.split('/').at(-1) ?? ''
@@ -147,7 +137,7 @@ export function serializeTaskFile(
 
 /**
  * Parse a task file. `path` supplies the identity and the fallback title, so it
- * is required — a task read without knowing where it lives has no name.
+ * is required.
  */
 export function parseTaskFile(text: string, path: string): Task {
   const { yaml, body } = splitFrontmatter(text)
@@ -177,9 +167,8 @@ export function parseTaskFile(text: string, path: string): Task {
   }
 
   // The same readers a patch goes through (PATCH_READERS), so a file and an edit
-  // are held to one vocabulary. Absent *and* null both mean "not set" — a key
-  // written as `due:` with nothing after it is an empty field, not a malformed
-  // one, and only a value that is present and wrong is worth interrupting for.
+  // are held to one vocabulary. Absent *and* null both mean "not set": a key
+  // written as `due:` with nothing after it is an empty field, not a malformed one.
   for (const key of ['due', 'priority', 'tags', 'reminder', 'recurrence', 'order'] as const) {
     const value = front[key]
     if (value === undefined || value === null) continue
@@ -194,7 +183,7 @@ export function parseTaskFile(text: string, path: string): Task {
 
 /**
  * A field edit, on its way to a file. `undefined` for a key that is *present*
- * means "clear it" — which is why the caller must merge by spreading rather than
+ * means "clear it", which is why the caller must merge by spreading rather than
  * by testing each value for undefined.
  */
 export type TaskPatch = Partial<
@@ -209,10 +198,8 @@ export type TaskPatch = Partial<
  * the same vocabulary, so the board cannot write a file it would then refuse. */
 const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
   status: (v) => enumOf(v, STATUSES, 'status'),
-  // A stamp (D79): the time is optional, and its absence is meaningful — a task
-  // due `2026-08-25` is due that day, not at midnight on it. `parseStamp` rather
-  // than a fourth regex here: the validity rules (real calendar dates, hour and
-  // minute bounds) live in `dates.ts` and must not be restated.
+  // A stamp (D79): the time is optional, and its absence is meaningful. The
+  // validity rules live in `dates.ts` and must not be restated here.
   due: (v) => {
     if (typeof v !== 'string' || parseStamp(v) === null) {
       throw new TaskFileError(
@@ -229,19 +216,16 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     return v
   },
   reminder: (v) => {
-    // NOT checked against the stamp shape, and deliberately so — even though the
-    // picker is now the only thing that writes one. These readers are shared
-    // with `parseTaskFile` on purpose, so a strict reader here would make a
-    // hand-written `reminder: 1d` break the whole task into the broken strip.
-    // An unparseable reminder is inert (features/tasks.md),
-    // never an error: it costs a notification, not a task.
+    // Deliberately NOT checked against the stamp shape: these readers are shared
+    // with `parseTaskFile`, so a strict reader would make a hand-written
+    // `reminder: 1d` break the whole task. An unparseable reminder is inert
+    // (docs/features/tasks.md): it costs a notification, not a task.
     if (typeof v !== 'string') throw new TaskFileError('reminder must be a string')
     return v
   },
   recurrence: parseRecurrence,
   // Lenient, like `reminder` and for the same reason: these readers are shared
-  // with `parseTaskFile`, so throwing here would take a hand-written
-  // `order: first` and break the whole task into the broken strip over a sort
+  // with `parseTaskFile`, so throwing here would break a whole task over a sort
   // key. Junk reads as no rank, and no rank sorts last.
   order: (v) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined),
   description: (v) => {
@@ -259,9 +243,8 @@ const CLEARABLE = new Set(['due', 'priority', 'reminder', 'recurrence'])
  *
  * Deliberately **stricter than the file parser**: an unknown key throws here,
  * where the parser carries it into `Task.extra`. The parser must tolerate keys
- * from a hand-edited or migrated file; a patch comes from our own UI, so an
- * unrecognised key is a typo — and silently dropping it looks to the user like
- * the edit simply did not take.
+ * from a hand-edited file; a patch comes from our own UI, so an unrecognised
+ * key is a typo, and silently dropping it would look like the edit did not take.
  */
 export function parseTaskPatch(raw: unknown): TaskPatch {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -282,7 +265,7 @@ export function parseTaskPatch(raw: unknown): TaskPatch {
   return patch as TaskPatch
 }
 
-/** `yaml: null` means the file had no frontmatter fence at all — a valid task
+/** `yaml: null` means the file had no frontmatter fence at all: a valid task
  * whose body is the whole file. */
 export function splitFrontmatter(text: string): { yaml: string | null; body: string } {
   const normalized = text.replace(/\r\n/g, '\n')
@@ -345,9 +328,7 @@ function parseRecurrence(value: unknown): Recurrence {
 }
 
 /** Always spell out `interval`, and drop empty optionals, so a recurrence
- * serializes the same bytes whether or not the writer stated the default. (The
- * inherited comment here claimed it *dropped* a defaulted interval; it never
- * did — normalising by always writing it is what makes the output stable.) */
+ * serializes the same bytes whether or not the writer stated the default. */
 function compactRecurrence(rec: Recurrence): Record<string, unknown> {
   const out: Record<string, unknown> = { frequency: rec.frequency, interval: rec.interval }
   if (rec.weekdays?.length) out.weekdays = rec.weekdays

@@ -1,22 +1,14 @@
 /**
- * When a reminder fires, and whether it still owes a notification — pure
+ * When a reminder fires, and whether it still owes a notification: pure
  * functions, no clock read anywhere.
  *
  * **A reminder is a moment** (D79): a stamp, `YYYY-MM-DD` or
- * `YYYY-MM-DDTHH:MM`, and nothing else. It used to be a small grammar with a
- * relative form — `1d`, `2w`, meaning *N days before `due`, at 09:00* — and
- * that form is gone. It was never the thing anyone wanted stored: it could not
- * say "the evening before", it hid an anchor hour nobody chose, it was silently
- * inert on a task with no due date, and it made when-a-thing-fires depend on a
- * field you could edit somewhere else. The relative *offsets* survive as
- * presets in the picker, which resolve to a real datetime at the moment you
- * choose one — so the file says when the notification happens, in words a
- * person can read without a parser.
+ * `YYYY-MM-DDTHH:MM`, and nothing else. Relative offsets ("1 day before") are
+ * presets in the picker that resolve to a real datetime when chosen, so the
+ * file says when the notification happens and it never depends on `due`.
  *
- * A value that is not a stamp — a legacy `1d`, or a typo — is **inert, never an
- * error**. That rule predates this change and outlives it: the reader in
- * `task-file.ts` is deliberately lenient for the same reason, because a bad
- * reminder should cost you a notification, not a whole task file.
+ * A value that is not a stamp (a legacy `1d`, or a typo) is **inert, never an
+ * error**: a bad reminder should cost you a notification, not a whole task file.
  *
  * Callers pass `now`/timestamps in; timezone conversion happens at the
  * scheduler's edge, never here.
@@ -27,10 +19,8 @@ import type { TaskStatus } from './types'
 /**
  * The hour a **timeless** reminder fires at.
  *
- * All that is left of the old relative anchor, and now it only ever acts as a
- * fallback: it is never written into a file, so a reminder that says a time
- * says its own. Presets that know an hour write it explicitly, which is what
- * keeps the common case legible on disk.
+ * Only ever a fallback: it is never written into a file. Presets that know an
+ * hour write it explicitly.
  */
 export const ANCHOR_HOUR = 9
 
@@ -39,7 +29,7 @@ export const ANCHOR_HOUR = 9
  *
  * Null when the task is done, when there is no reminder, when the reminder is
  * not a stamp, or when it has already been delivered at or after its own fire
- * time. `remindedAtLocal` is the machine-local watermark — deliberately not in
+ * time. `remindedAtLocal` is the machine-local watermark, deliberately not in
  * the repo, because a write on every fire would be a commit on every fire.
  */
 export function pendingFireTime(
@@ -62,7 +52,7 @@ export function pendingFireTime(
  *
  * The delta is measured between the dues' *date halves*, so a due date that
  * carries a time of its own cannot drag the reminder off its hour. Null means
- * "leave the stored string alone" — an unparseable reminder or due is not
+ * "leave the stored string alone": an unparseable reminder or due is not
  * something to guess at.
  */
 export function shiftForRollover(reminder: string, oldDue: string, newDue: string): string | null {

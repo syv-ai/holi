@@ -17,16 +17,10 @@ export const freeCopyPath = (taken: (p: string) => boolean, path: string): strin
   /**
    * **A `.local.` marker counts as part of the extension** (D65).
    *
-   * Splitting on the last dot alone turned `notes.local.md` into
-   * `notes.local copy.md`, where `local` is followed by a space rather than a
-   * dot — so `isLocalOnlyPath` stopped matching it, `*.local.*` stopped
-   * ignoring it, and duplicating a personal file **published it**. Observed in
-   * a real vault: a duplicated `memory/x.local.md` was committed and listed in
-   * the shared memory index.
-   *
-   * Fixed here rather than by widening the marker, because the marker being one
-   * exact spelling is the whole of D65 — and because a "local" file git still
-   * commits is worse than no marker at all. The copy is `notes copy.local.md`.
+   * Splitting on the last dot alone would turn `notes.local.md` into
+   * `notes.local copy.md`, which no longer matches `*.local.*`, so duplicating
+   * a personal file would publish it. The copy is `notes copy.local.md`. Fixed
+   * here rather than by widening the marker: the marker is one exact spelling.
    */
   const localExt = /\.local\.[^.]+$/.exec(base)
   const dot = localExt !== null ? localExt.index : base.lastIndexOf('.')

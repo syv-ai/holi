@@ -2,31 +2,25 @@
  * `.holi/settings/icons.yaml` — the vault's per-path icon map, and the **only** place an
  * icon lives (D82).
  *
- * A note's own frontmatter was tried first and dropped: `icon:` in a note
- * travels with the file, which is genuinely better for a note, but it can only
- * serve things that HAVE frontmatter — not a folder, not a PDF, and not
- * `CLAUDE.md`/`AGENTS.md`, which are read verbatim as the agent's instructions,
- * so frontmatter there becomes prompt text. Local-only markdown could not carry
- * one either, since the scan files it outside `docs`. Two mechanisms with a
- * precedence rule between them cost more to explain than the travelling
- * property was worth, so there is one.
+ * Rejected: `icon:` in a note's frontmatter. It can only serve things that HAVE
+ * frontmatter (not a folder, not a PDF, and not `CLAUDE.md`/`AGENTS.md`, where
+ * frontmatter becomes prompt text), and two mechanisms with a precedence rule
+ * cost more than they were worth.
  *
- * Its layering is the theme's (D64): the committed file is and shared
- * with everyone who clones the vault, and a gitignored `icons.local.json` beside it
- * overrides it **per key**, so a one-line personal file changes one entry and
- * inherits the rest.
+ * Its layering is the theme's (D64): the committed file is shared with everyone
+ * who clones the vault, and a local-only `icons.local.yaml` beside it overrides
+ * it **per key**.
  *
- * **A path-keyed map can rot**, and that is accepted rather than answered: a
- * file moved by an agent or a terminal leaves an entry behind, but it degrades
- * to "no icon", never to lost content — and refusing to let anyone icon a
- * folder to avoid a cosmetic staleness is the worse trade.
+ * **A path-keyed map can rot**, and that is accepted: a file moved by an agent
+ * or a terminal leaves an entry behind, which degrades to "no icon", never to
+ * lost content.
  */
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml'
 import { vaultRelPath } from './path-safety'
 
-/** The committed icon map — rides the normal watcher/snapshot path. */
+/** The committed icon map. Rides the normal watcher/snapshot path. */
 export const ICONS_FILE = '.holi/settings/icons.yaml'
-/** The personal override — gitignored (`*.local.*`), like `theme.local.json`. */
+/** The personal override, local-only (`*.local.*`) like `theme.local.css`. */
 export const ICONS_LOCAL_FILE = '.holi/settings/icons.local.yaml'
 
 /**
@@ -37,23 +31,18 @@ export const ICONS_LOCAL_FILE = '.holi/settings/icons.local.yaml'
  *
  * Built with `new RegExp` rather than a literal on purpose: the `v` flag is
  * ES2024 and this package targets ES2022, so TypeScript rejects the literal
- * form. Every runtime that loads this — Node 24 for the main process and tests,
- * Chromium 140 in Electron 43 for the renderer — supports it.
+ * form. Every runtime that loads this (Node and Electron's Chromium) supports it.
  */
 const ONE_EMOJI = new RegExp('^\\p{RGI_Emoji}$', 'v')
 
 /**
  * A lone pictograph, with or without a selector after it.
  *
- * RGI is strictly correct that a bare text-presentation character (❤, ⚙)
- * is not an emoji — but it is one to whoever typed it, and copying a symbol
- * out of a web page is enough to produce the bare form. Refusing it in
- * silence is the same failure as refusing the picker's star, so the bar here
- * is what the person meant rather than what the registry ratified.
- *
- * `Extended_Pictographic` is the safe way to say that: it holds no letter,
- * digit or punctuation, so this widens the rule without letting a word in.
- * The single-character anchor is what keeps a sentence out.
+ * RGI says a bare text-presentation character (❤, ⚙) is not an emoji, but it
+ * is one to whoever typed it, and copying a symbol out of a web page produces
+ * the bare form. `Extended_Pictographic` holds no letter, digit or punctuation,
+ * so this widens the rule without letting a word in; the single-character
+ * anchor keeps a sentence out.
  */
 const ONE_PICTOGRAPH = /^\p{Extended_Pictographic}\ufe0f?$/u
 
@@ -68,11 +57,9 @@ const ONE_PICTOGRAPH = /^\p{Extended_Pictographic}\ufe0f?$/u
  *   - **text-presentation by default** (❤️ ▶️ ☑️): RGI has the `…U+FE0F` form,
  *     and the bare character is a dingbat rather than an emoji.
  *
- * So one test cannot cover both, and testing only the literal value is what
- * made picking a star from the palette leave the note on its markdown glyph.
- * Trying the value with its selectors stripped catches the first class without
- * loosening anything: stripping cannot turn a non-emoji into an emoji, since
- * what is left still has to match RGI on its own.
+ * So testing only the literal value would refuse the picker's star. Trying the
+ * value with its selectors stripped catches the first class without loosening
+ * anything: what is left still has to match RGI on its own.
  */
 export function isOneEmoji(value: string): boolean {
   return (
@@ -85,12 +72,12 @@ export function isOneEmoji(value: string): boolean {
 export interface ResolvedIconMap {
   /** Vault-relative path → a single emoji. Only valid entries survive. */
   icons: Record<string, string>
-  /** What was dropped and why. Surfaced rather than swallowed: an icon that
-   *  silently does not appear is the bug this feature already shipped once. */
+  /** What was dropped and why. Surfaced rather than swallowed, so an icon never
+   *  silently fails to appear. */
   warnings: string[]
 }
 
-/** Parse one file. Anything that is not a JSON object reads as "no entries" —
+/** Parse one file. Anything that is not a YAML mapping reads as "no entries":
  *  a half-written file must not throw a vault scan. */
 function parseMap(json: string | null): Record<string, unknown> {
   if (json === null || json.trim() === '') return {}
@@ -138,18 +125,12 @@ export function resolveIconMap(
 }
 
 /**
- * The committed map with one path set or cleared, as JSON text ready to write.
+ * The committed map with one path set or cleared, as YAML text ready to write.
  *
- * Pure so the "Edit icon" gesture is testable without a filesystem: the caller
- * reads `.holi/settings/icons.yaml`, hands the text here, and writes what comes back.
- *
- * Keys come out **normalized and sorted**. Sorted because this file is
- * committed and a map whose order followed the order things were iconed would
- * churn the diff for no reason; normalized because two spellings of one path
- * (`Clients` and `Clients/`) must not both sit in the file claiming the same
+ * Keys come out **normalized and sorted**: sorted so the committed diff does
+ * not churn, normalized so `Clients` and `Clients/` cannot both claim one
  * folder. A key that cannot be normalized is left exactly as it is rather than
- * dropped — this function edits one entry, and silently deleting a line
- * someone hand-wrote is not editing.
+ * dropped: this function edits one entry.
  */
 export function withIcon(json: string | null, path: string, emoji: string | null): string {
   const raw = parseMap(json)
@@ -174,9 +155,8 @@ export function withIcon(json: string | null, path: string, emoji: string | null
 
   const sorted: Record<string, unknown> = {}
   for (const key of Object.keys(out).sort()) sorted[key] = out[key]
-  // Rewritten whole rather than merged into the existing document, because the
-  // whole point of this function is that the map is SORTED and normalised —
-  // keeping the old node order would defeat it. The map has no generated
-  // commentary to lose: it is one entry per path, and a path explains itself.
+  // Rewritten whole rather than merged into the existing document, because
+  // keeping the old node order would defeat the sort. Hand-written comments in
+  // the file do not survive.
   return stringifyYaml(sorted, { lineWidth: 0 })
 }

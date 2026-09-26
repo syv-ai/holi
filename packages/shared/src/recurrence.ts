@@ -1,8 +1,8 @@
 /**
- * Recurrence roll-forward math — pure functions over stamps (`YYYY-MM-DD`, or
- * `YYYY-MM-DDTHH:MM`; the hour rides along and the arithmetic is on days),
- * ported from the old Rust `services/recurrence.rs` (D19). The server runs
- * this on `tasks.complete`; clients only display the results.
+ * Recurrence roll-forward math: pure functions over stamps (`YYYY-MM-DD`, or
+ * `YYYY-MM-DDTHH:MM`; the hour rides along and the arithmetic is on days)
+ * (D19). Main runs this when a task is completed; the renderer only displays
+ * the results.
  */
 import {
   DAY_MS,
@@ -15,17 +15,6 @@ import {
 } from './dates'
 import type { Recurrence, RecurrenceFrequency, RecurrenceWeekday } from './types'
 
-/**
- * Given a task's current due date and recurrence rule, return the next due
- * date, or null if the date can't be parsed or the next occurrence would be
- * past `endDate`.
- *
- * `currentDue` is a **stamp** (D79) — it may name an hour, and if it does, the
- * result names the same one. The arithmetic below runs on whole calendar days
- * and is untouched by that: the month and year helpers clamp on days (Jan 31 +
- * 1 month → Feb 28), so a time component would only be along for the ride and
- * would round-trip through the clamp badly. Split it off, step, put it back.
- */
 /** Weekday order, so a summary reads Mon-first however the list was written. */
 const WEEKDAY_ORDER: readonly RecurrenceWeekday[] = [
   'mon',
@@ -47,9 +36,8 @@ const FREQUENCY_NOUN: Record<RecurrenceFrequency, string> = {
 /**
  * A rule, in words: `every week on Mon, Wed`, `every 3 days until 2026-12-01`.
  *
- * For the one row that stands in for the whole nested map. A summary rather
- * than four rows because `recurrence` is one key, and a block that draws a row
- * per key cannot have one key quietly occupying four of them.
+ * For the one frontmatter row that stands in for the whole nested map:
+ * `recurrence` is one key, so it gets one row.
  */
 export function describeRecurrence(rule: Recurrence): string {
   const noun = FREQUENCY_NOUN[rule.frequency]
@@ -64,6 +52,15 @@ export function describeRecurrence(rule: Recurrence): string {
   return `${every}${days}${until}`
 }
 
+/**
+ * Given a task's current due date and recurrence rule, return the next due
+ * date, or null if the date can't be parsed or the next occurrence would be
+ * past `endDate`.
+ *
+ * `currentDue` is a **stamp** (D79): if it names an hour, the result names the
+ * same one. The time is split off before stepping and put back after, because
+ * the month and year helpers clamp on days (Jan 31 + 1 month → Feb 28).
+ */
 export function nextDue(currentDue: string, rule: Recurrence): string | null {
   const time = stampTime(currentDue)
   const date = stampDate(currentDue)
@@ -124,7 +121,7 @@ export function nextDueCatchup(currentDue: string, rule: Recurrence, today: stri
     if (next === null) return null
     // A timed `next` compared against a date-only `today` is lexicographically
     // correct and looks like a bug: '2026-04-14T14:00' >= '2026-04-14' is true,
-    // which is the answer we want — a task due later today has caught up. Do
+    // which is the answer we want (a task due later today has caught up). Do
     // not "fix" this into a stamp comparison.
     if (next >= today) return next
     cursor = next
