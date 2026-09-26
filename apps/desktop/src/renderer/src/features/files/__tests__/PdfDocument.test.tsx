@@ -4,6 +4,7 @@
  * it was given, hands `onReady` a registry, and binds a keydown listener on
  * `document` from an effect. What a PDF looks like is the library's business.
  */
+import { DRAWER_WIDTH } from '@/lib/drawer'
 import { Provider, createStore } from 'jotai'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { emptyVaultSnapshot } from '@holi/shared'
@@ -418,7 +419,10 @@ test('puts Signatures on the top bar', async () => {
   )
   expect(seam.config?.icons).toHaveProperty('holi-lock')
   // The same merge widens the comments panel.
-  expect(seam.mergeSchema.mock.calls[0]![0]).toHaveProperty('sidebars.comment-panel.width', '360px')
+  expect(seam.mergeSchema.mock.calls[0]![0]).toHaveProperty(
+    'sidebars.comment-panel.width',
+    `${DRAWER_WIDTH.default}px`,
+  )
   // The comment tool moved to the top bar, so the Annotate bar drops it.
   const annotate = partial.toolbars['annotation-toolbar']!.items.find(
     (i) => i.id === 'annotation-tools',

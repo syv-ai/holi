@@ -1,3 +1,4 @@
+import { DRAWER_WIDTH } from '../src/renderer/src/lib/drawer'
 import { THEME_TOKENS } from '@holi/shared'
 import { describe, expect, it } from 'vitest'
 import {
@@ -13,6 +14,7 @@ import {
   PDF_SIGNATURE_FONT_FAMILIES,
   PDF_SIDEBAR_MOTION_CSS,
   PDF_SIDEBAR_WIDTHS,
+  PDF_SIDEBAR_FORM_CSS,
   PDF_SIGNATURE_NOTE,
   PDF_TOOLBAR_CSS,
   PDF_VIEWPORT_CSS,
@@ -426,17 +428,30 @@ describe('PDF_SIDEBAR_MOTION_CSS', () => {
     expect(PDF_SIDEBAR_MOTION_CSS).not.toMatch(/\d+m?s\b/)
   })
 
-  it("knows each sidebar's width, the viewer's 250px unless Holi widened it", () => {
-    expect(PDF_SIDEBAR_MOTION_CSS).toContain('[data-sidebar-id] { --holi-sidebar-width: 250px; }')
+  it('slides each sidebar exactly its own width, the drawer width', () => {
+    const w = `${DRAWER_WIDTH.default}px`
+    expect(PDF_SIDEBAR_MOTION_CSS).toContain(`[data-sidebar-id] { --holi-sidebar-width: ${w}; }`)
     expect(PDF_SIDEBAR_MOTION_CSS).toContain(
-      '[data-sidebar-id="comment-panel"] { --holi-sidebar-width: 360px; }',
+      `[data-sidebar-id="comment-panel"] { --holi-sidebar-width: ${w}; }`,
     )
   })
 })
 
 describe('PDF_SIDEBAR_WIDTHS', () => {
-  it('widens the comments panel and no other', () => {
-    expect(PDF_SIDEBAR_WIDTHS).toEqual({ 'comment-panel': { width: '360px' } })
+  it('opens every sidebar at the drawer width, like every drawer in Holi', () => {
+    const widths = Object.values(PDF_SIDEBAR_WIDTHS).map((s) => s.width)
+    expect(Object.keys(PDF_SIDEBAR_WIDTHS)).toContain('comment-panel')
+    expect(Object.keys(PDF_SIDEBAR_WIDTHS)).toContain('sidebar-panel')
+    expect(new Set(widths)).toEqual(new Set([`${DRAWER_WIDTH.default}px`]))
+  })
+})
+
+describe('PDF_SIDEBAR_FORM_CSS', () => {
+  it('draws a sidebar header and edge as a drawer does, from the edge token', () => {
+    expect(PDF_SIDEBAR_FORM_CSS).toMatch(/min-height: 44px/)
+    expect(PDF_SIDEBAR_FORM_CSS).toMatch(/font-size: 12px/)
+    expect(PDF_SIDEBAR_FORM_CSS.match(/var\(--drawer-edge\)/g)?.length).toBe(3)
+    expect(PDF_SHADOW_CSS).toContain(PDF_SIDEBAR_FORM_CSS)
   })
 })
 

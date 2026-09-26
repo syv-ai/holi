@@ -11,6 +11,7 @@
  * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
  * consumes this, `test/pdf-viewer-config.test.ts` pins it.
  */
+import { DRAWER_WIDTH } from './drawer'
 import { ASK_AGENT_PDF, ASK_AGENT_THREAD } from './pdf-comments'
 import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
 
@@ -429,22 +430,37 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
  */
 export const PDF_TOOLBAR_CSS = `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
 
+/** Every sidebar the viewer's schema declares, left and right. */
+const PDF_SIDEBAR_IDS = [
+  'sidebar-panel',
+  'annotation-panel',
+  'rubber-stamp-panel',
+  'signature-panel',
+  'search-panel',
+  'widget-edit-panel',
+  'comment-panel',
+  'redaction-panel',
+] as const
+
 /**
  * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
  * gives every sidebar a `width` (250px by default) and merges a partial into
- * each one field by field. Comments get room for a sentence to a line; the
- * rest keep the viewer's width.
+ * each one field by field. Every one opens at the width every drawer in Holi
+ * does (`DRAWER_WIDTH`). The viewer offers no way to drag one wider, so unlike
+ * a `DrawerShell` these do not resize; adding a handle would mean writing into
+ * the library's DOM against its own layout.
  */
-export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = {
-  'comment-panel': { width: '360px' },
-}
+export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = Object.fromEntries(
+  PDF_SIDEBAR_IDS.map((id) => [id, { width: `${DRAWER_WIDTH.default}px` }]),
+)
 
 /** The class on the stand-in that plays a closing sidebar's slide out
  *  (`features/files/pdf-sidebar-leave.ts`). */
 export const PDF_SIDEBAR_LEAVING = 'holi-sidebar-leaving'
 
-/** The width the viewer gives a sidebar Holi does not widen. */
-const VIEWER_SIDEBAR_WIDTH = '250px'
+/** The width for a sidebar the list above does not name, should the viewer
+ *  add one: the drawer width too, so the slide is never the wrong distance. */
+const VIEWER_SIDEBAR_WIDTH = `${DRAWER_WIDTH.default}px`
 
 /**
  * A sidebar slides its whole width in from the edge it docks on, and back out
@@ -466,6 +482,23 @@ const VIEWER_SIDEBAR_WIDTH = '250px'
  * by a stand-in (`PDF_SIDEBAR_LEAVING`). Keyframe names do not reach into a
  * shadow root, so they are declared here; the motion tokens do.
  */
+/**
+ * A sidebar's header and edge, drawn as a `DrawerShell`'s are: a 44px row with
+ * the title at 12px medium, a rule under it and a line on the inner edge, both
+ * `--drawer-edge`, which is clear unless a vault theme draws it. Two shapes of
+ * header, a padded row holding the `h2` (search, signatures, redaction) and
+ * the same with the `h2` in a flex row (comments). The edge rules carry
+ * `!important` and one class more to outrank the borderless rule's.
+ */
+const PDF_SIDEBAR_HEADER = ':is(.border-b.p-3, .border-b.p-4):has(> h2, > .flex > h2)'
+export const PDF_SIDEBAR_FORM_CSS = [
+  `[data-sidebar-id] ${PDF_SIDEBAR_HEADER} { display: flex; align-items: center; min-height: 44px; padding-block: 0; padding-inline: 12px; border-bottom-color: ${v('drawer-edge')} !important; }`,
+  `[data-sidebar-id] ${PDF_SIDEBAR_HEADER} > .flex { flex: 1; min-width: 0; }`,
+  `[data-sidebar-id] ${PDF_SIDEBAR_HEADER} h2 { margin: 0; font-size: 12px; line-height: 16px; font-weight: 500; color: ${v('foreground')}; }`,
+  `[data-sidebar-id].border-r.border-r { border-right-color: ${v('drawer-edge')} !important; }`,
+  `[data-sidebar-id].border-l.border-l { border-left-color: ${v('drawer-edge')} !important; }`,
+].join('\n')
+
 export const PDF_SIDEBAR_MOTION_CSS = [
   `[data-sidebar-id] { --holi-sidebar-width: ${VIEWER_SIDEBAR_WIDTH}; }`,
   ...Object.entries(PDF_SIDEBAR_WIDTHS).map(
@@ -519,6 +552,7 @@ export const PDF_SHADOW_CSS = [
   PDF_SIGNATURE_DIALOG_CSS,
   PDF_TOOLBAR_CSS,
   PDF_SIDEBAR_MOTION_CSS,
+  PDF_SIDEBAR_FORM_CSS,
   PDF_COMMENT_FIELD_CSS,
 ].join('\n')
 
