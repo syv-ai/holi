@@ -14,7 +14,7 @@ import { vaultSettingsAtom } from '../settings'
 import { VAULT_SETTING_DEFAULTS, type ResolvedVaultSettings } from '@holi/shared'
 
 /** A controllable `prefers-color-scheme`. jsdom implements no media queries, and
- *  `test/setup.dom.ts` installs a stub that always answers "no match" — which
+ *  `test/setup.dom.ts` installs a stub that always answers "no match", which
  *  would silently mean "the OS is light" in every test here. */
 let listeners: ((event: MediaQueryListEvent) => void)[] = []
 let systemDark = false
@@ -110,8 +110,7 @@ test('system follows the OS at mount', async () => {
 })
 
 test('system follows the OS while the app is running', async () => {
-  // The whole reason there is a listener: without it the app follows the OS only
-  // at launch, which reads as a bug the first time a Mac switches at sunset.
+  // Without the listener the app follows the OS only at launch.
   mount('system')
   await waitFor(() => expect(stamped()).toBe('light'))
 

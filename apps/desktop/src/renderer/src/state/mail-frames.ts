@@ -1,27 +1,18 @@
 /**
  * The documents a thread's messages are actually rendered into.
  *
- * A mail body lives in its own sandboxed frame ([[mail-frame]]), which is what
- * keeps a stranger's markup out of the app's document — and it is also why
- * "find in this thread" needs a channel that did not exist. The frames are
- * created three components below the thing that wants to search them, and the
- * useful handle is a `Document`, not a React value.
+ * A mail body lives in its own sandboxed frame, so "find in this thread" needs
+ * the frames' `Document`s, which are created three components below the search.
+ * A frame publishes its document here on write and withdraws it on cleanup.
+ * **Order is not this module's business**: the caller looks each message up by
+ * id, so results follow the conversation rather than mount order.
  *
- * So a frame publishes its document here on write and withdraws it on cleanup,
- * and the search reads the registry. **Order is deliberately not this module's
- * business**: the caller walks the thread's messages and looks each one up by
- * id, so the order of results is the order of the conversation rather than
- * whatever order the frames happened to mount in.
- *
- * **The frame is same-origin and carries no `allow-scripts`** — reaching into
- * its document is the app's own script touching an inert page, which is the
- * same thing `SandboxedHtml` already does to size it and to catch link clicks.
- * Nothing here widens what the frame can do.
+ * **The frame is same-origin and carries no `allow-scripts`**: reaching into
+ * its document is the app's own script touching an inert page, as
+ * `SandboxedHtml` already does. Nothing here widens what the frame can do.
  *
  * A version counter rather than a snapshot of the map: the documents are
- * mutable objects and a "snapshot" of them would be a lie. Subscribers re-read
- * the registry when the version moves, which is the only honest contract for a
- * store of live DOM handles.
+ * mutable, so subscribers re-read the registry when the version moves.
  */
 import { useSyncExternalStore } from 'react'
 
@@ -37,11 +28,10 @@ function announce(): void {
 /**
  * Publish a frame's document, and hand back the withdrawal.
  *
- * Withdrawal is conditional on still being the registered document: a frame
- * that is replaced — which is exactly what "load images" does, since a document
- * cannot shed a CSP — runs the new effect before React runs the old cleanup, so
- * an unconditional delete would remove the *new* document a moment after it
- * arrived.
+ * Withdrawal is conditional on still being the registered document: a replaced
+ * frame ("load images", since a document cannot shed a CSP) runs the new effect
+ * before React runs the old cleanup, so an unconditional delete would remove the
+ * *new* document.
  */
 export function registerMailFrame(key: string, document_: Document): () => void {
   frames.set(key, document_)
@@ -64,12 +54,9 @@ function subscribe(listener: () => void): () => void {
 }
 
 /**
- * A number that changes whenever the set of live frame documents does.
- *
- * The value means nothing on its own — it is a signal to go and read the
- * registry again. It is what makes a search survive a frame being rebuilt
- * underneath it: unblocking images or switching theme rewrites the document,
- * and marks that were in the old one are simply gone.
+ * A number that changes whenever the set of live frame documents does: a signal
+ * to re-read the registry. It lets a search survive a frame being rebuilt
+ * underneath it (unblocking images or switching theme rewrites the document).
  */
 export function useMailFrameVersion(): number {
   return useSyncExternalStore(
@@ -79,13 +66,8 @@ export function useMailFrameVersion(): number {
   )
 }
 
-/**
- * Back to an empty registry, for a test.
- *
- * Module state on a store the whole suite shares, so a test that mounted a
- * message would otherwise hand the next one a document belonging to a component
- * that has since unmounted.
- */
+/** Back to an empty registry, for a test: this is module state the whole suite
+ *  shares. */
 export function resetMailFramesForTests(): void {
   frames.clear()
   announce()

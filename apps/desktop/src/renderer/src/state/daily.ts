@@ -1,13 +1,12 @@
 /**
- * Daily notes, renderer side — path-based, personal-gated, offline-complete.
+ * Daily notes, renderer side (`docs/features/daily-notes.md`).
  *
- * The correctness boundary is no longer a server's unique index (D45, gone): the
- * main proc does a deterministic if-not-exists-write, so two of your devices
- * mint an identical blob at an identical path and git merges them silently.
+ * Main does a deterministic if-not-exists-write, so two of your devices mint an
+ * identical blob at an identical path and git merges them silently.
  *
- * This layer is now the *mechanism* only: mint today's daily and land on it.
- * **Whether** to is `dailyNotes` in the vault's settings, and it is asked by
- * `state/landing.ts` — which is what lets ⌘⇧D still mint one on demand in a
+ * This layer is the *mechanism* only: mint today's daily and land on it.
+ * **Whether** to is `dailyNotes` in the vault's settings, asked by
+ * `state/landing.ts`, which is what lets ⌘⇧D still mint one on demand in a
  * vault that keeps no daily notes automatically.
  */
 import { atom } from 'jotai'
@@ -22,23 +21,17 @@ import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from 
  * The path today's daily note *would* have, whether or not it exists.
  *
  * A path rather than a lookup: the file tree marks the row that matches, so an
- * absent daily simply marks nothing — which is the honest rendering in a shared
- * vault, where there is never one (§Daily notes are personal-vault-only).
- * `todayAtom` is the client's own local date, because nothing else computes
- * "today" (`features/daily-notes.md`).
+ * absent daily simply marks nothing. `todayAtom` is the client's own local date.
  */
 export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)))
 
 /**
  * Mint today's daily if it is not there yet, and say where it is. Lands on
- * nothing — that is the caller's business.
+ * nothing: that is the caller's business.
  *
- * **Split from the landing on purpose (FR-4).** A vault that keeps daily notes
- * keeps them whether or not you open on one: minting is a property of
- * `dailyNotes`, and `landing` only decides what you are looking at. Fold the two
- * back together and a vault that lands on its board quietly stops journalling —
- * which is a hole in the record that only shows up weeks later, when you go
- * looking for a day you know you worked.
+ * **Split from the landing on purpose.** Minting is a property of `dailyNotes`,
+ * and `landing` only decides what you are looking at. Folded together, a vault
+ * that lands on its board would quietly stop journalling.
  */
 export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
   const remote = get(activeRemoteAtom)
@@ -49,14 +42,12 @@ export const ensureTodaysDailyAtom = atom(null, async (get, set): Promise<string
 })
 
 /**
- * Get-or-create today's daily for the active vault and land on it (FR-4).
+ * Get-or-create today's daily for the active vault and land on it.
  * Returns the path, or null when there is no active vault. Opens the note
- * **pinned** — you are here to write in it, not browse it.
+ * **pinned**: you are here to write in it, not browse it.
  *
- * **Unconditional.** It used to refuse in a shared vault, which meant ⌘⇧D was
- * silently dead there; the policy now lives one layer up, so this is the verb
- * and `landing` decides when to say it. Anything calling this is asking for
- * today's note on purpose.
+ * **Unconditional.** The policy lives one layer up, in `landing`; anything
+ * calling this is asking for today's note on purpose.
  */
 export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string | null> => {
   const path = await set(ensureTodaysDailyAtom)
@@ -67,13 +58,12 @@ export const openTodaysDailyAtom = atom(null, async (get, set): Promise<string |
 })
 
 /**
- * Archive prior-day notes + GC stubs (FR-5), then commit — once. The sweep is
- * the one place a background process rewrites the vault's shape, so it lands as
- * a single deliberate commit rather than scattered autosaves (§Archiving).
+ * Archive prior-day notes + GC stubs, then commit once. The sweep is the one
+ * place a background process rewrites the vault's shape, so it lands as a
+ * single deliberate commit rather than scattered autosaves.
  *
- * No-op when the vault keeps no daily notes, and when nothing changed. Off means
- * "stop doing this behind my back", so the archiving stops with the minting —
- * and resumes where it left off if the setting is turned back on.
+ * No-op when the vault keeps no daily notes, and when nothing changed: the
+ * archiving stops with the minting, and resumes if the setting is turned back on.
  */
 export const sweepDailyAtom = atom(null, async (get, set) => {
   const remote = get(activeRemoteAtom)

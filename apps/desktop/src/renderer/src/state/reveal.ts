@@ -3,21 +3,15 @@
  *
  * The explorer's expansion, selection and focus live inside `FileTree`'s
  * headless-tree instance, which nothing outside the component can reach. So
- * revealing is a request rather than a call: anywhere in the app writes a path
- * here, and `FileTree` — the only thing that *can* drive the tree — answers it.
+ * revealing is a request: anywhere writes a path here, and `FileTree` answers.
  *
- * The nonce is the whole reason this is not just a path. A settled atom value
- * makes the second reveal of the same file a no-op, and "reveal it again" is the
- * common case: click Edit Source twice, or reveal the file you are already on.
- * Bumping a counter on every request gives the effect an edge to fire on even
- * when the path has not changed.
+ * The nonce gives the effect an edge to fire on when the same path is revealed
+ * again (click Edit Source twice), which a settled atom value would not.
  *
  * The request is deliberately never cleared. `FileTree` also uses the standing
- * path to keep a hidden file (`.holi/apps/<id>/index.html`) visible in a tree
- * whose show-hidden toggle is off — the row has to survive the reveal that
- * created it, or it would vanish from under the selection. One revealed hidden
- * path at a time: a second reveal replaces the first, which keeps the exception
- * bounded rather than letting the tree silently accumulate hidden rows.
+ * path to keep a hidden file (`.holi/apps/<id>/index.html`) visible while
+ * show-hidden is off, or it would vanish from under the selection. One revealed
+ * hidden path at a time, so the exception stays bounded.
  */
 import { atom } from 'jotai'
 

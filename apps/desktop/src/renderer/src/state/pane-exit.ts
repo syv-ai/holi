@@ -7,14 +7,11 @@
  * so the wait and the CSS cannot drift, and the pane is marked `leaving`
  * meanwhile. Under reduced motion there is nothing to wait for.
  *
- * **Both ways out of a split come through here.** The close-pane button is the
- * obvious one; closing the LAST TAB of a pane also unsplits, and that is the
- * one people actually do — an exit only the button played would look broken
- * more often than it looked right.
+ * **Both ways out of a split come through here**: the close-pane button, and
+ * closing the LAST TAB of a pane, which is the one people actually do.
  *
- * State rather than Shell's own `useState` (D102): a command table has to be
- * able to close a tab from a key, the menu and the palette alike, and a
- * component-local timer is reachable from none of them.
+ * State rather than Shell's own `useState` (D102): a command closes a tab from
+ * a key, the menu and the palette alike, none of which reach a component timer.
  */
 import { atom } from 'jotai'
 import { motionDurationMs, prefersReducedMotion } from '../lib/motion'

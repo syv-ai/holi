@@ -3,12 +3,7 @@
  *
  * The 4-act ritual (greeting → naming → settings → threshold) is driven entirely
  * by this reducer; `OnboardingRitual.tsx` is a thin view over it. Keeping the
- * flow pure lets it be unit-tested without a DOM (Vitest runs in `node` env).
- *
- * **Act 3 is the settings step and the threshold moved to 4.** Anything that
- * used to mean "the last act" by saying `3` now means the settings step — the
- * two are no longer the same number, and the assertion reads identically either
- * way.
+ * flow pure lets it be unit-tested without a DOM.
  */
 import { VAULT_SETTING_DESCRIPTORS, normaliseAnswers } from '@holi/shared'
 
@@ -28,8 +23,7 @@ export interface OnboardingState {
   submitting: boolean
   /** The settings act's answers, keyed by `VaultSettingDescriptor.key`. Seeded
    *  from the descriptors' own defaults, so clicking straight through writes
-   *  exactly what the seed already wrote rather than a second opinion about
-   *  what a vault should default to. */
+   *  exactly what the seed already wrote. */
   settings: Record<string, unknown>
 }
 
@@ -59,13 +53,12 @@ export const canAdvance = (s: OnboardingState): boolean => {
   if (s.act === 1) return true
   if (s.act === 2) return slugify(s.name).length > 0
   // The settings act always advances: every row carries a default, so there is
-  // nothing to fill in and nothing to block on. Act 4 is the floor of "there is
-  // nowhere further".
+  // nothing to fill in and nothing to block on. Act 4 is the last.
   if (s.act === 3) return true
   return false
 }
 
-/** True on the form at the starting act — the point where `back` dismisses. */
+/** True on the form at the starting act: the point where `back` dismisses. */
 export const atFloor = (s: OnboardingState, mode: Mode): boolean =>
   s.view === 'form' && s.act === startingAct(mode)
 
@@ -111,16 +104,14 @@ export const reduce = (s: OnboardingState, a: Action): OnboardingState => {
     case 'submitStart':
       return { ...s, submitting: true, error: null }
     case 'created':
-      // The repo now exists and is pushed — advance to the SETTINGS act, which
-      // is where its settings files get the user's answers merged over the
-      // seed's defaults. The threshold is one further on (act 4) and is what
-      // can truthfully say the repo exists. Only reached from act 2 (naming),
-      // after create.
+      // The repo now exists and is pushed: advance to the SETTINGS act, where
+      // its settings files get the user's answers merged over the seed's
+      // defaults. Only reached from act 2 (naming), after create.
       return { ...s, act: 3, submitting: false, error: null }
     case 'failInPlace':
       // A submit failure (create, or a join adopt) stays exactly where it
-      // happened — the naming form or the picker — with the message shown,
-      // rather than navigating away, which reads as an unexplained reset.
+      // happened, with the message shown, rather than navigating away, which
+      // reads as an unexplained reset.
       return { ...s, submitting: false, error: a.error }
     default:
       return s

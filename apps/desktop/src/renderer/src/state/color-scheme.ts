@@ -1,16 +1,11 @@
 /**
  * Light, dark, or whatever the OS says, and the `data-theme` stamp that makes it
- * real.
+ * real. `:root` in `index.css` carries the dark values and
+ * `[data-theme='light']` overrides them.
  *
- * The app has been dark-first and unstamped since it was written: `:root` in
- * `index.css` carries the dark values and `[data-theme='light']` overrides them,
- * but nothing ever wrote the attribute, so the light half of the stylesheet has
- * never been reachable. This is the switch `state/theme.ts` predicted.
- *
- * **Both modes are stamped explicitly.** Unstamped happens to resolve dark, so
- * "stamp only for light" would work by accident. It would also leave
- * `color-scheme:` unset, which is what paints the native window background
- * behind the app, and that shows as a white flash at the edges of a dark window.
+ * **Both modes are stamped explicitly.** Unstamped happens to resolve dark, but
+ * would leave `color-scheme:` unset, which paints the native window background
+ * and shows as a white flash at the edges of a dark window.
  *
  * The setting lives in `.holi/settings/app.local.yaml` and so is per vault and per
  * machine. Until a vault is open there is nothing to read, and the default
@@ -55,8 +50,7 @@ export function useColorScheme(): void {
   }, [cached, setScheme])
 
   // The OS preference, and every change to it for as long as the app runs.
-  // Without the listener the app would follow the OS only at launch, which
-  // reads as a bug the first time someone's Mac switches at sunset.
+  // Without the listener the app would follow the OS only at launch.
   useEffect(() => {
     const query = window.matchMedia(DARK_QUERY)
     setSystemPrefersDark(query.matches)

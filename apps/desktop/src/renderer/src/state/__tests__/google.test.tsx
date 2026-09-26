@@ -1,10 +1,7 @@
 /**
- * The connected-Google account, shared.
- *
- * It exists because two places need the same answer and must not disagree:
- * vault settings, which changes it, and the shell, which decides whether the
- * agenda/mail chips exist at all. A component-local `useState` in the settings
- * panel left the shell showing chips for an account nobody was signed into.
+ * The connected-Google account, shared: vault settings, which changes it, and
+ * the shell, which decides whether the agenda/mail chips exist at all, must not
+ * disagree.
  */
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -17,7 +14,7 @@ vi.mock('../../lib/trpc', () => ({
   trpc: {
     google: {
       status: { query: () => statusMock() },
-      // D87: the same read now also asks which accounts exist and which one
+      // D87: the same read also asks which accounts exist and which one
       // this vault uses. Mocked here so these stay about the shared atom.
       accounts: { query: () => accountsMock() },
     },
@@ -71,7 +68,7 @@ test('reports no account when nothing is connected', async () => {
 
 test('treats an unreachable connector as not connected, not as unknown forever', async () => {
   // The `google.*` procedures refuse outright when the connector is not
-  // configured. That is a normal state, not an error the user can act on — and
+  // configured. That is a normal state, not an error the user can act on, and
   // leaving it `undefined` would re-query on every render.
   statusMock.mockRejectedValue(new Error('the Google connector is not configured'))
 
@@ -93,8 +90,7 @@ test('asks once, however many components read it', async () => {
 
 test('carries the scopes a stored grant is missing — connected is not the same as sufficient', async () => {
   // The state a widened GOOGLE_SCOPES produces: the grant still works, mail
-  // still lists, and only the new calls fail. Nothing else in the UI can tell
-  // that apart from a broken feature.
+  // still lists, and only the new calls fail.
   statusMock.mockResolvedValue({
     account: { email: 'ada@syv.ai' },
     missingScopes: ['https://www.googleapis.com/auth/gmail.modify'],

@@ -2,10 +2,9 @@
  * Panel layouts, and the two rules that decide where one is filed and whether it
  * is written at all.
  *
- * Dragging itself is not testable here — `react-resizable-panels` works from
- * measured geometry and jsdom measures nothing. What *is* testable is everything
- * around the drag: which store a layout lands in, and the `isUserInteraction`
- * guard, which is the rule that has already gone wrong once (Shell.tsx:230).
+ * Dragging itself is not testable here: `react-resizable-panels` works from
+ * measured geometry and jsdom measures nothing. What *is* testable is which
+ * store a layout lands in, and the `isUserInteraction` guard.
  */
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test } from 'vitest'
@@ -52,10 +51,9 @@ test('a drag on an account-wide split is stored without a vault in the key', () 
 
   binding.onLayoutChanged({ list: 30, reader: 70 }, DRAG)
 
-  // Mail and the agenda are account-wide singletons (D67) — the same two panes
-  // whichever vault is open, and open at all with no vault. Filing the split
+  // Mail and the agenda are account-wide singletons (D67). Filing the split
   // under a remote would remember a different width per vault for identical
-  // content, and remember nothing at all before the first vault is added.
+  // content, and nothing at all with no vault open.
   expect(store.get(globalPanelLayoutsAtom)).toEqual({ mail: { list: 30, reader: 70 } })
   expect(store.get(panelLayoutsByVaultAtom)).toEqual({})
 })
@@ -74,8 +72,7 @@ test('an account-wide split ignores a programmatic reflow', () => {
 
   // Mounting a group, or opening any sibling panel in it, makes the library
   // recompute every size and report it with `isUserInteraction: false`. Saving
-  // that overwrites the width the user actually dragged — the bug already
-  // commented at Shell.tsx:230, now guarded on this path too.
+  // that overwrites the width the user actually dragged.
   expect(store.get(globalPanelLayoutsAtom).mail).toEqual({ list: 30, reader: 70 })
 })
 
@@ -89,7 +86,7 @@ test('the account-wide layout is restored whether or not a vault is open', () =>
     </Provider>,
   )
 
-  // No remote is set anywhere in this test — that is the point.
+  // No remote is set anywhere in this test: that is the point.
   expect(binding.defaultLayout).toEqual({ list: 30, reader: 70 })
 })
 
@@ -104,8 +101,6 @@ test('a vault-scoped split still refuses to save without a vault', () => {
 
   binding.onLayoutChanged({ nav: 20, editor: 80 }, DRAG)
 
-  // Unchanged behaviour, asserted because the account-wide sibling now sits
-  // beside it: the workspace row genuinely is per-vault, and has no key to
-  // write under until a vault is open.
+  // The per-vault binding has no key to write under until a vault is open.
   expect(store.get(panelLayoutsByVaultAtom)).toEqual({})
 })

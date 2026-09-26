@@ -1,5 +1,5 @@
 /**
- * The agent turn under review (D88, toward #4).
+ * The agent turn under review (D88).
  *
  * A turn is a commit range, so everything here is a question asked of git at the
  * moment it is asked. What that leaves worth testing is the ordering: a turn
@@ -71,8 +71,7 @@ test('takes the newest turn PER SESSION, which is the one each tab shows', async
 })
 
 test('skips a record from before a vault could run two sessions', async () => {
-  // It names no session, so there is no tab for its chip to sit under. One turn
-  // from any session puts that right.
+  // It names no session, so there is no tab for its chip to sit under.
   const s = store()
   list.mockResolvedValue([{ base: 'x', end: 'y', at: '2026-09-08T10:00:00Z' }])
   await s.set(loadLatestTurnsAtom)
@@ -153,8 +152,7 @@ test('reverting writes the resolved text and re-asks what is left', async () => 
   files.mockClear()
   await s.set(revertFileAtom, { path: 'a.md', text: 'mine\n' })
   expect(revert).toHaveBeenCalledWith({ remote: REMOTE, path: 'a.md', text: 'mine\n' })
-  // The revert just made a commit of its own, so the range's file list is stale
-  // at the one moment it is being looked at.
+  // The revert just made a commit of its own, so the range's file list is stale.
   expect(files).toHaveBeenCalled()
 })
 
@@ -184,11 +182,8 @@ test('a reset clears the last turn off the screen', async () => {
 })
 
 test('does not flush the open buffer before reverting', () => {
-  // Where this parts company with History's Restore. Restore replaces a file
-  // with an older version, so the current state is being discarded on purpose
-  // and a flush plus a clean reload is coherent. A turn revert takes back what
-  // the AGENT did; the reader's own unsaved edits are not part of that, and
-  // flushing would write them to disk only to overwrite them with the resolved
-  // text. Left alone, `decideReload` 3-way merges them instead.
+  // Unlike History's Restore: a turn revert takes back what the AGENT did, and
+  // flushing would write the reader's unsaved edits to disk only to overwrite
+  // them. Left alone, `decideReload` 3-way merges them instead.
   expect(flushAllBuffers).not.toHaveBeenCalled()
 })

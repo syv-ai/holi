@@ -4,11 +4,9 @@
  * `localStorage` rather than `.holi/settings/app.local.yaml`: that file is a
  * settings document the user or the agent authors, its validator refuses keys
  * Holi has not declared, and every write regenerates the whole file. A list
- * that changes on every tab switch is UI state, the same kind of thing as the
- * panel layouts and the show-hidden flag beside it in storage.
+ * that changes on every tab switch is UI state.
  *
- * Recording happens in two places and only two: Shell watches the active tab
- * (so the tree, the strip and the palette all count, whichever opened it) and
+ * Recording happens in two places only: Shell watches the active tab, and
  * `runCommandAtom` records each command it runs.
  */
 import { atom, type Getter } from 'jotai'

@@ -33,14 +33,11 @@ export const activeSessionIdAtom = atom<string | null>(null)
 /**
  * The session the app is currently on.
  *
- * **The tab you are looking at is the answer** when it is a session tab (D101),
- * because that is what "currently on" means once a session is an ordinary tab:
- * clicking one in the strip has to move the app's idea of which session you are
- * talking to, and the strip does not know this atom exists.
+ * **The tab you are looking at is the answer** when it is a session tab (D101):
+ * the tab strip does not know this atom exists.
  *
- * Otherwise the last one picked, then the first live one, then the first at all
- * — so closing a session's tab still leaves an answer, and a vault whose
- * sessions have all exited still has one to show.
+ * Otherwise the last one picked, then the first live one, then the first at
+ * all, so closing a session's tab still leaves an answer.
  */
 export const activeSessionAtom = atom<AgentSession | null>((get) => {
   const sessions = get(agentSessionsAtom)
@@ -78,11 +75,10 @@ export const agentSessionsSectionOpenAtom = atomWithStorage<boolean>(
 export type AgentTarget = string | 'new'
 
 /**
- * The sessions an ask may be sent to, in tab order.
+ * The sessions an ask may be sent to, in spawn order.
  *
  * Live, and not blocked on a question of their own: text sent to a session
- * sitting on a permission prompt waits behind that prompt at best, so offering
- * it is offering somewhere for an ask to disappear to.
+ * sitting on a permission prompt waits behind that prompt at best.
  */
 export const askTargetsAtom = atom((get) =>
   get(agentSessionsAtom)
@@ -91,12 +87,8 @@ export const askTargetsAtom = atom((get) =>
 )
 
 /**
- * The target an ask goes to when nobody picked one.
- *
- * The tab you are looking at, which is the session you are already having this
- * conversation with — unless it has ended or is waiting on a question of its
- * own, in which case the text would sit unread behind that question and a new
- * session is the honest answer.
+ * The target an ask goes to when nobody picked one: the current session, unless
+ * it has ended or is waiting on a question of its own, in which case a new one.
  */
 export const defaultAgentTargetAtom = atom<AgentTarget>((get) => {
   const active = get(activeSessionAtom)
@@ -112,10 +104,8 @@ const FALLBACK_GEOMETRY = { cols: 80, rows: 24 }
  * The geometry the last visible tab measured.
  *
  * Shared rather than per tab: a session started for an ask has never been shown,
- * so it has no geometry of its own, and something has to be guessed for it. The
- * last measurement is the best guess available — panes can be different widths
- * (D101), so it may be the wrong one, and the terminal refits the moment it is
- * shown either way.
+ * so its size has to be guessed. Panes can be different widths (D101), so it may
+ * be wrong; the terminal refits the moment it is shown.
  */
 export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)
 
@@ -124,10 +114,7 @@ export const agentGeometryAtom = atom(FALLBACK_GEOMETRY)
  *
  * **Mounted by the app shell**, not by whichever view happens to read the list:
  * the footer's dot has to be right before any session tab exists, and the list
- * is how the sidebar knows to show its section at all. A subscription that lived
- * in a tab would start when you opened one, which is exactly when it is already
- * too late. This used to live in the drawer, which was always mounted for the
- * same reason and is gone (D101).
+ * is how the sidebar knows to show its section at all.
  */
 export function useAgentSessions(): void {
   const setSessions = useSetAtom(agentSessionsAtom)
@@ -165,9 +152,8 @@ export function useAgentSessions(): void {
  * Close the tabs of sessions that have gone, and clear the turn review on a
  * vault switch.
  *
- * Both were the drawer's, and both are about the SET rather than about any one
- * session, so they move to the shell with the subscription above rather than
- * into a tab that may not be open when they need to happen.
+ * Both are about the SET rather than any one session, so they live in the shell
+ * rather than in a tab that may not be open when they need to happen.
  */
 export function useSessionTabs(activeRemote: string | null): void {
   const sessions = useAtomValue(agentSessionsAtom)
@@ -185,7 +171,7 @@ export function useSessionTabs(activeRemote: string | null): void {
    * A vault switch clears the turn review.
    *
    * The record is per vault, so without this the review stays open on the
-   * previous vault's turn — and every query it makes asks the NEW vault's git
+   * previous vault's turn, and every query it makes asks the NEW vault's git
    * for a range it has never heard of.
    *
    * The edge and not the level: on mount there is nothing to clear, and clearing

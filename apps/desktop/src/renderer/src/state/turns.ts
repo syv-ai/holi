@@ -2,14 +2,11 @@
  * The agent's last turn, and what it changed (D88).
  *
  * A turn is a **commit range**, and nothing here caches what that range
- * contains: the file list and every diff are asked of git at the moment they are
- * shown. Holding them would be a second copy of an answer git already has, and
- * one that goes stale the moment the agent's next turn, an autosave, or a pull
- * touches the tree.
+ * contains: the file list and every diff are asked of git when shown, since any
+ * held copy goes stale on the next turn, autosave, or pull.
  *
- * Shaped after `state/history.ts`, which answers the same questions about a
- * commit, and re-declares its own row types for the same reason that file does:
- * these are main-process shapes and the renderer does not import from main.
+ * Re-declares its row types, as `state/history.ts` does: these are main-process
+ * shapes and the renderer does not import from main.
  */
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
@@ -21,9 +18,8 @@ export interface Turn {
   end: string
   /** ISO 8601. */
   at: string
-  /** Which session ran it (D100). Absent on every record written before a vault
-   *  could run more than one, which is why those records have no chip: there is
-   *  no tab for them to sit under. One turn from any session fixes that. */
+  /** Which session ran it (D100). Absent on older records, which get no chip:
+   *  there is no tab for them to sit under. */
   sessionId?: string
   /** Another session's turn was open at the same instant, so this range contains
    *  work this turn did not do. Absent reads as false. */
@@ -90,10 +86,8 @@ export const loadLatestTurnsAtom = atom(null, async (_get, set) => {
 /**
  * How many files one turn's range touched.
  *
- * Cached by range rather than by session: two sessions whose turns shared a
- * settle commit ask about two different ranges, and the same range asked twice
- * is one query. Empty is a real answer — a range whose shas are gone is a turn
- * whose history is gone — and the router already turns that into `[]`.
+ * Cached by range rather than by session, so the same range asked twice is one
+ * query. Empty is a real answer: see `loadTurnFilesAtom`.
  */
 export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
   const key = rangeKey(turn)
@@ -104,8 +98,7 @@ export const loadTurnCountAtom = atom(null, async (get, set, turn: Turn) => {
 
 /**
  * What the turn changed. Empty is a real answer, not a failure: a range whose
- * shas are gone — a reset, a re-clone — is a turn whose history is gone, and the
- * router already turns that into `[]` rather than an error.
+ * shas are gone (a reset, a re-clone) comes back from the router as `[]`.
  */
 export const loadTurnFilesAtom = atom(null, async (get, set) => {
   const turn = get(reviewTurnAtom)
@@ -128,21 +121,15 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
 })
 
 /**
- * Write back what the reviewer resolved to, as a **new commit** — never a
- * rewrite (`features/history.md`).
+ * Write back what the reviewer resolved to, as a **new commit**, never a
+ * rewrite (`docs/features/history.md`).
  *
- * **The buffers are deliberately NOT flushed first**, which is where this parts
- * company with `history.ts`'s restore. Restore replaces a file with an older
- * version, so the user is discarding the current state on purpose and a flush
- * followed by a clean reload is the coherent thing. A turn revert takes back
- * what the AGENT did, and the reader's own unsaved edits are not what is being
- * taken back: flushing would write them to disk and then overwrite them with the
- * resolved text, losing them silently.
- *
- * So a file open with a dirty buffer gets no special case at all. The write hits
- * disk, the watcher reports it, and `decideReload` runs — a clean buffer reloads
- * silently, a dirty one 3-way merges, an overlap routes to reconcile. That
- * machinery exists and this is the case it was built for.
+ * **The buffers are deliberately NOT flushed first**, unlike `history.ts`'s
+ * restore. A turn revert takes back what the AGENT did, not the reader's unsaved
+ * edits: flushing would write them to disk and then overwrite them with the
+ * resolved text. Instead the write hits disk, the watcher reports it, and
+ * `decideReload` runs (clean buffer reloads, dirty one 3-way merges, an overlap
+ * routes to reconcile).
  *
  * The file list is then re-asked: the revert has just minted a commit inside the
  * range being looked at.

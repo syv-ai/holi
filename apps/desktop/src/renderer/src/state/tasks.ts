@@ -1,16 +1,12 @@
-/** The board's state (features/tasks.md).
+/** The board's state (`docs/features/tasks.md`).
  *
- * Tasks are **derived from the vault snapshot**, not held in a store of their own.
- * There is no server, so there is no push channel and nothing to reconcile a
- * second cache against: `scanVault` reads the files, the snapshot holds the
- * result, and the board is a view of it. A write goes to the router and then
- * re-reads — glob-and-parse is imperceptible at a vault's scale, and buying an
- * index before a measurement asks for one is what the PRD rejects outright.
+ * Tasks are **derived from the vault snapshot**, not held in a store of their
+ * own: the board is a view of it. A write goes to the router and then re-reads;
+ * glob-and-parse is imperceptible at a vault's scale, so there is no index.
  *
- * Gone with the server, and worth naming so they are not re-added by habit:
- * **presence** (its heartbeat needed a push channel, and two people on one task
- * file is now an ordinary git conflict), and **`related[]`** (a task links by
- * writing wiki-links in its body — backrefs are a grep).
+ * Deliberately absent: **presence** (two people on one task file is an ordinary
+ * git conflict) and **`related[]`** (a task links by writing wiki-links in its
+ * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
 import { allLabels, dailyNoteFilename, parseWikiLinks, stampDate, taskArea } from '@holi/shared'
@@ -20,8 +16,7 @@ import { closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
- * folder's path is the empty string — there is no "(no area)" any more because
- * there is no `area` field to be missing. */
+ * folder's path is the empty string. */
 export const ROOT_LANE = ''
 
 /** Tasks by path. The path is the identity, so this needs no id and no join. */
@@ -33,15 +28,13 @@ export const tasksAtom = atom<Map<string, Task>>(
  * omitting one from the board is indistinguishable from data loss. */
 export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
 
-/** How many tasks are still open (not done) — the badge on the board button, so
- * "how much is on my plate" is one glance without opening the board. */
+/** How many tasks are still open (not done): the badge on the board button. */
 export const openTaskCountAtom = atom(
   (get) => get(snapshotAtom).tasks.filter((t) => t.status !== 'done').length,
 )
 
-/** Open (not-done) tasks whose body links to `notePath` (daily-notes FR-6). A task
- * links by writing a wiki-link in its description — backrefs are a grep, not an index.
- * A task counts once no matter how many times it links. */
+/** Open (not-done) tasks whose body links to `notePath`. A task counts once no
+ * matter how many times it links. */
 export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): number {
   let n = 0
   for (const t of tasks) {
@@ -52,7 +45,7 @@ export function countOpenTasksLinking(tasks: Iterable<Task>, notePath: string): 
 }
 
 /** The badge on the sidebar "Today" entry: how many open tasks link to today's note
- * (daily-notes §UX). Zero → the Shell renders no badge. */
+ * (`docs/features/daily-notes.md`). Zero → the Shell renders no badge. */
 export const todayLinkCountAtom = atom((get) =>
   countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
 )
@@ -71,18 +64,16 @@ function localNow(): string {
  * Now, to the minute, as `YYYY-MM-DDTHH:MM`.
  *
  * Held in state rather than read inline so the label rules stay pure and
- * testable, and so the board re-renders when the clock moves rather than
- * whenever React happens to run. Local, not UTC — the same frame the
- * roll-forward uses.
+ * testable, and the board re-renders when the clock moves. Local, not UTC: the
+ * same frame the roll-forward uses.
  *
- * **Minute-valued on purpose.** A due date may name an hour now, so `overdue`
- * turns over on a minute rather than on a day (D79) — but the atom's identity
- * changes only when the minute string does, so a timer that fires twice a
- * minute costs nothing and a task board does not re-render on a tick.
+ * **Minute-valued on purpose.** A due date may name an hour, so `overdue` turns
+ * over on a minute (D79), but the atom's identity changes only when the minute
+ * string does, so a timer that fires twice a minute re-renders nothing.
  */
 export const nowAtom = atom<string>(localNow())
 
-/** Today, as `YYYY-MM-DD` — derived, so the daily note and the labels can never
+/** Today, as `YYYY-MM-DD`: derived, so the daily note and the labels can never
  *  disagree about what day it is. */
 export const todayAtom = atom((get) => stampDate(get(nowAtom)) ?? get(nowAtom).slice(0, 10))
 
@@ -92,16 +83,14 @@ export const tickNowAtom = atom(null, (get, set) => {
   if (next !== get(nowAtom)) set(nowAtom, next)
 })
 
-/** The create-task dialog's mode, or `null` when closed. `quick` (⌘T) captures a
- * task and stays where you are; `full` (⌘⇧T) captures it and drops you into the
- * detail editor to flesh it out. A single global atom: the dialog is mounted once
- * in the shell, and each entry point sets the mode rather than owning a copy. */
+/** The create-task dialog's mode. `quick` (⌘T) captures a task and stays where
+ * you are; `full` (⌘⇧T) captures it and opens it to flesh out. */
 export type CreateTaskMode = 'quick' | 'full'
 
 // ------------------------------------------------------------------ reducers
-// Pure, exported, and tested directly — the atoms are just where they live.
+// Pure, exported, and tested directly.
 
-/** The vault-root lane first, then alphabetical by path (features/tasks.md).
+/** The vault-root lane first, then alphabetical by path.
  *
  * The root lane is always present, even with nothing filed there: quick-add
  * needs a cell to land in, and a vault whose every task lives in a folder would
@@ -111,8 +100,7 @@ export function laneOrder(lanes: Iterable<string>): string[] {
   return [ROOT_LANE, ...rest]
 }
 
-/** A lane's heading. Only the root needs naming — its path is the empty string,
- * which would render as a blank row. */
+/** A lane's heading. Only the root needs naming: its path is the empty string. */
 export function laneLabel(lane: string): string {
   return lane === ROOT_LANE ? '(vault root)' : lane
 }
@@ -121,7 +109,7 @@ export function laneLabel(lane: string): string {
 
 export type Filter = {
   search: string
-  /** Matched against virtual labels AND real tags alike — one vocabulary. */
+  /** Matched against virtual labels AND real tags alike: one vocabulary. */
   tags: string[]
   hideDone: boolean
 }
@@ -129,8 +117,8 @@ export type Filter = {
 export const EMPTY_FILTER: Filter = { search: '', tags: [], hideDone: false }
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
 
-/** The board's only narrowing. Three controls, deliberately (features/tasks.md) —
- * the bar is a search-and-narrow aid, not a second configuration surface.
+/** The board's only narrowing. Three controls, deliberately: the bar is a
+ * search-and-narrow aid, not a second configuration surface.
  *
  * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing
  * the labels is what makes "show me the overdue p1s" a tag query rather than two
@@ -152,25 +140,21 @@ export function matchesFilter(task: Task, filter: Filter, now: string): boolean 
   return true
 }
 
-/** Every label in play, for the bar's tag picker — virtual ones included, so they are
- * selectable exactly like tags. */
+/** Every label in play, for the bar's tag picker, virtual ones included. */
 export function availableLabels(tasks: Iterable<Task>, now: string): string[] {
   const all = new Set<string>()
   for (const t of tasks) for (const l of allLabels(t, now)) all.add(l)
   return [...all].sort((a, b) => a.localeCompare(b))
 }
 
-/** The lane a task sits in. A one-liner over `taskArea`, kept so the board reads
- * in lane vocabulary rather than reaching for a domain helper mid-render. */
+/** The lane a task sits in, in the board's vocabulary. */
 export function laneOf(task: Task): string {
   return taskArea(task)
 }
 
 /** Every folder that exists in the vault, for the create-task dialog's folder
- * picker — the ancestor folders of every file, unique and sorted, with the root
- * excluded (it is offered separately as "(vault root)"). This lets a new task be
- * filed into any existing folder without retyping, and — because a folder is a
- * lane — into any existing lane. */
+ * picker: the ancestor folders of every file, unique and sorted, with the root
+ * excluded (it is offered separately as "(vault root)"). */
 export function taskCreateFolders(paths: Iterable<string>): string[] {
   const folders = new Set<string>()
   for (const path of paths) {
@@ -180,14 +164,11 @@ export function taskCreateFolders(paths: Iterable<string>): string[] {
   return [...folders].sort((a, b) => a.localeCompare(b))
 }
 
-/** What a drop onto `(targetLane, targetStatus)` means for `task` — the branch a
- * card's drop takes, factored out of the board so it is pure and tested (a
- * diagonal is the subtle one: lane AND column change, and both must land as one
- * action).
+/** What a drop onto `(targetLane, targetStatus)` means for `task`.
  *
- * - same lane, same column → `noop` (a card dropped where it already sits)
- * - same lane, new column → `status` (the vertical axis — a plain status change)
- * - new lane → `move` (the horizontal axis — a file move + link rewrite), and if
+ * - same lane, same column → `noop`
+ * - same lane, new column → `status` (the vertical axis)
+ * - new lane → `move` (the horizontal axis: a file move + link rewrite), and if
  *   the column also changed, the new `status` rides along so the diagonal is one
  *   `tasks.move` call rather than a move then a separate status write. */
 export type DropIntent =
@@ -206,9 +187,8 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 
 // ------------------------------------------------------------------- writes
 //
-// Every write re-reads the vault. There is no optimistic patching and no
-// mutation-result-as-truth: the file on disk is the only truth there is, and a
-// second representation of a task is exactly what D60 deleted.
+// Every write re-reads the vault. No optimistic patching and no
+// mutation-result-as-truth: the file on disk is the only truth (D60).
 
 export const createTaskAtom = atom(
   null,
@@ -223,8 +203,7 @@ export const createTaskAtom = atom(
 
 /** A field edit from the detail view.
  *
- * **No `version`.** There is nothing to race with on this machine — the file is
- * the single writer target — and between machines git arbitrates, not a token. */
+ * **No `version` token.** Between machines git arbitrates. */
 export const patchTaskAtom = atom(
   null,
   async (get, set, path: string, patch: Record<string, unknown>) => {
@@ -247,9 +226,8 @@ export const completeTaskAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-/** Moves a card between columns — the vertical axis. The horizontal axis (moving
- * a card to another lane) lives in `moveTaskAtom`, because it moves the file and
- * must rewrite inbound wiki-links in the same pass. */
+/** Moves a card between columns: the vertical axis. The horizontal axis is
+ * `moveTaskAtom`, because it moves the file and rewrites inbound wiki-links. */
 export const setTaskStatusAtom = atom(null, async (get, set, path: string, status: TaskStatus) => {
   if (status === 'done') return set(completeTaskAtom, path)
   return set(patchTaskAtom, path, { status })
@@ -257,8 +235,7 @@ export const setTaskStatusAtom = atom(null, async (get, set, path: string, statu
 
 /** The horizontal axis: moves a card to another lane, which moves the file into
  * that folder and rewrites inbound wiki-links in one pass (`tasks.move`). A
- * `status` rides along for a diagonal drop, so lane + column land as one call —
- * one write burst, one autosave commit, never a half-dropped card. */
+ * `status` rides along for a diagonal drop, so it is never half-dropped. */
 export const moveTaskAtom = atom(
   null,
   async (get, set, path: string, folder: string, status?: TaskStatus) => {
@@ -273,9 +250,8 @@ export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
   await trpc.tasks.delete.mutate({ remote, path })
-  // Same order `deleteNotes` uses: the file goes, then its tab. A task is an
-  // ordinary document now, so an open one leaves a tab pointing at bytes that
-  // are gone — and a live buffer that would write the file back.
+  // The file goes, then its tab: an open one would leave a tab pointing at bytes
+  // that are gone, and a live buffer that would write the file back.
   set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), [path]))
   await set(loadSnapshotAtom)
 })

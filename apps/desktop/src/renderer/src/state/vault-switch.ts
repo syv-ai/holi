@@ -1,22 +1,18 @@
 /**
  * Leaving the active vault: by switching to another, or by adding one.
  *
- * A vault switch is a teardown in main — the old watcher and timers stop — so
- * the tabs over the old vault have to go with it. Setting the active remote is
- * all that is needed: Shell's open effect picks it up and runs the same
- * open → daily → sweep sequence as cold start.
+ * A vault switch is a teardown in main (the old watcher and timers stop), so
+ * the tabs over the old vault go with it. Setting the active remote is all that
+ * is needed: Shell's open effect picks it up and runs the same sequence as a
+ * cold start.
  *
- * …and it ends every session in the vault, which is worth asking about first
- * (D100). The question has to be asked HERE, before `activeRemoteAtom` moves:
- * the open effect reacts to that atom by opening the new vault, which is what
- * closes the old one and takes its sessions with it. By the time the atom has
- * changed there is nothing left to confirm.
+ * It also ends every session in the vault, so it asks first (D100), HERE,
+ * before `activeRemoteAtom` moves: once the atom changes the open effect closes
+ * the old vault and there is nothing left to confirm.
  *
- * State rather than Shell's own (D102): "switch to <vault>" is a command, and
- * a command runs from a key, the menu or the palette, none of which can reach
- * a component's `useState`. Shell still renders the confirm from
- * `leavingVaultAtom`; the `'add'` intent is set by Shell's add-vault gesture,
- * whose continuation (showing the ritual) is Shell's own.
+ * State rather than Shell's own (D102): "switch to <vault>" is a command. Shell
+ * renders the confirm from `leavingVaultAtom`; the `'add'` intent is set by
+ * Shell's add-vault gesture.
  */
 import { atom } from 'jotai'
 import { sessionsWorthAsking } from '../lib/agent-notices'

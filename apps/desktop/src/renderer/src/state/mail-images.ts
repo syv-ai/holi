@@ -1,28 +1,18 @@
 /**
  * Who is allowed to know you opened their mail.
  *
- * Remote content is blocked by default and stays that way — an image fetched
- * from a sender's server is a read receipt nobody agreed to. What lives here is
- * the two ways a user says otherwise, and they are deliberately different
- * promises with different lifetimes:
+ * Remote content is blocked by default: an image fetched from a sender's server
+ * is a read receipt nobody agreed to. The two ways to say otherwise are
+ * deliberately different promises:
  *
- * - **This message** — remembered for as long as the app is running, and no
- *   longer. It answers "show me this one", which has no business surviving a
- *   restart. Held in an atom rather than in the component, because the reader
- *   unmounts every time a thread is closed and the choice was being lost on the
- *   way out: reopening a message you had just unblocked put the banner straight
- *   back.
- * - **This sender, always** — persisted in main (`google/image-prefs.ts`) and
- *   applied to every message from that address, forever. It answers "I do not
- *   mind telling Jane", which would be worthless if it evaporated.
+ * - **This message**: remembered while the app runs, and no longer. Held in an
+ *   atom rather than the component, because the reader unmounts every time a
+ *   thread is closed.
+ * - **This sender, always**: persisted in main (`google/image-prefs.ts`) and
+ *   applied to every message from that address.
  *
- * Offering only the first makes the user re-decide the same newsletter weekly;
- * offering only the second makes a one-off peek into a standing disclosure.
- * Both, or the affordance is dishonest.
- *
- * **`undefined` means "not asked yet"**, exactly as in [[state/google]] — the
- * banner must not flash for a sender that is already allowed while the query is
- * in flight.
+ * **`undefined` means "not asked yet"**, as in `state/google.ts`: the banner
+ * must not flash for an already-allowed sender while the query is in flight.
  */
 import { atom, getDefaultStore, useAtom, useSetAtom } from 'jotai'
 import { useCallback, useEffect } from 'react'
@@ -38,7 +28,7 @@ const alwaysAllowedSendersAtom = atom<ReadonlySet<string> | undefined>(undefined
 
 /** Identifies a block of HTML for the purposes of remembering a choice. */
 export interface RemoteContentIdentity {
-  /** Stable for the life of the message — a Gmail message id. Blocks with no
+  /** Stable for the life of the message: a Gmail message id. Blocks with no
    *  stable identity (a calendar description) pass `null`, and their choice
    *  then lasts only as long as they are mounted. */
   key: string | null
@@ -61,8 +51,7 @@ export interface RemoteContentChoice {
  * The standing exceptions, read once per session.
  *
  * Guarded on the atom rather than a ref, so several messages rendering at once
- * still produce one query — the first write moves every reader out of
- * `undefined` before the others' effects run.
+ * still produce one query.
  */
 export function useAlwaysAllowedSenders(): ReadonlySet<string> | undefined {
   const [senders, setSenders] = useAtom(alwaysAllowedSendersAtom)
@@ -104,8 +93,8 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
     (normalisedSender !== null && senders?.has(normalisedSender) === true)
 
   const allowOnce = useCallback(() => {
-    // A block with no key still unblocks — it simply has nothing to remember
-    // it by, so the local fallback in the component carries it.
+    // A block with no key still unblocks: the local fallback in the component
+    // carries it.
     if (key === null) return
     setUnblocked((previous) => new Set(previous).add(key))
   }, [key, setUnblocked])
@@ -126,14 +115,9 @@ export function useRemoteContent(identity: RemoteContentIdentity): RemoteContent
 /**
  * Back to "nothing is allowed", for a test.
  *
- * These atoms are module state on jotai's default store, which a suite shares
- * across every test in a file — so a test that unblocks a message would
- * otherwise hand the next one a message that is already unblocked, and the
- * banner assertions would pass or fail depending on the order they ran in.
- *
- * `alwaysAllowedSenders` goes back to `undefined` rather than to an empty set,
- * because "not asked yet" is a distinct state and a test that never re-queries
- * should see the same first render the app does.
+ * These atoms are module state on jotai's default store, shared across every
+ * test in a file. `alwaysAllowedSenders` goes back to `undefined`, not an empty
+ * set, so a test sees the same first render the app does.
  */
 export function resetMailImagesForTests(): void {
   const store = getDefaultStore()

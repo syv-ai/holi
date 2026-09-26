@@ -1,10 +1,6 @@
 /**
- * Starting a session, and sending one an ask (D100).
- *
- * These are store-level: nothing here renders, because none of it is about a
- * component any more. That is the change worth pinning — the drawer used to own
- * "open onto an empty list and start something", and an ask used to be a seed
- * atom the drawer noticed.
+ * Starting a session, and sending one an ask (D100). Store-level: nothing here
+ * renders, because none of it belongs to a component.
  */
 import { createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -95,8 +91,7 @@ test('going to the agent opens the current session rather than starting one', ()
 })
 
 test('going to the agent twice leaves you where it put you', () => {
-  // A drawer was a thing to open and shut. A tab is a place to go, and the
-  // second press must not undo the first.
+  // A tab is a place to go: the second press must not undo the first.
   const store = storeWith([session({ id: 'a' })])
   store.set(showAgentAtom)
   store.set(showAgentAtom)
@@ -157,7 +152,7 @@ test("a 'new' target spawns, named after the ask, with the ask as its paste", as
     }),
   )
   // The name is normalised in main (first line, collapsed, capped) and nowhere
-  // else — a second copy of that rule in the renderer is a second thing to drift.
+  // else: a second copy of that rule in the renderer would drift.
   expect(paste).not.toHaveBeenCalled()
 })
 
@@ -186,7 +181,7 @@ test('a failed spawn comes back with why', async () => {
 
 test('a session waiting on you is not offered as a target', () => {
   // It is blocked on a dialog of its own, so an ask sent to it waits behind that
-  // dialog at best. Offering it is offering somewhere for text to disappear to.
+  // dialog at best.
   const store = storeWith([
     session({ id: 'a', name: 'One' }),
     session({ id: 'b', name: 'Two', state: 'needs-you' }),
@@ -227,8 +222,8 @@ test('the default target is a new session when the tab cannot read it', () => {
 })
 
 test('a duplicate lands you on the copy, with its own spawn-time theme', async () => {
-  // Every spawn owes the app the same three things, and a fork is a spawn: main
-  // makes it, the renderer shows it and remembers the mode it was born under.
+  // A fork is a spawn: main makes it, the renderer shows it and remembers the
+  // mode it was born under.
   duplicate.mockResolvedValue({ ok: true, id: 'copy' })
   const store = storeWith([session({ id: 'a' })])
 
@@ -280,8 +275,7 @@ test('a restart refused by main says so, and takes you nowhere', async () => {
 
 test('a rename is the command, pasted, with the name left to type', async () => {
   // The whole of Holi's rename: there is no shell route, so the command goes
-  // into the session's box the way every other thing Holi sends does — and only
-  // the half Holi knows, because the name is typed where it will be read.
+  // into the session's box, and only the half Holi knows.
   const store = storeWith([session({ id: 'a', name: 'One' })])
 
   const res = await store.set(renameSessionAtom, 'a')
@@ -295,7 +289,7 @@ test('a rename is the command, pasted, with the name left to type', async () => 
 
 test('a rename puts the keyboard in the terminal the command landed in', async () => {
   // The tab was already showing, so nothing becomes visible and nothing would
-  // focus on its own — the name would be typed into the double-clicked tab. The
+  // focus on its own: the name would be typed into the double-clicked tab. The
   // send asks the terminal for focus directly.
   const store = storeWith([session({ id: 'a', name: 'One' })], ['a'])
   const focus = vi.fn()

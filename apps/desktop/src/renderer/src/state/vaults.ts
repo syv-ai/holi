@@ -23,22 +23,21 @@ export const vaultsAtom = atom<VaultEntry[]>([])
  *  empty list (first run) apart from a not-yet-loaded one. */
 export const vaultsLoadedAtom = atom(false)
 
-/** The open vault, as `owner/repo`. A vault has no id — the remote IS the
- * identity, and the clone's path is machine-local (types.ts §VaultEntry). */
+/** The open vault, as `owner/repo`. A vault has no id: the remote IS the
+ * identity, and the clone's path is machine-local. */
 export const activeRemoteAtom = atom<string | null>(null)
 
 /**
  * Per-vault "show hidden files" preference, persisted across launches. One
  * localStorage key holds a `{ [remote]: boolean }` map; a vault absent from it
- * defaults to hidden (`false`). Display-only — it gates the tree's `isHiddenPath`
+ * defaults to hidden (`false`). Display-only: it gates the tree's `isHiddenPath`
  * filter and touches nothing about scanning, opening, or sync.
  */
 export const showHiddenByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showHidden', {})
 
-/** Per-vault "show task files in the tree" flag, off by default — the board owns
- * tasks, so the tree stays notes-only until you opt a vault in. Purely a view
- * filter: task files are always scanned into `snapshot.tasks`; this only decides
- * whether they also render as leaves in the file tree (with a task glyph). */
+/** Per-vault "show task files in the tree" flag, off by default: the board owns
+ * tasks. Purely a view filter; task files are always scanned into
+ * `snapshot.tasks`. */
 export const showTasksByVaultAtom = atomWithStorage<Record<string, boolean>>('holi:showTasks', {})
 
 const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
@@ -46,16 +45,13 @@ const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
 /**
  * The whole vault, as last read off disk.
  *
- * **One source.** The board, the tree and the editor all derive from this rather
- * than each holding a query of their own — under D60 there is no server pushing
- * per-entity events to keep several caches honest, so a second source would only
- * ever be a second chance to disagree.
+ * **One source** (D60). The board, the tree and the editor all derive from this
+ * rather than each holding a query of their own, so there is nothing to
+ * disagree with.
  *
- * Refreshed by re-scanning after a write. That is a full walk-and-parse of the
- * vault, and deliberately so: a task set this size is imperceptible to re-read,
- * and the alternative is an index with an invalidation story bought before any
- * measurement asked for one (features/tasks.md). The filesystem watcher will
- * replace the explicit refetch, not the shape.
+ * Main pushes a fresh full snapshot on every watcher tick, and writes here also
+ * refetch. A full walk-and-parse is deliberate: an index with an invalidation
+ * story has not been asked for by any measurement (`docs/features/tasks.md`).
  */
 export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 
@@ -63,16 +59,15 @@ export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
 export const activeDocAtom = atom<DocMeta | null>(null)
 
 /**
- * FR-21's one sync state, exactly as main computed it.
+ * The one sync state, exactly as main computed it.
  *
  * **Never re-derived here.** `computeState` in `active-vault.ts` fixes the
- * priority order — a pause outranks a conflict, and the comment there explains
- * what it costs to get that backwards. The renderer's job is to render whatever
- * arrived, and `sync.state` is only the initial read before the first push.
+ * priority order (a pause outranks a conflict). `sync.state` is only the initial
+ * read before the first push.
  */
 export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
 
-/** Files the large-file gate held out of the last commit — the callout's source.
+/** Files the large-file gate held out of the last commit: the callout's source.
  *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
 export const heldBackAtom = atom<HeldBackFile[]>([])
 
@@ -91,16 +86,11 @@ export const loadSnapshotAtom = atom(null, async (get, set) => {
 })
 
 /**
- * Open a vault: `vaults.open`, not `vaults.snapshot`.
+ * Open a vault: `vaults.open`, not `vaults.snapshot`. Opening is what *starts*
+ * the watcher and the sync loop in main, and it hands back the live snapshot.
  *
- * Opening is what *starts* the watcher and the sync loop in main, and it hands
- * back the snapshot of the vault that is now live. A separate read afterwards
- * could only ever disagree with it.
- *
- * A vault switch in main is a teardown — exactly one `ActiveVault` exists, so
- * the previous vault stops pushing the moment this resolves. Nothing here may
- * keep a snapshot keyed by remote: there is only ever one vault's worth of
- * truth, and it belongs to whichever vault is open now.
+ * A vault switch in main is a teardown: exactly one `ActiveVault` exists. Nothing
+ * here may keep a snapshot keyed by remote.
  */
 export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.open.mutate({ remote })
@@ -110,16 +100,13 @@ export const openVaultAtom = atom(null, async (_get, set, remote: string) => {
 })
 
 /**
- * FR-7: clone a repo the user already has, and open it.
+ * Clone a repo the user already has, and open it.
  *
- * `vaults.add` clones into the managed root, seeds, registers, and opens in one
- * procedure — so the snapshot it returns is the vault that is now live, and the
- * list is re-read because the vault would otherwise be open and missing from
- * the dropdown at the same time.
+ * `vaults.add` clones, seeds, registers, and opens in one procedure; the list is
+ * re-read so the open vault is not missing from the dropdown.
  *
- * Deliberately does **not** swallow a refusal. A clone fails for reasons the
- * user can act on — no network, no access, a repo that is not there — and a
- * silent failure leaves the dropdown unchanged with nothing saying why.
+ * Deliberately does **not** swallow a refusal: a clone fails for reasons the
+ * user can act on (no network, no access, no such repo).
  */
 export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
   const snapshot = await trpc.vaults.add.mutate({ remote })
@@ -130,33 +117,21 @@ export const addVaultAtom = atom(null, async (_get, set, remote: string) => {
 })
 
 /**
- * FR-8: a new private repo, seeded, committed, pushed, opened.
- *
- * The push is not optional and the router does it rather than the caller: a
- * vault that exists only locally is not one anybody can be invited to. So by the
- * time this resolves the repo genuinely exists on GitHub and is clonable — which
- * is what lets the ritual's threshold say so truthfully.
+ * A new private repo, seeded, committed and pushed. The router pushes rather
+ * than the caller: a vault that exists only locally cannot be shared.
  *
  * **Deliberately does NOT refresh the vault list, and does NOT activate the
- * vault.** The onboarding ritual shows a "created, here's the remote" step
- * *before* entering, and the first-run gate flips to the Shell the moment
- * `vaultsAtom` becomes non-empty. So loading the list here would unmount the
- * ritual mid-success; the explicit `loadVaults` on "Open vault" is what enters.
- *
- * Activation used to happen here, "so that entry is instant". It made the vault
- * live at the NAMING act, which meant that in `add-vault` mode (where the Shell
- * is mounted behind the ritual) the vault was opened and landed before the
- * settings act had asked anything: the answers were written to a vault that had
- * already read the seeded defaults, so they took effect on the next launch and
- * not this one. A vault is activated when the ritual says it is finished.
+ * vault.** The first-run gate flips to the Shell the moment `vaultsAtom` becomes
+ * non-empty, which would unmount the onboarding ritual mid-success. Activating
+ * here would also open the vault before the settings act had asked anything, so
+ * the answers would land after the seeded defaults were read. The ritual
+ * activates the vault when it is finished.
  *
  * **`owner` is required here even though the router makes it optional.**
- * `vaults.create` answers with a snapshot rather than the repo, so the only way
- * the renderer can name the vault it just made is by knowing the owner up
- * front — and defaulting to the signed-in account would mean *guessing* the
- * remote and opening the wrong one. The UI always has a login to supply.
+ * `vaults.create` answers with a snapshot rather than the repo, and defaulting
+ * to the signed-in account would mean *guessing* the remote.
  *
- * Returns the `owner/repo` remote so the caller can show it without re-deriving.
+ * Returns the `owner/repo` remote.
  */
 export const createVaultAtom = atom(
   null,
@@ -169,21 +144,18 @@ export const createVaultAtom = atom(
 /**
  * Subscribe to everything main pushes, for the lifetime of the app.
  *
- * Established once where the store is created — **not** from a component
- * effect. A subscription that unmounts with a component silently stops the tree
- * updating the moment that component is conditionally rendered away, and the
- * symptom is a vault that looks fine and is quietly stale.
+ * Established once where the store is created, **not** from a component effect:
+ * a subscription that unmounts with a component leaves the vault quietly stale.
  *
- * The snapshot replaces rather than merges. The channel carries the whole vault
- * every time precisely so that nothing downstream has to reconcile frames — an
- * over-eager push is free, and a missed one heals on the next tick.
+ * The snapshot replaces rather than merges: the channel carries the whole vault
+ * every time, so a missed push heals on the next tick.
  */
 export function subscribeToVault(store: JotaiStore): () => void {
   const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
   const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
   const offHeldBack = window.holi.vault.onHeldBack((files) => store.set(heldBackAtom, files))
-  // A clicked reminder opens its task. Cross-vault, the switch runs here — not in
-  // main — so `activeRemoteAtom` stays truthful; the task opens once the new
+  // A clicked reminder opens its task. Cross-vault, the switch runs here, not in
+  // main, so `activeRemoteAtom` stays truthful; the task opens once the new
   // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
   const offReminder = window.holi.reminders.onOpen(({ remote, path }) => {
     if (remote && remote !== store.get(activeRemoteAtom)) {
@@ -192,7 +164,7 @@ export function subscribeToVault(store: JotaiStore): () => void {
       store.set(openTaskAtom, path)
     }
   })
-  // `holi app open <id>`, typed by the agent. Local authorship only — see the
+  // `holi app open <id>`, typed by the agent. Local authorship only: see the
   // channel's own comment for why an app appearing in the snapshot does not
   // open anything.
   const offAppOpen = window.holi.apps.onOpen((appId) => {
@@ -210,9 +182,8 @@ export function subscribeToVault(store: JotaiStore): () => void {
 export const createNoteAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
-  // A markdown note opens with starter frontmatter so the metadata is there
-  // from the start; any other file type is created empty — a note-scaffold in
-  // a .json would be nonsense (spec §Arbitrary files).
+  // A markdown note opens with starter frontmatter; any other file type is
+  // created empty.
   const text = path.endsWith('.md') ? scaffoldNoteText() : ''
   await trpc.notes.create.mutate({ remote, path, text })
   await set(loadSnapshotAtom)
@@ -220,9 +191,9 @@ export const createNoteAtom = atom(null, async (get, set, path: string) => {
 })
 
 /** Make a folder real on disk. Git tracks no empty directory, so we drop a
- *  `.gitkeep` inside it — the scanner then surfaces the folder in `snapshot.dirs`
- *  (the keep-file itself is never shown), and an empty folder survives a clone.
- *  `notes.write` upserts, so re-creating an existing folder is a harmless no-op. */
+ *  `.gitkeep` inside it: the scanner surfaces the folder in `snapshot.dirs` (the
+ *  keep-file itself is never shown), and an empty folder survives a clone.
+ *  `notes.write` upserts, so re-creating an existing folder is a no-op. */
 export const createFolderAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return
@@ -230,8 +201,8 @@ export const createFolderAtom = atom(null, async (get, set, path: string) => {
   await set(loadSnapshotAtom)
 })
 
-/** What links to `path` — the delete-preview fetch (FR-12). Empty, and no call,
- * when nothing is open: the dialog has nothing to warn about anyway. */
+/** What links to `path`: the delete-preview fetch. Empty, and no call, when
+ * nothing is open. */
 export const backrefsFor = atom(
   null,
   async (get, _set, path: string): Promise<{ path: string; count: number }[]> => {
@@ -242,25 +213,21 @@ export const backrefsFor = atom(
 )
 
 /**
- * "Abandon" (FR-20). Takes the merge back out of the tree; the conflict it was
- * called on is still a conflict, so the banner comes back with it. Nothing is
- * closed and nothing is discarded — the agent's session stays where it is, and
- * whatever it wrote into the working tree goes with the merge it was writing
- * into.
+ * "Abandon": takes the merge back out of the tree. The conflict is still a
+ * conflict, so the banner comes back. The agent's session stays where it is, and
+ * whatever it wrote into the working tree goes with the merge.
  */
 export const abandonReconcileAtom = atom(null, async () => {
   await trpc.sync.abandon.mutate()
 })
 
 /**
- * Rename a note: move the file, rewrite inbound links, follow the open tab (FR-11).
+ * Rename a note: move the file, rewrite inbound links, follow the open tab.
  *
  * The order is the correctness: flush the live buffer and commit a clean
  * restore point *before* the multi-file edit, so every step after is
- * recoverable (there is no transaction — features/wiki-links.md). Then the
- * rename, then a second commit so it lands as one commit on safe ground. The
- * open tab and active doc follow the file to its new path — a missed tab points
- * at something that no longer exists.
+ * recoverable (there is no transaction, `docs/features/wiki-links.md`). Then the
+ * rename, then a second commit so it lands as one commit on safe ground.
  */
 export const renameNoteAtom = atom(
   null,
@@ -302,9 +269,9 @@ export const moveNotesAtom = atom(
 )
 
 /**
- * Batch copy (Duplicate, Copy+Paste). No link rewrite and no tab retarget — the
- * originals stay put — but the same commit-pair ordering, and the flush ensures a
- * copy of a note being edited includes the latest keystrokes.
+ * Batch copy (Duplicate, Copy+Paste). No link rewrite and no tab retarget, but
+ * the same commit-pair ordering, and the flush ensures a copy of a note being
+ * edited includes the latest keystrokes.
  */
 export const copyNotesAtom = atom(
   null,
@@ -320,17 +287,11 @@ export const copyNotesAtom = atom(
 )
 
 /**
- * Batch delete (file, folder, multi-selection). Clears the editor if the open
- * note is among them and closes every deleted tab, so the pane never holds a doc
- * that no longer exists. One commit-pair, like the others.
- */
-/**
- * A drop from Finder (`features/file-tree.md`).
+ * A drop from Finder (`docs/features/file-tree.md`).
  *
- * Copies each file in and reloads the tree. A name the vault already uses is
- * refused rather than overwritten, per file rather than per drop — so a
- * six-file drop with one clash lands five. The skipped ones come back named,
- * because a file that silently did not arrive is the worst outcome here.
+ * A name the vault already uses is refused rather than overwritten, per file
+ * rather than per drop. The skipped ones come back named, because a file that
+ * silently did not arrive is the worst outcome here.
  */
 export const importFilesAtom = atom(
   null,
@@ -349,14 +310,11 @@ export const importFilesAtom = atom(
 )
 
 /**
- * Vault content out to a folder on disk (FR-13).
+ * Vault content out to a folder on disk.
  *
- * Returns what LANDED as well as what failed, and the difference is
- * load-bearing: a move deletes only the targets whose copy actually succeeded,
- * so a file that could not be written is still in the vault afterwards.
- *
- * No snapshot reload, unlike the import beside it — nothing in the vault
- * changed. A move reloads when its delete runs, which is the step that did.
+ * Returns what LANDED as well as what failed: a move deletes only the targets
+ * whose copy actually succeeded. No snapshot reload, since nothing in the vault
+ * changed; a move reloads when its delete runs.
  */
 export const exportFilesAtom = atom(
   null,
@@ -375,6 +333,11 @@ export const exportFilesAtom = atom(
   },
 )
 
+/**
+ * Batch delete (file, folder, multi-selection). Clears the editor if the open
+ * note is among them and closes every deleted tab. One commit-pair, like the
+ * others.
+ */
 export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: string[] }) => {
   const remote = get(activeRemoteAtom)
   if (!remote || paths.length === 0) return
@@ -388,8 +351,8 @@ export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: st
   await trpc.sync.commitNow.mutate()
 })
 
-/** What links into a set — the folder / multi-selection delete preview (FR-12
- *  generalized). Empty, and no call, for an empty set. */
+/** What links into a set: the folder / multi-selection delete preview. Empty,
+ *  and no call, for an empty set. */
 export const backrefsForMany = atom(
   null,
   async (get, _set, paths: string[]): Promise<{ path: string; count: number }[]> => {

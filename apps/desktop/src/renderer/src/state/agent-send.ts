@@ -1,15 +1,12 @@
 /**
  * What you *do* to the vault's agent: start a session, and send one an ask.
  *
- * Separate from `state/agent.ts`, which is what the agent *is* — the pushed
- * list, the tab you are looking at, the geometry. These need the open vault, and
- * they are what `state/vaults.ts` used to reach for, so a third module is what
- * keeps those two from importing each other.
+ * Separate from `state/agent.ts` (what the agent *is*) because these need the
+ * open vault, and a third module keeps `agent.ts` and `vaults.ts` from importing
+ * each other.
  *
- * **Everything that spawns a session comes through `startSessionAtom`**, which
- * is why it exists: a spawn is not one call but three steps — the vault guard,
- * the tab you land on, and the colour mode that session read out of its config.
- * A second spawn path is a second place to forget one of them.
+ * **Every spawn lands through `land`**: the tab you land on and the colour mode
+ * that session read out of its config (D86).
  */
 import { atom, type Getter, type Setter } from 'jotai'
 import { buildReconcilePrompt } from '../lib/reconcile-prompt'
@@ -36,12 +33,8 @@ export interface StartResult {
 
 /**
  * What every spawn owes the app once main has made one: show it, and remember
- * the colour mode it was born under (D86).
- *
- * Shared by the two atoms below, which are the only things that can produce a
- * session. A second copy of these three lines would be a second place to forget
- * one of them, and the colour mode is the one that would go quietly: a session
- * missing from that map simply never nudges you to restart it.
+ * the colour mode it was born under (D86). Forgetting the mode fails quietly: a
+ * session missing from that map never nudges you to restart it.
  */
 function land(get: Getter, set: Setter, id: string): void {
   // Show it: someone who asked for a session is asking to look at it.
@@ -51,14 +44,7 @@ function land(get: Getter, set: Setter, id: string): void {
   set(agentModeAtSpawnAtom, (m) => ({ ...m, [id]: get(activeModeAtom) }))
 }
 
-/**
- * Start one session in the open vault and show it.
- *
- * Showing it is opening its tab (D101). It used to be opening the drawer, which
- * had to happen BEFORE the spawn so that the drawer's own auto-start could see a
- * start in flight and stand down. Nothing watches a flag any more: a tab is
- * opened for a session that exists, after it exists.
- */
+/** Start one session in the open vault and open its tab (D101). */
 export const startSessionAtom = atom(
   null,
   async (
@@ -85,15 +71,12 @@ export const startSessionAtom = atom(
  * Rename a session: put Claude Code's own command in its box and get out of the
  * way (D101).
  *
- * **There is no dialog and no name field.** Holi cannot rename a session by
- * itself — `/rename` is the only route Claude Code offers, there is no shell
- * equivalent, and the command has to be typed into the session. So Holi types
- * the half it knows, focuses the tab, and the name is typed where it is going to
- * be read. A field in Holi would have collected a name only to paste it into a
- * box the user is now looking at anyway.
+ * **There is no dialog and no name field.** `/rename` is the only route Claude
+ * Code offers, with no shell equivalent, so Holi types the half it knows and
+ * focuses the tab.
  *
  * Unsent, like everything Holi writes: appending the Enter would submit whatever
- * draft was already sitting in that composer, as a prompt nobody meant to send.
+ * draft was already sitting in that composer.
  */
 export const renameSessionAtom = atom(
   null,
@@ -105,9 +88,8 @@ export const renameSessionAtom = atom(
 /**
  * Copy a session's conversation into one of its own (D101).
  *
- * Main resolves which conversation that is — Claude Code's session id, read out
- * of its listing at the moment of the fork — so the renderer never holds one.
- * What comes back is an ordinary Holi session, landed on like any other.
+ * Main resolves Claude Code's session id at the moment of the fork, so the
+ * renderer never holds one.
  */
 export const duplicateSessionAtom = atom(
   null,
@@ -124,10 +106,8 @@ export const duplicateSessionAtom = atom(
 /**
  * End a session and start another in its place, under its name (D101).
  *
- * Main does the ending and the naming: which names are real is its rule, and
- * the renderer only ever holds the derived string. What the renderer adds is
- * the geometry, so the new terminal is born at the size the old one had, and
- * the landing, which is what any spawn owes the app.
+ * Main does the ending and the naming. The renderer adds the geometry, so the
+ * new terminal is born at the size the old one had.
  */
 export const restartSessionAtom = atom(
   null,
@@ -145,20 +125,15 @@ export const restartSessionAtom = atom(
 /**
  * Go to the agent: ⌘J.
  *
- * Opens the current session's tab, or starts one when the vault has none —
- * "there is nowhere to talk to the agent" is answered by making somewhere,
- * which is the rule the drawer had and the one thing worth keeping from it.
+ * Opens the current session's tab, or starts one when the vault has none.
  *
- * **It does not toggle.** A drawer was a thing to open and shut; a tab is a
- * place to go, and ⌘J pressed twice should leave you where it put you rather
- * than undoing itself.
+ * **It does not toggle.** A tab is a place to go, and ⌘J pressed twice should
+ * leave you where it put you.
  */
 export const showAgentAtom = atom(null, (get, set): void => {
   const current = get(activeSessionAtom)
   // An exited session is a record to read, not somewhere to be sent to work, so
-  // the door steps over it — to another live one if the vault has one, and to a
-  // new one if it does not. Its tab stays where it is; this is about where you
-  // are being put, not about tidying up.
+  // this steps over it to another live one, or a new one. Its tab stays open.
   const target =
     current !== null && !current.exited
       ? current
@@ -175,14 +150,12 @@ export const showAgentAtom = atom(null, (get, set): void => {
  * Send text to a session, live or new. It lands in the input box **unsent**
  * (D100) and that session's tab comes forward.
  *
- * One rule for every sender, which is the point: nothing Holi writes can append
- * a submit to a draft somebody was half way through typing. A `'new'` target is
- * spawned with `--name` from the ask's first line, so its tab is named from the
- * moment it exists, and main holds the paste until that session's TUI is up.
+ * One rule for every sender: nothing Holi writes can append a submit to a
+ * half-typed draft. A `'new'` target is spawned with `--name` from the ask's
+ * first line, and main holds the paste until that session's TUI is up.
  *
  * A target that ended between being picked and being sent to is **refused**, not
- * silently dropped: the caller still has the text, and the answer it gets back
- * is what lets it keep it.
+ * silently dropped, so the caller can keep the text.
  */
 export const sendToAgentAtom = atom(
   null,
@@ -204,16 +177,15 @@ export const sendToAgentAtom = atom(
     set(activeSessionIdAtom, args.target)
     set(workspaceAtom, (w) => openSession(w, args.target))
     // …and the keyboard with it. A tab coming forward focuses its own terminal;
-    // one that was already showing does not, and a `/rename ` whose name then
-    // went to the double-clicked tab is the case this is for. A miss is fine:
-    // it means the terminal is not built yet, and it focuses itself when it is.
+    // one that was already showing does not (e.g. `/rename `). A miss is fine:
+    // the terminal is not built yet, and it focuses itself when it is.
     focusSessionTerminal(args.target)
     return { ok: true }
   },
 )
 
 /**
- * "Ask Claude to reconcile" (FR-18). Re-materialise the conflict in the working
+ * "Ask Claude to reconcile". Re-materialise the conflict in the working
  * tree (main re-runs the merge), then give it its own session with the conflicted
  * paths as a submitted first turn. If the merge now applies cleanly (no paths),
  * the banner is already cleared and there is nothing to hand the agent.

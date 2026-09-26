@@ -1,18 +1,14 @@
 /**
- * Applies the active vault's theme to the document root.
+ * Applies the active vault's theme to the document root (D64).
  *
  * The theme is a set of whitelisted colour/chrome token values (resolved in main
- * from `.holi/settings/theme.yaml` + `.holi/settings/theme.local.yaml`). Writing them as custom
- * properties on `document.documentElement` re-cascades the app's semantic tokens
- * — `--primary`, `--radius`, `--shadow-popover`, … — because those are `var()`
- * pointers (see `index.css`). It is deliberately the document ROOT and not an
- * inner wrapper: Radix dialogs, popovers and menus portal to `document.body`, so
- * only a root override reaches them.
+ * from `.holi/settings/theme.yaml` + `.holi/settings/theme.local.yaml`). Writing
+ * them as custom properties on `document.documentElement` re-cascades the app's
+ * semantic tokens, which are `var()` pointers (see `index.css`). The ROOT, not an
+ * inner wrapper: Radix dialogs, popovers and menus portal to `document.body`.
  *
- * The DOM bookkeeping (diff on switch, clear on the way out) lives in
- * `ThemeApplicator`; this hook is the shell that feeds it from the active-vault
- * atoms and the tRPC read, and surfaces the resolver's warnings so an ignored
- * key is diagnosable rather than silent.
+ * The DOM bookkeeping lives in `ThemeApplicator`; this hook feeds it and
+ * surfaces the resolver's warnings so an ignored key is diagnosable.
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useRef } from 'react'
@@ -25,18 +21,15 @@ import { activeModeAtom } from './color-scheme'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
 /**
- * The tokens a theme file does not yet name, with the values in force — or
+ * The tokens a theme file does not yet name, with the values in force, or
  * `null` when it already names them all.
  *
- * **This is what makes the file the source of truth rather than a list of
- * things you could say.** Every declaration arrived commented out, so the file
- * described the vocabulary while `index.css` still decided the colours. Writing
- * the values in force closes that gap once: from then on, the file answers
- * "what colour is this vault?" without the app having to.
+ * Writing the values in force makes the file, not `index.css`, the answer to
+ * "what colour is this vault?".
  *
- * Only what is MISSING. A token the vault has set is never touched, so this
- * cannot walk over somebody's theme, and once a file is complete it is a no-op
- * — which is what stops the write it triggers from triggering another.
+ * Only what is MISSING: a token the vault has set is never touched, and once a
+ * file is complete this is a no-op, which stops the write it triggers from
+ * triggering another.
  */
 function missingTokens(theme: ResolvedTheme): Record<ThemeModeKey, Record<string, string>> | null {
   const patch: Record<string, Record<string, string>> = {}
@@ -71,15 +64,13 @@ type ThemeModeKey = 'light' | 'dark'
 export function useVaultTheme(): void {
   const remote = useAtomValue(activeRemoteAtom)
   // The snapshot's object identity changes on every push; used purely as a
-  // "vault changed — re-read the theme" tick. The theme file contents are not in
+  // "vault changed, re-read the theme" tick. The theme file contents are not in
   // the snapshot (non-`.md` files carry only path + mtime), so we re-pull.
   const snapshot = useAtomValue(snapshotAtom)
   // The mode is a dependency, not a read-at-use. A resolved theme carries a
   // `light` and a `dark` block and only one is ever applied, so a flip that did
   // not re-apply would leave the OTHER mode's custom properties sitting on the
-  // root: the base palette switches and the vault's overrides do not. That is a
-  // worse-looking bug than having no light mode at all, and it is invisible in
-  // any vault with no theme file.
+  // root: the base palette switches and the vault's overrides do not.
   const mode = useAtomValue(activeModeAtom)
   // A stable instance across renders. Read inside the effects (a ref, so not an
   // effect dependency), which keeps the diff/clear state with the DOM it owns.
@@ -121,7 +112,7 @@ export function useVaultTheme(): void {
         }
       })
       .catch(() => {
-        // Leave whatever is applied — the CSS defaults are always valid, and a
+        // Leave whatever is applied: the CSS defaults are always valid, and a
         // transient read failure must not strip the user's theme.
       })
     return () => {

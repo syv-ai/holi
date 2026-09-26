@@ -15,12 +15,11 @@ function pushChannel<T>(channel: string) {
 }
 
 /**
- * The whole vault, every time it changes — no per-path events.
+ * The whole vault, every time it changes: no per-path events.
  *
- * `scanVault` is a walk and a parse, so re-deriving is cheap and a snapshot
- * cannot drift from the disk the way an event stream can. It also means a
- * dropped filesystem event costs a delay rather than a permanently wrong tree,
- * because the vault's heal tick pushes the same shape on a timer.
+ * A snapshot cannot drift from the disk the way an event stream can: a dropped
+ * filesystem event costs a delay rather than a permanently wrong tree, because
+ * the vault's heal tick pushes the same shape on a timer.
  */
 const onSnapshot = pushChannel<unknown>('vault:snapshot')
 
@@ -35,18 +34,16 @@ const onHeldBack = pushChannel<unknown>('vault:heldback')
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
- * A commit commits what is on disk, and the editor's newest words are in a
- * buffer until it writes them — so every durable moment is a flush then a
- * commit (`docs/glossary.md` §Flush). The renderer starts that sequence itself
- * for ⌘S, publish, tab close, vault switch and blur; quit is the one main
- * starts, because only main knows it is happening.
+ * A commit commits what is on disk, so every durable moment is a flush then a
+ * commit (`docs/glossary.md` §Flush). The renderer starts that itself everywhere
+ * except quit, which only main knows is happening.
  *
  * Main gives up after a second, so `flushDone()` is a courtesy, not a lock: a
  * renderer that never answers delays a quit, it does not prevent one.
  */
 const onFlushRequest = pushChannel<void>('vault:flush')
 
-/** PTY bytes for the drawer's xterm to decode, and which session produced them. */
+/** PTY bytes for a session tab's xterm to decode, and which session produced them. */
 const onAgentData = pushChannel<{ id: string; data: Uint8Array | string }>('agent-pty:data')
 /** One session ended. */
 const onAgentExit = pushChannel<{ id: string; code: number }>('agent-pty:exit')
@@ -54,7 +51,7 @@ const onAgentExit = pushChannel<{ id: string; code: number }>('agent-pty:exit')
  *  channel for the whole set: a tab strip renders the list, not a diff of it. */
 const onAgentSessions = pushChannel<unknown>('agent:sessions')
 
-/** A reminder fired and its notification was clicked — open this task, switching
+/** A reminder fired and its notification was clicked: open this task, switching
  * vaults first if it lives in another one. Carries `remote` so the renderer's
  * switch keeps `activeRemoteAtom` truthful (a main-side switch could not). */
 const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:open')
@@ -66,8 +63,7 @@ const onReminderOpen = pushChannel<{ remote: string; path: string }>('reminders:
 const onAppOpen = pushChannel<string>('apps:open')
 
 /** The Developer menu asked for the onboarding ritual, run against nothing.
- *  Dev builds only — main does not install the menu in a packaged app, so this
- *  channel simply never fires there. */
+ *  Dev builds only: main does not install the menu in a packaged app. */
 const onTestOnboarding = pushChannel<void>('dev:test-onboarding')
 
 /** A menu item ran: the id of a command in the renderer's table. ⌘W is the
@@ -75,7 +71,7 @@ const onTestOnboarding = pushChannel<void>('dev:test-onboarding')
  *  this is how it arrives instead. */
 const onMenuCommand = pushChannel<string>('menu:command')
 
-/** The ONE seam between renderer and main (architecture §8). */
+/** The ONE seam between renderer and main (architecture §3). */
 contextBridge.exposeInMainWorld('holi', {
   trpc: (op: unknown) => ipcRenderer.invoke('holi:trpc', op),
   vault: {
@@ -102,18 +98,16 @@ contextBridge.exposeInMainWorld('holi', {
   /**
    * The absolute path of a file dropped onto the window.
    *
-   * `File.path` used to carry it and no longer exists — Electron moved it here
-   * precisely so the renderer cannot invent one: `webUtils` answers only for a
-   * `File` the user actually dropped or picked. It is synchronous, which
-   * matters, because a `drop` handler cannot await before reading
-   * `dataTransfer`.
+   * `webUtils` answers only for a `File` the user actually dropped or picked,
+   * so the renderer cannot invent one. It is synchronous, which matters,
+   * because a `drop` handler cannot await before reading `dataTransfer`.
    */
   pathForFile: (file: File): string => webUtils.getPathForFile(file),
   /** Hand these files to the OS as a drag. Fire-and-forget: a drag cannot wait
    *  for a round trip. */
   startDrag: (paths: string[]) => ipcRenderer.send('holi:startDrag', paths),
   showSaveDialog: (defaultName: string) => ipcRenderer.invoke('holi:showSaveDialog', defaultName),
-  /** Pick a folder on disk — the destination for Copy/Move to Folder… (FR-13). */
+  /** Pick a folder on disk: the destination for Copy/Move to Folder…. */
   chooseFolder: (): Promise<string | null> => ipcRenderer.invoke('holi:chooseFolder'),
   agent: {
     onData: onAgentData,

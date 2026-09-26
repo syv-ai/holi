@@ -1,21 +1,9 @@
 /**
- * What is on screen: panes, each holding tabs.
+ * What is on screen: panes, each holding tabs (`docs/features/tabs-panes.md`).
  *
- * **A tab is not a note.** `architecture.md` constrains the pane system with
- * exactly that sentence, `vault-apps.md` §Tabs depends on it, and
- * `notes-editor.md` §Panes names the shape that forecloses it — a flat
- * `Map<path, …>`. So a tab is a discriminated union and the state is
- * `panes[] → tabs[]` from the first commit, even though plan 5 renders
- * `panes[0]` and nothing else. Adding a second pane later is then a second
- * element, not a rewrite.
- *
- * Preview-vs-pinned (VS Code's two-state model) is **plan 7**. Adding a
- * `pinned` flag later is additive; guessing its promotion rules now is not.
- *
- * **The second pane is real now.** The shape was paid for early precisely so
- * that this would be an addition rather than a rewrite, and it was: `splitPane`,
- * `closePane`, `focusPane` and `openInNewPane` below, plus one strengthening of
- * a rule that was already there — see `findTab`.
+ * **A tab is not a note** (`architecture.md`). A flat `Map<path, …>` would
+ * foreclose app, session and singleton tabs, so a tab is a discriminated union
+ * and the state is `panes[] → tabs[]`.
  */
 
 import { fileKind } from '@holi/shared'
@@ -34,36 +22,24 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => openBeside(w, w.active, path))
 })
 
-/**
- * A tab is not a note (architecture.md). The `preview` flag ports VS Code's
- * two-state model: a preview tab (italic) is the single one that a single-click
- * *replaces* rather than adding to, so browsing a vault costs one tab. Absent or
- * false means pinned. The board tab has no flag — it is pinned by construction,
- * being unique.
- */
-/** The unique surfaces: one board, one agenda, one mail. Opened from a nav
- *  button rather than from a file, and pinned by construction.
+/** The unique surfaces, one of each ever. Opened from a nav button rather than
+ *  from a file, and pinned by construction.
  *
- *  **Named, not derived.** This was `Exclude<Tab, {kind:'note'}>['kind']`, which
- *  encoded "every tab that is not a note is unique" — true until vault apps, of
- *  which there are as many as the vault holds. Derived, `openSingleton(w,'app')`
- *  typechecked and would have opened a tab with no `appId` at all.
+ *  **Named, not derived** from `Exclude<Tab, {kind:'note'}>`: derived, it would
+ *  include `app`, and `openSingleton(w,'app')` would typecheck and open a tab
+ *  with no `appId`.
  *
- *  **Settings is one of these rather than a modal** (#16): a modal blocks the
- *  window while you compare a setting against the vault it applies to, and a tab
- *  is splittable beside the note you are changing it for.
- *
- *  **History joined them for the same reason.** It was a full-screen modal, and
- *  reading what a commit changed is exactly the thing you want beside the note
- *  it changed. The per-NOTE history side panel is untouched: that one is the
- *  first of a set of sidebars a note unfolds, which is a different surface from
- *  a vault-wide one. */
+ *  Settings and history are tabs rather than modals so they can sit split beside
+ *  the note they concern. */
 export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
 
 /**
- * The two categories are now named rather than derived (see `SingletonTab`): a
- * tab is either *of* something — a note by path, an app by id — or it is one of
- * the singleton surfaces.
+ * A tab is either *of* something (a note by path, an app or session by id) or
+ * one of the singleton surfaces.
+ *
+ * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
+ * single one that a single-click *replaces* rather than adding to, so browsing a
+ * vault costs one tab. Absent or false means pinned.
  */
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
@@ -74,10 +50,8 @@ export type Tab =
    * One of the vault's agent sessions (D101), by the id main minted for it.
    *
    * One tab per session, as with an app. **Closing the tab does not end the
-   * session** — it keeps running, and the sidebar's list is how you get back to
-   * it. That split is new: in the drawer a tab WAS the session, so closing one
-   * killed it and had to ask first. A tab is a view now, and a view is free to
-   * close.
+   * session**: it keeps running, and the sidebar's list is how you get back to
+   * it. A tab is a view, and a view is free to close.
    */
   | { kind: 'session'; id: string }
   /** The board, the Google agenda, mail (D67), settings and history — one of
@@ -102,7 +76,7 @@ export function emptyWorkspace(): Workspace {
 
 /** Where the tabs actually live. Not persisted: whether tabs survive a restart
  *  is an open product question, and `.holi/settings/app.local.yaml` is where the
- *  answer would go (`notes-editor.md` §Panes). */
+ *  answer would go (`docs/features/tabs-panes.md`). */
 export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 
 function sameTab(a: Tab, b: Tab): boolean {
@@ -112,22 +86,17 @@ function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind === 'session' && b.kind === 'session') return a.id === b.id
   // Everything left is a singleton, of which there is one, ever. A kind that
   // carries an identity and is NOT listed above falls in here and reads as
-  // "already open" whatever it names — which is how two different sessions
-  // briefly shared one tab.
+  // "already open" whatever it names, so two different sessions would share one tab.
   return true
 }
 
 /**
- * Where a tab already is, across **every** pane — or null.
+ * Where a tab already is, across **every** pane, or null.
  *
- * One buffer per file was a per-pane rule while there was one pane, and a second
- * pane turns it into a hole: the same note open in two panes is two `EditorPane`
- * instances over one path, each holding its own `base` and each autosaving on
- * its own debounce, with the other one's write arriving as an "external" change
- * to reconcile. That is the data-loss-shaped bug the rule exists to prevent, and
- * it does not care which pane the second buffer is in.
- *
- * So the rule is now global, and it is the reason a split cannot simply
+ * One buffer per file is a global rule: the same note open in two panes is two
+ * `EditorPane` instances over one path, each holding its own `base` and each
+ * autosaving on its own debounce, with the other one's write arriving as an
+ * "external" change to reconcile. It is also why a split cannot simply
  * duplicate the tab it was invoked on.
  */
 function findTab(workspace: Workspace, tab: Tab): { pane: number; tab: number } | null {
@@ -138,8 +107,8 @@ function findTab(workspace: Workspace, tab: Tab): { pane: number; tab: number } 
   return null
 }
 
-/** Focus a pane, and a tab within it. The workhorse behind "it is already open
- *  over there" — every opener routes through this rather than adding a copy. */
+/** Focus a pane, and a tab within it. Every opener routes through this when the
+ *  tab is already open, rather than adding a copy. */
 function focusExisting(workspace: Workspace, at: { pane: number; tab: number }): Workspace {
   return {
     panes: workspace.panes.map((pane, i) => (i === at.pane ? { ...pane, active: at.tab } : pane)),
@@ -147,13 +116,8 @@ function focusExisting(workspace: Workspace, at: { pane: number; tab: number }):
   }
 }
 
-/**
- * Open a tab in the active pane, or focus it if it is already there.
- *
- * Focusing rather than appending is not tidiness: two tabs over one file means
- * two buffers over one path, each with its own `base`, racing each other's
- * saves. The editor's whole reload story assumes one buffer per file.
- */
+/** Open a tab in the active pane, or focus it if it is already open anywhere
+ *  (the one-buffer rule, see `findTab`). */
 export function openTab(workspace: Workspace, tab: Tab): Workspace {
   const existing = findTab(workspace, tab)
   if (existing !== null) return focusExisting(workspace, existing)
@@ -161,12 +125,10 @@ export function openTab(workspace: Workspace, tab: Tab): Workspace {
 }
 
 /**
- * Open a singleton surface — always a leftmost tab.
+ * Open a singleton surface, always as a leftmost tab.
  *
- * The non-note surfaces are unique, so each gets a fixed home rather than
- * landing wherever it was opened. If it is already open, focus it **in place**
- * (do not move it, or a second click would shuffle the strip under the user);
- * otherwise insert it at the front and the notes slide right.
+ * If it is already open, focus it **in place** (moving it would shuffle the
+ * strip under the user on a second click); otherwise insert it at the front.
  */
 export function openSingleton(workspace: Workspace, kind: SingletonTab): Workspace {
   const existing = findTab(workspace, { kind })
@@ -190,24 +152,20 @@ export function openSettings(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'settings')
 }
 
-/** The vault's commit history, as a tab. */
 export function openHistory(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'history')
 }
 
-/** Open a vault app in the active pane, or focus it if it is already there.
- *  Dedupes by `appId`, exactly as `openTab` dedupes a note by path — two frames
- *  over one app are two running copies of it, and the second is not the one you
- *  were looking at. Appended rather than inserted leftmost: an app is opened
- *  from the sidebar like a file, not from the nav rail like a singleton. */
+/** Open a vault app, or focus it if already open. Deduped by `appId`: two frames
+ *  over one app are two running copies of it. Appended rather than inserted
+ *  leftmost: an app is opened from the sidebar like a file, not from the nav
+ *  rail like a singleton. */
 export function openApp(workspace: Workspace, appId: string): Workspace {
   return openTab(workspace, { kind: 'app', appId })
 }
 
-/** Show one agent session in the active pane, or focus its tab if it is already
- *  open somewhere. Deduped by session id for the same reason an app is deduped
- *  by its id: two terminals over one PTY would both be attached to it, and only
- *  one of them would be the one you had scrolled. */
+/** Show one agent session, or focus its tab if already open. Deduped by id: two
+ *  terminals over one PTY would both be attached to it. */
 export function openSession(workspace: Workspace, id: string): Workspace {
   return openTab(workspace, { kind: 'session', id })
 }
@@ -216,9 +174,8 @@ export function openSession(workspace: Workspace, id: string): Workspace {
  * A pane with one tab removed, its active index following the **document**.
  *
  * Closing the active tab falls back to its left-hand neighbour; removing any
- * other one keeps whatever was active where it now sits. Shared, because a move
- * performs exactly the same removal — and two copies of this rule would be two
- * chances to silently put the user on a different file.
+ * other one keeps whatever was active where it now sits. Shared with the moves,
+ * which perform exactly the same removal.
  */
 function withoutTabAt(pane: Pane, index: number): Pane {
   const tabs = pane.tabs.filter((_, i) => i !== index)
@@ -235,16 +192,12 @@ function withoutTabAt(pane: Pane, index: number): Pane {
 /**
  * Close a tab in the active pane.
  *
- * The active tab follows the *document*, not the index. Closing a tab to the
- * left of the active one shifts every index after it, so keeping the number
- * would silently move the user to a different file — a data-loss-shaped bug in
- * a UI that autosaves.
+ * The active tab follows the *document*, not the index: keeping the number would
+ * silently move the user to a different file in a UI that autosaves.
  *
  * **An emptied pane goes, unless it is the last one.** Closing the final tab of
- * a split is how you unsplit — anything else would leave a permanent empty
- * column that only a second, separate gesture could remove. The last pane always
- * stays: an empty pane is the empty-editor state, and a workspace with no panes
- * has nothing to render into.
+ * a split is how you unsplit. The last pane always stays: an empty pane is the
+ * empty-editor state, and a workspace with no panes has nothing to render into.
  */
 export function closeTab(workspace: Workspace, index: number): Workspace {
   const closed = updatePane(workspace, (pane) =>
@@ -260,23 +213,20 @@ export function closeTab(workspace: Workspace, index: number): Workspace {
 /**
  * Would closing this tab take its pane with it?
  *
- * Derived by RUNNING `closeTab` rather than by restating its rule — "the pane
- * had one tab and it is not the last pane" is easy to write down and easy to let
- * drift from the thing it describes. Running it means the answer is always
- * exactly what the close is about to do.
+ * Derived by RUNNING `closeTab` rather than restating its rule, so the answer
+ * cannot drift from what the close is about to do.
  *
- * The caller is the shell, which has to know BEFORE it closes: a pane that is
- * going needs to play its exit first, and React unmounts it the instant state
- * says it is gone.
+ * The shell has to know BEFORE it closes: a pane that is going needs to play its
+ * exit first, and React unmounts it the instant state says it is gone.
  */
 export function closingTabRemovesPane(workspace: Workspace, index: number): boolean {
   return closeTab(workspace, index).panes.length < workspace.panes.length
 }
 
 /**
- * Single-click open: reuse the one preview tab (FR-15).
+ * Single-click open: reuse the one preview tab.
  *
- * If the note is already open, just focus it — clicking it again does not change
+ * If the note is already open, just focus it: clicking it again does not change
  * whether it is pinned. Otherwise, if a preview tab exists, replace it in place
  * (browsing costs one tab); if none does, add one. The new tab is a *preview*.
  */
@@ -317,9 +267,8 @@ export function pinTab(workspace: Workspace, index: number): Workspace {
   return pinTabIn(workspace, workspace.active, index)
 }
 
-/** `pinTab` against a named pane. `openPinned` needs it: the note it is asked to
- *  pin may already be open in a pane that is not the active one, and focusing it
- *  there is the whole point of the cross-pane lookup. */
+/** `pinTab` against a named pane: `openPinned` may find the note open in a pane
+ *  that is not the active one. */
 function pinTabIn(workspace: Workspace, paneIndex: number, index: number): Workspace {
   return {
     ...workspace,
@@ -343,9 +292,9 @@ export function pinActive(workspace: Workspace): Workspace {
 }
 
 /**
- * Point every open tab at a renamed note's new path (FR-11).
+ * Point every open tab at a renamed note's new path.
  *
- * A rename moves bytes, not tabs — indices and the active selection are
+ * A rename moves bytes, not tabs: indices and the active selection are
  * untouched, so the user stays on whatever they were looking at, now under its
  * new name. Spans all panes, not just the active one: a note can be open in
  * more than one, and a missed tab would point at a path that no longer exists.
@@ -362,8 +311,7 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
   }
 }
 
-/** `retargetTab` for a whole batch (FR-11, folder/multi-move). One map, applied
- *  across all panes; a tab whose path is a `from` follows to its `to`. */
+/** `retargetTab` for a whole batch (folder or multi-move). */
 export function retargetTabs(
   workspace: Workspace,
   moves: { from: string; to: string }[],
@@ -383,11 +331,9 @@ export function retargetTabs(
 /**
  * Follow a renamed app to its new id, in every pane.
  *
- * `retargetTabs` cannot do this: it keys on `path`, and an app tab has no path —
- * its identity is `appId`, which is the directory name under `.holi/apps/` and
- * the `holi-app://` host both. So a rename that only ran `retargetTabs` would
- * leave the open tab pointing at an id with nothing behind it, and the frame
- * would render the "was deleted" tombstone for an app that is very much alive.
+ * `retargetTabs` keys on `path`, and an app tab's identity is `appId` (the
+ * directory name under `.holi/apps/` and the `holi-app://` host). Without this
+ * the frame would render the "was deleted" tombstone for a renamed app.
  */
 export function retargetAppTab(workspace: Workspace, from: string, to: string): Workspace {
   if (from === to) return workspace
@@ -420,8 +366,8 @@ export function closeTabsForPaths(workspace: Workspace, paths: string[]): Worksp
  * A session leaves that list when it is **ended**, not when it exits: an exited
  * session keeps its place, and its tab with it, so the last thing it printed is
  * still there to read. What this closes is a terminal attached to a session that
- * has been disposed of — by the End action, by a vault switch, or by the app
- * closing the vault under it.
+ * has been disposed of: by the End action, a vault switch, or the app closing
+ * the vault under it.
  */
 export function closeSessionTabs(workspace: Workspace, liveIds: string[]): Workspace {
   return closeTabsWhere(workspace, (t) => t.kind === 'session' && !liveIds.includes(t.id))
@@ -429,11 +375,8 @@ export function closeSessionTabs(workspace: Workspace, liveIds: string[]): Works
 
 /**
  * Every pane with the matching tabs removed, each pane's active index following
- * the **document** rather than the position.
- *
- * Shared by both callers above, and by the two for one reason: the rule for
- * where the selection lands when tabs are removed underneath it is fiddly
- * enough that a second copy would be a second answer.
+ * the **document** rather than the position. Shared so there is one answer to
+ * where the selection lands.
  */
 function closeTabsWhere(workspace: Workspace, gone: (tab: Tab) => boolean): Workspace {
   return {
@@ -461,13 +404,11 @@ export function activeTab(workspace: Workspace): Tab | null {
  * Whether a note is alone in the window: one pane, and the tab it is showing a
  * markdown file (a note or a task file, which open in the same editor, D96).
  *
- * This is when the notes editor centres its column (#13). `theme.ts` explains
- * why the column is otherwise anchored left: a centred column moves whenever
- * the pane changes width, and a panel appearing beside you should narrow the
- * text, not slide it. With one pane nothing can appear beside the note on its
- * own, so only a split ends it. Other tabs in the pane do not: they sit behind
- * the one showing and take no width from it. Nor do the explorer and the
- * sidebars, whose width only ever changes because the user dragged it.
+ * This is when the notes editor centres its column. `editor/theme.ts` explains why the
+ * column is otherwise anchored left: a panel appearing beside you should narrow
+ * the text, not slide it. With one pane nothing can appear beside the note on
+ * its own, so only a split ends it; the explorer and sidebars only change width
+ * because the user dragged them.
  */
 export function isSoloNote(workspace: Workspace): boolean {
   if (workspace.panes.length !== 1) return false
@@ -485,9 +426,6 @@ function updatePane(workspace: Workspace, fn: (pane: Pane) => Pane): Workspace {
 
 /* ────────────────────────────────────────────────────────────────────────────
  * Panes
- *
- * The array has held more than one element since the first commit; these are the
- * operations that finally put something in it.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /** Focus a pane. Clicking anywhere in a pane makes it the one that "open" means,
@@ -501,15 +439,10 @@ export function focusPane(workspace: Workspace, index: number): Workspace {
 /**
  * Split: a new, **empty** pane beside the active one, focused.
  *
- * Empty, and not a copy of the active tab, which is what VS Code and Obsidian
- * both do. They can: their editors tolerate two views of one buffer. Holi's does
- * not — one buffer per file is the rule the whole external-reload story rests on
- * (`findTab` above), so duplicating the tab would be handing the user two
- * autosaves racing over one path, which is worse than an empty pane.
- *
- * So a split makes room, and the next thing you open fills it. The richer
- * gesture is `openInNewPane` — "open THIS beside what I am reading" — which is
- * what the tree and the apps list offer, and what people actually reach for.
+ * Empty, not a copy of the active tab as in VS Code and Obsidian: their editors
+ * tolerate two views of one buffer, Holi's does not (`findTab`). A split makes
+ * room and the next thing you open fills it; `openInNewPane` is the richer
+ * gesture the tree and apps list offer.
  */
 export function splitPane(workspace: Workspace): Workspace {
   const at = workspace.active + 1
@@ -526,8 +459,8 @@ export function splitPane(workspace: Workspace): Workspace {
 /**
  * Open a tab in a new pane beside the active one.
  *
- * Already open somewhere? Focus it there. That is not a shortcut — it is the
- * one-buffer rule again, and it means the menu item is safe to hit twice.
+ * Already open somewhere? Focus it there (the one-buffer rule), which also makes
+ * the menu item safe to hit twice.
  */
 export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
   const existing = findTab(workspace, tab)
@@ -546,18 +479,13 @@ export function openInNewPane(workspace: Workspace, tab: Tab): Workspace {
 /**
  * Open a note **beside** the pane it was asked from, as a preview.
  *
- * The board's card click. `openInNewPane` is the wrong tool for it: that always
- * makes a pane, so clicking five cards would leave you with five panes and one
- * board squeezed against the edge. This reuses the pane to the right if there is
- * one and splits only when there is not, which is what "open it next to what I
- * am looking at" actually means when you do it repeatedly.
+ * The board's card click. Unlike `openInNewPane`, which always makes a pane,
+ * this reuses the pane to the right if there is one and splits only when there
+ * is not, so clicking five cards does not leave five panes.
  *
- * Preview rather than pinned, for the same reason the file tree's single click
- * is: browsing the board costs one tab, and the first edit pins it.
- *
- * Already open anywhere? Focus it there. That is the one-buffer rule (`findTab`)
- * and it is the whole reason the board no longer holds a detail panel of its
- * own: two editors over one task file is two autosaves racing over one path.
+ * Preview rather than pinned, as with the file tree's single click: browsing the
+ * board costs one tab, and the first edit pins it. Already open anywhere? Focus
+ * it there (`findTab`).
  */
 export function openBeside(workspace: Workspace, from: number, path: string): Workspace {
   const existing = findTab(workspace, { kind: 'note', path })
@@ -579,11 +507,8 @@ export function openBeside(workspace: Workspace, from: number, path: string): Wo
 }
 
 /**
- * Close a whole pane. **The last one never goes** — an empty pane is the
- * empty-editor state, and a workspace with no panes has nothing to render into.
- *
- * Focus lands on the neighbour, chosen the same way `closeTab` chooses one: the
- * left-hand pane, unless the closed one was leftmost.
+ * Close a whole pane. **The last one never goes** (see `closeTab`). Focus lands
+ * on the left-hand neighbour, unless the closed one was leftmost.
  */
 export function closePane(workspace: Workspace, index: number): Workspace {
   if (workspace.panes.length <= 1 || index < 0 || index >= workspace.panes.length) return workspace
@@ -601,45 +526,35 @@ export function activePane(workspace: Workspace): Pane | null {
 /* ────────────────────────────────────────────────────────────────────────────
  * Moving a tab (D78)
  *
- * A move is the one thing a split deliberately cannot do. `splitPane` refuses to
- * duplicate the tab it was invoked on because two views of one path are two
- * buffers racing each other's autosave (see `findTab`) — but *relocating* that
- * buffer breaks nothing, because there is still exactly one of it. Remove, then
- * insert; never copy.
+ * Relocating a tab keeps exactly one buffer per path (`findTab`), so a move is
+ * always remove, then insert; never copy.
  * ──────────────────────────────────────────────────────────────────────────── */
 
 /**
  * A tab as it should land after a drag: pinned.
  *
- * Dragging is intent, the way editing is (`pinActive`). Without this the gesture
- * eats itself — place a preview tab deliberately, then single-click anything in
- * the tree, and `openPreview` replaces it *in place*, destroying the tab you
- * just positioned. The `preview` key is dropped rather than set false, matching
- * what `pinTabIn` writes.
+ * Dragging is intent, the way editing is (`pinActive`). Otherwise the next
+ * single-click in the tree would make `openPreview` replace the tab you just
+ * positioned. The `preview` key is dropped rather than set false, matching
+ * `pinTabIn`.
  */
 function dragged(tab: Tab): Tab {
   return tab.kind === 'note' && tab.preview ? { kind: 'note', path: tab.path } : tab
 }
 
 /**
- * Move a tab to `dest` — one function for a reorder *and* a cross-pane move.
+ * Move a tab to `dest`: one function for a reorder *and* a cross-pane move.
  *
- * The caller passes the tab's **identity**, not its location: `findTab` already
- * spans the workspace, so a strip never has to learn where a dropped tab came
- * from, and a drag carries a name rather than a pair of indices that could go
- * stale between the `dragstart` and the `drop`.
+ * The caller passes the tab's **identity**, not its location, so a drag never
+ * carries indices that could go stale between `dragstart` and `drop`.
  *
- * `dest.index` is read against the destination pane's tabs **as they are now** —
- * "insert before whatever currently sits there". So a rightward move within one
- * pane must decrement after the removal, or the target slides out from under the
- * drop and everything lands one place short.
+ * `dest.index` is read against the destination pane's tabs **as they are now**
+ * ("insert before whatever sits there"), so a rightward move within one pane
+ * must decrement after the removal or it lands one place short.
  *
- * **A reorder rearranges; it does not navigate.** Within a pane, the active tab
- * follows the *document* (`closeTab`'s rule) — tidying a full strip while
- * reading one file must not drop you into whichever tab you happened to drag. A
- * cross-pane move is different in kind: the destination shows what you dropped
- * into it, and the workspace focuses that pane, because that is where you are
- * now looking.
+ * **A reorder rearranges; it does not navigate.** Within a pane the active tab
+ * follows the *document*. A cross-pane move shows what you dropped and focuses
+ * that pane, because that is where you are now looking.
  */
 export function moveTab(
   workspace: Workspace,
@@ -658,8 +573,7 @@ export function moveTab(
   if (samePane && (dest.index === found.tab || dest.index === found.tab + 1)) return workspace
 
   const moved = dragged(source.tabs[found.tab]!)
-  // What the source pane was looking at, held as the document rather than as a
-  // number — the only form of it that survives a removal.
+  // Held as the document rather than a number: the only form that survives a removal.
   const wasActive = source.tabs[source.active]
   const removed = withoutTabAt(source, found.tab)
 
@@ -686,10 +600,8 @@ export function moveTab(
         : pane,
   )
 
-  // An emptied source pane goes — `closeTab`'s rule, and the difference between
-  // unsplitting by dragging your last tab away and a permanent empty column.
-  // It can never be the *last* pane: emptying one requires a different pane to
-  // move into, so reaching here means there were at least two.
+  // An emptied source pane goes (`closeTab`'s rule). It can never be the *last*
+  // pane: emptying one requires a different pane to move into.
   if (removed.tabs.length === 0) {
     return {
       panes: panes.filter((_, p) => p !== found.pane),
@@ -700,16 +612,14 @@ export function moveTab(
 }
 
 /**
- * Move a tab into a brand-new pane, inserted at `at` — the edge-drop.
+ * Move a tab into a brand-new pane, inserted at `at`: the edge-drop.
  *
  * `at` is an index into `panes` (`0..panes.length`), read against the array as
  * it is now: dropping on pane `i`'s left edge is `i`, its right edge `i + 1`.
  *
  * **One drop is a no-op, and only one.** A pane's *only* tab dropped on that
- * pane's *own* edge would remove the column and rebuild an identical one in the
- * same place — a flicker, not a move. The guard has to be exactly this narrow:
- * that same sole tab dropped on a *different* pane's edge is an ordinary move,
- * and it does collapse the pane it came from.
+ * pane's *own* edge would rebuild an identical column in the same place. That
+ * same sole tab dropped on a *different* pane's edge is an ordinary move.
  */
 export function moveTabToNewPane(workspace: Workspace, tab: Tab, at: number): Workspace {
   const found = findTab(workspace, tab)
@@ -726,8 +636,7 @@ export function moveTabToNewPane(workspace: Workspace, tab: Tab, at: number): Wo
 
   if (removed.tabs.length === 0) {
     // Removed unconditionally, unlike `closeTab`: a pane is being *added* in the
-    // same operation, so the "last pane never goes" rule would leave an empty
-    // column beside the new one rather than protect anything.
+    // same operation, so "last pane never goes" would only leave an empty column.
     panes = panes.filter((_, p) => p !== found.pane)
     if (index > found.pane) index -= 1
   }
@@ -749,17 +658,13 @@ function paneOfTab(workspace: Workspace, tab: Tab): number {
  *
  * **It asks the moves rather than restating their rules.** Both return the
  * workspace **by reference** when they would change nothing, so this cannot
- * drift from what a drop actually does — and it drifted the moment there were
- * two panes. Pane 1's left edge and pane 0's right edge are *the same gap*, so a
- * sole tab dragged out of pane 0 has **three** inert edges around it, not two;
- * a rule written out by hand had only ever counted its own pane's. That edge lit
- * up, accepted the drop, and did nothing.
+ * drift from what a drop does. A hand-written rule misses that pane 1's left
+ * edge and pane 0's right edge are *the same gap*: a sole tab dragged out of
+ * pane 0 has three inert edges, not two.
  *
- * The middle is the one zone decided here rather than derived: the pane a drag
- * came **from** never offers it, even when a drop there would move something
- * (to the end of its own strip). Every split gesture crosses the body on the way
- * to an edge, and a full-pane wash on all of them is noise — the strip already
- * expresses that move anyway.
+ * The middle is decided here rather than derived: the pane a drag came **from**
+ * never offers it. Every split gesture crosses the body on the way to an edge,
+ * and the strip already expresses that move.
  */
 export function dropZones(workspace: Workspace, tab: Tab, index: number): PaneDropZone[] {
   const pane = workspace.panes[index]

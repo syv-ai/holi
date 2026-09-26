@@ -4,9 +4,8 @@
  * The name → stack resolution is `EDITOR_FONT_STACKS` in `@holi/shared`, tested
  * there. What only a DOM can show is that the property is actually written, that
  * it follows a vault switch, and that a vault which says nothing lands on mono
- * rather than on nothing at all — an unset var would take the theme's fallback,
- * which is the same stack, so a broken hook would look identical in the app and
- * only this test would catch it.
+ * rather than on nothing at all: an unset var would take the theme's fallback,
+ * the same stack, so only this test would catch a broken hook.
  */
 import { Provider, createStore } from 'jotai'
 import { expect, test } from 'vitest'

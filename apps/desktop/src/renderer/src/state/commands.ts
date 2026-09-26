@@ -6,19 +6,15 @@
  * Jotai write. The keydown dispatcher (`useCommandHotkeys`), the palette's `>`
  * list and main's application menu all run a command by id through
  * `runCommandAtom`, so a shortcut hint beside a command is never a second list
- * to keep in step with the first. The old Holi kept three: a registry with no
- * handlers, a `switch` in its shortcut hook, and the palette's own closures.
- * Two of thirteen commands ever got a hint.
+ * to keep in step with the first.
  *
  * **A hotkey here is a renderer keydown.** ⌘W is the exception, marked
  * `boundBy: 'menu'`: it is the File menu's accelerator, which fires before the
  * page ever sees the key, so the dispatcher skips the row and main sends the
- * id instead. Nothing else should take that route — a menu accelerator on ⌘K
+ * id instead. Nothing else should take that route: a menu accelerator on ⌘K
  * would take the key from CodeMirror's link command, on ⌘C from xterm.
  *
- * `matchHotkey` is exact on modifiers, so `⌘T` and `⌘⇧T` are two rows, as
- * they are two commands. ⌘S used to fire with shift held as well; it no longer
- * does, and nothing was bound to ⌘⇧S.
+ * `matchHotkey` is exact on modifiers, so `⌘T` and `⌘⇧T` are two rows.
  */
 import { atom, useSetAtom, useStore, type Getter, type Setter } from 'jotai'
 import { useEffect } from 'react'
@@ -71,24 +67,20 @@ export function untitledPath(taken: ReadonlySet<string>): string {
 }
 
 export const STATIC_COMMANDS: readonly Command[] = [
-  // FR-6: ⌘⇧D jumps to today's daily (creating it if needed). Deliberately NOT
-  // routed through the landing: this is the gesture that still works in a
-  // vault whose `dailyNotes` is off, which is what makes "off" mean "stop doing
-  // this behind my back" rather than "the feature is gone".
+  // ⌘⇧D jumps to today's daily (creating it if needed). Deliberately NOT
+  // routed through the landing: it still works in a vault whose `dailyNotes`
+  // is off, which only stops the daily being opened automatically.
   {
     id: 'daily.open',
     label: "Open today's daily",
     hotkey: '⌘⇧D',
     run: (_get, set) => void set(openTodaysDailyAtom),
   },
-  // A real commit point rather than a placebo (`features/vaults-sync.md`):
-  // write the buffers, then ask main to commit instead of waiting out the idle
-  // timer, then push — ⌘S is an explicit "save this", so getting it
-  // off-machine matches the intent (D61). The commit has to resolve before the
-  // push, or the push races ahead of the edit ⌘S just committed. Every open
-  // buffer saves, not the focused one; a buffer whose syntax is mid-edit holds
-  // off on its own (FR-16), which is why this asks the registry for the
-  // *gated* writer.
+  // A real commit point (`docs/features/vaults-sync.md`): write the buffers,
+  // commit instead of waiting out the idle timer, then push, since ⌘S is an
+  // explicit "save this" (D61). The commit has to resolve before the push, or
+  // the push races ahead of it. Every open buffer saves; a buffer whose syntax
+  // is mid-edit holds off on its own, which is why this uses the *gated* writer.
   {
     id: 'sync.save',
     label: 'Save and sync',
@@ -100,8 +92,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
         .then(() => undefined),
   },
   // A new empty pane beside this one, focused. Empty rather than a copy of the
-  // current tab — see `splitPane`; one buffer per file is not a preference, it
-  // is what the autosave/reload story rests on.
+  // current tab: see `splitPane`.
   {
     id: 'pane.split',
     label: 'Split pane',
@@ -116,8 +107,8 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌥⌘S',
     run: (_get, set) => set(navOpenAtom, (open) => !open),
   },
-  // Bound here now that there is no drawer to own it: a session tab is mounted
-  // only while it is open, so the shortcut that OPENS one cannot live inside it.
+  // Bound here because a session tab is mounted only while it is open, so the
+  // shortcut that OPENS one cannot live inside it.
   {
     id: 'agent.show',
     label: 'Go to the agent',
@@ -131,7 +122,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
   },
   // Create a task in any folder (including one that is not yet a lane, which
   // board quick-add cannot reach). ⌘T captures quickly and stays put; ⌘⇧T
-  // captures and opens the detail editor to fill in the rest.
+  // captures and opens the task to fill in the rest.
   {
     id: 'task.new',
     label: 'New task',
@@ -200,7 +191,7 @@ export const commandsAtom = atom<Command[]>((get) => {
 })
 
 /**
- * The only way a command runs — from the key dispatcher, the palette and the
+ * The only way a command runs, from the key dispatcher, the palette and the
  * menu alike. Unknown ids and rows whose `when` is false are refused quietly:
  * a menu built for a vault that has since closed may still send one.
  */

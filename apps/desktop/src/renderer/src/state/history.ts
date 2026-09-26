@@ -1,10 +1,9 @@
 /**
- * Version history — the vault's git history, per open file.
+ * Version history: the vault's git history, per open file and vault-wide.
  *
- * D60 deleted the CRDT snapshot store; git's object store IS the timeline
- * (`features/history.md`). Everything here keys off the open note's
- * **path** — a `DocMeta` has no id under D60 — and opening a different note
- * clears the selection and the preview.
+ * Git's object store IS the timeline (D60, `docs/features/history.md`).
+ * Everything per-file keys off the open note's **path**, and opening a different
+ * note clears the selection and the preview.
  */
 import { fileKind, isTaskFilePath } from '@holi/shared'
 import { atom } from 'jotai'
@@ -13,30 +12,29 @@ import { trpc } from '../lib/trpc'
 import { workspaceAtom } from './panes'
 import { activeRemoteAtom } from './vaults'
 
-/** One commit that touched the open file — the git `Commit` shape. */
+/** One commit that touched the open file: the git `Commit` shape. */
 export interface Version {
   sha: string
   subject: string
-  /** ISO 8601 author date. The panel formats it and never re-sorts — the log is
+  /** ISO 8601 author date. The panel formats it and never re-sorts: the log is
    *  already newest-first. */
   date: string
   author: string
-  /** Lines added and removed, summed over the commit — or over the ONE file
-   *  when this list is a note's own history, which is the more useful number
-   *  there. Both zero on a merge, which `--numstat` reports no diff for. */
+  /** Lines added and removed, summed over the commit, or over the ONE file
+   *  when this list is a note's own history. Both zero on a merge, which
+   *  `--numstat` reports no diff for. */
   added: number
   removed: number
 }
 
 /**
- * The path the history drawer targets: the **focused tab**, when it is a markdown
- * note (not a task file, not an image/pdf). Null otherwise — which is also when
- * the header History button hides.
+ * The path the per-note history panel targets: the **focused tab**, when it is
+ * a markdown note (not a task file, not an image/pdf). Null otherwise, which is
+ * also when the header History button hides.
  *
  * Keyed off the workspace's active tab, NOT `activeDocAtom`: that atom follows a
- * note being *opened* (a tree click / wiki-link), not a tab being *focused*, and
- * `EditorPane` never syncs it — so switching between open tabs would leave the
- * drawer stale. One source of truth, shared by the button and the drawer.
+ * note being *opened*, not a tab being *focused*, so switching between open tabs
+ * would leave the panel stale.
  */
 export const historyTargetPathAtom = atom<string | null>((get) => {
   const w = get(workspaceAtom)
@@ -47,7 +45,7 @@ export const historyTargetPathAtom = atom<string | null>((get) => {
   return tab.path
 })
 
-/** A file's before/after at a commit — fed to the merge view as a diff. */
+/** A file's before/after at a commit, fed to the merge view as a diff. */
 export interface FileDiff {
   before: string
   after: string
@@ -77,8 +75,7 @@ export const loadVersionsAtom = atom(null, async (get, set) => {
     trpc.history.list.query({ path }),
     trpc.notes.fileHistory.query({ path }).catch(() => undefined),
   ])
-  // Focus may have moved to another file while this was in flight — don't stamp
-  // one file's timeline over another's.
+  // Focus may have moved to another file while this was in flight.
   if (get(historyTargetPathAtom) !== path) return
   set(versionsAtom, versions)
   if (history !== undefined) set(revisionCountAtom, history?.revisions ?? 0)
@@ -96,11 +93,10 @@ export const loadDiffAtom = atom(null, async (get, set, sha: string) => {
 })
 
 /**
- * Restore writes the old content back as a **new commit** — never a rewrite of
+ * Restore writes the old content back as a **new commit**, never a rewrite of
  * history. Flush the live buffer first so the editor's external-write reconcile
  * reloads the restored text cleanly (clean buffer → silent reload) rather than
- * 3-way-merging it. The list is refetched — the restore just minted a commit, and
- * a timeline missing it is missing it at the one moment it matters.
+ * 3-way-merging it. The list is refetched: the restore just minted a commit.
  */
 export const restoreVersionAtom = atom(null, async (get, set, sha: string) => {
   const path = get(historyTargetPathAtom)
@@ -120,13 +116,11 @@ export const resetHistoryAtom = atom(null, (_get, set) => {
 })
 
 // -------------------------------------------------- the whole-vault history tab
-// The broad history surface (a tab, opened from the footer sync state): every
-// commit in the vault, and for the selected one every file it changed with its
-// diff. Commit-first, where the drawer above is file-first.
+// Every commit in the vault, and for the selected one every file it changed
+// with its diff. Commit-first, where the panel above is file-first.
 //
-// **A diff per file, not one selected file.** The surface shows each changed
-// file as its own collapsible with the diff inside it, so several are on screen
-// at once and each is loaded and kept on its own. Keyed by path within the
+// **A diff per file, not one selected file.** Each changed file is its own
+// collapsible, so several are on screen at once. Keyed by path within the
 // commit, and dropped wholesale when the commit changes.
 
 export const vaultCommitsAtom = atom<Version[]>([])
