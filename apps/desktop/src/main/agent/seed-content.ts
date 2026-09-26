@@ -124,7 +124,7 @@ const SETTINGS_JSON =
         //
         // Matched on the writing tools rather than on the path, because the
         // matcher grammar cannot see a path; the hook returns immediately for
-        // anything outside `.holi/apps/`.
+        // anything outside a `<name>.app/` bundle.
         PostToolUse: [
           {
             matcher: 'Write|Edit|MultiEdit',

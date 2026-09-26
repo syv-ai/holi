@@ -28,12 +28,21 @@ function main(payload) {
   const filePath = payload?.tool_input?.file_path
   if (typeof filePath !== 'string') return []
 
-  // `.holi/apps/<id>/…` — anywhere in the absolute path, because the hook is
-  // handed an absolute path and never told where the vault root is.
-  const match = /[/\\]\.holi[/\\]apps[/\\]([^/\\]+)[/\\](.+)$/.exec(filePath)
+  // `<name>.app/…` (D107). The hook is handed an absolute path, so the part
+  // above the vault is cut off first when the session's cwd (the vault root)
+  // says where that is; a folder named `x.app` above the vault is not an app.
+  const cwd = typeof payload?.cwd === 'string' ? payload.cwd.replace(/[/\\]+$/, '') : ''
+  const inVault =
+    cwd !== '' && (filePath.startsWith(`${cwd}/`) || filePath.startsWith(`${cwd}\\`))
+  const base = inVault ? cwd.length + 1 : 0
+  const rel = filePath.slice(base)
+  const match = /(?:^|[/\\])([^/\\]+\.app)[/\\]/.exec(rel)
   if (match === null) return []
-  const [, appId] = match
-  const appDir = filePath.slice(0, match.index) + join('/.holi/apps', appId)
+  const bundleEnd = base + match.index + match[0].length - 1
+  const appDir = filePath.slice(0, bundleEnd)
+  // What `holi app init` takes: the vault-relative bundle when it is known.
+  const bundle = inVault ? appDir.slice(base) : match[1]
+  if (/^(\.claude|memory)[/\\]/.test(bundle)) return []
 
   const source = readFileSync(filePath, 'utf8')
   const ext = extname(filePath).toLowerCase()
@@ -42,7 +51,7 @@ function main(payload) {
     ...unbuildable(ext),
     ...syntax(source, ext),
     ...boundaries(source, ext),
-    ...registration(appDir, appId),
+    ...registration(appDir, bundle),
   ]
 }
 
@@ -185,21 +194,21 @@ function stripComments(source) {
 }
 
 /**
- * Is this app registered?
+ * Is this app finished?
  *
  * Only asked once there IS an entry document. Before that the app is merely
  * unfinished, and an agent halfway through writing one does not need to be told
  * on every file that it has not finished yet.
  */
-function registration(appDir, appId) {
+function registration(appDir, bundle) {
   if (!existsSync(join(appDir, 'index.html'))) return []
   if (existsSync(join(appDir, 'app.yaml'))) return []
   return [
     [
       ERROR,
-      `${appId} has no app.yaml, so it will not appear in the sidebar. Write one ` +
-        `(name: ${appId} is enough), or run \`holi app init ${appId}\`. Write it ` +
-        `LAST: it is what registers the app.`,
+      `${bundle} has no app.yaml, so it is not finished and will not open. Write ` +
+        `one (an empty file is enough), or run \`holi app init ${bundle}\`. Write ` +
+        `it LAST: it is what finishes the app.`,
     ],
   ]
 }

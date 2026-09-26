@@ -676,7 +676,7 @@ describe('ensureSeeded — the vault-apps skill', () => {
     const skill = await readFile(join(root, '.claude/skills/vault-apps/SKILL.md'), 'utf8')
     // The three facts an app author cannot discover by reading the app's own
     // code: where it goes, what the bridge offers, and that nothing persists.
-    expect(skill).toContain('.holi/apps/')
+    expect(skill).toContain('.app/')
     expect(skill).toContain('holi.docs.list()')
     expect(skill).toContain('holi.docs.read(')
     expect(skill).toContain('holi.tasks.list()')
@@ -934,7 +934,7 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
   })
 
   it('tells the agent it can open the app itself', () => {
-    expect(flat).toContain('holi app open <id>')
+    expect(flat).toContain('holi app open <path>')
   })
 
   it('says a check is reported back on write', () => {

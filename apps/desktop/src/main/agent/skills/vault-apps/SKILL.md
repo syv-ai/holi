@@ -12,38 +12,41 @@ vault's own theme without doing anything.
 Write one when a question is better answered by a screen than by a note: "how many
 tasks are open per project", "show me every note tagged draft", "a burndown of this
 month". The user does not have to know anything about how it works; you write the
-files and it appears in their sidebar.
+files and it appears in their file tree.
 
 ## Where it goes
 
+An app is a folder whose name ends in `.app`, and it can go anywhere in the vault.
+Put it next to the notes it is about: a burndown for a project goes in that
+project's folder. The folder name, without `.app`, is what the app is called.
+
 ```
-.holi/apps/<id>/index.html      ← required: the entry document
-.holi/apps/<id>/app.js          ← anything else you like, beside it
-.holi/apps/<id>/style.css
-.holi/apps/<id>/app.yaml        ← required: write this LAST
+Projects/Q2/Burndown.app/index.html   ← required: the entry document
+Projects/Q2/Burndown.app/app.js       ← anything else you like, beside it
+Projects/Q2/Burndown.app/style.css
+Projects/Q2/Burndown.app/app.yaml     ← required: write this LAST
 ```
 
-- `<id>` is the app's name and **must match `[a-z0-9-]+`** — lowercase letters,
-  digits and dashes. `retro-board` is fine; `Retro_Board` is not an app at all
-  and will not appear.
-- `index.html` is required. A directory without one is ignored, so write the
+- The name is yours to choose: `Burndown.app`, `Retro board.app`. It cannot sit
+  inside another `.app` folder, nor under `.claude/` or `memory/`.
+- `index.html` is required. A folder without one is not an app, so write the
   entry document even if it is a stub.
 - Every other file is served beside it, untouched. Relative `src`/`href` work:
   `<script src="app.js">`, `<link rel="stylesheet" href="style.css">`.
-- `app.yaml` is what **registers** the app, and you write it **last**. Until it
-  exists the app does not appear, which is the point: you write an app one file
-  at a time, and without a marker it would show up in the sidebar the moment
-  `index.html` landed and open onto half a page.
+- `app.yaml` is what **finishes** the app, and you write it **last**. Until it
+  exists the app does not open, which is the point: you write an app one file at
+  a time, and without a marker it would open onto half a page the moment
+  `index.html` landed.
 
   ```yaml
-  name: Retro board          # optional — the label; defaults to the directory
-  icon: kanban               # optional — any lucide icon name
-  description: Sprint retros # optional — the sidebar tooltip
+  description: Sprint retros # optional: shown where the app is listed
   ```
 
-  Every key is optional. An **empty file registers the app**, so if you have
-  nothing to say, write nothing. `holi app init <id>` scaffolds one for you.
-- It appears in the sidebar as soon as the manifest lands. No restart.
+  An **empty file is enough**, so if you have nothing to say, write nothing.
+  There is no `name` or `icon` key: the name is the folder, and the user sets an
+  icon the way they do for any file. `holi app init <path>` scaffolds one for you.
+- It appears in the file tree and the apps list as soon as the manifest lands.
+  No restart.
 
 ## The API
 
@@ -120,12 +123,12 @@ You have two things and no more: a check that runs on every file you write, and
 a command that opens the app.
 
 ```sh
-holi app open <id>          # opens (or focuses) the app's tab in Holi
-holi app init <id>          # scaffolds .holi/apps/<id>/ with a manifest
+holi app open <path>        # opens (or focuses) the app's tab in Holi
+holi app init <path>        # scaffolds <path>, a folder ending in .app
 ```
 
-**The check speaks on its own.** Every time you write a file under
-`.holi/apps/`, a `vault-app check` runs and tells you what will not work — a
+**The check speaks on its own.** Every time you write a file inside a `.app`
+folder, a `vault-app check` runs and tells you what will not work — a
 syntax error and its line, a `.ts` file that has no bundler to build it, a
 `localStorage` call that will throw, a missing manifest. It never blocks a
 write and it says nothing at all when there is nothing wrong, so **if it is
@@ -136,7 +139,7 @@ run. So the loop is:
 
 1. Write the files, manifest last.
 2. Read what the check says, if it says anything.
-3. `holi app open <id>`.
+3. `holi app open <path>`, e.g. `holi app open Projects/Q2/Burndown.app`.
 4. **Ask the user what they see.** You still have no console, no screenshot
    and no way to read the rendered page — opening the tab puts it in front of
    them, not in front of you.
@@ -195,7 +198,7 @@ reliably comes out unreadable.
 
 ## A whole app
 
-`.holi/apps/vault-dashboard/index.html`:
+`Vault dashboard.app/index.html`:
 
 ```html
 <!doctype html>
@@ -244,8 +247,8 @@ reliably comes out unreadable.
 
 ## Before you say it is done
 
-- **Write `app.yaml`**, if you have not. Without it the app does not exist.
-- **Open it: `holi app open <id>`.** Then say what it should show, so the
+- **Write `app.yaml`**, if you have not. Without it the app does not open.
+- **Open it: `holi app open <path>`.** Then say what it should show, so the
   user can tell you when it does not — you have still never seen it render, so
   do not claim to have looked at it.
 - If they already had it open, tell them to reload the tab (see above).

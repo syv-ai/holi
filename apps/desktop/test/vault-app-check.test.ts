@@ -49,10 +49,10 @@ afterEach(async () => {
 
 /** Write a file into an app and report it as a `Write` the agent just made. */
 async function wrote(rel: string, content: string): Promise<Run> {
-  const abs = join(root, '.holi/apps', rel)
+  const abs = join(root, 'Team', rel)
   await mkdir(join(abs, '..'), { recursive: true })
   await writeFile(abs, content)
-  return runHook({ tool_name: 'Write', tool_input: { file_path: abs, content } })
+  return runHook({ cwd: root, tool_name: 'Write', tool_input: { file_path: abs, content } })
 }
 
 /** The advisory text the hook produced, or '' when it stayed quiet. */
@@ -64,37 +64,54 @@ function said(run: Run): string {
   return parsed.hookSpecificOutput?.additionalContext ?? ''
 }
 
-const REGISTERED = 'name: retro\n'
+const FINISHED = ''
 
 /** An app that is finished, so registration never becomes the reported problem. */
-async function finished(id = 'retro'): Promise<void> {
-  const dir = join(root, '.holi/apps', id)
+async function finished(name = 'retro'): Promise<void> {
+  const dir = join(root, 'Team', `${name}.app`)
   await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, 'app.yaml'), REGISTERED)
+  await writeFile(join(dir, 'app.yaml'), FINISHED)
   await writeFile(join(dir, 'index.html'), '<!doctype html><h1>hi</h1>\n')
 }
 
 describe('it never blocks, and it is quiet when there is nothing to say', () => {
   it('exits 0 and says nothing for a valid script', async () => {
     await finished()
-    const run = await wrote('retro/app.js', 'const a = 1\nconsole.log(a)\n')
+    const run = await wrote('retro.app/app.js', 'const a = 1\nconsole.log(a)\n')
     expect(run.code).toBe(0)
     expect(said(run)).toBe('')
   })
 
   it('exits 0 even when it has plenty to say', async () => {
     await finished()
-    const run = await wrote('retro/app.js', 'const a = (\nlocalStorage.setItem("x", 1)\n')
+    const run = await wrote('retro.app/app.js', 'const a = (\nlocalStorage.setItem("x", 1)\n')
     expect(run.code).toBe(0)
     expect(said(run)).not.toBe('')
   })
 
-  it('ignores a write outside .holi/apps entirely', async () => {
+  it('ignores a write outside any .app bundle entirely', async () => {
     const abs = join(root, 'notes/mine.js')
     await mkdir(join(root, 'notes'), { recursive: true })
     await writeFile(abs, 'const a = (\n')
-    const run = await runHook({ tool_name: 'Write', tool_input: { file_path: abs } })
+    const run = await runHook({ cwd: root, tool_name: 'Write', tool_input: { file_path: abs } })
     expect(run.code).toBe(0)
+    expect(said(run)).toBe('')
+  })
+
+  it('ignores the old .holi/apps location, which is no longer an app', async () => {
+    const abs = join(root, '.holi/apps/retro/app.js')
+    await mkdir(join(abs, '..'), { recursive: true })
+    await writeFile(abs, 'const a = (\n')
+    const run = await runHook({ cwd: root, tool_name: 'Write', tool_input: { file_path: abs } })
+    expect(said(run)).toBe('')
+  })
+
+  it('does not take a folder named .app above the vault for an app', async () => {
+    const vault = join(root, 'Holi.app', 'vault')
+    const abs = join(vault, 'notes/mine.js')
+    await mkdir(join(abs, '..'), { recursive: true })
+    await writeFile(abs, 'const a = (\n')
+    const run = await runHook({ cwd: vault, tool_name: 'Write', tool_input: { file_path: abs } })
     expect(said(run)).toBe('')
   })
 
@@ -117,7 +134,7 @@ describe('it never blocks, and it is quiet when there is nothing to say', () => 
 describe('code that cannot run', () => {
   it('reports a syntax error with its line', async () => {
     await finished()
-    const run = await wrote('retro/app.js', 'const a = 1\nconst b = (\nconsole.log(a)\n')
+    const run = await wrote('retro.app/app.js', 'const a = 1\nconst b = (\nconsole.log(a)\n')
     const text = said(run)
     expect(text).toMatch(/SyntaxError/)
     expect(text).toMatch(/line \d+/)
@@ -126,19 +143,19 @@ describe('code that cannot run', () => {
   it('reports a syntax error inside an inline script, at the file\'s own line', async () => {
     await finished()
     const html = ['<!doctype html>', '<h1>hi</h1>', '<script>', 'const a = )', '</script>'].join('\n')
-    const run = await wrote('retro/index.html', html)
+    const run = await wrote('retro.app/index.html', html)
     expect(said(run)).toMatch(/line 4/)
   })
 
   it('accepts module syntax — a type="module" script is legal here', async () => {
     await finished()
-    const run = await wrote('retro/app.js', 'export const a = 1\n')
+    const run = await wrote('retro.app/app.js', 'export const a = 1\n')
     expect(said(run)).toBe('')
   })
 
   it('reports a .ts/.tsx/.jsx file as unbuildable — there is no bundler', async () => {
     await finished()
-    for (const rel of ['retro/app.ts', 'retro/App.tsx', 'retro/App.jsx']) {
+    for (const rel of ['retro.app/app.ts', 'retro.app/App.tsx', 'retro.app/App.jsx']) {
       const run = await wrote(rel, 'export const a: number = 1\n')
       expect(said(run)).toMatch(/no bundler/)
     }
@@ -150,59 +167,59 @@ describe('the boundaries the skill states', () => {
 
   it('reports localStorage and sessionStorage, with the reason', async () => {
     for (const source of ['localStorage.setItem("a", 1)\n', 'sessionStorage.getItem("a")\n']) {
-      const text = said(await wrote('retro/app.js', source))
+      const text = said(await wrote('retro.app/app.js', source))
       expect(text).toMatch(/opaque origin/)
     }
   })
 
   it('reports holi.data, which does not exist', async () => {
-    const text = said(await wrote('retro/app.js', 'await holi.data.get("x")\n'))
+    const text = said(await wrote('retro.app/app.js', 'await holi.data.get("x")\n'))
     expect(text).toMatch(/holi\.data/)
   })
 
   it('reports a write through the bridge — an app shows, the agent changes', async () => {
-    const text = said(await wrote('retro/app.js', 'await holi.docs.write("a.md", "x")\n'))
+    const text = said(await wrote('retro.app/app.js', 'await holi.docs.write("a.md", "x")\n'))
     expect(text).toMatch(/cannot write/)
   })
 
   it('reports a hand-added bridge script tag', async () => {
     const html = '<!doctype html>\n<script src="holi-bridge.js"></script>\n<h1>hi</h1>\n'
-    const text = said(await wrote('retro/index.html', html))
+    const text = said(await wrote('retro.app/index.html', html))
     expect(text).toMatch(/bridge/)
   })
 
   it('nudges about a hard-coded colour, below the rest', async () => {
-    const text = said(await wrote('retro/style.css', 'body { color: #1e1e1e; }\n'))
+    const text = said(await wrote('retro.app/style.css', 'body { color: #1e1e1e; }\n'))
     expect(text).toMatch(/#1e1e1e/)
     expect(text).toMatch(/var\(--/)
   })
 
   it('does not mistake a hex-looking id or a comment for a colour', async () => {
-    const text = said(await wrote('retro/app.js', 'const id = "abc123"\nconst n = 0x1e1e1e\n'))
+    const text = said(await wrote('retro.app/app.js', 'const id = "abc123"\nconst n = 0x1e1e1e\n'))
     expect(text).toBe('')
   })
 })
 
 describe('registration', () => {
   it('reports an app with an entry document and no manifest, naming the fix', async () => {
-    const dir = join(root, '.holi/apps/retro')
+    const dir = join(root, 'Team/retro.app')
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'index.html'), '<!doctype html><h1>hi</h1>\n')
-    const text = said(await wrote('retro/app.js', 'const a = 1\n'))
+    const text = said(await wrote('retro.app/app.js', 'const a = 1\n'))
     expect(text).toMatch(/app\.yaml/)
-    expect(text).toMatch(/holi app init retro/)
+    expect(text).toMatch(/holi app init Team\/retro\.app/)
   })
 
   it('says nothing about registration once the manifest is there', async () => {
     await finished()
-    expect(said(await wrote('retro/app.js', 'const a = 1\n'))).toBe('')
+    expect(said(await wrote('retro.app/app.js', 'const a = 1\n'))).toBe('')
   })
 
   it('does not nag about a manifest before there is an entry document', async () => {
     // Mid-authoring: the app has one file so far. Registration is not yet a
     // problem, and saying so on the first write is the noise that gets a hook
     // ignored.
-    await mkdir(join(root, '.holi/apps/retro'), { recursive: true })
-    expect(said(await wrote('retro/app.js', 'const a = 1\n'))).toBe('')
+    await mkdir(join(root, 'Team/retro.app'), { recursive: true })
+    expect(said(await wrote('retro.app/app.js', 'const a = 1\n'))).toBe('')
   })
 })
