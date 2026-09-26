@@ -15,7 +15,7 @@ describe('languageIdForPath', () => {
   })
 
   it('maps the three languages a vault app is written in', () => {
-    // An app is unbuilt HTML/CSS/JS the browser runs as-is (prd/vault-apps.md),
+    // An app is unbuilt HTML/CSS/JS the browser runs as-is (features/vault-apps.md),
     // so these are the extensions the editor actually meets under `.holi/apps/`.
     expect(languageIdForPath('.holi/apps/dash/app.js')).toBe('javascript')
     expect(languageIdForPath('.holi/apps/dash/index.html')).toBe('html')

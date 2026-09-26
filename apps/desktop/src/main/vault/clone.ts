@@ -8,7 +8,7 @@
  * re-clone is precisely what would destroy that work. When the path cannot be
  * confidently claimed, this refuses and says what it found.
  *
- * `prd/vaults-sync.md` FR-1's "Holi never adopts a user-maintained checkout" is
+ * `features/vaults-sync.md`'s "Holi never adopts a user-maintained checkout" is
  * about adopting a path the *user* chose. This adopts a path *Holi* chose, under
  * the managed root, which is a different thing.
  */

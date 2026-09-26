@@ -346,7 +346,7 @@ describe('a due date that names an hour', () => {
 
 describe('order', () => {
   it('reads a rank off the file and writes it back unchanged', () => {
-    // The board's manual ordering (`prd/tasks.md` §Board UX). A rank is the one
+    // The board's manual ordering (`features/tasks.md`). A rank is the one
     // key in a task file that means nothing to a human, so it earns its place
     // by round-tripping exactly — a rewrite that rounded it would reshuffle a
     // column nobody touched.

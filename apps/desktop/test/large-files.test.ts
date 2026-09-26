@@ -1,7 +1,7 @@
 /**
  * The large-file gate's pure core: which dirty paths commit, which are held back.
  * Pinned here so the size boundary and the deletions-always-commit rule can't
- * drift (docs/specs/2026-08-03-large-binary-policy-design.md).
+ * drift (docs/features/vaults-sync.md).
  */
 import { execFile } from 'node:child_process'
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'

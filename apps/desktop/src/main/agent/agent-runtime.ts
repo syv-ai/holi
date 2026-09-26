@@ -238,7 +238,7 @@ export interface AgentArgs {
  * The interactive `claude` invocation — deliberately bare. This is a normal
  * terminal session, not a headless/`--print` run. Holi builds no prompt content,
  * so there is NO `--append-system-prompt`: vault conventions live in `AGENTS.md`,
- * which Claude Code reads natively from the cwd (prd/agent.md §Per-turn). And no
+ * which Claude Code reads natively from the cwd (features/agent-config.md). And no
  * `--mcp-config`/`--strict-mcp-config` — Holi declares no MCP servers, and
  * `--strict-mcp-config` would additionally suppress any the *vault* configures
  * natively in `.claude/`, which it is entitled to do.

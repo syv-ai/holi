@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Holi SessionStart hook — tell the agent what this vault remembers, once per
-// session, before it answers anything. See prd/agent.md §Memory (D89).
+// session, before it answers anything. See features/agent-memory.md (D89).
 //
 // SessionStart rather than UserPromptSubmit: memory is session state, and 3k
 // characters injected into every turn is a cost paid over and over. It fires on

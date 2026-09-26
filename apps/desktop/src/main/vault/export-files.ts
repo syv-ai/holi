@@ -1,5 +1,5 @@
 /**
- * Vault content, written out to a folder on disk (`prd/notes-editor.md` FR-13).
+ * Vault content, written out to a folder on disk (`features/file-tree.md`).
  *
  * The mirror of `import-files.ts`, and the two differ in exactly one decided
  * way. Importing refuses a colliding name (`COPYFILE_EXCL`) because the vault's

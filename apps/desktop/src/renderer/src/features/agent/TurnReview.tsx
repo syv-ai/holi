@@ -2,7 +2,7 @@
  * What the agent's last turn changed, and how to take a piece of it back (D88).
  *
  * The review happens AFTER the turn, never as a gate before the write:
- * `prd/vaults-sync.md` §Non-goals rules out an outbound gate, and Claude Code's
+ * `features/vaults-sync.md` rules out an outbound gate, and Claude Code's
  * own permission prompts already ask. So this is a reading of a commit range,
  * shaped like `HistoryPanel` because it answers the same questions about one.
  *

@@ -6,7 +6,7 @@
  * last loaded or saved, `mine` is the buffer, `theirs` is what is now on disk.
  *
  * The report is the feature. A merger that silently picks a side would remove
- * it (`prd/notes-editor.md` §External writes), because the whole point is to
+ * it (`features/editor.md`), because the whole point is to
  * route an unmergeable overlap to the same reconcile path a git conflict uses.
  *
  * **Line granularity, not character.** `fast-diff` is used here purely as an

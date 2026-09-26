@@ -1,6 +1,6 @@
 /**
  * Writing vault content OUT to a folder on disk — the replacement for the drag
- * to Finder that macOS refuses (`prd/notes-editor.md` FR-13).
+ * to Finder that macOS refuses (`features/file-tree.md`).
  *
  * The mirror of `import-files.ts`, and it differs in exactly one decided way:
  * a name already in use is auto-renamed rather than refused. Importing protects

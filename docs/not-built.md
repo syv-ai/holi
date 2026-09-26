@@ -1,182 +1,122 @@
-# Not built — designed, wanted, absent
+# Not built
 
-The PRDs describe **the product that exists**. This file holds the other thing: work that is
-wanted, mostly designed, and not built. The split exists because the two kinds of statement had
-been living in the same sections, and a reader could not tell them apart — a PRD section that
-reads as a specification is indistinguishable from one that reads as a plan, and both were being
-believed.
+Work that is wanted, mostly designed, and absent. The feature pages describe what exists; this page
+is the other half. No ordering, no sizing, no dates.
 
-Below this line there is **no ordering, no sizing, and no dates**. It is a list of what is missing,
-which is the only claim it can make honestly.
-
-**Audited entry-by-entry against the code on 2026-08-21.** Three entries were describing work that
-had shipped — the reconcile → drawer handoff (2026-07-27), creating a task from a calendar event
-and the document-template set (both 2026-08-04) — and are gone, folded into their pillars. They
-predated this file, which was written from PRD prose rather than from the code; the entries that
-came after it were all accurate. The rule that follows is in the [README](README.md): an entry gets
-checked against the code when it is *written*, not only when it is purged. The audit's own two
-findings — the reconcile's read-only files and its abandon affordance — were built the same day
-and purged with everything else.
-
-## What belongs here, and what does not
-
-An entry answers **"what could we build next"**. If a thing is absent and the honest statement is
-**"why it isn't here, and what would change that"**, it is a boundary with a trigger condition —
-product shape — and **the PRD owns it alone**. Squashing the autosave journal, an OS network-status
-listener, a template output target nobody has asked for, and rename-as-a-slash-command are all of
-that kind: each is deliberately absent, each names the observation that would revive it, and each is
-complete in its own PRD. Filing them here too would be a second copy of a claim, which is exactly
-what the consolidate-then-purge rule exists to prevent.
-
-So this file also does not hold **non-goals** ("Holi is not a full email client" describes the
-product's shape as surely as any feature does), **rejected alternatives** (only useful beside the
-design that beat them), or **admitted uncertainty about behaviour that ships** ("the debounce is 3
-seconds, tuned rather than derived").
-
-Each entry names where its design and its reasoning live, because the reasoning belongs with the
-pillar that owns it and not with the backlog.
-
-**When something here gets built, this file purges it.** The entry's reasoning — including any
-sub-question it carried — folds into the owning PRD as a description of what now exists, and the
-entry is deleted. This is the same cycle [`decisions.md`](decisions.md) runs, for the same reason the
-[README](README.md) gives: "not built" is a *claim about how things are*, so two copies of it can
-contradict each other. A plan, by contrast, records what was done on a date and cannot go stale.
-
----
+An entry answers "what could we build next". A deliberate absence with a trigger ("add an OS
+network listener only if retry latency proves annoying") is product shape and stays on its feature
+page, not here. Check an entry against the code when writing it, and delete it when it ships,
+folding its reasoning into the owning page.
 
 ## Agent
 
-**Vault apps — state, writes, and a backend.** The feature itself is **built**: slice 1 shipped
-(2026-08-20), so an agent-authored app in `.holi/apps/<id>/` opens as a themed tab and reads the
-vault's notes and tasks. [`prd/vault-apps.md`](prd/vault-apps.md) describes it. What is absent is
-everything downstream of one undecided question — **where app state lives**, which the PRD's §State
-holds open on purpose: it is per-app rather than per-platform (a retro board's state is shared by
-nature; a CSV explorer's is nobody else's business), so it waits for real apps to say which kind was
-missed. Nothing here is blocked on design; each is additive against the surface that exists:
+**Telling a live session something unprompted.** Holi has no channel into a running Claude Code
+session except its PTY, where anything written lands in the user's input box. The pre-commit
+transforms wanted to tell the agent what they rewrote: the runner supports a `notify` callback and
+main leaves it unwired. The substitute is `.holi/state/hooks.local.log`, which the agent reads when
+asked. Also absent: surfacing a hook failure in the sync status bar when no session is open.
 
-- `holi.data` and **every write call** — the trust model already permits writes, so this is the
-  state question and nothing else.
-- The `utilityProcess` **backend** (`server.mjs`) and **personal apps** in `userData/apps/` —
-  each waits for an app that needs it.
-- **Auto-reload** — deliberately not a second surface. (The command-palette entry was the other half of this line until D102 built it, 2026-09-21.)
+**A cap on concurrent sessions.** A vault can run any number.
 
-No longer absent, as of slice 2 (2026-08-20): the app **manifest** (`app.yaml`, now the
-registration marker), a `holi` CLI the agent can type (`app open`, `app init`, `seed refresh`),
-and **an agent action that opens an app** — which was the gap that made slice 1's authoring loop
-end in "ask the user to go and look".
+**Memory tooling.** Lint findings as proposals, a graph view, and per-directory indexes. See
+[agent-memory](features/agent-memory.md).
 
-**The two apps this document keeps using as examples — the retro board and the poll — still cannot
-be built**, because both need shared state. That, rather than any missing API, is the measure of the
-gap.
+**Self-improvement loop.** Dropped from v1: unproven, and one person's background agent editing
+shared skills and memory is a hazard. If revived, auto-edits touch the personal layer only and
+shared changes become proposals.
 
-**Self-improvement / curator loop.** Designed around headless background forks and dropped from v1:
-unproven value, and in a shared vault one person's background agent auto-editing **shared** skills
-and memory is a real hazard. **If revived, the shape is already decided:** auto-edits are scoped to
-the **personal** layer only, and shared-layer changes become **proposals requiring approval**.
+**Agent theme proposals.** The agent writes a vault's theme; proposing one for approval is absent.
 
-**Agent theme proposals.** The agent authors a vault's theme today
-([`architecture.md`](architecture.md) §9); having it *propose* one for approval is not built.
+## Vault apps
 
-## Telling the agent something, unprompted
+**App state.** Agreed design: state is per app and declared in `app.yaml`. `state: local` is a
+SQLite database under `userData` with a path and size cap in the manifest, never in the repo, and is
+the default (a finance app's data belongs nowhere near git). `state: shared` is a committed text
+file (JSON or NDJSON) in the app's folder, because text merges and diffs where a committed database
+cannot. Sensitivity is a location, not a cipher: with no server there is no key distribution, so
+encrypting shared state protects against nobody. Open: whether shared state is written like a
+document (last writer wins) or a log (merge keeps both). Until this lands there is no `holi.data`
+and no bridge write, and a retro board or a poll cannot be built.
 
-Holi has **no way to push text into a live Claude Code session.** Ops runs the other way (the agent
-calls Holi), and the only channel into a running session is its PTY — where anything written lands
-in the user's input box as if they had typed it, which is worse than saying nothing.
+**The rest of the bridge and manifest.** `holi.open` opens only a vault path, not another app by
+id. No `holi.tasks` writes or subscriptions, no theme-change event. `app.yaml`'s `name`, `icon` and
+`description` are written but never read: every surface shows the directory id. An app's injected
+theme is always the dark block.
 
-This bites the pre-commit transforms (D76 part 4, [`prd/vaults-sync.md`](prd/vaults-sync.md) FR-9),
-which wanted to tell the agent what they rewrote. The runner supports a `notify` callback and main
-leaves it unwired. The substitute is a pull surface: a capped, machine-local
-`.holi/state/hooks.local.log` the agent reads when asked — the first agent-readable log in Holi, and the
-only one.
-
-**Also not built:** D76's floor for when no agent session is open — surfacing a hook failure in the
-sync status bar via `pause(reason)`. The log is the only surface today.
+**Backend, personal apps, hot reload.** A `utilityProcess` backend (`server.mjs`), personal apps in
+`userData/apps/`, and reloading an open app when its files change (today reload is a button).
 
 ## Notes & editor
 
-**True live preview inside an *unfocused* table cell.** A rendered table's cells read as prose since
-2026-09-09 (#11, D93): bold is bold, inline code is code, a link is coloured, and `**`, `*` and
-`` ` `` are hidden. What is not there is the real thing — a wiki-link is not a chip in a cell, a
-markdown link still shows `[text](url)`, and an image is not drawn. **Why, exactly:**
-`codemirror-markdown-tables` renders an unfocused cell itself, as a `contenteditable` div whose
-spans it classes from `highlightingFor(rootState, tags)`. There are no decorations anywhere in that
-path, and everything live preview does beyond colouring — concealing a delimiter, replacing a range
-with a widget — *is* a decoration. The only editor in a table is the one that appears in the cell
-you have clicked into, and that one already has the full inline stack. **What it would take:**
-forking or patching the package so a cell view renders from a decoration set rather than from a
-highlighter, or replacing the table widget with one of our own. Both are large, against a dependency
-that is otherwise carrying its weight, and the gap is cosmetic — the source stays readable and one
-click gives you the real editor. Worth revisiting only if tables become a place where wiki-links are
-commonly written.
+**Slash commands as small programs.** Agreed design: a command is a small JS module the vault
+commits, run in the same isolated origin vault apps use, handed the buffer and selection and
+returning text or an action. It gets `fetch`, the vault actions apps have, an agent query and a mail
+compose call; no filesystem, shell or Node. Real scripts were rejected because a committed command
+is code that arrives on a teammate's laptop with a pull. Machine-local-only commands were rejected
+because the agent could not write one for the team. Today the menu is a fixed `/todo` and `/table`.
 
-**A binary with no extension Holi knows opens as text, and looks like corruption.** `fileKind`
-defaults to `text` for an unknown extension, which is the forgiving choice and the right one for a
-`.env` or a `Makefile` — but a `.ttf` in `.holi/document-templates/_brand/fonts/` opens in the plain
-editor as several screens of replacement characters, which reads as a broken file rather than as a
-format with no viewer. Noticed 2026-08-20 while verifying the image plate; not fixed, because the
-fix is a *third* answer between "editable text" and "typed placeholder" — probably a byte-sniff
-rather than a longer extension list, since the whole point is the extensions nobody enumerated.
+**Live preview inside an unfocused table cell.** Cells read as prose (bold, code, links coloured),
+but a wiki-link is not a chip and an image is not drawn. `codemirror-markdown-tables` renders an
+unfocused cell itself from a highlighter, with no decorations, and everything live preview does
+beyond colour is a decoration. Fixing it means patching the package or owning the table widget.
+Worth it only if tables become a common place for links.
 
-**Viewing a `.docx` Holi cannot render.** A `.docx` in a vault gets a typed placeholder naming what it is. Opening one in place, `mammoth`-rendered HTML say, is not built. **A PDF is no longer in this entry**: the viewer shipped on 2026-09-21 (D103, [`prd/pdf-export.md`](prd/pdf-export.md) §Viewing a PDF), embedpdf's ready-made viewer over its own PDFium wasm, with marks saved into the file, and an earlier version of this paragraph calling the viewer "genuinely optional" because originals are rarely opened was overtaken by his asking for it. **The framing this inherited is dead:** an earlier design converted incoming PDFs and `.docx` files to markdown on entry and archived the original to object storage, and D62 killed it, because the vault is text-first *by authorship*, so rich documents are what it **emits**, not what it imports. What survives is the viewer, and for `.docx` the same question the PDF answered stands: given how rarely an original is opened, "reveal it in the Finder and let the OS open it" may be the whole feature. The old viewer's lesson is recorded in the PDF design rather than here: the previous app's EmbedPDF integration was ~1550 LOC on the headless route with worker-engine and StrictMode hangs on "Loading PDF…", and the ready-made shape avoided all of it.
+**A binary with an unknown extension opens as text.** A `.ttf` shows as replacement characters and
+looks like corruption. Probably a byte sniff rather than a longer extension list.
 
-**Importing a folder.** Dropping a folder in from Finder is refused with a sentence — the copy is
-per file, and recursing means deciding what to do about the files inside it that collide, which is
-the same question the flat case answers one at a time and a folder answers all at once.
+**Viewing a `.docx` in place.** It gets a typed placeholder. Revealing it in Finder may be the whole
+feature.
 
-**Dragging a row out to Finder.** `webContents.startDrag` starts a drag the app's own window
-accepts — that round trip is what the in-tree move rides on — but Finder refuses the drop, so
-nothing lands. Verified by hand on macOS 2026-08-22; it cannot be covered by a test, because
-neither Vitest nor CDP can drive an OS-level drag. The handler matches Electron's documented shape
-(`files` + `file` + a non-empty `icon`), so the fault is not obviously in the call; the 1×1
-transparent drag icon is the first thing to suspect. **Copy to Folder… / Move to Folder… exist
-because of this** and cover the same need without a gesture, so the drag would be a convenience on
-top rather than a missing capability.
+**Importing a folder** from Finder is refused; recursing means deciding collisions for a whole tree.
+
+**Dragging a tree row out to Finder.** `webContents.startDrag` starts, but Finder refuses the drop.
+Copy to Folder and Move to Folder cover the need.
+
+**Tabs.** Dragging a tab to a new window or another vault, and vertical splits.
+
+## Sync
+
+**Git LFS setup.** The large-file hook's message mentions LFS; nothing configures it.
+
+**Reconcile lock for task files.** A conflicted task file opened in `TaskFileEditor` is not locked
+during a reconcile; the lock covers note tabs only.
 
 ## Tasks
 
-**A time-grouped secondary board view** — "Today / This week / Later". Post-v1, and it returns as
-an *option*, never a mode to configure: a second view earns its place only by not multiplying the
-config space that [`prd/tasks.md`](prd/tasks.md) §What the design deliberately excludes closes off.
+**A time-grouped board view** ("Today / This week / Later"), as an option, never a mode to configure.
 
-**Assignees**, and with them per-person reminders on shared tasks. This is the answer if
-vault-wide reminders prove noisy — **not** a private reminder channel, which would make a shared
-task mean different things to different members.
+**Assignees**, and with them per-person reminders on shared tasks. This is the answer if vault-wide
+reminders prove noisy, not a private reminder channel.
 
-## Google mail & calendar
+**A renumber pass** for exhausted ranks. `needsRenumber` exists in `packages/shared/src/rank.ts`;
+nothing calls it.
 
-**A task that lights up for a recurring event series** — the reminders and agenda tie-in across
-[`prd/tasks.md`](prd/tasks.md) and [`prd/daily-notes.md`](prd/daily-notes.md). Untouched by
-D67–D70.
+**Mail and calendar chips on a board card.** `GoogleLinkChips` exists and is never rendered.
 
-## PDF export
+**A launch-at-login toggle** after the first-launch prompt.
 
-**A mermaid diagram renders in the editor and not in the PDF.** Since 2026-09-09 a ```mermaid fence
-draws as a diagram in a note ([`#6`](https://github.com/syv-ai/holi/issues/6)); a PDF made from that
-note still shows the fence as a code block. That inconsistency is worse than the feature being absent
-in both places, so it should not stay open long — but it is a design question rather than a task, and
-it is [`#9`](https://github.com/syv-ai/holi/issues/9).
+**A task that lights up for a recurring event series**, tying reminders to the agenda.
 
-**Why it is not simply "call mermaid in the exporter".** Mermaid needs a DOM, and the two places a
-PDF gets made have different amounts of one. `ConvertToPdf` runs in the renderer and has a DOM. The
-agent's `md-to-pdf` skill shells `typst compile` directly and never enters Holi at all, so it has
-none. Three routes, and the choice between them is the decision:
+## PDF
 
-1. **Pre-render in the renderer.** Cheap, and fixes only the UI path — the agent's PDFs would still
-   show code blocks, so the two paths would disagree about what a vault's documents look like.
-2. **An offscreen `BrowserWindow` in main, behind an ops endpoint.** Both paths reach it, the agent's
-   through the `holi` CLI it already uses. Coherent, and much the most work.
-3. **Do not render mermaid in PDFs at all**, and say so in the `md-to-pdf` skill. Honest, and it
-   keeps one story rather than two.
+**Mermaid in a PDF.** A mermaid fence draws in the editor and exports as a code block. The export
+paths differ in DOM: `ConvertToPdf` runs in the renderer, the agent's `md-to-pdf` skill shells
+`typst` with no DOM. Pre-rendering in the renderer fixes one path only; an offscreen window in main
+behind the `holi` CLI fixes both and costs the most; not rendering mermaid in PDFs at all keeps one
+story. Undecided.
 
-Route 2 is the only one where the two PDF paths agree, which is the property that matters. Whether
-that earns an offscreen window is what has not been decided.
+**Note-relative images in a PDF.** cmarker resolves them against its own package directory, so
+only absolute image paths export.
 
+**Template distribution across vaults.** Templates are per-vault; a shared brand repo is the
+obvious answer and is not designed.
 
-**Template distribution across vaults.** Templates are per-vault committed content, which is what
-makes a team consistent *within* a vault and does nothing across five of them. A shared brand repo
-cloned as a vault is the obvious answer and has not been designed.
+**The agent replying to PDF comments**, and recording which note a PDF was exported from.
 
 ## Daily notes
 
-**Templates / configurable seed content.** The seed is `type: daily-note` frontmatter plus a title
-heading, in code. Deferred post-v1.
+**Configurable seed content** and a home-timezone override.
+
+## Auth
+
+**Pasting a fine-grained PAT.** The device flow is the only sign-in.

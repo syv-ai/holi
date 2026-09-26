@@ -1,6 +1,6 @@
 /**
  * Bringing files in from outside the vault — the drop from Finder
- * (`prd/notes-editor.md` FR-13).
+ * (`features/file-tree.md`).
  *
  * A vault is a folder, so an import is a copy. Two things make it unlike
  * `copyNotes`, which moves files that are already inside:

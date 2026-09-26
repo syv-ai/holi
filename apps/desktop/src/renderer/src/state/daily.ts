@@ -25,7 +25,7 @@ import { activeDocAtom, activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from 
  * absent daily simply marks nothing — which is the honest rendering in a shared
  * vault, where there is never one (§Daily notes are personal-vault-only).
  * `todayAtom` is the client's own local date, because nothing else computes
- * "today" (`prd/daily-notes.md`).
+ * "today" (`features/daily-notes.md`).
  */
 export const todayDailyPathAtom = atom((get) => dailyNoteFilename(get(todayAtom)))
 

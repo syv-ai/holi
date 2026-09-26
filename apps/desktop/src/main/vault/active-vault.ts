@@ -43,7 +43,7 @@ import { watchVault, type VaultWatcher } from './watcher'
 /**
  * FR-21's display vocabulary.
  *
- * Push is automatic (`prd/vaults-sync.md` §Pushing), so there is no `publishing`
+ * Push is automatic (`features/vaults-sync.md`), so there is no `publishing`
  * state and no resting "N to publish": the remote is current within seconds by
  * design, and an unpushed count is information only when a push is *failing*.
  * That is why the count rides `offline` rather than a state of its own —
@@ -78,7 +78,7 @@ export type SyncState =
 export interface SyncTimings {
   /** Quiet before a rescan. Short: the file tree has to feel live. */
   rescanDebounceMs: number
-  /** Quiet before the commit check. `prd/vaults-sync.md` §Committing FR-4. */
+  /** Quiet before the commit check. `features/vaults-sync.md`. */
   commitQuietMs: number
   /** The backstop. Rescans AND commits, whatever the watcher did or did not say. */
   healIntervalMs: number
@@ -87,7 +87,7 @@ export interface SyncTimings {
   focusThrottleMs: number
   /** Quiet before a coalesced background push. Longer than the commit debounce:
    *  a landed commit is already durable on disk, so nothing is lost by batching
-   *  a burst of them into one push. `prd/vaults-sync.md` §Pushing. */
+   *  a burst of them into one push. `features/vaults-sync.md`. */
   pushQuietMs: number
   /** How long quit and a vault switch will wait for a best-effort push before
    *  giving up — the work is already committed, so an unreachable remote must
@@ -537,7 +537,7 @@ export async function openActiveVault(args: {
 
   /** Coalesce a burst of commits into one background push. Re-armed on every
    *  landed commit, so continuous typing pushes a handful of times rather than
-   *  once per idle debounce. `prd/vaults-sync.md` §Pushing. */
+   *  once per idle debounce. `features/vaults-sync.md`. */
   function schedulePush(): void {
     if (closed) return
     if (pushTimer !== null) clearTimeout(pushTimer)
@@ -549,7 +549,7 @@ export async function openActiveVault(args: {
 
   /**
    * Push local commits now, best-effort — the automatic replacement for the old
-   * Publish (`prd/vaults-sync.md` §Pushing). Called by the coalescer, the leave
+   * Publish (`features/vaults-sync.md`). Called by the coalescer, the leave
    * points (⌘S, vault switch, quit), and after coming back to the app.
    *
    * The failure taxonomy is the whole point (D61):

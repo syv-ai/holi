@@ -4,7 +4,7 @@
  * clone. This is the ONE piece of per-turn state the agent cannot discover
  * itself (it is editor-UI focus, which only Holi holds); tasks, backreferences
  * and sync state the agent finds with its own native tools, and vault
- * conventions live in AGENTS.md (prd/agent.md §Per-turn context).
+ * conventions live in AGENTS.md (features/agent-config.md).
  *
  * `*.local.*` is local-only (isLocalOnlyPath in shared), so the mirror never
  * adopts this file as a vault doc and it never syncs. Writes are debounced and

@@ -1,7 +1,7 @@
 /**
  * FR-21's vocabulary, and nothing beyond it.
  *
- * Push is automatic (`prd/vaults-sync.md` §Pushing), so there is no "N to
+ * Push is automatic (`features/vaults-sync.md`), so there is no "N to
  * publish" and no `publishing`: the words are up to date, pulling, offline
  * (with the waiting count), no write access, conflict, reconciling, paused. A
  * test per kind, because the failure mode here is not a crash, it is a vault

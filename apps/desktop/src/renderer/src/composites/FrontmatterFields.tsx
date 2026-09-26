@@ -379,7 +379,7 @@ export function FrontmatterFields({
               // The one thing a field edit cannot do by writing text. `done` on
               // a recurring task is not a status, it is a roll-forward to the
               // next occurrence — a bare write would end the series wherever
-              // somebody happened to set it (prd/tasks.md §Recurrence).
+              // somebody happened to set it (features/tasks.md).
               if (field.key === 'status' && v === 'done' && isTask) return void complete(path)
               set(field.key, v as TaskStatus)
             }}

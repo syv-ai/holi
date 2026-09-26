@@ -1,5 +1,5 @@
 /**
- * Which documents a reconcile locks (`prd/vaults-sync.md` FR-19).
+ * Which documents a reconcile locks (`features/vaults-sync.md`).
  *
  * The rule is narrow in two directions, and both matter: only a *live*
  * reconcile locks anything, and it locks only the files it is actually

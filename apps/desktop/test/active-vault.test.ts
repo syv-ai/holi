@@ -561,7 +561,7 @@ describe('ActiveVault — sync', () => {
 
   it('pushes a landed commit to the remote on the coalesce timer', async () => {
     // Push is automatic: a committed change reaches the remote without anyone
-    // clicking anything (`prd/vaults-sync.md` §Pushing).
+    // clicking anything (`features/vaults-sync.md`).
     const { active, dir, teammate } = await withTeammate({
       rescanDebounceMs: 30,
       commitQuietMs: 60,
@@ -927,7 +927,7 @@ describe('ActiveVault — sync', () => {
 
   it('recovers from a non-fast-forward push by pulling then retrying', async () => {
     // The remote moved under us. Rather than surface a rejection, pushNow pulls
-    // and retries — both sides survive (`prd/vaults-sync.md` §Pushing). A push
+    // and retries — both sides survive (`features/vaults-sync.md`). A push
     // rejection is just one more way to discover a divergence.
     const { active, dir, teammate } = await withTeammate()
     await theyPublish(teammate, 'theirs.md', 'theirs\n')

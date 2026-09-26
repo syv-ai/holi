@@ -1,5 +1,5 @@
 /**
- * Where a dragged card's rank lands (`prd/tasks.md` §Board UX).
+ * Where a dragged card's rank lands (`features/tasks.md`).
  *
  * The property that matters is that a drop writes **one** file: the card takes
  * a rank between its new neighbours and nothing else moves. Dense integers

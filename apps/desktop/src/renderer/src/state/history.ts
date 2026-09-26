@@ -2,7 +2,7 @@
  * Version history — the vault's git history, per open file.
  *
  * D60 deleted the CRDT snapshot store; git's object store IS the timeline
- * (`prd/vaults-sync.md` §History). Everything here keys off the open note's
+ * (`features/history.md`). Everything here keys off the open note's
  * **path** — a `DocMeta` has no id under D60 — and opening a different note
  * clears the selection and the preview.
  */

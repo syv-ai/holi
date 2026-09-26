@@ -1,4 +1,4 @@
-/** The stripped board (prd/tasks.md §Board UX).
+/** The stripped board (features/tasks.md).
  *
  * One layout. Todo / Doing / Done, fixed; one swim lane per folder, because the
  * folder IS the lane. A cell is `(column, lane)`.

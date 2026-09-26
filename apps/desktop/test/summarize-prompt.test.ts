@@ -1,5 +1,5 @@
 /**
- * The seed for "Summarize" on a mail thread (`prd/google-mail-calendar.md`).
+ * The seed for "Summarize" on a mail thread (`features/google.md`).
  *
  * It is a first-person instruction to the agent, like the reconcile seed — the
  * drawer starts a real session with it, so the thread can be asked a follow-up

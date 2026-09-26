@@ -1,8 +1,8 @@
 /**
  * The git engine — Holi's sync, run against the system `git` binary.
  *
- * **Why the binary and not a JS implementation** (`prd/vaults-sync.md` §How git
- * is run): merge-with-honest-conflict-reporting is the load-bearing operation in
+ * **Why the binary and not a JS implementation** (`features/vaults-sync.md`):
+ * merge-with-honest-conflict-reporting is the load-bearing operation in
  * the whole sync design — FR-12 and the entire reconcile path rest on git
  * *refusing* rather than guessing — and that is precisely isomorphic-git's
  * weakest area. Shelling out also inherits credential helpers, hooks, and
@@ -180,11 +180,11 @@ export interface GitRepo {
    *  names — a reset, a re-clone — and a range whose shas are gone is a turn
    *  whose history is gone, which the caller reports rather than crashes on. */
   rangeFiles(from: string, to: string): Promise<RangeFile[]>
-  /** The vault's history — which IS git history (`prd/vaults-sync.md` §History).
+  /** The vault's history — which IS git history (`features/history.md`).
    * `path` follows a file through renames. */
   log(opts?: { path?: string; limit?: number }): Promise<Commit[]>
   /** A file's content at a past commit, for the history preview/restore
-   * (`prd/vaults-sync.md` §History). Rejects when `path` is absent at `sha` —
+   * (`features/history.md`). Rejects when `path` is absent at `sha` —
    * e.g. a commit from before the file was renamed (`show` reads the given name,
    * it does not `--follow`). */
   show(sha: string, path: string): Promise<string>
@@ -194,7 +194,7 @@ export interface GitRepo {
   /** Fetch and merge the default branch. Never rebases; a conflict aborts. */
   pull(): Promise<PullResult>
   /** Re-run the merge WITHOUT aborting, leaving the conflict markers + MERGE_HEAD
-   * in the tree for the reconcile flow (`prd/agent.md` §merge resolver). Unlike
+   * in the tree for the reconcile flow (`features/agent-sessions.md`). Unlike
    * `pull()`, which announces a conflict by aborting, this re-materialises it so
    * the agent has something to resolve. Re-fetches, so it merges the current
    * remote state, not a stale one. */

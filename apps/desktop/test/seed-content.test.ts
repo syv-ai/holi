@@ -467,8 +467,8 @@ describe('hook scripts', () => {
       env: { CLAUDE_PROJECT_DIR: root },
     })
     expect(run.code).toBe(0)
-    // The one piece of state the agent cannot discover itself (prd/agent.md
-    // §Per-turn); everything else it finds natively, so nothing else is injected.
+    // The one piece of state the agent cannot discover itself (features/agent-config.md);
+    // everything else it finds natively, so nothing else is injected.
     expect(run.stdout).toBe('Focused note: `notes/plan.md` (use `Read` to view its contents)')
     expect(run.stdout).not.toContain('## Memory') // no fill indicators (D60)
     expect(run.stdout).not.toContain('# Related') // no tasks/backrefs (D60)

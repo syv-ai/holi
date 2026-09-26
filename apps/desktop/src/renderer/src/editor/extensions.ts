@@ -52,7 +52,7 @@ export interface EditorDeps {
   /** The open note's vault path, for note-relative image resolution. */
   notePath: string
   /** The document is locked — a reconcile is resolving this file
-   *  (`prd/vaults-sync.md` FR-19). Both halves are needed: `readOnly` stops the
+   *  (`features/vaults-sync.md`). Both halves are needed: `readOnly` stops the
    *  commands, `editable` stops the caret, and a caret in a document that
    *  silently swallows input reads as a broken editor rather than a locked one. */
   readOnly?: boolean

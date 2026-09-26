@@ -10,7 +10,7 @@
  * `description` to the body's first sentence, a missing `type` to `note`, and
  * frontmatter that is not valid YAML is treated exactly as if it were absent.
  * Nothing here can fail, which matters because the caller is a pre-commit
- * transform and `prd/vaults-sync.md` FR-9 says a transform may never block a
+ * transform and `features/vaults-sync.md` says a transform may never block a
  * commit. A half-written memory file must not be able to stop someone saving.
  *
  * **No IO.** Files in, markdown out. The transform is the only thing that

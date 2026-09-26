@@ -54,7 +54,7 @@ const EMPTY_SNAPSHOT: VaultSnapshot = emptyVaultSnapshot()
  * Refreshed by re-scanning after a write. That is a full walk-and-parse of the
  * vault, and deliberately so: a task set this size is imperceptible to re-read,
  * and the alternative is an index with an invalidation story bought before any
- * measurement asked for one (prd/tasks.md §Summary). The filesystem watcher will
+ * measurement asked for one (features/tasks.md). The filesystem watcher will
  * replace the explicit refetch, not the shape.
  */
 export const snapshotAtom = atom<VaultSnapshot>(EMPTY_SNAPSHOT)
@@ -257,7 +257,7 @@ export const abandonReconcileAtom = atom(null, async () => {
  *
  * The order is the correctness: flush the live buffer and commit a clean
  * restore point *before* the multi-file edit, so every step after is
- * recoverable (there is no transaction — prd/notes-editor.md §Rename). Then the
+ * recoverable (there is no transaction — features/wiki-links.md). Then the
  * rename, then a second commit so it lands as one commit on safe ground. The
  * open tab and active doc follow the file to its new path — a missed tab points
  * at something that no longer exists.
@@ -325,7 +325,7 @@ export const copyNotesAtom = atom(
  * that no longer exists. One commit-pair, like the others.
  */
 /**
- * A drop from Finder (`prd/notes-editor.md` FR-13).
+ * A drop from Finder (`features/file-tree.md`).
  *
  * Copies each file in and reloads the tree. A name the vault already uses is
  * refused rather than overwritten, per file rather than per drop — so a

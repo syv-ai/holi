@@ -7,7 +7,7 @@
  * the right positions); and it is a `minimalChange` diff rather than a
  * whole-document replace, so CodeMirror's selection mapping carries the caret
  * through untouched. No `scrollIntoView`: a background reload must not move the
- * viewport. See `docs/specs/2026-08-03-undo-external-reload-design.md`.
+ * viewport. See `docs/features/editor.md`.
  */
 import { Transaction } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'

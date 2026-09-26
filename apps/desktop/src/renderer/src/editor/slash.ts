@@ -62,7 +62,7 @@ const COMMANDS: HoliCompletion[] = [
     // **Not a string.** Picking this types the argument and re-opens the popup
     // on `tableSizes`, which is what the second level is: the panel stays and
     // its contents change. A flyout was rejected — see the design of record,
-    // `docs/specs/2026-09-13-completion-popover-design.md`.
+    // `docs/features/editor.md`.
     apply: (view: EditorView, completion: Completion, from: number, to: number) => {
       view.dispatch({
         changes: { from, to, insert: COMMAND_PREFIX },

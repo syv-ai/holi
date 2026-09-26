@@ -81,7 +81,7 @@ export const STATIC_COMMANDS: readonly Command[] = [
     hotkey: '⌘⇧D',
     run: (_get, set) => void set(openTodaysDailyAtom),
   },
-  // A real commit point rather than a placebo (`prd/vaults-sync.md` FR-4):
+  // A real commit point rather than a placebo (`features/vaults-sync.md`):
   // write the buffers, then ask main to commit instead of waiting out the idle
   // timer, then push — ⌘S is an explicit "save this", so getting it
   // off-machine matches the intent (D61). The commit has to resolve before the

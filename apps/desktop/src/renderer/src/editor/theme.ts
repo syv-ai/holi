@@ -450,7 +450,7 @@ export const editorTheme = EditorView.baseTheme({
    * objects react, the prose never does. **Paint only** — colour, background,
    * border and shadow. Never width, height, font-size, padding or margin, which
    * is what pegs CodeMirror's measure loop (see the callout in
-   * prd/notes-editor.md). A hover that resized a chip would relayout the line
+   * features/editor.md). A hover that resized a chip would relayout the line
    * under the pointer, which is the cost that rule exists to refuse.
    *
    * The duration comes from the app's vocabulary, so no number is stated here.

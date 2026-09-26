@@ -1,60 +1,51 @@
-# Docs index
+# Holi docs
 
-The living documentation for Holi. The PRDs, architecture, and vision are the **continuously updated truth** — each states its requirements *and* the reasoning (why, and what was rejected) natively. Read top-to-bottom for the full picture.
-
-**The PRDs describe the product that exists.** Work that is designed and *not* built lives in [not-built.md](not-built.md), and the split is load-bearing: a PRD section specifying a future is indistinguishable from one describing the present, and both were being believed. What stays in a PRD regardless of the split: **non-goals** (a boundary is part of the product's shape), **rejected alternatives** (the reason nobody should re-propose a thing, which is only useful beside the design that won), and **admitted uncertainty about behaviour that ships** ("the debounce is 3 seconds, tuned rather than derived").
+A registry of how Holi works and why. Each page is short and owns one subject; pages link to each
+other rather than repeating each other.
 
 ## Foundation
-| Doc | What it is |
-|---|---|
-| [vision.md](vision.md) | What Holi is, product principles, the shape of v1 |
-| [architecture.md](architecture.md) | The whole system: the vault as a git repo, sync, the agent, security |
-| [not-built.md](not-built.md) | **What is designed and not built** — one entry per gap, each pointing back at the pillar that owns its reasoning. **No ordering, no sizing, no dates** — naming a next would make it the roadmap this split exists to kill. **Purges an entry when it ships** |
-| [decisions.md](decisions.md) | **Decision inbox** — new load-bearing decisions land here first, then get consolidated natively into the docs above and the inbox is purged (cycle repeats) |
-| [glossary.md](glossary.md) | Canonical terms (vault, task, push, reconcile, autosave commit…) |
 
-## PRDs (v1 pillars)
-| PRD | Owns |
-|---|---|
-| [prd/vaults-sync.md](prd/vaults-sync.md) | Vaults as clones, autosave commits, auto-pull, auto-push, conflicts + reconcile, history |
-| [prd/auth-identity.md](prd/auth-identity.md) | GitHub device-flow sign-in, the token, collaborators as membership, the access model |
-| [prd/notes-editor.md](prd/notes-editor.md) | CodeMirror live-preview editor, file persistence, external writes, wiki-links, rename, tree, tabs |
-| [prd/tasks.md](prd/tasks.md) | `task.*.md` files, the board, swim lanes by folder, recurrence + local reminders |
-| [prd/agent.md](prd/agent.md) | Interactive Claude xterm drawer, CC-native config layering, per-turn hook, zero ops, merge reconcile |
-| [prd/daily-notes.md](prd/daily-notes.md) | Idempotent daily notes, personal-vault-only, archiving |
-| [prd/onboarding.md](prd/onboarding.md) | First-run three-act ritual, create-or-join a vault, the add-vault mode that retired `AddVault` |
-| [prd/google-mail-calendar.md](prd/google-mail-calendar.md) | @syv.ai Gmail + Calendar: triage, the sandboxed reader, the composer, meetings |
-| [prd/pdf-export.md](prd/pdf-export.md) | Markdown → branded syv.ai PDFs via Typst, as a vault skill |
-| [prd/vault-apps.md](prd/vault-apps.md) | Agent-authored in-vault apps: the per-app `holi-app://` origin, app tabs, the `holi.*` bridge, the authoring skill. Slices 1–2 shipped; app **state** is still undecided, see [not-built.md](not-built.md) |
-| [prd/command-palette.md](prd/command-palette.md) | ⌘P quick open over everything openable, `>` commands, ask the assistant, recents; and the one table of commands the keys, menu and palette share (D102) |
+| Page                            | What it is                                                                  |
+| ------------------------------- | --------------------------------------------------------------------------- |
+| [vision](vision.md)             | What Holi is, its principles, and what comes after v1                       |
+| [architecture](architecture.md) | A map of the system: processes, the vault, the agent, security              |
+| [ui-system](ui-system.md)       | The renderer's component layers, tokens, focus, motion, drawers and theming |
+| [glossary](glossary.md)         | Canonical terms; when a word is ambiguous, this wins                        |
+| [not-built](not-built.md)       | Designed and wanted, but absent                                             |
+| [decisions](decisions.md)       | What each D-number decided, and where it now lives                          |
 
-## Designed, not built
-Not PRDs, because they describe nothing that exists — *yet*. [not-built.md](not-built.md) owns their status, and a doc graduates into the table above when it ships.
+## Features
 
-**The table is empty.** `prd/vault-apps.md` was its last entry and graduated on 2026-08-20 when slice 1 shipped; what remains unbuilt of that feature is a gap inside a built pillar, which is [not-built.md](not-built.md)'s job rather than a second table's.
+| Page                                           | What it covers                                                           |
+| ---------------------------------------------- | ------------------------------------------------------------------------ |
+| [vaults-sync](features/vaults-sync.md)         | Managed clones, autosave commits, pull, push, reconcile, vault git hooks |
+| [history](features/history.md)                 | A file's and a vault's history, and restoring from it                    |
+| [settings](features/settings.md)               | `.holi/settings/app.yaml`, its schema, the settings tab                  |
+| [file-tree](features/file-tree.md)             | The tree, folders, hidden and local files, icons                         |
+| [auth](features/auth.md)                       | GitHub sign-in, the token, collaborators, access                         |
+| [editor](features/editor.md)                   | CodeMirror live preview, tables, images, external writes, completion     |
+| [tabs-panes](features/tabs-panes.md)           | Panes, preview and pinned tabs, moving tabs                              |
+| [frontmatter](features/frontmatter.md)         | The frontmatter block, typed rows, schemas                               |
+| [wiki-links](features/wiki-links.md)           | Link grammar, rename, backrefs                                           |
+| [tasks](features/tasks.md)                     | Task files, the board, dates, recurrence, reminders                      |
+| [daily-notes](features/daily-notes.md)         | Idempotent daily notes and their archive                                 |
+| [agent-sessions](features/agent-sessions.md)   | Claude Code in a PTY, session tabs, turn review, reconcile               |
+| [agent-config](features/agent-config.md)       | Config layering, the per-vault silo, seeded files, tools, permissions    |
+| [agent-memory](features/agent-memory.md)       | The vault's `memory/` directory                                          |
+| [google](features/google.md)                   | Gmail and Calendar per vault                                             |
+| [pdf](features/pdf.md)                         | Typst export, templates, the PDF viewer                                  |
+| [vault-apps](features/vault-apps.md)           | Agent-written apps in their own origin                                   |
+| [command-palette](features/command-palette.md) | Quick open and the one table of commands                                 |
+| [onboarding](features/onboarding.md)           | First run, creating or joining a vault                                   |
 
-*Google mail/calendar and Typst export used to sit in a "phase 2 stubs" table here. Both are built and live and are PRDs above — a built pillar filed as a stub is a doc that lies about what the product does. The one remaining stub, PDF/docx import conversion, was **deleted**: D62 killed its premise (the vault emits rich documents rather than importing them), and what survived it — where large binaries live at scale, and viewing a binary Holi cannot render — is in [not-built.md](not-built.md).*
+## Rules for these docs
 
-## Dated records (history, not living docs)
-
-**Nothing in here is authoritative.** Each file is a snapshot of what was believed on its date, kept because the reasoning behind a decision is sometimes worth more than the decision. When one of these disagrees with a living doc above, the living doc wins — always, and without needing to be reconciled.
-
-| Dir | What it is |
-|---|---|
-| [notes/](notes/) | Findings worth keeping that own no PRD (e.g. what Dash's PTY handling taught the agent drawer) |
-| [specs/](specs/) | Design docs — the shape of a feature as agreed, before it was built. The reasoning that did not fit in a PRD |
-| [plans/](plans/) | Implementation plans, written lean and executed. **Only the live ones** — a plan is deleted once its work has landed, see Conventions |
-| [verification/](verification/) | What was actually checked by hand, and what was left unverified |
-
-## Conventions
-- The PRDs are updated **in place** as decisions change — no changelog framing, no amendment trails. Git history is the archaeology.
-- **A PRD section must not describe itself.** "Status: designed, not built" inside a specification is the failure this doc system has hit most often, in both directions — a section claiming to be unbuilt three weeks after it shipped, a built pillar filed as a stub, a PRD promising "a skill, not a UI" after the UI shipped. The rule that follows: **check the code, never the claim**, and when something is not built, say so in [not-built.md](not-built.md) and leave the PRD to describe what is.
-- New decisions get drafted in [decisions.md](decisions.md), agreed with Nicolai, then folded natively into the owning PRD and purged from the inbox.
-- **A plan is deleted once its work has landed** (2026-09-05; the 46 plans from July and August went that day). A plan is scaffolding for building a thing, and scaffolding left standing is read as part of the building: an executed plan describes a tree that has moved on, in the imperative mood, next to a plan that is still waiting to be executed. **`docs/plans/` holds only the live ones**, so what is in it is what someone could pick up. The deleted ones are in git history, which is where the archaeology lives for everything else in this repo.
-- **Before deleting one, check the fold-up.** The rule that survives from every earlier version of this convention: **a plan holding something the living docs do not is a docs bug**, and the fix is to fold it into the PRD. Deleting an unfolded plan turns a docs bug into a lost argument. Folding first is the work; the deletion is the receipt.
-- **`decisions.md` purges for a different reason**, and the difference is worth keeping straight: a decision is a *claim about how things are*, so two copies can contradict each other. A plan cannot go stale that way, only be finished — and a finished plan is deleted because it is finished, not because it is wrong.
-- **A PRD may carry verification status, and it must be dated.** "Proven in real use as of *date*", "still unproven — treat as broken". It is the one kind of claim in a PRD that is about a *moment* rather than a design, so the date is part of the claim. Status kept away from the thing it qualifies is how *"nothing in this repo has ever talked to Google"* survived into four documents after it stopped being true. [verification/](verification/) is history, not where this lives.
-- **A gap purges when it ships.** [not-built.md](not-built.md) runs the same consolidate-then-purge cycle [decisions.md](decisions.md) does, and for the reason given below: "X does not exist" is a claim about how things are, so two copies of it can contradict. When the thing is built, its reasoning — including any sub-question the entry carried — folds into the owning PRD as a description of what now exists, and the entry is deleted. **An entry is also checked against the code when it is written**, not only when it is purged: the first version of that file was assembled out of PRD prose and three of its sixteen entries described things that had shipped weeks earlier, which is the same failure as a stale PRD wearing the clothes of its own cure.
-- **A boundary with a trigger stays in the PRD, and only there.** "No OS network listener; add one only if the retry latency proves annoying" is product shape plus the observation that would change it — not a gap. Filing it in [not-built.md](not-built.md) as well would be the second copy the rule above forbids.
-- A term is ambiguous? [glossary.md](glossary.md) wins.
-- **There is no server**, and no doc should imply otherwise. If you find one that does, it is stale.
+- **Code is the authority.** A page describes what exists. Check the code, never the claim.
+- **A page is current, not a history.** No dates, no changelog, no "was reversed". Git keeps the
+  history.
+- **What is absent goes in [not-built](not-built.md)**, and leaves it when it ships. A deliberate
+  boundary with a reason stays on its feature page.
+- **Rejected alternatives stay** beside the design that beat them, so nobody re-proposes them.
+- **Decisions** get a D-number and a line in [decisions](decisions.md); their substance goes
+  straight into the owning page.
+- **There is no server.** A page that implies one is stale.

@@ -1,5 +1,5 @@
 /**
- * A document the editor will not let you change (`prd/vaults-sync.md` FR-19).
+ * A document the editor will not let you change (`features/vaults-sync.md`).
  *
  * Asserted by running a real editing command and watching it refuse, which is
  * the user-facing fact. The other half of the lock — `EditorView.editable`,

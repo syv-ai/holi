@@ -1,4 +1,4 @@
-/** The board's state (prd/tasks.md §Board UX).
+/** The board's state (features/tasks.md).
  *
  * Tasks are **derived from the vault snapshot**, not held in a store of their own.
  * There is no server, so there is no push channel and nothing to reconcile a
@@ -101,7 +101,7 @@ export type CreateTaskMode = 'quick' | 'full'
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly — the atoms are just where they live.
 
-/** The vault-root lane first, then alphabetical by path (prd/tasks.md §Board UX).
+/** The vault-root lane first, then alphabetical by path (features/tasks.md).
  *
  * The root lane is always present, even with nothing filed there: quick-add
  * needs a cell to land in, and a vault whose every task lives in a folder would
@@ -129,7 +129,7 @@ export type Filter = {
 export const EMPTY_FILTER: Filter = { search: '', tags: [], hideDone: false }
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
 
-/** The board's only narrowing. Three controls, deliberately (prd/tasks.md §Board UX) —
+/** The board's only narrowing. Three controls, deliberately (features/tasks.md) —
  * the bar is a search-and-narrow aid, not a second configuration surface.
  *
  * The tag filter matches `overdue`/`p1`… exactly as it matches a real tag: computing

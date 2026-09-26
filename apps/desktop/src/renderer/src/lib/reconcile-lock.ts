@@ -1,6 +1,6 @@
 /**
  * Whether an open document is locked because a reconcile is resolving it
- * (`prd/vaults-sync.md` FR-19).
+ * (`features/vaults-sync.md`).
  */
 import type { SyncState } from '../../../main/vault/active-vault'
 

@@ -330,7 +330,7 @@ describe('pull', () => {
   }
 
   it('merges two edits to the same file when the changed lines are apart', async () => {
-    // prd/tasks.md §Concurrency: two people editing different fields of one
+    // features/tasks.md: two people editing different fields of one
     // task both survive. True — with the caveat pinned by the next test.
     const { ours, theirs } = await pair()
     await publish(theirs, 'task.a.md', taskFile())
@@ -349,7 +349,7 @@ describe('pull', () => {
     // Not a bug — git's merge needs at least one unchanged line between two
     // changes to treat them as independent hunks. Adjacent edits overlap.
     //
-    // This is the boundary prd/tasks.md §Concurrency now states: two people
+    // This is the boundary features/tasks.md states: two people
     // editing different fields of one task both survive only when the changed
     // lines are not neighbours, and in a five-line frontmatter block neighbours
     // are the common case. `status` and `due` are adjacent in the PRD's own
@@ -772,7 +772,7 @@ describe('runGit', () => {
   })
 
   it('waits out an index.lock held by someone else instead of failing', async () => {
-    // The clone is deliberately legible (`prd/vaults-sync.md`) and the agent has
+    // The clone is deliberately legible (`features/vaults-sync.md`) and the agent has
     // Bash, so a git command the user ran can hold the index while Holi's loop
     // wants it. Measured on an 800-file vault: `git status` neither takes the
     // lock nor fails on it, `git add`+`git commit` holds it ~215 ms, and a

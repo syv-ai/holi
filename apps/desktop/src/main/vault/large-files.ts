@@ -1,5 +1,5 @@
 /**
- * The large-file gate (docs/specs/2026-08-03-large-binary-policy-design.md).
+ * The large-file gate (docs/features/vaults-sync.md).
  *
  * Git history is permanent and replicated to every clone, and push is automatic
  * (D61) — so a big binary committed once is published to everyone before anyone

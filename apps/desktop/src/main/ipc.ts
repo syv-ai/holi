@@ -48,7 +48,7 @@ export function registerIpc(deps: { router: AnyRouter }): void {
   })
 
   /**
-   * Hand a vault file to the OS as a drag (`prd/notes-editor.md` FR-13).
+   * Hand a vault file to the OS as a drag (`features/file-tree.md`).
    *
    * A web drag never tells the operating system a file is involved — it carries
    * MIME data, not a pasteboard file promise — so dropping a tree row into

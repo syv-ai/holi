@@ -112,7 +112,7 @@ describe('merge3 — clean', () => {
   })
 
   it('merges edits to different regions', () => {
-    // The case prd/notes-editor.md says to write a test against first: a pull
+    // The case features/editor.md says to write a test against first: a pull
     // landing on the open note while you type.
     const mine = T('ONE', 'two', 'three', 'four', 'five')
     const theirs = T('one', 'two', 'three', 'four', 'FIVE')
@@ -343,7 +343,7 @@ describe('merge3 — the scenarios this exists for', () => {
 
     // Adjacent lines, different fields — and it MERGES.
     //
-    // `git merge` refuses this exact case (prd/tasks.md §Concurrency, and
+    // `git merge` refuses this exact case (features/tasks.md, and
     // git.test.ts pins it both ways), because its merge needs an unchanged
     // line between two changes to call them independent hunks. That is a
     // property of git's three-line context model, not a claim about meaning:

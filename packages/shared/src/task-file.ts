@@ -1,6 +1,6 @@
 /**
  * The task file format — `task.<name>.md`, YAML frontmatter + a markdown body
- * that *is* the task's description (prd/tasks.md).
+ * that *is* the task's description (features/tasks.md).
  *
  * **The title is the body's first heading**, at any level, and there is no
  * `title:` key. A name written in frontmatter is a second place for the same
@@ -233,7 +233,7 @@ const PATCH_READERS: Record<string, (v: unknown) => unknown> = {
     // picker is now the only thing that writes one. These readers are shared
     // with `parseTaskFile` on purpose, so a strict reader here would make a
     // hand-written `reminder: 1d` break the whole task into the broken strip.
-    // An unparseable reminder is inert (prd/tasks.md §Recurrence & reminders),
+    // An unparseable reminder is inert (features/tasks.md),
     // never an error: it costs a notification, not a task.
     if (typeof v !== 'string') throw new TaskFileError('reminder must be a string')
     return v

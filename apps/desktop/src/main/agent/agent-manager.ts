@@ -16,7 +16,7 @@
  * under that join, because a missing or slow CLI must still report a live turn —
  * and because the sync pause has a deadline a watcher cannot meet.
  *
- * Pure Claude Code (prd/agent.md): no MCP surface, no built system prompt, no
+ * Pure Claude Code (features/agent-config.md): no MCP surface, no built system prompt, no
  * turn protocol, no presence. The agent's whole surface is its native tools on
  * the vault's files; Holi's only per-turn injection is the focused-note line,
  * written by the focus writer.

@@ -1,5 +1,5 @@
 /**
- * The turn-signal transport (prd/agent.md §Git coexistence): a tiny localhost
+ * The turn-signal transport (features/agent-sessions.md): a tiny localhost
  * HTTP server the agent's Claude Code hooks POST to, so Holi learns when a turn
  * starts and ends WITHOUT parsing PTY output (see [[holi-no-custom-cc-state-monitoring]]).
  *

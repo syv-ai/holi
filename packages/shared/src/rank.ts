@@ -1,6 +1,6 @@
 /**
  * Sparse ranks — where a dragged card lands between its neighbours
- * (`prd/tasks.md` §Board UX).
+ * (`features/tasks.md`).
  *
  * **The property worth protecting is that a drop writes one file.** The card
  * takes a rank strictly between the two it was dropped between, and nothing

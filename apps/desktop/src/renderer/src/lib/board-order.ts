@@ -1,5 +1,5 @@
 /**
- * The order of cards inside one board cell (`prd/tasks.md` §Board UX).
+ * The order of cards inside one board cell (`features/tasks.md`).
  *
  * A cell is `(column, lane)`, and a card's place in it is its `order` — a
  * sparse rank in the task's own frontmatter. Sorting lives here rather than in

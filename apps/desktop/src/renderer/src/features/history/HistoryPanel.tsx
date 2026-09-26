@@ -2,7 +2,7 @@
  * Version history for the open note — a right-hand side panel beside the editor,
  * mirroring AgentPanel's shape (not a `viewAtom` peer, not a modal).
  *
- * These are the file's actual git commits (`prd/vaults-sync.md` §History): a flat
+ * These are the file's actual git commits (`features/history.md`): a flat
  * log, newest-first, each row its sha, message and author. Picking one shows the
  * diff that commit made to *this* file (vs its parent) in a merge view; the sha
  * links to the commit on the remote; Restore writes the old content as a new commit.

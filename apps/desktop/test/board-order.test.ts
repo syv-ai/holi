@@ -1,5 +1,5 @@
 /**
- * The order of cards inside one board cell (`prd/tasks.md` §Board UX).
+ * The order of cards inside one board cell (`features/tasks.md`).
  */
 import { describe, expect, it } from 'vitest'
 import type { Task } from '@holi/shared'

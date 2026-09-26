@@ -999,7 +999,7 @@ export function createRouter(deps: RouterDeps) {
      * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
      * it is written in place first, so the single `renameNote` carries the final
      * content to the destination — one route call, one write burst, one autosave
-     * commit, and a card is never half-dropped (prd/tasks.md §Board UX). `done`
+     * commit, and a card is never half-dropped (features/tasks.md). `done`
      * routes through `rollForward`, never a bare `status: done`, so a recurring
      * task advances instead of persisting done.
      *
@@ -1047,7 +1047,7 @@ export function createRouter(deps: RouterDeps) {
    *
    * A recurrence with no `due` has nothing to advance from, and one that has run
    * past its `endDate` has nowhere left to go — both end the series rather than
-   * looking set and never firing again (prd/tasks.md §Recurrence & reminders).
+   * looking set and never firing again (features/tasks.md).
    */
   function rollForward(task: Task): Task {
     const rolled =
@@ -1413,8 +1413,8 @@ export function createRouter(deps: RouterDeps) {
     /** ⌘S. FR-4 calls it a real commit point rather than a placebo. */
     commitNow: t.procedure.mutation(() => activeOrThrow().commitNow()),
 
-    /** ⌘S's second half: push the just-committed work now (`prd/vaults-sync.md`
-     *  §Pushing). Best-effort — a non-fast-forward recovers into the conflict
+    /** ⌘S's second half: push the just-committed work now (`features/vaults-sync.md`).
+     *  Best-effort — a non-fast-forward recovers into the conflict
      *  path, a network failure surfaces as `offline`; the renderer only kicks it. */
     pushNow: t.procedure.mutation(async () => {
       await activeOrThrow().pushNow()
@@ -1433,7 +1433,7 @@ export function createRouter(deps: RouterDeps) {
     }),
   })
 
-  // The vault's history IS git history (`prd/vaults-sync.md` §History): no snapshot
+  // The vault's history IS git history (`features/history.md`): no snapshot
   // store, git's object store is the timeline. `--follow` (in `repo.log`) tracks a
   // file through renames; `HISTORY_LIMIT` caps a long-lived file's timeline.
   const HISTORY_LIMIT = 200
@@ -1470,7 +1470,7 @@ export function createRouter(deps: RouterDeps) {
       }),
 
     /** Restore writes the old content as a **new commit** — never a rewrite of
-     *  history (`prd/vaults-sync.md` §History). Lands as an autosave `Update`
+     *  history (`features/history.md`). Lands as an autosave `Update`
      *  commit; a labelled landmark is a later refinement. */
     restore: vaultMutation
       .input(fields({ remote: 'string', path: 'string', sha: 'string' }))
@@ -1493,8 +1493,7 @@ export function createRouter(deps: RouterDeps) {
    * the tree.
    *
    * `revert` is a write and a new commit, never a rewrite — the same rule
-   * `history.restore` follows, and for the same reason (`prd/vaults-sync.md`
-   * §History).
+   * `history.restore` follows, and for the same reason (`features/history.md`).
    */
   const turns = t.router({
     /** This machine's turn records for the open vault, newest first. */

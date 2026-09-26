@@ -3,7 +3,7 @@
 // cannot discover itself: the note the user has focused in the editor. Tasks,
 // backreferences and sync state the agent finds with its own native tools
 // (Glob/grep/git); vault conventions and memory guidance live in AGENTS.md.
-// See prd/agent.md §Per-turn context.
+// See features/agent-config.md.
 //
 // Pure local read (<50 ms): Holi's main process keeps `.holi/state/context.local.json`
 // current, so this never talks to a server. Outside Holi — or with nothing

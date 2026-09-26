@@ -129,7 +129,7 @@ export const loadTurnDiffAtom = atom(null, async (get, set, path: string) => {
 
 /**
  * Write back what the reviewer resolved to, as a **new commit** — never a
- * rewrite (`prd/vaults-sync.md` §History).
+ * rewrite (`features/history.md`).
  *
  * **The buffers are deliberately NOT flushed first**, which is where this parts
  * company with `history.ts`'s restore. Restore replaces a file with an older

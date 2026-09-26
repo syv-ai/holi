@@ -3,8 +3,7 @@
  *
  * The vocabulary is fixed by the requirement and this file does not extend it.
  * In particular there is **no word for "saving"**: `up-to-date` over a
- * not-yet-committed tree is a bounded transient that plan 4 settled and
- * accepted (`docs/plans/2026-07-22-main-process.md` §Resolved, D1) — the bytes
+ * not-yet-committed tree is a bounded transient, accepted on purpose: the bytes
  * are on disk, every explicit action commits, and a chip that toggled every
  * three seconds of typing would cost a steady indicator to report nothing.
  *
@@ -30,7 +29,7 @@ export function syncLabel(state: SyncState): SyncLabel {
       return { text: 'pulling', tone: 'busy' }
     case 'offline':
       // Push is automatic, so unpushed commits are only worth naming when the
-      // network is stopping them (`prd/vaults-sync.md` §State display). The
+      // network is stopping them (`features/vaults-sync.md`). The
       // count is what tells you how much is waiting; a bare "offline" hides it.
       return {
         text: state.count > 0 ? `offline — ${state.count} waiting` : 'offline',

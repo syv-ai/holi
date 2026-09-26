@@ -683,7 +683,7 @@ describe('tasks.complete', () => {
 
   it('rolls a recurring task forward instead of persisting done', async () => {
     // The card's checkbox goes through here, never a bare `status: done` write —
-    // this is the single roll-forward path (prd/tasks.md §Board UX).
+    // this is the single roll-forward path (features/tasks.md).
     const { caller } = await rig({
       'task.standup.md': [
         '---',

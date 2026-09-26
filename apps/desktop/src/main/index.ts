@@ -85,7 +85,7 @@ let tray: Tray | null = null
 /**
  * A second launch must not happen at all.
  *
- * `prd/vaults-sync.md` names the hazard as "the app opened twice would race on
+ * `features/vaults-sync.md` names the hazard as "the app opened twice would race on
  * commits" and asks for a lock on the clone — but one Holi process owns every
  * vault, so excluding a second *app* is exactly excluding a second writer on
  * every clone, and it covers vaults that are not even open, which a per-clone

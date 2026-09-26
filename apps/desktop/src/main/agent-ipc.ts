@@ -3,7 +3,7 @@
  * live byte stream: PTY data/exit and the session list are pushed out to the
  * renderer by the manager (`agent-pty:data`, `agent-pty:exit`, `agent:sessions`);
  * keystrokes, resize and focus are pushed in; start/kill/attach/sessions are
- * request/response. Channel names mirror prd/agent.md's wire shape.
+ * request/response. Channel names mirror the wire shape in features/agent-sessions.md.
  *
  * **Every route but focus names a session (D100).** A vault runs several, so
  * "write to the agent" is not an address. Focus is the exception because the

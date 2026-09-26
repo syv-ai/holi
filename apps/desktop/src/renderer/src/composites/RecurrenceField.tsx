@@ -47,7 +47,7 @@ export function RecurrenceField({
 }: {
   value: Recurrence | undefined
   onChange: (next: Recurrence | undefined) => void
-  /** The task this rule belongs to has no `due` date (prd/tasks.md §Recurrence).
+  /** The task this rule belongs to has no `due` date (features/tasks.md).
    *  Worth saying, because the rule looks set and simply would not fire. */
   warnNoDue?: boolean
   'data-testid'?: string

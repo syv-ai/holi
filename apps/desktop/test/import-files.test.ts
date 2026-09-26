@@ -1,5 +1,5 @@
 /**
- * Bringing a file in from outside the vault (`prd/notes-editor.md` FR-13).
+ * Bringing a file in from outside the vault (`features/file-tree.md`).
  *
  * A vault is a folder, so importing is a copy — but it is the one write whose
  * *source* is not the vault, which makes it the one place a name can arrive
