@@ -23,7 +23,7 @@ import { useTreeProjection } from './useTreeProjection'
 /** `single` keeps one path open, as the reference does; `multi` lets folders stay open. */
 export type NavTreeExpansion = 'single' | 'multi'
 
-const ROW = 28
+const ROW = 24
 const MID = ROW / 2
 const RADIUS = 6
 /** The elbow's run from the rail to where the icon starts. */
@@ -276,13 +276,18 @@ export function NavTree({
               }}
             />
           )}
-          {roots.map((id) => {
+          {roots.map((id, i) => {
             const node = data[id]
             if (!node) return null
             const isOpen = node.isFolder && open.has(id)
             const focused = focusRoot === id
             return (
-              <div key={id}>
+              <div
+                key={id}
+                // A break between the root's folders and its loose files
+                // (folders sort first), so the two groups read apart.
+                className={cn(!node.isFolder && i > 0 && data[roots[i - 1]!]?.isFolder && 'mt-3')}
+              >
                 <Button
                   variant="ghost"
                   data-path={id}
@@ -291,7 +296,7 @@ export function NavTree({
                   onDoubleClick={() => !node.isFolder && onOpenPinned(id)}
                   className={cn(
                     ROW_RESET,
-                    'group h-9 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
+                    'group h-8 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
                     focused || onPath(id)
                       ? 'text-foreground'
                       : 'text-muted-foreground/70 hover:text-foreground',
