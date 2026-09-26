@@ -34,5 +34,14 @@ export function matchHotkey(e: KeyboardEvent, spec: string): boolean {
   if (p.mod !== (e.metaKey || e.ctrlKey)) return false
   if (p.shift !== e.shiftKey) return false
   if (p.alt !== e.altKey) return false
-  return e.key.toLowerCase() === p.key
+  if (e.key.toLowerCase() === p.key) return true
+  // **⌥ changes the character, not the key.** On macOS ⌥S types `ß`, so
+  // `e.key` for ⌥⌘S is `ß` and a spec written `⌥⌘S` never matched. With ⌥ in
+  // the spec, a letter or digit falls back to the physical key, which ⌥ does
+  // not touch. Only then: on a layout like AZERTY the physical key and the
+  // letter differ, and without ⌥ the letter is the one that is meant.
+  if (!p.alt) return false
+  if (/^[a-z]$/.test(p.key)) return e.code === `Key${p.key.toUpperCase()}`
+  if (/^[0-9]$/.test(p.key)) return e.code === `Digit${p.key}`
+  return false
 }

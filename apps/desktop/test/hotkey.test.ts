@@ -26,4 +26,13 @@ describe('matchHotkey', () => {
   it('is case-insensitive on the key', () => {
     expect(matchHotkey(ev({ metaKey: true, key: 'J' }), '⌘J')).toBe(true)
   })
+  it('matches ⌥ shortcuts by physical key, since ⌥ changes the character', () => {
+    // macOS: ⌥⌘S reports `ß` as its key.
+    const e = ev({ metaKey: true, altKey: true, key: 'ß', code: 'KeyS' })
+    expect(matchHotkey(e, '⌥⌘S')).toBe(true)
+    expect(matchHotkey(e, '⌘S')).toBe(false)
+  })
+  it('without ⌥, the letter decides, not the physical key (AZERTY)', () => {
+    expect(matchHotkey(ev({ metaKey: true, key: 'q', code: 'KeyA' }), '⌘A')).toBe(false)
+  })
 })
