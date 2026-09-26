@@ -311,6 +311,8 @@ export interface TabStripProps {
   onDragOverStrip?: (over: boolean) => void
   /** Controls pinned to the right-hand end, outside the scroll (version history). */
   trailing?: ReactNode
+  /** Controls pinned to the left-hand end, before the tabs (show the nav). */
+  leading?: ReactNode
 }
 
 export function TabStrip({
@@ -324,6 +326,7 @@ export function TabStrip({
   onDragBegin,
   onDragOverStrip,
   trailing,
+  leading,
 }: TabStripProps) {
   // Read here rather than taken as a prop: every pane's strip wants the same
   // map, and threading it through `PaneView` would make each caller repeat a
@@ -658,6 +661,7 @@ export function TabStrip({
 
   return (
     <div className="flex h-11 min-w-0 items-center gap-1 px-2">
+      {leading}
       {/* The frame the side counts float in. They are positioned against the
           scroll viewport rather than the whole row, so `trailing` keeps its
           place at the end and the counts sit on the strip's own edges. */}

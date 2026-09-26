@@ -14,11 +14,12 @@
  * list is the rest of what the app says about them.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { History, PanelRight, Settings } from 'lucide-react'
+import { History, PanelLeftClose, PanelLeftOpen, PanelRight, Settings } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
   Button,
+  Kbd,
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
@@ -139,7 +140,7 @@ export function Shell() {
   const openLanding = useSetAtom(openLandingAtom)
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
-  const navOpen = useAtomValue(navOpenAtom)
+  const [navOpen, setNavOpen] = useAtom(navOpenAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   // Also the one place that asks main whether Google is connected at all — the
@@ -371,6 +372,15 @@ export function Shell() {
           open={navOpen}
           keepMounted
           label="Sidebar"
+          actions={[
+            {
+              icon: <PanelLeftClose />,
+              label: 'Hide sidebar',
+              hotkey: '⌥⌘S',
+              boundByCommand: true,
+              onSelect: () => setNavOpen(false),
+            },
+          ]}
           header={
             <VaultPicker
               vaults={vaults}
@@ -617,6 +627,31 @@ export function Shell() {
                       }
                       onDropEdge={(t, side) =>
                         setWorkspace((w) => moveTabToNewPane(w, t, side === 'before' ? i : i + 1))
+                      }
+                      // With the nav hidden, the way back for the mouse sits where
+                      // the nav's edge was: the start of the first pane's strip.
+                      leading={
+                        i === 0 &&
+                        !navOpen && (
+                          <Tooltip
+                            content={
+                              <span className="inline-flex items-center gap-1.5">
+                                Show sidebar
+                                <Kbd>⌥⌘S</Kbd>
+                              </span>
+                            }
+                          >
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="shrink-0 text-muted-foreground"
+                              aria-label="Show sidebar"
+                              onClick={() => setNavOpen(true)}
+                            >
+                              <PanelLeftOpen size={16} />
+                            </Button>
+                          </Tooltip>
+                        )
                       }
                       trailing={
                         <>

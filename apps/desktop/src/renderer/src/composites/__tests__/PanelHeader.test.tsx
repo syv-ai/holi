@@ -56,3 +56,19 @@ test('the bound hotkey ignores a non-matching chord', () => {
   fireEvent.keyDown(window, { key: 'k', metaKey: true })
   expect(onSelect).not.toHaveBeenCalled()
 })
+
+test('a hotkey the command table owns is shown, not bound twice', () => {
+  // The nav's ⌥⌘S: bound here as well, one press would toggle it twice.
+  const onSelect = vi.fn()
+  render(
+    <PanelHeader
+      actions={[
+        { icon: <i>«</i>, label: 'Hide sidebar', hotkey: '⌥⌘S', boundByCommand: true, onSelect },
+      ]}
+    >
+      x
+    </PanelHeader>,
+  )
+  fireEvent.keyDown(window, { key: 'ß', code: 'KeyS', metaKey: true, altKey: true })
+  expect(onSelect).not.toHaveBeenCalled()
+})

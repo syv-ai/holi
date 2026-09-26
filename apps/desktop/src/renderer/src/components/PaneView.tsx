@@ -105,6 +105,8 @@ export interface PaneViewProps {
   onDragOverStrip?: (over: boolean) => void
   /** Controls at the right-hand end of this pane's strip. */
   trailing?: ReactNode
+  /** Controls at the left-hand end of this pane's strip. */
+  leading?: ReactNode
 }
 
 export function PaneView({
@@ -125,6 +127,7 @@ export function PaneView({
   onDragBegin,
   onDragOverStrip,
   trailing,
+  leading,
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
@@ -176,6 +179,7 @@ export function PaneView({
         onDragBegin={onDragBegin}
         onDragOverStrip={onDragOverStrip}
         trailing={trailing}
+        leading={leading}
       />
 
       {/* The body is a drop surface too — dropping into the middle moves the tab

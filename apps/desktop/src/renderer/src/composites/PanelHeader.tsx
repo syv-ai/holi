@@ -26,6 +26,9 @@ export interface HeaderAction {
   label: string
   /** Glyph shortcut (e.g. `⌘J`) — shown in the tooltip AND bound while mounted. */
   hotkey?: string
+  /** The hotkey is the command table's (`state/commands.ts`): shown here, not
+   *  bound here, or one press would run it twice (the nav's ⌥⌘S). */
+  boundByCommand?: boolean
   onSelect: () => void
   /** Omit the control entirely without disturbing the others' order. */
   hidden?: boolean
@@ -54,7 +57,7 @@ export function PanelHeader({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       for (const a of controlsRef.current) {
-        if (a.hotkey && matchHotkey(e, a.hotkey)) {
+        if (a.hotkey && !a.boundByCommand && matchHotkey(e, a.hotkey)) {
           e.preventDefault()
           a.onSelect()
           return
