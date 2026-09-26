@@ -84,6 +84,11 @@ function Card({
   const now = useAtomValue(nowAtom)
   const { ref: cardRef, ack } = useAck<HTMLDivElement>()
   const complete = useSetAtom(completeTaskAtom)
+  const setStatus = useSetAtom(setTaskStatusAtom)
+  // Completing goes through `complete` so a recurring task rolls forward;
+  // reopening a done task is a plain status change.
+  const toggle = (): Promise<void> =>
+    task.status === 'done' ? setStatus(task.path, 'todo') : complete(task.path)
   const open = useSetAtom(openBesideAtom)
   const del = useSetAtom(deleteTaskAtom)
 
@@ -124,7 +129,7 @@ function Card({
           // commit would put the feedback late.
           onCheckedChange={() => {
             ack('tick')
-            void complete(task.path)
+            void toggle()
           }}
           onClick={(e) => e.stopPropagation()}
           className="mt-0.5 shrink-0"
@@ -165,7 +170,7 @@ function Card({
       <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem onSelect={() => open(task.path)}>Open</ContextMenuItem>
-        <ContextMenuItem onSelect={() => void complete(task.path)}>
+        <ContextMenuItem onSelect={() => void toggle()}>
           {task.status === 'done' ? 'Reopen' : 'Complete'}
         </ContextMenuItem>
         <ContextMenuSeparator />
