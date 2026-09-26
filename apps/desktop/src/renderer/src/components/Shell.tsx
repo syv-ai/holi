@@ -27,7 +27,9 @@ import {
   type PanelImperativeHandle,
 } from '@/primitives'
 import { OnboardingRitual } from '@/features/onboarding/OnboardingRitual'
+import { SessionsMenu } from '@/features/agent/SessionsMenu'
 import { TurnReview } from '@/features/agent/TurnReview'
+import { AppsMenu } from '@/features/apps/AppsMenu'
 import { HistoryPanel } from '@/features/history/HistoryPanel'
 import { BoardView } from '@/features/tasks/BoardView'
 import { AgendaView } from '@/features/google/AgendaView'
@@ -630,9 +632,12 @@ export function Shell() {
                       }
                       // With the nav hidden, the way back for the mouse sits where
                       // the nav's edge was: the start of the first pane's strip.
+                      // Sessions and apps come with it, since the nav was the
+                      // only place either could be clicked.
                       leading={
                         i === 0 &&
                         !navOpen && (
+                          <>
                           <Tooltip
                             content={
                               <span className="inline-flex items-center gap-1.5">
@@ -651,6 +656,9 @@ export function Shell() {
                               <PanelLeftOpen size={16} />
                             </Button>
                           </Tooltip>
+                          <SessionsMenu />
+                          <AppsMenu />
+                          </>
                         )
                       }
                       trailing={
