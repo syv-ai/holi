@@ -9,7 +9,7 @@
  * again (click Edit Source twice), which a settled atom value would not.
  *
  * The request is deliberately never cleared. `FileTree` also uses the standing
- * path to keep a hidden file (`.holi/apps/<id>/index.html`) visible while
+ * path to keep a hidden file (`.holi/settings/app.yaml`, say) visible while
  * show-hidden is off, or it would vanish from under the selection. One revealed
  * hidden path at a time, so the exception stays bounded.
  */

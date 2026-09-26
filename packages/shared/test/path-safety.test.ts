@@ -2,9 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_CONFIG_FILES,
   AGENT_SURFACE_FILES,
-  APPS_DIR,
-  appIdFromPath,
-  isAppRootPath,
   GITKEEP,
   LOCAL_ONLY_IGNORE_LINES,
   PathSafetyError,
@@ -13,7 +10,6 @@ import {
   isHiddenPath,
   isKeepFile,
   isLocalOnlyPath,
-  isValidAppId,
   isVaultConfigPath,
   vaultRelPath,
 } from '../src/path-safety'
@@ -254,55 +250,3 @@ describe('isAgentSurfacePath (what a vault app may never touch)', () => {
   })
 })
 
-describe('isValidAppId', () => {
-  it('accepts a lowercase, dash-separated name', () => {
-    expect(isValidAppId('retro-board')).toBe(true)
-    expect(isValidAppId('csv2')).toBe(true)
-    expect(isValidAppId('a')).toBe(true)
-  })
-
-  it('rejects anything that would not survive being a URL host', () => {
-    // The id becomes the HOST of a `holi-app://` URL, and hosts are case-folded:
-    // `My_App` and `my_app` would collide, and a mixed-case directory would 404
-    // in a way that reads as a path bug. So the grammar is restricted instead.
-    for (const id of ['My_App', 'retro_board', 'retro board', 'Retro', '', '..', 'a/b']) {
-      expect(isValidAppId(id)).toBe(false)
-    }
-  })
-})
-
-describe('appIdFromPath', () => {
-  it('reads the id out of any path inside the app directory', () => {
-    expect(appIdFromPath('.holi/apps/retro/index.html')).toBe('retro')
-    expect(appIdFromPath('.holi/apps/retro/sub/app.js')).toBe('retro')
-    expect(appIdFromPath('.holi/apps/retro')).toBe('retro')
-  })
-
-  it('is null for an invalid id or a path outside APPS_DIR', () => {
-    expect(appIdFromPath('.holi/apps/My_App/index.html')).toBe(null)
-    expect(appIdFromPath('.holi/settings/theme.yaml')).toBe(null)
-    expect(appIdFromPath('notes/x.md')).toBe(null)
-    expect(appIdFromPath('.holi/appsy/retro/index.html')).toBe(null)
-    expect(appIdFromPath(APPS_DIR)).toBe(null)
-  })
-})
-
-describe('isAppRootPath', () => {
-  it('is true for the app folder itself', () => {
-    expect(isAppRootPath('.holi/apps/retro')).toBe(true)
-  })
-
-  it('is false for everything inside it — the app is the folder, not its files', () => {
-    // The distinction from `appIdFromPath`, which answers "which app is this
-    // part of" and is happy with all three of these.
-    expect(isAppRootPath('.holi/apps/retro/index.html')).toBe(false)
-    expect(isAppRootPath('.holi/apps/retro/sub')).toBe(false)
-    expect(isAppRootPath('.holi/apps/retro/sub/app.js')).toBe(false)
-  })
-
-  it('is false for the apps directory itself and for anything outside it', () => {
-    expect(isAppRootPath(APPS_DIR)).toBe(false)
-    expect(isAppRootPath('.holi/apps/My_App')).toBe(false)
-    expect(isAppRootPath('notes/retro')).toBe(false)
-  })
-})

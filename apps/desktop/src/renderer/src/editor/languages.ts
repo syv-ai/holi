@@ -3,7 +3,7 @@
  * general code editor, two narrow sets:
  *
  * - config: `.holi/settings/app.yaml`, a `.yaml`, a `.env`, the odd `.toml`.
- * - the web three: a vault app under `.holi/apps/` is unbuilt HTML, CSS and JS.
+ * - the web three: a vault app (a `<name>.app` folder) is unbuilt HTML, CSS and JS.
  *   TypeScript is left out on purpose: nothing compiles it.
  *
  * JSON and YAML also get a validity linter, since agent-written config fails

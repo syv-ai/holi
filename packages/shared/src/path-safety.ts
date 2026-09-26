@@ -142,8 +142,7 @@ export function isKeepFile(path: string): boolean {
  * reading the user's memory, or rewriting `.claude/hooks/google-send-gate.mjs`,
  * the hook that asks before mail leaves (D70).
  *
- * `.holi/` is deliberately absent: that is Holi's own config, not the agent's,
- * and it is where the app itself lives.
+ * `.holi/` is deliberately absent: that is Holi's own config, not the agent's.
  */
 export const AGENT_SURFACE_FILES: readonly string[] = [
   'AGENTS.md',
@@ -183,34 +182,4 @@ export function isAgentSurfacePath(path: string): boolean {
     path.startsWith('.claude/') ||
     path.startsWith(`${MEMORY_DIR}/`)
   )
-}
-
-/** Where vault apps live. Already hidden from the tree by `isHiddenPath`. */
-export const APPS_DIR = '.holi/apps'
-
-/**
- * Whether `id` may name an app.
- *
- * An app id is its directory name, and it becomes the **host** of a
- * `holi-app://` URL. Hosts are case-folded by every URL parser, so a mixed-case
- * directory would 404; the grammar is restricted instead, and anything else is
- * simply not an app.
- */
-export function isValidAppId(id: string): boolean {
-  return /^[a-z0-9-]+$/.test(id)
-}
-
-/** `.holi/apps/<id>/…` → `<id>`, or null when the path is not under `APPS_DIR`
- *  or the id is not one `isValidAppId` accepts. */
-export function appIdFromPath(path: string): string | null {
-  if (!path.startsWith(`${APPS_DIR}/`)) return null
-  const id = path.split('/')[2]
-  return id !== undefined && isValidAppId(id) ? id : null
-}
-
-/** An app's own folder, `.holi/apps/<id>`, and nothing inside it: "is this the
- *  app", which the tree needs to draw the folder as an app. */
-export function isAppRootPath(path: string): boolean {
-  const id = appIdFromPath(path)
-  return id !== null && path === `${APPS_DIR}/${id}`
 }

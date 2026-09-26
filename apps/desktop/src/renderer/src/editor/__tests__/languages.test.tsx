@@ -16,10 +16,10 @@ describe('languageIdForPath', () => {
 
   it('maps the three languages a vault app is written in', () => {
     // An app is unbuilt HTML/CSS/JS the browser runs as-is (features/vault-apps.md),
-    // so these are the extensions the editor actually meets under `.holi/apps/`.
-    expect(languageIdForPath('.holi/apps/dash/app.js')).toBe('javascript')
-    expect(languageIdForPath('.holi/apps/dash/index.html')).toBe('html')
-    expect(languageIdForPath('.holi/apps/dash/style.css')).toBe('css')
+    // so these are the extensions the editor actually meets inside a `.app` folder.
+    expect(languageIdForPath('Dash.app/app.js')).toBe('javascript')
+    expect(languageIdForPath('Dash.app/index.html')).toBe('html')
+    expect(languageIdForPath('Dash.app/style.css')).toBe('css')
   })
 
   it('maps the module variants of javascript', () => {
@@ -47,7 +47,7 @@ describe('languageIdForPath', () => {
     expect(languageIdForPath('Makefile')).toBeNull()
     expect(languageIdForPath('.gitignore')).toBeNull()
     // TypeScript is deliberately absent: an app ships unbuilt, so a `.ts` file
-    // under `.holi/apps/` would not run — highlighting it would advertise a
+    // in an app would not run — highlighting it would advertise a
     // language the runtime does not have.
     expect(languageIdForPath('app.ts')).toBeNull()
   })
