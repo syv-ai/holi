@@ -10,9 +10,8 @@
  * the library's decision, made by its code; this only types for it.
  *
  * The input is one line, so a line break becomes a space: the comment would
- * lose it anyway, and it is shown with its whitespace collapsed. Enter sends,
- * as it did; the field grows with its text (`field-sizing`, in
- * `PDF_COMMENT_FIELD_CSS`, because Tailwind does not reach into the shadow
+ * lose it anyway. Enter sends; the field grows with its text (`field-sizing`,
+ * in `PDF_COMMENT_FIELD_CSS`, because Tailwind does not reach into the shadow
  * root). Selecting a comment focuses the viewer's input; the focus is passed
  * on here.
  */

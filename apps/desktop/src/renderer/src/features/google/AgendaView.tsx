@@ -3,18 +3,14 @@
  * an event becomes a task.
  *
  * **Account-wide, not vault content** (D67): this shows the same events
- * whichever vault is open. Creating a task from an event is the one write, and
- * it writes a *task file* — no calendar scope is involved, and none is granted.
+ * whichever vault is open. Creating a task from an event writes a *task file*,
+ * not a calendar event.
  *
- * Fetched on open and on refresh, never polled. Nothing is cached to disk;
- * Google stays the source of truth, so offline says so rather than showing a
- * stale day.
+ * Fetched on open and on refresh, never polled. A cached agenda may paint
+ * first, but the live fetch always replaces it.
  *
- * **A list and a detail pane**, because a row cannot hold an invitation. The
- * row answers "what am I doing" — a line of it, scannable down a week. The
- * detail answers "what is this", which is mostly the description: the dial-in,
- * the agenda, the document links. That was previously reachable only by turning
- * the event into a task, which is a strange price to pay for reading it.
+ * **A list and a detail pane**, because a row cannot hold an invitation: the
+ * detail is mostly the description (the dial-in, the agenda, the links).
  */
 import { useCallback, useEffect, useState } from 'react'
 import {
@@ -100,8 +96,7 @@ type State =
   | { kind: 'disconnected' }
   | { kind: 'error'; message: string }
 
-/** How far ahead the agenda looks. A week is the horizon a person plans over;
- *  anything longer stops being an agenda and starts being a calendar. */
+/** How far ahead the agenda looks. */
 const DAYS_AHEAD = 7
 
 /**
@@ -136,13 +131,9 @@ function dayLabel(key: string): string {
 }
 
 /**
- * The second line of a row: what this block is, whose it is, and how big.
- *
- * Ordered by how often it settles a question at a glance — an out-of-office
- * that reads like a meeting is how someone gets double-booked on leave, and
- * "12 people" is the difference between a meeting you can skip and one you
- * cannot. The organizer is named only for someone else's calendar, where
- * "who called this" is not already obvious.
+ * The second line of a row: what this block is, whose it is, and how big. The
+ * organizer is named only for someone else's calendar, where "who called this"
+ * is not already obvious.
  */
 function detailLine(event: CalendarEvent): string {
   return [
@@ -173,22 +164,13 @@ function eventKey(event: CalendarEvent): string {
 /**
  * A description as markup, whichever shape it arrived in.
  *
- * **Every description goes through the one renderer** ([[SandboxedHtml]]).
- * A description is a stranger's content no matter how it is written, and a
- * second rendering path is a second place for the sandbox to be forgotten —
- * so the plain ones are converted *into* the renderer's input rather than
- * given a renderer of their own.
+ * **Every description goes through the one renderer** ([[SandboxedHtml]]): a
+ * second rendering path is a second place for the sandbox to be forgotten, so
+ * plain text is converted *into* the renderer's input. Google Calendar's editor
+ * stores HTML, but API- or `.ics`-created events carry bare text whose newlines
+ * HTML would collapse. `&` must be escaped first or it double-escapes the others.
  *
- * The conversion exists because the two are not interchangeable. Google
- * Calendar's own editor stores rich text, so most descriptions are already
- * HTML; an event created through the API or imported from an `.ics` carries
- * bare text with real newlines, and an HTML document collapses those. Escaping
- * first keeps a literal `<` visible instead of letting it open a tag that was
- * never meant as one, and `&` must go first or it would double-escape the
- * entities the other two produce.
- *
- * This is *not* sanitizing, and does not stand in for it: escaping decides what
- * the text means, and the sanitizer downstream still decides what survives.
+ * This is *not* sanitizing: the sanitizer downstream still decides what survives.
  */
 function descriptionHtml(description: string): string {
   if (/<[a-z][^>]*>/i.test(description)) return description
@@ -224,9 +206,8 @@ export function AgendaView() {
   const layout = useGlobalPanelLayout('agenda')
 
   const loadCalendars = useCallback(() => {
-    // Failure here is not worth a surface of its own: the agenda's own error
-    // state already covers "Google is unreachable", and a picker that silently
-    // stays empty is better than two error messages about the same outage.
+    // No error surface of its own: the agenda's error state already covers
+    // "Google is unreachable", and one message per outage is enough.
     void trpc.google.calendars
       .query()
       .then(setCalendars)
@@ -238,9 +219,8 @@ export function AgendaView() {
     setState({ kind: 'loading' })
 
     // Paint the last agenda for this exact day and calendar set, if there is
-    // one — then let the live fetch below replace it. Never a request, and
-    // never a substitute for the real answer: a stale agenda shown *instead of*
-    // a fresh one is worse than a slow one, so this only fills the gap.
+    // one, then let the live fetch below replace it. It only fills the gap
+    // while loading and never stands in for the real answer.
     void trpc.google.agendaCached
       .query(window)
       .then((events) => {
@@ -269,12 +249,9 @@ export function AgendaView() {
   useEffect(loadCalendars, [loadCalendars])
 
   /**
-   * Switch a calendar on or off.
-   *
-   * Optimistic in the list, then a reload of the agenda — the toggle is a
-   * statement about which calendars exist for the user at all, so the events
-   * have to follow it immediately or the checkbox appears not to have worked.
-   * It is persisted in main, which is also where the agent reads it.
+   * Switch a calendar on or off: optimistic in the list, then a reload so the
+   * events follow immediately. Persisted in main, which is also where the agent
+   * reads it.
    */
   const toggleCalendar = (calendar: CalendarChoice, enabled: boolean) => {
     setCalendars((previous) => previous.map((c) => (c.id === calendar.id ? { ...c, enabled } : c)))
@@ -286,11 +263,9 @@ export function AgendaView() {
   }
 
   /**
-   * Make a task out of an event.
-   *
-   * The event's Google permalink goes in the **body**, as an ordinary markdown
-   * link (D67) — no frontmatter field, nothing machine-owned. That is the whole
-   * representation; "which tasks reference this event" is a grep for the URL.
+   * Make a task out of an event. The event's Google permalink goes in the
+   * **body** as an ordinary markdown link (D67), no frontmatter field: "which
+   * tasks reference this event" is a grep for the URL.
    */
   const createTask = async (event: CalendarEvent) => {
     if (remote === null) return
@@ -300,9 +275,7 @@ export function AgendaView() {
         remote,
         title: event.title,
         folder: '',
-        // The link first, then whatever the invitation actually said — a task
-        // made from a board call is worth opening because the dial-in and the
-        // agenda came with it, not because it repeats the title.
+        // The link first, then whatever the invitation said.
         description:
           `[${event.title}](${event.htmlLink})\n` +
           (event.description === null ? '' : `\n${event.description}\n`),
@@ -342,10 +315,8 @@ export function AgendaView() {
     byDay.set(key, [...(byDay.get(key) ?? []), event])
   }
 
-  // Looked up rather than stored: a refresh, or switching a calendar off, hands
-  // back a fresh array, and holding the old object would pin the pane to an
-  // event that may no longer be on the agenda. Gone means the pane empties,
-  // still there means it stays put across a reload.
+  // Looked up rather than stored: a refresh hands back a fresh array, and the
+  // old object could pin the pane to an event no longer on the agenda.
   const openEvent = state.events.find((event) => eventKey(event) === selected) ?? null
 
   return (
@@ -357,9 +328,7 @@ export function AgendaView() {
     >
       <ResizablePanel id="agenda-list" defaultSize={480} minSize={320}>
         <div className="flex h-full min-h-0 flex-col">
-          {/* No "Agenda" heading — the tab already says so, and a title inside
-              a pane that is already labelled spends a row on a word nobody
-              reads twice. The controls keep the row. */}
+          {/* No "Agenda" heading: the tab already says so. */}
           <div className="flex h-11 shrink-0 items-center justify-end gap-2 px-4">
             <div className="flex items-center gap-1">
               <CalendarPicker calendars={calendars} onToggle={toggleCalendar} />
@@ -386,21 +355,16 @@ export function AgendaView() {
                     {events.map((event) => (
                       <li
                         key={eventKey(event)}
-                        // An event that does not block time is on the calendar
-                        // without claiming any: an FYI, a webinar someone forwarded.
-                        // Dimming says "this is not why your day is full".
+                        // An event that does not block time is dimmed.
                         className={`motion-respond group relative rounded ${event.busy ? '' : 'opacity-60'} ${
                           selected === eventKey(event) ? 'bg-secondary' : 'hover:bg-secondary/60'
                         }`}
                       >
-                        {/* The whole row selects, but a row also *contains*
-                            buttons, and a button inside a button is invalid
-                            HTML that React renders anyway and browsers resolve
-                            inconsistently. So the selection target is a real
-                            button stretched behind the content: right
-                            semantics, focusable, no nesting. The content is
-                            inert so clicks fall through to it, and the actions
-                            switch pointer events back on. */}
+                        {/* The row contains buttons, and a button inside a
+                            button is invalid HTML. So the selection target is a
+                            real button stretched behind the content, which is
+                            inert so clicks fall through; the actions switch
+                            pointer events back on. */}
                         <Button
                           variant="ghost"
                           aria-label={`show ${event.title}`}
@@ -414,8 +378,7 @@ export function AgendaView() {
                           </span>
                           <span className="min-w-0 flex-1">
                             {/* Someone else's event is dimmed rather than
-                                hidden: it is on the agenda because it was asked
-                                for, but it is not something the user is doing. */}
+                                hidden: it was asked for, but is not the user's. */}
                             <span
                               className={`block truncate text-sm ${event.mine ? '' : 'text-muted-foreground'}`}
                             >
@@ -428,18 +391,11 @@ export function AgendaView() {
                             )}
                           </span>
 
-                          {/* Two actions survive on the row, and only two.
-                              Opening in Google and making a task both mean "I
-                              have decided about this one event" — which is when
-                              the detail pane is already open, so they moved
-                              there and the row keeps its width for the title.
-                              These two did not: an unanswered invitation is the
-                              one row on an agenda that is a task rather than a
-                              fact, and joining is the most-clicked thing on any
-                              agenda. Both stay visible rather than appearing on
-                              hover — a hidden-but-present button inside a row
-                              that is itself clickable swallows the clicks meant
-                              to select it. */}
+                          {/* Only RSVP and Join live on the row; the rest are in
+                              the detail pane. Both stay visible rather than
+                              appearing on hover: a hidden-but-present button
+                              inside a clickable row swallows the clicks meant to
+                              select it. */}
                           <span className="pointer-events-auto flex shrink-0 items-center gap-1">
                             {event.myResponse === 'needsAction' && (
                               <Tooltip content="answer this invitation in Google Calendar">
@@ -498,12 +454,8 @@ export function AgendaView() {
 }
 
 /**
- * One event, at the length a row cannot hold.
- *
- * The description is the reason this pane exists — it is where the dial-in, the
- * agenda and the document links actually live, and until now the only way to
- * read one was to turn the event into a task and open that. Everything above it
- * is the metadata `detailLine` has to drop to fit on a row.
+ * One event, at the length a row cannot hold: the description, plus the
+ * metadata `detailLine` has to drop to fit on a row.
  */
 function EventDetail({
   event,
@@ -555,8 +507,7 @@ function EventDetail({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6">
-        {/* Wrapped, not truncated. A row has to cut a long title; this is the
-            one place the whole thing fits, which is half the point of a pane. */}
+        {/* Wrapped, not truncated: the one place a long title fits. */}
         <h3 className="text-sm font-medium">{event.title}</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
           {longDayLabel(event)} · {timeLabel(event)}
@@ -571,9 +522,7 @@ function EventDetail({
             <Fact icon={<CalendarDays size={13} />}>{KIND_LABELS[event.kind]}</Fact>
           )}
           {event.recurring && <Fact icon={<Repeat size={13} />}>repeats</Fact>}
-          {/* Said out loud here, where there is room for the words. On the row
-              this is only a dimming, which tells you something is different
-              without telling you what. */}
+          {/* On the row this is only a dimming; here it is said in words. */}
           {!event.busy && <Fact icon={<CalendarDays size={13} />}>does not block time</Fact>}
           {event.location !== undefined && event.location !== '' && (
             <Fact icon={<MapPin size={13} />}>{event.location}</Fact>
@@ -586,11 +535,8 @@ function EventDetail({
 
         {event.description !== null && event.description.trim() !== '' && (
           <div className="mt-4 border-t border-divider pt-3">
-            {/* Whoever sent the invitation wrote this, so it goes down the same
-                sandboxed path a mail body does — all of it, not just the part
-                that already looks like markup. `descriptionHtml` normalises
-                plain text into the renderer's input; it does not choose a
-                renderer, because there is only the one. */}
+            {/* Whoever sent the invitation wrote this, so all of it goes down
+                the same sandboxed path a mail body does. */}
             <SandboxedHtml
               html={descriptionHtml(event.description)}
               label={`description of ${event.title}`}
@@ -602,9 +548,7 @@ function EventDetail({
   )
 }
 
-/** One line of event metadata: an icon that says which kind of fact it is, and
- *  the fact. A `<dl>` because that is what these are — labelled values whose
- *  label happens to be drawn rather than written. */
+/** One line of event metadata: an icon for the kind of fact, and the fact. */
 function Fact({
   icon,
   children,
@@ -623,15 +567,10 @@ function Fact({
 }
 
 /**
- * Which calendars this agenda draws from.
- *
- * Yours are listed first and separately from the ones you are subscribed to,
- * because that is the distinction the list exists to make: a Workspace account
- * accumulates colleagues, rooms and birthday calendars, and flattening all of
- * them into one agenda is what made "what am I doing today" unanswerable.
- *
- * The swatch is Google's own colour for the calendar, so a row here and a row
- * in Google Calendar are recognisably the same thing.
+ * Which calendars this agenda draws from. Yours are listed separately from
+ * subscribed ones: a Workspace account accumulates colleagues, rooms and
+ * birthday calendars, and flattening them all makes "what am I doing today"
+ * unanswerable. The swatch is Google's own colour for the calendar.
  */
 function CalendarPicker({
   calendars,
@@ -650,8 +589,7 @@ function CalendarPicker({
     <DropdownMenuCheckboxItem
       key={calendar.id}
       checked={calendar.enabled}
-      // Radix closes on select by default; ticking three colleagues one at a
-      // time through three menu openings is the wrong interaction for this.
+      // Radix closes on select by default; keep it open for multiple ticks.
       onSelect={(event) => event.preventDefault()}
       onCheckedChange={(checked) => onToggle(calendar, checked)}
     >
@@ -678,8 +616,7 @@ function CalendarPicker({
         {others.length > 0 && (
           <>
             <DropdownMenuSeparator />
-            {/* Named for what they are. "Subscribed" is the word Google uses,
-                and it is why these are off until asked for. */}
+            {/* "Subscribed" is Google's word; these are off until asked for. */}
             <DropdownMenuLabel>Subscribed</DropdownMenuLabel>
             {others.map(item)}
           </>

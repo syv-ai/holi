@@ -1,21 +1,13 @@
 /**
  * Every icon this vault has set, in one place (D82).
  *
- * **The map had no view.** An icon is set from a tree row's "Edit Icon…", one
- * path at a time, and the only way to see the whole map was to open
- * `.holi/settings/icons.yaml` and read JSON. That is fine for setting one and
- * useless for the thing a list is actually for: noticing that six of them point
- * at files you renamed months ago.
+ * **Icons rot on rename, by design** (D82: the map is keyed by path). So this
+ * marks an entry whose path is no longer in the vault rather than hiding it: a
+ * stale entry is invisible everywhere else, and this is the only place to
+ * clean it up.
  *
- * **Icons rot on rename, by design** (D82: the map is keyed by path and there is
- * no second source to lose to). So this marks an entry whose path is no longer
- * in the vault rather than hiding it — a stale entry is invisible everywhere
- * else, and this list is the only place it can be cleaned up.
- *
- * **Reuses the tree's own dialog** rather than growing a second editor. The
- * dialog registry lives in `state/`, which is not a feature, so summoning
- * `edit-icon` from here crosses no boundary and cannot drift from what the tree
- * does: same validator, same writer, same "an empty field means no entry".
+ * **Reuses the tree's own dialog** through the `state/` dialog registry, so it
+ * crosses no feature boundary and cannot drift from what the tree does.
  */
 import { useMemo } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -56,8 +48,8 @@ export function IconsSection(): React.JSX.Element {
 
   const clear = (path: string): void => {
     if (remote === null) return
-    // `undefined`, which is what removes the entry — the same call the dialog
-    // makes when you empty its field.
+    // `undefined` removes the entry, the same call the dialog makes when you
+    // empty its field.
     void trpc.notes.setIcon.mutate({ remote, path, emoji: undefined })
   }
 

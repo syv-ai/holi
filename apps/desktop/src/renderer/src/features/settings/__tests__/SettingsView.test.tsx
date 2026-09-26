@@ -1,16 +1,13 @@
 /**
- * Every setting this vault has, in a tab with a rail (#16).
+ * Every setting this vault has, in a tab with a rail.
  *
- * The point of these is the things a settings surface owes that a one-shot
- * ritual does not: it renders EVERY setting rather than the subset worth asking
- * a stranger at a vault's birth, it says which layer a value comes from so a
- * machine-local preference is never silently committed, and it writes through
- * the ritual's own procedure so the two cannot drift.
+ * Unlike the onboarding ritual it renders EVERY setting, says which layer a
+ * value comes from so a machine-local preference is never silently committed,
+ * and writes through the ritual's own procedure so the two cannot drift.
  *
- * The rail adds two failures that are invisible by inspection and silent at
- * runtime, so both are pinned here: a descriptor filed under a section that does
- * not exist renders NOWHERE, and a heading the rail offers as a jump target that
- * the section never renders is a link that scrolls to nothing.
+ * The rail adds two silent failures, both pinned here: a descriptor filed under
+ * a section that does not exist renders NOWHERE, and a declared heading the
+ * section never renders is a jump that scrolls to nothing.
  */
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -35,7 +32,7 @@ vi.mock('@/lib/trpc', () => ({
       write: { mutate: (input: unknown) => write(input) },
     },
     // The Appearance section renders the theme too, so the mock has to answer
-    // for it — otherwise every test here passes while logging an unhandled
+    // for it, otherwise every test here passes while logging an unhandled
     // rejection.
     theme: {
       read: { query: () => themeRead() },
@@ -43,8 +40,8 @@ vi.mock('@/lib/trpc', () => ({
       reset: { mutate: vi.fn() },
     },
     // The tests below walk EVERY section, so this mock has to answer for the
-    // three ported out of the legacy vault panel as well. Each has its own file
-    // for its own behaviour; these are here only so the walk does not throw.
+    // Vault, Connections and Account sections too, only so the walk does not
+    // throw.
     github: {
       collaborators: { query: () => collaborators() },
       openCollaboratorSettings: { mutate: vi.fn() },
@@ -116,9 +113,8 @@ test('every descriptor is filed under a section that exists', () => {
 
 test('every setting renders, across the sections', async () => {
   setup()
-  // Against the list, never a number. This is the FULL list, which is the
-  // difference between this and the ritual — `editorFont` has no birth question
-  // and still belongs here.
+  // Against the list, never a number. This is the FULL list, unlike the
+  // ritual: `editorFont` has no birth question and still belongs here.
   const seen: string[] = []
   for (const section of SETTINGS_SECTIONS) {
     await go(section.label)
@@ -211,15 +207,13 @@ test('re-reads after a write, so a control shows its own answer', async () => {
   setup()
   const daily = await screen.findByRole('group', { name: 'Keep a daily note' })
   await userEvent.click(within(daily).getByRole('checkbox'))
-  // Twice: once on mount, once forced after the write. The atom caches per
-  // vault, and a pane that could not see its own write would be a pane that
-  // reports the value it had when you opened it.
+  // Twice: once on mount, once forced after the write, because the atom caches
+  // per vault.
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
 })
 
 test('shows the resolver’s complaint beside the setting it names', async () => {
-  // Nothing displayed these at all before: a malformed value was replaced by a
-  // default and never mentioned.
+  // Otherwise a malformed value is replaced by a default and never mentioned.
   setup({ warnings: ['dropped "dailyNotes": expected a boolean, got "yes"'] })
   const daily = await screen.findByRole('group', { name: 'Keep a daily note' })
   expect(within(daily).getByText(/expected a boolean/)).toBeInTheDocument()
@@ -229,13 +223,12 @@ test('says which settings wait for the next vault open', async () => {
   setup()
   const landing = await screen.findByRole('group', { name: 'Open on' })
   expect(within(landing).getByText(/next time this vault opens/)).toBeInTheDocument()
-  // And only that one — everything else applies as you click it.
+  // And only that one: everything else applies as you click it.
   expect(screen.getAllByText(/next time this vault opens/)).toHaveLength(1)
 })
 
 test('offers the files the section on screen is a view of', async () => {
-  // Per section rather than one anonymous row at the end of the tab: the point
-  // is saying WHICH file backs what you are looking at.
+  // Per section: the point is saying WHICH file backs what you are looking at.
   setup()
   expect(await screen.findByRole('button', { name: '.holi/settings/app.yaml' })).toBeInTheDocument()
   expect(screen.queryByRole('button', { name: '.holi/settings/theme.css' })).not.toBeInTheDocument()

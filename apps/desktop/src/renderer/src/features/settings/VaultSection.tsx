@@ -1,19 +1,12 @@
 /**
  * What this vault is, and who can see it.
  *
- * **Read-only, on purpose.** The old panel drove a connect-a-repo flow that
- * installed a deploy key and a webhook, plus invites, roles and
- * transfer-ownership — all server rules, and GitHub owns access now. Holi does
- * not implement invitation (FR-11); it points at the flow that does.
+ * **Read-only, on purpose.** GitHub owns access; Holi does not implement
+ * invitation, it points at the flow that does.
  *
  * Visibility arrives with the members rather than from a second call this could
- * forget to make. `router.ts` says why: a vault silently becoming public is the
- * highest-severity thing that can happen to it, and this is the only surface
- * that would ever show it.
- *
- * Ported out of `features/vault/VaultSettings.tsx` when the settings tab grew a
- * rail, and put on the shared vocabulary in `settings-ui.tsx` when that tab
- * stopped being six surfaces with six type scales.
+ * forget to make: a vault silently becoming public is the highest-severity
+ * thing that can happen to it, and this is the only surface that shows it.
  */
 import { SiGithub } from '@icons-pack/react-simple-icons'
 import { useAtomValue } from 'jotai'
@@ -32,31 +25,28 @@ import {
 } from './settings-ui'
 import { COLLABORATORS, WHERE_IT_LIVES } from './vault-headings'
 
-/** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git` — this one is for a
- *  human to click, not for git to clone. A vault whose origin is a local path
- *  (a test fixture) still renders its remote; the link simply will not resolve,
- *  which is the honest outcome for a vault that is not on GitHub. */
+/** Mirrors `remoteUrl` in `main/git.ts`, minus the `.git`: this one is for a
+ *  human to click. A vault whose origin is a local path (a test fixture) gets a
+ *  link that will not resolve. */
 const originUrl = (remote: string) => `https://github.com/${remote}`
 
-/** A collaborator's GitHub profile. Same honesty caveat as `originUrl`: a login
- *  is always a real GitHub account, so this always resolves. */
+/** A collaborator's GitHub profile. A login is always a real GitHub account,
+ *  so this always resolves. */
 const userUrl = (login: string) => `https://github.com/${login}`
 
 /** The clone path, shortened for display. A vault always lives at
- *  `<managed-root>/<owner>/<repo>`, and the tail is exactly the remote — so the
- *  segment before it is the managed root's own folder (`Holi`). Show from there,
- *  dropping the long home-directory prefix. The full path stays in the tooltip
- *  and still drives the Finder reveal. */
+ *  `<managed-root>/<owner>/<repo>`, so show from the managed root's own folder
+ *  (`Holi`) on. The full path stays in the tooltip and drives the Finder
+ *  reveal. */
 const displayLocalPath = (fullPath: string, remote: string): string => {
   const parts = fullPath.split('/')
   const rootLeaf = parts[parts.length - remote.split('/').length - 1]
   return rootLeaf ? `${rootLeaf}/${remote}` : fullPath
 }
 
-/** A collaborator's GitHub avatar. Falls back to a neutral initial circle when
- *  `avatarUrl` is absent, so the row never shows a broken image (the URL is a
- *  remote githubusercontent.com asset). Decorative — the login beside it names
- *  the person — so `alt=""`. */
+/** A collaborator's GitHub avatar, or a neutral initial circle when
+ *  `avatarUrl` is absent. Decorative (the login beside it names the person), so
+ *  `alt=""`. */
 function CollaboratorAvatar({ login, avatarUrl }: { login: string; avatarUrl?: string }) {
   if (avatarUrl) {
     return <img src={avatarUrl} alt="" className="size-4 shrink-0 rounded-full" />
@@ -75,7 +65,7 @@ export function VaultSection(): React.JSX.Element {
     visibility: string
     collaborators: Collaborator[]
   } | null>(null)
-  /** The sentence to show, plus the raw refusal for the tooltip — kept together
+  /** The sentence to show, plus the raw refusal for the tooltip, kept together
    *  so they can never describe two different failures. */
   const [error, setError] = useState<{ text: string; raw: string } | null>(null)
 
@@ -86,10 +76,9 @@ export function VaultSection(): React.JSX.Element {
     void trpc.github.collaborators
       .query({ remote })
       .then(setMembers)
-      // A refusal here is ordinary — a vault that is not on GitHub, no network,
-      // or a token without the scope — and *which* one decides what the user
-      // should do about it. Say so rather than rendering an empty member list,
-      // which would read as "nobody else has access".
+      // A refusal here is ordinary (not on GitHub, no network, a token without
+      // the scope). Say which rather than rendering an empty member list, which
+      // would read as "nobody else has access".
       .catch((err: unknown) =>
         setError({
           text: collaboratorsErrorText(errorCodeOf(err), remote),
@@ -104,9 +93,8 @@ export function VaultSection(): React.JSX.Element {
       {entry === undefined ? (
         <SettingsNote>no vault open</SettingsNote>
       ) : (
-        // A vault IS its remote; the local path is the clone FR-15 promises
-        // survives a sign-out. Both are links: the remote opens GitHub, the path
-        // reveals the folder in Finder.
+        // A vault IS its remote; the local path is the clone, which survives a
+        // sign-out. The remote opens GitHub, the path reveals it in Finder.
         <div className="space-y-2">
           <SettingsField label="Remote">
             <ExternalLink

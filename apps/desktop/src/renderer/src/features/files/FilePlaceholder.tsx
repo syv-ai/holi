@@ -1,11 +1,8 @@
 /**
- * The in-app stand-in for a rich file Holi can't yet render — today only an
- * office document (spec §Arbitrary files). It names the file and its type and
- * says support is coming; a real per-type viewer replaces it, as `ImageViewer`
- * did for images and `PdfViewer` for PDFs (D103). Text files are NOT here: they
- * edit in the plain editor (`EditorPane plain`). Deliberately NOT a "reveal in
- * Finder" shortcut — the file stays in-app, in the vault, and syncs like
- * everything else.
+ * The in-app stand-in for a rich file Holi can't yet render (an office
+ * document). It names the file and its type and says support is coming. Text
+ * files edit in the plain editor instead. Deliberately NOT a "reveal in
+ * Finder" shortcut: the file stays in-app, in the vault, and syncs.
  */
 import type { FileKind } from '@holi/shared'
 import { FileText, type LucideIcon } from 'lucide-react'

@@ -1,11 +1,8 @@
 /**
  * The rail, for a pane too narrow to hold one.
  *
- * A pane's `minSize` is 240px, so this is not a hypothetical width. The thing
- * worth pinning is that the narrow form is the same navigation and not a
- * reduced one: it still reaches a heading, because a narrow pane makes a section
- * taller rather than shorter, so jumping into the middle of one matters more
- * here than at full width.
+ * The narrow form is the same navigation, not a reduced one: it still reaches a
+ * heading, because a narrow pane makes a section taller.
  */
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -30,7 +27,7 @@ const SECTIONS: SettingsSection[] = [
 ]
 
 // Radix marks the page inert while its listbox is open, and jsdom resolves the
-// `pointer-events: none` it puts on body but not the `auto` on the content —
+// `pointer-events: none` it puts on body but not the `auto` on the content:
 // the same limitation `AccountSection.test.tsx` documents.
 const user = userEvent.setup({ pointerEventsCheck: 0 })
 
@@ -77,7 +74,7 @@ test('offers headings only for the section you are in', async () => {
   setup('general')
   await user.click(screen.getByRole('combobox', { name: 'Settings section' }))
   expect(await screen.findByRole('option', { name: 'General' })).toBeInTheDocument()
-  // Appearance is listed, its contents are not — selection is expansion here
+  // Appearance is listed, its contents are not: selection is expansion here
   // exactly as it is in the rail.
   expect(screen.getByRole('option', { name: 'Appearance' })).toBeInTheDocument()
   expect(screen.queryByRole('option', { name: 'Surfaces' })).not.toBeInTheDocument()

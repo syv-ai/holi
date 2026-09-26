@@ -1,10 +1,9 @@
 /**
  * Signing out, which is the one destructive control in the settings tab.
  *
- * Also untested in the legacy panel it came from. The thing worth pinning is
- * FR-15's promise: signing out drops the credential, the clones survive unless
- * you say otherwise, and if saying otherwise would discard commits that never
- * reached the remote you are told before you do it.
+ * Signing out drops the credential, the clones survive unless you say
+ * otherwise, and if saying otherwise would discard commits that never reached
+ * the remote you are told before you do it.
  */
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -36,11 +35,9 @@ vi.mock('@/lib/trpc', () => ({
  * **`pointerEventsCheck` off, and only here.** Radix marks the page inert while
  * a modal is open by putting `pointer-events: none` on `body` and restoring
  * `auto` on the dialog content. jsdom resolves the first and not the second, so
- * user-event walks up from a button that is genuinely clickable in the real app,
- * finds BODY, and refuses. This is the first test in the repo that clicks a
- * control inside a dialog, which is why nothing had hit it before. The check is
- * disabled for the file rather than globally: everywhere else it is a real
- * guard against clicking something inert.
+ * user-event walks up from a button that is clickable in the real app, finds
+ * BODY, and refuses. Disabled here rather than globally: everywhere else it is
+ * a real guard against clicking something inert.
  */
 const user = userEvent.setup({ pointerEventsCheck: 0 })
 
@@ -78,7 +75,7 @@ test('signing out is confirmed, and keeps the clones unless you say otherwise', 
 
   await user.click(within(dialog).getByRole('button', { name: 'Sign out' }))
   await waitFor(() => expect(signOut).toHaveBeenCalled())
-  // The clones are a separate, deliberate act (FR-15).
+  // The clones are a separate, deliberate act.
   expect(deleteClones).not.toHaveBeenCalled()
 })
 
@@ -94,7 +91,7 @@ test('ticking the box is what deletes the clones', async () => {
 })
 
 test('warns before deleting clones that hold unpushed work', async () => {
-  // Advisory rather than blocking — the Trash makes it recoverable — but it has
+  // Advisory rather than blocking (the Trash makes it recoverable), but it has
   // to be said, because the commits exist nowhere else.
   unpushed.mockResolvedValue([{ remote: 'syv-ai/holi', ahead: 3 }])
   setup()

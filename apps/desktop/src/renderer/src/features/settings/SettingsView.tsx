@@ -1,24 +1,17 @@
 /**
- * Every setting this vault has, in a tab with a rail (#16).
+ * Every setting this vault has, in a tab with a rail.
  *
- * **Renders the sections; does not know the sections.** Every rail item comes
- * from `SETTINGS_SECTIONS` and every row inside one comes from
- * `VAULT_SETTING_DESCRIPTORS` — the same list the onboarding ritual renders and
- * the same list `seed-content.ts` builds a new vault's `app.json` from. Adding a
- * setting is adding a descriptor, including saying which section it lands in.
+ * **Renders the sections; does not know the sections.** Rail items come from
+ * `SETTINGS_SECTIONS` and rows from `VAULT_SETTING_DESCRIPTORS`, the same list
+ * the onboarding ritual renders. Adding a setting is adding a descriptor.
  *
- * **A tab, not a modal.** A modal blocks the window while you compare a setting
- * against the vault it applies to; a tab splits beside the note you are changing
- * it for, and closes like anything else.
+ * **A tab, not a modal**, so it can split beside the note it is changing.
  *
- * **Changes apply now.** The resolved settings are cached per vault and the
- * cache's own docstring says re-reading them mid-session would mean answering
- * "what happens to the tab you are looking at". The answer turned out to be that
- * most of them already do: the hooks and the file-size cap are read by main on
+ * **Changes apply now.** The hooks and the file-size cap are read by main on
  * every commit, `colorScheme` re-applies through `useVaultTheme`, and
- * `editorFont` is a CSS custom property. So a write here forces the cache and
+ * `editorFont` is a CSS custom property, so a write here forces the cache and
  * the app follows. `landing` is the exception and says so on its own row: it
- * describes what happens when a vault OPENS, and this one already did.
+ * describes what happens when a vault opens.
  *
  * **The scroll container lives here, not in a section.** The rail jumps to a
  * heading by scrolling this element, so a section that owned its own scrolling
@@ -64,19 +57,14 @@ export function SettingsView(): React.JSX.Element {
   const section = SETTINGS_SECTIONS.find((s) => s.id === activeId) ?? SETTINGS_SECTIONS[0]!
 
   return (
-    // **A container query, not a media query.** This is a pane, not the window:
-    // the same app at the same window size shows this tab full width or beside
-    // two other panes, and only the tab's OWN width decides whether a rail fits.
-    // A pane's `minSize` is 240px and the rail plus a column of controls wants
-    // roughly 560, so below that the rail becomes a picker above the content.
+    // **A container query, not a media query**: only the pane's own width
+    // decides whether a rail fits. The rail plus controls want roughly 560px, so
+    // below that the rail becomes a picker above the content.
     //
     // **Two elements, and they cannot be one.** A container query resolves
-    // against the nearest ANCESTOR container, never against the element that
-    // declares `container-type` itself — so `@container` and `@min-[560px]:*`
-    // on the same div gives a query that can never match. The children's
-    // variants worked (the rail appeared, the picker hid) while the row/column
-    // switch silently did not, which reads as "the rail is there but the
-    // content dropped below it".
+    // against the nearest ANCESTOR container, never the element declaring
+    // `container-type`, so `@container` and `@min-[560px]:*` on the same div
+    // never match.
     <div className="@container h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col @min-[560px]:flex-row">
         <div className="hidden w-44 shrink-0 overflow-y-auto border-r border-divider @min-[560px]:block">
@@ -108,8 +96,7 @@ export function SettingsView(): React.JSX.Element {
                 </p>
               )}
               {/* Warnings the resolver could not attribute to any key. Shown once
-                  at the top of whichever section you are in rather than dropped:
-                  a value refused for being malformed used to vanish silently. */}
+                  at the top of whichever section you are in rather than dropped. */}
               {unattributed.map((warning) => (
                 <p
                   key={warning}
@@ -126,22 +113,10 @@ export function SettingsView(): React.JSX.Element {
             </div>
           </div>
 
-          {/* The escape hatch, the same one "Edit Icon…" offers for its map:
-              these are files, they are readable, and a pane that hid them would
-              be claiming to be the only way to change a vault's mind. Per
-              section rather than one anonymous row at the end of everything, so
-              it says WHICH file backs what you are looking at.
-
-              **Outside the scroller, not at the end of it.** As the last thing
-              in a long section it was a footnote you had to reach; as a bar it
-              is a persistent answer to "where does this live?". That also means
-              it cannot collide with a section's own trailing content, which is
-              what drew two hairlines a few pixels apart under Appearance.
-
-              Absent, not empty, for the sections backed by nothing on disk:
-              what GitHub says about a vault and which Google account this
-              machine holds are not files, and offering none under a sentence
-              promising some would be worse than saying nothing. */}
+          {/* The escape hatch: these are files, and this names which file backs
+              the section on screen. Outside the scroller so it is always visible
+              and never collides with a section's trailing content. Absent for
+              sections backed by nothing on disk (GitHub, Google). */}
           {section.files.length > 0 && (
             <div className="shrink-0 border-t border-divider px-6 py-2">
               <div className="mx-auto max-w-2xl">

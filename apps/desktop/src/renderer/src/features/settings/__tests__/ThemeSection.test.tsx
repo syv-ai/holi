@@ -1,8 +1,7 @@
 /**
- * The theme's controls (#16's second gap, over D64).
+ * The theme's controls (D64).
  *
- * The three things worth pinning are the ones a later tidy-up would get wrong:
- * the pane renders every whitelisted token rather than a list of its own, a
+ * The pane renders every whitelisted token rather than a list of its own, a
  * reset DELETES the key rather than writing a blank, and the two axes (mode and
  * layer) decide where a write lands rather than what is shown.
  */
@@ -25,10 +24,9 @@ vi.mock('@/lib/trpc', () => ({
       read: { query: () => themeRead() },
       write: { mutate: (input: unknown) => themeWrite(input) },
     },
-    // Appearance carries the `colorScheme` row as well as the tokens, and that
-    // row is a descriptor like any other — so this mock has to answer for the
-    // settings file too, or every test here passes while logging an unhandled
-    // rejection.
+    // Appearance carries the `colorScheme` descriptor row as well, so this mock
+    // has to answer for the settings file too, or every test here logs an
+    // unhandled rejection.
     settings: {
       read: { query: () => settingsRead() },
       write: { mutate: (input: unknown) => settingsWrite(input) },
@@ -68,7 +66,7 @@ beforeEach(() => {
 })
 
 test('renders a control for every whitelisted token', async () => {
-  // From `THEME_TOKEN_GROUPS`, not a list here — so a token added to the
+  // From `THEME_TOKEN_GROUPS`, not a list here, so a token added to the
   // whitelist appears without this file being touched.
   setup()
   await waitFor(() => expect(screen.getByText('Surfaces')).toBeInTheDocument())
@@ -144,7 +142,7 @@ test('defaults to writing the shared file', async () => {
 
 test('surfaces a refused value rather than swallowing it', async () => {
   // The pane's validator is the file's validator, so a refusal here means the
-  // colour did not stick — saying nothing would read as a control that works.
+  // colour did not stick; saying nothing would read as a control that works.
   themeRead.mockResolvedValue({ light: {}, dark: {}, warnings: [] })
   themeWrite.mockResolvedValue({ ok: true, warnings: ['refused "radius" (dark): "5 dogs"'] })
   settingsRead.mockResolvedValue({ ...VAULT_SETTING_DEFAULTS, warnings: [] })

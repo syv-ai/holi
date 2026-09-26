@@ -1,11 +1,8 @@
 /**
  * The agenda's calendar picker.
  *
- * The problem it solves: a Workspace account is subscribed to colleagues'
- * calendars, rooms and birthdays, and an agenda that merges all of them cannot
- * answer "what am I doing today". So the tests worth having are about the
- * distinction being visible and the toggle reaching main — which is what makes
- * it true for the agent as well as the panel.
+ * The tests are about the mine/subscribed distinction being visible and the
+ * toggle reaching main, which is what makes it true for the agent as well.
  */
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -109,8 +106,7 @@ async function openPicker() {
 test('separates the calendars you own from the ones you only watch', async () => {
   const { menu } = await openPicker()
 
-  // The grouping IS the feature — "Jane Doe" sitting in an undifferentiated
-  // list is what made the agenda unreadable in the first place.
+  // The grouping IS the feature.
   expect(within(menu).getByText('Your calendars')).toBeInTheDocument()
   expect(within(menu).getByText('Subscribed')).toBeInTheDocument()
 })
@@ -135,8 +131,7 @@ test('switching a colleague on tells main, and reloads the agenda', async () => 
 })
 
 test('stays open while several calendars are ticked', async () => {
-  // Radix closes a menu on select by default; ticking three colleagues through
-  // three separate openings is the wrong interaction for a filter list.
+  // Radix closes a menu on select by default; a filter list must stay open.
   const { user, menu } = await openPicker()
 
   await user.click(within(menu).getByRole('menuitemcheckbox', { name: /Jane Doe/ }))
@@ -152,18 +147,13 @@ test('marks an event from someone else’s calendar as theirs', async () => {
 
   render(<AgendaView />)
 
-  // Attribution on the row, so a glance never reads someone else's dentist
-  // appointment as the user's own.
+  // Attribution on the row, so someone else's event never reads as the user's.
   expect(await screen.findByText('Jane Doe')).toBeInTheDocument()
 })
 
 /**
- * Triage on the row.
- *
- * An agenda that renders every entry identically makes the user re-read their
- * own calendar to find the one thing that needs them. These tests are about the
- * three distinctions that carry the most: an unanswered invitation, a block
- * that is not a meeting, and time that is not really taken.
+ * Triage on the row: an unanswered invitation, a block that is not a meeting,
+ * and time that is not really taken.
  */
 
 test('flags an invitation that still needs an answer', async () => {
@@ -195,7 +185,6 @@ test('marks out-of-office distinctly from a meeting', async () => {
   render(<AgendaView />)
   await screen.findByText('Away')
 
-  // "Away" that reads like a meeting is why people double-book someone on leave.
   expect(screen.getByText(/out of office/i)).toBeInTheDocument()
   expect(screen.getAllByText(/out of office/i)).toHaveLength(1)
 })
@@ -222,8 +211,7 @@ test('offers the video link for a Zoom conference, not just Meet', async () => {
   render(<AgendaView />)
   await user.click(await screen.findByRole('button', { name: /join Q2 review/i }))
 
-  // The row used to read `hangoutLink`, which is Meet-only — half a
-  // consultancy's calls had no join button at all.
+  // Not only Meet: `hangoutLink` alone would miss Zoom and Teams.
   expect(openExternal).toHaveBeenCalledWith('https://syv.zoom.us/j/123')
 })
 
@@ -235,16 +223,13 @@ test('puts the event description into the task it creates', async () => {
   const user = userEvent.setup()
 
   render(<AgendaView />)
-  // Making a task now lives in the detail pane rather than on the row — it
-  // means "I have decided about this one event", which is when the pane is
-  // already open. The row keeps only RSVP and Join.
+  // Making a task lives in the detail pane; the row keeps only RSVP and Join.
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   await user.click(await screen.findByRole('button', { name: /^task$/i }))
 
   await waitFor(() => expect(createTaskMock).toHaveBeenCalled())
   const { description } = createTaskMock.mock.calls[0]![0] as { description: string }
-  // The link is the representation (D67); the description is what makes the
-  // task worth opening — the dial-in lives there, not in the title.
+  // The link is the representation (D67); the description carries the dial-in.
   expect(description).toContain('https://calendar.google.com/x')
   expect(description).toContain('Dial-in 555-0100')
 })
@@ -256,14 +241,12 @@ test('paints the cached agenda while Google is still answering', async () => {
 
   render(<AgendaView />)
 
-  // The point of the cache: a day on screen immediately, instead of "Loading…"
-  // for as long as Google takes.
+  // The point of the cache: a day on screen before Google answers.
   expect(await screen.findByText('Yesterday’s copy')).toBeInTheDocument()
 
   live.resolve([event({ id: 'fresh', title: 'The real thing' })])
 
-  // And replaced the moment the live answer lands — the cache fills the gap, it
-  // does not stand in for the answer.
+  // And replaced the moment the live answer lands.
   expect(await screen.findByText('The real thing')).toBeInTheDocument()
   expect(screen.queryByText('Yesterday’s copy')).toBeNull()
 })
@@ -280,12 +263,8 @@ test('says nothing about calendars when Google gives none', async () => {
 })
 
 /**
- * The detail pane.
- *
- * What a row cannot hold, and what the agenda previously made you create a task
- * to read. The description is the reason the pane exists, so most of these are
- * about how a description reaches the screen — including the case where it is
- * markup written by whoever sent the invitation.
+ * The detail pane. Most of these are about how a description reaches the
+ * screen, including markup written by whoever sent the invitation.
  */
 
 test('the list and the detail pane are separated by a draggable handle', async () => {
@@ -303,9 +282,7 @@ test('says nothing until an event is picked', async () => {
   render(<AgendaView />)
   await screen.findByText('Q2 review')
 
-  // An agenda is read far more often than it is interrogated; opening onto a
-  // pane full of the first event's details would be answering a question
-  // nobody asked.
+  // Nothing is selected on open.
   expect(screen.getByText(/pick an event/i)).toBeInTheDocument()
 })
 
@@ -320,17 +297,15 @@ async function descriptionFrame(): Promise<Document> {
 }
 
 test('shows the description a row has no room for', async () => {
-  // Bare text with real newlines — what an event created through the API or
-  // imported from an .ics carries, rather than Google's own rich-text HTML.
+  // Bare text with real newlines, as an API- or .ics-created event carries.
   agendaMock.mockResolvedValue([
     event({ description: 'Dial-in 555-0100\nDeck is in the drive folder' }),
   ])
 
   const frame = await descriptionFrame()
 
-  // Down the same renderer as markup: one path, so there is one place the
-  // sandbox could be forgotten rather than two. `detailLine` never carried this
-  // at all — reading it used to mean creating a task first.
+  // Down the same renderer as markup: one path, so one place the sandbox could
+  // be forgotten rather than two.
   expect(frame.body.textContent).toContain('Dial-in 555-0100')
   // Converted, not collapsed. Putting raw text into an HTML document would run
   // the two lines together.
@@ -346,16 +321,14 @@ test('a plain description keeps the characters that look like markup', async () 
 
   const frame = await descriptionFrame()
 
-  // Escaped on the way in, so a stray `<` stays visible text instead of opening
-  // a tag nobody wrote — and `&` is escaped first, or it would double-escape
-  // the entity the `<` produces.
+  // Escaped on the way in, so a stray `<` stays visible text; `&` is escaped
+  // first, or it would double-escape the entity the `<` produces.
   expect(frame.body.textContent).toContain('budget <b 5000 EUR & rising')
 })
 
 test('renders an HTML description as markup, in a frame of its own', async () => {
-  // What Meet and Zoom actually write into an invitation. It is a stranger's
-  // markup, so it takes the same sandboxed path a mail body does rather than
-  // being trusted for being "from Google".
+  // What Meet and Zoom write into an invitation: a stranger's markup, so it
+  // takes the same sandboxed path a mail body does.
   agendaMock.mockResolvedValue([
     event({ description: '<p>Join here: <a href="https://meet.example/x">link</a></p>' }),
   ])
@@ -367,8 +340,7 @@ test('renders an HTML description as markup, in a frame of its own', async () =>
   const frame = (await screen.findByLabelText(/description of Q2 review/i)) as HTMLIFrameElement
   await waitFor(() => expect(frame.contentDocument?.body.firstChild).toBeTruthy())
 
-  // Real markup, and *inside* the frame — the anchor exists as an element in a
-  // document of its own, not as text in the app's document.
+  // Real markup, and *inside* the frame, not in the app's document.
   const anchor = frame.contentDocument!.querySelector('a')
   expect(anchor?.getAttribute('href')).toBe('https://meet.example/x')
   expect(screen.queryByText(/<a href/)).toBeNull()
@@ -391,8 +363,7 @@ test('names the things the row had to drop to fit', async () => {
   expect(await screen.findByText('Room 3, second floor')).toBeInTheDocument()
   expect(screen.getByText('Mette')).toBeInTheDocument()
   expect(screen.getByText('12 people')).toBeInTheDocument()
-  // On a row, repeating is invisible and not blocking time is only a dimming —
-  // which says something is different without saying what.
+  // On a row, repeating is invisible and not blocking time is only a dimming.
   expect(screen.getByText('repeats')).toBeInTheDocument()
 })
 
@@ -404,9 +375,8 @@ test('lets go of an event that a refresh drops from the agenda', async () => {
   await user.click(await screen.findByRole('button', { name: /show Q2 review/i }))
   await screen.findByLabelText(/description of Q2 review/i)
 
-  // Declining an invitation, or switching its calendar off, takes the event off
-  // the next response. Holding the object rather than looking it up would pin
-  // the pane to an event that is no longer on the agenda.
+  // An event missing from the next response empties the pane rather than
+  // staying pinned to a stale object.
   agendaMock.mockResolvedValue([])
   await user.click(screen.getByRole('button', { name: /refresh agenda/i }))
 

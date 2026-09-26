@@ -358,8 +358,8 @@ test("fetches no font: its UI is Holi's and the signature faces are bundled", as
 test('fetches no stamp library from the CDN', async () => {
   mount()
   await screen.findByTestId('pdf')
-  // Rubber stamps are disabled, but the stamp plugin still fetched its default
-  // manifest and stamps from jsDelivr on every open.
+  // Rubber stamps are disabled, but without this the stamp plugin fetches its
+  // default manifest and stamps from jsDelivr on every open.
   expect(seam.config?.stamp?.manifests).toEqual([])
 })
 
@@ -511,7 +511,7 @@ test('asks for a signature alone, never initials as well', async () => {
   mount()
   await screen.findByTestId('pdf')
   // In signature-and-initials mode Save stays disabled until both are filled,
-  // with nothing saying so: an uploaded signature looked like it did nothing.
+  // with nothing saying so.
   expect(seam.config?.signature?.mode).toBe('signature-only')
 })
 
@@ -737,7 +737,7 @@ test('⌘F puts the caret in the search field, and closing it gives focus back',
 
   // Closed: the field goes, and focus must not fall to <body>, or the next ⌘F
   // would be a key from outside the viewer.
-  // Closing reports no sidebar at all, measured in the running viewer.
+  // Closing reports no sidebar at all.
   panel.remove()
   act(() => seam.sidebarCb!({ sidebarId: '' }))
   await waitFor(() => expect(document.activeElement).toBe(host))

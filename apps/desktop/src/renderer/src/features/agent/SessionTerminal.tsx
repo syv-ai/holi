@@ -1,16 +1,10 @@
 /**
- * One agent session's terminal (D100).
+ * One agent session's terminal (D100, D101): each session is an ordinary tab
+ * with its own xterm, scrollback, data tap and geometry.
  *
- * A vault runs several sessions and each is an ordinary tab (D100, D101), so the
- * xterm that was the drawer's single child is now one of N, each owning its own
- * scrollback, its own data tap and its own geometry. Every component here is
- * **mounted for as long as its session exists** and merely hidden when another
- * tab is showing: a terminal unmounted on tab switch would throw away its
- * scrollback and have to replay main's mirror to get it back, which is a repaint
- * the user can see.
- *
- * Every gotcha in here was paid for once already in `AgentPanel` and is kept
- * verbatim. They are each commented where they sit.
+ * It stays **mounted for as long as its session exists** and is merely hidden
+ * when another tab is showing: unmounting would throw away the scrollback and
+ * replaying main's mirror to get it back is a visible repaint.
  */
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
@@ -28,9 +22,8 @@ const HIDE_CURSOR = '\x1b[?25l'
 const DISABLE_FOCUS_REPORTING = '\x1b[?1004l'
 
 /** A hidden container measures 0×0, and FitAddon clamps that to its 2×1 minimum
- * instead of bailing — fitting there would SIGWINCH the PTY into a 2-column
- * sliver. (Today `display:none` doesn't even fire the observer, but that's one
- * CSS change away from being untrue.) */
+ * instead of bailing: fitting there would SIGWINCH the PTY into a 2-column
+ * sliver. */
 const MIN_FITTABLE_PX = 10
 
 /** Dim, italic line — session lifecycle notices printed into the scrollback. */
@@ -53,10 +46,9 @@ export function SessionTerminal({
 }): React.JSX.Element {
   const hostRef = useRef<HTMLDivElement | null>(null)
   /** Where xterm actually opens: the box INSIDE the gutter. FitAddon sizes the
-   *  terminal from its parent's computed width and height, which under
-   *  `box-sizing: border-box` include the parent's padding — so padding on the
-   *  host bought two rows and four columns that were drawn into the gutter it
-   *  was meant to keep clear. The gutter is the inset between the two boxes. */
+   *  terminal from its parent's computed size, which under `border-box` includes
+   *  padding, so a padded host would draw rows and columns into the gutter. The
+   *  gutter is the inset between the two boxes. */
   const mountRef = useRef<HTMLDivElement | null>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -92,7 +84,7 @@ export function SessionTerminal({
    *
    * `term.open()` against a `display:none` host leaves xterm's renderer with
    * no measurements, and everything written afterwards silently fails to
-   * paint — a live session in a blank panel. Main's mirror is what makes
+   * paint: a live session in a blank panel. Main's mirror is what makes
    * deferring safe: whatever the PTY printed before this terminal existed is
    * replayed by `attach()`.
    *
@@ -124,7 +116,7 @@ export function SessionTerminal({
     })
 
     /**
-     * The panel's one key hook — see `agent-terminal-keys.ts` for which chords
+     * The panel's one key hook: see `agent-terminal-keys.ts` for which chords
      * it claims and why.
      *
      * `preventDefault()` is load-bearing, not decoration: xterm returns early
@@ -157,9 +149,7 @@ export function SessionTerminal({
       return false
     })
 
-    // Filtered by session: every session's bytes arrive on one channel, and a
-    // tab that wrote another tab's output would be the whole point of the ids
-    // thrown away at the last step.
+    // Filtered by session: every session's bytes arrive on one channel.
     const offData = window.holi.agent.onData((e) => {
       if (e.id === sessionId) term.write(e.data)
     })
@@ -168,9 +158,8 @@ export function SessionTerminal({
     })
     const typed = term.onData((data) => window.holi.agent.write(sessionId, data))
 
-    // Replay what main's mirror recorded — output from before this terminal
-    // existed, which for a session started in another tab is all of it — THEN
-    // start taking live data.
+    // Replay what main's mirror recorded (output from before this terminal
+    // existed), THEN start taking live data.
     void (async () => {
       const state = await window.holi.agent.attach(sessionId)
       if (state) term.write(state)

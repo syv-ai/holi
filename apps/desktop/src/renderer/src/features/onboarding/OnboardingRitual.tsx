@@ -38,25 +38,24 @@ type ActState = 'idle' | 'active' | 'exiting'
 
 // The ceremony CTAs come in two weights: the solid pill (Button `ceremony`) and
 // a transparent ghost. The ghost reuses the stock `ghost` variant and layers on
-// the ceremony geometry — kept here as one shared string, not per-call-site.
+// the ceremony geometry, kept here as one shared string.
 const CEREMONY_GHOST =
   'h-[38px] gap-2 rounded-full px-5 text-[13px] font-medium tracking-[0.005em] text-muted-foreground hover:text-foreground'
 
 interface Props {
-  /** `first-run` plays all three acts (greeting → naming → threshold);
-   *  `add-vault` skips the greeting and starts at naming. */
+  /** `first-run` plays every act from the greeting; `add-vault` skips the
+   *  greeting and starts at naming. */
   mode: Mode
   /** Only provided in `add-vault` mode. The × button + Esc-at-the-floor call
-   *  this to dismiss the overlay. Absent in `first-run` — nowhere to dismiss to. */
+   *  this to dismiss the overlay. Absent in `first-run`: nowhere to dismiss to. */
   onDismiss?: () => void
   /**
    * Walk the whole ritual against nothing (Developer → Test onboarding).
    *
    * **Creates nothing and writes nothing**: no GitHub repo, no clone, no vault
    * in the registry, no settings files. The naming act fakes its own success so
-   * the acts after it are reachable, which is the only reason this exists — the
-   * settings act and the threshold are unreachable until a vault is created, and
-   * that made them the one part of the ritual no test could drive.
+   * the settings act and the threshold, otherwise unreachable until a vault is
+   * created, can be driven.
    */
   dryRun?: boolean
 }
@@ -73,20 +72,20 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     initialState(mode, session?.login ?? ''),
   )
 
-  // Purely visual crossfade bookkeeping — which act is fading out. Kept local
-  // because it has nothing to do with the logical flow the reducer owns.
+  // Purely visual crossfade bookkeeping: which act is fading out. Kept out of
+  // the reducer, which owns the logical flow.
   const [exitingAct, setExitingAct] = useState<Act | null>(null)
   const [continueWokenOnce, setContinueWokenOnce] = useState(false)
   const [continueWaking, setContinueWaking] = useState(false)
 
   const [orgs, setOrgs] = useState<string[]>([])
   const [repos, setRepos] = useState<Repo[] | null>(null)
-  /** Non-null when the repo list failed to load — kept local to the join view
+  /** Non-null when the repo list failed to load: kept local to the join view
    *  (with a retry) rather than aborting the whole ritual. */
   const [reposError, setReposError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  /** The `owner/repo` of the vault just created — set on success so the
-   *  threshold can show and copy the live remote. */
+  /** The `owner/repo` of the vault just created, so the threshold can show and
+   *  copy the live remote. */
   const [createdRemote, setCreatedRemote] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -94,8 +93,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
 
   const slug = slugify(s.name)
 
-  // FR-3: `read:org` buys exactly one feature — offering an org as the owner of
-  // a new vault. If it fails, the personal account still works.
+  // `read:org` buys exactly one feature: offering an org as the owner of a new
+  // vault. If it fails, the personal account still works.
   useEffect(() => {
     void trpc.github.orgs
       .query()
@@ -103,9 +102,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
       .catch(() => {})
   }, [])
 
-  // Load the repo list for the join picker. A failure (a timeout, a flaky
-  // network) stays *here* — shown in the picker with a retry — rather than
-  // tearing down to the naming form and losing the user's place.
+  // Load the repo list for the join picker. A failure stays *here*, shown in
+  // the picker with a retry, rather than losing the user's place.
   const loadRepos = useCallback(() => {
     setReposError(null)
     void trpc.github.repos
@@ -149,9 +147,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   }
 
   const back = () => {
-    // The threshold is terminal: the vault already exists, so there is nothing
-    // to go back to — only "Open vault" forward. The settings act before it is
-    // NOT terminal; going back to rename is fine, the repo is already made.
+    // The threshold is terminal: the vault already exists, so only "Open vault"
+    // forward. The settings act before it is NOT terminal.
     if (s.act === 4) return
     if (s.view === 'join') {
       dispatch({ type: 'toForm' })
@@ -169,14 +166,12 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   /**
    * Save the settings act's answers, then move on to the threshold.
    *
-   * The vault already exists by here and its two settings files already hold
-   * the seed's defaults, so this MERGES the answers over them — which is why a
-   * failure is not fatal. A vault whose preferences did not stick is still a
-   * working vault with valid settings, and trapping someone on a settings step
-   * over it would be the worse outcome. Surface it and carry on.
+   * The vault already exists and its settings files hold the seed's defaults,
+   * so this MERGES the answers over them, which is why a failure is not fatal:
+   * the vault still has valid settings. Surface it and carry on.
    *
-   * The split is by each descriptor's own `target`, so a setting added later
-   * reaches the right file without this function changing.
+   * The split is by each descriptor's own `target`, so a new setting reaches
+   * the right file without this function changing.
    */
   const saveSettings = async () => {
     const remote = createdRemote
@@ -184,8 +179,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
       advance()
       return
     }
-    // A dry run has no vault to write to, and inventing one would be the one
-    // thing this mode promises not to do.
+    // A dry run has no vault to write to.
     if (dryRun) {
       advance()
       return
@@ -198,7 +192,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
         localJson: JSON.stringify(local),
       })
       // A refused value is not an error the ritual can act on, but it must not
-      // vanish either — the agent and the user can both read the file.
+      // vanish either.
       if (warnings.length > 0) console.warn(`[settings] ${warnings.join('; ')}`)
     } catch (err) {
       console.warn(
@@ -208,16 +202,13 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     advance()
   }
 
-  // Create the vault from the naming act. On success the repo genuinely exists
-  // and is pushed (the router commits + pushes before returning), so we advance
-  // to the threshold, which can now say so truthfully and show the live remote.
-  // On failure we stay on the naming form with the message shown.
+  // Create the vault from the naming act. On success the repo exists and is
+  // pushed (the router commits and pushes before returning). On failure we stay
+  // on the naming form with the message shown.
   const submit = async () => {
     if (s.submitting || !canAdvance(s)) return
-    // The fake success a dry run turns on. Everything downstream — the settings
-    // act, the threshold, the copyable remote — reads `createdRemote`, so
-    // standing one up is all it takes to make the rest of the ritual real
-    // without a repo existing anywhere.
+    // The fake success a dry run turns on: everything downstream reads
+    // `createdRemote`, so setting it makes the rest of the ritual reachable.
     if (dryRun) {
       setCreatedRemote(`${s.owner || 'you'}/${slug}`)
       runExit(2)
@@ -235,24 +226,18 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
     }
   }
 
-  // "Open vault" on the threshold. The repo already exists and is active; this
-  // just refreshes the list — which flips the first-run gate to the Shell — and
-  // dismisses the add-vault popover if that is how we were opened.
+  // "Open vault" on the threshold: activate, refresh the list (which flips the
+  // first-run gate to the Shell), and dismiss the add-vault popover if open.
   const enter = async () => {
-    // A dry run has nothing to refresh into (there is no new vault in the
-    // registry) so it only closes. Calling `loadVaults` would be harmless but
-    // dishonest: it would look like the ritual had done something.
+    // A dry run has no new vault to refresh into, so it only closes.
     if (dryRun) {
       onDismiss?.()
       return
     }
-    // **Activate here, not at creation.** Setting the active remote is what
-    // makes the Shell open and land the vault, and doing it at the naming act
-    // landed it before the settings step had asked anything: the answers went
-    // to a vault that had already read the seeded defaults, so a fresh vault
-    // opened on the daily in dark and only obeyed its settings after a restart.
-    // A vault created through the join path activates itself (`addVaultAtom`)
-    // and never reaches this act.
+    // **Activate here, not at creation.** Activating makes the Shell land the
+    // vault and read its settings; doing it at the naming act would read the
+    // seeded defaults before the settings act's answers were written. A joined
+    // vault activates itself (`addVaultAtom`) and never reaches this act.
     if (createdRemote !== null) setActiveRemote(createdRemote)
     await loadVaults()
     onDismiss?.()
@@ -267,8 +252,7 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
   }
 
   // Adopt a repo the user was added to. On failure we stay on the picker with
-  // the message shown (a bounce to the naming form would read as an unexplained
-  // reset). Success unmounts us via the App gate / Shell refresh.
+  // the message shown. Success unmounts us via the App gate / Shell refresh.
   const run = (fn: () => Promise<unknown>) => {
     dispatch({ type: 'submitStart' })
     return fn().catch((err: unknown) =>
@@ -490,11 +474,9 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
                           disabled={s.submitting || !repo.canPush}
                           className="h-auto w-full justify-start gap-2.5 rounded-md px-2.5 py-2 font-mono text-[13px] font-normal text-foreground"
                           onClick={() => run(() => addVault(repo.remote))}
-                          // `title` here is a Button *prop* (component, not a native
-                          // element) so the gate's native-title ban doesn't apply — and
-                          // it's what we want: a disabled trigger, on which the Radix
-                          // Tooltip never fires, so the plain title explains the disabled
-                          // state the one place the custom tooltip can't.
+                          // `title` is a Button *prop*, not a native attribute, so the
+                          // native-title ban doesn't apply. The Radix Tooltip never fires
+                          // on a disabled trigger, so the plain title explains it.
                           title={repo.canPush ? '' : 'you cannot push to this repo'}
                         >
                           <span className="obrit-join-remote">{repo.remote}</span>
@@ -523,8 +505,8 @@ export function OnboardingRitual({ mode, onDismiss, dryRun = false }: Props) {
             </div>
           </section>
 
-          {/* ── Act 3: Threshold ── */}
           {/* ── Act 3: How this vault behaves ── */}
+          {/* Asked once, at birth: see `VaultSettingsAct`. */}
           <section className="obrit-act obrit-settings-act" data-state={actState(3)}>
             <div className="obrit-act-inner">
               <div className="obrit-eyebrow">A FEW CHOICES</div>

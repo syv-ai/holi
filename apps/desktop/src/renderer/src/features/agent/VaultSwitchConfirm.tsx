@@ -1,21 +1,17 @@
 /**
- * "You have sessions running here" — the question a vault switch asks (D100).
+ * The question a vault switch asks when sessions are running (D100).
  *
- * **A switch ends every one of the vault's sessions**, and that is not a choice
- * Holi is making for convenience: `VaultHost` holds exactly one `ActiveVault`
- * and `open()` closes the current one first, so a session left running in the
- * vault you walked away from has no repo, no watcher and no sync loop behind it.
- * Main has always ended them. Nothing has ever said so first.
+ * **A switch ends every one of the vault's sessions**: `VaultHost` holds exactly
+ * one `ActiveVault` and `open()` closes the current one first, so a session left
+ * running would have no repo, watcher or sync loop behind it.
  *
- * It is asked only for a session that is mid-turn or waiting on you, which is
- * the same line the End action in the sidebar draws: an idle conversation ends
- * quietly and comes back with Resume, and interrupting one of these costs work
- * part way through or drops a question nobody answered.
+ * It is asked only for a session that is mid-turn or waiting on you, the same
+ * line the sidebar's End action draws: an idle conversation ends quietly and
+ * comes back with Resume.
  *
- * **Adding a vault asks the same question, at the start of the ritual rather
- * than at the end of it.** Creating a vault opens it, so it ends these sessions
- * just as picking another one does — and the moment to say so is before someone
- * has named a repo and waited for a clone, not after.
+ * Adding a vault asks the same question at the start of the ritual, not the end:
+ * creating a vault opens it, and the moment to say so is before someone has
+ * named a repo and waited for a clone.
  */
 import { useAtomValue } from 'jotai'
 import { useState } from 'react'
@@ -62,10 +58,8 @@ export function VaultSwitchConfirm(props: {
   /**
    * Read once, when the question is asked.
    *
-   * The list is live, and a turn can land while the dialog is open — which
-   * would rewrite the sentence under the reader, at worst into "0 sessions are
-   * still running" over two buttons asking about them. What it says is what was
-   * true when it interrupted you.
+   * The list is live, and a turn landing while the dialog is open would rewrite
+   * the sentence under the reader, at worst into "0 sessions are still running".
    */
   const sessions = useAtomValue(agentSessionsAtom)
   const [busy] = useState(() => sessionsWorthAsking(sessions))

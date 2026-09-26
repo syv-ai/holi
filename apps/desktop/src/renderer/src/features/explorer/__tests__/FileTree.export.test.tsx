@@ -1,6 +1,6 @@
 /**
- * Copy to Folder… / Move to Folder… (FR-13), the supported way out of the vault
- * now that the drag to Finder is known not to work.
+ * Copy to Folder… / Move to Folder…, the supported way out of the vault (the
+ * drag to Finder does not work, see docs/not-built.md).
  *
  * The assertion that matters is the last one: a move deletes only what actually
  * landed. Anything else loses the file — copied nowhere, and deleted from the

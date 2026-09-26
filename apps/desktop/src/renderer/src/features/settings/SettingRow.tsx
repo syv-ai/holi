@@ -1,12 +1,6 @@
 /**
- * One setting, rendered from its descriptor.
- *
- * Extracted from `SettingsView` when the tab gained a rail: the rows are no
- * longer one list in one component, they are whatever the section on screen
- * claims from `VAULT_SETTING_DESCRIPTORS`.
- *
- * The layout is `SettingsRow`, shared with every other section, so this file
- * decides only what a *setting* adds to a row: the layer badge, the
+ * One setting, rendered from its descriptor. The layout is `SettingsRow`; this
+ * file decides only what a *setting* adds to a row: the layer badge, the
  * next-open caveat, the three control kinds, and the resolver's complaint.
  */
 import { TriangleAlert } from 'lucide-react'
@@ -57,10 +51,8 @@ export function SettingRow({
   const { key, label, explanation, control } = descriptor
   const value = settings[key] ?? descriptor.default
 
-  // Acknowledge: changing a setting WRITES A FILE in the vault, which is a
-  // different weight of act from picking a tab. The row flashes once so the
-  // write is visible where it happened, rather than being silent or needing a
-  // toast somewhere else on screen.
+  // Changing a setting WRITES A FILE in the vault, so the row flashes once to
+  // make the write visible where it happened.
   const { ref: rowRef, ack } = useAck<HTMLDivElement>()
   const change = (k: string, v: unknown) => {
     ack('flash')

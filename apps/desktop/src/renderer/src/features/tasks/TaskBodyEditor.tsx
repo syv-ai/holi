@@ -1,13 +1,9 @@
 /**
  * A markdown body editor that is not backed by a file.
  *
- * The new-task dialog needs the notes stack — `@`-mentions, `[[wiki-links]]`
- * that render as chips, live preview — over text that has nowhere to live yet.
- * Every other surface in the app edits a document that exists, which is
- * `EditorPane`'s job; this is the one that does not.
- *
- * Lifted out of `TaskDetail` when the task detail view became the task file
- * itself and the rest of that module went with it.
+ * The new-task dialog needs the notes stack (`@`-mentions, `[[wiki-links]]`
+ * that render as chips, live preview) over text that has nowhere to live yet.
+ * Every other surface edits a document that exists, which is `EditorPane`'s job.
  */
 import type { Task } from '@holi/shared'
 import { EditorState } from '@codemirror/state'
@@ -25,18 +21,12 @@ import { openNoteTabAtom } from '@/state/panes'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /**
- * The task description as a full note editor.
+ * The task description as a full note editor rather than a plain textarea.
+ * Deps come from the vault snapshot the same pull-based way EditorPane wires
+ * them; a wiki-link click opens the note as a tab (`openNoteTabAtom`).
  *
- * The description IS the task file's markdown body, so it gets the same editor
- * the notes do — `@`-mentions, `[[wiki-links]]` that render as chips and click
- * through to the note, live preview — rather than a plain textarea. Deps come
- * from the vault snapshot the same pull-based way EditorPane wires them; a
- * wiki-link click opens the note as a tab (`openNoteTabAtom`), switching the
- * view off the board.
- *
- * Mounts once per task (keyed by `task.path` at the call site): the description
- * is last-write-wins with no version, so external edits are not streamed into an
- * open editor — switching tasks remounts with fresh text.
+ * Mounts once: `initial` is read at mount only, and nothing is streamed into
+ * an open editor.
  */
 export function TaskDescriptionEditor({
   notePath,
@@ -47,8 +37,7 @@ export function TaskDescriptionEditor({
   notePath: string
   initial: string
   onChange: (v: string) => void
-  /** Override the editor host's classes — the in-pane task editor makes the body
-   *  fill the pane, where the sidebar's fixed min-height is right. */
+  /** Override the editor host's default classes (a fixed min-height). */
   hostClassName?: string
 }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
@@ -74,8 +63,8 @@ export function TaskDescriptionEditor({
       ...(t.due === undefined ? {} : { due: t.due }),
     })),
   }
-  /** Same seam the notes editor has (#5): a task's description is prose in the
-   *  notes stack, so a passage of it is as askable as a passage of a note. */
+  /** Same Ask agent seam the notes editor has: a passage of a task's
+   *  description is as askable as a passage of a note. */
   const sendToAgent = useSetAtom(sendToAgentAtom)
   const askTargets = useAtomValue(askTargetsAtom)
   const defaultTarget = useAtomValue(defaultAgentTargetAtom)
@@ -132,8 +121,7 @@ export function TaskDescriptionEditor({
       parent: hostRef.current,
     })
     return () => view.destroy()
-    // Mount once; the call site keys this component by task.path so a task
-    // switch remounts it with fresh text.
+    // Mount once; `initial` seeds the view and is not tracked afterwards.
   }, [])
 
   return (

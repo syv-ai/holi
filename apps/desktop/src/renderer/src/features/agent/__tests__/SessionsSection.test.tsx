@@ -1,10 +1,7 @@
 /**
- * The sidebar's Sessions section (D100).
- *
- * What it owes the user is the thing the footer door cannot give: which of
- * several sessions is the one waiting, and a way to get to that one. So the
- * cases here are when it appears at all, what a card says, and where a click
- * lands.
+ * The sidebar's Sessions section (D100, D101): which of several sessions is the
+ * one waiting, and a way to get to it. The cases are when it appears at all,
+ * what a card says, and where a click lands.
  */
 import { fireEvent, render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -73,9 +70,8 @@ function setup(sessions: AgentSession[], open = true) {
 }
 
 test('offers a way to start the first one when the vault has none', async () => {
-  // It used to hide itself when empty, which it could while the footer carried a
-  // Claude control. With that gone (D101) the `+` beside the heading is the only
-  // place a first session can be started with the mouse.
+  // The `+` beside the heading is the only place a first session can be started
+  // with the mouse (D101).
   const { store } = setup([])
   store.set(activeRemoteAtom, REMOTE)
   await userEvent.click(screen.getByLabelText('start another session'))
@@ -86,9 +82,8 @@ test('offers a way to start the first one when the vault has none', async () => 
 })
 
 test('is shown for a single session', () => {
-  // Where it parts company with a tab strip: one tab is redundant with the
-  // drawer's own header, one card is the only thing on screen that says a
-  // session exists while the drawer is shut.
+  // With no tab open, one card is the only thing on screen that says a session
+  // exists.
   setup([session({ id: 'a', name: 'Fix the merge' })])
   expect(screen.getByText('Fix the merge')).toBeInTheDocument()
 })
@@ -170,10 +165,9 @@ test('asks before ending one that is mid-turn', async () => {
 })
 
 test('keeps no name of its own, even now that it offers a rename', async () => {
-  // D100 refused a Rename because a second name kept in Holi goes stale the
-  // moment anybody types `/rename`. That constraint is intact and this is how:
-  // the card shows what main pushed, and renaming sends Claude Code's own
-  // command rather than storing anything here.
+  // A second name kept in Holi would go stale the moment anybody types
+  // `/rename` (D100): the card shows what main pushed, and renaming sends Claude
+  // Code's own command rather than storing anything here.
   const { store } = setup([session({ id: 'a', name: 'One' })])
   fireEvent.contextMenu(screen.getByText('One'))
   await userEvent.click(await screen.findByText('Rename'))
@@ -183,8 +177,6 @@ test('keeps no name of its own, even now that it offers a rename', async () => {
 })
 
 test('starts another session from the section header', async () => {
-  // The drawer's `+` had nowhere to go when the drawer did. This is the only
-  // place left that means "another one of these".
   const { store } = setup([session({ id: 'a', name: 'One' })])
   store.set(activeRemoteAtom, REMOTE)
   await userEvent.click(screen.getByLabelText('start another session'))

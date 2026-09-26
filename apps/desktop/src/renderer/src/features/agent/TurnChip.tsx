@@ -1,12 +1,6 @@
 /**
- * What one session's last turn changed (D88, #4).
- *
- * It sits under its own tab's terminal, because a turn belongs to a session and
- * a vault runs several (D100). It used to be in the footer, where it was the
- * only thing that said a turn had happened at all once the drawer was shut — a
- * job the sidebar's Sessions section now does better, and one a single chip
- * could not do honestly for three sessions anyway.
- *
+ * What one session's last turn changed (D88). It sits under its own tab's
+ * terminal, because a turn belongs to a session and a vault runs several (D100).
  * It is a count and a door, nothing more: what changed is `TurnReview`'s job.
  *
  * **A turn ENDING is the event.** `agent:sessions` pushes on every bracket, so
@@ -56,7 +50,7 @@ export function TurnChip({ sessionId }: { sessionId: string }): React.JSX.Elemen
    * Acknowledge: a turn that has just landed gets one beat.
    *
    * Keyed on the turn's range rather than on `working` going false, because the
-   * record loads asynchronously AFTER the turn ends — at the moment of that edge
+   * record loads asynchronously AFTER the turn ends: at the moment of that edge
    * this chip may still be rendering `null`, and there would be no node to
    * acknowledge on. The first record seen is deliberately silent: opening a
    * vault that already has a turn behind it is not an event.

@@ -1,12 +1,7 @@
 /**
- * The vault switcher — a dropdown menu, not a native `<select>`.
- *
- * A native select cannot hold an action row, and "add a vault" belongs *in* the
- * list of vaults, not as a separate `+` button beside it: switching and adding
- * are the same gesture (open the list, pick where to go). So this is the `Menu`
- * primitive (Radix dropdown) — a trigger showing the current vault, and a menu
- * of vaults with "Add vault…" pinned to the bottom. Radix supplies open/close,
- * outside-click, Escape, and focus management.
+ * The vault switcher, a dropdown menu rather than a native `<select>`, because a
+ * native select cannot hold an action row and "Add vault…" belongs *in* the
+ * list: switching and adding are the same gesture.
  */
 import { Check, ChevronDown, Plus } from 'lucide-react'
 import {

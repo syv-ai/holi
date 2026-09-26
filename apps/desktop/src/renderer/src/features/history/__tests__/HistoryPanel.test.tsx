@@ -55,8 +55,7 @@ test('a file never committed has none', async () => {
 })
 
 test('closing slides it out rather than removing it at once', async () => {
-  // It used to return null the moment it closed, before the drawer could
-  // play its exit, so the sidebar vanished instead of sliding away.
+  // It must stay rendered after closing so the drawer can play its exit.
   fileHistory.mockResolvedValue({ last: {}, first: {}, revisions: 3 })
   const store = setup()
   await screen.findByText('3 revisions')

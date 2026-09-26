@@ -1,10 +1,8 @@
 /**
- * The explorer's mutation layer, lifted out of the FileTree view. Owns the state
- * adjacent to mutations — the cut/copy clipboard, the delete-confirm preview, and
- * the transient (empty, not-yet-on-disk) folders — and turns the pure plans from
- * `lib/tree-actions` into batch-atom dispatches. FileTree keeps only projection +
- * headless-tree wiring + render; every "what files move where" decision is here,
- * planned by pure functions that are unit-tested directly (see tree-actions.test).
+ * The explorer's mutation layer. Owns the state adjacent to mutations (the
+ * cut/copy clipboard, the delete-confirm preview, the transient not-yet-on-disk
+ * folders) and turns the pure plans from `lib/tree-actions` into batch-atom
+ * dispatches.
  *
  * Method identities are stable (useCallback with no deps) and read the freshest
  * doc-path set / clipboard / preview through refs, because headless-tree captures
@@ -84,9 +82,8 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null)
   const [confirming, setConfirming] = useState<DeletePreview | null>(null)
   const [pendingFolders, setPendingFolders] = useState<string[]>([])
-  /** Files the last export refused. Held until dismissed or superseded, for the
-   *  same reason the import's are: a file that silently did not arrive is the
-   *  worst outcome either direction has. */
+  /** Files the last export refused. Held until dismissed or superseded, like the
+   *  import's: a file that silently did not arrive is the worst outcome. */
   const [exportFailures, setExportFailures] = useState<{ name: string; reason: string }[]>([])
 
   // headless-tree captures handler closures once; refs keep the stable methods

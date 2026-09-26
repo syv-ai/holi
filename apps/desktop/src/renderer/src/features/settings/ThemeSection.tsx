@@ -1,28 +1,20 @@
 /**
- * The vault's colours and chrome, with real controls (#16, D64).
+ * The vault's colours and chrome, with real controls (D64).
  *
- * The settings tab used to end with a link to `.holi/settings/theme.yaml` and the words
- * "no controls here yet". This is that gap.
+ * **Two axes, chosen once for the whole section rather than per token:**
  *
- * **Two axes, chosen once for the whole section rather than per token**, because
- * both are facts about who and when, not about the colour:
- *
- * - **Mode.** The theme files carry a `light` and a `dark` block, so every token
- *   has two values. The picker follows whichever mode the app is actually in by
- *   default, so what you see is what you are editing.
- * - **Layer.** `theme.json` is committed and shared; `theme.local.json` is this
+ * - **Mode.** The theme files carry a `light` and a `dark` block. The picker
+ *   starts on the mode the app is in, so what you see is what you are editing.
+ * - **Layer.** `THEME_FILE` is committed and shared; `THEME_LOCAL_FILE` is this
  *   machine's and overrides it per key. Same split as settings, same badge.
  *
- * **A token with no value is the normal case, not an empty field.** A vault's
- * theme file is `{dark:{}, light:{}}` until someone changes something, so every
- * row shows the colour *in force* — which is Holi's default, resolved by the
- * browser — and says whether this vault has actually set it. Clearing a row
- * deletes the key rather than writing a blank, which is why the patch carries
- * `null`.
+ * **A token with no value is the normal case.** Every row shows the colour *in
+ * force* (Holi's default, resolved by the browser) and says whether this vault
+ * set it. Clearing a row deletes the key rather than writing a blank, which is
+ * why the patch carries `null`.
  *
- * **Rendered from `THEME_TOKEN_GROUPS`, not from a list here.** Adding a token
- * to the whitelist puts it in this pane, and a shared test fails if it does
- * not.
+ * **Rendered from `THEME_TOKEN_GROUPS`**, so adding a token to the whitelist
+ * puts it in this pane.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAtomValue } from 'jotai'
@@ -48,8 +40,8 @@ import { activeModeAtom } from '@/state/color-scheme'
 
 type Layer = 'committed' | 'local'
 
-/** A pair of buttons that read as one choice. The settings rows above use the
- *  same shape for `choice`, so the section does not introduce a new control. */
+/** A pair of buttons that read as one choice, the same shape the settings rows
+ *  use for `choice`. */
 function Segmented<T extends string>({
   value,
   options,
@@ -125,9 +117,8 @@ function TokenRow({
           label={`${themeTokenLabel(slug)} colour`}
         />
       ) : (
-        // A length or a shadow. Typed rather than picked: `0.5rem` and a
-        // box-shadow are not things a swatch can express, and the validator
-        // already says exactly what it will accept.
+        // A length or a shadow: typed rather than picked, since a swatch cannot
+        // express it and the validator says what it accepts.
         <Input
           value={draft}
           aria-label={themeTokenLabel(slug)}
@@ -160,9 +151,8 @@ function TokenRow({
 
 export function ThemeSection({ remote }: { remote: string }): React.JSX.Element {
   const appMode = useAtomValue(activeModeAtom)
-  // Starts on the mode the app is in, so the first thing you edit is the thing
-  // you can see. Free to diverge after that — editing the other mode's palette
-  // without switching the whole app to it is the point of having the control.
+  // Starts on the mode the app is in, then free to diverge: editing the other
+  // palette without switching the app to it is the point of the control.
   const [mode, setMode] = useState<ThemeMode>(appMode === 'light' ? 'light' : 'dark')
   const [layer, setLayer] = useState<Layer>('committed')
   const [theme, setTheme] = useState<ResolvedTheme | null>(null)
@@ -198,10 +188,9 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
    * What this vault says for the mode on screen.
    *
    * **Read from the RESOLVED theme, which is committed merged under local.** So
-   * with the layer set to shared, a token the local file overrides still shows
-   * the local value — because that is the colour in force, and a pane that
-   * showed the shared one would be describing a vault nobody is looking at.
-   * The layer decides where a write LANDS, not what is displayed.
+   * with the layer set to shared, a locally overridden token still shows the
+   * local value, the colour in force. The layer decides where a write LANDS,
+   * not what is displayed.
    */
   const values = useMemo(() => (theme === null ? {} : theme[mode]), [theme, mode])
 
@@ -213,9 +202,7 @@ export function ThemeSection({ remote }: { remote: string }): React.JSX.Element 
       <DescriptorSection section="appearance" />
 
       {/* **Above the theme's own loading gate, not behind it.** Light/dark is a
-          settings row and the theme file is a separate read; gating the whole
-          section on the slower of the two would blank a control that is already
-          answerable. */}
+          settings row and the theme file a separate read, so it need not wait. */}
       {theme === null ? (
         <p className="py-4 text-xs text-muted-foreground">Reading this vault&rsquo;s theme…</p>
       ) : (
@@ -259,10 +246,8 @@ function ThemeTokens({
 }): React.JSX.Element {
   return (
     <>
-      {/* **Sticky, because they govern everything below them.** Mode and layer
-          are chosen once for the whole section, so a swatch forty rows down
-          still has to say which mode it is showing and where a change would
-          land. Scrolling them away would make every swatch ambiguous. */}
+      {/* **Sticky, because they govern everything below them.** Scrolled away,
+          every swatch would be ambiguous about its mode and layer. */}
       <div className="sticky top-0 z-10 -mx-1 mt-4 flex flex-wrap items-center justify-between gap-3 bg-background px-1 py-2">
         <div>
           <h3 className="text-xs font-medium">Theme</h3>
@@ -271,12 +256,9 @@ function ThemeTokens({
           </SettingsNote>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          {/* **"palette", not "Dark"/"Light".** The `colorScheme` row directly
-              above this one is also Light/Dark, and it means something else
-              entirely: that one sets what the app IS, this one sets which of the
-              two blocks in the theme file a swatch edits. Two identically
-              labelled controls a few rows apart is the ambiguity that appeared
-              the moment they shared a section. */}
+          {/* **"palette", not "Dark"/"Light".** The `colorScheme` row above is
+              also Light/Dark and sets what the app IS; this sets which block of
+              the theme file a swatch edits. */}
           <Segmented
             label="Which palette you are editing"
             value={mode}
@@ -337,11 +319,8 @@ function ThemeTokens({
 /**
  * Back to the standard look, in one act.
  *
- * **Not the same control as a row's reset**, which is why both exist: a row's
- * reset deletes one key, and this deletes both theme files. Ported out of the
- * legacy vault panel, which was the only place it lived — the token pane
- * shipped without it, so a vault with forty overrides had forty resets and no
- * way back.
+ * **Not the same control as a row's reset**: a row's reset deletes one key,
+ * this deletes both theme files.
  *
  * Confirmed, because deleting the COMMITTED file removes the shared theme for
  * collaborators too, on their next sync.
@@ -356,9 +335,8 @@ function ResetTheme({ remote }: { remote: string }): React.JSX.Element {
   }
 
   return (
-    // **No rule of its own.** This used to draw a `border-t` immediately above
-    // the view's footer, which draws one too, so a section boundary appeared as
-    // two hairlines a few pixels apart. Spacing separates it now.
+    // **No rule of its own**: the view's footer draws one, and two would sit a
+    // few pixels apart. Spacing separates it.
     <div className="mt-6 flex items-center justify-between gap-3">
       <SettingsNote>Clear every colour this vault has set, in both files and both modes.</SettingsNote>
       <Button variant="secondary" size="xs" className="shrink-0" onClick={() => setConfirming(true)}>

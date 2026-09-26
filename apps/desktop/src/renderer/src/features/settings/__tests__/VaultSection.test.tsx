@@ -1,11 +1,8 @@
 /**
  * What this vault is, and who can see it.
  *
- * The legacy side panel this was ported out of had **no tests at all**, and the
- * two things it owes are exactly the two nothing else in the app says: a vault
- * that has quietly become public, and *which* refusal is hiding the collaborator
- * list. Both were argued for in prose in the panel's own docstrings and pinned
- * by nothing.
+ * The two things it owes that nothing else in the app says: a vault that has
+ * quietly become public, and *which* refusal is hiding the collaborator list.
  */
 import { render, screen, waitFor } from '@/test/render'
 import { Provider, createStore } from 'jotai'
@@ -48,9 +45,8 @@ beforeEach(() => {
 })
 
 test('names the remote a vault IS, and the clone it lives in', async () => {
-  // A vault's identity is its remote; the local path is the clone FR-15
-  // promises survives a sign-out. Until this section existed neither was
-  // written down anywhere in the app.
+  // A vault's identity is its remote; the local path is the clone that
+  // survives a sign-out.
   setup()
   expect(await screen.findByRole('button', { name: REMOTE })).toBeInTheDocument()
   // Shortened from the managed root, not the full home-directory prefix.

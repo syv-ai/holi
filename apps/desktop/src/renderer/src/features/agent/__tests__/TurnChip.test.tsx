@@ -1,7 +1,7 @@
 /**
- * One session's word on what its last turn changed (D88, #4, D100).
+ * One session's word on what its last turn changed (D88, D100).
  *
- * The chip lives under its own tab now, so the two states worth pinning are the
+ * The chip lives under its own tab, so the two states worth pinning are the
  * ones a per-session chip could get wrong: whose turn it shows, and what it
  * reloads on. A turn ENDING is the event, and `agent:sessions` pushes on every
  * bracket, so the chip watches its own session leave `working` rather than
@@ -99,8 +99,8 @@ test('shows its OWN session’s turn, not the newest in the vault', async () => 
 })
 
 test('says when the turn overlapped another session', async () => {
-  // The range holds the other session's edits too — they shared one settle
-  // commit — and git cannot tell them apart. Better said than inferred from two
+  // The range holds the other session's edits too (they shared one settle
+  // commit) and git cannot tell them apart. Better said than inferred from two
   // identical shas.
   setup({
     turns: { 'sess-a': { ...TURN, overlapped: true } },
@@ -120,8 +120,7 @@ test('shows nothing when this session has recorded no turn', () => {
 })
 
 test('shows nothing for a turn with no reachable files', () => {
-  // `TurnReview` has something to say about that state; a chip does not — it
-  // would be a chip that wasted a click.
+  // `TurnReview` has something to say about that state; a chip does not.
   const { container } = setup({ counts: { 'aaa..bbb': 0 } })
   expect(container).toBeEmptyDOMElement()
 })
@@ -176,8 +175,8 @@ test('ignores another session’s turn ending', async () => {
 })
 
 test('asks for a record on mount when it has none', async () => {
-  // A vault opened with the drawer closed: the last turn may have been minutes
-  // ago and nothing has pushed a session list since.
+  // A vault just opened: the last turn may have been minutes ago and nothing
+  // has pushed a session list since.
   setup({ turns: {} })
   await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
 })

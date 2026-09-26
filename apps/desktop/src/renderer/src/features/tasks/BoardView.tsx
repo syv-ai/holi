@@ -1,4 +1,4 @@
-/** The stripped board (features/tasks.md).
+/** The task board (docs/features/tasks.md).
  *
  * One layout. Todo / Doing / Done, fixed; one swim lane per folder, because the
  * folder IS the lane. A cell is `(column, lane)`.
@@ -95,21 +95,16 @@ function Card({
       draggable
       data-task={task.path}
       // The dragged path rides the drag itself, not React state: the drop handler
-      // looks the task up by path (its lane and status), so dataTransfer is the
-      // whole payload — no companion state to keep in sync.
+      // looks the task up by path, so dataTransfer is the whole payload.
       onDragStart={(e) => {
         e.dataTransfer.setData('text/plain', task.path)
       }}
-      // A task IS its file, so opening one opens the file — beside the board,
-      // as a preview, which is the file tree's single-click rule. The detail
-      // panel that used to live on the right is gone with the view it drew:
-      // the same editor in a pane says everything it said, and two editors over
-      // one task file would be two autosaves racing over one path.
+      // A task IS its file, so opening one opens the file as a preview beside
+      // the board (the file tree's single-click rule). One editor per task
+      // file: two would be two autosaves racing over one path.
       onClick={() => open(task.path)}
-      // No border, no fill. A board of forty tasks was forty drawn boxes inside
-      // twelve more; the text and its checkbox are enough to say where one task
-      // ends. The hover tint stays — it is the only thing left that says this
-      // row is a target you can pick up.
+      // No border, no fill: the text and its checkbox say where one task ends.
+      // The hover tint is what says the row can be picked up.
       className={cn(
         'motion-respond cursor-grab rounded-md p-2 text-xs hover:bg-muted/40 active:cursor-grabbing',
         cue === 'before' && 'border-t-2 border-t-primary',
@@ -125,9 +120,8 @@ function Card({
           // A circle, like every other place this app draws a task's status.
           shape="circle"
           checked={task.status === 'done'}
-          // Acknowledge before the write, not after it. The beat says the click
-          // landed; making it wait on the file write and the commit would put
-          // the feedback after the thing it is feedback for.
+          // Acknowledge before the write: waiting on the file write and the
+          // commit would put the feedback late.
           onCheckedChange={() => {
             ack('tick')
             void complete(task.path)
@@ -143,8 +137,7 @@ function Card({
 
       {(labels.length > 0 || task.tags.length > 0 || task.due) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1 pl-6">
-          {/* Humanised, not raw: a due date may carry a time now, and
-              `due 2026-08-03T09:00` on a card is a stamp, not a date. */}
+          {/* Humanised, not raw: a due date may carry a time. */}
           {task.due && (
             <span className="text-[10px] text-muted-foreground">due {shortStamp(task.due)}</span>
           )}
@@ -166,9 +159,7 @@ function Card({
     </div>
   )
 
-  // The row menu the card never had. `delete` lived only in the detail panel,
-  // so removing that would have left the board with no way to delete a task —
-  // and "go and find the file in the tree" is not one.
+  // The board's way to delete a task, besides finding its file in the tree.
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
@@ -187,16 +178,12 @@ function Card({
 }
 
 /**
- * Add a task to one cell — so it carries both axes, the column's status and the
+ * Add a task to one cell, so it carries both axes: the column's status and the
  * lane's folder.
  *
- * **Summoned by the column header's `+`, not resident in the cell.** It used to
- * sit in all of them at once: one input per (column, lane), so a board with five
- * folders drew fifteen empty fields whose only job was to be available. The
- * control moved to the header; what it reveals is still one input per cell,
- * because the cell is what says which folder the task lands in — a single field
- * under the header would have to pick a folder silently, and the board's whole
- * claim is that the lane IS the folder.
+ * **Summoned by the column header's `+`, not resident in every cell.** What it
+ * reveals is still one input per cell, because the cell says which folder the
+ * task lands in; a single field under the header would pick a folder silently.
  */
 function QuickAdd({
   status,
@@ -213,8 +200,7 @@ function QuickAdd({
   const create = useSetAtom(createTaskAtom)
   const [title, setTitle] = useState('')
 
-  // Enter submits — replaces the old <form onSubmit> (a native <form> is not a
-  // primitive; the keydown handler is the same behaviour without the element).
+  // Enter submits via keydown: a native <form> is not a primitive.
   const submit = () => {
     const t = title.trim()
     if (!t) return
@@ -232,8 +218,7 @@ function QuickAdd({
           e.preventDefault()
           submit()
         }
-        // Escape puts the row away again — the same key that closes the detail
-        // panel, and the only way out that does not need the mouse.
+        // Escape puts the row away again, the only way out without the mouse.
         if (e.key === 'Escape') {
           e.preventDefault()
           onCancel()
@@ -246,13 +231,10 @@ function QuickAdd({
 }
 
 /**
- * Task files that would not parse.
- *
- * Shown as a strip rather than as cards in a column, because an unparseable file
- * has no `status` to place it by — inventing one would be the same guess the
- * parser just refused to make. Never hidden: a task missing from the board is
- * indistinguishable from data loss, and the model will occasionally write bad
- * frontmatter.
+ * Task files that would not parse. A strip rather than cards, because an
+ * unparseable file has no `status` to place it by. Never hidden: a task missing
+ * from the board is indistinguishable from data loss, and the model will
+ * occasionally write bad frontmatter.
  */
 function BrokenStrip(): React.JSX.Element | null {
   const broken = useAtomValue(brokenTasksAtom)
@@ -293,8 +275,8 @@ function Grid(): React.JSX.Element {
   const now = useAtomValue(nowAtom)
   /** Which column is currently showing its quick-add row, if any. */
   const [adding, setAdding] = useState<TaskStatus | null>(null)
-  /** The cell under a drag, `status:lane`. With the cells' own borders and fill
-   *  gone, this is the only thing that says where a card would land. */
+  /** The cell under a drag, `status:lane`: the only thing that says where a
+   *  card would land, since cells draw nothing at rest. */
   const [over, setOver] = useState<string | null>(null)
   /** `path:before` / `path:after` — where a same-cell drop would insert. Drawn
    *  as a rule on the card being aimed at, because a card cannot show a gap
@@ -305,29 +287,25 @@ function Grid(): React.JSX.Element {
   const all = everything.filter((t) => matchesFilter(t, filter, now))
   const lanes = laneOrder(all.map(laneOf))
 
-  // "hide done" drops the whole Done column, not just its cards — an empty
-  // column that can never fill reads as a layout bug, not a filter.
+  // "hide done" drops the whole Done column, not just its cards: an empty
+  // column that can never fill reads as a layout bug.
   const columns = filter.hideDone ? COLUMNS.filter((c) => c.status !== 'done') : COLUMNS
-  // The lane column is sized to be read, not to hold a path: the label wraps
-  // rather than truncating, so a long folder name costs a second line instead of
-  // an ellipsis and a tooltip.
+  // The lane label wraps rather than truncating, so a long folder name costs a
+  // second line instead of an ellipsis.
   const gridTemplateColumns = `5rem repeat(${columns.length}, minmax(0, 1fr))`
 
   const cell = (lane: string, status: TaskStatus) =>
     sortCell(all.filter((t) => t.status === status && laneOf(t) === lane))
 
   /**
-   * Cards new to the board arrive: one created, one pulled in, one revealed by
-   * a filter widening. Keyed by PATH and computed board-wide rather than per
-   * cell, which gets the distinction right for free — a card dragged from Todo
-   * to Doing keeps its path, so it has moved rather than arrived, and does not
-   * replay an entrance in its new column.
+   * Cards new to the board animate in. Keyed by PATH and computed board-wide
+   * rather than per cell, so a card dragged between columns keeps its path and
+   * does not replay an entrance.
    */
   const { arrivalProps } = useArrivals(all.map((t) => t.path))
 
-  // Both axes are live now: a same-lane drop rewrites status, a cross-lane drop
-  // moves the file (+ link rewrite), and a diagonal does both in one call. The
-  // dragged task is looked up by path, so the drop knows its current lane/status.
+  // A same-lane drop rewrites status, a cross-lane drop moves the file (+ link
+  // rewrite), and a diagonal does both in one call.
   const drop = (e: React.DragEvent, lane: string, status: TaskStatus) => {
     setOver(null)
     setOverCard(null)
@@ -335,11 +313,9 @@ function Grid(): React.JSX.Element {
     const task = tasks.get(path)
     if (!task) return
 
-    // Dropped ON a card, in the cell it already lives in: this is a reorder, and
-    // the axes are unchanged. A drop that crosses a cell falls through to the
-    // status/move intent below and keeps whatever rank it had — the card lands
-    // where its rank puts it in the new column, which is the honest answer
-    // without asking the user to aim twice.
+    // Dropped ON a card in its own cell: a reorder, axes unchanged. A drop
+    // that crosses a cell falls through to the status/move intent below and
+    // keeps its rank, landing where that rank puts it in the new column.
     const onCard = (e.target as HTMLElement).closest?.('[data-task]')
     const targetPath = onCard?.getAttribute('data-task') ?? null
     if (targetPath !== null && task.status === status && laneOf(task) === lane) {
@@ -364,8 +340,7 @@ function Grid(): React.JSX.Element {
       <div className="grid gap-2" style={{ gridTemplateColumns }}>
         <div />
         {columns.map((c) => (
-          // The column's add control lives here, at the head of what it adds to,
-          // instead of once per cell down the whole column.
+          // The column's add control, at the head of what it adds to.
           <div
             key={c.status}
             className="flex items-center gap-1 px-1 pb-1 text-xs font-semibold text-foreground"
@@ -392,8 +367,8 @@ function Grid(): React.JSX.Element {
               {laneLabel(lane)}
             </div>
             {columns.map((c) => (
-              // Every cell is a drop target: both axes are real writes now. The
-              // cell draws nothing at rest — only while a card is over it.
+              // Every cell is a drop target. It draws nothing at rest, only
+              // while a card is over it.
               <div
                 key={c.status}
                 data-cell={`${c.status}:${lane}`}
@@ -446,9 +421,7 @@ function Grid(): React.JSX.Element {
       </div>
 
       {all.length === 0 && (
-        // The empty state distinguishes "no tasks yet" from "nothing matches your
-        // filters" — there is no "N excluded" count anywhere, because nothing is hidden
-        // into unselected buckets.
+        // "No tasks yet" versus "nothing matches your filters".
         <p className="mt-6 text-center text-xs text-muted-foreground">
           {everything.length === 0
             ? 'No tasks yet. Add one above — or ask Claude to.'

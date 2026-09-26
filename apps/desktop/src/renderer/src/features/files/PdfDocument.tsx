@@ -1,58 +1,35 @@
 /**
- * A vault PDF in a pane, through embedpdf's ready-made viewer (D103).
+ * A vault PDF in a pane, through embedpdf's ready-made viewer (D103). The one
+ * module that imports embedpdf, loaded lazily by `PdfViewer` so the main chunk
+ * never pays for the viewer, its worker or the PDFium wasm.
  *
- * This module is the one that imports embedpdf, so it is loaded lazily by
- * `PdfViewer` and the main chunk never pays for the viewer, its worker or the
- * 4.6 MB PDFium wasm. What it owns, beyond mounting the viewer:
- *
- * - **Bytes.** `files.read` brings the file over the IPC seam as a `Uint8Array`
- *   and it becomes a blob URL the viewer fetches same-origin. A renderer
- *   `fetch` of `holi-vault://` fails on CORS, and the reason the protocol stays
- *   that way is in `main/router.ts` above `files`.
- * - **Marks are saved into the file.** Every annotation event restarts a quiet
- *   timer; when it fires, the export plugin renders the whole document to bytes
- *   and `files.write` puts them back at the same path. The mtime the write
- *   returns is remembered so the snapshot tick it causes is not mistaken for a
- *   foreign edit.
- * - **The file on disk stays the truth.** A snapshot whose mtime is not ours is
- *   a re-export or a pull, and the bytes are fetched again; the viewer remounts
- *   on the new URL. Skipped while a save is pending, so the most that is ever at
- *   risk is one quiet second of marks.
+ * - **Bytes.** `files.read` brings the file over IPC and it becomes a blob URL.
+ *   A renderer `fetch` of `holi-vault://` fails on CORS (see `main/router.ts`
+ *   above `files`).
+ * - **Marks are saved into the file** after a quiet timer, via the export
+ *   plugin and `files.write`. The returned mtime is remembered so the snapshot
+ *   tick it causes is not taken for a foreign edit; any other mtime refetches
+ *   the bytes (skipped while a save is pending).
  * - **Its keys reach it only from itself.** The commands plugin listens on
  *   `document` and would take `h`, the arrows or ⌘= from the file tree. The
- *   guard below is registered in a layout effect, which React runs before any
- *   child's effect, so it sits ahead of the plugin's listener and can
- *   `stopImmediatePropagation` a key the viewer would otherwise claim when the
- *   event did not start inside the viewer. A disabled command (print on ⌘P) is
- *   not claimed, so Holi's palette still opens. "Inside" needs focus to be
- *   there, and a page is not focusable, so the host is (`tabIndex={-1}`): a
- *   click anywhere in the viewer focuses it, and opening a PDF focuses it the
- *   way opening a note focuses its editor, so ⌘F reaches the viewer's search.
- *   The search panel does not focus its own field, so opening it puts the
- *   caret there, and closing it hands focus back to the host rather than
- *   letting it fall to `<body>`, where the next ⌘F would be a key from outside.
- *   Escape in the field closes it, as it closes a browser's find bar.
+ *   guard below is a layout effect, which React runs before any child's
+ *   effect, so it can `stopImmediatePropagation` a key that did not start
+ *   inside the viewer. A disabled command (print on ⌘P) is not claimed, so
+ *   Holi's palette still opens. A page is not focusable, so the host is
+ *   (`tabIndex={-1}`); closing a sidebar hands focus back to it rather than
+ *   letting it fall to `<body>`.
  * - **Theme.** `pdfViewerTheme` speaks in `var(--token)` strings that cross the
  *   shadow boundary; a mode flip goes through `setTheme`, not a remount. The
- *   one colour the palette cannot reach, the white a page shows until it is
- *   painted, is overridden by a `<style>` put into the viewer's shadow root at
- *   init: a sibling of Preact's render, like the viewer's own theme style, so a
- *   re-render leaves it alone.
- * - **It arrives once, whole.** Opening, the viewer shows "Initializing PDF
- *   engine…" and "Initializing plugins…" over a spinner, then its toolbar, then
- *   its pages, spread over some 300 ms and none of it configurable. So it is
- *   laid out invisible and fades in (D98's arrive) when the first page image
- *   loads. A timer reveals it anyway, so a broken file's error or a password
- *   prompt is never left invisible.
- * - **Signatures outlive the PDF they were made in** (D104). The viewer keeps
- *   them in memory, so each viewer loads the saved list from main (`userData`,
- *   never a vault) when it is ready and saves the list on every change, in the
- *   library's own serialized form. Signature only: with initials as well, Save
- *   stayed disabled until both were filled, and nothing said so.
- * - **It opens at 150%, or fit-width if that is narrower** (`openingZoomCap`).
- *   The viewer opens at fit-width and the first zoom each document gets is
- *   capped; both happen before the first page paints, so there is no visible
- *   second resize.
+ *   blank-page white is overridden by a `<style>` in the shadow root, a sibling
+ *   of Preact's render so a re-render leaves it alone.
+ * - **It arrives once, whole.** The viewer's loading stages are not
+ *   configurable, so it is laid out invisible and fades in (D98) when the first
+ *   page image loads, with a timer so an error or password prompt still shows.
+ * - **Signatures outlive the PDF** (D104): loaded from main (`userData`, never
+ *   a vault) and saved on every change. Signature only: with initials too, Save
+ *   stays disabled until both are filled, with no hint why.
+ * - **It opens at 150%, or fit-width if narrower** (`openingZoomCap`), both
+ *   before the first paint.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -128,9 +105,8 @@ import { activeModeAtom } from '@/state/color-scheme'
 import { sessionAtom } from '@/state/session'
 import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
-/** How long the marks have to be quiet before the file is rewritten. Matches
- *  the feel of autosave without being it: autosave's 3 s is a git commit, this
- *  is a file write the commit then picks up. */
+/** How long the marks have to be quiet before the file is rewritten. A file
+ *  write the autosave commit then picks up, not a commit itself. */
 const SAVE_QUIET_MS = 1000
 
 /** How long the viewer may stay invisible waiting for a page. Measured opens
@@ -428,12 +404,11 @@ export function PdfDocument({
         commands.execute('panel:toggle-search')
       })
       // The root is watched for two things. A sidebar the viewer unmounts is
-      // put back as a stand-in that slides out (`pdf-sidebar-leave.ts`), at
-      // once: the callback runs before the next paint, so the panel is never
-      // seen gone. And comment rows, which come and go with the panel, with
-      // each comment added or deleted, and with selection. Pages repaint
-      // through the root constantly, so the rows are looked for once per
-      // frame at most, and the state changes only when they did.
+      // put back as a stand-in that slides out (`pdf-sidebar-leave.ts`); the
+      // callback runs before the next paint, so the panel is never seen gone.
+      // And comment rows: pages repaint through the root constantly, so rows
+      // are looked for once per frame at most, and state changes only when
+      // they did.
       let pendingFrame = false
       new MutationObserver((records) => {
         playSidebarLeaves(records)
@@ -464,10 +439,6 @@ export function PdfDocument({
     (registry: PluginRegistry) => {
       registryRef.current = registry
       provided(registry, 'annotation')?.onAnnotationEvent(scheduleSave)
-      // A sidebar opening or closing. Closing reports an empty `sidebarId`, and
-      // whatever held focus in the panel (the field, its close button) is gone
-      // with it; after the render, focus goes to the search field if that is
-      // what opened, or back to the host if it fell to <body>.
       // The read-only toggle (`lib/pdf-read-only.ts`): two commands, one per
       // direction, each computed from the annotations in the viewer's store so
       // the button follows every change without Holi keeping any state.
@@ -541,11 +512,9 @@ export function PdfDocument({
       }
 
       // Ask agent (D106): about the selected comment's thread, or with none
-      // selected about the PDF itself, so the button is always a way into a
-      // chat about the file. Two commands whose `visible` swaps, like the
-      // read-only pair, because a command's label is fixed. Each opens Holi's
-      // popover under its own button, found in the shadow root by the id the
-      // toolbar CSS uses.
+      // selected about the PDF itself. Two commands whose `visible` swaps, like
+      // the read-only pair, because a command's label is fixed. Each opens
+      // Holi's popover under its own button, found by the toolbar CSS's id.
       if (commands !== null) {
         const selected = ({ state, documentId }: CommandContext) =>
           threadOf(threadsInViewer(state, documentId), selectedAnnotationId(state, documentId))
@@ -609,6 +578,10 @@ export function PdfDocument({
           sidebars: PDF_SIDEBAR_WIDTHS,
         })
       }
+      // A sidebar opening or closing. Closing reports an empty `sidebarId`, and
+      // whatever held focus in the panel is gone with it; after the render,
+      // focus goes to the search field if that is what opened, or back to the
+      // host if it fell to <body>.
       ui?.onSidebarChanged((event) => {
         // Before a signature can be typed, so its canvas never draws one in a
         // fallback face (`PDF_SIGNATURE_FONT_FAMILIES`). Local files, cheap.
@@ -716,7 +689,7 @@ export function PdfDocument({
           config={{
             src,
             // Absolute on purpose: a root-relative URL resolved against the
-            // engine worker's `blob:` base is the old Holi's "Loading PDF…" hang.
+            // engine worker's `blob:` base hangs on "Loading PDF…".
             wasmUrl: new URL(pdfiumWasmUrl, window.location.href).href,
             worker: true,
             // No CDN fonts: the vault's PDFs embed theirs, and the app is offline-first.
@@ -726,8 +699,8 @@ export function PdfDocument({
             fonts: PDF_FONTS,
             // Holi's lock glyphs for the read-only toggle.
             icons: PDF_ICONS,
-            // Rubber stamps are disabled, but the plugin still fetched its
-            // default manifest and stamps from jsDelivr on every open.
+            // Rubber stamps are disabled, but without this the plugin still
+            // fetches its default manifest and stamps from jsDelivr on open.
             stamp: { manifests: [] },
             tabBar: 'never',
             zoom: { defaultZoomLevel: ZoomMode.FitWidth },
@@ -750,10 +723,8 @@ export function PdfDocument({
           const registry = registryRef.current
           if (ask === null || registry === null) return { ok: false, message: 'The PDF is closed.' }
           const state = registry.getStore().getState()
-          // Nothing selected: the PDF, and how many comments it has with the
-          // command that reads them, not the comments themselves. An ask about
-          // the document is not about its marks, and the agent reads them when
-          // it is.
+          // Nothing selected: the PDF and its comment count, not the comments
+          // themselves; the agent reads them when the ask is about them.
           if (ask.threadId === null) {
             const count = threadsInViewer(state, ask.documentId).length
             return sendToAgent({ text: askPrompt(instruction, pdfAskHeader(path, count)), target })

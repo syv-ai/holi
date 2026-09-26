@@ -1,20 +1,14 @@
 /**
  * What you can do to several threads at once.
  *
- * It **replaces** the toolbar rather than sitting under it. A selection is a
- * mode, and the controls that belong to the other mode — search, the mailbox
- * picker, refresh — are all things that would destroy or invalidate the
- * selection if used. Showing them is offering the user a way to lose their work
- * silently.
+ * It **replaces** the toolbar rather than sitting under it: search, the
+ * mailbox picker and refresh would all silently invalidate the selection.
  *
- * **Every action is N per-thread writes, not a bulk endpoint.** That looks like
- * the lazy choice and is the deliberate one: each write goes through
- * [[MailView]]'s `write`, which owns the optimistic paint, the generation check
- * that decides whether an undo is still valid, and `explainWriteFailure`. A
- * bulk endpoint would need its own copy of all three, and would have to invent
- * an answer for the case this shape gets for free — a partial failure, where
- * some threads moved and some did not. Here the ones that succeeded stay moved,
- * one message explains the rest, and the list re-reads.
+ * **Every action is N per-thread writes, not a bulk endpoint**, deliberately:
+ * each write goes through [[MailView]]'s `write`, which owns the optimistic
+ * paint, the undo generation check, and `explainWriteFailure`. A partial
+ * failure then comes for free: the ones that succeeded stay moved, one message
+ * explains the rest, and the list re-reads.
  */
 import { Archive, MailOpen, Mail, Star, StarOff, Trash2, X } from 'lucide-react'
 import { Button, Tooltip } from '@/primitives'
@@ -39,10 +33,8 @@ export function SelectionBar({
       <span className="shrink-0 text-xs font-medium tabular-nums">{count} selected</span>
 
       <div className="ml-auto flex shrink-0 items-center gap-1">
-        {/* Both directions of both toggles, spelled out rather than derived from
-            the selection. A mixed selection has no "current" state to flip, and
-            a button whose meaning depends on threads you cannot all see at once
-            is a button you cannot predict. */}
+        {/* Both directions of both toggles, spelled out rather than derived:
+            a mixed selection has no "current" state to flip. */}
         <Tooltip content="mark read">
           <Button
             variant="ghost"

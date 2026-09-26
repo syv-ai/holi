@@ -1,5 +1,5 @@
 /**
- * The apps menu the tab strip shows while the nav is hidden: every registered
+ * The apps menu the rail shows while the nav is hidden: every registered
  * app, opened as its row in the nav opens it, and nothing at all without apps.
  */
 import { render, screen } from '@/test/render'

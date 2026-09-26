@@ -14,7 +14,7 @@
  *    contentWindow` is what says the message came from the frame we mounted.
  *  - **The app never names itself.** Every call goes out with the `appId` this
  *    component was mounted with and the vault the user has open. An app that put
- *    an id in its message would be ignored — otherwise one app could address
+ *    an id in its message would be ignored: otherwise one app could address
  *    another's directory by asking nicely.
  *
  * What it may ask for at all is decided in main (`apps.*`), not here: the
@@ -137,11 +137,10 @@ export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
         src={`holi-app://${appId}/index.html`}
         // The frame's accessible name. `title` is the usual attribute for an
         // iframe and is the one the gate bans (it is a browser tooltip on every
-        // other element), so the label goes on aria-label — as it does on the
-        // mail frame.
+        // other element), so the label goes on aria-label.
         aria-label={appId}
         // `allow-scripts` alone. Adding `allow-same-origin` would let the app
-        // remove its own sandbox — and would give it a real origin, which is the
+        // remove its own sandbox and give it a real origin, which is the
         // isolation this whole feature rests on.
         sandbox="allow-scripts"
         className="min-h-0 flex-1 border-0"

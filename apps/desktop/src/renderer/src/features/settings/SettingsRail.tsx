@@ -1,18 +1,15 @@
 /**
  * The settings tab's rail: sections as folders, headings as their contents.
  *
- * **Selection is expansion.** There is no separate open/closed state, because a
- * section you are not looking at has nothing worth jumping to: clicking a
- * section shows its whole view and reveals its headings beneath it, muted, as
- * jump links into that view. So one section is open at a time and it is always
- * the one you are in, which means the rail can never disagree with the content.
+ * **Selection is expansion.** There is no separate open/closed state: clicking
+ * a section shows it and reveals its headings as jump links, so the one open
+ * section is always the one you are in and the rail cannot disagree with the
+ * content.
  *
- * **Not `FileTree`, deliberately.** That is 829 lines of `@headless-tree` wiring
- * for drag-and-drop, multi-select, inline rename, hotkeys and context menus,
- * built as a projection of the vault snapshot. This is eight static items one
- * level deep with none of those gestures, and generalising the explorer would
- * have meant pulling headless-tree into a consumer that needs no part of it.
- * What the two genuinely share is the row's *look*, which is tokens.
+ * **Not `FileTree`, deliberately.** That is `@headless-tree` wiring for
+ * drag-and-drop, rename, hotkeys and context menus over the vault snapshot;
+ * this is a few static items one level deep. The two share only the row's look,
+ * which is tokens.
  */
 import { Fragment } from 'react'
 import { ChevronRight } from 'lucide-react'
@@ -90,21 +87,14 @@ export function SettingsRail({
 }
 
 /**
- * The rail, for a pane too narrow to hold one.
+ * The rail, for a pane too narrow to hold one. Replaced rather than squeezed:
+ * a 100px rail truncates every label, which is worse navigation than a picker.
  *
- * A pane's `minSize` is 240px, so the settings tab can be a third of the width
- * the rail plus a column of controls needs. Below the threshold the rail is
- * replaced by this rather than squeezed: a 100px rail truncates every label to
- * two words, which is a worse navigation than a picker.
- *
- * **It carries the headings too.** Losing the jump links here would be the
- * wrong way round — a narrow pane is not a shorter section, it is a taller one,
- * so a jump into the middle of Appearance matters more at this width than at
- * full width, not less. They appear under the section you are in, indented,
- * exactly as they do in the rail.
+ * **It carries the headings too**: a narrow pane makes a section taller, so
+ * jumps matter more here, not less.
  *
  * Values are prefixed rather than bare ids, because a section and a heading can
- * legitimately share a name — Appearance's own list is a title away from it.
+ * share a name.
  */
 export function SettingsPicker({
   sections,

@@ -1,12 +1,9 @@
 /**
- * Gitignored rows are dimmed, the way VS Code and every other IDE does it.
+ * Gitignored rows are dimmed, the way VS Code does it.
  *
- * The tree shows gitignored files on purpose — they are real files in the
- * directory — but it used to show them looking exactly like committed content,
- * and **the name does not tell you**: `*.local.*` is only the seeded rule, a
- * vault may ignore anything, and one seeded before D65 carries a bare
- * `USER.md`. Which paths those are is git's answer, carried on the snapshot;
- * all this tree does is look them up.
+ * **The name does not tell you**: `*.local.*` is only the seeded rule and a
+ * vault may ignore anything. Which paths those are is git's answer, carried on
+ * the snapshot; all this tree does is look them up.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
@@ -60,10 +57,9 @@ test('dims a row git ignores and leaves its neighbour alone', () => {
 })
 
 test('applies no name rule of its own — the list decides, whatever it contains', () => {
-  // Inverted on purpose. `USER.md` is the file this whole thread started with
-  // and it is NOT dimmed here, because this vault does not ignore it; the
-  // ordinary-looking `plan.md` IS, because this vault does. Any pattern the
-  // renderer kept for itself would get both of these backwards.
+  // Inverted on purpose. `USER.md` is NOT dimmed here, because this vault does
+  // not ignore it; the ordinary-looking `plan.md` IS, because this vault does.
+  // Any pattern the renderer kept for itself would get both of these backwards.
   tree(['USER.md', 'plan.md'], ['plan.md'])
 
   expect(nameOf('plan.md').className).toContain('opacity-50')

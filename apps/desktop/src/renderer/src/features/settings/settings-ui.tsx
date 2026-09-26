@@ -1,19 +1,9 @@
 /**
  * The settings tab's shared vocabulary: one heading, one row, one list, one
- * note, one link.
+ * note, one link. A section should render without choosing a size, spacing or
+ * colour of its own; where one still does, it says why on the line.
  *
- * **Why this file exists.** The tab grew out of six surfaces written at
- * different times — the descriptor rows, the theme tokens, the icon map, and
- * three sections ported out of the legacy vault panel — and it showed. Five type
- * sizes for the same job (`text-sm`, `text-xs`, `text-[11px]`, `text-[10px]`,
- * `text-base`), two button sizes for the same weight of action, two idioms for a
- * row separator, and section wrappers that each supplied their own padding, so
- * a section boundary drew a rule twice.
- *
- * A section should now be able to render without choosing a single size,
- * spacing or colour of its own. Where one still does, it says why on the line.
- *
- * **The scale, decided once here:**
+ * **The scale:**
  *
  * | | |
  * |---|---|
@@ -24,20 +14,15 @@
  * | row description | `text-[11px] text-muted-foreground` |
  * | badges and other meta | `text-[10px]` |
  *
- * A group heading is *smaller* than the rows it introduces, which is the
- * settings idiom (and already the app's: `VaultSection`'s "Remote"/"Local" and
- * the collaborator permission are the same micro-label). Weight and case carry
- * the hierarchy instead of size, so a heading cannot be mistaken for a row.
+ * A group heading is *smaller* than the rows it introduces (the settings
+ * idiom); weight and case carry the hierarchy so it cannot read as a row.
  *
- * **Buttons: `xs` in content, `sm` in a dialog footer.** Both are common in the
- * app; the split is by where they sit, not by taste. A dialog's footer is the
- * one place a settings action is the primary thing on screen.
+ * **Buttons: `xs` in content, `sm` in a dialog footer**, where a settings
+ * action is the primary thing on screen.
  *
- * **Separators are `--divider`, not `--border`.** `index.css` is explicit that
- * `--divider` is the hairline between pieces of chrome (the sidebar's edge, a
- * footer's top rule) and `--border` is the edge of an object (a card, a chip, a
- * popover). Half this tab had it the other way round. The `Layer` badge keeps
- * `--border`, correctly: it is a chip.
+ * **Separators are `--divider`, not `--border`.** `--divider` is the hairline
+ * between pieces of chrome; `--border` is the edge of an object. The `Layer`
+ * badge keeps `--border` because it is a chip.
  */
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
@@ -54,12 +39,9 @@ export function headingId(title: string): string {
 /**
  * A heading inside a settings section, and the rail's jump target for it.
  *
- * **The rail declares headings, the section renders them, and this is the one
- * place the id is written.** The rail scrolls by `[data-heading="<id>"]`, so a
- * section writing its own markup could silently stop being reachable while
- * still looking correct. `headingId` is exported so a registry entry derives its
- * ids from the same titles rather than restating them, and a test asserts every
- * declared heading actually renders.
+ * **This is the one place the id is written.** The rail scrolls by
+ * `[data-heading="<id>"]`, so a section writing its own markup could silently
+ * become unreachable. A test asserts every declared heading renders.
  */
 export function SettingsHeading({
   title,
@@ -81,11 +63,9 @@ export function SettingsHeading({
 }
 
 /**
- * A run of rows that read as one list.
- *
- * The separator lives here rather than on each row, which is what removes the
- * `last:border-b-0` dance and the double rule where a list met a section
- * boundary that drew its own.
+ * A run of rows that read as one list. The separator lives here rather than
+ * on each row, so a list never draws a double rule where it meets a section
+ * boundary.
  */
 export function SettingsList({ children }: { children: ReactNode }): React.JSX.Element {
   return <div className="divide-y divide-divider">{children}</div>
@@ -95,29 +75,16 @@ export function SettingsList({ children }: { children: ReactNode }): React.JSX.E
  * One row: a label, an optional description, a control on the right, and
  * anything that needs the row's full width underneath.
  *
- * Every section's rows go through this, so the vertical rhythm and the
- * label/description pairing are decided once.
- *
- * **The control belongs on the right, and `children` is the exception.** A
- * settings row is a question and an answer, and the answer reads as one when it
- * is pinned to the right edge of every row in the list. `children` is for a
- * control that is not one answer at all: the commit transforms are five
- * labelled switches, each with its own sentence, and a stack of those is a list
- * that happens to live in a row.
+ * **The control belongs on the right, and `children` is the exception**: for a
+ * control that is not one answer, like the commit transforms' stack of
+ * labelled switches.
  *
  * **Wrapping decides when a wide control drops below, not a breakpoint.** The
- * top line is a wrap container: the label column has a real flex-basis, so when
- * the label minimum plus the control natural width exceed the row, the control
- * moves to a second line and `justify-end` keeps it right. The switch is then a
- * property of the control own width, so a four-option radio group drops below
- * far earlier than a checkbox does, where one container-query breakpoint would
- * have had to be wrong for one of them. It also holds at every pane width,
- * including the 240px minimum, with no new class to verify in a running window.
- *
- * `basis-48` is that minimum: a label column narrower than 192px stops being a
- * column and starts being a hyphenation exercise. It only decides where the
- * wrap happens; `grow` hands the label everything left over once the control
- * fits.
+ * label column has a real flex-basis, so the control moves to a second line
+ * when label minimum plus control width exceed the row, and `justify-end` keeps
+ * it right. A single container-query breakpoint would be wrong for either a
+ * four-option radio group or a checkbox. `basis-48` is the label minimum: below
+ * 192px it stops being a column.
  */
 export function SettingsRow({
   label,
@@ -174,13 +141,9 @@ export function SettingsNote({
 }
 
 /**
- * A link inside a sentence.
- *
- * A `Button` rather than an `<a>` because every one of these *acts* — it opens
- * a tab, reveals a folder, or jumps to the OS browser — and none of them has an
- * href to follow. `variant="link"` is the app's existing shape for that
- * (`VaultSection`'s remote and clone path are the same control), and the size
- * override is what lets it sit on the text baseline instead of as a chip.
+ * A link inside a sentence. A `Button` rather than an `<a>` because each one
+ * acts (opens a tab, reveals a folder, opens the browser) and has no href. The
+ * size override lets it sit on the text baseline instead of as a chip.
  */
 export function SettingsLink({
   onClick,
@@ -206,11 +169,8 @@ export function SettingsLink({
 }
 
 /**
- * A link that leaves the app: a GitHub page, a folder in Finder.
- *
- * Distinct from `SettingsLink` only in that the destination is worth showing
- * before you commit to it, so it carries a tooltip with the full URL or path.
- * A `Button` for the same reason: `openExternal` is an act, not an href.
+ * A link that leaves the app: a GitHub page, a folder in Finder. Unlike
+ * `SettingsLink` it carries a tooltip with the full URL or path.
  */
 export function ExternalLink({
   url,
@@ -240,11 +200,8 @@ export function ExternalLink({
 }
 
 /**
- * A key/value pair shown as a stacked micro-label over its value.
- *
- * The shape `VaultSection` uses for the remote and the clone path: the value
- * gets the full width before it truncates, which a side-by-side row would not
- * give a long path.
+ * A key/value pair shown as a stacked micro-label over its value, so a long
+ * value (a clone path) gets the full width before it truncates.
  */
 export function SettingsField({
   label,

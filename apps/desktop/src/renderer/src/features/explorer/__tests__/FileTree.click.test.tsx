@@ -2,9 +2,8 @@
  * What a modified click on a file row does.
  *
  * ⌘-click opens the file in a new pane beside the one you are in, the way an
- * editor's ⌘-click on a link does. That took ⌘ away from the selection, so ⇧
- * is the toggle now: ⇧-click adds a file to the selection or takes it out.
- * A plain click still opens a preview and nothing else.
+ * editor's ⌘-click on a link does, so ⇧ is the selection toggle: ⇧-click adds
+ * a file to the selection or takes it out. A plain click opens a preview.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'

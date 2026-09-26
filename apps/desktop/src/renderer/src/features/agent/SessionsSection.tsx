@@ -1,38 +1,18 @@
 /**
- * The sidebar's list of the vault's agent sessions (D100), and since D101 the
- * whole of what the app says about them outside their own tabs.
+ * The sidebar's list of the vault's agent sessions (D100, D101): with no tab
+ * open, this is the only place a session shows.
  *
- * **A session with no tab open has nothing else on screen.** The drawer used to
- * hold them all and the footer reduced them to one dot; both are gone, and what
- * replaced them is this: a card per session, its name, its state in words, and
- * everything you can do to one, always visible while the sidebar is.
+ * Always present, unlike the apps section, which hides itself when the vault has
+ * none: otherwise a vault whose sessions have all ended would have no way to
+ * start one but ⌘J. Headed "chats" rather than "sessions" because that is what
+ * the rows are to the person reading the sidebar.
  *
- * **Always present, unlike the apps section**, which hides itself when the vault
- * has none. It used to follow that rule, and could while the footer carried a
- * Claude control: with that gone (D101), a vault whose sessions have all ended
- * would have no way to start one but ⌘J. So the heading stays whatever the vault
- * holds, and the `+` beside it is the way to the first one.
+ * Its rows are tree rows, not chips, for `AppsSection`'s reason, and take the
+ * tree row's metrics so they line up with the file icons above.
  *
- * **It is headed "chats"**, not "sessions", which is the word everywhere else —
- * the glossary, the docs, Claude Code's own CLI. The heading is the one place
- * the jargon is not worth it: what the rows are, to the person reading the
- * sidebar, is conversations.
- *
- * **It fills a resizable panel**, exactly as the apps section does: a header
- * that never scrolls and a list that does. It used to size to its contents
- * below the sidebar's group, on the reasoning that a handful of rows does not
- * earn a handle — which held while a vault had one session and stopped holding
- * the moment it could have six, because the tree then lost its height to a list
- * nobody could shrink.
- *
- * **The rows are tree rows, not chips**, for `AppsSection`'s reason: a section
- * that styles itself as chips reads as a fourth chip row stuck under the tree.
- * So they take the tree row's metrics verbatim (22px, `text-sm`, `font-normal`)
- * and line up with the file icons above them.
- *
- * There is no Rename. The name is Claude Code's own, set with `--name` at spawn
- * or `/rename` inside the session, and a second one kept beside it in Holi would
- * be a copy that goes stale the moment anybody types `/rename`.
+ * Rename does not keep a Holi-side name: it pastes `/rename ` into the session,
+ * because the name is Claude Code's own (`--name` at spawn, `/rename` inside),
+ * and a copy kept in Holi would go stale.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { ChevronRight, History, Plus } from 'lucide-react'
@@ -78,9 +58,7 @@ export function SessionsSection(): React.JSX.Element {
 
   const indicatorFor = useSessionIndicator()
 
-  /** Show this session: its tab opens, or comes forward if it is already open
-   *  (D101). The one thing a card does that the footer door cannot, which is why
-   *  the card names a session. */
+  /** Show this session: its tab opens, or comes forward if already open (D101). */
   const show = (session: AgentSession) => {
     setActiveId(session.id)
     setWorkspace((w) => openSession(w, session.id))
@@ -91,23 +69,17 @@ export function SessionsSection(): React.JSX.Element {
     await window.holi.agent.kill(session.id)
   }
 
-  /** End this one and start another under its name. A genuinely new session
-   *  rather than the same one reborn, which is what restarting a process
-   *  actually is — saying otherwise would pretend a conversation survived that
-   *  did not. The name survives, because it was chosen for the work. */
+  /** End this one and start a genuinely new session under its name: the
+   *  conversation does not survive a restart, the name does. */
   const restart = (session: AgentSession) => restartSession(session.id)
 
   return (
-    // Fills its panel: a header that never scrolls, and a list that does. The
-    // header is also what stays visible when the panel is collapsed to it, so
-    // `shrink-0` on it is load-bearing rather than tidiness.
+    // Fills its resizable panel: a header that never scrolls, and a list that
+    // does. The header is what stays visible when the panel is collapsed to it,
+    // so its `shrink-0` is load-bearing.
     <div className="group/sessions relative flex h-full flex-col overflow-hidden">
-      {/* The two actions the drawer's header used to carry, in the explorer's
-          section-action pattern: floated top-right, and out of sight until you
-          are in the section. Starting a session is not something you do often
-          enough to spend a permanent row on, and neither is going back to an old
-          one — but when the drawer went, this became the only place either of
-          them could live. */}
+      {/* The explorer's section-action pattern: floated top-right, hidden until
+          you are in the section. */}
       <div className="motion-respond pointer-events-none absolute right-2 top-0.5 z-10 flex items-center gap-0.5 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/sessions:pointer-events-auto group-hover/sessions:opacity-100">
         <Tooltip content="resume a past session in a new tab">
           <Button
@@ -132,9 +104,8 @@ export function SessionsSection(): React.JSX.Element {
           </Button>
         </Tooltip>
       </div>
-      {/* The whole header is the toggle, not a chevron you have to hit. Same
-          metrics and same lowercase as the apps section: nothing in this sidebar
-          shouts. */}
+      {/* The whole header is the toggle. Same metrics and lowercase as the apps
+          section. */}
       <Button
         variant="ghost"
         size="xs"
@@ -201,13 +172,10 @@ export function SessionsSection(): React.JSX.Element {
                     </Button>
                   </ContextMenuTrigger>
                 </Tooltip>
-                {/* Radix hands focus back to the row when the menu closes, and it
-                    does so AFTER the item's work: Rename had already put the
-                    keyboard in the terminal, and the menu took it back to the
-                    row, so the name went nowhere. Nothing on this menu wants
-                    the row focused afterwards: three of the four land you in a
-                    tab that focuses its own terminal, and the fourth opens a
-                    dialog or removes the row. */}
+                {/* Radix hands focus back to the row when the menu closes, AFTER
+                    the item's work, which would pull the keyboard out of the
+                    terminal Rename just focused. Nothing on this menu wants the
+                    row focused afterwards. */}
                 <ContextMenuContent onCloseAutoFocus={(e) => e.preventDefault()}>
                   {/* No dialog: the command goes in the session's box and the
                       name is typed where it is going to be read. */}
@@ -219,7 +187,7 @@ export function SessionsSection(): React.JSX.Element {
                   </ContextMenuItem>
                   {/* A copy of the conversation, in a session of its own: the
                       original keeps running and neither sees the other's turns.
-                      Offered for an exited session too — its transcript is
+                      Offered for an exited session too: its transcript is
                       exactly what a fork is made of. */}
                   <ContextMenuItem onSelect={() => void duplicateSession(session.id)}>
                     Duplicate

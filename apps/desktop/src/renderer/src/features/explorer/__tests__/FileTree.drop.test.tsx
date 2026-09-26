@@ -1,19 +1,14 @@
 /**
  * A drag carrying OS files, dropped on a **row** of the tree.
  *
- * The container already handled this (FR-13); a row did not, and the failure was
- * invisible from the code: `item.getProps()` — headless-tree's dnd handlers —
- * calls `e.stopPropagation()` as the FIRST statement of both `onDragOver` and
- * `onDrop`, so the container's import handler never saw a drop that landed on a
- * row. Worse, when it then refuses the drag (`canDropForeignDragObject` defaults
- * to `() => false`) it returns *without* `preventDefault()`, and an unprevented
- * file drop is a navigation: Electron opened the dropped file in a new window
- * instead of importing it. The same path swallowed the in-tree move, because
- * that arrives as a file drop too (a row's drag is a native `startDrag`).
+ * headless-tree's row handlers call `e.stopPropagation()` first, so the
+ * container's import handler never sees a drop on a row; and when the library
+ * refuses the drag it returns *without* `preventDefault()`, so the file drop
+ * becomes a navigation and Electron opens the file in a new window. The in-tree
+ * move arrives as a file drop too (a row's drag is a native `startDrag`).
  *
- * `preventDefault` is therefore the assertion that matters, and it is asserted
- * directly rather than through a visible effect — nothing renders differently
- * when the browser steals a drop.
+ * `preventDefault` is therefore the assertion that matters, asserted directly:
+ * nothing renders differently when the browser steals a drop.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
@@ -57,8 +52,7 @@ class FakeDataTransfer {
 }
 
 /** Built by hand rather than via `fireEvent.drop`, so the test does not depend
- *  on how Testing Library papers over jsdom's missing `DragEvent` (the idiom
- *  TabStrip.test.tsx established). */
+ *  on how Testing Library papers over jsdom's missing `DragEvent`. */
 function dragEvent(type: string, dataTransfer: FakeDataTransfer): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
@@ -97,8 +91,8 @@ beforeEach(() => {
 })
 
 test('a file dropped on a folder row is claimed by the tree, not by the browser', () => {
-  // The whole bug in one assertion. An unprevented file drop is a navigation,
-  // and Electron answers a navigation with a window.
+  // An unprevented file drop is a navigation, and Electron answers a
+  // navigation with a window.
   tree()
   const event = dragEvent('drop', new FakeDataTransfer())
 
@@ -128,7 +122,7 @@ test('a file dropped on a file row imports into the folder that file is in', () 
 })
 
 test('a file dragged out of this vault and dropped on a folder row is a move, not an import', async () => {
-  // The in-tree move now arrives as a file drop: a row's drag is a native
+  // The in-tree move arrives as a file drop: a row's drag is a native
   // `startDrag`, so what comes back carries an absolute path inside this vault.
   tree()
   const dt = new FakeDataTransfer([{ name: 'b.md' }])

@@ -1,25 +1,17 @@
 /**
  * ⌘F inside the thread you are reading.
  *
- * Pressing it used to open the *list* search — a Gmail query against the whole
- * mailbox — which is a reasonable thing to want and never what ⌘F means with a
- * conversation open in front of you. [[MailView]] routes between the two on
- * where the keystroke came from; this is the half that searches the thread.
+ * [[MailView]] routes ⌘F between this and the list search on where the
+ * keystroke came from. Mail bodies live in sandboxed frames, which makes this
+ * harder than an ordinary find:
  *
- * Three things make it harder than an ordinary find, and all three are
- * consequences of mail bodies living in sandboxed frames:
- *
- * 1. **The text is in other documents.** One per message, reached through
- *    [[state/mail-frames]]. The order of results comes from the thread's own
- *    message order, not from the registry.
- * 2. **A collapsed message has no frame at all**, so it cannot be searched and
- *    its matches cannot be counted. A search therefore expands the whole thread
- *    while it is open — a count that silently excludes what is collapsed is
- *    worse than no count, because it reads as "not in this thread".
- * 3. **Scrolling to a match cannot use `scrollIntoView`.** The frame is sized to
- *    its content and never scrolls internally, so the element's own scroll does
- *    nothing; what has to move is the thread's scroller, which is in a
- *    different document from the match.
+ * 1. **The text is in other documents**, one per message, reached through
+ *    [[state/mail-frames]]. Result order comes from the thread's message order.
+ * 2. **A collapsed message has no frame at all**, so a search expands the whole
+ *    thread while it is open: a count that silently excludes what is collapsed
+ *    reads as "not in this thread".
+ * 3. **Scrolling to a match cannot use `scrollIntoView`**: the thread's scroller
+ *    has to move, and it is in a different document from the match.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
@@ -27,9 +19,8 @@ import { Button, Input, Tooltip } from '@/primitives'
 import { clearIn, findIn, setActiveMark } from '../../lib/mail-find'
 import { mailFrameFor, useMailFrameVersion } from '../../state/mail-frames'
 
-/** Where a plain-text message body is marked in the app's own document. Set by
- *  [[MailView]]'s `MessageBody`, and the reason it exists: a text-only message
- *  has no frame to register. */
+/** Where a plain-text message body is marked in the app's own document, since a
+ *  text-only message has no frame to register. Set by [[MailView]]'s `MessageBody`. */
 export const MESSAGE_BODY_ATTR = 'data-holi-message'
 
 export interface ThreadFindHandle {
@@ -40,11 +31,8 @@ export interface ThreadFindHandle {
 }
 
 /**
- * Where one message's searchable content is.
- *
- * Two possible homes, because a message is rendered two different ways: HTML
- * bodies go in a frame, plain-text ones are ordinary app DOM. Both are just an
- * `Element` to the search.
+ * Where one message's searchable content is: HTML bodies are in a frame,
+ * plain-text ones are ordinary app DOM.
  */
 function rootFor(id: string, scope: ParentNode): Element | null {
   const framed = mailFrameFor(id)
@@ -64,9 +52,9 @@ export function ThreadFind({
   const [term, setTerm] = useState('')
   const [index, setIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
-  // Bumped whenever a frame document is created or replaced — unblocking images
-  // or switching theme rewrites the page, and marks that were in the old one
-  // are gone with it. Re-running the search is the whole response.
+  // Bumped whenever a frame document is created or replaced (unblocking images,
+  // switching theme), which takes its marks with it. Re-running the search is
+  // the whole response.
   const frameVersion = useMailFrameVersion()
 
   useEffect(() => inputRef.current?.focus(), [])
@@ -76,18 +64,10 @@ export function ThreadFind({
   /**
    * The matches, across every message, in reading order.
    *
-   * **In an effect, not in render**, for two reasons and the second is the one
-   * that bit. Searching *mutates* — it wraps text in `<mark>` — and mutation
-   * during render is not something React promises anything about. And opening
-   * the find is what expands the collapsed messages, which happens in the very
-   * same commit: computed during render, the search ran against a DOM where
-   * those bodies did not exist yet, and reported a count for the one message
-   * that had already been open. A layout effect runs after the commit, so the
-   * text is there to be found.
-   *
-   * Recomputed wholesale rather than maintained incrementally: a search is
-   * cheap next to anything else on this screen, and an incremental version
-   * would have to reconcile against documents that get rewritten underneath it.
+   * **In an effect, not in render.** Searching *mutates* (it wraps text in
+   * `<mark>`), and opening the find expands the collapsed messages in the same
+   * commit: computed during render, the search would run before those bodies
+   * exist. Recomputed wholesale, since the documents get rewritten underneath.
    */
   useLayoutEffect(() => {
     if (scroller === null) return
@@ -99,8 +79,7 @@ export function ThreadFind({
     }
     setMarks(found)
     // `frameVersion` appears in the deps and nowhere in the body on purpose: it
-    // is a signal to go and re-read live DOM, not a value. A frame rebuilt by an
-    // image unblock or a theme change takes the marks that were in it with it.
+    // is a signal to re-read live DOM, not a value.
   }, [term, messageIds, scroller, frameVersion])
 
   // An out-of-range index after the term narrows the result set would show
@@ -113,8 +92,7 @@ export function ThreadFind({
     scrollToMark(marks[active]!, scroller)
   }, [marks, active, scroller])
 
-  /** Every mark comes out on the way past — leaving them would put permanent
-   *  highlights in a thread nobody is searching any more. */
+  /** Every mark comes out on close, or the highlights would stay. */
   useEffect(() => {
     return () => {
       if (scroller === null) return
@@ -154,14 +132,9 @@ export function ThreadFind({
         aria-label="find in conversation"
         className="h-7 text-xs"
       />
-      {/* Says nothing until there is something to say. A "0/0" over an empty box
-          is a result reported for a search nobody ran.
-
-          A live region, because the number changing IS the feedback for pressing
-          Enter — without it a screen reader hears nothing move. It also makes
-          the counter findable on its own: `1/2` is what a two-message thread's
-          position indicator says too, and the two mean entirely different
-          things. */}
+      {/* Nothing until a term is typed. A live region, because the number
+          changing IS the feedback for pressing Enter; the label also tells it
+          apart from a thread's `1/2` position indicator. */}
       {term !== '' && (
         <span
           role="status"
@@ -205,21 +178,14 @@ export function ThreadFind({
 /**
  * Bring a match into view by moving the THREAD's scroller.
  *
- * `mark.scrollIntoView()` is the obvious call and does nothing useful: the mark
- * is inside a frame that is sized to its own content and declares
- * `overflow-y: hidden`, so there is no scrollable box around it. The element
- * that has to move is the reader's scroller, one document up.
- *
- * Bridged through viewport coordinates, which both documents agree on — the
- * frame's own layout offsets would need the frame's position added to them, and
- * every wrapper in between accounted for.
+ * `mark.scrollIntoView()` does nothing useful: the mark's frame is sized to its
+ * content and declares `overflow-y: hidden`. Bridged through viewport
+ * coordinates, which both documents agree on.
  */
 function scrollToMark(mark: HTMLElement, scroller: HTMLElement | null): void {
   if (scroller === null) return
-  // jsdom implements no layout and no scrolling — every rect is zero and
-  // `scrollBy` does not exist. Bringing something into view is meaningless
-  // where nothing has a position, so this is a no-op there rather than a throw
-  // that takes the whole reader down with it.
+  // jsdom has no `scrollBy`; a no-op there rather than a throw that takes the
+  // reader down.
   if (typeof scroller.scrollBy !== 'function') return
 
   const markRect = mark.getBoundingClientRect()

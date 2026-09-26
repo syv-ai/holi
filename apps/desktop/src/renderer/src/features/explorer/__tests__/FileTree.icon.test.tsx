@@ -45,12 +45,8 @@ function tree(
 
 const rowFor = (path: string) => document.querySelector(`[data-path="${path}"]`)!
 
-/** The row's icon slot. The first `w-4` span is the expand chevron — a folder
- *  keeps that whatever its icon — so asserting on the row as a whole would test
- *  the chevron instead of the thing under test. */
-// By its own marker, not by position. This indexed `span.flex.w-4`[1] — the
-// second such span — which was the icon only while EVERY row reserved a chevron
-// column before it. Files no longer do, so position stopped meaning icon.
+/** The row's icon slot, found by its own marker rather than by position: a
+ *  folder's first `w-4` span is the expand chevron and a file has none. */
 const iconSlotOf = (path: string) => rowFor(path).querySelector('[data-slot="row-icon"]')!
 
 beforeEach(() => {
@@ -82,7 +78,6 @@ test('the emoji does not leak into the row label', () => {
   expect(screen.getByText('roadmap.md')).toBeTruthy()
 })
 
-// The half frontmatter could never have served.
 test('an entry decorates a folder', () => {
   tree(['Clients/acme.md'], { dirs: ['Clients'], icons: { Clients: '👥' } })
 
@@ -92,15 +87,13 @@ test('an entry decorates a folder', () => {
 })
 
 test('an entry decorates a file that has no frontmatter at all', () => {
-  // A PDF is not markdown, so the scan files it under `files` and it was never
-  // reachable by a frontmatter rule.
+  // A PDF is not markdown, so the scan files it under `files`.
   tree([], { files: ['spec.pdf'], icons: { 'spec.pdf': '📘' } })
 
   expect(iconSlotOf('spec.pdf').textContent).toContain('📘')
 })
 
-// A stale entry — the file it names was moved outside Holi — must be inert,
-// which is the whole cost the map was accepted with.
+// A stale entry (the file it names was moved outside Holi) must be inert.
 test('an entry does not conjure a row for a path that is not there', () => {
   tree(['roadmap.md'], { icons: { 'ghost.md': '👻' } })
 

@@ -24,14 +24,10 @@ interface TemplateOption {
 }
 
 /**
- * Convert-to-PDF: pick a template, fill its typed metadata fields (each rendered
- * as the widget its declared type maps to — a date picker prefilled to today, a
- * dropdown, a checkbox, …), choose a destination via the native save dialog,
- * Convert. The render writes to the chosen path and is revealed in Finder.
- *
- * The pdf-domain content block: it knows nothing about overlays or sizing — it
- * fills a Dialog's Header/Body/Footer slots and the registry summons it at
- * `size: 'md'`. Footer owns its own busy state (the slot, not a shell prop).
+ * Convert-to-PDF: pick a template, fill its typed metadata fields (each the
+ * widget its declared type maps to), choose a destination via the native save
+ * dialog, Convert. The render writes to the chosen path and is revealed in
+ * Finder. Fills a Dialog's slots and knows nothing about overlays or sizing.
  */
 export function ConvertToPdf({
   remote,

@@ -1,12 +1,9 @@
 /**
  * Developer → Test onboarding: the whole ritual, against nothing.
  *
- * The one property worth guarding is the one the mode promises — **it creates
- * nothing**. Everything else is covered by the reducer tests and
- * `VaultSettingsAct.test.tsx`; what those cannot cover is the seam between them,
- * because the settings act and the threshold are unreachable until a vault
- * exists. This mode is what makes them reachable, so this walks the ritual end
- * to end and asserts nothing was written anywhere.
+ * The property the mode promises: **it creates nothing**. This walks the
+ * ritual end to end, through the settings act and threshold that are otherwise
+ * unreachable until a vault exists, and asserts nothing was written anywhere.
  *
  * Stubs `window.holi` directly rather than using `test/helpers/fake-holi`: that
  * helper *creates* a `window` for the node environment, which replaces jsdom's
@@ -42,11 +39,10 @@ afterEach(() => {
 /**
  * The act currently on screen.
  *
- * **Every act is mounted at once** — they crossfade on `data-state` rather than
- * unmounting — so a bare `getByRole('button', {name: /continue/i})` finds the
- * settings act's CTA while the naming act is showing, clicks it, and advances
- * the reducer. That reads exactly like the ritual working. Scope to the active
- * act or the test measures the wrong thing.
+ * **Every act is mounted at once** (they crossfade on `data-state`), so a bare
+ * `getByRole('button', {name: /continue/i})` can find the settings act's CTA
+ * while the naming act is showing, and still advance the reducer. Scope to the
+ * active act or the test measures the wrong thing.
  */
 const activeAct = () => {
   const el = document.querySelector('.obrit-act[data-state="active"]')
@@ -54,7 +50,7 @@ const activeAct = () => {
   return el as HTMLElement
 }
 
-/** Name the vault and leave the naming act — the click that, in a real run,
+/** Name the vault and leave the naming act: the click that, in a real run,
  *  creates a GitHub repo and clones it.
  *
  *  Queried from `screen`, not the active act: the naming CTA lives in the
@@ -82,7 +78,7 @@ test('walks naming → settings → threshold without creating anything', async 
   // that scrolls cannot push it off the bottom edge.
   await userEvent.click(screen.getByRole('button', { name: /continue/i }))
 
-  // The threshold — which in a real run shows the live remote.
+  // The threshold, which in a real run shows the live remote.
   await waitFor(() => expect(activeAct()).toHaveClass('obrit-threshold'))
   await userEvent.click(within(activeAct()).getByRole('button', { name: /open vault/i }))
   expect(onDismiss).toHaveBeenCalled()
@@ -98,18 +94,16 @@ test('reaches the settings act, which no real run can do without a repo', async 
   render(<OnboardingRitual mode="add-vault" dryRun onDismiss={vi.fn()} />)
   await nameAndCreate()
 
-  // Every descriptor's row, rendered — the seam the other tests cannot cover.
+  // Every descriptor's row, rendered.
   await waitFor(() => expect(activeAct()).toHaveClass('obrit-settings-act'))
   expect(within(activeAct()).getAllByRole('group').length).toBeGreaterThan(0)
   expect(paths).not.toContain('vaults.create')
 })
 
 test('creating does not activate the vault before the settings act has asked', async () => {
-  // The ordering bug this file now guards. Activation is what makes the Shell
-  // open and LAND a vault, so doing it at the naming act meant the settings
-  // step wrote its answers to a vault that had already read the seeded
-  // defaults: a fresh vault opened on the daily in dark and only obeyed its
-  // own settings after a restart.
+  // Activation makes the Shell open and LAND a vault, so it must come after
+  // the settings act; otherwise the vault reads the seeded defaults before the
+  // answers are written.
   const store = createStore()
   render(
     <Provider store={store}>
@@ -128,7 +122,7 @@ test('a real run still creates — the dry run is the exception, not the rule', 
   // would pass for the wrong reason.
   render(<OnboardingRitual mode="add-vault" onDismiss={vi.fn()} />)
   await nameAndCreate()
-  // A real submit is async — the dry run short-circuits before the await, which
+  // A real submit is async; the dry run short-circuits before the await, which
   // is exactly the difference being asserted.
   await waitFor(() => expect(paths).toContain('vaults.create'))
 })

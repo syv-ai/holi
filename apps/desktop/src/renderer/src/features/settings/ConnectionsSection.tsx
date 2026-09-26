@@ -2,13 +2,8 @@
  * The Connections section: the Google account behind mail + calendar (D67).
  *
  * **Lives under `features/settings/`, not `features/google/`, because a feature
- * may only import primitives, composites and itself.** It was previously
- * composed into the legacy vault panel by the shell as a `connections` prop,
- * which is the workaround that injection existed for. With the settings tab
- * owning every settings surface it is simply one of the sections, and the shell
- * no longer has to know it exists. The mail and agenda views are unaffected:
- * nothing here is shared with them but `state/google.ts`, which is not a
- * feature.
+ * may only import primitives, composites and itself.** It shares only
+ * `state/google.ts` with the mail and agenda views.
  *
  * **Two scopes, and the panel's job is keeping them apart** (D87). An account is
  * connected on this *machine*; a *vault* uses one of them. So the rows offer
@@ -18,13 +13,11 @@
  *
  * The two-phase shape mirrors `SignIn`: `connect` returns as soon as the
  * browser is open, `awaitConnect` resolves when the grant lands. Nothing here
- * ever sees a token — the renderer is handed an email address and nothing else.
+ * ever sees a token: the renderer is handed an email address and nothing else.
  *
- * **Whether an account is connected lives in `state/google.ts`, not here.** The
- * shell shows or hides the agenda and mail chips on the same answer, so a local
- * `useState` meant connecting left the chips missing until a reload. What stays
- * local is only the transient part of the flow — in flight, and what went
- * wrong — which nothing outside this panel has any use for.
+ * **Whether an account is connected lives in `state/google.ts`, not here**,
+ * because the shell shows the agenda and mail chips on the same answer. Only
+ * the flow's transient state is local.
  */
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/primitives'
@@ -33,7 +26,7 @@ import { useGoogleAccount } from '@/state/google'
 import { useAlwaysAllowedSenders, useForgetImageSenders } from '@/state/mail-images'
 import { trpc } from '@/lib/trpc'
 
-/** The flow's transient state. "Connected" is deliberately absent — that is the
+/** The flow's transient state. "Connected" is deliberately absent: that is the
  *  shared atom's to know. */
 type Phase = { kind: 'idle'; error?: string } | { kind: 'connecting' }
 
@@ -72,11 +65,10 @@ export function ConnectionsSection(): React.JSX.Element {
       await trpc.google.connect.mutate()
       const result = await trpc.google.awaitConnect.mutate()
       if (result.kind === 'granted' && result.account !== null) {
-        // Writing the shared atom is what makes the shell's chips appear, on
-        // the same tick this panel says "connected as". `refreshGoogle` then
-        // re-reads what was actually granted rather than assuming consent was
-        // taken whole — a user can approve Gmail and decline contacts, which
-        // lands here as `granted` with scopes still missing.
+        // Writing the shared atom makes the shell's chips appear on the same
+        // tick. `refreshGoogle` then re-reads what was actually granted: a user
+        // can approve Gmail and decline contacts, which lands here as `granted`
+        // with scopes still missing.
         setAccount(result.account)
         void refreshGoogle()
         setPhase({ kind: 'idle' })
@@ -120,10 +112,8 @@ export function ConnectionsSection(): React.JSX.Element {
 
   /**
    * The connect button's label follows the **machine** list, not this vault's
-   * link (D87). "A different account" is only a sensible thing to offer when
-   * there is an account here to differ from; on a first run there is none, and
-   * naming one the user does not have is how the two scopes get confused. While
-   * the answer is still being asked for, `accounts` is empty and the button is
+   * link (D87): "a different account" only makes sense when there is one here
+   * to differ from. While `accounts` is loading it is empty and the button is
    * disabled, so the plain label is also the safe one.
    */
   const connectLabel = accounts.length > 0 ? 'Connect a different account…' : 'Connect'
@@ -133,9 +123,9 @@ export function ConnectionsSection(): React.JSX.Element {
   /**
    * Connected, but on a grant older than the scopes this build needs.
    *
-   * Worth its own affordance rather than an error on the feature that fails:
-   * the mailbox still lists, so the user's evidence says Google works, and
-   * "reconnect" is not a step anyone guesses from a triage button doing nothing.
+   * Its own affordance rather than an error on the feature that fails: the
+   * mailbox still lists, so nobody would guess "reconnect" from a triage
+   * button doing nothing.
    */
   const needsReconsent = connected && missingScopes.length > 0
 
@@ -226,11 +216,10 @@ export function ConnectionsSection(): React.JSX.Element {
 /**
  * The standing "always load images from this sender" permissions.
  *
- * **Shown because it is revocable, and revocable because it is shown.** Every
- * one of these is a disclosure the user agreed to once, in a mail reader,
- * possibly months ago — a permission that cannot be seen or withdrawn from
- * settings is not one they can be said to still be giving. Absent entirely when
- * there are none, so the common case costs no words.
+ * **Shown because it is revocable, and revocable because it is shown.** Each
+ * was agreed to once in a mail reader, possibly months ago; a permission that
+ * cannot be seen or withdrawn is not one still being given. Absent entirely
+ * when there are none.
  */
 function ImageSenders(): React.JSX.Element | null {
   const senders = useAlwaysAllowedSenders()

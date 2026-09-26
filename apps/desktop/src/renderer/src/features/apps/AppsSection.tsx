@@ -2,34 +2,22 @@
  * The sidebar's list of vault apps, and the whole of what you can do to one
  * without asking the agent.
  *
- * **Hidden entirely when the vault has no apps**, heading included. That is the
- * rule the agenda and mail chips already follow: a launcher whose only
- * destination is "go make one" is a dead end wearing the clothes of a feature,
- * and an app is made by asking the agent, not by clicking here.
+ * **Hidden entirely when the vault has no apps**, heading included: a launcher
+ * whose only destination is "go make one" is a dead end, and an app is made by
+ * asking the agent.
  *
- * Two kinds of row, and the second is the point of the first being a list at
- * all. A **registered** app has a manifest and opens. An **unregistered** one is
- * a directory with an entry document and no manifest — half-written, or written
- * by hand by someone who did not know the manifest was the marker. It used to be
- * computed (`unregisteredAppIdsAtom`) and shown nowhere, which is the failure
- * mode slice 1 proved worst: the app does not appear and there is nowhere to
- * look. It now appears, dimmed, with a menu item that finishes it.
+ * A **registered** app has a manifest and opens. An **unregistered** one is a
+ * directory with an entry document and no manifest (half-written, or written by
+ * hand); it shows dimmed with a menu item that finishes it, so a missing app is
+ * never invisible.
  *
- * **The rows are styled as tree rows, not as chips.** They used to be `Button
- * size="xs"` wearing the chip look — 12px, `font-medium`, 24px tall, a 12px
- * glyph — which read as a fourth chip row stuck under the tree. They are the
- * same kind of thing as a file: something the vault holds, that you click to
- * open. So they take the tree row's metrics verbatim (22px, `text-sm`,
- * `font-normal`, a 14px glyph in the same `w-4` column, `text-brand` when
- * open), and the icons line up with the tree's root-level file icons.
+ * **The rows are tree rows, not chips**: an app is the same kind of thing as a
+ * file, so rows take the tree row's metrics and their icons line up with the
+ * tree's root-level file icons. A chip-styled section read as a fourth chip row.
  *
- * The menu deliberately does NOT mirror the file tree's. Most of that menu —
- * New File, Cut, Copy, Paste, Duplicate — is about paths, and an app is not a
- * path: it is a directory whose name is also a `holi-app://` host. Duplicating
- * one would need a second id nobody chose; pasting into one is just editing a
- * file, which the tree already does better. What is left is what actually has a
- * meaning at the level of "an app": open it, edit its source, rename it, delete
- * it, find it on disk.
+ * The menu deliberately does NOT mirror the file tree's. Most of that menu is
+ * about paths, and an app is a directory whose name is also a `holi-app://`
+ * host: duplicating one would need a second id nobody chose.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AppWindow, ChevronRight } from 'lucide-react'
@@ -69,7 +57,7 @@ const entryOf = (appId: string): string => `${dirOf(appId)}/index.html`
 /**
  * Why this id cannot be used, or null when it can.
  *
- * Main checks the same things against the filesystem and is the authority — it
+ * Main checks the same things against the filesystem and is the authority: it
  * has to be, since a teammate's pull can create a directory between the keypress
  * and the mutation. This exists so the common refusals land under the field
  * instead of after a round-trip.
@@ -117,8 +105,8 @@ export function AppsSection(): React.JSX.Element | null {
     }
     setRenaming(null)
     void renameApp({ from, to }).then((result) => {
-      // A refusal from main — the id was taken between keypress and mutation, or
-      // the directory moved under us. Put the field back with the reason.
+      // A refusal from main (the id was taken between keypress and mutation, or
+      // the directory moved under us). Put the field back with the reason.
       if (!result.ok) setRenaming({ appId: from, error: result.error })
     })
   }
@@ -139,8 +127,7 @@ export function AppsSection(): React.JSX.Element | null {
           <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, appId))}>
             Open
           </ContextMenuItem>
-          {/* Recorded in vault-apps.md as "not built: a pane system, not a menu
-              item". The pane system exists now, so it is a menu item. */}
+          {/* Beside the current pane rather than in place of its tab. */}
           <ContextMenuItem
             onSelect={() => setWorkspace((w) => openInNewPane(w, { kind: 'app', appId }))}
           >
@@ -155,7 +142,7 @@ export function AppsSection(): React.JSX.Element | null {
       )}
       {/* Opening the tab is only half of it: the file lives under `.holi/apps/`,
           so in most vaults it is not in the explorer at all until the reveal
-          puts it there (#18). */}
+          puts it there. */}
       <ContextMenuItem
         onSelect={() => {
           const entry = entryOf(appId)
@@ -224,7 +211,7 @@ export function AppsSection(): React.JSX.Element | null {
                   : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 registered ? '' : 'italic opacity-60',
               ].join(' ')}
-              // An unregistered app has no manifest, so `openAppOp` refuses it —
+              // An unregistered app has no manifest, so `openAppOp` refuses it:
               // a row that opens a refusal is worse than a row that does not open.
               onClick={registered ? () => setWorkspace((w) => openApp(w, appId)) : undefined}
             >
@@ -240,16 +227,12 @@ export function AppsSection(): React.JSX.Element | null {
 
   return (
     // Fills its panel: a header that never scrolls, and a list that does. The
-    // header is also what stays visible when the panel is collapsed to it, so
-    // `shrink-0` here is load-bearing rather than tidiness.
+    // header is what stays visible when the panel is collapsed to it, so its
+    // `shrink-0` is load-bearing.
     <div className="flex h-full flex-col overflow-hidden">
-      {/* The whole header is the toggle, not a chevron you have to hit — the
-          same target VS Code gives a sidebar section. The sidebar has ONE type
-          size, `text-sm`, so the heading takes it: it started at 10px uppercase,
-          which is the settings panel's system, and a heading a few pixels under
-          the rows it labels reads as a mistake rather than as a hierarchy.
-          `font-medium` and the muted tint are what mark it as a heading.
-          Lowercase, like the chips: nothing else in this sidebar shouts. */}
+      {/* The whole header is the toggle. The sidebar has ONE type size,
+          `text-sm`, so the heading takes it; `font-medium` and the muted tint
+          are what mark it as a heading. Lowercase, like the chips. */}
       <Button
         variant="ghost"
         size="xs"
@@ -265,9 +248,8 @@ export function AppsSection(): React.JSX.Element | null {
         apps
       </Button>
       {/* No horizontal padding on the list: each row carries its own `px-2`, the
-          way a tree row does, so a hover highlight spans the sidebar rather than
-          floating inside an inset box — and the rows sit at the tree's indent
-          instead of 8px further in. */}
+          way a tree row does, so a hover highlight spans the sidebar and the rows
+          sit at the tree's indent. */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-1">
         {appIds.map((appId) => row(appId, true))}
         {unregistered.map((appId) => row(appId, false))}
@@ -330,7 +312,7 @@ function RenameRow({
 }
 
 /**
- * The two fixed-width slots a tree row starts with: the chevron column (empty —
+ * The two fixed-width slots a tree row starts with: the chevron column (empty,
  * an app has nothing to expand, exactly like a file) and the glyph. Keeping the
  * empty one is what lines an app's icon up with the tree's root-level file
  * icons directly above it, instead of half a column to the left.

@@ -1,15 +1,13 @@
 /**
  * The settings tab's shared read and write, for whichever section is on screen.
  *
- * **On the atom, not on local state.** The tab used to be one component holding
- * one `useState` of the resolved settings; with a rail there are several section
- * components and only one is mounted at a time, so a local copy would be re-read
- * from scratch on every rail click and two sections could disagree about the
- * same value. `vaultSettingsAtom` already exists, already caches per vault, and
- * already has the forced re-read the pane needs to see its own write.
+ * **On the atom, not on local state.** Only one section is mounted at a time,
+ * so a local copy would be re-read on every rail click and two sections could
+ * disagree. `vaultSettingsAtom` caches per vault and has the forced re-read the
+ * pane needs to see its own write.
  *
- * The write is still `settings.write` — the onboarding ritual's only writer — so
- * the two surfaces cannot drift into writing different shapes.
+ * The write is `settings.write`, the onboarding ritual's writer too, so the two
+ * surfaces cannot drift into writing different shapes.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -24,7 +22,7 @@ import { activeRemoteAtom } from '@/state/vaults'
 
 export interface VaultSettingsHandle {
   /** `null` until the first read lands, or while the cache still holds another
-   *  vault's answer — never the previous vault's settings. */
+   *  vault's answer: never the previous vault's settings. */
   resolved: ResolvedVaultSettings | null
   /** The same object, indexable by descriptor key. */
   values: Record<string, unknown>
@@ -72,9 +70,8 @@ export function useVaultSettings(): VaultSettingsHandle {
       } catch (err) {
         setError(err instanceof Error ? err.message : 'could not write the settings file')
       }
-      // Force, not read: the point of the pane is to see your own write, and
-      // everything reading the atom re-renders with it — which is what makes
-      // appearance and the editor font apply as you click.
+      // Force, not read: everything reading the atom re-renders with the write,
+      // which is what makes appearance and the editor font apply as you click.
       await load({ force: true })
     },
     [remote, resolved, setCached, load],

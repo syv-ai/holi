@@ -1,20 +1,15 @@
 /**
- * The ritual's settings act — how this vault behaves, asked once, at birth.
+ * The ritual's settings act: how this vault behaves, asked once, at birth.
  *
  * **Renders the list; does not know the list.** Every row comes from
- * `RITUAL_SETTING_DESCRIPTORS`, which is also what `seed-content.ts` builds the
- * vault's `settings.json` from. Adding a setting later is adding a descriptor —
- * this file should not need touching, and the tests assert against the list's
- * length rather than a number so that stays true.
+ * `RITUAL_SETTING_DESCRIPTORS`, so adding a setting is adding a descriptor.
  *
- * **The ritual's list is a subset**, not all of them. A preference with a good
- * default and no consequence at a vault's first moment is one more thing between
- * somebody and their first note; it lives in the settings tab instead, and
+ * **The ritual's list is a subset.** A preference with a good default and no
+ * consequence at a vault's first moment lives in the settings tab instead;
  * `askedAtBirth` is where each row says which it is.
  *
- * Nothing here is required. Every row carries a default and the seed has already
- * written it, so clicking straight through is a no-op rather than a choice
- * deferred.
+ * Nothing here is required. The seed has already written every default, so
+ * clicking straight through is a no-op.
  */
 import {
   RITUAL_SETTING_DESCRIPTORS,
@@ -30,13 +25,9 @@ interface Props {
   onChange: (key: string, value: unknown) => void
 }
 
-/** A pill in a `choice`.
- *
- *  Composes the `Button` primitive rather than a native element (the
- *  `no-restricted-syntax` boundary), and carries **radio** semantics: the group
- *  is one decision with one answer, so `role="radio"` is what says so to anyone
- *  not looking at the pills. The ritual's own `obrit-choice-pill` supplies the
- *  look, since this palette is self-contained and not the app's. */
+/** A pill in a `choice`, with **radio** semantics: the group is one decision
+ *  with one answer. The ritual's own `obrit-choice-pill` supplies the look,
+ *  since this palette is self-contained and not the app's. */
 function ChoicePill({
   label,
   checked,
@@ -115,7 +106,7 @@ function Row({
                     checked={block[toggle.key] === true}
                     // The whole block, not just the switch that moved: a patch
                     // naming one transform must not read as an answer about the
-                    // other two.
+                    // others.
                     onCheckedChange={(next) =>
                       onChange(key, { ...block, [toggle.key]: next === true })
                     }

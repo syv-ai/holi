@@ -1,11 +1,10 @@
 /**
  * The vault's history, as a tab.
  *
- * The reading it owes: a commit is one act, so picking one shows every file it
- * changed with its diff already open rather than a second list to click
- * through. What only this file can show is that each file loads its own diff,
- * that collapsing one does not throw the answer away, and that a vault switch
- * does not leave the last vault's commits on screen.
+ * A commit is one act, so picking one shows every file it changed with its
+ * diff already open. Each file loads its own diff, collapsing one does not
+ * throw the answer away, and a vault switch does not leave the last vault's
+ * commits on screen.
  */
 import { render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -67,14 +66,14 @@ test('says what to do before a commit is picked', async () => {
 })
 
 test('a picked commit opens every file it changed, expanded', async () => {
-  // The whole point of the rework: a commit is one act, read as one.
+  // A commit is one act, read as one.
   setup()
   await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
   const plan = await screen.findByRole('button', { name: /notes\/plan\.md/ })
   const other = await screen.findByRole('button', { name: /notes\/other\.md/ })
   expect(plan).toHaveAttribute('aria-expanded', 'true')
   expect(other).toHaveAttribute('aria-expanded', 'true')
-  // Each asks for its own diff, so thirty files fetch in parallel rather than
+  // Each asks for its own diff, so files fetch in parallel rather than
   // serially through a selection.
   await waitFor(() => expect(fileDiff).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(document.querySelectorAll('.cm-editor')).toHaveLength(2))

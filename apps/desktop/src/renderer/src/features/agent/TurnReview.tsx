@@ -7,7 +7,7 @@
  * shaped like `HistoryPanel` because it answers the same questions about one.
  *
  * The unit is a range rather than a tool-level record because git catches the
- * files the agent changed through `Bash` — a `sed`, an `mv`, a script — that a
+ * files the agent changed through `Bash` (a `sed`, an `mv`, a script) that a
  * `Write|Edit|MultiEdit` matcher never sees.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -28,7 +28,7 @@ import {
   type TurnFile,
 } from '@/state/turns'
 
-/** `at` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
+/** `at` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {
     month: 'short',
@@ -75,7 +75,6 @@ export function TurnReview(): React.JSX.Element | null {
   // switch), the drawer still slides out, empty.
   const shown = open && turn !== null
 
-  // The house busy/error wrapper (HistoryPanel, VaultSection) — reused.
   const guard = (fn: () => Promise<unknown>) => async () => {
     setBusy(true)
     setError(null)
@@ -152,9 +151,8 @@ export function TurnReview(): React.JSX.Element | null {
           {error !== null && <p className="px-3 pb-1 text-xs text-destructive">{error}</p>}
           <div className="border-t border-divider p-2">
             {/* Acknowledge: keeping a resolution writes a revert COMMIT, so it
-            gets a beat. Fired on the way in rather than after the await — the
-            ack is feedback that the act was taken, and an 800ms bloom must not
-            wait on git. */}
+            gets a beat. Fired on the way in rather than after the await: the
+            ack is feedback that the act was taken and must not wait on git. */}
             <Button
               ref={keepRef}
               variant="secondary"

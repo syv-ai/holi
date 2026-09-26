@@ -3,14 +3,11 @@
  *
  * **The preview is the artifact, not a likeness of it.** `renderMailMarkdown`
  * produces the bytes shown in the preview pane *and* the `text/html` part that
- * is sent; the only difference between the two is the remote-image flag, so
- * they cannot drift. The preview holds remote images back and the sent mail
- * does not — that is correct (the reader's rule, D69), and the existing "load
- * images" banner makes them identical in one click.
+ * is sent; the only difference is the remote-image flag (the preview holds
+ * remote images back, D69), so they cannot drift.
  *
- * **Autosave is single-flight and latest-wins**, which is the one piece of
- * concurrency here that has teeth. A second `create` while the first is in
- * flight makes a second draft, and the user watches their message fork.
+ * **Autosave is single-flight and latest-wins.** A second `create` while the
+ * first is in flight makes a second draft, and the message forks.
  *
  * **Nothing is ever read-only.** A draft written outside Holi is converted with
  * `turndown` and opens for editing with a notice saying so.
@@ -30,12 +27,9 @@ import type { MailAddress } from '../../lib/mail-types'
 import { trpc } from '../../lib/trpc'
 
 /**
- * Idle time before an autosave.
- *
- * 2s, not the 350ms ultramail used. A keystroke-rate debounce turns a paragraph
- * into a dozen `drafts.update` calls against a rate-limited API, and the save
- * state flickers so fast it reads as noise rather than reassurance. Forced
- * saves on blur, close and send are what make the longer wait safe.
+ * Idle time before an autosave. A keystroke-rate debounce turns a paragraph
+ * into a dozen `drafts.update` calls against a rate-limited API. Forced saves
+ * on blur, close and send are what make the longer wait safe.
  */
 const AUTOSAVE_IDLE_MS = 2000
 
@@ -55,7 +49,7 @@ export interface MailComposerProps {
    *  create one on its first save. */
   draftId?: string
   /** Every address the account may send from, so reply-all excludes all of
-   *  them. Empty is survivable — the user is copied on their own reply. */
+   *  them. Empty is survivable: the user is copied on their own reply. */
   sendAs?: string[]
   suggestions?: MailAddress[]
   onSent: (draft: { id: string | null }) => void
@@ -71,7 +65,7 @@ interface LoadedDraft {
   subject: string
   markdown: string
   foreign: boolean
-  /** The thread the draft is filed in, if any — see `applyLoaded`. */
+  /** The thread the draft is filed in, if any. See `applyLoaded`. */
   threadId: string | undefined
 }
 
@@ -86,28 +80,20 @@ export function MailComposer({
   onReconnect,
 }: MailComposerProps): React.JSX.Element {
   /**
-   * The thread this message belongs to, and therefore what every save and the
-   * send rebuild the threading headers from.
+   * The thread every save and the send rebuild the threading headers from.
    *
-   * State rather than a derived value because a *continued* draft carries its
-   * own thread, which the intent cannot know: `continueDraft` opens every draft
-   * as `new` deliberately — recipients, subject and body all arrive from
-   * `google.draft` a moment later, and a second source for them would flicker —
-   * so `applyLoaded` is where a continued reply learns its thread.
+   * State rather than derived: `continueDraft` opens every draft as `new`, so a
+   * continued reply learns its thread only in `applyLoaded`.
    */
   const [threadId, setThreadId] = useState<string | undefined>(
     intent.kind === 'new' ? undefined : intent.threadId,
   )
   /**
-   * A forward carries the original's attachments (D71).
-   *
-   * The message id travels, never the bytes: main fetches them and hands them
-   * to `buildRfc822`, so there is no base64 in renderer state, no file picker
-   * and no size-cap UI to design.
+   * A forward carries the original's attachments (D71). The message id travels,
+   * never the bytes: main fetches them and hands them to `buildRfc822`.
    */
-  // Memoised: a fresh object each render would change `save`'s identity every
-  // render, and the autosave effect depends on `save` — so the 2s debounce
-  // would reschedule itself continuously instead of settling.
+  // Memoised: a fresh object each render would change `save`'s identity, and
+  // the autosave debounce would reschedule itself continuously.
   const forwardOf = useMemo(
     () => (intent.kind === 'forward' ? { messageId: intent.parent.id } : undefined),
     [intent],
@@ -138,8 +124,7 @@ export function MailComposer({
   const draftRef = useRef<string | null>(draftId ?? null)
   const savingRef = useRef(false)
   const queuedRef = useRef(false)
-  /** No save has any business happening before the first real edit. Ultramail
-   *  shipped without this guard and left zombie empty drafts behind. */
+  /** No save before the first real edit, or empty drafts pile up in Gmail. */
   const dirtyRef = useRef(false)
   /** State updates are skipped once this is false. The save on unmount below
    *  outlives the component on purpose, and its result has nowhere to go. */
@@ -160,9 +145,8 @@ export function MailComposer({
     setMarkdown(draft.markdown)
     setForeign(draft.foreign)
     if (draft.threadId !== undefined) setThreadId(draft.threadId)
-    // Loading is not an edit. Marking it dirty would save the draft straight
-    // back over itself, which for a foreign draft means replacing the
-    // original's formatting before the user has touched anything.
+    // Loading is not an edit: marking it dirty would save a foreign draft back
+    // over its original formatting before the user touched anything.
     dirtyRef.current = false
     setSaveState('pristine')
   }
@@ -174,11 +158,10 @@ export function MailComposer({
       .query({ id: draftId })
       .then((draft) => {
         if (cancelled) return
-        // `markdown` is null exactly when `X-Holi-Source` was absent, which is
-        // main telling the renderer to convert — main cannot, since turndown
-        // needs a DOM and main has none. With no html either there is nothing
-        // to convert and the plain text IS the message: converting `''` would
-        // open blank and autosave that over a real draft on the first keystroke.
+        // `markdown` is null exactly when `X-Holi-Source` was absent: the
+        // renderer converts, since turndown needs a DOM. With no html either the
+        // plain text IS the message; converting `''` would open blank and
+        // autosave that over a real draft on the first keystroke.
         const body =
           draft.markdown ?? (draft.html === null ? draft.text : mailHtmlToMarkdown(draft.html))
         applyLoaded({
@@ -187,10 +170,8 @@ export function MailComposer({
           subject: draft.subject,
           markdown: body,
           foreign: draft.foreign,
-          // The draft's own thread, which outranks the intent: `continueDraft`
-          // opens every draft as `new` on purpose, so this is the only place the
-          // thread of a continued reply is known. Losing it rebuilds the draft
-          // with no `In-Reply-To` and moves it out of its conversation.
+          // The draft's own thread outranks the intent. Losing it rebuilds the
+          // draft with no `In-Reply-To` and moves it out of its conversation.
           threadId: draft.threadId ?? undefined,
         })
       })
@@ -223,13 +204,10 @@ export function MailComposer({
   // ---- autosave -----------------------------------------------------------
 
   /**
-   * One save, and then the trailing one it may have queued — as a single
-   * promise, so awaiting it means the composer is actually quiescent.
-   *
-   * The recursion is what makes that true. Starting the queued save with a bare
-   * `void save()` (which is what this was) leaves it outside the chain: a caller
-   * awaiting the save it triggered gets control back while a later one is still
-   * on the wire. Harmless for the autosave, and not harmless for Send.
+   * One save, and then the trailing one it may have queued, as a single
+   * promise, so awaiting it means the composer is actually quiescent. The
+   * recursion is what makes that true: a bare `void save()` for the queued one
+   * would let Send proceed while a later save is still on the wire.
    */
   const runSave = useCallback(async (): Promise<void> => {
     savingRef.current = true
@@ -243,13 +221,9 @@ export function MailComposer({
       })
       if (result.id !== null) draftRef.current = result.id
       /**
-       * Only clean if nothing changed *while this save was in flight*.
-       *
-       * Clearing unconditionally is the obvious version and it silently loses
-       * work: the queued save that runs next would find a clean flag, return
-       * immediately, and everything typed during the request would sit unsaved
-       * until the user happened to type again. The composer would say "Saved"
-       * the whole time.
+       * Only clean if nothing changed *while this save was in flight*. Clearing
+       * unconditionally makes the queued save find a clean flag and skip,
+       * leaving everything typed during the request unsaved.
        */
       if (!queuedRef.current) dirtyRef.current = false
       if (mountedRef.current) {
@@ -278,8 +252,7 @@ export function MailComposer({
     if (!dirtyRef.current) return
     if (savingRef.current) {
       // Latest-wins: coalesce every request arriving mid-flight into one
-      // trailing save, rather than queueing a call per keystroke — then wait for
-      // the chain that will run it, which now includes that trailing save.
+      // trailing save, then wait for the chain that will run it.
       queuedRef.current = true
       await inFlightRef.current
       return
@@ -307,15 +280,10 @@ export function MailComposer({
   }, [to, cc, subject, markdown, save])
 
   /**
-   * A forced save on the way out.
-   *
-   * This is what makes closing safe rather than lossy: a dismissed composer
-   * leaves its text in Gmail Drafts, where the Drafts view (D71, Task 12) can
-   * find it again. Without it, closing a dirty composer inside the 2s idle
-   * window silently discards everything typed since the last save.
-   *
+   * A forced save on the way out, so a dismissed composer leaves its text in
+   * Gmail Drafts (D71) rather than losing what was typed inside the idle window.
    * The save deliberately outlives the component, so its state updates are
-   * suppressed rather than issued at nothing.
+   * suppressed.
    */
   const saveOnUnmount = useRef(save)
   saveOnUnmount.current = save
@@ -372,24 +340,21 @@ export function MailComposer({
           ...(threadId === undefined ? {} : { threadId }),
         })
       } catch (error: unknown) {
-        // Closing here would unmount the composer, so the failure just set would
-        // render at nothing and the user would be told the draft was thrown away
-        // while it sat in Gmail. It stays open, saying so, with the text intact.
+        // Stay open with the failure and the text intact: closing would hide
+        // that the draft still sits in Gmail.
         setFailure(describeSendFailure(error))
         return
       }
     }
-    // The draft is gone, so there is nothing left to save — and the unmount save
-    // below is a `create`, which would put the message the user just discarded
+    // The unmount save would be a `create`, putting the discarded message
     // straight back into Drafts.
     dirtyRef.current = false
     onDiscarded()
   }
 
   const attemptClose = (): void => {
-    // Pristine closes like any dialog. Dirty refuses: the exits are Send and an
-    // explicit Discard, so nothing the user wrote leaves without being asked
-    // about.
+    // Pristine closes like any dialog. Dirty asks first: the exits are Send and
+    // an explicit Discard.
     if (dirtyRef.current) {
       setConfirmingDiscard(true)
       return
@@ -466,9 +431,8 @@ export function MailComposer({
 
       {forwarded.length > 0 && (
         <p className="text-xs text-muted-foreground" data-testid="forwarded-attachments">
-          {/* Named, because the user is about to send files they cannot see.
-              The bytes are fetched in main at send time; this is the only
-              account of what will travel. */}
+          {/* Named, because the bytes are fetched in main at send time and this
+              is the only account of what will travel. */}
           Attached: {forwarded.map((file) => file.filename).join(', ')}
         </p>
       )}
@@ -482,8 +446,7 @@ export function MailComposer({
             variant={tab === which ? 'secondary' : 'ghost'}
             size="sm"
             onClick={() => {
-              // Switching to preview is a natural save point, and it is the
-              // moment the user is most likely to walk away.
+              // Switching to preview is a natural save point.
               if (which === 'preview') void save()
               setTab(which)
             }}
@@ -537,10 +500,8 @@ export function MailComposer({
       {confirmingDiscard && (
         <div className="flex items-center gap-2 text-xs" role="alert">
           <span className="min-w-0 flex-1">Discard this draft?</span>
-          {/* "Discard draft", not "Discard" — the button that opened this
-              confirmation is also called Discard, and two controls with the
-              same name one line apart is how a confirmation stops confirming
-              anything. */}
+          {/* "Discard draft", not "Discard": the button that opened this
+              confirmation is also called Discard. */}
           <Button size="sm" variant="destructive" onClick={() => void discard()}>
             Discard draft
           </Button>
@@ -581,12 +542,9 @@ export function MailComposer({
 }
 
 /**
- * The body editor.
- *
- * Its own component so the CodeMirror lifecycle is not entangled with the
- * composer's state machine. The view is created once and never recreated from
- * `value` — a controlled CodeMirror that rebuilds on every keystroke loses the
- * cursor, the selection and the undo history.
+ * The body editor. The view is created once and never recreated from `value`:
+ * a controlled CodeMirror that rebuilds on every keystroke loses the cursor,
+ * the selection and the undo history.
  */
 function MarkdownEditor({
   value,

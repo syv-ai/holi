@@ -17,10 +17,9 @@ function setup(over: Record<string, unknown> = {}) {
 
 test('renders one row per descriptor, in the list’s own order', () => {
   setup()
-  // Asserted against the list, never a hardcoded number: the whole point of the
-  // descriptor list is that adding a setting is adding a row and nothing else.
-  // The RITUAL's subset — a preference the ritual does not ask about renders in
-  // the settings tab instead (`askedAtBirth`).
+  // Asserted against the list, never a hardcoded number, so adding a setting is
+  // adding a row and nothing else. The RITUAL's subset: a preference it does
+  // not ask about renders in the settings tab instead (`askedAtBirth`).
   const rows = screen.getAllByRole('group')
   expect(rows).toHaveLength(RITUAL_SETTING_DESCRIPTORS.length)
   expect(rows.map((r) => r.getAttribute('data-setting'))).toEqual(
@@ -73,7 +72,7 @@ test('the transforms are one row of several switches', async () => {
   expect(within(row).getAllByRole('checkbox')).toHaveLength(TRANSFORM_NAMES.length)
 
   await userEvent.click(within(row).getByRole('checkbox', { name: /File finished tasks away/ }))
-  // The whole block comes back, not just the switch that moved — a patch naming
+  // The whole block comes back, not just the switch that moved: a patch naming
   // one transform must not read as an answer about the others.
   expect(onChange).toHaveBeenCalledWith('hooks', {
     relink: true,
@@ -94,8 +93,8 @@ test('a transform switch shows the vault’s current answer', () => {
 })
 
 test('warns about the shared-vault collision on the daily-note row', () => {
-  // This sentence is the reason the row exists: Holi used to guess the answer
-  // from the GitHub collaborator count instead of saying this out loud.
+  // This sentence is the reason the row exists: the collision is said out loud
+  // rather than guessed from the collaborator count.
   setup()
   const row = screen.getByRole('group', { name: 'Keep a daily note' })
   expect(within(row).getByText(/everyone writes the same file/i)).toBeInTheDocument()

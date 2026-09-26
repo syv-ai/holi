@@ -1,18 +1,15 @@
 /**
  * The vault's history, as a tab.
  *
- * A tab rather than the full-screen modal it used to be, for the reason
- * settings became one (#16): reading what a commit changed is exactly the thing
- * you want open beside the note it changed, and a modal blocks the window while
- * you try. It is splittable, closable and one-per-window for free.
+ * A tab rather than a modal, so what a commit changed can sit open beside the
+ * note it changed.
  *
  * **Commit-first, and then every file at once.** Pick a commit on the left and
- * the right becomes one collapsible per changed file with that file's diff
- * inside it, rather than a second list you have to click through. A commit is a
- * single act and this reads it as one.
+ * the right becomes one collapsible per changed file with its diff inside,
+ * rather than a second list to click through. A commit is a single act and
+ * this reads it as one.
  *
- * The per-NOTE history side panel is a different surface and is untouched: that
- * one is file-first, and it is the first of a set of sidebars a note unfolds.
+ * The per-note history side panel (`HistoryPanel`) is the file-first surface.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
 import { ChevronDown, ChevronRight } from 'lucide-react'
@@ -33,7 +30,7 @@ import {
 } from '@/state/history'
 import { activeRemoteAtom } from '@/state/vaults'
 
-/** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
+/** `date` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {
     month: 'short',
@@ -45,10 +42,9 @@ const when = (iso: string) =>
 /**
  * One changed file: a header that collapses, and the diff under it.
  *
- * It asks for its own diff when it first opens, so a commit touching thirty
- * files fetches thirty times in parallel instead of serially through a
- * selection — and a file you collapse and open again costs nothing, because the
- * answer is kept per commit rather than per view.
+ * It asks for its own diff when it first opens, so a commit's files fetch in
+ * parallel, and re-opening a collapsed file costs nothing because the answer
+ * is kept per commit rather than per view.
  */
 function FileEntry({ path, sha }: { path: string; sha: string }): React.JSX.Element {
   // Expanded by default: a commit is usually small, and the surface exists to be
@@ -110,7 +106,7 @@ export function HistoryView(): React.JSX.Element {
     void load()
   }, [remote, load, reset])
 
-  // The commit on the remote — GitHub is the vault's host (D60).
+  // The commit on the remote: GitHub is the vault's host (D60).
   const openCommit = (sha: string) => {
     if (remote !== null) void window.holi.openExternal(`https://github.com/${remote}/commit/${sha}`)
   }

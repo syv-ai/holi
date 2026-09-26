@@ -1,8 +1,8 @@
 /**
- * Version history for the open note — a right-hand side panel beside the editor,
- * mirroring AgentPanel's shape (not a `viewAtom` peer, not a modal).
+ * Version history for the open note, as a right-hand side panel beside the
+ * editor.
  *
- * These are the file's actual git commits (`features/history.md`): a flat
+ * These are the file's actual git commits (`docs/features/history.md`): a flat
  * log, newest-first, each row its sha, message and author. Picking one shows the
  * diff that commit made to *this* file (vs its parent) in a merge view; the sha
  * links to the commit on the remote; Restore writes the old content as a new commit.
@@ -27,7 +27,7 @@ import {
 } from '@/state/history'
 import { activeRemoteAtom } from '@/state/vaults'
 
-/** `date` is an ISO string, not a Date — no superjson transformer on the ipcLink. */
+/** `date` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, {
     month: 'short',
@@ -61,7 +61,6 @@ export function HistoryPanel() {
     void loadVersions()
   }, [open, targetPath, loadVersions, reset])
 
-  // The house busy/error wrapper (VaultSection) — reused, not reinvented.
   const guard = (fn: () => Promise<unknown>) => async () => {
     setBusy(true)
     setError(null)
@@ -74,14 +73,13 @@ export function HistoryPanel() {
     }
   }
 
-  // The commit on the remote — GitHub is the vault's host (D60). Opens in the browser.
+  // The commit on the remote: GitHub is the vault's host (D60).
   const openCommit = (sha: string) => {
     if (remote) void window.holi.openExternal(`https://github.com/${remote}/commit/${sha}`)
   }
 
   const onRestore = guard(async () => {
     if (!selectedSha) return
-    // window.confirm is the codebase's only destructive-confirm precedent (MembersSection).
     const proceed = window.confirm(
       'Restore this version?\n\n' +
         "It replaces the note's text with this commit's version as a new commit — everyone in " +

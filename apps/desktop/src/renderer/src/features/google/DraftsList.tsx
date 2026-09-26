@@ -1,16 +1,10 @@
 /**
  * Every unsent draft, in one list (D71).
  *
- * It answers three questions at once, and that is why it is in v1 rather than
- * deferred:
- *
  * - **A new-message draft is reachable.** It belongs to no thread, so without
- *   this list the only way back to it is Gmail — and "open Gmail to find your
- *   draft" is the thing this pillar is removing.
+ *   this list the only way back to it is Gmail.
  * - **A thread with two drafts shows both.** The thread's *Continue draft* chip
- *   opens the newest; the other one lives here. That is the whole answer to an
- *   ambiguity the spec left open.
- * - **No path ends at a browser.**
+ *   opens the newest; the other one lives here.
  */
 import { useEffect, useState } from 'react'
 import { FilePen } from 'lucide-react'
@@ -28,9 +22,7 @@ export interface DraftSummary {
 }
 
 function recipients(to: MailAddress[]): string {
-  // Not a blank cell. A blank row on the one screen where the user is looking
-  // for something they half-wrote reads as a rendering bug, and the draft looks
-  // lost rather than unaddressed.
+  // Not a blank cell, which reads as a rendering bug rather than unaddressed.
   if (to.length === 0) return '(no recipient)'
   return to.map((address) => (address.name === '' ? address.email : address.name)).join(', ')
 }
@@ -86,9 +78,7 @@ export function DraftsList({
     <ul aria-label="Drafts">
       {drafts.map((draft) => (
         <li key={draft.draftId}>
-          {/* The `Button` primitive, not a native one — the boundaries gate
-              bans `<button>` outside primitives/, and the thread rows beside
-              this list are built the same way. */}
+          {/* The `Button` primitive: the boundaries gate bans native `<button>`. */}
           <Button
             variant="ghost"
             className="block h-auto w-full rounded-none border-b border-divider px-3 py-2 text-left"

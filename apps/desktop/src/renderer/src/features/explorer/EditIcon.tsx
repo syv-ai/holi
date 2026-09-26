@@ -24,17 +24,12 @@ function lastEmojiOf(raw: string): string {
 }
 
 /**
- * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82).
+ * Set or clear a path's icon in `.holi/settings/icons.yaml` (D82). The map is
+ * the only place an icon lives, so this works the same on a note, a folder and
+ * a PDF, with no precedence to explain. No Clear button: an empty field already
+ * means "no entry".
  *
- * The map is the only place an icon lives, so this is the only gesture that
- * sets one and it works the same on a note, a folder and a PDF. There is no
- * second source to lose to, which is why nothing here explains a precedence.
- *
- * There is no Clear button either: an empty field already means "no entry", and
- * a button that did the same thing would be a second way to say it.
- *
- * The explorer-domain content block: it fills a Dialog's slots and knows nothing
- * about overlays or sizing (the registry summons it at `size: 'sm'`).
+ * Fills a Dialog's slots and knows nothing about overlays or sizing.
  */
 export function EditIcon({
   remote,
@@ -76,8 +71,7 @@ export function EditIcon({
 
       <Dialog.Body>
         <div className="flex items-center gap-2.5">
-          {/* Sized to its content — one emoji — rather than stretching across the
-              dialog, which made a one-character field look like a text box. */}
+          {/* Sized to its one emoji, so it does not read as a text box. */}
           <Input
             autoFocus
             value={value}
@@ -88,10 +82,8 @@ export function EditIcon({
             aria-label="Icon"
             className="h-8 w-10 shrink-0 px-0 text-center text-sm"
           />
-          {/* The subject of the dialog, so it reads at body weight rather than
-              as a caption — and in the UI font: this is a path, but every other
-              path the app shows a person (the tree row, the tab) is in the UI
-              font too, and monospacing it here made one dialog look borrowed. */}
+          {/* The subject of the dialog: body weight, and the UI font like every
+              other path the app shows (the tree row, the tab). */}
           <span className="min-w-0 flex-1 truncate text-sm text-foreground">{path}</span>
         </div>
 

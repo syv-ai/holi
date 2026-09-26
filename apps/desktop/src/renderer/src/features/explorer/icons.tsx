@@ -29,10 +29,8 @@ export function FolderIcon() {
   return <Folder size={14} aria-hidden="true" />
 }
 
-/** A vault app's own folder. An app is a thing you run, not a place you keep
- *  files, and now that Edit Source reveals `.holi/apps/<id>/` in the tree (#18)
- *  the folder is somewhere people actually look. Same glyph as the app rows in
- *  the apps section, so one icon means "app" wherever it appears. */
+/** A vault app's own folder, which Edit Source reveals in the tree. Same glyph
+ *  as the app rows in the apps section, so one icon means "app" everywhere. */
 export function AppFolderIcon() {
   return <AppWindow size={14} aria-hidden="true" />
 }
@@ -41,15 +39,11 @@ export function MarkdownIcon() {
   return <FileText size={14} color="currentColor" aria-hidden="true" />
 }
 
-/** A task file's leaf glyph, keyed to its status so the tree shows progress at a
- * glance: an empty circle for todo, a dotted one for doing, a checked one for
- * done — tinted apart from the markdown/file icons so a `task.*.md` reads as a
- * task.
+/** A task file's leaf glyph, keyed to its status: an empty circle for todo, a
+ * dotted one for doing, a checked one for done.
  *
- * **The colours are the `--task-*` tokens, not hex.** Those tokens already
- * existed and already painted the editor's task orbs, so a task's status had
- * one colour in a note and a different one in the tree. Now it has one
- * everywhere, and a vault theme can recolour all of it at once (D64). */
+ * **The colours are the `--task-*` tokens, not hex**, the same ones the
+ * editor's task orbs use, so a vault theme recolours both at once (D64). */
 export function TaskIcon({ status }: { status: TaskStatus }) {
   if (status === 'done')
     return <CircleCheck size={14} color="var(--task-done)" aria-hidden="true" />

@@ -1,23 +1,17 @@
 /**
  * Third-party HTML, rendered in a page of its own.
  *
- * Google hands Holi markup that a stranger wrote, in two places: a mail message
- * body, and a **calendar event description** — an invitation's description is
- * whoever-invited-you's HTML, dial-in blocks and all, and Google Calendar's own
- * UI renders it as markup. So both go down one path rather than two, and the
- * reasoning lives here once: [[mail-html]] decides what markup survives,
- * [[mail-frame]] decides what document it survives *in*, and neither is a
- * substitute for the other. Sanitized markup never lands in the app's document.
+ * Google hands Holi markup a stranger wrote in two places, a mail body and a
+ * **calendar event description**, so both go down this one path.
+ * [[mail-html]] decides what markup survives, [[mail-frame]] decides what
+ * document it survives *in*, and neither substitutes for the other. Sanitized
+ * markup never lands in the app's document.
  *
- * Remote content is blocked until asked for, per block of HTML — the same
- * decision every mail client makes, for the same reason: an image fetched from
- * a sender's server is a read receipt nobody agreed to. A calendar invitation
- * is no different; a tracking pixel in a meeting description is still a pixel.
+ * Remote content is blocked until asked for, per block of HTML: an image fetched
+ * from a sender's server is a read receipt nobody agreed to.
  *
- * The `mail-` module names predate the calendar using them. They are not
- * mail-specific and are deliberately not renamed — the sanitizer and the frame
- * document carry their own test suites under those names, and churning them
- * would move the security-relevant code without changing it.
+ * The `mail-` modules are not mail-specific and are deliberately not renamed,
+ * so the security-relevant code and its test suites stay put.
  */
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { ImageOff } from 'lucide-react'
@@ -35,19 +29,14 @@ import { registerMailFrame } from '../../state/mail-frames'
 import { matchHotkey } from '../../lib/hotkey'
 
 interface SandboxedHtmlProps {
-  /** Raw and untrusted. Sanitizing happens **here** — a caller must not pre-sanitize
-   *  and must not pass anything it has already put through the sanitizer twice. */
+  /** Raw and untrusted. Sanitizing happens **here**; a caller must not pre-sanitize. */
   html: string
   /** Names the frame for a screen reader, e.g. `message from Jane`. */
   label: string
   /**
-   * Who this block belongs to, so an unblock can be remembered.
-   *
-   * Optional because not every block has an identity worth keeping: a calendar
-   * event description is re-rendered from whatever the agenda last fetched, and
-   * "always load images from this event" is not a sentence. Omitting it means
-   * the choice lives and dies with this component, which is where it lived for
-   * everything before.
+   * Who this block belongs to, so an unblock can be remembered. Optional: a
+   * calendar event description has no identity worth keeping, and without one
+   * the choice lives and dies with this component.
    */
   identity?: RemoteContentIdentity
 }
@@ -57,15 +46,13 @@ const NO_IDENTITY: RemoteContentIdentity = { key: null, sender: null }
 /**
  * One block of untrusted HTML: a sandboxed frame, with images held back.
  *
- * Re-sanitizing from the *original* HTML when the user unblocks (rather than
- * stashing the stripped URLs and putting them back) keeps one code path —
- * whatever renders has been through the sanitizer under the current setting,
- * always.
+ * Unblocking re-sanitizes from the *original* HTML rather than restoring
+ * stripped URLs, so whatever renders has been through the sanitizer under the
+ * current setting.
  *
- * **The unblock is remembered outside this component** ([[state/mail-images]]),
- * and it has to be: the reader unmounts every time a thread closes, so a choice
- * held in local state was lost on the way out and the banner came back on the
- * next open. What stays local is only the fallback for a block with no identity.
+ * **The unblock is remembered outside this component** ([[state/mail-images]])
+ * because the reader unmounts every time a thread closes. Local state is only
+ * the fallback for a block with no identity.
  */
 export function SandboxedHtml({
   html,
@@ -83,7 +70,7 @@ export function SandboxedHtml({
     [html, allowRemoteContent],
   )
   // From the RAW html, so loading images cannot flip the canvas underneath the
-  // message — see `bringsOwnDesign`.
+  // message. See `bringsOwnDesign`.
   const palette = useMemo(() => canvasFor(html, themed), [html, themed])
 
   const loadOnce = () => {
@@ -102,10 +89,8 @@ export function SandboxedHtml({
           <Button variant="ghost" size="xs" className="shrink-0" onClick={loadOnce}>
             Load images
           </Button>
-          {/* The standing version of the same permission. Offered only when
-              there is an address to attach it to, because "always" with nobody
-              to be always about would store an empty sender and unblock every
-              message whose `From` could not be parsed. */}
+          {/* Offered only with an address to attach it to: an empty sender
+              would unblock every message whose `From` could not be parsed. */}
           {remote.sender !== null && (
             <Button
               variant="ghost"
@@ -144,9 +129,8 @@ interface HtmlFrameProps {
   label: string
   /**
    * Publish this frame's document under this key, so in-thread find can reach
-   * it ([[state/mail-frames]]). `null` for a block with no stable identity — a
-   * calendar event description, which is re-rendered from whatever the agenda
-   * last fetched and is not part of any thread.
+   * it ([[state/mail-frames]]). `null` for a block with no stable identity,
+   * such as a calendar event description.
    */
   registerAs: string | null
 }
@@ -155,10 +139,9 @@ interface HtmlFrameProps {
  * The content's own page.
  *
  * Written into rather than handed a `srcdoc`, because the app needs the
- * document anyway — to size the frame and to catch link clicks — and writing
- * gives it on the same tick instead of after a load event. Everything reaching
- * in here is the *app's* script touching an inert document; the frame carries
- * no `allow-scripts`, so nothing inside it ever runs.
+ * document (to size the frame and catch link clicks) on the same tick rather
+ * than after a load event. The frame carries no `allow-scripts`, so nothing
+ * inside it ever runs; only the app's script touches the inert document.
  */
 function HtmlFrame({
   html,
@@ -183,10 +166,8 @@ function HtmlFrame({
     document_.close()
 
     /**
-     * A link must not navigate anything — inside the frame it would replace the
-     * content with a live web page, which is the one place remote content was
-     * being kept out of. Delegated, so it covers every anchor in markup nobody
-     * here wrote.
+     * A link must not navigate anything: inside the frame it would replace the
+     * content with a live web page. Delegated, so it covers every anchor.
      */
     const onClick = (event: MouseEvent) => {
       const anchor = (event.target as Element | null)?.closest('a[href]')
@@ -199,20 +180,15 @@ function HtmlFrame({
     document_.addEventListener('click', onClick)
 
     /**
-     * The frame has no intrinsic height, so it is measured and set — and the
-     * measurement has to be right, because a frame shorter than its content
-     * does not merely clip: it becomes its own little scroll area inside the
-     * thread, which is the one thing a mail reader must never do.
+     * The frame has no intrinsic height, so it is measured and set. A frame
+     * shorter than its content becomes its own scroll area inside the thread.
      *
      * **Observe `body`, not `documentElement`.** The root element's box *is*
-     * the frame viewport — the height we just set — so a ResizeObserver on it
-     * watches our own output and never fires when the content grows. That is a
-     * feedback loop with no signal in it, and it is why a message could end up
-     * short and scrollable. `body`'s box follows the content.
+     * the frame viewport (the height we just set), so an observer on it never
+     * fires when the content grows. `body`'s box follows the content.
      *
-     * `scrollHeight` is taken from both, and the larger wins: margins on the
-     * body are outside its own scroll box but inside the root's, and mail is
-     * full of body margins.
+     * `scrollHeight` is taken from both, and the larger wins: body margins are
+     * outside the body's scroll box but inside the root's.
      */
     const measure = () =>
       setHeight(
@@ -229,17 +205,13 @@ function HtmlFrame({
     document_.addEventListener('load', measure, true)
 
     /**
-     * ⌘F pressed **over the message** has to be forwarded out by hand.
+     * ⌘F pressed **over the message** has to be forwarded out by hand: a
+     * keydown inside an iframe does not cross the frame boundary, so React
+     * never sees it.
      *
-     * A keydown inside an iframe does not cross the frame boundary — it is a
-     * separate document with a separate event path, so React never sees it. The
-     * effect is that find works everywhere in the pane except over the text the
-     * user is actually reading, which is the one place they will press it.
-     *
-     * Re-dispatched onto the host frame element rather than invoked through a
-     * callback prop, so it enters React's tree at the point the frame occupies
-     * and the pane's existing handler decides what to do with it — one place
-     * that knows what ⌘F means, not two.
+     * Re-dispatched onto the host frame element rather than through a callback
+     * prop, so the pane's existing handler stays the one place that knows what
+     * ⌘F means.
      */
     const onFrameKeyDown = (event: KeyboardEvent) => {
       if (!matchHotkey(event, '⌘F')) return
@@ -274,26 +246,18 @@ function HtmlFrame({
       /**
        * **A fresh element when the policy widens, or the images never load.**
        *
-       * A CSP delivered by `<meta>` joins the document's list of policies, and
-       * a request has to satisfy *every* policy in it. `document.open()` does
-       * not clear the ones already applied — so rewriting the document with a
-       * wider `img-src` adds a permissive policy underneath the restrictive one
-       * that is still there, and `img-src data:` goes on refusing every remote
-       * image. Rewriting is enough for the markup and not enough for the browser.
-       *
-       * The symptom was exact: "Load images" restored the `src`, the banner
-       * went away, and nothing appeared until you left the message and came
-       * back — because that destroyed the iframe and built a new document,
-       * which is the only way a document sheds a policy. Keying on the flag
-       * does deliberately what navigating away did by accident.
+       * A CSP delivered by `<meta>` joins the document's list of policies, and a
+       * request must satisfy *every* one. `document.open()` does not clear the
+       * ones already applied, so rewriting with a wider `img-src` leaves the
+       * restrictive policy refusing every remote image. Only a new iframe sheds
+       * a policy.
        *
        * The key is on the frame and not on `HtmlFrame`, so the measured height
-       * survives the swap and the message does not collapse to nothing and
-       * spring back while the new document is written.
+       * survives the swap and the message does not collapse and spring back.
        */
       key={allowRemoteContent ? 'remote-allowed' : 'remote-blocked'}
-      // `allow-same-origin` and nothing else. No `allow-scripts` — granting both
-      // is the footgun that lets framed content drop its own sandbox.
+      // `allow-same-origin` and nothing else. No `allow-scripts`: granting both
+      // lets framed content drop its own sandbox.
       sandbox="allow-same-origin"
       aria-label={label}
       className="block w-full rounded-md border-0"

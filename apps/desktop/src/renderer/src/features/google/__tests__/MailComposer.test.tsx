@@ -1,10 +1,9 @@
 /**
  * The composer (D71).
  *
- * The tests that matter here are all about *drafts that should not exist* and
- * *drafts that should not fork*. Both are failures the user discovers later, in
- * Gmail, as a list of half-written messages they do not remember making —
- * ultramail shipped both.
+ * The tests that matter here are about *drafts that should not exist* and
+ * *drafts that should not fork*: both surface later in Gmail as half-written
+ * messages the user does not remember making.
  *
  * The body editor is CodeMirror and is exercised in
  * `editor/__tests__/mail-composer-extensions.test.tsx`; dirtiness is driven
@@ -100,8 +99,7 @@ function setup() {
 
 describe('the pristine guard', () => {
   it('creates no draft when the composer is opened and closed untouched', async () => {
-    // Ultramail shipped without this and left zombie empty drafts behind. A
-    // reply composer opens pre-filled with a quote, so "has content" is not
+    // A reply composer opens pre-filled with a quote, so "has content" is not
     // the same question as "the user wrote something".
     const { onClose } = mount()
 
@@ -116,9 +114,8 @@ describe('the pristine guard', () => {
     const user = setup()
     const { onClose } = mount()
 
-    // Focus has to be inside the composer: Escape is handled on the section,
-    // which is right for an inline surface — it must not swallow the key for
-    // the thread reader around it.
+    // Focus has to be inside the composer: Escape is handled on the section, so
+    // an inline composer does not swallow the key for the reader around it.
     await user.click(subjectField())
     await user.keyboard('{Escape}')
 
@@ -169,9 +166,8 @@ describe('autosave', () => {
   })
 
   it('does not lose an edit made while a save was in flight', async () => {
-    // The subtle half of single-flight. Marking the draft clean when the
-    // request returns discards whatever was typed *during* it: the queued save
-    // finds nothing to do, and the composer says "Saved" over unsaved text.
+    // The subtle half of single-flight: marking the draft clean when the
+    // request returns would skip the queued save for text typed *during* it.
     const user = setup()
     let resolve: ((value: { id: string }) => void) | undefined
     saveDraft.mockImplementationOnce(
@@ -220,11 +216,9 @@ describe('autosave', () => {
 
   /**
    * The thread a continued draft belongs to comes from the draft, not from the
-   * intent — `continueDraft` opens every draft as `new`, deliberately, because
-   * recipients, subject and body are all loaded a moment later and a second
-   * source for them would flicker. `threadId` travelled with them by accident:
-   * without it every autosave rebuilds the draft with no `In-Reply-To`, quietly
-   * moving a reply out of its conversation.
+   * intent: `continueDraft` opens every draft as `new`. Without it every
+   * autosave rebuilds the draft with no `In-Reply-To`, moving a reply out of
+   * its conversation.
    */
   it('keeps a continued draft in the thread it belongs to', async () => {
     const user = setup()
@@ -313,8 +307,8 @@ describe('sending', () => {
     const user = setup()
     mount({ intent: { kind: 'new' }, sendAs: [] })
     await user.type(screen.getByRole('textbox', { name: /to/i }), 'bo@example.com{Enter}')
-    // A subject, so the empty-SUBJECT confirmation does not intercept what this
-    // test is about — the empty BODY.
+    // A subject, so the empty-SUBJECT confirmation does not intercept the
+    // empty BODY this test is about.
     await user.type(subjectField(), 'Quick one')
 
     await user.click(screen.getByRole('button', { name: 'Send' }))
@@ -334,13 +328,9 @@ describe('sending', () => {
   })
 
   /**
-   * Send racing the autosave, which is the half "forces a save before sending"
-   * did not cover. `save()` returns immediately when one is already in flight —
-   * it only sets the queued flag — so awaiting it awaited nothing, and Send went
-   * out while the create was still on the wire. `draftId` was therefore still
-   * unknown, main took the compose branch, and the user got a sent message AND
-   * an orphan draft: the exact "one delivered, one orphaned" pair the CLI's
-   * `send --draft` was added to prevent.
+   * Send racing the autosave. If Send does not await the in-flight save chain,
+   * it goes out with `draftId` still unknown, main takes the compose branch,
+   * and the user gets a sent message AND an orphan draft.
    */
   it('waits for an in-flight save, so the send is of the draft rather than a second message', async () => {
     const user = setup()
@@ -410,7 +400,7 @@ describe('sending', () => {
 
 describe('a draft written outside Holi', () => {
   it('converts it, says so, and leaves it editable', async () => {
-    // "No read-only state ever" — the clause a grilling overturned.
+    // No draft is ever read-only.
     draftQuery.mockResolvedValue({
       draftId: 'd-7',
       threadId: null,
@@ -430,8 +420,8 @@ describe('a draft written outside Holi', () => {
   })
 
   it('does not save a loaded draft back over itself before it is touched', async () => {
-    // Loading is not an edit. For a foreign draft this would replace the
-    // original's formatting before the user did anything at all.
+    // Loading is not an edit: saving would replace a foreign draft's original
+    // formatting before the user did anything.
     draftQuery.mockResolvedValue({
       draftId: 'd-7',
       threadId: null,
@@ -451,11 +441,9 @@ describe('a draft written outside Holi', () => {
   })
 
   /**
-   * A draft with no `text/html` part at all — which is every draft the agent
-   * wrote through `holi-google draft` before the marker shipped, and anything
-   * from a plain-text client. `html` is null and `markdown` is null (no marker),
-   * so converting the html means converting nothing: the composer opened blank
-   * and the first keystroke autosaved that blank over the user's message.
+   * A draft with no `text/html` part at all, as a plain-text client writes.
+   * `html` and `markdown` are both null, so converting the html would open blank
+   * and the first keystroke would autosave that over the user's message.
    */
   it('opens a plain-text foreign draft with its text, not blank', async () => {
     const user = setup()
@@ -516,10 +504,8 @@ describe('discarding', () => {
   })
 
   /**
-   * A discard that failed left the draft in Gmail and closed the composer
-   * anyway — so the failure it had just set was rendered at nothing, the user
-   * was told the opposite of what happened, and the unmount save could then
-   * recreate the draft they had asked to delete.
+   * A failed discard leaves the draft in Gmail, so the composer must stay open
+   * and show the failure rather than close as if the draft were gone.
    */
   it('stays open and says so when the discard is refused', async () => {
     const user = setup()
@@ -538,9 +524,8 @@ describe('discarding', () => {
   })
 
   it('does not save the draft it just deleted back into existence', async () => {
-    // The unmount save is what makes closing non-lossy, and after a discard it
-    // is the opposite: a `create` for the message the user just threw away,
-    // reappearing in Drafts moments after they binned it.
+    // After a discard the unmount save would be a `create` for the message the
+    // user just threw away.
     const user = setup()
     const { onDiscarded, unmount } = mount()
     await user.type(subjectField(), 'a')

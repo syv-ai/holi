@@ -1,4 +1,4 @@
-/** The board's only narrowing (features/tasks.md).
+/** The board's only narrowing (docs/features/tasks.md).
  *
  * **Three controls, deliberately:** text search, tag filter, done toggle. Nothing else.
  * The bar is a search-and-narrow aid, not a second configuration surface — no

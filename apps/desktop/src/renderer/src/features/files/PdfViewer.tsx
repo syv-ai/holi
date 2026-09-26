@@ -1,9 +1,7 @@
 /**
- * A `.pdf` tab. Replaces `FilePlaceholder`'s `pdf` case the way `ImageViewer`
- * replaced `image` (D103). The viewer proper is `PdfDocument`, loaded lazily so
- * embedpdf, its worker and the PDFium wasm are their own chunk and the main
- * chunk stays where it was; until it arrives the pane shows the file name, which
- * is what the placeholder showed.
+ * A `.pdf` tab (D103). The viewer proper is `PdfDocument`, loaded lazily so
+ * embedpdf, its worker and the PDFium wasm are their own chunk; until it
+ * arrives the pane shows the file name.
  */
 import { lazy, Suspense } from 'react'
 

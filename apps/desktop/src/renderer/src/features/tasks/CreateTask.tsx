@@ -34,8 +34,8 @@ function folderOf(path: string): string {
 
 const STATUSES: TaskStatus[] = ['todo', 'doing', 'done']
 
-/** The optional fields a `full` create can set before the task exists — the same
- * fields the detail editor patches, held here as a draft until submit. */
+/** The optional fields a `full` create can set before the task exists, held
+ * here as a draft until submit. */
 type Draft = {
   due?: string
   priority?: Priority
@@ -45,12 +45,11 @@ type Draft = {
 }
 
 /**
- * Create a task in any folder — the tasks-domain content block. It knows nothing
- * about overlays or sizing: it fills a Dialog's Header/Body/Footer slots, and the
- * dialog registry summons it at `size: 'md'`. `quick` (⌘T) captures title+folder+
- * status and stays put; `full` (⌘⇧T) shows every field as a draft, writes in one
- * go, then opens the detail editor. Footer owns its own submit state (the slot,
- * not a declarative shell prop) — disabled until a title exists.
+ * Create a task in any folder. It fills a Dialog's Header/Body/Footer slots and
+ * knows nothing about overlays or sizing. `quick` (⌘T) captures
+ * title+folder+status and stays put; `full` (⌘⇧T) shows every field as a
+ * draft, writes in one go, then opens the task file. Submit is disabled until
+ * a title exists.
  */
 export function CreateTask({
   mode,

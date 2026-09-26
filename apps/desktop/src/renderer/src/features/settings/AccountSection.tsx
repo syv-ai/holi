@@ -2,11 +2,8 @@
  * Who you are signed in as, and how to stop being.
  *
  * Its own section rather than a footer on the Vault one: identity is not a
- * property of the vault you happen to have open, and sign-out is the one
- * destructive control in the whole tab. The old panel put it last behind a
- * divider for the same reason, which a rail says more plainly.
- *
- * Ported out of `features/vault/VaultSettings.tsx` unchanged, dialog included.
+ * property of the open vault, and sign-out is the one destructive control in
+ * the tab.
  */
 import { useEffect, useState } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -28,9 +25,8 @@ export function AccountSection(): React.JSX.Element {
   const [alsoDeleteClones, setAlsoDeleteClones] = useState(false)
   const [unpushedText, setUnpushedText] = useState<string | null>(null)
 
-  // Ask what deleting the clones would cost, but only when the dialog opens —
-  // this walks every clone's git status, so it is not worth doing on every
-  // render. Reset the choice each time it opens.
+  // Ask what deleting the clones would cost only when the dialog opens: this
+  // walks every clone's git status. Reset the choice each time it opens.
   useEffect(() => {
     if (!confirmSignOut) return
     setAlsoDeleteClones(false)

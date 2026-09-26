@@ -1,13 +1,9 @@
 /**
- * The vault as a VS Code-style explorer — Phase 2: multi-select, folder
- * rename/delete/move, drag-and-drop (files and folders, atomic multi-move), and
- * cut/copy/paste/duplicate.
+ * The vault as a VS Code-style explorer (docs/features/file-tree.md).
  *
  * Pure projection of `snapshotAtom` (plus the client-only transient folders the
  * action hook owns). headless-tree owns selection/focus/expansion/keyboard; every
- * mutation runs through `useExplorerActions`, which plans the batch atoms. This
- * component keeps only the projection, the headless-tree wiring, and the render —
- * including the per-row context menu, now the Radix ContextMenu primitive.
+ * mutation runs through `useExplorerActions`, which plans the batch atoms.
  */
 import {
   dragAndDropFeature,
@@ -149,10 +145,10 @@ export function FileTree({
   /** Folder ids, for deciding where a dropped file lands. */
   const dirSet = useMemo(() => new Set(snapshot.dirs), [snapshot.dirs])
 
-  // The tree projects notes AND non-markdown files (spec §Arbitrary files); the
-  // scanner keeps them in separate lists so link-aware ops stay markdown-only.
-  // Task files join only when the per-vault toggle is on — the board owns them by
-  // default (features/file-tree.md: task files in the tree).
+  // The tree projects notes AND non-markdown files; the scanner keeps them in
+  // separate lists so link-aware ops stay markdown-only. Task files join only
+  // when the per-vault toggle is on, since the board owns them by default
+  // (docs/features/file-tree.md).
   const docPaths = useMemo(
     () => [
       ...snapshot.docs.map((d) => d.path),
@@ -168,9 +164,6 @@ export function FileTree({
   // alike. A note's frontmatter is deliberately not a second one (D82).
   const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
 
-  // The mutation layer: clipboard, delete preview, transient folders, and every
-  // move/paste/duplicate/rename/delete, planned by pure functions and dispatched
-  // to the batch atoms. FileTree only reads its state and calls its methods.
   const actions = useExplorerActions(docPaths)
 
   const revealRequest = useAtomValue(revealRequestAtom)
@@ -178,20 +171,13 @@ export function FileTree({
 
   // Hidden entries are filtered out unless the per-vault toggle is on. "Hidden"
   // means dot-prefixed (`.holi/…`) OR machine-local (`*.local.*`, e.g.
-  // `USER.local.md` at the root — not dot-prefixed, but the toggle should still
-  // gate it). Managed non-dot files (AGENTS.md, CLAUDE.md, MEMORY.md) are never
-  // hidden.
+  // `USER.local.md`, not dot-prefixed but still gated by the toggle).
   const data = useMemo(() => {
-    // A revealed path outranks the filter, for that one path only (#18). Edit
-    // Source opens `.holi/apps/<id>/index.html`, which is hidden in every vault
-    // that has not turned hidden files on — and a tree that cannot show the file
-    // it was just asked to reveal is the actual bug. The alternative, flipping
-    // `showHiddenByVault`, would change the whole explorer because you clicked
-    // one menu item; this changes nothing the user did not ask for.
-    //
-    // `buildTreeData` grows the ancestor folders from the path itself, so
-    // putting the file back is enough — `.holi`, `.holi/apps` and the app's own
-    // folder appear with it, and only along that branch.
+    // A revealed path outranks the filter, for that one path only: Edit Source
+    // reveals `.holi/apps/<id>/index.html`, hidden in most vaults. Flipping
+    // `showHiddenByVault` instead would change the whole explorer for one menu
+    // click. `buildTreeData` grows the ancestor folders from the path, so only
+    // that branch appears.
     const visible = showHidden
       ? docPaths
       : docPaths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
@@ -204,14 +190,10 @@ export function FileTree({
   }, [docPaths, snapshot.dirs, actions.pendingFolders, showHidden, revealPath])
 
   /**
-   * What git ignores, so the tree can dim it the way every IDE does.
-   *
-   * A file that will never be committed and one that will are otherwise
-   * indistinguishable in this tree, and the NAME does not tell you: `*.local.*`
-   * is only the seeded rule, a vault may ignore anything, and a vault seeded
-   * before D65 carries a bare `USER.md` line. Answered by `git check-ignore` in
-   * main and carried on the snapshot, so this is a lookup rather than a rule
-   * the renderer would have to keep in step with git.
+   * What git ignores, so the tree can dim it. The name does not tell you:
+   * `*.local.*` is only the seeded rule and a vault may ignore anything. Main
+   * answers with `git check-ignore` and carries it on the snapshot, so the
+   * renderer never keeps a rule in step with git.
    */
   const ignoredSet = useMemo(() => new Set(snapshot.ignored), [snapshot.ignored])
 
@@ -260,7 +242,7 @@ export function FileTree({
     onPrimaryAction: (item) => {
       if (!item.isFolder()) onOpenPreview(item.getId())
     },
-    // Folders rename too now (they fan out to N notes via renameFolder).
+    // Folders rename too (they fan out to N notes via renameFolder).
     canRename: () => true,
     onRename: (item, value) => {
       const from = item.getId()
@@ -313,7 +295,7 @@ export function FileTree({
       },
     },
     // Drag files AND folders onto a folder = move; multi-drag moves the whole
-    // selection as ONE atomic batch (spec §Drag-and-drop). No sibling reorder.
+    // selection as ONE atomic batch. No sibling reorder.
     canReorder: false,
     canDrag: () => true,
     canDrop: (items, target) => {
@@ -335,17 +317,14 @@ export function FileTree({
       )
     },
     // A drag carrying OS files, dropped on a ROW. Without these three the
-    // library refuses the drop (`canDropForeignDragObject` defaults to
-    // `() => false`) — and refuses it by returning from its `onDrop` *without*
-    // `preventDefault()`, having already called `stopPropagation()` on the way
-    // in. The container handler below therefore never saw it and nothing
-    // cancelled the browser's default, so Chromium treated the drop as a
-    // navigation and Electron opened the file in a new window. That swallowed
-    // the in-tree move too: a row's drag is a native `startDrag`, so a note
-    // dropped on a folder comes back as a file drop like any other.
+    // library refuses the drop by returning from its `onDrop` *without*
+    // `preventDefault()`, after `stopPropagation()`: the container handler never
+    // sees it and Chromium treats the drop as a navigation, opening the file in
+    // a new window. A row's file drag is a native `startDrag`, so the in-tree
+    // move of a note arrives here as a file drop too.
     //
-    // Scoped to `Files` so the tree's own web drag — which carries no files —
-    // stays on the `canDrop`/`onDrop` pair above and never reaches this one.
+    // Scoped to `Files` so the tree's own web drag (no files) stays on the
+    // `canDrop`/`onDrop` pair above.
     canDropForeignDragObject: (dataTransfer) => dataTransfer.types.includes('Files'),
     // Also `Files`-only: the default derived from the line above accepts any
     // foreign drag whose `effectAllowed` is not 'none', which would light a
@@ -353,12 +332,10 @@ export function FileTree({
     canDragForeignDragObjectOver: (dataTransfer) => dataTransfer.types.includes('Files'),
     onDropForeignDragObject: (dataTransfer, target) => {
       const id = target.item.getId()
-      // Focus the row that received the drop, as the library does for its own
-      // (`draggedItems[0].setFocused()`). Not cosmetic: headless-tree ends a
-      // valid drop with `updateDomFocus()`, which reads `getFocusedItem()`
-      // WITHOUT a null check — with nothing focused it throws from inside a
-      // `setTimeout`, so a drag from Finder into a freshly-launched window
-      // imported the file and then raised an unhandled rejection.
+      // Focus the row that received the drop, as the library does for its own.
+      // Not cosmetic: headless-tree ends a valid drop with `updateDomFocus()`,
+      // which reads `getFocusedItem()` WITHOUT a null check and throws from a
+      // `setTimeout` when nothing is focused (a fresh window).
       target.item.setFocused()
       // On a folder, that folder; on a file, the folder it is in; on the root
       // item, the vault root — the same rule the container drop follows.
@@ -381,24 +358,19 @@ export function FileTree({
   }, [data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
-   * Answer a reveal request (#18): expand down to the path, select it, focus the
-   * row and bring it into view.
+   * Answer a reveal request: expand down to the path, select it, focus the row
+   * and bring it into view.
    *
    * **No dependency array on purpose.** Expanding a folder is headless-tree's
-   * own state, not React's — it re-renders without changing anything this effect
-   * could list as a dep. So the effect runs on every render and claims the nonce
-   * only once the work is actually done; the intermediate render caused by the
-   * expansions is what lets the second half run against rows that now exist.
-   *
-   * A row cannot be focused before its ancestors are expanded, hence the two
-   * passes rather than one.
+   * own state, not React's, so nothing here could be listed as a dep. The effect
+   * runs on every render and claims the nonce only once the work is done; the
+   * render the expansions cause lets the second pass find rows that now exist.
    */
   useEffect(() => {
     const req = revealRequest
     if (req === null || revealedNonce.current === req.nonce) return
-    // A rename field owns the focus and the caret. Yanking either out from under
-    // someone mid-edit is worse than not revealing, so the request is dropped
-    // rather than deferred — by the time the rename ends it is stale anyway.
+    // A rename field owns the focus and the caret, so the request is dropped
+    // rather than deferred: by the time the rename ends it is stale anyway.
     if (tree.isRenamingItem()) {
       revealedNonce.current = req.nonce
       return
@@ -421,21 +393,17 @@ export function FileTree({
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
 
   /**
-   * Files from outside the renderer, landing in `dest`.
-   *
-   * Reached two ways — the container's own handler for a drop on empty space,
-   * and headless-tree's `onDropForeignDragObject` for a drop on a row — so it
-   * lives here rather than inline in either. Both paths must agree; a row that
-   * imported differently from the gap beneath it would be its own bug.
+   * Files from outside the renderer, landing in `dest`. Shared by the
+   * container's drop on empty space and headless-tree's
+   * `onDropForeignDragObject` for a drop on a row, so both paths agree.
    */
   const dropFiles = (dataTransfer: DataTransfer, dest: string): void => {
     setImporting(false)
     const sources = [...dataTransfer.files].map((f) => window.holi.pathForFile(f))
     if (sources.length === 0) return
     // A file dragged out of this very vault and dropped back into it is a
-    // MOVE, and it goes through the move path so links are rewritten and
-    // open tabs follow — copying it would leave a duplicate and a pile of
-    // links pointing at the original.
+    // MOVE, so links are rewritten and open tabs follow; copying would leave a
+    // duplicate with links still pointing at the original.
     const prefix = entry === undefined ? null : `${entry.path}/`
     const mine = prefix === null ? [] : sources.filter((p) => p.startsWith(prefix))
     const theirs = prefix === null ? sources : sources.filter((p) => !p.startsWith(prefix))
@@ -449,15 +417,14 @@ export function FileTree({
   const refused = [...skipped, ...actions.exportFailures]
 
   // The row's context-menu target set: the whole multi-selection when the clicked
-  // row is part of it, else just that row (parity with a right-click in VS Code).
+  // row is part of it, else just that row (as a right-click in VS Code).
   const rowTargets = (id: string): string[] => {
     const sel = tree.getSelectedItems().map((it) => it.getId())
     return sel.length > 1 && sel.includes(id) ? sel : [id]
   }
 
-  // The per-row menu, declarative on the ContextMenu primitive. A single row gets
-  // the create/rename/path actions; a multi-selection is limited to the batch ops
-  // that make sense across a set.
+  // A single row gets the create/rename/path actions; a multi-selection is
+  // limited to the batch ops that make sense across a set.
   const rowMenu = (path: string, isFolder: boolean, targets: string[]) => {
     const folderDest = isFolder ? path : parentOf(path)
     const multi = targets.length > 1
@@ -469,11 +436,9 @@ export function FileTree({
       >
         {!multi && !isFolder && (
           <>
-            {/* A pane is per-document, so this is a file's action and not a
-                folder's. It opens beside what you are reading rather than over
-                it — and if the file is already open in some other pane, it just
-                goes there (`openInNewPane`), because one buffer per file holds
-                across panes. */}
+            {/* A file's action, not a folder's. If the file is already open in
+                another pane it goes there (`openInNewPane`): one buffer per file
+                holds across panes. */}
             <ContextMenuItem onSelect={() => onOpenInNewPane(path)}>
               Open in a New Pane
             </ContextMenuItem>
@@ -493,9 +458,7 @@ export function FileTree({
               Rename…
               <ContextMenuShortcut>F2</ContextMenuShortcut>
             </ContextMenuItem>
-            {/* Every row, not just notes: the map is where every icon lives, so
-                offering the gesture on some rows and not others would invent a
-                rule the user would have to learn. */}
+            {/* Every row, not just notes: the icon map covers every path. */}
             <ContextMenuItem
               onSelect={() =>
                 activeRemote !== null &&
@@ -540,9 +503,9 @@ export function FileTree({
           <ContextMenuShortcut>⌘D</ContextMenuShortcut>
         </ContextMenuItem>
         {/* Out of the vault. Outside the `!multi` guard because both act on a
-            whole selection and on folders, exactly as Cut/Copy/Delete do — and
-            because this is now the ONLY way out: dropping a row into Finder
-            does not work (see not-built.md). */}
+            whole selection and on folders, as Cut/Copy/Delete do. This is the
+            only way out: dropping a row into Finder does not work
+            (docs/not-built.md). */}
         <ContextMenuSeparator />
         <ContextMenuItem onSelect={() => actions.copyOut(targets)}>Copy to Folder…</ContextMenuItem>
         <ContextMenuItem onSelect={() => actions.startMoveOut(targets, isFolder)}>
@@ -580,19 +543,14 @@ export function FileTree({
   }
 
   /**
-   * Where the "new file" / "new folder" input opens, and how deep it sits.
-   *
-   * It used to render at the top of the tree whatever you had clicked, while
-   * the file was still created inside the folder you picked — so the tree
-   * disagreed with what the command was about to do. Now it opens as a child of
-   * that folder, at the indent its contents will have.
+   * Where the "new file" / "new folder" input opens: as a child of the target
+   * folder, at the indent its contents will have.
    */
   const items = tree.getItems().filter((item) => item.getId() !== ROOT_ID)
   const rows = items.map((item) => ({ id: item.getId(), level: item.getItemMeta().level }))
-  // Rows that have just appeared — a folder expanding, a file created, a pull
-  // bringing one in — arrive rather than blinking into place. Computed from what
-  // CHANGED rather than declared on the row, or every unrelated re-render of the
-  // tree would replay the whole list (see lib/use-arrivals.ts).
+  // Rows that have just appeared animate in. Computed from what CHANGED rather
+  // than declared on the row, or every unrelated re-render would replay the
+  // whole list (see lib/use-arrivals.ts).
   const { arrivalProps } = useArrivals(rows.map((r) => r.id))
   const slot = pending === null ? null : pendingSlot(rows, pending.parent)
   const pendingRow = (level: number) => (
@@ -608,7 +566,7 @@ export function FileTree({
           actions.addPendingFolder(folder)
           void createFolder(folder)
         } else {
-          // Open the created file once it lands — a non-md file is not in
+          // Open the created file once it lands: a non-md file is not in
           // `docs`, so opening a tab explicitly is what surfaces it.
           const path = joinPath(pending!.parent, withMdExtension(name))
           void createNote(path).then(() => onOpenPreview(path))
@@ -619,10 +577,8 @@ export function FileTree({
   )
 
   return (
-    // Fills its panel. The tree briefly sized itself to its rows instead, so the
-    // apps list would hug it rather than sink to the bottom of the sidebar —
-    // that job now belongs to the resizable divider between the two panels,
-    // which is a boundary the user can put wherever they want it.
+    // Fills its panel; the resizable divider between it and the apps list sets
+    // the boundary.
     <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
         onNewFile={() => setPending({ kind: 'file', parent: '' })}
@@ -641,9 +597,8 @@ export function FileTree({
           importing && 'bg-primary/5 ring-1 ring-inset ring-primary/40',
         )}
         {...tree.getContainerProps()}
-        // A drop from Finder (FR-13). Guarded on the `Files` type so it never
-        // competes with the tree's own drag, which carries no files — without
-        // that, the in-vault move and the import would both claim every drop.
+        // A drop from Finder. Guarded on the `Files` type so it never competes
+        // with the tree's own drag, which carries no files.
         onDragOver={(e) => {
           if (!e.dataTransfer.types.includes('Files')) return
           e.preventDefault()
@@ -667,10 +622,8 @@ export function FileTree({
           dropFiles(e.dataTransfer, id === null ? '' : dirSet.has(id) ? id : parentOf(id))
         }}
       >
-        {/* One banner, both directions. A file that did not arrive and a file
-            that did not leave are the same class of outcome — something the
-            user asked for silently did not happen — so they share a place to
-            say so rather than competing for the top of the tree. */}
+        {/* One banner for both directions: a file that did not arrive and one
+            that did not leave are the same class of outcome. */}
         {refused.length > 0 && (
           <Button
             variant="link"
@@ -694,12 +647,9 @@ export function FileTree({
           const task = taskByPath.get(id)
           const arrival = arrivalProps(id)
           /**
-           * A breath between the root's folders and its loose files.
-           *
-           * Only at the root, and only on the FIRST file after the last
-           * folder: inside a folder the indent already says where you are, so
-           * a gap there would just be a hole. The tree sorts folders before
-           * files, so one row carries the whole separation.
+           * A gap between the root's folders and its loose files, carried by
+           * the first root file after the last folder (folders sort first).
+           * Inside a folder the indent already separates them.
            */
           const prev = i > 0 ? items[i - 1] : undefined
           const startsRootFiles =
@@ -709,13 +659,9 @@ export function FileTree({
             prev.getItemMeta().level === 0 &&
             prev.isFolder()
           /**
-           * Gitignored, dimmed — VS Code's treatment, and every IDE's.
-           *
-           * On the row's CONTENTS rather than on the row, so a dimmed file
-           * still gets a solid selection highlight when you click it. `isCut`
-           * above does dim the whole row, and means something different: that
-           * is a pending move, a state the row is briefly in, where this is
-           * a standing fact about the file.
+           * Gitignored, dimmed. On the row's CONTENTS rather than the row, so a
+           * dimmed file still gets a solid selection highlight. `isCut` dims the
+           * whole row because it is a transient pending move.
            */
           const dim = ignoredSet.has(id) ? 'opacity-50' : ''
           const rowProps = item.getProps()
@@ -726,12 +672,11 @@ export function FileTree({
                 <div
                   {...rowProps}
                   data-path={id}
-                  // One drag, both directions (FR-13). A web drag cannot tell
-                  // the OS a file is involved, so the row hands the gesture to
-                  // `startDrag` — dropped in Finder the file lands there, and
-                  // dropped back on this window it arrives as a file drop,
-                  // which is where the in-tree move now happens. A folder has
-                  // no single file to hand over, so it keeps the web drag.
+                  // A web drag cannot tell the OS a file is involved, so a file
+                  // row hands the gesture to `startDrag`. Dropped back on this
+                  // window it arrives as a file drop, which is where the
+                  // in-tree move happens (Finder refuses the drop, see
+                  // docs/not-built.md). A folder keeps the web drag.
                   onDragStart={(e) => {
                     if (isFolder) return
                     e.preventDefault()
@@ -739,11 +684,9 @@ export function FileTree({
                   }}
                   onClick={(e) => {
                     // ⇧ toggles one row in or out of the selection, and ⌘ on a
-                    // file opens it in a new pane beside this one. Both are
-                    // answered here with headless-tree's own calls rather than
-                    // passed to its click handler, which reads ⇧ as a range and
-                    // ⌘ as the toggle. Everything else is its handler, whose
-                    // primary action opens the preview (`onPrimaryAction`).
+                    // file opens it in a new pane. Both are handled here because
+                    // headless-tree's click handler reads ⇧ as a range and ⌘ as
+                    // the toggle.
                     if (e.shiftKey) {
                       item.setFocused()
                       item.toggleSelect()
@@ -771,13 +714,9 @@ export function FileTree({
                     isCut ? 'opacity-40' : '',
                   ].join(' ')}
                 >
-                  {/* The chevron column exists only where there is a chevron.
-                        A file used to reserve it and start one slot in, which at
-                        the vault root left every file indented past a folder
-                        that was its sibling, for a control it does not have.
-                        Nesting is already said by the row's indent, and it is
-                        measured from the row's start — so a file inside a folder
-                        still sits one level right of it. */}
+                  {/* The chevron column exists only on folders, so a root file
+                        lines up with its sibling folders. Nesting is said by
+                        the row's indent. */}
                   {isFolder && (
                     <span
                       className={`flex w-4 shrink-0 justify-center text-muted-foreground ${dim}`}
@@ -823,10 +762,9 @@ export function FileTree({
                       >
                         {item.getItemName()}
                       </span>
-                      {/* Today's daily, marked where it lives rather than behind a
-                            chip that named a file you could not see (daily-notes §UX).
-                            Absent in a shared vault, because there is no daily there —
-                            the chip claimed otherwise and no-oped when pressed. */}
+                      {/* Today's daily, marked where it lives
+                            (docs/features/daily-notes.md). Absent in a shared
+                            vault, which has no daily. */}
                       {id === todayDailyPath && (
                         <span className="shrink-0 rounded-full bg-brand/15 px-1.5 text-[10px] leading-4 text-brand">
                           today
@@ -840,8 +778,7 @@ export function FileTree({
               {rowMenu(id, isFolder, rowTargets(id))}
             </ContextMenu>
           )
-          // The input opens where the file will land, so the tree agrees with
-          // what the command is about to do (§New file / new folder).
+          // The input opens where the file will land.
           return slot?.afterId === id ? (
             <Fragment key={id}>
               {row}

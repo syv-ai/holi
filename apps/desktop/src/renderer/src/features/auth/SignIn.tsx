@@ -3,11 +3,9 @@
  * that is already signed in to GitHub.
  *
  * **Two phases, one screen.** `auth.signIn` returns the code to show and opens
- * the browser itself — the URI GitHub handed back, never a hardcoded one.
+ * the browser itself (the URI GitHub handed back, never a hardcoded one).
  * `auth.awaitSignIn` then holds its request open until GitHub answers, so this
- * component makes one call and waits rather than polling `auth.status` and
- * guessing when to stop. The comment above `signInFlow` in `main/router.ts`
- * explains why the router is shaped that way.
+ * component makes one call and waits rather than polling `auth.status`.
  *
  * The token never arrives here. `awaitSignIn` resolves with the viewer and
  * nothing else; the credential stops in main and goes to the keychain.
@@ -23,7 +21,7 @@ type Phase =
   | { kind: 'idle' }
   | { kind: 'starting' }
   | { kind: 'waiting'; userCode: string; verificationUri: string }
-  /** `denied` is the user pressing Cancel on github.com — a normal outcome, and
+  /** `denied` is the user pressing Cancel on github.com: a normal outcome, and
    *  worded as one. `expired` is the code timing out, and only that one offers
    *  to start again, because only that one is worth repeating unchanged. */
   | { kind: 'denied' }
@@ -40,8 +38,7 @@ export function SignIn() {
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // A flow left running holds a polling loop in main against a code nobody is
-  // going to type. Cancelling is cheap; leaking one costs a request every few
-  // seconds until it expires.
+  // going to type, so cancel on unmount.
   useEffect(
     () => () => {
       if (running.current) void trpc.auth.cancelSignIn.mutate()
@@ -50,9 +47,8 @@ export function SignIn() {
     [],
   )
 
-  // The clipboard write can reject (no permission, headless) — that must never
-  // escape into the sign-in flow, so it stays local and silent; the code is on
-  // screen to type by hand regardless.
+  // The clipboard write can reject (no permission, headless). That must never
+  // escape into the sign-in flow; the code is on screen to type by hand.
   async function copyCode(code: string) {
     try {
       await navigator.clipboard.writeText(code)
@@ -73,10 +69,8 @@ export function SignIn() {
       const result = await trpc.auth.awaitSignIn.mutate()
       running.current = false
       if (result.kind === 'granted') setSession(result.viewer)
-      // `cancelled` is US stopping — an unmount, or a second sign-in
-      // superseding this one. The user did nothing and is owed no message, so
-      // it goes quietly back to the button rather than reporting a refusal
-      // they never made.
+      // `cancelled` is US stopping (an unmount, or a second sign-in superseding
+      // this one), so it goes quietly back to the button with no message.
       else if (result.kind === 'cancelled') setPhase({ kind: 'idle' })
       else setPhase({ kind: result.kind })
     } catch (err) {
@@ -127,10 +121,9 @@ export function SignIn() {
           >
             {phase.kind === 'starting' ? 'Opening GitHub…' : 'Sign in with GitHub'}
           </Button>
-          {/* Sign-in grants a broad `repo` token (auth-identity.md §176); a
-              fine-grained PAT scoped to selected repos is the tighter option, so
-              the screen says so. Informational only — there is no PAT-paste flow;
-              the device flow is the sole sign-in path. */}
+          {/* Sign-in grants a broad `repo` token (docs/features/auth.md); a
+              fine-grained PAT is the tighter option, so the screen says so.
+              Informational only: the device flow is the sole sign-in path. */}
           <p className="max-w-xs text-center text-xs text-muted-foreground">
             Holi requests broad repo access.{' '}
             <Button

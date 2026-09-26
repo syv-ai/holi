@@ -1,17 +1,12 @@
 /**
  * A brand-new message, as a dialog (D71).
  *
- * **A dialog is right here and was wrong for reply.** A reply needs the thing
- * it is replying to on screen, so it mounts inline at the foot of the thread. A
- * fresh message has no context to preserve, so a modal costs nothing and gets
- * the composer out of a list pane that is 320px wide.
- *
- * Closing is safe rather than lossy: the composer forces a save on unmount, and
- * the Drafts view is where the message turns up again.
+ * A reply mounts inline under the thread it answers; a fresh message has no
+ * context to preserve, so a modal costs nothing. Closing is safe: the composer
+ * forces a save on unmount, and the Drafts view finds it again.
  *
  * This wrapper exists because the dialog registry carries only serialisable
- * entries — `sendAs` and the address book are fetched here rather than stuffed
- * into a Jotai atom.
+ * entries, so `sendAs` and the address book are fetched here.
  */
 import { useEffect, useState } from 'react'
 import { MailComposer } from './MailComposer'

@@ -1,9 +1,8 @@
 /**
  * The sidebar's list of vault apps.
  *
- * It is hidden when there is none — the same rule the agenda and mail chips
- * follow — because a launcher whose only destination is "go make one" is a dead
- * end wearing the clothes of a feature.
+ * It is hidden when there is none, because a launcher whose only destination is
+ * "go make one" is a dead end.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
@@ -54,8 +53,8 @@ test('lists the apps in sorted order', () => {
 })
 
 test('shows an unfinished app after the finished ones, and says what it needs', async () => {
-  // It was computed and rendered nowhere, which is the exact failure this list
-  // exists to remove: the app does not appear and there is nowhere to look.
+  // The failure this list exists to remove: the app does not appear and there
+  // is nowhere to look.
   withFiles('burndown/index.html', 'burndown/app.yaml', 'half-done/index.html')
   render(<AppsSection />)
 
@@ -121,7 +120,7 @@ test('the unregistered list is sorted and excludes the registered', () => {
   expect(store.get(unregisteredAppIdsAtom)).toEqual(['alpha', 'zeta'])
 })
 
-/** The row labels, in render order — finished first, then unfinished. The
+/** The row labels, in render order: finished first, then unfinished. The
  *  section heading is a button too (it toggles the panel), so it is excluded by
  *  the `aria-expanded` it carries and the rows do not. */
 function rowNames(): string[] {

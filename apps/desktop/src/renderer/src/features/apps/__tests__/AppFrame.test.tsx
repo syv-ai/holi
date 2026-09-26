@@ -1,5 +1,5 @@
 /**
- * The frame a vault app runs in — the renderer half of the boundary.
+ * The frame a vault app runs in: the renderer half of the boundary.
  *
  * What these tests are about is identity and isolation, not rendering: the frame
  * must be sandboxed in the exact way that leaves its origin opaque, it must

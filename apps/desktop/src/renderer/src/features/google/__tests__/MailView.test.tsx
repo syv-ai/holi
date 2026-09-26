@@ -1,11 +1,9 @@
 /**
- * MailView — the reader, at the point where a message body becomes markup.
+ * MailView: the list, the reader, triage, and the wiring around the sanitizer.
  *
- * The sanitizer has its own suite (`lib/__tests__/mail-html.test.tsx`); what is
- * tested here is the wiring around it, which is where the safety property is
- * actually spent: that HTML goes through `sanitizeMailHtml` rather than around
- * it, that a blocked message offers the unblock and that the unblock works, and
- * that a link in a message opens externally instead of navigating the app.
+ * The sanitizer has its own suite (`lib/__tests__/mail-html.test.tsx`); here
+ * the checks are that HTML goes through it rather than around it, that blocked
+ * remote content can be unblocked, and that links open externally.
  */
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -102,8 +100,7 @@ function page(threads: unknown[], nextPageToken: string | null = null) {
   return { threads, nextPageToken, syncedAt: new Date().toISOString() }
 }
 
-/** One thread in the list, one message in it — the list is not what is under
- *  test here, so every case opens the same row. */
+/** One thread in the list, one message in it: every case opens the same row. */
 function withMessage(message: Message, extra: Record<string, unknown> = {}) {
   threadMock.mockResolvedValue(page([summary()]))
   readMock.mockResolvedValue({
@@ -126,13 +123,7 @@ function withMessage(message: Message, extra: Record<string, unknown> = {}) {
   })
 }
 
-/**
- * Point the list somewhere — a tab, Sent, or Drafts.
- *
- * All three used to be reached differently: the tabs through a dropdown, Mail
- * and Drafts through a pair of buttons on a strip of their own. One picker now,
- * so one helper.
- */
+/** Point the list somewhere: a tab, Sent, or Drafts, all in one picker. */
 async function chooseMailbox(
   user: ReturnType<typeof userEvent.setup>,
   label: string | RegExp,
@@ -150,9 +141,8 @@ async function openThread(): Promise<HTMLElement> {
 }
 
 /**
- * The message's own document — an HTML body renders in a sandboxed frame, so
- * everything about how it rendered is *inside* the frame and deliberately not
- * reachable from the app's own DOM.
+ * The message's own document: an HTML body renders in a sandboxed frame, not
+ * in the app's own DOM.
  */
 async function frameOf(article: HTMLElement): Promise<Document> {
   const frame = article.querySelector('iframe')
@@ -163,12 +153,9 @@ async function frameOf(article: HTMLElement): Promise<Document> {
 
 beforeEach(() => {
   threadMock.mockReset()
-  // A default, because the real `trpc.google.thread.query` ALWAYS returns a
-  // promise. A bare `mockReset()` returned `undefined`, and every test that
-  // opened a row without stubbing this threw "Cannot read properties of
-  // undefined (reading 'then')" — which vitest reports as an unhandled error
-  // beside a passing suite rather than as a failure. The double has to keep the
-  // shape of the thing it stands in for.
+  // A default, because the real query ALWAYS returns a promise. A bare
+  // `mockReset()` returns `undefined`, which surfaces as an unhandled error
+  // beside a passing suite rather than as a failure.
   readMock.mockReset().mockResolvedValue({
     id: 't1',
     subject: 'Q2 budget',
@@ -204,13 +191,10 @@ beforeEach(() => {
   discardDraftMock.mockReset().mockResolvedValue({ ok: true })
   draftMock.mockReset().mockResolvedValue(null)
   draftsMock.mockReset().mockResolvedValue([])
-  // The remote-content choice now outlives a component, which is the whole
-  // point of it — so it has to be put back between tests or one test's
-  // "Load images" silently satisfies the next test's assertion.
+  // The remote-content choice outlives a component, so reset it or one test's
+  // "Load images" satisfies the next test's assertion.
   resetMailImagesForTests()
-  // The frame registry is module state on a store the whole suite shares, so a
-  // test that mounted a message would otherwise hand the next one a document
-  // belonging to a component that has since unmounted.
+  // The frame registry is module state shared by the suite.
   resetMailFramesForTests()
   openExternal.mockReset()
   // @ts-expect-error — the preload bridge is not typed onto window in tests.
@@ -222,9 +206,7 @@ afterEach(() => {
 })
 
 test('shows the subject, which is the whole point of a thread list', async () => {
-  // Regression: every row read "(no subject)" from an empty sender, because the
-  // metadata headers were requested as one comma-joined value that Gmail
-  // matched nothing against and answered 200 to. See google-gmail.test.ts.
+  // The header-request side of this is covered in google-gmail.test.ts.
   threadMock.mockResolvedValue(page([summary({ subject: 'Q2 budget', from: { name: 'Jane Doe', email: 'jane@doe.test' } })]))
 
   render(<MailView />)
@@ -251,13 +233,7 @@ test('leaves a thread awaiting the user unmarked', async () => {
   expect(screen.queryByLabelText('you replied')).toBeNull()
 })
 
-/**
- * The list, past "a row per thread".
- *
- * An inbox that shows everything at once is the inbox Gmail's own tabs exist
- * to fix, and a list that stops at 25 with no way forward is a list that hides
- * the rest of the mail.
- */
+/** The list: tabs, search, chips and paging. */
 
 test('shows the whole inbox by default, not one of Gmail’s tabs', async () => {
   threadMock.mockResolvedValue(page([summary()]))
@@ -265,11 +241,8 @@ test('shows the whole inbox by default, not one of Gmail’s tabs', async () => 
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  // Regression, reported from real use as "Email view says No threads".
   // `category:primary` only matches anything if the account USES Gmail's tabs,
-  // and any non-Default inbox layout switches them off. Defaulting to a filter
-  // that can silently empty the inbox is the wrong default: the tabs are
-  // offered, not assumed.
+  // so the tabs are offered, not assumed.
   expect(queryOf(0).category).toBeUndefined()
 })
 
@@ -286,9 +259,7 @@ test('a search is not narrowed by the category, as in Gmail itself', async () =>
   await user.click(screen.getByRole('button', { name: /search mail/i }))
   await user.type(await screen.findByRole('combobox', { name: /search mail/i }), 'from:jane{Enter}')
 
-  // Gmail's own search escapes the tab you are standing in. Silently ANDing the
-  // category onto an explicit query is how a search comes back empty for a
-  // reason the user cannot see.
+  // Gmail's own search escapes the tab you are standing in.
   await waitFor(() => expect(queryOf(2)).toMatchObject({ query: 'from:jane' }))
   expect(queryOf(2).category).toBeUndefined()
 })
@@ -301,8 +272,7 @@ test('says which tab is empty, rather than implying the inbox is', async () => {
   await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
 
-  // An empty tab and an empty mailbox look identical otherwise — which is
-  // exactly how the Primary default read as "the mail is gone".
+  // An empty tab and an empty mailbox look identical otherwise.
   expect(await screen.findByText(/nothing in promotions/i)).toBeInTheDocument()
 })
 
@@ -330,8 +300,7 @@ test('marks a thread with an unsent draft', async () => {
 
   render(<MailView />)
 
-  // The state nothing else in the list reveals: you started replying, stopped,
-  // and there is no other trace of it.
+  // You started replying and stopped.
   expect(await screen.findByLabelText('unsent draft')).toBeInTheDocument()
 })
 
@@ -346,11 +315,9 @@ test('names the tab a thread came from, when it is not Primary', async () => {
 /**
  * The two cases that must render NOTHING, for different reasons.
  *
- * `primary` is what the brief excluded — "not in Primary" — and `null` means the
- * thread carries no `CATEGORY_*` label at all, which is not the same claim. See
- * the `CATEGORIES` note in `MailboxPicker`: on an account that does not use
- * Gmail's tabs, every thread is `null`, so calling that Primary would label a
- * whole inbox with a tab it is not in.
+ * `primary` is not worth naming, and `null` means the thread carries no
+ * `CATEGORY_*` label at all: on an account that does not use Gmail's tabs,
+ * every thread is `null`. See the `CATEGORIES` note in `MailboxPicker`.
  */
 test('says nothing about the tab for Primary, and nothing when there is no tab', async () => {
   threadMock.mockResolvedValue(page([summary({ category: 'primary' })]))
@@ -369,12 +336,8 @@ test('says nothing about the tab for Primary, and nothing when there is no tab',
 })
 
 /**
- * The meeting badge (item 8).
- *
- * A thread with an `.ics` on it is a meeting, and until now the list said
- * nothing about the difference between "Ada wrote to you" and "Ada is expecting
- * you at 14:00". `hasInvite` is resolved in main by one scoped query — see
- * `fetchInviteIds` — so the row only has to draw it.
+ * The meeting badge. `hasInvite` is resolved in main by one scoped query (see
+ * `fetchInviteIds`), so the row only has to draw it.
  */
 test('marks a thread carrying a calendar invite', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true })]))
@@ -396,12 +359,9 @@ test('says nothing about meetings on a thread that is not one', async () => {
 /**
  * The metadata rail.
  *
- * Everything that is a *fact about* the thread — when it arrived, how many
- * messages, whether it is a meeting — sits in one right-aligned group, and none
- * of the thread's *text* is in it. That separation is the whole point: the rail
- * takes only the width it needs, and the sender, subject and preview truncate
- * against it instead of pushing it off the row. The count used to live inside
- * the sender's own truncating span, where a narrow list ate it first.
+ * Facts about the thread (stamp, count, meeting) sit in one right-aligned
+ * group with none of the thread's *text*, so the text truncates against the
+ * rail instead of pushing it off the row.
  */
 test('groups the stamp, the count and the meeting badge apart from the text', async () => {
   threadMock.mockResolvedValue(page([summary({ hasInvite: true, messageCount: 3 })]))
@@ -409,17 +369,14 @@ test('groups the stamp, the count and the meeting badge apart from the text', as
   render(<MailView />)
 
   await screen.findByText('Q2 budget')
-  // Marked rather than found by shape: the stamp's own text is locale-dependent
-  // (`11:00 AM` under the test locale), so querying for it asserts Intl output
-  // instead of the layout under test.
+  // Found by marker, not by the stamp's text, which is locale-dependent.
   const rail = document.querySelector('[data-thread-meta]')
 
   expect(rail).not.toBeNull()
   expect(rail!.textContent).toMatch(/\d{1,2}:\d{2}/)
   expect(rail).toHaveTextContent('(3)')
   expect(rail!.querySelector('[aria-label="meeting invite"]')).not.toBeNull()
-  // The truncating text is NOT in here. That is what lets it ellipsis behind
-  // the rail rather than push it off the row.
+  // The truncating text is NOT in here.
   expect(rail).not.toHaveTextContent('Q2 budget')
   expect(rail).not.toHaveTextContent('Jane')
 })
@@ -442,18 +399,16 @@ test('offers an unsubscribe link for a newsletter', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await user.click(await screen.findByRole('button', { name: /unsubscribe/i }))
 
-  // Opened, never requested by Holi: an unsubscribe URL is a page to look at,
-  // and firing it silently is a request made on the user's behalf.
+  // Opened, never requested by Holi.
   expect(openExternal).toHaveBeenCalledWith('https://list.test/unsub?u=9')
 })
 
 /**
- * Joining a meeting from the reader (item 8).
+ * Joining a meeting from the reader.
  *
  * The link is NOT parsed out of the `.ics`. Main matches the invite's `UID` to
- * the calendar event Holi already has and hands back that event's
- * `conferenceUrl` — one implementation of "where is the video call", in
- * `calendar.ts`, rather than a second one growing on the mail side.
+ * the calendar event and hands back that event's `conferenceUrl`, so
+ * "where is the video call" has one implementation, in `calendar.ts`.
  */
 const MEETING = {
   eventId: 'e1',
@@ -486,16 +441,14 @@ test('spends nothing looking for a meeting in a thread that has no invite', asyn
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
-  // The summary already says there is no `.ics`, so asking would be two
-  // requests to be told so.
+  // The summary already says there is no `.ics`.
   expect(meetingMock).not.toHaveBeenCalled()
   expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
 })
 
 /**
- * A meeting with no video call at all — a room booking, or a phone call. The
- * event is still worth reaching, and "nothing to join" must not render as a
- * Join button that opens something plausible.
+ * A meeting with no video call: the event is still worth reaching, but not
+ * through a Join button.
  */
 test('offers the calendar page when there is nothing to join', async () => {
   withMessage({ body: 'in the kitchen', html: null })
@@ -521,8 +474,7 @@ test('says nothing when the invite is not on the calendar', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
   await waitFor(() => expect(meetingMock).toHaveBeenCalled())
-  // Declined, or already over. Both are "there is nothing to join", and a
-  // button here would be a guess.
+  // Declined, or already over: nothing to join.
   expect(screen.queryByRole('button', { name: /join/i })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /open this meeting/i })).not.toBeInTheDocument()
 })
@@ -581,8 +533,7 @@ test('loads the next page when asked', async () => {
 
   await waitFor(() => expect(screen.getByText('Second page')).toBeInTheDocument())
   expect(queryOf(1)).toMatchObject({ pageToken: 'page-2' })
-  // Appended, not replaced — "load more" that loses the page above it is a
-  // pagination control pretending to be one.
+  // Appended, not replaced.
   expect(screen.getByText('First page')).toBeInTheDocument()
   // And there is nothing left to ask for.
   expect(screen.queryByRole('button', { name: /load more/i })).toBeNull()
@@ -609,14 +560,13 @@ test('opens an attachment in Gmail rather than downloading it', async () => {
   const article = await openThread()
   await user.click(within(article).getByRole('button', { name: /q2-deck\.pdf/i }))
 
-  // The scope is read-only and v1 does not download: the honest affordance is
-  // the thread in Gmail, where the attachment actually is.
+  // Holi does not fetch attachment bytes: the thread in Gmail is where it is.
   expect(openExternal).toHaveBeenCalledWith('https://mail.google.com/x')
 })
 
 test('renders an HTML body as real markup, inside a frame of its own', async () => {
-  // A word that appears ONLY in the body. The recipient's name would otherwise
-  // satisfy the second assertion by accident — the header renders it as a link.
+  // A word that appears ONLY in the body: the header renders the recipient's
+  // name, which would satisfy the second assertion by accident.
   withMessage({
     body: 'the quarterly plan is attached',
     html: '<p>the <b>quarterly</b> plan is attached</p>',
@@ -625,7 +575,6 @@ test('renders an HTML body as real markup, inside a frame of its own', async () 
   const article = await openThread()
   const frame = await frameOf(article)
 
-  // The point of the whole change: a designed message reads as designed mail.
   expect(frame.querySelector('b')?.textContent).toBe('quarterly')
   // And it is emphatically NOT in the app's document.
   expect(within(article).queryByText(/quarterly/)).toBeNull()
@@ -633,7 +582,7 @@ test('renders an HTML body as real markup, inside a frame of its own', async () 
 
 test('the frame is sandboxed without allow-scripts', async () => {
   // Granting `allow-scripts` alongside `allow-same-origin` would let framed
-  // content remove its own sandbox — the one combination that must never ship.
+  // content remove its own sandbox.
   withMessage({ body: 'x', html: '<p>x</p>' })
 
   const article = await openThread()
@@ -653,7 +602,7 @@ test('the frame document denies everything by default', async () => {
 
 test('renders a text-only body as text, never as markup', async () => {
   // A plain-text message that happens to contain angle brackets must not be
-  // parsed — this is the path where there is no sanitizer to save us.
+  // parsed: there is no sanitizer on this path.
   withMessage({ body: 'the tag is <b>bold</b>', html: null })
 
   const article = await openThread()
@@ -670,7 +619,7 @@ test('blocks a remote image and offers to load it', async () => {
 
   // Nothing was fetched: no src at all, so no read receipt reached the sender.
   expect(frame.querySelector('img')?.hasAttribute('src')).toBe(false)
-  // Belt and braces — the frame's own policy would refuse the fetch anyway.
+  // Belt and braces: the frame's own policy would refuse the fetch anyway.
   expect(
     frame.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content'),
   ).not.toContain('https:')
@@ -689,14 +638,13 @@ test('loads the images when the user asks, for that message only', async () => {
       'https://cdn.test/logo.png',
     ),
   )
-  // The frame's policy has to widen with it, or the src would be there and the
-  // image still would not load.
+  // The frame's policy has to widen with it.
   expect(
     (await frameOf(article))
       .querySelector('meta[http-equiv="Content-Security-Policy"]')
       ?.getAttribute('content'),
   ).toContain('https:')
-  // The offer is gone once taken — there is nothing left to unblock.
+  // The offer is gone once taken.
   expect(within(article).queryByRole('button', { name: /load images/i })).toBeNull()
 })
 
@@ -723,16 +671,13 @@ test('opens a link in the body externally instead of navigating the frame', asyn
   const notCancelled = clickInFrame(frame, 'a')
 
   expect(openExternal).toHaveBeenCalledWith('https://syv.ai')
-  // Left to itself the frame would navigate to the page in place — which is
-  // precisely the remote content the whole feature keeps out.
+  // Left to itself the frame would navigate in place, loading remote content.
   expect(notCancelled).toBe(false)
 })
 
 test('refuses to open a link scheme it does not trust, and still does not navigate', async () => {
-  // `ftp:` on purpose, not `javascript:` or `file:` — DOMPurify strips those,
-  // so a test using them would pass without the second gate existing. This one
-  // survives sanitization and is refused here, at the point where a URL would
-  // actually leave the app.
+  // `ftp:` on purpose, not `javascript:` or `file:`: DOMPurify strips those, so
+  // a test using them would pass without the second gate existing.
   withMessage({ body: 'x', html: '<a href="ftp://evil.test/x">download</a>' })
 
   const frame = await frameOf(await openThread())
@@ -747,11 +692,9 @@ test('refuses to open a link scheme it does not trust, and still does not naviga
 /**
  * The split.
  *
- * The width itself is not assertable — `react-resizable-panels` sizes from
- * measured geometry and jsdom measures none. What these check is the wiring
- * either side of the measurement: that there is a handle to drag at all
- * (the list was a fixed `w-80` before), and that a width already saved reaches
- * the panel rather than being read from a per-vault store mail never writes to.
+ * The width itself is not assertable: `react-resizable-panels` sizes from
+ * measured geometry and jsdom measures none. These check that there is a handle
+ * and that the saved width is read from the global store.
  */
 test('the list and the reader are separated by a draggable handle', async () => {
   threadMock.mockResolvedValue(page([summary()]))
@@ -773,10 +716,7 @@ test('remembers its width per account, not per vault', async () => {
   reads.mockRestore()
 
   // Mail shows one Google account whichever vault is open, and opens with no
-  // vault at all — so the split is filed under the account. The per-vault store
-  // would remember a different width per vault for identical content, and would
-  // decline to save anything at all until a vault exists (`usePanelLayout`
-  // cannot key a write on a null remote).
+  // vault at all (`usePanelLayout` cannot key a write on a null remote).
   expect(keys).toContain('holi:panelLayouts:global')
   expect(keys).not.toContain('holi:panelLayouts')
 })
@@ -784,9 +724,7 @@ test('remembers its width per account, not per vault', async () => {
 /**
  * The toolbar.
  *
- * One row, no heading. Search is an icon until it is wanted, because a
- * permanently-open field in a panel this narrow spends a whole row on a control
- * used occasionally — and the list is what the pane is for.
+ * One row, no heading. Search is an icon until it is wanted.
  */
 
 test('search is an icon until it is asked for', async () => {
@@ -801,8 +739,7 @@ test('search is an icon until it is asked for', async () => {
   await user.click(screen.getByRole('button', { name: /search mail/i }))
 
   const field = await screen.findByRole('combobox', { name: /search mail/i })
-  // Focused on unfold: the click that opened it is the same gesture as the
-  // intent to type, and a field that looks ready but is not is worse than none.
+  // Focused on unfold: the click that opened it is the intent to type.
   expect(field).toHaveFocus()
 })
 
@@ -811,8 +748,8 @@ test('⌘F opens search when the pane has focus', async () => {
   const user = userEvent.setup()
 
   render(<MailView />)
-  // Focus something inside the pane — the binding is deliberately scoped to the
-  // pane rather than the document, so mail's ⌘F cannot fire from the editor.
+  // Focus something inside the pane: the binding is scoped to the pane, not the
+  // document.
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await user.keyboard('{Meta>}f{/Meta}')
 
@@ -825,9 +762,7 @@ test('the view carries no redundant "Mail" heading', async () => {
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  // The tab already says Mail. A title inside a pane that is already labelled
-  // spends the narrowest dimension of the narrowest panel on a word nobody
-  // reads twice.
+  // The tab already says Mail.
   expect(screen.queryByRole('heading', { name: /^mail$/i })).toBeNull()
 })
 
@@ -844,8 +779,7 @@ test('the unread toggle narrows the list, and survives a search', async () => {
   await user.click(screen.getByRole('button', { name: /search mail/i }))
   await user.type(await screen.findByRole('combobox', { name: /search mail/i }), 'budget{Enter}')
 
-  // Unlike a category, unread is a STATE rather than a place — so a search
-  // keeps it, where a search deliberately escapes the category tab.
+  // Unread is a STATE rather than a place, so a search keeps it.
   await waitFor(() => expect(queryOf(2)).toMatchObject({ query: 'budget', unread: true }))
 })
 
@@ -856,9 +790,7 @@ test('the footer reports sync and Gmail’s own exact counts', async () => {
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
 
-  // Exact, from labels.get — not the resultSizeEstimate the category picker
-  // refuses to show, which is approximate and so would be a number people
-  // trust and it would be wrong.
+  // Exact, from labels.get, not the approximate resultSizeEstimate.
   expect(await screen.findByText(/7 unread · 431 in inbox/)).toBeInTheDocument()
   expect(screen.getByText(/synced/i)).toBeInTheDocument()
 })
@@ -870,15 +802,15 @@ test('the footer counts only what is on screen when Gmail will not say', async (
   render(<MailView />)
   await screen.findByRole('button', { name: /Q3 plan/ })
 
-  // "0 unread" would be a claim. A count of what is rendered cannot be wrong.
+  // "0 unread" would be a claim.
   expect(await screen.findByText(/2 shown/)).toBeInTheDocument()
 })
 
 /**
  * The reader.
  *
- * A thread is one scrolling column of messages, each at its full height. The
- * history above the newest message is context you open when you want it.
+ * A thread is one scrolling column of messages, each at its full height, with
+ * the history above the newest message collapsed.
  */
 
 test('opens the newest message and collapses the history above it', async () => {
@@ -917,7 +849,6 @@ test('opens the newest message and collapses the history above it', async () => 
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
-  // A ten-message thread that opens fully expanded buries the part that is new.
   const older = await screen.findByRole('button', { name: /expand message 1 of 2 from Jane/i })
   expect(screen.getByRole('button', { name: /collapse message 2 of 2 from Mette/i })).toBeInTheDocument()
 
@@ -930,10 +861,8 @@ test('opens the newest message and collapses the history above it', async () => 
 /**
  * The metadata header.
  *
- * Labelled rows, not the running `Jane to ada@syv.ai · cc …` sentence this used
- * to be — a reader checking whether they were addressed or copied is doing a
- * lookup, and a lookup wants a column. A row is ABSENT rather than blank when
- * the header carried nothing.
+ * Labelled rows, not a sentence. A row is ABSENT rather than blank when the
+ * header carried nothing.
  */
 test('names the fields a message actually has, and no others', async () => {
   withMessage({ body: 'hello', html: null }, { cc: [{ name: 'Bo', email: 'bo@example.com' }] })
@@ -943,8 +872,7 @@ test('names the fields a message actually has, and no others', async () => {
   expect(within(reader).getByText('From')).toBeInTheDocument()
   expect(within(reader).getByText('To')).toBeInTheDocument()
   expect(within(reader).getByText('Cc')).toBeInTheDocument()
-  // Gmail strips Bcc from delivered mail, so it is empty here — and an empty
-  // row would claim the message had one.
+  // Gmail strips Bcc from delivered mail, so it is empty here.
   expect(within(reader).queryByText('Bcc')).not.toBeInTheDocument()
 })
 
@@ -958,8 +886,7 @@ test('shows Bcc when the message carries one', async () => {
   expect(within(reader).getByRole('button', { name: /about Kim/i })).toBeInTheDocument()
 })
 
-/** Where you are in the conversation — suppressed when there is no conversation
- *  to be in the middle of. */
+/** Where you are in the conversation, suppressed on a one-message thread. */
 test('a one-message thread shows no position counter', async () => {
   withMessage({ body: 'hello', html: null })
 
@@ -976,25 +903,20 @@ test('an address is a person you can act on, not just a name', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
   await user.click(await screen.findByRole('button', { name: /about Jane/i }))
 
-  // The address is the whole reason main stopped throwing it away: a display
-  // name cannot be mailed, copied, or told apart from a namesake.
+  // A display name cannot be mailed, copied, or told apart from a namesake.
   expect(await screen.findByText('jane@example.com')).toBeInTheDocument()
 
   await user.click(screen.getByRole('button', { name: /^email$/i }))
 
-  // Composing is a mailto: handoff — the granted scope is read-only, so the
-  // OS's mail client sends and Holi does not pretend it can.
+  // "Email" is a mailto: handoff to the OS's mail client.
   expect(openExternal).toHaveBeenCalledWith('mailto:jane@example.com')
 })
 
 /**
  * "@" completion.
  *
- * The people come from the mail already in hand — there is no contacts scope
- * (`GOOGLE_SCOPES` is gmail + calendar, both read-only), so an address book
- * would mean a new Google API and a fresh consent screen. What the cache can
- * see is everyone who has written to you, which is most of who anyone searches
- * for. These are the pure parts, tested directly rather than through the field.
+ * People come from the senders of loaded mail, ranked first, then the address
+ * book. These are the pure parts, tested directly rather than through the field.
  */
 
 test('an @ only opens the list while it is still one word', () => {
@@ -1003,7 +925,7 @@ test('an @ only opens the list while it is still one word', () => {
   // Whitespace ends it: `@` in prose is not a request for a person.
   expect(mentionAt('@met budget')).toBeNull()
   // And an address the user already accepted must not reopen the list on its
-  // own `@` — this is what made the popup flicker back after every completion.
+  // own `@`.
   expect(mentionAt('from:jane@syv.ai')).toBeNull()
   expect(mentionAt('budget')).toBeNull()
 })
@@ -1012,8 +934,7 @@ test('accepting a person leaves a query the user could have typed', () => {
   const query = 'from:@met'
   expect(replaceMention(query, mentionAt(query)!, 'mette@syv.ai')).toBe('from:mette@syv.ai ')
 
-  // Gmail's own grammar either way — a bare `@mette` is not valid, so the
-  // prefix is supplied when the user has not already written one.
+  // A bare `@mette` is not valid Gmail grammar, so the prefix is supplied.
   const bare = '@met'
   expect(replaceMention(bare, mentionAt(bare)!, 'mette@syv.ai')).toBe('from:mette@syv.ai ')
 })
@@ -1023,8 +944,8 @@ test('people are ranked by how often you actually hear from them', () => {
     { from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } },
     { from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } },
     { from: { name: 'Anders Skøt', email: 'anders@krifa.dk' } },
-    // No address to act on — a `From` the parser could not read. Never offered,
-    // because completing to an empty address produces a query matching nothing.
+    // A `From` the parser could not read: never offered, as an empty address
+    // produces a query matching nothing.
     { from: { name: 'Mystery', email: '' } },
   ]
 
@@ -1040,7 +961,7 @@ test('people are ranked by how often you actually hear from them', () => {
 test('the address book fills in behind senders, never over them', () => {
   const threads = [{ from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } }]
   const contacts = [
-    // Someone who has not written recently — the whole reason to want contacts.
+    // Someone who has not written recently.
     { name: 'Signe Holm', email: 'signe@syv.ai' },
     // The same person as the sender above, as the address book has them.
     { name: 'Mette N.', email: 'mette@syv.ai' },
@@ -1048,18 +969,15 @@ test('the address book fills in behind senders, never over them', () => {
 
   const all = matchPeople(threads, '', contacts)
 
-  // Whoever actually writes to you outranks the address book, which carries no
-  // frequency to rank on.
+  // Senders outrank the address book, which carries no frequency.
   expect(all.map((p) => p.email)).toEqual(['mette@syv.ai', 'signe@syv.ai'])
-  // Not duplicated, and the sender's own count survives — a contact must not
-  // flatten someone already ranked to zero.
+  // Not duplicated, and the sender's own count survives.
   expect(all[0]!.count).toBe(1)
   expect(all[0]!.name).toBe('Mette Nielsen')
 })
 
 test('no contacts is not a broken dropdown — the sender corpus still answers', () => {
-  // What a cold contacts API, a refusal, or a grant predating contacts.readonly
-  // all look like here. Completion has to keep working.
+  // A cold contacts API, a refusal, or a grant without contacts.readonly.
   const threads = [{ from: { name: 'Mette Nielsen', email: 'mette@syv.ai' } }]
 
   expect(matchPeople(threads, 'mette', []).map((p) => p.email)).toEqual(['mette@syv.ai'])
@@ -1085,16 +1003,11 @@ test('typing @ in the search box offers people from the mail on screen', async (
 })
 
 /**
- * Triage (D68) — the first stateful things Holi does to a mailbox.
- *
- * What matters here is the *wiring*, which is the half jsdom can prove: that
- * opening spends a request only when there is something to change, that the row
- * moves without a refetch, and that a refusal puts the row back. Whether the
- * buttons land where a person expects them is layout, and this file cannot see
- * layout at all.
+ * Triage (D68): opening spends a request only when there is something to
+ * change, the row moves without a refetch, and a refusal puts the row back.
  */
 
-/** The row's name span carries the unread weight — see `ThreadRow`. */
+/** The row's name span carries the unread weight: see `ThreadRow`. */
 function rowIsUnread(row: HTMLElement): boolean {
   return row.querySelector('.font-semibold') !== null
 }
@@ -1111,8 +1024,7 @@ test('opening an unread thread marks it read, once, and the row stops being bold
 
   await waitFor(() => expect(setReadMock).toHaveBeenCalledWith({ id: 't1', read: true }))
   expect(setReadMock).toHaveBeenCalledTimes(1)
-  // Locally, with no second `threads.query`. A refetch would spend the whole
-  // saving `history.list` exists for.
+  // Locally, with no second `threads.query`.
   await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(false))
   expect(threadMock).toHaveBeenCalledTimes(1)
 })
@@ -1138,8 +1050,7 @@ test('a refused mark-read puts the row back to unread', async () => {
   await user.click(await screen.findByRole('button', { name: /Q2 budget/ }))
 
   await waitFor(() => expect(setReadMock).toHaveBeenCalled())
-  // The optimistic clear is undone: the mailbox still says unread, so the list
-  // must too. This is the exact state a grant older than GOOGLE_SCOPES produces.
+  // The optimistic clear is undone: the mailbox still says unread.
   await waitFor(() => expect(rowIsUnread(screen.getByRole('button', { name: /Q2 budget/ }))).toBe(true))
 })
 
@@ -1153,7 +1064,7 @@ test('stars and unstars the open thread', async () => {
   await user.click(screen.getByRole('button', { name: 'star this thread' }))
 
   await waitFor(() => expect(setStarredMock).toHaveBeenCalledWith({ id: 't1', starred: true }))
-  // The button becomes its own inverse, so the state is legible without a legend.
+  // The button becomes its own inverse.
   const unstar = await screen.findByRole('button', { name: 'unstar this thread' })
   await user.click(unstar)
   await waitFor(() => expect(setStarredMock).toHaveBeenLastCalledWith({ id: 't1', starred: false }))
@@ -1169,8 +1080,7 @@ test('archiving removes the row and closes the reader', async () => {
   await user.click(screen.getByRole('button', { name: 'archive this thread' }))
 
   await waitFor(() => expect(archiveMock).toHaveBeenCalledWith({ id: 't1' }))
-  // Both halves. Leaving the reader open on a thread that has left the list is
-  // how `openSummary` keeps rendering something the mailbox no longer holds.
+  // Both halves: the row goes and the reader closes.
   await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
   expect(screen.queryByRole('article')).toBeNull()
   expect(screen.getByRole('button', { name: /Other/ })).toBeInTheDocument()
@@ -1200,17 +1110,13 @@ test('a refused archive puts the thread back in the list', async () => {
   await user.click(screen.getByRole('button', { name: 'archive this thread' }))
 
   await waitFor(() => expect(archiveMock).toHaveBeenCalled())
-  // Still there. An optimistic removal that is never undone loses mail from the
-  // list until a full refresh, and the user has no reason to suspect one.
+  // Still there.
   await waitFor(() => expect(screen.getByRole('button', { name: /Q2 budget/ })).toBeInTheDocument())
 })
 
 test('a refused write says why, instead of silently snapping back', async () => {
-  // The failure mode this exists for, from real use: a grant without
-  // gmail.modify loads mail perfectly and refuses every write. The revert put
-  // the row back exactly as it was, which is indistinguishable from the click
-  // never registering — so the symptom was "nothing happens" and the fix
-  // (reconnect) was unguessable.
+  // A grant without gmail.modify loads mail and refuses every write. A silent
+  // revert is indistinguishable from the click never registering.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary({ unread: true })]))
   setReadMock.mockRejectedValue(new Error('this Google permission was not granted'))
@@ -1222,8 +1128,7 @@ test('a refused write says why, instead of silently snapping back', async () => 
 })
 
 test('a rate limit is not reported as a permissions problem', async () => {
-  // Sending someone to re-consent for a transient throttle is the wrong-fix
-  // problem `classify` exists to avoid in main; it must survive the trip here.
+  // Re-consent is the wrong fix for a transient throttle (`classify` in main).
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   archiveMock.mockRejectedValue(new Error('Google is rate limiting this request'))
@@ -1238,19 +1143,13 @@ test('a rate limit is not reported as a permissions problem', async () => {
 })
 
 /**
- * The remote-content choice, and how long each version of it lasts.
- *
- * Reported from real use: "Load images" worked and then did not — closing the
- * thread and reopening it put the banner straight back. The choice lived in the
- * component, and the reader unmounts every time a thread is closed.
- *
- * Two answers are offered because they are two different promises: *this
- * message* has no reason to outlive the session, and *this sender* would be
- * worthless if it did not.
+ * The remote-content choice, and how long each version of it lasts: *this
+ * message* lasts the session and must survive the reader unmounting; *this
+ * sender* is remembered in main.
  */
 
-/** Reopen the same thread from scratch, as closing the reader and coming back
- *  does — a fresh mount, so nothing component-local survives. */
+/** Reopen the same thread from a fresh mount, so nothing component-local
+ *  survives. */
 async function reopenThread(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
   cleanup()
   render(<MailView />)
@@ -1270,7 +1169,6 @@ test('an unblocked message stays unblocked when the reader is closed and reopene
 
   const reopened = await reopenThread(user)
 
-  // The whole bug: this used to be back, and the images with it.
   expect(within(reopened).queryByRole('button', { name: /^load images$/i })).toBeNull()
   expect((await frameOf(reopened)).querySelector('img')?.getAttribute('src')).toBe(
     'https://cdn.test/logo.png',
@@ -1284,7 +1182,7 @@ test('“load images” is that message only, not every message from the sender'
   const article = await openThread()
   await user.click(within(article).getByRole('button', { name: /^load images$/i }))
 
-  // Nothing was stored. The one-off must not quietly become standing consent.
+  // Nothing was stored: the one-off must not become standing consent.
   await waitFor(() => expect(allowImagesFromMock).not.toHaveBeenCalled())
 })
 
@@ -1331,9 +1229,8 @@ test('offers nothing to remember when the sender could not be parsed', async () 
 /**
  * The canvas a message renders on.
  *
- * Reported from real use: rich mail and headings came out black on the dark
- * theme's background. Mail declares its ink and inherits its paper — see
- * `canvasFor` — so a message that brings any design of its own gets white.
+ * Mail declares its ink and inherits its paper (see `canvasFor`), so a message
+ * that brings any design of its own gets white.
  */
 test('a designed message renders on paper, not on the dark theme', async () => {
   withMessage({ body: 'hello', html: '<p style="color:#333333">the quarterly plan</p>' })
@@ -1352,16 +1249,14 @@ test('prose that brought no design keeps the app’s own theme', async () => {
   const article = await openThread()
   const frame = await frameOf(article)
 
-  // Continuity where it is safe: a plain message should not be a white card in
-  // a dark app for no reason.
+  // A plain message should not be a white card in a dark app.
   expect(frame.querySelector('style')?.textContent).not.toContain('color-scheme: light')
 })
 
 /**
  * Unread per Gmail tab.
  *
- * The picker showed no counts because the obvious source is an estimate. These
- * are counted, and paid for only when the menu is opened.
+ * Counted, not estimated, and paid for only when the menu is opened.
  */
 test('the category picker spends nothing until it is opened', async () => {
   threadMock.mockResolvedValue(page([summary()]))
@@ -1392,22 +1287,18 @@ test('shows the unread count beside each tab, and 500+ past a page', async () =>
 
   const menu = await screen.findByRole('menu')
   expect(within(menu).getByRole('menuitem', { name: /Primary/ })).toHaveTextContent('4')
-  // Honest past the page rather than a flat 500, which would quietly mean
-  // "at least 500".
+  // "500+" past the page, not a flat 500.
   expect(within(menu).getByRole('menuitem', { name: /Promotions/ })).toHaveTextContent('500+')
   // "All mail" is the whole inbox's unread, already in hand from mailCounts.
   expect(within(menu).getByRole('menuitem', { name: /All mail/ })).toHaveTextContent('12')
-  // A tab whose own request failed shows nothing — an absent number says "not
-  // known", where 0 would say "nothing here".
+  // A tab whose own request failed shows nothing: absent says "not known",
+  // 0 would say "nothing here".
   expect(within(menu).getByRole('menuitem', { name: /Social/ })).not.toHaveTextContent(/\d/)
 })
 
 /**
- * ⌘F with a thread open means "find in what I am reading".
- *
- * It opened the LIST search instead — a Gmail query against the whole mailbox,
- * which is a reasonable thing to want and never what ⌘F means with a
- * conversation in front of you.
+ * ⌘F with a thread open means "find in what I am reading", not the list's
+ * Gmail query.
  */
 
 /** A two-message thread, both plain text, with a term in each. */
@@ -1448,9 +1339,8 @@ function twoMessageThread() {
  * Put the keyboard inside the reader.
  *
  * A message header is the focusable thing in there that mutates nothing. It
- * collapses the message as a side effect, which is useful rather than a
- * nuisance: it leaves the whole thread collapsed, so a find that reports two
- * matches has had to expand it.
+ * collapses the message, leaving the whole thread collapsed, so a find that
+ * reports two matches has had to expand it.
  */
 async function focusReader(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(await screen.findByRole('button', { name: /collapse message 2 of 2/i }))
@@ -1494,11 +1384,8 @@ test('counts every match across the thread and steps through them', async () => 
 
   await user.type(await screen.findByRole('textbox', { name: /find in conversation/i }), 'budget')
 
-  // Both messages, though `focusReader` left the whole thread COLLAPSED —
-  // a collapsed message has no frame, so a search has to expand the thread or
-  // the count reads as "not in this conversation".
-  // Queried by role, not by text: "1/2" is also what a two-message thread's
-  // position indicator says, and the two mean entirely different things.
+  // Both messages, though `focusReader` left the whole thread COLLAPSED.
+  // Queried by role, not by text: "1/2" is also the position indicator.
   expect(await screen.findByRole('status')).toHaveTextContent('1/2')
 
   await user.keyboard('{Enter}')
@@ -1544,13 +1431,8 @@ test('closing the find takes every mark with it', async () => {
 /**
  * ⌘F, and where the keyboard goes when the search closes.
  *
- * The binding is on the pane's container, which is what "with this pane
- * focused" actually means — a keydown only reaches it when focus is already
- * inside, so mail's ⌘F cannot fire while the user is typing in the editor. The
- * cost is that focus escaping to `document.body` makes the shortcut dead, and
- * closing the search field is exactly what used to do that: the input unmounts,
- * nothing takes its place, and ⌘F silently stopped working until something in
- * the pane was clicked.
+ * The binding is on the pane's container, so focus escaping to `document.body`
+ * when the search input unmounts would make the shortcut dead.
  */
 test('⌘F still works after the search has been closed', async () => {
   threadMock.mockResolvedValue(page([summary()]))
@@ -1577,8 +1459,7 @@ test('⌘F still works after the search has been closed', async () => {
  *
  * The selection is a MODE: while one exists the toolbar gives way to the
  * selection bar, because search, the mailbox picker and refresh would each
- * destroy or invalidate the selection, and offering them is offering a way to
- * lose work silently.
+ * destroy or invalidate the selection.
  */
 
 /** Three rows, so a shift-range has a middle. */
@@ -1604,7 +1485,7 @@ test('builds a selection with cmd-click and says how big it is', async () => {
   await user.keyboard('{/Meta}')
 
   expect(await screen.findByText('2 selected')).toBeInTheDocument()
-  // Cmd-click selects rather than opening — the thread was never fetched.
+  // Cmd-click selects rather than opening: the thread was never fetched.
   expect(readMock).not.toHaveBeenCalled()
 })
 
@@ -1635,7 +1516,7 @@ test('archives every selected thread through the same per-thread write', async (
   await waitFor(() => expect(archiveMock).toHaveBeenCalledTimes(2))
   expect(archiveMock).toHaveBeenCalledWith({ id: 't1' })
   expect(archiveMock).toHaveBeenCalledWith({ id: 't2' })
-  // The bar goes with the selection rather than describing rows on their way out.
+  // The bar goes with the selection.
   expect(screen.queryByText(/selected/)).toBeNull()
 })
 
@@ -1672,9 +1553,8 @@ test('Escape clears a selection', async () => {
 })
 
 test('forgets a selected thread that is no longer in the list', async () => {
-  // The list is replaced wholesale by every refresh and every optimistic write,
-  // so an id can outlive the row it names — and "3 selected" over two rows is a
-  // count of threads the user can neither see nor act on.
+  // The list is replaced wholesale by every refresh and optimistic write, so an
+  // id can outlive the row it names.
   threeThreads()
   const user = userEvent.setup()
   render(<MailView />)
@@ -1697,9 +1577,7 @@ test('forgets a selected thread that is no longer in the list', async () => {
 /**
  * The row context menu.
  *
- * Every verb in it already existed in the reader's header and every one cost an
- * open first — which for archiving a newsletter is backwards, since opening it
- * marks it read on the way past.
+ * Triage without opening, since opening marks the thread read.
  */
 
 /** Right-click the one thread row and hand back the menu. */
@@ -1721,7 +1599,7 @@ test('archives a thread from the row, without opening it', async () => {
   await waitFor(() => expect(archiveMock).toHaveBeenCalledWith({ id: 't1' }))
   // Optimistic, through the same `write` the header buttons use.
   await waitFor(() => expect(screen.queryByRole('button', { name: /Q2 budget/ })).toBeNull())
-  // The thread was never read, which is the whole point of triaging from here.
+  // The thread was never read.
   expect(readMock).not.toHaveBeenCalled()
 })
 
@@ -1737,8 +1615,7 @@ test('offers the direction the thread is not already in', async () => {
 })
 
 test('puts a read thread back on the pile', async () => {
-  // The move the reader's header cannot express at all: opening a thread is
-  // what marks it read, so "mark unread" has nowhere else to live.
+  // Opening a thread marks it read, so "mark unread" lives only here.
   threadMock.mockResolvedValue(page([summary({ unread: false })]))
   const user = userEvent.setup()
   render(<MailView />)
@@ -1758,8 +1635,7 @@ test('offers Unsubscribe only when the sender advertised one', async () => {
 })
 
 test('surfaces a refused row action rather than silently reverting', async () => {
-  // A silent revert is indistinguishable from the click never registering,
-  // which is exactly how a missing gmail.modify grant presented in real use.
+  // A silent revert is indistinguishable from the click never registering.
   threadMock.mockResolvedValue(page([summary()]))
   archiveMock.mockRejectedValue(new Error('this Google permission was not granted'))
   const user = userEvent.setup()
@@ -1775,9 +1651,6 @@ test('surfaces a refused row action rather than silently reverting', async () =>
 
 /**
  * The number beside the unread toggle describes the list it sits above.
- *
- * It used to be the whole inbox's unread whatever tab was selected — so
- * standing in Promotions with one unread thread, the button said 16.
  */
 test('the unread badge follows the selected tab, not the whole inbox', async () => {
   countsMock.mockResolvedValue({ unread: 16, total: 340 })
@@ -1797,9 +1670,8 @@ test('the unread badge follows the selected tab, not the whole inbox', async () 
 })
 
 test('shows no number for a tab whose count was never fetched', async () => {
-  // `categoryCounts` is not paid for until the picker is opened, and this is
-  // the same rule the picker follows: an absent number says "not known", where
-  // a 0 would claim there is nothing there.
+  // `categoryCounts` is not paid for until the picker is opened. As in the
+  // picker, an absent number says "not known".
   countsMock.mockResolvedValue({ unread: 16, total: 340 })
   categoryCountsMock.mockResolvedValue({})
   threadMock.mockResolvedValue(page([summary()]))
@@ -1815,11 +1687,7 @@ test('shows no number for a tab whose count was never fetched', async () => {
 })
 
 /**
- * The merge, and the mailbox it made room for.
- *
- * Three controls said where the list was pointed — a Mail/Drafts button pair, a
- * category dropdown, and between them no way at all to reach Sent. One picker
- * now, with the tabs above a separator and the two real mailboxes below it.
+ * The mailbox picker: the tabs above a separator, Sent and Drafts below it.
  */
 test('offers the tabs, Sent and Drafts from one control', async () => {
   threadMock.mockResolvedValue(page([summary()]))
@@ -1846,8 +1714,7 @@ test('asks Gmail for the Sent mailbox, and says so on the trigger', async () => 
   await chooseMailbox(user, 'Sent')
 
   await waitFor(() => expect(queryOf(1)).toMatchObject({ mailbox: 'sent' }))
-  // The label is the whole affordance — a picker that has to be opened to say
-  // where you are is a button, not a picker.
+  // The trigger says where you are without being opened.
   expect(screen.getByRole('button', { name: 'choose a mailbox' })).toHaveTextContent('Sent')
 })
 
@@ -1862,8 +1729,7 @@ test('drops the unread filter in Sent, where a message cannot be unread', async 
 
   await chooseMailbox(user, 'Sent')
 
-  // Not merely unsent — the control is gone, because a switch that does nothing
-  // is worse than no switch.
+  // Not merely unsent: the control is gone.
   await waitFor(() => expect(queryOf(2).unread).toBeUndefined())
   expect(screen.queryByRole('button', { name: /show unread only/i })).toBeNull()
 })
@@ -1896,8 +1762,6 @@ test('a search escapes the mailbox, as it escapes the tabs', async () => {
 })
 
 test('compose sits on the toolbar row, in line with refresh', async () => {
-  // It used to live on a strip of its own below, carrying the Mail/Drafts
-  // buttons. That strip is gone with the merge.
   threadMock.mockResolvedValue(page([summary()]))
   render(<MailView />)
   await screen.findByRole('button', { name: /Q2 budget/ })
@@ -1912,8 +1776,8 @@ test('compose sits on the toolbar row, in line with refresh', async () => {
  * The optimistic undo, when the list has moved on under it.
  *
  * `write` captures the list it is undoing. Restoring that snapshot after
- * something else has replaced the list discards the other change wholesale — so
- * the recovery is to re-read rather than to invent an undo.
+ * something else has replaced the list would discard the other change, so the
+ * recovery is to re-read.
  */
 test('a failed write does not roll back a refresh that landed while it was in flight', async () => {
   const user = userEvent.setup()
@@ -1933,16 +1797,14 @@ test('a failed write does not roll back a refresh that landed while it was in fl
 
   refuse(new Error('this Google permission was not granted'))
 
-  // The stale snapshot must not come back. It used to, taking the refreshed
-  // page with it.
+  // The stale snapshot must not come back.
   expect(await screen.findByText(/Reconnect Google in settings/)).toBeInTheDocument()
   await waitFor(() => expect(screen.getByRole('button', { name: /Newer thing/ })).toBeInTheDocument())
 })
 
 test('reads the refusal from the code, not from Google’s prose', async () => {
-  // The router maps `GoogleApiError.code` onto a tRPC code so this does not
-  // have to match on sentences. A message that says nothing useful still has
-  // to produce the right advice.
+  // The router maps `GoogleApiError.code` onto a tRPC code, so a message that
+  // says nothing useful still produces the right advice.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   archiveMock.mockRejectedValue(
@@ -1974,18 +1836,11 @@ test('a rate-limit code is not reported as a permissions problem either', async 
 })
 
 test('unblocking builds a NEW frame, because a document cannot shed a CSP', async () => {
-  // Reported from real use: "if I allow images, it doesn't load until I move
-  // away and back to the email."
+  // A `<meta>` CSP joins the document's list of policies, and `document.open()`
+  // does not clear the ones already applied, so rewriting the document with a
+  // wider `img-src` leaves the images blocked. Only a new iframe drops a policy.
   //
-  // A `<meta>` CSP joins the document's list of policies and every request must
-  // satisfy all of them; `document.open()` does not clear the ones already
-  // applied. So rewriting the document with a wider `img-src` leaves the
-  // original `img-src data:` in force and the images stay blocked — the markup
-  // is right and the browser refuses anyway. Leaving the message destroyed the
-  // iframe, which is the only way a policy goes away.
-  //
-  // jsdom does not enforce CSP, so this cannot assert that an image loaded. It
-  // asserts the property the fix rests on: the element is replaced, not reused.
+  // jsdom does not enforce CSP, so this asserts the element is replaced.
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
   const user = userEvent.setup()
 
@@ -2002,10 +1857,8 @@ test('unblocking builds a NEW frame, because a document cannot shed a CSP', asyn
 })
 
 test('“always from this sender” rebuilds the frame too, not just the banner', async () => {
-  // Reported from real use: "if I click to allow images from a sender, the
-  // image still doesn't show." The one-off path was fixed by keying the iframe
-  // on the policy flag; this asserts the standing path takes the same route,
-  // since it reaches `allowRemoteContent` through a different atom.
+  // The iframe is keyed on the policy flag; the standing path must take the
+  // same route, since it reaches `allowRemoteContent` through a different atom.
   withMessage({ body: 'hello', html: '<img src="https://cdn.test/logo.png">' })
   const user = userEvent.setup()
 
@@ -2022,9 +1875,8 @@ test('“always from this sender” rebuilds the frame too, not just the banner'
 })
 
 test('does not churn the frame when nothing about the policy changed', async () => {
-  // The key is the flag, not a fresh value per render — keying on something
-  // unstable would rebuild the document on every render, losing scroll position
-  // and re-running the measure for nothing.
+  // The key is the flag, not a fresh value per render, which would rebuild the
+  // document every render and lose scroll position.
   withMessage({ body: 'hello', html: '<p>just a sentence</p>' })
 
   const article = await openThread()
@@ -2037,10 +1889,9 @@ test('does not churn the frame when nothing about the policy changed', async () 
 /**
  * Replying without leaving (D71).
  *
- * The handoff these replace opened Gmail in a browser. What matters now is that
- * the composer appears *inside the thread* — the message being answered has to
- * stay on screen — and that sending refreshes the thread rather than inventing
- * a message.
+ * The composer appears *inside the thread*, so the message being answered
+ * stays on screen, and sending refreshes the thread rather than inventing a
+ * message.
  */
 async function openForCompose() {
   const user = userEvent.setup()
@@ -2058,10 +1909,8 @@ test('reply opens a composer inside the thread, not a browser', async () => {
 
   const composer = await screen.findByRole('region', { name: 'Compose mail' })
   expect(composer).toBeInTheDocument()
-  // The thing being replied to is still on screen beside it. Scoped to the
-  // READER's copy: the composer quotes the message, and markdown highlighting
-  // puts the `>` in its own span, so the quoted line's own text is 'a body' too
-  // and a bare text query matches both.
+  // The thing being replied to is still on screen. Scoped to the READER's copy:
+  // the composer's quote puts `>` in its own span, so its text is 'a body' too.
   expect(screen.getByText('a body', { selector: '[data-holi-message]' })).toBeInTheDocument()
   expect(openExternal).not.toHaveBeenCalled()
 })
@@ -2133,9 +1982,8 @@ test('open in Gmail is still there — leaving is a choice, not a fallback', asy
 /**
  * The Drafts view (D71).
  *
- * It exists so that no route to a half-written message ends at a browser. The
- * cases below are the three it answers: a draft that belongs to no thread, a
- * thread that has one, and a thread that has two.
+ * No route to a half-written message ends at a browser: a draft that belongs
+ * to no thread, a thread that has one, and a thread that has two.
  */
 function draft(overrides: Record<string, unknown> = {}) {
   return {
@@ -2150,8 +1998,7 @@ function draft(overrides: Record<string, unknown> = {}) {
 }
 
 test('Drafts lists a draft that belongs to no thread at all', async () => {
-  // Without this view its only route back is Gmail, which is the thing being
-  // removed.
+  // Without this view its only route back would be Gmail.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   draftsMock.mockResolvedValue([draft()])
@@ -2164,8 +2011,7 @@ test('Drafts lists a draft that belongs to no thread at all', async () => {
 })
 
 test('a draft with no recipient reads as (no recipient), not as a blank row', async () => {
-  // A blank row on the screen where the user is hunting for something they
-  // half-wrote reads as a rendering bug, and the draft looks lost.
+  // A blank row reads as a rendering bug.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   draftsMock.mockResolvedValue([draft({ to: [] })])
@@ -2201,11 +2047,8 @@ test('opening a draft loads it into the composer', async () => {
 })
 
 test('opening a draft closes the thread it would otherwise hide behind', async () => {
-  // The composer lives in the reader pane, which is only reached when nothing
-  // is open. With a thread open the click fell through to the thread view and
-  // the composer rendered at the foot of its scroller — off-screen, so the
-  // click looked like it did nothing, and the draft being edited had no
-  // relationship to the conversation displayed above it.
+  // The draft composer renders in the reader pane only with nothing open;
+  // otherwise it would land off-screen at the foot of an unrelated thread.
   const user = userEvent.setup()
   threadMock.mockResolvedValue(page([summary()]))
   draftsMock.mockResolvedValue([draft()])
@@ -2296,12 +2139,12 @@ test('the thread list comes back when Mail is chosen again', async () => {
 /**
  * A new message (D71).
  *
- * A dialog, where a reply is inline — a reply needs the thing it answers on
- * screen and a fresh message has no context to preserve.
+ * A dialog, where a reply is inline: a fresh message has no context to
+ * preserve.
  */
 test('new message opens the compose dialog rather than an inline composer', async () => {
-  // Asserted against the real registry atom, not a mock: the entry it writes IS
-  // the contract with `DialogHost`.
+  // Asserted against the real registry atom: the entry IS the contract with
+  // `DialogHost`.
   const store = getDefaultStore()
   store.set(activeDialogAtom, null)
   const user = userEvent.setup()
@@ -2314,8 +2157,7 @@ test('new message opens the compose dialog rather than an inline composer', asyn
 })
 
 test('new message does not disturb an open thread', async () => {
-  // The dialog is a separate surface; opening it must not close what is being
-  // read behind it.
+  // The dialog must not close what is being read behind it.
   const store = getDefaultStore()
   store.set(activeDialogAtom, null)
   const user = userEvent.setup()

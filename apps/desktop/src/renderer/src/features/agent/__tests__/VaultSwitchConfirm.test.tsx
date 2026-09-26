@@ -4,7 +4,7 @@
  *
  * What it owes the user is an accurate sentence about what they are about to
  * lose, so the cases are what it says for one session against several, and that
- * both answers reach the caller — Shell holds the switch itself, and a cancel
+ * both answers reach the caller: Shell holds the switch itself, and a cancel
  * that silently switched anyway would be worse than never asking.
  */
 import { act, render, screen } from '@/test/render'
@@ -82,8 +82,8 @@ test('says what is at stake the same way whichever it is', async () => {
 
 test('keeps saying what was true when it interrupted you', async () => {
   // The list is live and a turn can land while the dialog is open. Left to
-  // follow it, the body would rewrite itself under the reader — at worst into
-  // "0 sessions are still running" over two buttons asking about them.
+  // follow it, the body would rewrite itself under the reader, at worst into
+  // "0 sessions are still running".
   const { store } = setup([session({ id: 'a', name: 'Fix the merge' })])
   expect(await screen.findByText(/Fix the merge is part way through a turn/)).toBeInTheDocument()
 
