@@ -7,7 +7,10 @@
  * still being named, so an empty or fully filtered folder still shows.
  *
  * An app bundle (`Budget.app`, D107) is a folder with `isApp` set: it holds its
- * files like any folder, and sorts with the files, since it reads as one.
+ * files like any folder, and sorts with the files, since it reads as one. It
+ * needs its entry document to be one: a `.app` folder with nothing to open (a
+ * macOS app copied in, an app whose first file is still being written) is a
+ * folder.
  */
 import { isAppBundlePath } from '@holi/shared'
 
@@ -28,6 +31,7 @@ export function buildTreeData(
   folders: string[] = [],
 ): Record<string, TreeItemData> {
   const root: TreeItemData = { name: '', isFolder: true, isApp: false, children: [] }
+  const present = new Set(paths)
   const data: Record<string, TreeItemData> = { [ROOT_ID]: root }
 
   // Returns the node, so callers need not re-index under
@@ -38,7 +42,7 @@ export function buildTreeData(
     const node: TreeItemData = {
       name: baseName(path),
       isFolder: true,
-      isApp: isAppBundlePath(path),
+      isApp: isAppBundlePath(path) && present.has(`${path}/index.html`),
       children: [],
     }
     data[path] = node

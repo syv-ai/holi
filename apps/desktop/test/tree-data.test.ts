@@ -37,4 +37,10 @@ describe('buildTreeData', () => {
     expect(data['site']?.isApp).toBe(false)
     expect(data[ROOT_ID].children).toEqual(['site', 'zoo', 'alpha.md', 'Zed.app'])
   })
+
+  it('is not an app until it has an entry document', () => {
+    const data = buildTreeData(['Mac.app/Contents/Info.plist', 'Half.app/app.js'])
+    expect(data['Mac.app']?.isApp).toBe(false)
+    expect(data['Half.app']?.isApp).toBe(false)
+  })
 })

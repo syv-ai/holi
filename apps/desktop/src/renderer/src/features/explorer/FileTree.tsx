@@ -351,7 +351,8 @@ export function FileTree({
     if (e.shiftKey && anchor !== null) return setSelected(new Set(rangeBetween(rows, anchor, id)))
     select([id], id)
     setFocusRoot(id.split('/')[0]!)
-    if (node.isFolder && !node.isApp) toggle(id)
+    // An unfinished app has nothing to open yet, so it shows its files instead.
+    if (node.isFolder && (!node.isApp || unfinished.includes(id))) toggle(id)
     else if (e.metaKey) onOpenInNewPane(id)
     else onOpenPreview(id)
   }
@@ -424,7 +425,7 @@ export function FileTree({
         else moveTo(parentOf(id) || undefined)
         break
       case 'Enter':
-        if (isFolder && !isApp) toggle(id)
+        if (isFolder && (!isApp || unfinished.includes(id))) toggle(id)
         else onOpenPreview(id)
         break
       case 'Escape':

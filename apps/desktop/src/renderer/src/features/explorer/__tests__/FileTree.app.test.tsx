@@ -87,3 +87,10 @@ test('an unfinished app offers Finish this app instead of Open', async () => {
   expect(await screen.findByText('Finish this app')).toBeTruthy()
   expect(screen.queryByText('Open')).toBeNull()
 })
+
+test('a click on an unfinished app shows its files rather than opening it', async () => {
+  const open = tree(['Finance/Budget.app/index.html'])
+  await userEvent.click(rowFor('Finance/Budget.app')!)
+  expect(open.preview).not.toHaveBeenCalled()
+  expect(rowFor('Finance/Budget.app/index.html')).not.toBeNull()
+})

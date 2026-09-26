@@ -172,6 +172,13 @@ describe('retargetTabs', () => {
 })
 
 describe('closeTabsForPaths', () => {
+  it('closes an app whose bundle was deleted, and leaves one that only lost a file', () => {
+    let w = openApp(emptyWorkspace(), 'A.app')
+    w = openApp(w, 'B.app')
+    const next = closeTabsForPaths(w, ['A.app/index.html', 'A.app/app.yaml', 'B.app/notes.md'])
+    expect(next.panes[0]!.tabs).toEqual([{ kind: 'app', path: 'B.app' }])
+  })
+
   it('closes deleted tabs and keeps the user on a surviving document', () => {
     let w = emptyWorkspace()
     w = openTab(w, { kind: 'note', path: 'a.md' }) // idx 0
@@ -261,9 +268,18 @@ describe('retargetTabs, for an app', () => {
     w = openApp(w, 'Team/retro.app')
     const next = retargetTabs(w, [
       { from: 'Team/notes.md', to: 'Old/Team/notes.md' },
+      { from: 'Team/retro.app/index.html', to: 'Old/Team/retro.app/index.html' },
       { from: 'Team/retro.app/lib/a.js', to: 'Old/Team/retro.app/lib/a.js' },
     ])
     expect(kinds(next)).toEqual(['app:Old/Team/retro.app'])
+  })
+
+  it('stays put when a file is dragged out of the expanded app, or within it', () => {
+    let w = emptyWorkspace()
+    w = openApp(w, 'A.app')
+    expect(retargetTabs(w, [{ from: 'A.app/notes.md', to: 'Docs/notes.md' }])).toEqual(w)
+    expect(retargetTabs(w, [{ from: 'A.app/index.html', to: 'Docs/index.html' }])).toEqual(w)
+    expect(retargetTabs(w, [{ from: 'A.app/foo.md', to: 'A.app/lib/foo.md' }])).toEqual(w)
   })
 
   it('leaves an app alone when only a sibling whose name it prefixes moves', () => {

@@ -6,9 +6,12 @@
  * and the state is `panes[] → tabs[]`.
  */
 
-import { fileKind } from '@holi/shared'
+import { fileKind, isAppBundlePath } from '@holi/shared'
 import { atom } from 'jotai'
 import type { PaneDropZone } from '@/lib/tab-drop'
+
+/** An app's entry document, which is what says where its bundle went. */
+const APP_ENTRY = 'index.html'
 
 /** Open a note as a preview tab in the active pane — the action behind a
  *  wiki-link click from a surface that is not the editor (e.g. a task
@@ -314,9 +317,10 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
 /**
  * `retargetTab` for a whole batch (folder or multi-move).
  *
- * An app tab follows its bundle: the moves name files, so a tab on
- * `A.app` follows a move of `A.app/index.html` to `B/A.app/index.html` by
- * taking the same suffix off the destination.
+ * An app tab follows its bundle, and the moves name files, so the bundle is
+ * followed by its entry document: `A.app/index.html` to `B/A.app/index.html`
+ * moves the tab to `B/A.app`. Only the entry document, and only to another
+ * bundle: a note dragged out of an expanded app is not the app moving.
  */
 export function retargetTabs(
   workspace: Workspace,
@@ -324,12 +328,10 @@ export function retargetTabs(
 ): Workspace {
   const map = new Map(moves.map((m) => [m.from, m.to]))
   const bundleTo = (bundle: string): string | undefined => {
-    for (const { from, to } of moves) {
-      if (!from.startsWith(`${bundle}/`)) continue
-      const rest = from.slice(bundle.length)
-      if (to.endsWith(rest)) return to.slice(0, -rest.length)
-    }
-    return undefined
+    const to = map.get(`${bundle}/${APP_ENTRY}`)
+    if (to === undefined || !to.endsWith(`/${APP_ENTRY}`)) return undefined
+    const dest = to.slice(0, -APP_ENTRY.length - 1)
+    return isAppBundlePath(dest) ? dest : undefined
   }
   return {
     ...workspace,
@@ -354,7 +356,14 @@ export function retargetTabs(
  * emptied pane stays as the empty-editor state (`active: -1`), never disappears.
  */
 export function closeTabsForPaths(workspace: Workspace, paths: string[]): Workspace {
-  return closeTabsWhere(workspace, (t) => t.kind === 'note' && paths.includes(t.path))
+  return closeTabsWhere(
+    workspace,
+    (t) =>
+      // An app goes with its entry document: deleting the bundle from the tree
+      // closes its tab, as deleting it from the apps list does.
+      (t.kind === 'note' && paths.includes(t.path)) ||
+      (t.kind === 'app' && paths.includes(`${t.path}/${APP_ENTRY}`)),
+  )
 }
 
 /**
