@@ -1274,7 +1274,6 @@ describe('vaults.add', () => {
       '.claude/skills/using-tasks/SKILL.md',
       '.claude/skills/vault-apps/SKILL.md',
       'AGENTS.md',
-      'CLAUDE.md',
       'README.md',
       // D89: a new vault is seeded with the memory directory, not a MEMORY.md.
       'memory/index.md',
