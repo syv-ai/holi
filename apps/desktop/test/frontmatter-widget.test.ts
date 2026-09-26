@@ -212,13 +212,15 @@ describe('frontmatterSummaryParts', () => {
 })
 
 describe('frontmatterDecorations summary data', () => {
-  it('carries the body-only char count and a null commit by default', () => {
+  it('carries the body-only char count, and no commit until one is fetched', () => {
     const widget = specs(frontmatterDecorations(stateFor(DOC)))[0]!.spec.widget as {
       chars: number
       commit: unknown
     }
     expect(widget.chars).toBe('body paragraph'.length)
-    expect(widget.commit).toBeNull()
+    // Undefined, not null: null is an answer (no history), and the summary
+    // waits for an answer before it shows.
+    expect(widget.commit).toBeUndefined()
   })
 
   it('reflects a commit dispatched via setFrontmatterCommit', () => {
