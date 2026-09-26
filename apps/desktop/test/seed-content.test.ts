@@ -64,6 +64,7 @@ describe('SEED_FILES', () => {
   it('covers exactly the managed set (USER.local.md is machine-local, never seeded)', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
+      '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
@@ -203,23 +204,6 @@ describe('SEED_FILES', () => {
 
   it('seeds no CLAUDE.md: Claude Code reads AGENTS.md itself', () => {
     expect(SEED_FILES['CLAUDE.md']).toBeUndefined()
-  })
-
-  it('AGENTS.md grants the agent git (coexistence), not the old prohibition', () => {
-    const agents = SEED_FILES['AGENTS.md']!
-    expect(agents).toContain('Run git freely')
-    expect(agents).toContain('pauses its own commit/pull loop')
-    expect(agents).not.toContain('Do not run') // the pre-coexistence prohibition
-  })
-
-  it('AGENTS.md names the machine-local user file by its real name', () => {
-    // A plain `USER.md` is NOT gitignored — the ignore glob is `*.local.*`
-    // (D65) — so telling the agent to keep personal detail there would publish
-    // it to every collaborator on the next auto-commit. It is also absent from
-    // AGENT_SURFACE_FILES under that name, so a vault app could read it.
-    const agents = SEED_FILES['AGENTS.md']!
-    expect(agents).toContain('USER.local.md')
-    expect(agents).not.toMatch(/\`USER\.md\`/)
   })
 
   it('settings.json wires the focus + turn hooks and gates network egress', () => {
@@ -560,13 +544,13 @@ describe('settingsWithRequired', () => {
     const twice = settingsWithRequired(once)
 
     expect(twice).toBeNull()
-    // Two matchers, not two copies: `Bash` for the CLI and `mcp__…Gmail…` for
-    // the claude.ai connector, which a Bash matcher cannot see. Seeding again
-    // adds neither.
-    expect(parse(once).hooks.PreToolUse).toHaveLength(2)
+    // Two gate matchers, not two copies: `Bash` for the CLI and `mcp__…Gmail…`
+    // for the claude.ai connector, which a Bash matcher cannot see; then the
+    // memory index guard. Seeding again adds none of them.
     expect(parse(once).hooks.PreToolUse.map((e: { matcher: string }) => e.matcher)).toEqual([
       'Bash',
       'mcp__.*[Gg]mail.*',
+      'Write|Edit|MultiEdit',
     ])
   })
 
@@ -655,6 +639,32 @@ describe('the connector opt-out reaches vaults that already exist', () => {
   })
 })
 
+describe('settingsWithRequired — the memory index guard', () => {
+  it('seeds a PreToolUse guard on memory/index.md for the writing tools', () => {
+    const pre = JSON.parse(SEED_FILES['.claude/settings.json']!).hooks.PreToolUse
+    const guard = pre.find((e: { hooks: { command: string }[] }) =>
+      e.hooks[0]!.command.includes('memory-index-guard'),
+    )
+    expect(guard.matcher).toBe('Write|Edit|MultiEdit')
+  })
+
+  it('merges it into a vault that already has the send gate', () => {
+    const before = JSON.stringify({
+      hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ command: 'google-send-gate' }] }] },
+    })
+    const pre = JSON.parse(settingsWithRequired(before)!).hooks.PreToolUse
+    const text = JSON.stringify(pre)
+    expect(text).toContain('memory-index-guard')
+    // The gate is not added twice.
+    expect(text.match(/google-send-gate/g)).toHaveLength(pre.length - 1)
+  })
+
+  it('leaves settings that already carry it alone', () => {
+    const seeded = SEED_FILES['.claude/settings.json']!
+    expect(settingsWithRequired(seeded)).toBeNull()
+  })
+})
+
 describe('ensureSeeded — the vault-apps skill', () => {
   it('writes the authoring contract into a vault that never had it', async () => {
     // This is what makes a new skill reach EXISTING vaults with no migration:
@@ -707,6 +717,7 @@ describe('the managed / once split (D75)', () => {
   it('manages exactly the code and documentation Holi ships', () => {
     expect(Object.keys(MANAGED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
+      '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
@@ -947,30 +958,6 @@ describe('the vault-apps skill teaches the loop that now exists', () => {
   })
 })
 
-describe('AGENTS.md and the pre-commit hook', () => {
-  const agents = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
-
-  it('no longer tells the agent the link rewrite is entirely its job', () => {
-    // `relink` does it at the commit boundary now. The instruction survives for
-    // a move git cannot see, but it is no longer stated as the only mechanism.
-    expect(agents).toContain('pre-commit hook')
-    expect(agents).not.toMatch(/in the same change\. Grep/i)
-  })
-
-  it('says a hand-rewrite is harmless rather than forbidding it', () => {
-    // Because it IS harmless: the rewrite map is keyed on the OLD path, so
-    // after a hand-fix it matches nothing. Telling the agent not to do it would
-    // be inventing a hazard (see hook-relink.test.ts).
-    expect(agents).toMatch(/harmless/i)
-  })
-
-  it('stays thin — no Hooks section', () => {
-    // Three transforms nobody has asked about do not earn a heading in the file
-    // every agent always has loaded.
-    expect(SEED_FILES['AGENTS.md']!).not.toMatch(/^## Hooks/m)
-  })
-})
-
 /**
  * Vault memory (D89) — one memory surface, seeded and migrated.
  *
@@ -1013,16 +1000,6 @@ describe('vault memory (D89)', () => {
     expect(SEED_FILES['MEMORY.md']).toBeUndefined()
   })
 
-  it('tells the agent the file contract, and names MEMORY.md as the older shape', () => {
-    const prose = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
-    expect(prose).toContain('one fact in one file')
-    expect(prose).toMatch(/memory\/whatever\.local\.md/)
-    expect(prose).toMatch(/index\.md.*generated/i)
-    // Free-form on purpose: the overview prints the types in use, which lets the
-    // vocabulary document and converge on itself with no registry to maintain.
-    expect(prose).toMatch(/free-form/)
-  })
-
   it('ships a memory skill, because AGENTS.md cannot be corrected', () => {
     // The reason this is a skill and not more `AGENTS.md` prose: `AGENTS.md` is
     // a ONCE_FILE, so a vault seeded before D65 still tells the agent that
@@ -1040,15 +1017,6 @@ describe('vault memory (D89)', () => {
     // Never migrate someone's MEMORY.md unprompted — that is a shared-layer
     // auto-edit, which `not-built.md` rules against.
     expect(prose).toMatch(/only when the user asks/)
-  })
-
-  it('stops naming USER.local.md as somewhere to write', () => {
-    // It is auto-loaded by nothing, appears in no index and in no overview, so
-    // `memory/<name>.local.md` does the same job strictly better. Named as
-    // legacy, never deleted.
-    const prose = SEED_FILES['AGENTS.md']!.replace(/\s+/g, ' ')
-    expect(prose).toMatch(/older shape/)
-    expect(prose).toMatch(/memory\/<name>\.local\.md/)
   })
 
   it('reaches a vault that already exists, both keys and the hook', () => {

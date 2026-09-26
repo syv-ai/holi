@@ -54,6 +54,12 @@ compose call; no filesystem, shell or Node. Real scripts were rejected because a
 is code that arrives on a teammate's laptop with a pull. Machine-local-only commands were rejected
 because the agent could not write one for the team. Today the menu is a fixed `/todo` and `/table`.
 
+**Standard markdown links instead of wiki-links.** In-vault links are `[[path]]`. Plain
+`[text](path.md)` would render on GitHub and is what every tool and agent already knows. The cost:
+the editor's link chips, `@` completion, the relink transform and backrefs all move grammar,
+existing links need a one-time rewrite, and a relative link breaks when its source file moves where
+a vault-rooted `[[path]]` does not. Undesigned.
+
 **Live preview inside an unfocused table cell.** Cells read as prose (bold, code, links coloured),
 but a wiki-link is not a chip and an image is not drawn. `codemirror-markdown-tables` renders an
 unfocused cell itself from a highlighter, with no decorations, and everything live preview does

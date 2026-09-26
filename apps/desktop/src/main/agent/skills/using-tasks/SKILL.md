@@ -13,7 +13,6 @@ file; change one by editing it. The board reads the files.
 
 ```markdown
 ---
-title: Book the rehearsal room
 status: todo
 due: 2026-08-25
 priority: high
@@ -26,16 +25,20 @@ recurrence:
   endDate: 2026-12-31
 ---
 
+# Book the rehearsal room
+
 Anything below the frontmatter is the task's body. It is ordinary markdown, so
 [[wiki-links]] work — that is how a task links to a note, a person, or another task.
 ```
 
-Every field except `title` and `status` is optional. A field you leave out is simply
+**The title is the body's first heading** (`# Book the rehearsal room`), at any level.
+There is no `title:` key; without a heading the title falls back to the filename.
+
+Every field is optional, and `status` defaults to `todo`. A field you leave out is simply
 absent — do not write `due:` with nothing after it and do not write `null`.
 
 | field | what it holds |
 |-------|---------------|
-| `title` | the task, in words. Falls back to the filename if missing |
 | `status` | `todo`, `doing` or `done` — nothing else |
 | `due` | when it is due, as a **stamp** (below) |
 | `priority` | `high`, `medium` or `low` |

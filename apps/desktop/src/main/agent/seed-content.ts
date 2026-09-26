@@ -66,39 +66,24 @@ import reportTyp from './templates/report/template.typ?raw'
 
 const AGENTS_MD = `# Agent rules
 
-## What a vault is
-
-A git repository of markdown files. No database, no server: the file **is** the note, the task, and the record.
-
-- A note is a \`.md\` file at a path: \`projects/q2/roadmap.md\`.
-- Links are path-based wiki-links: \`[[projects/q2/roadmap.md]]\` or \`[[path|Label]]\`.
-- Renaming a note means rewriting every \`[[link]]\` to it. A pre-commit hook does this for renames git can see; grep \`[[<path>\` if you moved the file some other way. Doing it yourself as well is harmless.
-- Images, PDFs and anything else are ordinary committed files: \`![alt](logo.png)\`.
+You are the assistant for a Holi vault: a private GitHub repo of files, mostly markdown. Images, PDFs and anything else are ordinary committed files. Links between files are path-based wiki-links: \`[[projects/q2/roadmap.md]]\`.
 
 ## Tasks
 
-- A task is a \`.md\` file prefixed \`task.\`: \`projects/q2/task.fix-login.md\`. Glob \`**/task.*.md\`.
-- Frontmatter carries \`status\` (todo | doing | done), \`due\`, \`priority\`, \`tags\`, \`reminder\`, \`recurrence\`. The body is the description.
-- No task ids — link one like any note. Its "area" is the folder it sits in.
+A task (a TODO in the vault) is a file named \`task.<slug>.md\`, in the folder it belongs to. Find them with \`**/task.*.md\`. Use the using-tasks skill to read or write one.
+
+## Files
+
+- Moving a file: links to it are rewritten on commit when git sees the rename. If you moved it another way, fix the links manually.
+- A \`.local.\` in a filename keeps the file on this machine (gitignored). Anything personal goes in one.
 
 ## Sync
 
-Edits auto-commit every few seconds and push on their own; pulls are automatic. There is no Publish step.
-
-Run git freely, merges included. Holi pauses its own commit/pull loop for the length of your turn, so you never contend on \`.git/index.lock\`. It stays paused while you are off the default branch or mid-rebase.
+Holi commits every few seconds and pushes and pulls on its own. It pauses that loop for the length of your turn, so run git freely, merges included. It stays paused while you are off the default branch or mid-rebase.
 
 ## Memory
 
-A memory is **one fact in one file** under \`memory/\`. Write one whenever you learn something this vault will want again.
-
-- Frontmatter: \`type\` (free-form — \`convention\`, \`environment\`, \`person\`, \`project\`, \`reference\`, \`preference\` are a starting set, not a list to stay inside) and a one-line \`description\`, which is what the index and the session overview print. \`title\` is optional and falls back to the H1, then the filename.
-- The body is the fact. Link other memories with ordinary wiki-links: \`[[memory/other.md]]\`.
-- \`memory/whatever.local.md\` is **personal** — the \`.local.\` makes it gitignored, so it never leaves this clone. Anything about one person goes there.
-- \`memory/index.md\` is **generated** on commit. Edit the memory files; edits to the index are discarded.
-
-Use the **memory** skill when writing one.
-
-\`MEMORY.md\` and \`USER.local.md\` are the older shape. Both still work and are still read, and neither is written to any more — a personal fact goes in \`memory/<name>.local.md\`, which the session overview announces, where \`USER.local.md\` is auto-loaded by nothing and listed nowhere. Splitting either into \`memory/\` is worth doing when the user asks; never unasked.
+A memory is one fact in one file under \`memory/\`. Do not use a memory system of your own. Write one, with the memory skill, whenever you learn something this vault or its user will want again. \`memory/<name>.local.md\` stays on this machine, so personal facts go there. \`memory/index.md\` is generated on commit, and edits to it are discarded.
 `
 
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
