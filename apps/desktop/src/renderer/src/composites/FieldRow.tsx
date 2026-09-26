@@ -30,10 +30,6 @@ export const FIELD_CONTROL =
 /** A value that is not set: muted, consistently across every control. */
 export const FIELD_UNSET = 'text-muted-foreground'
 
-/** The same, for a value that is read rather than edited: no edge, no height of
- *  its own, but the same inset so it lines up with the fields above and below. */
-export const FIELD_READONLY = 'truncate px-3 text-xs text-muted-foreground'
-
 /**
  * A press anywhere on the row that missed its control focuses the control:
  * the text input first, so a tag chip's own remove button is never the pick.

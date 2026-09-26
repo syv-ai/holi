@@ -12,13 +12,13 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 
 **Typed rows.** `frontmatterSchema(path)` in `packages/shared` says what each key is per file kind: `enum`, `stamp`, `date`, `list`, `recurrence` or `text`. A task has status, priority, due, reminder, recurrence, tags (and a hidden `order`); a note has `tags`. Every schema key is drawn whether the file has it or not, and nothing is written until a value is given. Unknown keys are drawn as text and written back verbatim. A row with a value set shows an × under the pointer that removes it: a schema key is unset and its row stays, any other key is deleted with its row. A press anywhere on a row focuses its control. The last row is "add field": a name and a free-text value; schema keys, hidden keys, YAML-syntax names and empty values are refused. The rows are the widget's own DOM with value areas filled through a portal by the app's single React root (`frontmatter-portals.ts`, `FrontmatterFieldsHost`), so they use the real `Select` and `DateTimePicker`. Writes go through `editYamlMapping`, which keeps comments, key order and nested structure.
 
-**Facts under the rows**, read-only and never written to the file: _created_ (the file's first commit and its author, following renames) and _links_ (`N in · M out`). Fetched when the block opens, drawn empty from the first frame.
+**A facts line over the rows**, read-only and never written to the file: "In <folder> · created DD/MM/YY, <author> · N links". The folder is derived (for a task it is its lane; changing it is a move, which belongs to the file tree), absent at the vault root. _Created_ is the file's first commit and its author, following renames; _links_ counts both directions, split in its tooltip. Fetched when the block opens, the line holds its height invisibly and fades in whole once main answers.
 
 **Raw YAML fallback.** No schema (the agent surface, hidden paths) or frontmatter that is not a mapping gets a nested `EditorView` with the YAML grammar and highlighting, and none of the markdown stack. Its edits are written back over the region under a marker annotation, with the `---` fences rebuilt every time. Broken YAML turns the chevron red and holds the autosave (`frontmatterValid`).
 
 **Scaffold on arrival.** A note gets `tags: []` however it arrived. The file tree's `+` writes it at creation; the `scaffold-md` pre-commit transform prepends it to any other markdown in the commit's added set (an agent's `Write`, a drop-in import, another editor). `wantsScaffold` excludes the agent surface (`CLAUDE.md`, `AGENTS.md`, `MEMORY.md`, `USER.local.md`, `.claude/`, `memory/`), task files, hidden paths and non-markdown. Transforms: [vaults-sync.md](vaults-sync.md).
 
-**Look and motion.** The block takes one width open or closed (`min(24rem, …)`), is centred in the column, and keeps `2.5rem` beneath it. Opening animates from the old height to `auto`. Rows carry no edges and tint under the pointer; read-only rows do not.
+**Look and motion.** The block takes one width open or closed (`min(24rem, …)`), is centred in the column, and keeps `2.5rem` beneath it. Opening animates from the old height to `auto`. Rows carry no edges and tint under the pointer.
 
 ## Rules
 
@@ -43,6 +43,6 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 ## Code
 
 - `apps/desktop/src/renderer/src/editor/frontmatter.ts`, `frontmatter-region.ts`, `frontmatter-portals.ts`
-- `apps/desktop/src/renderer/src/composites/FrontmatterFields.tsx`, `FrontmatterFieldsHost.tsx`, `FileFactsRows.tsx`
+- `apps/desktop/src/renderer/src/composites/FrontmatterFields.tsx`, `FrontmatterFieldsHost.tsx`, `FileFactsLine.tsx`, `FieldRow.tsx`
 - `packages/shared/src/frontmatter-schema.ts`, `yaml-document.ts`, `scaffold-md.ts`
 - `apps/desktop/src/main/vault/hooks/scaffold-md.ts`

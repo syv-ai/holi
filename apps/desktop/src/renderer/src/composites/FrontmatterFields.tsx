@@ -32,8 +32,8 @@ import {
   SelectValue,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FileFactsRows } from './FileFactsRows'
-import { FIELD_CONTROL, FIELD_READONLY, FIELD_UNSET, FieldRow } from './FieldRow'
+import { FileFactsLine } from './FileFactsLine'
+import { FIELD_CONTROL, FIELD_UNSET, FieldRow } from './FieldRow'
 import { RecurrenceField } from './RecurrenceField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
 import { cn } from '@/lib/cn'
@@ -312,8 +312,8 @@ export function FrontmatterFields({
   yaml: string
   /** The whole YAML body to write back. */
   onWrite: (yaml: string) => void
-  /** Draw the read-only facts under the rows (`FileFactsRows`), which ask
-   *  main for the file's history and links. */
+  /** Draw the read-only facts line over the rows (`FileFactsLine`), which
+   *  asks main for the file's history and links. */
   facts?: boolean
 }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
@@ -329,10 +329,6 @@ export function FrontmatterFields({
   }
 
   const isTask = isTaskFilePath(path)
-  // `lastIndexOf` is -1 at the vault root, and `slice(0, -1)` would then be the
-  // path minus its last character.
-  const slash = path.lastIndexOf('/')
-  const folder = slash === -1 ? '' : path.slice(0, slash)
   const due = typeof values.due === 'string' ? values.due : undefined
 
   const control = (field: FieldSpec): React.JSX.Element => {
@@ -427,14 +423,7 @@ export function FrontmatterFields({
       className="flex flex-col bg-transparent px-1 py-1.5 text-foreground"
       data-frontmatter-fields={path}
     >
-      {/* Derived, never written: the folder a file sits in is a fact about the
-          vault, and for a task it is also its lane. Editing it would be a move,
-          which has to rewrite inbound links and so belongs to the file tree. */}
-      {folder !== '' && (
-        <FieldRow label="folder" title={path}>
-          <span className={FIELD_READONLY}>{folder}</span>
-        </FieldRow>
-      )}
+      {facts && <FileFactsLine path={path} />}
       {frontmatterRows(schema, Object.keys(values)).map((field) => (
         <FieldRow
           key={field.key}
@@ -448,7 +437,6 @@ export function FrontmatterFields({
         </FieldRow>
       ))}
       <AddFieldRow existing={Object.keys(values)} schema={schema} onAdd={set} />
-      {facts && <FileFactsRows path={path} />}
     </div>
   )
 }

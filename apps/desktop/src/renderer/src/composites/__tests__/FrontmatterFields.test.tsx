@@ -57,21 +57,6 @@ test('an old `created:` is an ordinary key now, not a date field', () => {
   expect(screen.queryByTestId('fm-created')).not.toBeInTheDocument()
 })
 
-test('the folder row shows the parents, not the file', () => {
-  // The one fact about a task that is not in its file. Editing it would be a
-  // move, which has to rewrite inbound links, so it is not editable here.
-  fields('status: todo\n', 'work/projects/task.a.md')
-  expect(screen.getByText('folder')).toBeInTheDocument()
-  expect(screen.getByText('work/projects')).toBeInTheDocument()
-})
-
-test('a file at the vault root has no folder row at all', () => {
-  // `lastIndexOf('/')` is -1 there, and `slice(0, -1)` is the path minus its
-  // last character — the row showed the task's own filename, one letter short.
-  fields('status: todo\n', 'task.a.md')
-  expect(screen.queryByText('folder')).not.toBeInTheDocument()
-})
-
 test('a key the schema never heard of renders as text and survives a write', async () => {
   // The migration path for a leftover `title:`, and the promise `Task.extra`
   // already makes: an unknown key is not an error and is never dropped.
