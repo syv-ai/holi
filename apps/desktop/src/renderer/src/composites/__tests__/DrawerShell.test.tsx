@@ -7,7 +7,8 @@ import { act, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { expect, test, vi } from 'vitest'
-import { DRAWER_WIDTH } from '@/lib/drawer'
+import { DRAWER_RAIL_WIDTH, DRAWER_WIDTH } from '@/lib/drawer'
+import { Button } from '@/primitives'
 import { DrawerShell, DrawerTitle, drawerWidthsAtom } from '../DrawerShell'
 
 function drawer(
@@ -84,7 +85,26 @@ test('keepMounted holds the content while hidden, inert', () => {
   rerender({ open: false })
   slideEnds(section()!)
   expect(screen.getByText('body')).toBeInTheDocument()
-  expect(section()).toHaveAttribute('inert')
+  expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
+})
+
+test('a drawer with a rail closes to the rail, which is live while the content is not', () => {
+  const { rerender } = drawer({
+    id: 'nav',
+    side: 'left',
+    rail: <Button>show</Button>,
+  })
+  // Open: the rail is there but asleep, so it cannot be tabbed to.
+  expect(
+    screen.getByRole('button', { name: 'show', hidden: true }).closest('[inert]'),
+  ).not.toBeNull()
+
+  rerender({ open: false })
+  // One width, moving: the closed width is the rail's, never 0, so the panes
+  // beside it are never jumped by a rail appearing next to an emptied drawer.
+  expect(section()!.style.getPropertyValue('--drawer-closed-w')).toBe(`${DRAWER_RAIL_WIDTH}px`)
+  expect(screen.getByRole('button', { name: 'show' }).closest('[inert]')).toBeNull()
+  expect(screen.getByText('body').closest('[inert]')).not.toBeNull()
 })
 
 test('arrow keys resize toward the content, clamped, and remember it per drawer', async () => {

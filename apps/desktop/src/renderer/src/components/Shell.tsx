@@ -372,8 +372,37 @@ export function Shell() {
           id="nav"
           side="left"
           open={navOpen}
-          keepMounted
           label="Sidebar"
+          // Hidden, the nav closes to a rail rather than to nothing: the way
+          // back, an orb per running session (its status, a press to open
+          // it), then the apps. The nav is the only place any of them can be
+          // clicked, and the orbs are where you see which session needs you.
+          rail={
+            <>
+              <div className="flex h-11 shrink-0 items-center">
+                <Tooltip
+                  content={
+                    <span className="inline-flex items-center gap-1.5">
+                      Show sidebar
+                      <Kbd>⌥⌘S</Kbd>
+                    </span>
+                  }
+                >
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="text-muted-foreground"
+                    aria-label="Show sidebar"
+                    onClick={() => setNavOpen(true)}
+                  >
+                    <PanelLeftOpen size={16} />
+                  </Button>
+                </Tooltip>
+              </div>
+              <SessionOrbs />
+              <AppsMenu />
+            </>
+          }
           actions={[
             {
               icon: <PanelLeftClose />,
@@ -562,39 +591,6 @@ export function Shell() {
             </div>
           </DrawerShell>
 
-          {/* The nav, hidden, leaves a rail in its place: the way back, then an
-              orb per running session (its status, a press to open it), then
-              the apps. The nav was the only place any of them could be clicked,
-              and the orbs are also where you see which session needs you. */}
-          {!navOpen && (
-            <nav
-              aria-label="Sidebar rail"
-              className="motion-in-fade flex w-11 shrink-0 flex-col items-center gap-1 pb-2"
-            >
-              <div className="flex h-11 shrink-0 items-center">
-                <Tooltip
-                  content={
-                    <span className="inline-flex items-center gap-1.5">
-                      Show sidebar
-                      <Kbd>⌥⌘S</Kbd>
-                    </span>
-                  }
-                >
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="text-muted-foreground"
-                    aria-label="Show sidebar"
-                    onClick={() => setNavOpen(true)}
-                  >
-                    <PanelLeftOpen size={16} />
-                  </Button>
-                </Tooltip>
-              </div>
-              <SessionOrbs />
-              <AppsMenu />
-            </nav>
-          )}
 
           <div className="flex min-w-60 flex-1 flex-col">
             {/* The panes. One `ResizablePanelGroup` nested inside the editor

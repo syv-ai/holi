@@ -492,10 +492,25 @@
   transition: width var(--motion-slide) var(--ease-slide);
 }
 [data-slot='drawer'][data-state='closed'] {
-  width: 0;
+  /* 0, or the rail's width for a drawer that closes to one (the nav). */
+  width: var(--drawer-closed-w, 0);
 }
 [data-slot='drawer'][data-resizing] {
   transition: none;
+}
+/* A drawer's rail (the nav's, while hidden) follows the slide: it fades in
+ * over the LAST respond-length of a close, as the drawer arrives at the
+ * rail's width, and out straight away when an open starts, so the drawer
+ * slides in from it rather than under it. */
+[data-drawer-rail] {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-respond) var(--ease-settle);
+}
+[data-slot='drawer'][data-state='closed'] [data-drawer-rail] {
+  opacity: 1;
+  pointer-events: auto;
+  transition-delay: calc(var(--motion-slide) - var(--motion-respond));
 }
 @starting-style {
   [data-slot='drawer'][data-appear] {
@@ -798,8 +813,11 @@
   .motion-out-fade {
     animation-duration: 1ms;
   }
-  [data-slot='drawer'] {
+  [data-slot='drawer'],
+  [data-drawer-rail],
+  [data-slot='drawer'][data-state='closed'] [data-drawer-rail] {
     transition-duration: 1ms;
+    transition-delay: 0ms;
   }
 }
 

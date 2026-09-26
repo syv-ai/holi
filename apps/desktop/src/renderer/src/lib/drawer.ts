@@ -10,6 +10,10 @@
  */
 export const DRAWER_WIDTH = { default: 320, min: 150, max: 560 } as const
 
+/** How wide a drawer with a `rail` stays when closed: one 44px column, the
+ *  height of a header row turned on its side. */
+export const DRAWER_RAIL_WIDTH = 44
+
 /** A width inside the drawer range, rounded to a whole pixel. */
 export function clampDrawerWidth(px: number): number {
   return Math.round(Math.min(DRAWER_WIDTH.max, Math.max(DRAWER_WIDTH.min, px)))

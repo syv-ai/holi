@@ -22,6 +22,15 @@
  * Arrow keys move it by 16px for the keyboard. Every drawer shares one range
  * (`DRAWER_WIDTH`).
  *
+ * **A rail** is what a drawer can close to instead of nothing (the nav's:
+ * the show button, the running sessions, the apps). Its width is then the
+ * rail's, `DRAWER_RAIL_WIDTH`, so opening and closing move one width
+ * continuously between the two. A rail beside the drawer, mounted only while
+ * it was closed, made the panes jump by its width at the start of each slide.
+ * The rail sits over the collapsed column. It fades in as the drawer lands at
+ * its width, not when the close starts (it arrived first and the drawer slid
+ * away under it), and out as soon as an open starts.
+ *
  * **The edge** is `--drawer-edge`, a vault theme token, transparent by default:
  * a drawer lies flat on the page. The handle shows `--divider` under the
  * pointer, so the seam can be found without being drawn.
@@ -31,7 +40,7 @@ import { X } from 'lucide-react'
 import { atomWithStorage } from 'jotai/utils'
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/cn'
-import { DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
+import { DRAWER_RAIL_WIDTH, DRAWER_WIDTH, clampDrawerWidth } from '@/lib/drawer'
 import { prefersReducedMotion } from '@/lib/motion'
 import { PanelHeader, type HeaderAction } from './PanelHeader'
 
@@ -51,6 +60,7 @@ export function DrawerShell({
   actions,
   onClose,
   keepMounted = false,
+  rail,
   className,
   children,
 }: {
@@ -75,6 +85,9 @@ export function DrawerShell({
    * away. Other drawers unmount once they have slid out.
    */
   keepMounted?: boolean
+  /** What the drawer closes to, in a `DRAWER_RAIL_WIDTH` column at its edge,
+   *  rather than to nothing. Implies the content stays mounted. */
+  rail?: React.ReactNode
   className?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
@@ -91,7 +104,8 @@ export function DrawerShell({
 
   const [resizing, setResizing] = useState(false)
 
-  if (!present && !keepMounted) return null
+  const kept = keepMounted || rail !== undefined
+  if (!present && !kept) return null
 
   const store = (px: number) => setWidths((prev) => ({ ...prev, [id]: clampDrawerWidth(px) }))
   // Dragging toward the content widens a drawer: rightward for the left one.
@@ -138,11 +152,15 @@ export function DrawerShell({
       data-state={open ? 'open' : 'closed'}
       // Slide in on mount, for a drawer that mounts BY opening. One that is
       // there from the start (the nav, at launch) just is.
-      data-appear={keepMounted ? undefined : ''}
+      data-appear={kept ? undefined : ''}
       data-resizing={resizing ? '' : undefined}
       aria-label={label}
-      inert={!open}
-      style={{ '--drawer-w': `${width}px` } as React.CSSProperties}
+      style={
+        {
+          '--drawer-w': `${width}px`,
+          ...(rail !== undefined && { '--drawer-closed-w': `${DRAWER_RAIL_WIDTH}px` }),
+        } as React.CSSProperties
+      }
       className={cn(
         'relative flex h-full shrink-0 overflow-clip',
         side === 'left' ? 'justify-end' : 'justify-start',
@@ -152,7 +170,7 @@ export function DrawerShell({
         if (e.target === e.currentTarget && e.propertyName === 'width' && !open) setPresent(false)
       }}
     >
-      <div className="flex h-full w-(--drawer-w) shrink-0 flex-col">
+      <div className="flex h-full w-(--drawer-w) shrink-0 flex-col" inert={!open}>
         <PanelHeader
           actions={actions}
           close={onClose ? { icon: <X />, label: `Close ${label}`, onSelect: onClose } : undefined}
@@ -165,6 +183,20 @@ export function DrawerShell({
         </PanelHeader>
         <div className="flex min-h-0 flex-1 flex-col">{children}</div>
       </div>
+      {rail !== undefined && (
+        <nav
+          aria-label={`${label} rail`}
+          data-drawer-rail=""
+          inert={open}
+          className={cn(
+            // Its fade is timed to the slide, in `index.css`.
+            'absolute inset-y-0 z-10 flex w-(--drawer-closed-w) flex-col items-center gap-1 bg-background pb-2',
+            side === 'left' ? 'left-0' : 'right-0',
+          )}
+        >
+          {rail}
+        </nav>
+      )}
       <div
         role="separator"
         aria-orientation="vertical"
@@ -173,6 +205,7 @@ export function DrawerShell({
         aria-valuemax={DRAWER_WIDTH.max}
         aria-valuenow={width}
         tabIndex={open ? 0 : -1}
+        hidden={!open}
         className={cn(
           // A 7px strip to catch the pointer, drawing a 1px line in its middle:
           // the theme's edge at rest, the divider while found or held.
