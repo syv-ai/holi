@@ -112,7 +112,15 @@ export function CreateTask({
     const t = title.trim()
     if (t === '' || busy) return
     setBusy(true)
-    const path = await create({ title: t, status, folder: folder.trim().replace(/^\/+|\/+$/g, '') })
+    // The body goes in with the create, which puts the title heading above it.
+    // A `description` patch afterwards would replace the whole body, heading too.
+    const body = mode === 'full' ? bodyRef.current.trim() : ''
+    const path = await create({
+      title: t,
+      status,
+      folder: folder.trim().replace(/^\/+|\/+$/g, ''),
+      ...(body !== '' ? { description: body } : {}),
+    })
     if (path && mode === 'full') {
       const extra: Record<string, unknown> = {}
       if (draft.due) extra.due = draft.due
@@ -120,7 +128,6 @@ export function CreateTask({
       if (draft.tags.length) extra.tags = draft.tags
       if (draft.reminder) extra.reminder = draft.reminder
       if (draft.recurrence) extra.recurrence = draft.recurrence
-      if (bodyRef.current.trim() !== '') extra.description = bodyRef.current
       if (Object.keys(extra).length > 0) await patch(path, extra)
     }
     if (path && mode === 'full') openTask(path)

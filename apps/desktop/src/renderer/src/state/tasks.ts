@@ -192,7 +192,11 @@ export function dropIntent(task: Task, targetLane: string, targetStatus: TaskSta
 
 export const createTaskAtom = atom(
   null,
-  async (get, set, input: { title: string; status: TaskStatus; folder: string }) => {
+  async (
+    get,
+    set,
+    input: { title: string; status: TaskStatus; folder: string; description?: string },
+  ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return null
     const { path } = await trpc.tasks.create.mutate({ remote, ...input })
