@@ -45,8 +45,8 @@ import { useExplorerActions } from './useExplorerActions'
 import { useTreeProjection } from './useTreeProjection'
 
 /**
- * The explorer (docs/features/file-tree.md): root entries as headings on a
- * rail, the focused one marked by a bar that slides between them, and each
+ * The explorer (docs/features/file-tree.md): root entries as headings, the
+ * focused one marked by a bar at their left that slides between them, and each
  * open folder's contents hung from a rounded connector whose path to the open
  * file is drawn in the brand colour.
  *
@@ -740,8 +740,6 @@ export function FileTree({
           aria-multiselectable
           className="relative flex flex-col"
         >
-          {/* The rail the bar runs on. */}
-          <span aria-hidden className="absolute bottom-0 left-3 top-0 w-px bg-divider" />
           {bar && (
             <span
               aria-hidden

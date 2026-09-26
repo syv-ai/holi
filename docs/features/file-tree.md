@@ -1,6 +1,6 @@
 # File tree
 
-The sidebar explorer shows the vault as the folders and files on disk. It reads as a navigation list: root entries are headings on a rail, and each open folder's contents hang from a rounded connector. It does what an editor's explorer does: context menu, inline create and rename, multi-select, keyboard navigation, drag to move, cut, copy and paste. Every move keeps `[[links]]` intact, and files dropped in from Finder are copied into the vault.
+The sidebar explorer shows the vault as the folders and files on disk. It reads as a navigation list: root entries are headings, and each open folder's contents hang from a rounded connector. It does what an editor's explorer does: context menu, inline create and rename, multi-select, keyboard navigation, drag to move, cut, copy and paste. Every move keeps `[[links]]` intact, and files dropped in from Finder are copied into the vault.
 
 ## How it works
 
@@ -8,7 +8,7 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Folders are real.** A folder row comes from `snapshot.dirs`, which lists every directory holding a file, so a folder whose contents are all filtered out still shows. New Folder writes a `.gitkeep` so the empty folder persists and syncs; a keep-file is a folder signal and never shown as a leaf. A folder still being named exists only in client state.
 
-**The look.** Root entries are larger and muted unless they are focused or on the open file's path. The focused root is marked by a brand bar on the rail, which slides to the next one. Inside a folder, each row hangs from its parent's chevron by a rounded elbow. The line from the root to the open file is drawn in brand, and so are the chevrons of every folder on it. The open file is bold.
+**The look.** Root entries are larger and muted unless they are focused or on the open file's path. The focused root is marked by a brand bar at its left, which slides to the next one; there is no line under it. Inside a folder, each row hangs from its parent's chevron by a rounded elbow. The line from the root to the open file is drawn in brand, and so are the chevrons of every folder on it. The open file is bold.
 
 - A folder leads with a chevron only. A file leads with its type glyph in the chevron's column, except a note, which has no glyph and no `.md`: it is the unmarked row. The empty slot keeps names aligned.
 - The root's folders and its loose files are two groups with a gap between them.
