@@ -27,6 +27,7 @@ import {
 import {
   SiCss,
   SiDotenv,
+  SiGit,
   SiGnubash,
   SiGo,
   SiGraphql,
@@ -52,6 +53,15 @@ import {
  *  components; `ComponentType<any>` is the common slot that accepts either. The
  *  render below only ever passes `size` + `color`, which both honour. */
 type IconCmp = ComponentType<any>
+
+/** [glyph, colour] by whole file name, for the dotfiles an extension lookup
+ *  cannot reach (`.gitignore` has no extension: its only dot leads the name).
+ *  Git red is the Git mark's own. */
+const BY_NAME: Record<string, [IconCmp, string]> = {
+  '.gitignore': [SiGit, '#de4c36'],
+  '.gitattributes': [SiGit, '#de4c36'],
+  '.gitmodules': [SiGit, '#de4c36'],
+}
 
 /** [glyph, colour] per extension. Colours are dark-friendly, loosely tracking
  *  each type's identity (JS yellow, TS/CSS blue, Rust orange, …). */
@@ -135,6 +145,6 @@ export function fileIconFor(path: string, icon?: string): JSX.Element {
   const base = path.slice(path.lastIndexOf('/') + 1)
   const dot = base.lastIndexOf('.')
   const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : ''
-  const [Icon, color] = BY_EXT[ext] ?? [File, '#90a4ae']
+  const [Icon, color] = BY_NAME[base] ?? BY_EXT[ext] ?? [File, '#90a4ae']
   return <Icon size={14} color={color} />
 }
