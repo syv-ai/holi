@@ -1,4 +1,4 @@
-import { SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { SETTINGS_LOCAL_FILE, parseSettingsText, seedSettingsText } from '@holi/shared'
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -36,21 +36,35 @@ describe('createDeliveredLog', () => {
       'task.a.md': '2026-07-28T09:00',
       'task.b.md': '2026-07-28T10:00',
     })
-    const onDisk = JSON.parse(await readFile(settingsPath(), 'utf8'))
+    const onDisk = parseSettingsText(await readFile(settingsPath(), 'utf8'))
     expect(onDisk.reminders).toEqual({
       'task.a.md': '2026-07-28T09:00',
       'task.b.md': '2026-07-28T10:00',
     })
   })
 
-  it('preserves an unrelated sibling key when writing', async () => {
+  // The file is the vault's YAML local settings, seeded with this machine's
+  // answers. Reading it as anything else loses them on the first fire.
+  it('keeps the settings in the seeded YAML file when writing', async () => {
     await mkdir(join(root, '.holi/settings'), { recursive: true })
-    await writeFile(settingsPath(), JSON.stringify({ launchPrompted: true }), 'utf8')
+    await writeFile(settingsPath(), seedSettingsText({ colorScheme: 'light' }, 'local'), 'utf8')
     const log = createDeliveredLog(rootFor)
     log.markDelivered('o/r', 'task.a.md', '2026-07-28T09:00')
-    const onDisk = JSON.parse(await readFile(settingsPath(), 'utf8'))
-    expect(onDisk.launchPrompted).toBe(true)
+    const text = await readFile(settingsPath(), 'utf8')
+    expect(text).toContain('# Every setting this vault has.')
+    const onDisk = parseSettingsText(text)
+    expect(onDisk.colorScheme).toBe('light')
     expect(onDisk.reminders).toEqual({ 'task.a.md': '2026-07-28T09:00' })
+  })
+
+  it('reads the watermark back from a YAML file', async () => {
+    await mkdir(join(root, '.holi/settings'), { recursive: true })
+    const seeded = seedSettingsText(
+      { colorScheme: 'dark', reminders: { 'task.a.md': '2026-07-28T09:00' } },
+      'local',
+    )
+    await writeFile(settingsPath(), seeded, 'utf8')
+    expect(createDeliveredLog(rootFor).read('o/r')).toEqual({ 'task.a.md': '2026-07-28T09:00' })
   })
 
   it('reads {} when rootFor cannot resolve the remote', () => {

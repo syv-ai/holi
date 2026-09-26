@@ -1,4 +1,4 @@
-import { SETTINGS_LOCAL_FILE } from '@holi/shared'
+import { SETTINGS_LOCAL_FILE, parseSettingsText, writeSettingsText } from '@holi/shared'
 /**
  * The delivery watermark, named. Two verbs over the per-task last-fired map:
  * `read` is what `sweep` indexes (one file read per vault per tick), `markDelivered`
@@ -7,7 +7,9 @@ import { SETTINGS_LOCAL_FILE } from '@holi/shared'
  *
  * Backed by each vault's `.holi/settings/app.local.yaml` under a `reminders` key —
  * gitignored by the seeded `*.local.*` rule, so a fire is never a commit. Other
- * local settings share the file, so writes merge rather than clobber.
+ * local settings share the file, so it is read and written as the same YAML
+ * document the settings writer produces: parsing it as anything else reads
+ * nothing, and the next write would replace the machine's settings.
  * Synchronous by design: the sweep tick reads and marks inline.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
@@ -25,11 +27,9 @@ function loadSettings(root: string): Record<string, unknown> {
   const file = settingsFile(root)
   if (!existsSync(file)) return {}
   try {
-    const parsed = JSON.parse(readFileSync(file, 'utf8'))
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {}
+    // An unparseable file reads as `{}`, so a corrupt file never stalls the sweep.
+    return parseSettingsText(readFileSync(file, 'utf8'))
   } catch {
-    // A corrupt local file must not stall the sweep — treat as empty and let the
-    // next markDelivered rewrite it clean.
     return {}
   }
 }
@@ -56,7 +56,7 @@ export function createDeliveredLog(rootFor: (remote: string) => string | null): 
       const file = settingsFile(root)
       mkdirSync(dirname(file), { recursive: true })
       const tmp = `${file}.tmp`
-      writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', 'utf8')
+      writeFileSync(tmp, writeSettingsText(next, 'local'), 'utf8')
       renameSync(tmp, file)
     },
   }
