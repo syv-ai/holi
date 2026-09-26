@@ -61,7 +61,7 @@ import {
   defaultAgentTargetAtom,
 } from '@/state/agent'
 import { sendToAgentAtom } from '@/state/agent-send'
-import { appIdsAtom } from '@/state/apps'
+import { appPathsAtom } from '@/state/apps'
 import { activeModeAtom } from '@/state/color-scheme'
 import { commandsAtom, runCommandAtom, type Command } from '@/state/commands'
 import {
@@ -100,7 +100,7 @@ function tabOf(row: PaletteRow): Tab {
     case 'path':
       return { kind: 'note', path: row.key }
     case 'app':
-      return { kind: 'app', appId: row.key }
+      return { kind: 'app', path: row.key }
     case 'session':
       return { kind: 'session', id: row.key }
     case 'surface':
@@ -118,7 +118,7 @@ export function CommandPalette(): React.JSX.Element {
   const close = useSetAtom(closePaletteAtom)
   const store = useStore()
   const snapshot = useAtomValue(snapshotAtom)
-  const appIds = useAtomValue(appIdsAtom)
+  const appPaths = useAtomValue(appPathsAtom)
   const sessions = useAtomValue(agentSessionsAtom)
   const modeAtSpawn = useAtomValue(agentModeAtSpawnAtom)
   const colorMode = useAtomValue(activeModeAtom)
@@ -132,8 +132,8 @@ export function CommandPalette(): React.JSX.Element {
   const sendToAgent = useSetAtom(sendToAgentAtom)
 
   const rows = useMemo(
-    () => buildRows({ snapshot, appIds, sessions }),
-    [snapshot, appIds, sessions],
+    () => buildRows({ snapshot, appPaths, sessions }),
+    [snapshot, appPaths, sessions],
   )
   const tabsMode = state.mode === 'tabs'
   const query = state.query

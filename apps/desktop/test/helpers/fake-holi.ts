@@ -41,7 +41,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
-  const appOpenSubs = new Set<(appId: string) => void>()
+  const appOpenSubs = new Set<(bundle: string) => void>()
   const testOnboardingSubs = new Set<() => void>()
   const menuCommandSubs = new Set<(id: string) => void>()
   let onFlushed: (() => void) | null = null

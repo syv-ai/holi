@@ -26,10 +26,10 @@ import { commentThreadsJson, formatCommentThreads, type PdfCommentThread } from 
 /** What a route needs main to do. Injected, so this module stays testable
  *  without a window, a vault, or a running app. */
 export interface AgentOpsDeps {
-  /** Open (or focus) the app's tab in the active pane. */
-  openApp(appId: string): Promise<{ ok: true } | { ok: false; error: string }>
-  /** Scaffold a new app directory: manifest, entry document. */
-  initApp(appId: string): Promise<{ ok: true; created: string[] } | { ok: false; error: string }>
+  /** Open (or focus) the tab of the app at this bundle path, in the active pane. */
+  openApp(path: string): Promise<{ ok: true } | { ok: false; error: string }>
+  /** Scaffold a new app bundle at this path: manifest, entry document. */
+  initApp(path: string): Promise<{ ok: true; created: string[] } | { ok: false; error: string }>
   /** Run the enabled pre-commit transforms over the staged set. Called by
    *  Holi's own git hook, not by the agent, but it lives here because this is
    *  where the loopback port and its token already are. */
@@ -71,19 +71,19 @@ export function createAgentOps(deps: AgentOpsDeps): AgentOps {
   return async (pathname, params) => {
     switch (pathname) {
       case '/app/open': {
-        const id = params.get('id')
-        if (id === null || id === '') return json({ ok: false, error: 'app/open needs an id' })
+        const path = params.get('path')
+        if (path === null || path === '') return json({ ok: false, error: 'app/open needs a path' })
         try {
-          return json(await deps.openApp(id))
+          return json(await deps.openApp(path))
         } catch (error) {
           return json({ ok: false, error: message(error) })
         }
       }
       case '/app/init': {
-        const id = params.get('id')
-        if (id === null || id === '') return json({ ok: false, error: 'app/init needs an id' })
+        const path = params.get('path')
+        if (path === null || path === '') return json({ ok: false, error: 'app/init needs a path' })
         try {
-          return json(await deps.initApp(id))
+          return json(await deps.initApp(path))
         } catch (error) {
           return json({ ok: false, error: message(error) })
         }

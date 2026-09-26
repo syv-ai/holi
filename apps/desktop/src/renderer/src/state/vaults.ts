@@ -167,8 +167,8 @@ export function subscribeToVault(store: JotaiStore): () => void {
   // `holi app open <id>`, typed by the agent. Local authorship only: see the
   // channel's own comment for why an app appearing in the snapshot does not
   // open anything.
-  const offAppOpen = window.holi.apps.onOpen((appId) => {
-    store.set(workspaceAtom, (w) => openApp(w, appId))
+  const offAppOpen = window.holi.apps.onOpen((bundle) => {
+    store.set(workspaceAtom, (w) => openApp(w, bundle))
   })
   return () => {
     offSnapshot()

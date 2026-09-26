@@ -14,13 +14,14 @@ import {
   DropdownMenuTrigger,
   Tooltip,
 } from '@/primitives'
-import { appIdsAtom } from '@/state/apps'
+import { appName } from '@holi/shared'
+import { appPathsAtom } from '@/state/apps'
 import { openApp, workspaceAtom } from '@/state/panes'
 
 export function AppsMenu(): React.JSX.Element | null {
-  const appIds = useAtomValue(appIdsAtom)
+  const appPaths = useAtomValue(appPathsAtom)
   const setWorkspace = useSetAtom(workspaceAtom)
-  if (appIds.length === 0) return null
+  if (appPaths.length === 0) return null
 
   return (
     <DropdownMenu>
@@ -37,13 +38,13 @@ export function AppsMenu(): React.JSX.Element | null {
         </DropdownMenuTrigger>
       </Tooltip>
       <DropdownMenuContent side="right" align="start" className="max-w-72">
-        {appIds.map((appId) => (
+        {appPaths.map((path) => (
           <DropdownMenuItem
-            key={appId}
+            key={path}
             className="text-xs"
-            onSelect={() => setWorkspace((w) => openApp(w, appId))}
+            onSelect={() => setWorkspace((w) => openApp(w, path))}
           >
-            <span className="truncate">{appId}</span>
+            <span className="truncate">{appName(path)}</span>
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

@@ -2,37 +2,38 @@
  * The `holi-app://` scheme — how one vault app's files reach its frame.
  *
  * `holi-vault://` serves the whole vault to the renderer, which is trusted. This
- * one is deliberately narrower: an app is served **from its own directory and
- * nowhere else**, so the URL's host is the app id and the resolved root is
- * `<vaultRoot>/.holi/apps/<appId>`. One app cannot read another's files, and no
- * app can read a note off disk — the bridge is the only route to vault content,
- * and the bridge is where the refusals live.
+ * one is deliberately narrower: an app is served **from its own bundle and
+ * nowhere else**, so the URL's host encodes the bundle's path (`appHost`, D107)
+ * and the resolved root is `<vaultRoot>/<bundle>`. One app cannot read another's
+ * files, and no app can read a note off disk — the bridge is the only route to
+ * vault content, and the bridge is where the refusals live.
  *
  * Everything here is pure; the `protocol.handle` that calls it stays in
  * `index.ts` beside the vault one, so the two handlers read as the pair they are.
  */
 import { join } from 'node:path'
-import { APPS_DIR, isValidAppId, themeBlockToVars, vaultRelPath, type ThemeBlock } from '@holi/shared'
+import {
+  bundleFromAppHost,
+  isAppBundlePath,
+  themeBlockToVars,
+  vaultRelPath,
+  type ThemeBlock,
+} from '@holi/shared'
 import { absPathFor } from '../vault/vault-files'
 import { mimeFor } from '../vault/asset-protocol'
 import { BRIDGE_JS } from './bridge-script'
 import { APP_BASE_TOKENS } from './app-tokens'
 
 /**
- * `holi-app://<appId>/<rel>` → its parts, or null when the scheme is wrong, the
- * URL is unparseable, or the id is not one an app may have.
+ * `holi-app://<host>/<rel>` → its parts, or null when the scheme is wrong, the
+ * URL is unparseable, or the host does not decode to a bundle.
  *
- * A bare host (`holi-app://retro`) means the entry document, the same way a web
- * server resolves `/` to `index.html`.
- *
- * **The host is folded to lower case explicitly.** Chromium folds the host of a
- * `standard:` scheme; Node's `URL` leaves a non-special scheme's host alone. The
- * fold here makes the two agree, so `isValidAppId` sees the same string in the
- * running app as it does in a test.
+ * A bare host means the entry document, the same way a web server resolves `/`
+ * to `index.html`.
  */
 export function parseAppUrl(
   url: string,
-): { appId: string; rel: string; mode: 'light' | 'dark' } | null {
+): { bundle: string; rel: string; mode: 'light' | 'dark' } | null {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -40,8 +41,8 @@ export function parseAppUrl(
     return null
   }
   if (parsed.protocol !== 'holi-app:') return null
-  const appId = parsed.hostname.toLowerCase()
-  if (!isValidAppId(appId)) return null
+  const bundle = bundleFromAppHost(parsed.hostname)
+  if (bundle === null) return null
   let rel: string
   try {
     rel = decodeURIComponent(parsed.pathname).replace(/^\/+/, '')
@@ -50,23 +51,23 @@ export function parseAppUrl(
   }
   // The renderer's mode in force, which main cannot know: the frame's URL says it.
   const mode = parsed.searchParams.get('mode') === 'light' ? 'light' : 'dark'
-  return { appId, rel: rel === '' ? 'index.html' : rel, mode }
+  return { bundle, rel: rel === '' ? 'index.html' : rel, mode }
 }
 
 /**
- * Absolute path for one file inside ONE app's directory, or null when it would
+ * Absolute path for one file inside ONE app's bundle, or null when it would
  * escape.
  *
  * Two guards compose exactly as `assetAbsPath`'s do: the URL parser has already
  * normalized any raw `../` away (clamped to the host root), and `vaultRelPath`
  * rejects the residue — an absolute path, an empty one, or a surviving `..`.
- * The root it joins under is the app's own directory, which is the difference
+ * The root it joins under is the app's own bundle, which is the difference
  * that matters.
  */
-export function appFileAbsPath(vaultRoot: string, appId: string, rel: string): string | null {
-  if (!isValidAppId(appId)) return null
+export function appFileAbsPath(vaultRoot: string, bundle: string, rel: string): string | null {
+  if (!isAppBundlePath(bundle)) return null
   try {
-    return absPathFor(join(vaultRoot, APPS_DIR, appId), vaultRelPath(rel))
+    return absPathFor(join(vaultRoot, bundle), vaultRelPath(rel))
   } catch {
     return null
   }

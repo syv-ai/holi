@@ -14,12 +14,12 @@ import { resolveLanding } from '../src/renderer/src/lib/landing-target'
 /** A vault holding one note and one app. */
 const vault = {
   docPaths: new Set(['Notes/Standup.md', '22-08-2026.md']),
-  appIds: new Set(['retro']),
+  appPaths: new Set(['retro.app']),
 }
 
 /** A vault holding nothing at all — a freshly created one, before any seeding
  *  the tree can see. */
-const empty = { docPaths: new Set<string>(), appIds: new Set<string>() }
+const empty = { docPaths: new Set<string>(), appPaths: new Set<string>() }
 
 const on = (landing: LandingTarget) => ({ landing, dailyNotes: true })
 const off = (landing: LandingTarget) => ({ landing, dailyNotes: false })
@@ -45,9 +45,9 @@ describe('a target that still exists', () => {
   })
 
   test('opens the app it names', () => {
-    expect(resolveLanding(on({ kind: 'app', appId: 'retro' }), vault)).toEqual({
+    expect(resolveLanding(on({ kind: 'app', path: 'retro.app' }), vault)).toEqual({
       kind: 'app',
-      appId: 'retro',
+      path: 'retro.app',
     })
   })
 
@@ -67,7 +67,7 @@ describe('a target that has rotted', () => {
   })
 
   test('falls back to the daily when the app is gone', () => {
-    expect(resolveLanding(on({ kind: 'app', appId: 'gone' }), vault)).toEqual({ kind: 'daily' })
+    expect(resolveLanding(on({ kind: 'app', path: 'gone.app' }), vault)).toEqual({ kind: 'daily' })
   })
 
   test('falls back in a vault holding nothing at all', () => {
@@ -85,7 +85,7 @@ describe('a target that has rotted', () => {
   })
 
   test('falls back to nothing for a missing app in a no-daily vault', () => {
-    expect(resolveLanding(off({ kind: 'app', appId: 'gone' }), vault)).toBeNull()
+    expect(resolveLanding(off({ kind: 'app', path: 'gone.app' }), vault)).toBeNull()
   })
 })
 

@@ -1,13 +1,14 @@
 /**
  * Which vault apps exist, and the actions on them (`docs/features/vault-apps.md`).
  *
- * An app is a directory under `.holi/apps/` holding **both** an entry document
- * (`index.html`) and a manifest (`app.yaml`), at its own root. The manifest is
- * the registration marker, written last: without it an app would appear the
- * moment its first byte lands and open to a half-written page. It is not
- * sufficient on its own, since an app with no entry document has nothing to open.
+ * An app is a bundle, a directory named `<name>.app` anywhere in the vault
+ * (D107), holding **both** an entry document (`index.html`) and a manifest
+ * (`app.yaml`) at its own root. The manifest is the "finished" marker, written
+ * last: without it an app would appear the moment its first byte lands and open
+ * to a half-written page. It is not sufficient on its own, since an app with no
+ * entry document has nothing to open.
  *
- * The same rule is re-implemented in `main/apps/migrate-manifests.ts` and the
+ * The same rule is re-implemented in `main/apps/app-ops.ts` and the
  * `vault-app-check` hook, deliberately: there is no shared layer, and inventing
  * one for three call sites is the mistake D74 refused.
  *
@@ -16,93 +17,78 @@
  */
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { APPS_DIR, APP_MANIFEST_FILE, appIdFromPath } from '@holi/shared'
-import { flushAllBuffers } from '../lib/buffer-registry'
+import { APP_MANIFEST_FILE, APP_SUFFIX, appBundleOf, appName, isAppBundlePath } from '@holi/shared'
 import { trpc } from '../lib/trpc'
-import { closeTab, retargetAppTab, retargetTabs, workspaceAtom } from './panes'
+import { closeTab, workspaceAtom } from './panes'
 import {
-  activeDocAtom,
   activeRemoteAtom,
   deleteManyAtom,
   loadSnapshotAtom,
+  moveNotesAtom,
   snapshotAtom,
 } from './vaults'
 
 const ENTRY_FILE = 'index.html'
 
-/** ids that have each of the two files at their own app root. A nested
+/** Bundles that have each of the two files at their own root. A nested
  *  `sub/index.html` is a page inside an app and `sub/app.yaml` is a stray file;
  *  neither is a second app. */
 const rootFilesAtom = atom((get) => {
   const entries = new Set<string>()
   const manifests = new Set<string>()
   for (const file of get(snapshotAtom).files) {
-    const id = appIdFromPath(file.path)
-    if (id === null) continue
-    if (file.path === `${APPS_DIR}/${id}/${ENTRY_FILE}`) entries.add(id)
-    else if (file.path === `${APPS_DIR}/${id}/${APP_MANIFEST_FILE}`) manifests.add(id)
+    const bundle = appBundleOf(file.path)
+    if (bundle === null) continue
+    if (file.path === `${bundle}/${ENTRY_FILE}`) entries.add(bundle)
+    else if (file.path === `${bundle}/${APP_MANIFEST_FILE}`) manifests.add(bundle)
   }
   return { entries, manifests }
 })
 
-/** Every registered app in the open vault, by id, sorted. */
-export const appIdsAtom = atom((get) => {
+/** By name, then by path, so two apps of one name keep a stable order. */
+const byName = (a: string, b: string): number =>
+  appName(a).localeCompare(appName(b)) || a.localeCompare(b)
+
+/** Every finished app in the open vault, by bundle path. */
+export const appPathsAtom = atom((get) => {
   const { entries, manifests } = get(rootFilesAtom)
-  return [...entries].filter((id) => manifests.has(id)).sort()
+  return [...entries].filter((p) => manifests.has(p)).sort(byName)
 })
 
 /**
- * Directories that have an entry document but no manifest: an app someone
- * started and has not finished.
+ * Bundles that have an entry document but no manifest: an app someone started
+ * and has not finished.
  *
  * Kept apart rather than dropped so the absence is *legible*: otherwise the agent
  * writes an app, nothing shows up, and there is nowhere to look.
  */
-export const unregisteredAppIdsAtom = atom((get) => {
+export const unregisteredAppPathsAtom = atom((get) => {
   const { entries, manifests } = get(rootFilesAtom)
-  return [...entries].filter((id) => !manifests.has(id)).sort()
+  return [...entries].filter((p) => !manifests.has(p)).sort(byName)
 })
 
-/** Close the tab showing `appId` in the active pane: the tombstone's button. */
-export const closeAppAtom = atom(null, (_get, set, appId: string) => {
+/** Close the tab showing the app at `path` in the active pane: the tombstone's
+ *  button. */
+export const closeAppAtom = atom(null, (_get, set, path: string) => {
   set(workspaceAtom, (w) => {
     const pane = w.panes[w.active]
     if (pane === undefined) return w
-    const index = pane.tabs.findIndex((t) => t.kind === 'app' && t.appId === appId)
+    const index = pane.tabs.findIndex((t) => t.kind === 'app' && t.path === path)
     return index === -1 ? w : closeTab(w, index)
   })
 })
 
-/**
- * Every id that has a directory under `.holi/apps/`, whether or not anything
- * inside it makes it an app.
- *
- * This, not `appIdsAtom`, is the set a new id must not collide with. Main
- * refuses a collision too (it stats the directory, which is the authority); this
- * lets the field say so before the round-trip.
- */
-export const appDirIdsAtom = atom((get) => {
-  const snapshot = get(snapshotAtom)
-  const ids = new Set<string>()
-  for (const path of [...snapshot.files.map((f) => f.path), ...snapshot.dirs]) {
-    const id = appIdFromPath(path)
-    if (id !== null) ids.add(id)
-  }
-  return ids
-})
-
-/** Every file inside each app, by id: what a delete removes and a rename
- *  retargets open tabs for. */
+/** Every file inside each bundle: what a delete removes. */
 export const appFilesAtom = atom((get) => {
-  const byId = new Map<string, string[]>()
+  const byBundle = new Map<string, string[]>()
   for (const file of get(snapshotAtom).files) {
-    const id = appIdFromPath(file.path)
-    if (id === null) continue
-    const list = byId.get(id)
+    const bundle = appBundleOf(file.path)
+    if (bundle === null) continue
+    const list = byBundle.get(bundle)
     if (list) list.push(file.path)
-    else byId.set(id, [file.path])
+    else byBundle.set(bundle, [file.path])
   }
-  return byId
+  return byBundle
 })
 
 /**
@@ -113,7 +99,7 @@ export const appFilesAtom = atom((get) => {
  * no apps the panel and its handle must be absent, not merely empty.
  */
 export const hasAppsAtom = atom(
-  (get) => get(appIdsAtom).length > 0 || get(unregisteredAppIdsAtom).length > 0,
+  (get) => get(appPathsAtom).length > 0 || get(unregisteredAppPathsAtom).length > 0,
 )
 
 /**
@@ -131,39 +117,40 @@ export const appsSectionOpenAtom = atomWithStorage<boolean>('holi:appsSectionOpe
 export type AppActionResult = { ok: true } | { ok: false; error: string }
 
 /**
- * Rename an app, and take everything pointing at the old id with it.
+ * Rename an app: the tree's folder move of its bundle to `<name>.app` beside
+ * it, so links are rewritten and open tabs follow as for any other move.
  *
- * Main does the directory rename and the `[[link]]` rewrite; this is the
- * renderer's half: `moveNotesAtom`'s commit-pair ordering, plus moving the
- * **app** tab, whose identity is an id rather than a path.
- *
- * The flush matters: an unsaved buffer keyed by an old path would later save
- * itself back, recreating the old directory with one stale file in it.
+ * Why a name cannot be used comes back as a value, for the inline field; main
+ * refuses an overwrite too, and is the authority, since a teammate's pull can
+ * create the destination between the keypress and the move.
  */
 export const renameAppAtom = atom(
   null,
-  async (get, set, { from, to }: { from: string; to: string }): Promise<AppActionResult> => {
-    const remote = get(activeRemoteAtom)
-    if (remote === null) return { ok: false, error: 'no vault is open' }
-    if (from === to) return { ok: true }
-
-    const prefix = `${APPS_DIR}/${from}/`
-    const moves = (get(appFilesAtom).get(from) ?? []).map((path) => ({
-      from: path,
-      to: `${APPS_DIR}/${to}/${path.slice(prefix.length)}`,
+  async (
+    get,
+    set,
+    { bundle, name }: { bundle: string; name: string },
+  ): Promise<AppActionResult> => {
+    const slash = bundle.lastIndexOf('/')
+    const dest = `${slash === -1 ? '' : bundle.slice(0, slash + 1)}${name}${APP_SUFFIX}`
+    if (dest === bundle) return { ok: true }
+    if (name.includes('/') || !isAppBundlePath(dest)) {
+      return { ok: false, error: `${name} cannot name an app` }
+    }
+    const snapshot = get(snapshotAtom)
+    const taken = [...snapshot.files.map((f) => f.path), ...snapshot.dirs].some(
+      (p) => p === dest || p.startsWith(`${dest}/`),
+    )
+    if (taken) return { ok: false, error: `${name} already exists` }
+    const moves = (get(appFilesAtom).get(bundle) ?? []).map((from) => ({
+      from,
+      to: `${dest}${from.slice(bundle.length)}`,
     }))
-
-    await flushAllBuffers()
-    await trpc.sync.commitNow.mutate()
-    const result = await trpc.apps.rename.mutate({ remote, from, to })
-    if (!result.ok) return result
-
-    set(workspaceAtom, retargetAppTab(retargetTabs(get(workspaceAtom), moves), from, to))
-    const active = get(activeDocAtom)
-    const moved = active ? moves.find((m) => m.from === active.path) : undefined
-    await set(loadSnapshotAtom)
-    if (moved) set(activeDocAtom, get(snapshotAtom).docs.find((d) => d.path === moved.to) ?? null)
-    await trpc.sync.commitNow.mutate()
+    try {
+      await set(moveNotesAtom, { moves })
+    } catch (error) {
+      return { ok: false, error: (error as Error).message }
+    }
     return { ok: true }
   },
 )
@@ -176,10 +163,10 @@ export const renameAppAtom = atom(
  */
 export const registerAppAtom = atom(
   null,
-  async (get, set, appId: string): Promise<AppActionResult> => {
+  async (get, set, path: string): Promise<AppActionResult> => {
     const remote = get(activeRemoteAtom)
     if (remote === null) return { ok: false, error: 'no vault is open' }
-    const result = await trpc.apps.register.mutate({ remote, appId })
+    const result = await trpc.apps.register.mutate({ remote, path })
     if (!result.ok) return result
     await set(loadSnapshotAtom)
     return { ok: true }
@@ -195,9 +182,9 @@ export const registerAppAtom = atom(
  * The now-empty directory is left behind, as when deleting a folder in the
  * tree; with no entry document it appears in neither list.
  */
-export const deleteAppAtom = atom(null, async (get, set, appId: string) => {
-  const paths = get(appFilesAtom).get(appId) ?? []
+export const deleteAppAtom = atom(null, async (get, set, bundle: string) => {
+  const paths = get(appFilesAtom).get(bundle) ?? []
   if (paths.length === 0) return
   await set(deleteManyAtom, { paths })
-  set(closeAppAtom, appId)
+  set(closeAppAtom, bundle)
 })

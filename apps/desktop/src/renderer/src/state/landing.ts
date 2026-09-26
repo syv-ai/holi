@@ -9,7 +9,7 @@
 import { atom } from 'jotai'
 import { resolveLanding } from '../lib/landing-target'
 import { ensureTodaysDailyAtom } from './daily'
-import { appIdsAtom } from './apps'
+import { appPathsAtom } from './apps'
 import { openApp, openPinned, openSingleton, workspaceAtom } from './panes'
 import { loadVaultSettingsAtom } from './settings'
 import { activeDocAtom, snapshotAtom } from './vaults'
@@ -33,7 +33,7 @@ export const openLandingAtom = atom(null, async (get, set): Promise<void> => {
 
   const target = resolveLanding(settings, {
     docPaths: new Set(get(snapshotAtom).docs.map((d) => d.path)),
-    appIds: new Set(get(appIdsAtom)),
+    appPaths: new Set(get(appPathsAtom)),
   })
   if (target === null) return
 
@@ -55,7 +55,7 @@ export const openLandingAtom = atom(null, async (get, set): Promise<void> => {
       return
 
     case 'app':
-      set(workspaceAtom, openApp(get(workspaceAtom), target.appId))
+      set(workspaceAtom, openApp(get(workspaceAtom), target.path))
       return
 
     // The singleton surfaces: the same request as clicking one in the nav rail.

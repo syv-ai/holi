@@ -30,8 +30,8 @@ import {
   VAULT_MARKER_FILE,
 } from '@holi/shared'
 import { ensureSeeded } from './agent/seed-content'
-import { initAppOp, renameAppOp, type AppInitResult, type AppRenameResult } from './apps/app-ops'
-import { migrateAppManifests } from './apps/migrate-manifests'
+import { initAppOp, type AppInitResult } from './apps/app-ops'
+import { migrateApps as moveLegacyApps } from './apps/migrate-apps'
 import { scanBackrefs, scanBackrefsMany } from './vault/backrefs'
 import { fileHistory, linksOut, type FileHistory } from './vault/file-facts'
 import { copyNotes } from './vault/copy'
@@ -535,19 +535,19 @@ export function createRouter(deps: RouterDeps) {
   }
 
   /**
-   * Give a pre-manifest app the manifest that now registers it.
+   * Move the apps kept in `.holi/apps/` to `<id>.app/` at the root (D107).
    *
    * Runs wherever `ensureSeeded` does and always **ahead of `host.open`**, for
-   * the seed's reason and a sharper one: the renderer keys registration on
-   * `app.yaml`, so an app without one would be missing from the first snapshot
-   * and blink into the sidebar only on the next rescan.
+   * the seed's reason and a sharper one: the first snapshot the renderer sees
+   * already has the apps where the tree shows them, and the moves reach git
+   * through the ordinary autosave.
    */
   async function migrateApps(root: string): Promise<void> {
-    const migrated = await migrateAppManifests(root)
-    if (migrated.length > 0) {
-      console.log(`[apps] wrote a manifest for: ${migrated.join(', ')}`)
-    }
+    const { moved, skipped } = await moveLegacyApps(root)
+    if (moved.length > 0) console.log(`[apps] moved: ${moved.map((m) => m.to).join(', ')}`)
+    if (skipped.length > 0) console.log(`[apps] target exists, left: ${skipped.join(', ')}`)
   }
+
   /** remote -> the clone's root on this machine. Every path-taking procedure
    * goes through here, so an unknown vault fails once, in one place. */
   async function rootFor(remote: string): Promise<string> {
@@ -1049,13 +1049,13 @@ export function createRouter(deps: RouterDeps) {
    *
    * `read` / `docs` / `tasks` are what a **vault app** reaches, through the
    * postMessage bridge — which is why they are read-only and why `read` refuses
-   * the agent surface. `rename` / `register` are what **Holi's own sidebar**
-   * reaches, and they mutate.
+   * the agent surface. `register` is what **Holi's own launchers** reach, and it
+   * mutates.
    *
    * They share a namespace safely only because `AppFrame` answers the bridge
    * with an exhaustive `switch` over `APP_METHODS`, never by forwarding a
    * method name into tRPC. **Do not turn that switch into a passthrough** — it
-   * is the only thing standing between an app and renaming its neighbours.
+   * is the only thing standing between an app and finishing its neighbours.
    */
   const apps = t.router({
     read: t.procedure
@@ -1085,23 +1085,13 @@ export function createRouter(deps: RouterDeps) {
 
     // ---- Holi's own UI from here down. Not reachable from an app. ----
 
-    /** Rename an app's directory, which is to say rename the app: the id is the
-     *  directory name and the `holi-app://` host both. A refusal comes back as a
-     *  value, not a throw, because the caller is an inline rename field that has
-     *  somewhere to put the reason. */
-    rename: vaultMutation
-      .input(fields({ remote: 'string', from: 'string', to: 'string' }))
-      .mutation(async ({ input }): Promise<AppRenameResult> =>
-        renameAppOp(await rootFor(input.remote), input.from, input.to),
-      ),
-
-    /** Write the manifest that registers a directory as a finished app — the
-     *  sidebar's "finish this app", and the same op as `holi app init`. Never
-     *  overwrites, so it cannot clobber a manifest someone is mid-way through. */
+    /** Write the manifest that finishes a bundle — the launchers' "Finish this
+     *  app", and the same op as `holi app init`. Never overwrites, so it cannot
+     *  clobber a manifest someone is mid-way through. A rename is a tree move. */
     register: vaultMutation
-      .input(fields({ remote: 'string', appId: 'string' }))
+      .input(fields({ remote: 'string', path: 'string' }))
       .mutation(async ({ input }): Promise<AppInitResult> =>
-        initAppOp(await rootFor(input.remote), input.appId),
+        initAppOp(await rootFor(input.remote), input.path),
       ),
   })
 

@@ -111,7 +111,7 @@ describe('the DataTransfer payload', () => {
   it('round-trips every kind of tab', () => {
     const tabs = [
       { kind: 'note', path: 'notes/a.md' },
-      { kind: 'app', appId: 'burndown' },
+      { kind: 'app', path: 'Team/burndown.app' },
       { kind: 'board' },
       { kind: 'agenda' },
       { kind: 'mail' },
@@ -145,7 +145,7 @@ describe('the DataTransfer payload', () => {
     expect(parseTabPayload('{"kind":"note","path":5}')).toBeNull()
     expect(parseTabPayload('{"kind":"note","path":""}')).toBeNull()
     expect(parseTabPayload('{"kind":"app"}')).toBeNull()
-    expect(parseTabPayload('{"kind":"app","appId":""}')).toBeNull()
+    expect(parseTabPayload('{"kind":"app","path":""}')).toBeNull()
   })
 
   it('does not let extra keys ride in from the string', () => {

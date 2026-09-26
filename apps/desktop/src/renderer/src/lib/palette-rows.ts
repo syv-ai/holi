@@ -12,7 +12,7 @@
  * thousands of files from mounting thousands of items.
  */
 import commandScore from 'command-score'
-import { isHiddenPath, type VaultSnapshot } from '@holi/shared'
+import { appName, isHiddenPath, type VaultSnapshot } from '@holi/shared'
 import type { Tab } from '../state/panes'
 import { entryOfTab, type RecentEntry, type RecentKind } from './recents'
 
@@ -36,11 +36,11 @@ export type RowIcon =
 
 export interface PaletteRow {
   kind: RowKind
-  /** The path, app id, session id or surface kind — what opens it, and what
+  /** The path, app bundle, session id or surface kind — what opens it, and what
    *  a recent of the same kind is keyed by. */
   key: string
   name: string
-  /** The folder for a path; nothing for the rest. */
+  /** The folder for a path or an app; nothing for the rest. */
   detail?: string
   icon: RowIcon
   /** A git-ignored path: shown, dimmed, as VS Code does. */
@@ -74,11 +74,11 @@ function splitPath(path: string): { name: string; detail?: string } {
 
 export interface RowSources {
   snapshot: VaultSnapshot
-  appIds: readonly string[]
+  appPaths: readonly string[]
   sessions: readonly { id: string; name: string; exited: boolean }[]
 }
 
-export function buildRows({ snapshot, appIds, sessions }: RowSources): PaletteRow[] {
+export function buildRows({ snapshot, appPaths, sessions }: RowSources): PaletteRow[] {
   const ignored = new Set(snapshot.ignored)
   const pathRow = (
     path: string,
@@ -102,7 +102,13 @@ export function buildRows({ snapshot, appIds, sessions }: RowSources): PaletteRo
     ...snapshot.files
       .filter((f) => !isHiddenPath(f.path))
       .map((f) => pathRow(f.path, 'file', f.updatedAt)),
-    ...appIds.map((id): PaletteRow => ({ kind: 'app', key: id, name: id, icon: { glyph: 'app' } })),
+    ...appPaths.map((path): PaletteRow => ({
+      kind: 'app',
+      key: path,
+      ...splitPath(path),
+      name: appName(path),
+      icon: { glyph: 'app' },
+    })),
     ...sessions
       .filter((s) => !s.exited)
       .map((s): PaletteRow => ({

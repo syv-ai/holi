@@ -164,7 +164,7 @@ export function PaneView({
         {tab?.kind === 'session' ? null : (
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'app' ? (
-              <AppFrame appId={tab.appId} />
+              <AppFrame path={tab.path} />
             ) : tab?.kind === 'board' ? (
               <BoardView />
             ) : tab?.kind === 'agenda' ? (

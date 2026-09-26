@@ -22,8 +22,8 @@ const SCRIPT = `#!/bin/sh
 #
 # Every command here is reversible or read-only, which is why none of them
 # asks first:
-#   app open <id>            open the app's tab (you can close it)
-#   app init <id>            scaffold a new app directory (you can delete it)
+#   app open <path>          open the app's tab (you can close it)
+#   app init <path>          scaffold a new app bundle (you can delete it)
 #   seed refresh [path]      rewrite the managed files Holi itself wrote
 #   pdf comments <path>      print a PDF's comments (reads, changes nothing)
 #
@@ -42,14 +42,15 @@ usage() {
   cat >&2 <<'USAGE'
 usage: holi <command>
 
-  app open <id>                 open a finished app in a tab
-  app init <id>                 scaffold .holi/apps/<id>/ with a manifest
+  app open <path>               open a finished app in a tab
+  app init <path>               scaffold <path> (a folder ending in .app)
   seed refresh [path] [--force] rewrite the managed files Holi wrote
   pdf comments <path> [--json]  print a vault PDF's comments: page, mark,
                                 marked text, author, dates and replies
 
-An app is finished when it has app.yaml next to index.html. Write the manifest
-LAST: it is what registers the app, so the tab never opens onto half a page.
+An app is a folder ending in .app, anywhere in the vault, e.g. Finance/Budget.app.
+It is finished when it has app.yaml next to index.html. Write the manifest LAST:
+it is what finishes the app, so the tab never opens onto half a page.
 USAGE
   exit 2
 }
@@ -72,12 +73,12 @@ case "\$cmd" in
     [ $# -gt 0 ] && shift
     case "\$sub" in
       open)
-        [ $# -ge 1 ] || { echo "holi app open <id>" >&2; exit 2; }
-        post app/open --data-urlencode "id=\$1"
+        [ $# -ge 1 ] || { echo "holi app open <path>" >&2; exit 2; }
+        post app/open --data-urlencode "path=\$1"
         ;;
       init)
-        [ $# -ge 1 ] || { echo "holi app init <id>" >&2; exit 2; }
-        post app/init --data-urlencode "id=\$1"
+        [ $# -ge 1 ] || { echo "holi app init <path>" >&2; exit 2; }
+        post app/init --data-urlencode "path=\$1"
         ;;
       *) usage ;;
     esac

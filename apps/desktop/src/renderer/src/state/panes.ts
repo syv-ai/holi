@@ -27,14 +27,14 @@ export const openBesideAtom = atom(null, (_get, set, path: string) => {
  *
  *  **Named, not derived** from `Exclude<Tab, {kind:'note'}>`: derived, it would
  *  include `app`, and `openSingleton(w,'app')` would typecheck and open a tab
- *  with no `appId`.
+ *  with no `path`.
  *
  *  Settings and history are tabs rather than modals so they can sit split beside
  *  the note they concern. */
 export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
 
 /**
- * A tab is either *of* something (a note by path, an app or session by id) or
+ * A tab is either *of* something (a note or app by path, a session by id) or
  * one of the singleton surfaces.
  *
  * The `preview` flag is VS Code's two-state model: a preview tab (italic) is the
@@ -43,9 +43,9 @@ export type SingletonTab = 'board' | 'agenda' | 'mail' | 'settings' | 'history'
  */
 export type Tab =
   | { kind: 'note'; path: string; preview?: boolean }
-  /** A vault app (D74), identified by its directory name under `.holi/apps/`.
-   *  There is one tab per app, not one per vault. */
-  | { kind: 'app'; appId: string }
+  /** A vault app (D74), identified by its bundle's path, `Finance/Budget.app`
+   *  (D107). There is one tab per app, not one per vault. */
+  | { kind: 'app'; path: string }
   /**
    * One of the vault's agent sessions (D101), by the id main minted for it.
    *
@@ -82,7 +82,7 @@ export const workspaceAtom = atom<Workspace>(emptyWorkspace())
 function sameTab(a: Tab, b: Tab): boolean {
   if (a.kind !== b.kind) return false
   if (a.kind === 'note' && b.kind === 'note') return a.path === b.path
-  if (a.kind === 'app' && b.kind === 'app') return a.appId === b.appId
+  if (a.kind === 'app' && b.kind === 'app') return a.path === b.path
   if (a.kind === 'session' && b.kind === 'session') return a.id === b.id
   // Everything left is a singleton, of which there is one, ever. A kind that
   // carries an identity and is NOT listed above falls in here and reads as
@@ -156,12 +156,12 @@ export function openHistory(workspace: Workspace): Workspace {
   return openSingleton(workspace, 'history')
 }
 
-/** Open a vault app, or focus it if already open. Deduped by `appId`: two frames
+/** Open a vault app, or focus it if already open. Deduped by `path`: two frames
  *  over one app are two running copies of it. Appended rather than inserted
  *  leftmost: an app is opened from the sidebar like a file, not from the nav
  *  rail like a singleton. */
-export function openApp(workspace: Workspace, appId: string): Workspace {
-  return openTab(workspace, { kind: 'app', appId })
+export function openApp(workspace: Workspace, path: string): Workspace {
+  return openTab(workspace, { kind: 'app', path })
 }
 
 /** Show one agent session, or focus its tab if already open. Deduped by id: two
@@ -311,39 +311,36 @@ export function retargetTab(workspace: Workspace, from: string, to: string): Wor
   }
 }
 
-/** `retargetTab` for a whole batch (folder or multi-move). */
+/**
+ * `retargetTab` for a whole batch (folder or multi-move).
+ *
+ * An app tab follows its bundle: the moves name files, so a tab on
+ * `A.app` follows a move of `A.app/index.html` to `B/A.app/index.html` by
+ * taking the same suffix off the destination.
+ */
 export function retargetTabs(
   workspace: Workspace,
   moves: { from: string; to: string }[],
 ): Workspace {
   const map = new Map(moves.map((m) => [m.from, m.to]))
-  return {
-    ...workspace,
-    panes: workspace.panes.map((pane) => ({
-      ...pane,
-      tabs: pane.tabs.map((tab) =>
-        tab.kind === 'note' && map.has(tab.path) ? { ...tab, path: map.get(tab.path)! } : tab,
-      ),
-    })),
+  const bundleTo = (bundle: string): string | undefined => {
+    for (const { from, to } of moves) {
+      if (!from.startsWith(`${bundle}/`)) continue
+      const rest = from.slice(bundle.length)
+      if (to.endsWith(rest)) return to.slice(0, -rest.length)
+    }
+    return undefined
   }
-}
-
-/**
- * Follow a renamed app to its new id, in every pane.
- *
- * `retargetTabs` keys on `path`, and an app tab's identity is `appId` (the
- * directory name under `.holi/apps/` and the `holi-app://` host). Without this
- * the frame would render the "was deleted" tombstone for a renamed app.
- */
-export function retargetAppTab(workspace: Workspace, from: string, to: string): Workspace {
-  if (from === to) return workspace
   return {
     ...workspace,
     panes: workspace.panes.map((pane) => ({
       ...pane,
-      tabs: pane.tabs.map((tab) =>
-        tab.kind === 'app' && tab.appId === from ? { ...tab, appId: to } : tab,
-      ),
+      tabs: pane.tabs.map((tab) => {
+        if (tab.kind === 'note' && map.has(tab.path)) return { ...tab, path: map.get(tab.path)! }
+        if (tab.kind !== 'app') return tab
+        const to = bundleTo(tab.path)
+        return to === undefined ? tab : { ...tab, path: to }
+      }),
     })),
   }
 }

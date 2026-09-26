@@ -13,7 +13,7 @@ import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import { entryOfTab, prune, touch, type RecentEntry } from '../lib/recents'
 import { agentSessionsAtom } from './agent'
-import { appIdsAtom } from './apps'
+import { appPathsAtom } from './apps'
 import type { Tab } from './panes'
 import { activeRemoteAtom, snapshotAtom } from './vaults'
 
@@ -32,7 +32,7 @@ function isLive(get: Getter): (entry: RecentEntry) => boolean {
   const snapshot = get(snapshotAtom)
   const scanned = snapshot.docs.length + snapshot.files.length > 0
   const paths = new Set([...snapshot.docs, ...snapshot.files].map((d) => d.path))
-  const apps = new Set(get(appIdsAtom))
+  const apps = new Set(get(appPathsAtom))
   const sessions = new Set(
     get(agentSessionsAtom)
       .filter((s) => !s.exited)

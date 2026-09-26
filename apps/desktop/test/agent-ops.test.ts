@@ -73,22 +73,22 @@ describe('the turn signals keep their contract', () => {
 describe('app/open', () => {
   it('opens the app and answers ok', async () => {
     const r = await rig()
-    const res = await post(r.port(), `/app/open?t=${r.token()}&id=retro-board`)
+    const res = await post(r.port(), `/app/open?t=${r.token()}&path=Retro.app`)
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ ok: true })
-    expect(r.openApp).toHaveBeenCalledWith('retro-board')
+    expect(r.openApp).toHaveBeenCalledWith('Retro.app')
   })
 
   it('answers a refusal as a value, not a 500', async () => {
     const r = await rig({
       openApp: vi.fn(() => Promise.resolve({ ok: false as const, error: 'no app.yaml' })),
     })
-    const res = await post(r.port(), `/app/open?t=${r.token()}&id=half-written`)
+    const res = await post(r.port(), `/app/open?t=${r.token()}&path=Half.app`)
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'no app.yaml' })
   })
 
-  it('refuses a missing id without calling the dep', async () => {
+  it('refuses a missing path without calling the dep', async () => {
     const r = await rig()
     const res = await post(r.port(), `/app/open?t=${r.token()}`)
     expect(JSON.parse(res.body)).toMatchObject({ ok: false })
@@ -97,7 +97,7 @@ describe('app/open', () => {
 
   it('turns a thrown dep into a refusal rather than a 500', async () => {
     const r = await rig({ openApp: vi.fn(() => Promise.reject(new Error('vault is closed'))) })
-    const res = await post(r.port(), `/app/open?t=${r.token()}&id=retro-board`)
+    const res = await post(r.port(), `/app/open?t=${r.token()}&path=Retro.app`)
     expect(res.status).toBe(200)
     expect(JSON.parse(res.body)).toEqual({ ok: false, error: 'vault is closed' })
   })
@@ -167,7 +167,7 @@ describe('pdf/comments', () => {
 describe('auth and routing', () => {
   it('refuses a bad token before the dep is reached', async () => {
     const r = await rig()
-    const res = await post(r.port(), '/app/open?t=wrong&id=retro-board')
+    const res = await post(r.port(), '/app/open?t=wrong&path=Retro.app')
     expect(res.status).toBe(403)
     expect(r.openApp).not.toHaveBeenCalled()
   })
@@ -176,7 +176,7 @@ describe('auth and routing', () => {
     // A megabyte of body with the wrong token must be turned away on the
     // headers, not accumulated first.
     const r = await rig()
-    const res = await post(r.port(), '/app/open?t=wrong&id=x', 'x'.repeat(1024 * 1024))
+    const res = await post(r.port(), '/app/open?t=wrong&path=x', 'x'.repeat(1024 * 1024))
     expect(res.status).toBe(403)
   })
 
@@ -207,7 +207,10 @@ describe('auth and routing', () => {
     const server = createHookServer({ onTurnStart: () => {}, onTurnEnd: () => {}, log: () => {} })
     servers.push(server)
     await server.start()
-    const res = await post(server.port()!, `/app/open?t=${server.tokenForVault('owner/repo')}&id=x`)
+    const res = await post(
+      server.port()!,
+      `/app/open?t=${server.tokenForVault('owner/repo')}&path=x`,
+    )
     expect(res.status).toBe(404)
   })
 })

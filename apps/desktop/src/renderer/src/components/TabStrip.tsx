@@ -28,6 +28,7 @@ import {
   Mail,
   SquareKanban,
 } from 'lucide-react'
+import { appName } from '@holi/shared'
 import { fileIconFor } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
 import { reorderOffsets } from '@/lib/tab-reorder'
@@ -103,7 +104,7 @@ export function tabKey(tab: Tab): string {
   return tab.kind === 'note'
     ? `note:${tab.path}`
     : tab.kind === 'app'
-      ? `app:${tab.appId}`
+      ? `app:${tab.path}`
       : tab.kind === 'session'
         ? `session:${tab.id}`
         : tab.kind
@@ -131,7 +132,7 @@ function tabIcon(tab: Tab, icons: Record<string, string>, sessions: AgentSession
 
 function tabName(tab: Tab, sessions: AgentSession[]): string {
   if (tab.kind === 'note') return tab.path.split('/').at(-1) ?? tab.path
-  if (tab.kind === 'app') return tab.appId
+  if (tab.kind === 'app') return appName(tab.path)
   // Claude Code's own name, pushed by main. A gone session's tab keeps a label
   // for the frame until the tab goes too.
   if (tab.kind === 'session') return sessions.find((s) => s.id === tab.id)?.name ?? 'Session'
@@ -147,7 +148,11 @@ function tabTooltip(tab: Tab, sessions: AgentSession[]): string {
   }
   return (
     TAB_LABEL[tab.kind] ??
-    (tab.kind === 'note' ? tab.path : tab.kind === 'app' ? `the ${tab.appId} app` : tab.kind)
+    (tab.kind === 'note'
+      ? tab.path
+      : tab.kind === 'app'
+        ? `the ${appName(tab.path)} app`
+        : tab.kind)
   )
 }
 

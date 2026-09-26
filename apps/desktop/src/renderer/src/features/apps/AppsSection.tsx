@@ -15,9 +15,8 @@
  * file, so rows take the tree row's metrics and their icons line up with the
  * tree's root-level file icons. A chip-styled section read as a fourth chip row.
  *
- * The menu deliberately does NOT mirror the file tree's. Most of that menu is
- * about paths, and an app is a directory whose name is also a `holi-app://`
- * host: duplicating one would need a second id nobody chose.
+ * An app is also a row in the file tree, where it is filed (D107); this list is
+ * every app in the vault in one place, by name.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AppWindow, ChevronRight } from 'lucide-react'
@@ -33,46 +32,25 @@ import {
   Tooltip,
 } from '@/primitives'
 import { DeleteConfirm } from '@/composites'
-import { APPS_DIR, isValidAppId } from '@holi/shared'
+import { appName } from '@holi/shared'
 import {
-  appDirIdsAtom,
   appsSectionOpenAtom,
   appFilesAtom,
-  appIdsAtom,
+  appPathsAtom,
   deleteAppAtom,
   registerAppAtom,
   renameAppAtom,
-  unregisteredAppIdsAtom,
+  unregisteredAppPathsAtom,
 } from '../../state/apps'
 import { activeTab, openApp, openInNewPane, openPinned, workspaceAtom } from '../../state/panes'
 import { revealPathAtom } from '../../state/reveal'
 import { activeRemoteAtom, backrefsForMany, vaultsAtom } from '../../state/vaults'
 
-const ID_RULE = 'lowercase letters, digits and dashes only'
-
-/** The app's own root on disk, relative to the vault. */
-const dirOf = (appId: string): string => `${APPS_DIR}/${appId}`
-const entryOf = (appId: string): string => `${dirOf(appId)}/index.html`
-
-/**
- * Why this id cannot be used, or null when it can.
- *
- * Main checks the same things against the filesystem and is the authority: it
- * has to be, since a teammate's pull can create a directory between the keypress
- * and the mutation. This exists so the common refusals land under the field
- * instead of after a round-trip.
- */
-function rejectId(next: string, current: string, taken: Set<string>): string | null {
-  if (next === current) return null
-  if (!isValidAppId(next)) return `an app id is ${ID_RULE}`
-  if (taken.has(next)) return `${next} already exists`
-  return null
-}
+const entryOf = (bundle: string): string => `${bundle}/index.html`
 
 export function AppsSection(): React.JSX.Element | null {
-  const appIds = useAtomValue(appIdsAtom)
-  const unregistered = useAtomValue(unregisteredAppIdsAtom)
-  const takenIds = useAtomValue(appDirIdsAtom)
+  const apps = useAtomValue(appPathsAtom)
+  const unregistered = useAtomValue(unregisteredAppPathsAtom)
   const appFiles = useAtomValue(appFilesAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vaults = useAtomValue(vaultsAtom)
@@ -84,39 +62,32 @@ export function AppsSection(): React.JSX.Element | null {
   const getBackrefs = useSetAtom(backrefsForMany)
 
   /** The app whose row is currently an input, plus the last refusal to show. */
-  const [renaming, setRenaming] = useState<{ appId: string; error: string | null } | null>(null)
+  const [renaming, setRenaming] = useState<{ path: string; error: string | null } | null>(null)
   const [confirming, setConfirming] = useState<{
-    appId: string
+    path: string
     refs: { path: string; count: number }[]
   } | null>(null)
   const [open, setOpen] = useAtom(appsSectionOpenAtom)
 
-  if (appIds.length === 0 && unregistered.length === 0) return null
+  if (apps.length === 0 && unregistered.length === 0) return null
 
   const vaultPath = vaults.find((v) => v.remote === activeRemote)?.path ?? null
   const absOf = (rel: string) => (vaultPath === null ? rel : `${vaultPath}/${rel}`)
 
-  const commitRename = (from: string, raw: string) => {
-    const to = raw.trim()
-    const reason = rejectId(to, from, takenIds)
-    if (reason !== null) {
-      setRenaming({ appId: from, error: reason })
-      return
-    }
-    setRenaming(null)
-    void renameApp({ from, to }).then((result) => {
-      // A refusal from main (the id was taken between keypress and mutation, or
-      // the directory moved under us). Put the field back with the reason.
-      if (!result.ok) setRenaming({ appId: from, error: result.error })
+  const commitRename = (bundle: string, raw: string) => {
+    void renameApp({ bundle, name: raw.trim() }).then((result) => {
+      // Put the field back with the reason: a name that is taken, or cannot be
+      // one, or a move main refused.
+      setRenaming(result.ok ? null : { path: bundle, error: result.error })
     })
   }
 
-  const startDelete = (appId: string) => {
-    const files = appFiles.get(appId) ?? []
-    void getBackrefs(files).then((refs) => setConfirming({ appId, refs }))
+  const startDelete = (path: string) => {
+    const files = appFiles.get(path) ?? []
+    void getBackrefs(files).then((refs) => setConfirming({ path, refs }))
   }
 
-  const menuFor = (appId: string, registered: boolean) => (
+  const menuFor = (path: string, registered: boolean) => (
     <ContextMenuContent
       // Keep focus in the rename field this can open, instead of Radix pulling
       // it back to the row when the menu closes.
@@ -124,12 +95,12 @@ export function AppsSection(): React.JSX.Element | null {
     >
       {registered ? (
         <>
-          <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, appId))}>
+          <ContextMenuItem onSelect={() => setWorkspace((w) => openApp(w, path))}>
             Open
           </ContextMenuItem>
           {/* Beside the current pane rather than in place of its tab. */}
           <ContextMenuItem
-            onSelect={() => setWorkspace((w) => openInNewPane(w, { kind: 'app', appId }))}
+            onSelect={() => setWorkspace((w) => openInNewPane(w, { kind: 'app', path }))}
           >
             Open in a New Pane
           </ContextMenuItem>
@@ -138,14 +109,13 @@ export function AppsSection(): React.JSX.Element | null {
         // The one action that changes what this row *is*. It writes the manifest
         // and nothing else, so a half-written app becomes a finished one without
         // a round-trip through the agent.
-        <ContextMenuItem onSelect={() => void registerApp(appId)}>Finish this app</ContextMenuItem>
+        <ContextMenuItem onSelect={() => void registerApp(path)}>Finish this app</ContextMenuItem>
       )}
-      {/* Opening the tab is only half of it: the file lives under `.holi/apps/`,
-          so in most vaults it is not in the explorer at all until the reveal
-          puts it there. */}
+      {/* Opening the tab is only half of it: the reveal opens the bundle in the
+          tree, which is where its other files are. */}
       <ContextMenuItem
         onSelect={() => {
-          const entry = entryOf(appId)
+          const entry = entryOf(path)
           setWorkspace((w) => openPinned(w, entry))
           revealPath(entry)
         }}
@@ -153,49 +123,47 @@ export function AppsSection(): React.JSX.Element | null {
         Edit Source
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem onSelect={() => setRenaming({ appId, error: null })}>
-        Rename…
-      </ContextMenuItem>
-      <ContextMenuItem variant="destructive" onSelect={() => startDelete(appId)}>
+      <ContextMenuItem onSelect={() => setRenaming({ path, error: null })}>Rename…</ContextMenuItem>
+      <ContextMenuItem variant="destructive" onSelect={() => startDelete(path)}>
         Delete
       </ContextMenuItem>
       <ContextMenuSeparator />
-      <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(absOf(dirOf(appId)))}>
+      <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(absOf(path))}>
         Copy Path
       </ContextMenuItem>
-      <ContextMenuItem onSelect={() => void window.holi.openPath(absOf(dirOf(appId)))}>
+      <ContextMenuItem onSelect={() => void window.holi.openPath(absOf(path))}>
         Reveal in Finder
       </ContextMenuItem>
     </ContextMenuContent>
   )
 
   /** The open app, so its row tints like the tree's open file does. */
-  const openAppId = (() => {
+  const openPath = (() => {
     const tab = activeTab(workspace)
-    return tab?.kind === 'app' ? tab.appId : null
+    return tab?.kind === 'app' ? tab.path : null
   })()
 
-  const row = (appId: string, registered: boolean) => {
-    if (renaming?.appId === appId) {
+  const row = (path: string, registered: boolean) => {
+    if (renaming?.path === path) {
       return (
         <RenameRow
-          key={appId}
-          appId={appId}
+          key={path}
+          path={path}
           error={renaming.error}
-          onCommit={(value) => commitRename(appId, value)}
+          onCommit={(value) => commitRename(path, value)}
           onCancel={() => setRenaming(null)}
         />
       )
     }
     return (
-      <ContextMenu key={appId}>
+      <ContextMenu key={path}>
         {/* Tooltip OUTSIDE the trigger, not inside it: both are `asChild` and
             clone their single child, so the outer one must be the one holding a
             Radix element. Inverted, `ContextMenuTrigger` would try to pass a ref
-            to `Tooltip`, which is a plain function component. Empty content
-            passes straight through, so a registered row gets no tooltip. */}
+            to `Tooltip`, which is a plain function component. The tooltip is
+            the path, which tells two apps of one name apart. */}
         <Tooltip
-          content={registered ? '' : `${appId} has no app.yaml yet — right-click to finish it`}
+          content={registered ? path : `${path} has no app.yaml yet, right-click to finish it`}
         >
           <ContextMenuTrigger asChild>
             <Button
@@ -206,21 +174,21 @@ export function AppsSection(): React.JSX.Element | null {
                 // brings: its own height, radius, 12px text, medium weight and
                 // 12px glyph would otherwise make this a chip under the tree.
                 "h-[22px] w-full justify-start gap-1 rounded px-2 text-sm font-normal [&_svg:not([class*='size-'])]:size-3.5",
-                appId === openAppId
+                path === openPath
                   ? 'text-brand'
                   : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
                 registered ? '' : 'italic opacity-60',
               ].join(' ')}
               // An unregistered app has no manifest, so `openAppOp` refuses it:
               // a row that opens a refusal is worse than a row that does not open.
-              onClick={registered ? () => setWorkspace((w) => openApp(w, appId)) : undefined}
+              onClick={registered ? () => setWorkspace((w) => openApp(w, path)) : undefined}
             >
-              <IconColumns appId={appId} />
-              <span className="min-w-0 flex-1 truncate text-left">{appId}</span>
+              <IconColumns path={path} />
+              <span className="min-w-0 flex-1 truncate text-left">{appName(path)}</span>
             </Button>
           </ContextMenuTrigger>
         </Tooltip>
-        {menuFor(appId, registered)}
+        {menuFor(path, registered)}
       </ContextMenu>
     )
   }
@@ -251,19 +219,19 @@ export function AppsSection(): React.JSX.Element | null {
           way a tree row does, so a hover highlight spans the sidebar and the rows
           sit at the tree's indent. */}
       <div className="min-h-0 flex-1 overflow-y-auto pb-1">
-        {appIds.map((appId) => row(appId, true))}
-        {unregistered.map((appId) => row(appId, false))}
+        {apps.map((path) => row(path, true))}
+        {unregistered.map((path) => row(path, false))}
       </div>
 
       {confirming && (
         <DeleteConfirm
-          label={dirOf(confirming.appId)}
+          label={confirming.path}
           refs={confirming.refs}
           onCancel={() => setConfirming(null)}
           onConfirm={() => {
-            const appId = confirming.appId
+            const path = confirming.path
             setConfirming(null)
-            void deleteApp(appId)
+            void deleteApp(path)
           }}
         />
       )}
@@ -271,28 +239,28 @@ export function AppsSection(): React.JSX.Element | null {
   )
 }
 
-/** The row as an editable field. Seeded with the current id rather than empty:
+/** The row as an editable field. Seeded with the current name rather than empty:
  *  a rename is usually a small edit to a name that already exists, and clearing
  *  it would make the common case the expensive one. */
 function RenameRow({
-  appId,
+  path,
   error,
   onCommit,
   onCancel,
 }: {
-  appId: string
+  path: string
   error: string | null
   onCommit: (value: string) => void
   onCancel: () => void
 }): React.JSX.Element {
-  const [value, setValue] = useState(appId)
+  const [value, setValue] = useState(appName(path))
   return (
     <div className="flex flex-col">
       <div className="flex h-[22px] items-center gap-1 px-2">
-        <IconColumns appId={appId} />
+        <IconColumns path={path} />
         <Input
           autoFocus
-          aria-label={`rename ${appId}`}
+          aria-label={`rename ${appName(path)}`}
           className="h-[22px] min-w-0 flex-1 rounded border-primary bg-background px-1 py-0 text-sm shadow-none"
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -317,12 +285,12 @@ function RenameRow({
  * empty one is what lines an app's icon up with the tree's root-level file
  * icons directly above it, instead of half a column to the left.
  */
-function IconColumns({ appId }: { appId: string }): React.JSX.Element {
+function IconColumns({ path }: { path: string }): React.JSX.Element {
   return (
     <>
       <span className="w-4 shrink-0" aria-hidden="true" />
       <span className="flex w-4 shrink-0 justify-center">
-        <AppWindow aria-hidden="true" data-app-icon={appId} />
+        <AppWindow aria-hidden="true" data-app-icon={path} />
       </span>
     </>
   )

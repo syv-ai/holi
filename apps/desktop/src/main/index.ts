@@ -301,7 +301,7 @@ async function main(): Promise<void> {
     if (vault === null) return new Response(null, { status: 404 })
     const parsed = parseAppUrl(request.url)
     if (parsed === null) return new Response(null, { status: 400 })
-    const abs = appFileAbsPath(vault.root, parsed.appId, parsed.rel)
+    const abs = appFileAbsPath(vault.root, parsed.bundle, parsed.rel)
     if (abs === null) return new Response(null, { status: 403 })
 
     // The entry document is the one file that is rewritten: it carries the
@@ -460,20 +460,21 @@ async function main(): Promise<void> {
     onStatus: (sessionId, status) => agent.noteStatus(sessionId, status),
     opsFor: (remote) =>
       createAgentOps({
-      openApp: async (appId) => {
+      openApp: async (path) => {
         const root = await rootFor(remote)
         if (root === null) return { ok: false, error: 'no vault is open' }
-        const result = await openAppOp(root, appId)
+        const result = await openAppOp(root, path)
         // The tab opens only once the app is known to be openable: a refusal
         // that still opened a tab would show the agent a blank frame and tell
         // it the reason at the same time.
-        if (result.ok) send('apps:open', appId)
-        return result
+        if (!result.ok) return result
+        send('apps:open', result.bundle)
+        return { ok: true }
       },
-      initApp: async (appId) => {
+      initApp: async (path) => {
         const root = await rootFor(remote)
         if (root === null) return { ok: false, error: 'no vault is open' }
-        return initAppOp(root, appId)
+        return initAppOp(root, path)
       },
       /**
        * Holi's own pre-commit hook, calling back in. The transforms run here

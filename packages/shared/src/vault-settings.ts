@@ -97,7 +97,7 @@ const SINGLETON_LANDINGS: readonly SingletonLanding[] = ['board', 'agenda', 'mai
 export type LandingTarget =
   | { kind: 'daily' }
   | { kind: 'note'; path: string }
-  | { kind: 'app'; appId: string }
+  | { kind: 'app'; path: string }
   | { kind: SingletonLanding }
 
 export interface ResolvedVaultSettings {
@@ -144,7 +144,11 @@ export function parseLandingTarget(value: unknown): LandingTarget | null {
     return typeof path === 'string' && path !== '' ? { kind: 'note', path } : null
   }
   if (kind === 'app') {
-    return typeof appId === 'string' && appId !== '' ? { kind: 'app', appId } : null
+    if (typeof path === 'string' && path !== '') return { kind: 'app', path }
+    // Before D107 an app was `.holi/apps/<id>`, and opening a vault moves it to
+    // `<id>.app` at the root, so a landing written then still lands.
+    if (typeof appId === 'string' && appId !== '') return { kind: 'app', path: `${appId}.app` }
+    return null
   }
   if (SINGLETON_LANDINGS.includes(kind as SingletonLanding)) {
     return { kind: kind as SingletonLanding }

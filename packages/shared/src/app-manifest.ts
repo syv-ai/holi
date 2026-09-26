@@ -9,7 +9,7 @@
  * YAML rather than JSON: it takes comments and does not fail on a trailing
  * comma, which matters for a file written unattended by a model.
  *
- * The parser is forgiving inside the mapping: a typo costs the label, never the
+ * The parser is forgiving inside the mapping: a typo costs a field, never the
  * app, because an app that silently does not appear is the worst failure. Only
  * text that is not a mapping at all (a list, a number, a bare scalar) is refused.
  */
@@ -19,16 +19,12 @@ import { parse as parseYaml } from 'yaml'
 export const APP_MANIFEST_FILE = 'app.yaml'
 
 export interface AppManifest {
-  /** Display label. Defaults to the directory name at the call site; **never a
-   *  second id** — the directory name is still the identity (D74). */
-  name?: string
-  /** A lucide icon name. Unknown or absent falls back to the default glyph. */
-  icon?: string
-  /** Free text, shown in the sidebar tooltip. */
+  /** Free text, for the launchers. The name is the bundle's folder name (D107),
+   *  and the icon is the vault icon map's, as for any row. */
   description?: string
 }
 
-const KNOWN_KEYS = ['name', 'icon', 'description'] as const
+const KNOWN_KEYS = ['description'] as const
 
 /**
  * Never throws. `{}` for an empty, comment-only, or malformed manifest; `null`

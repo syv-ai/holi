@@ -11,7 +11,7 @@ export type RecentKind = 'path' | 'app' | 'session' | 'surface' | 'command'
 
 export interface RecentEntry {
   kind: RecentKind
-  /** A vault-relative path, an app id, a session id, a `SingletonTab`, or a
+  /** A vault-relative path, an app bundle, a session id, a `SingletonTab`, or a
    *  command id, by `kind`. */
   key: string
 }
@@ -24,7 +24,7 @@ export function entryOfTab(tab: Tab): RecentEntry {
     case 'note':
       return { kind: 'path', key: tab.path }
     case 'app':
-      return { kind: 'app', key: tab.appId }
+      return { kind: 'app', key: tab.path }
     case 'session':
       return { kind: 'session', key: tab.id }
     default:

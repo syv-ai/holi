@@ -10,10 +10,10 @@ import { activeTab, workspaceAtom } from '@/state/panes'
 import { AppsMenu } from '../AppsMenu'
 
 const { ids } = vi.hoisted(() => ({ ids: { current: [] as string[] } }))
-vi.mock('@/state/apps', () => ({ appIdsAtom: atom(() => ids.current) }))
+vi.mock('@/state/apps', () => ({ appPathsAtom: atom(() => ids.current) }))
 
-function setup(appIds: string[]) {
-  ids.current = appIds
+function setup(appPaths: string[]) {
+  ids.current = appPaths
   const store = createStore()
   const view = render(
     <Provider store={store}>
@@ -23,14 +23,17 @@ function setup(appIds: string[]) {
   return { store, ...view }
 }
 
-test('picking an app opens its tab', async () => {
-  const { store } = setup(['char-count', 'tasks-by-area'])
+test('picking an app by name opens its tab', async () => {
+  const { store } = setup(['char-count.app', 'Areas/tasks-by-area.app'])
   const user = userEvent.setup()
 
   await user.click(screen.getByRole('button', { name: 'apps' }))
   await user.click(screen.getByRole('menuitem', { name: 'tasks-by-area' }))
 
-  expect(activeTab(store.get(workspaceAtom))).toEqual({ kind: 'app', appId: 'tasks-by-area' })
+  expect(activeTab(store.get(workspaceAtom))).toEqual({
+    kind: 'app',
+    path: 'Areas/tasks-by-area.app',
+  })
 })
 
 test('a vault with no apps shows no apps button', () => {

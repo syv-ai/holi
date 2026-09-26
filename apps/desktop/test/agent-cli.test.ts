@@ -142,20 +142,20 @@ describe('usage', () => {
 
 describe('app open', () => {
   it('reaches the ops route and prints the answer', async () => {
-    const res = await run(bin, ['app', 'open', 'retro-board'], env)
+    const res = await run(bin, ['app', 'open', 'Finance/Budget.app'], env)
     expect(res.code).toBe(0)
     expect(JSON.parse(res.stdout)).toMatchObject({ ok: true })
-    expect(deps.openApp).toHaveBeenCalledWith('retro-board')
+    expect(deps.openApp).toHaveBeenCalledWith('Finance/Budget.app')
   })
 
-  it('passes an id through verbatim, spaces and all', async () => {
-    // Not a valid id — but the CLI must not be the thing that mangles it, or
-    // the refusal names an argument the user never typed.
-    await run(bin, ['app', 'open', 'my app'], env)
-    expect(deps.openApp).toHaveBeenCalledWith('my app')
+  it('passes a path through verbatim, spaces and all', async () => {
+    // The CLI must not be the thing that mangles it, or the refusal names an
+    // argument the user never typed.
+    await run(bin, ['app', 'open', 'My Apps/my app'], env)
+    expect(deps.openApp).toHaveBeenCalledWith('My Apps/my app')
   })
 
-  it('needs an id', async () => {
+  it('needs a path', async () => {
     const res = await run(bin, ['app', 'open'], env)
     expect(res.code).not.toBe(0)
   })

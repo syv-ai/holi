@@ -1,6 +1,6 @@
 import { sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { APP_METHODS, THEME_TOKENS } from '@holi/shared'
+import { APP_METHODS, THEME_TOKENS, appHost } from '@holi/shared'
 import { APP_BASE_TOKENS, missingBaseTokens } from '../src/main/apps/app-tokens'
 import { BRIDGE_JS } from '../src/main/apps/bridge-script'
 import {
@@ -11,84 +11,87 @@ import {
 } from '../src/main/apps/app-protocol'
 
 const ROOT = '/vault/root'
-const APPS = `${ROOT}${sep}.holi${sep}apps`
+const BUNDLE = 'Finance/Budget.app'
+const APP = `${ROOT}${sep}Finance${sep}Budget.app`
+const HOST = appHost(BUNDLE)
 
 describe('parseAppUrl', () => {
-  it('reads the app id off the HOST and the file off the path', () => {
-    expect(parseAppUrl('holi-app://retro/index.html')).toMatchObject({
-      appId: 'retro',
+  it('reads the bundle off the HOST and the file off the path', () => {
+    expect(parseAppUrl(`holi-app://${HOST}/index.html`)).toMatchObject({
+      bundle: BUNDLE,
       rel: 'index.html',
     })
-    expect(parseAppUrl('holi-app://retro/sub/app.js')).toMatchObject({
-      appId: 'retro',
+    expect(parseAppUrl(`holi-app://${HOST}/sub/app.js`)).toMatchObject({
+      bundle: BUNDLE,
       rel: 'sub/app.js',
     })
   })
 
   // The renderer knows the mode in force; main does not. The frame's URL says it.
   it('reads the colour mode off the query, dark when absent or unknown', () => {
-    expect(parseAppUrl('holi-app://retro/index.html?mode=light')?.mode).toBe('light')
-    expect(parseAppUrl('holi-app://retro/index.html?mode=dark')?.mode).toBe('dark')
-    expect(parseAppUrl('holi-app://retro/index.html')?.mode).toBe('dark')
-    expect(parseAppUrl('holi-app://retro/index.html?mode=pink')?.mode).toBe('dark')
+    expect(parseAppUrl(`holi-app://${HOST}/index.html?mode=light`)?.mode).toBe('light')
+    expect(parseAppUrl(`holi-app://${HOST}/index.html?mode=dark`)?.mode).toBe('dark')
+    expect(parseAppUrl(`holi-app://${HOST}/index.html`)?.mode).toBe('dark')
+    expect(parseAppUrl(`holi-app://${HOST}/index.html?mode=pink`)?.mode).toBe('dark')
   })
 
   it('treats a bare host as the entry document', () => {
-    expect(parseAppUrl('holi-app://retro/')).toMatchObject({ appId: 'retro', rel: 'index.html' })
-    expect(parseAppUrl('holi-app://retro')).toMatchObject({ appId: 'retro', rel: 'index.html' })
+    expect(parseAppUrl(`holi-app://${HOST}/`)).toMatchObject({ bundle: BUNDLE, rel: 'index.html' })
+    expect(parseAppUrl(`holi-app://${HOST}`)).toMatchObject({ bundle: BUNDLE, rel: 'index.html' })
   })
 
   it('decodes the path', () => {
-    expect(parseAppUrl('holi-app://retro/a%20b.css')).toMatchObject({ appId: 'retro', rel: 'a b.css' })
+    expect(parseAppUrl(`holi-app://${HOST}/a%20b.css`)).toMatchObject({ rel: 'a b.css' })
   })
 
-  it('folds the host to lower case, deliberately rather than by accident', () => {
-    // Chromium case-folds the host of a `standard:` scheme; Node's URL does not
-    // fold a non-special one. Folding here makes the two agree, so the same URL
-    // means the same app whichever parser produced the string.
-    expect(parseAppUrl('holi-app://Retro/index.html')).toMatchObject({ appId: 'retro', rel: 'index.html' })
+  it('reads a host that arrives upper-cased the same', () => {
+    // Chromium case-folds the host of a `standard:` scheme and Node does not
+    // fold a non-special one; hex means the fold changes nothing either way.
+    expect(parseAppUrl(`holi-app://${HOST.toUpperCase()}/index.html`)).toMatchObject({
+      bundle: BUNDLE,
+    })
   })
 
-  it('is null for an id that could not be a directory name', () => {
-    // `My_App` folds to `my_app`, which isValidAppId then rejects for the
-    // underscore — an app id must survive being a host without colliding.
-    expect(parseAppUrl('holi-app://My_App/index.html')).toBeNull()
+  it('is null for a host that is not a bundle', () => {
+    expect(parseAppUrl('holi-app://retro/index.html')).toBeNull()
+    expect(parseAppUrl(`holi-app://${appHost('.claude/x.app')}/index.html`)).toBeNull()
   })
 
   it('is null for another scheme or for a non-URL', () => {
-    expect(parseAppUrl('holi-vault://retro/x')).toBeNull()
+    expect(parseAppUrl(`holi-vault://${HOST}/x`)).toBeNull()
     expect(parseAppUrl('not a url')).toBeNull()
   })
 })
 
 describe('appFileAbsPath', () => {
-  it('resolves inside ONE app directory', () => {
-    expect(appFileAbsPath(ROOT, 'retro', 'index.html')).toBe(`${APPS}${sep}retro${sep}index.html`)
-    expect(appFileAbsPath(ROOT, 'retro', 'sub/a.js')).toBe(`${APPS}${sep}retro${sep}sub${sep}a.js`)
+  it('resolves inside ONE bundle', () => {
+    expect(appFileAbsPath(ROOT, BUNDLE, 'index.html')).toBe(`${APP}${sep}index.html`)
+    expect(appFileAbsPath(ROOT, BUNDLE, 'sub/a.js')).toBe(`${APP}${sep}sub${sep}a.js`)
   })
 
-  it('refuses to leave that directory', () => {
+  it('refuses to leave that bundle', () => {
     // Narrower than holi-vault://, which is the whole point: one app cannot read
     // another app's files, and no app can read the vault's notes off disk.
-    expect(appFileAbsPath(ROOT, 'retro', '../../../etc/passwd')).toBeNull()
-    expect(appFileAbsPath(ROOT, 'retro', '../other/index.html')).toBeNull()
-    expect(appFileAbsPath(ROOT, 'retro', '/abs')).toBeNull()
-    expect(appFileAbsPath(ROOT, 'retro', '')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, '../../../etc/passwd')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, '../Other.app/index.html')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, '/abs')).toBeNull()
+    expect(appFileAbsPath(ROOT, BUNDLE, '')).toBeNull()
   })
 
-  it('refuses an invalid app id even when the file path is fine', () => {
-    expect(appFileAbsPath(ROOT, '../..', 'index.html')).toBeNull()
-    expect(appFileAbsPath(ROOT, 'My_App', 'index.html')).toBeNull()
+  it('refuses a path that is not a bundle even when the file path is fine', () => {
+    expect(appFileAbsPath(ROOT, '../x.app', 'index.html')).toBeNull()
+    expect(appFileAbsPath(ROOT, 'notes', 'index.html')).toBeNull()
+    expect(appFileAbsPath(ROOT, '.claude/x.app', 'index.html')).toBeNull()
   })
 
-  it('always lands under the one app root — the containment guarantee', () => {
+  it('always lands under the one bundle — the containment guarantee', () => {
     // No `..` case here: vaultRelPath refuses one outright, even an interior
     // one the shell would resolve. The URL parser has already normalized any
     // that a real request could carry.
     for (const rel of ['index.html', 'sub/a.js', './index.html', 'sub//deep/a.js']) {
-      const out = appFileAbsPath(ROOT, 'retro', rel)
+      const out = appFileAbsPath(ROOT, BUNDLE, rel)
       expect(out).not.toBeNull()
-      expect(out!.startsWith(`${APPS}${sep}retro${sep}`)).toBe(true)
+      expect(out!.startsWith(`${APP}${sep}`)).toBe(true)
     }
   })
 })

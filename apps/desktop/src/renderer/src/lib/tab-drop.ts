@@ -90,7 +90,7 @@ export function tabPayload(tab: Tab): string {
     tab.kind === 'note'
       ? { kind: 'note', path: tab.path }
       : tab.kind === 'app'
-        ? { kind: 'app', appId: tab.appId }
+        ? { kind: 'app', path: tab.path }
         : { kind: tab.kind },
   )
 }
@@ -110,12 +110,12 @@ export function parseTabPayload(text: string): Tab | null {
   }
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return null
 
-  const { kind, path, appId } = value as Record<string, unknown>
+  const { kind, path } = value as Record<string, unknown>
   if (kind === 'note') {
     return typeof path === 'string' && path !== '' ? { kind: 'note', path } : null
   }
   if (kind === 'app') {
-    return typeof appId === 'string' && appId !== '' ? { kind: 'app', appId } : null
+    return typeof path === 'string' && path !== '' ? { kind: 'app', path } : null
   }
   if (kind === 'board' || kind === 'agenda' || kind === 'mail' || kind === 'settings') {
     return { kind }

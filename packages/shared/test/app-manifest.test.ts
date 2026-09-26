@@ -8,13 +8,6 @@ describe('APP_MANIFEST_FILE', () => {
 })
 
 describe('parseAppManifest', () => {
-  it('parses the fields it knows', () => {
-    expect(parseAppManifest('name: Retro\nicon: kanban\n')).toEqual({
-      name: 'Retro',
-      icon: 'kanban',
-    })
-  })
-
   it('keeps a description', () => {
     expect(parseAppManifest('description: Sprint retros, on the wall\n')).toEqual({
       description: 'Sprint retros, on the wall',
@@ -27,20 +20,19 @@ describe('parseAppManifest', () => {
     expect(parseAppManifest('# just a comment\n')).toEqual({})
   })
 
-  it('drops unknown keys rather than erroring', () => {
-    expect(parseAppManifest('name: Retro\nversion: 3\nentry: main.html\n')).toEqual({
-      name: 'Retro',
+  it('drops unknown keys rather than erroring, including the retired name and icon', () => {
+    expect(parseAppManifest('name: Retro\nicon: kanban\ndescription: d\nversion: 3\n')).toEqual({
+      description: 'd',
     })
   })
 
   it('drops a field whose value is the wrong type', () => {
-    expect(parseAppManifest('name: 42\nicon: kanban\n')).toEqual({ icon: 'kanban' })
-    expect(parseAppManifest('name:\n  a: b\n')).toEqual({})
-    expect(parseAppManifest('icon:\n  - a\n')).toEqual({})
+    expect(parseAppManifest('description: 42\n')).toEqual({})
+    expect(parseAppManifest('description:\n  - a\n')).toEqual({})
   })
 
-  it('returns {} for malformed YAML — a typo costs the label, never the app', () => {
-    expect(parseAppManifest('name: "unterminated\n')).toEqual({})
+  it('returns {} for malformed YAML — a typo costs a field, never the app', () => {
+    expect(parseAppManifest('description: "unterminated\n')).toEqual({})
     expect(parseAppManifest('a:\n b: c\n  d: e\n')).toEqual({})
   })
 

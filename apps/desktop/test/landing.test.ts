@@ -32,7 +32,7 @@ const settings = (over: Partial<ResolvedVaultSettings> = {}): ResolvedVaultSetti
 })
 
 /** A vault holding one ordinary note plus an app (entry + manifest, which is
- *  what `appIdsAtom` requires before it will call an app real). */
+ *  what `appPathsAtom` requires before it will call an app real). */
 const snapshot: VaultSnapshot = {
   docs: [
     { path: 'Notes/Standup.md', kind: 'note', updatedAt: '2026-08-22T00:00:00Z' },
@@ -40,7 +40,7 @@ const snapshot: VaultSnapshot = {
   ],
   tasks: [],
   broken: [],
-  files: [{ path: '.holi/apps/retro/index.html' }, { path: '.holi/apps/retro/app.yaml' }],
+  files: [{ path: 'retro.app/index.html' }, { path: 'retro.app/app.yaml' }],
 }
 
 /** A store with a vault open and its snapshot in, ready to land. */
@@ -77,9 +77,9 @@ describe('openLandingAtom', () => {
   })
 
   it('lands on an app', async () => {
-    const store = rig({ landing: { kind: 'app', appId: 'retro' } })
+    const store = rig({ landing: { kind: 'app', path: 'retro.app' } })
     await store.set(openLandingAtom)
-    expect(tabs(store)).toEqual([{ kind: 'app', appId: 'retro' }])
+    expect(tabs(store)).toEqual([{ kind: 'app', path: 'retro.app' }])
   })
 
   it.each(['board', 'agenda', 'mail'] as const)('lands on the %s', async (kind) => {
@@ -135,7 +135,7 @@ describe('openLandingAtom — a rotted target', () => {
   })
 
   it('falls back to the daily when the app is gone', async () => {
-    const store = rig({ landing: { kind: 'app', appId: 'nope' } })
+    const store = rig({ landing: { kind: 'app', path: 'nope.app' } })
     await store.set(openLandingAtom)
     expect(tabs(store)).toEqual([{ kind: 'note', path: '22-08-2026.md' }])
   })

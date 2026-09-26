@@ -10,7 +10,7 @@ import type { LandingTarget, ResolvedVaultSettings } from '@holi/shared'
 /** What the vault actually holds, as the snapshot sees it. */
 export interface VaultContents {
   docPaths: ReadonlySet<string>
-  appIds: ReadonlySet<string>
+  appPaths: ReadonlySet<string>
 }
 
 type LandingSettings = Pick<ResolvedVaultSettings, 'landing' | 'dailyNotes'>
@@ -38,8 +38,8 @@ export function resolveLanding(
         : resolveLanding({ landing: { kind: 'daily' }, dailyNotes }, vault)
 
     case 'app':
-      return vault.appIds.has(landing.appId)
-        ? { kind: 'app', appId: landing.appId }
+      return vault.appPaths.has(landing.path)
+        ? { kind: 'app', path: landing.path }
         : resolveLanding({ landing: { kind: 'daily' }, dailyNotes }, vault)
 
     // The singleton surfaces cannot rot, and `dailyNotes` does not affect them.

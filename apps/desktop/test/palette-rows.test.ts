@@ -33,7 +33,7 @@ function snapshot(over: Partial<VaultSnapshot> = {}): VaultSnapshot {
 const rows = (over: Partial<VaultSnapshot> = {}): PaletteRow[] =>
   buildRows({
     snapshot: snapshot(over),
-    appIds: ['plan'],
+    appPaths: ['Work/plan.app'],
     sessions: [
       { id: 's1', name: 'refactor', exited: false },
       { id: 's2', name: 'old', exited: true },
@@ -49,7 +49,7 @@ describe('buildRows', () => {
       'path:notes/beta.md',
       'path:2026-09-21.md',
       'path:notes/deck.pdf',
-      'app:plan',
+      'app:Work/plan.app',
       'session:s1',
       'surface:board',
       'surface:agenda',
@@ -67,6 +67,11 @@ describe('buildRows', () => {
     expect(daily.detail).toBeUndefined()
   })
 
+  it('names an app without .app, with its folder as detail', () => {
+    const plan = rows().find((r) => r.kind === 'app')!
+    expect(plan).toMatchObject({ key: 'Work/plan.app', name: 'plan', detail: 'Work' })
+  })
+
   it('dims an ignored path rather than dropping it', () => {
     expect(rows().find((r) => r.key === 'notes/beta.md')?.dim).toBe(true)
     expect(rows().find((r) => r.key === 'notes/alpha.md')?.dim).toBeUndefined()
@@ -76,12 +81,12 @@ describe('buildRows', () => {
 describe('rankRows with nothing typed', () => {
   it('lists the recents first, in order, then paths newest-modified first', () => {
     const recents: RecentEntry[] = [
-      { kind: 'app', key: 'plan' },
+      { kind: 'app', key: 'Work/plan.app' },
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = rankRows(rows(), '', recents)
     expect(keys(ranked)).toEqual([
-      'app:plan',
+      'app:Work/plan.app',
       'path:notes/alpha.md',
       'path:2026-09-21.md',
       'path:notes/beta.md',
@@ -129,7 +134,7 @@ describe('rankRows with a query', () => {
         icons: {},
         ignored: [],
       }),
-      appIds: [],
+      appPaths: [],
       sessions: [],
     })
     const ranked = rankRows(two, 'plan', [{ kind: 'path', key: 'b/plan.md' }])
@@ -146,7 +151,7 @@ describe('rankRows with a query', () => {
 describe('openTabRows', () => {
   const tabs = [
     { kind: 'note', path: 'notes/alpha.md' },
-    { kind: 'app', appId: 'plan' },
+    { kind: 'app', path: 'Work/plan.app' },
     { kind: 'board' },
     { kind: 'session', id: 's1' },
   ] as const
@@ -158,7 +163,7 @@ describe('openTabRows', () => {
       { kind: 'path', key: 'notes/alpha.md' },
     ]
     const ranked = openTabRows(rows(), [...tabs], { kind: 'board' }, recents)
-    expect(keys(ranked)).toEqual(['session:s1', 'path:notes/alpha.md', 'app:plan'])
+    expect(keys(ranked)).toEqual(['session:s1', 'path:notes/alpha.md', 'app:Work/plan.app'])
     expect(ranked.map((r) => r.recent)).toEqual([true, true, false])
   })
 

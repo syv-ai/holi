@@ -12,7 +12,7 @@
  *  - **The source, never the origin.** `event.origin` is the literal string
  *    `"null"` for an opaque origin, so it identifies nothing. `event.source ===
  *    contentWindow` is what says the message came from the frame we mounted.
- *  - **The app never names itself.** Every call goes out with the `appId` this
+ *  - **The app never names itself.** Every call goes out with the bundle this
  *    component was mounted with and the vault the user has open. An app that put
  *    an id in its message would be ignored: otherwise one app could address
  *    another's directory by asking nicely.
@@ -24,10 +24,10 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { APP_METHODS, type AppMethod, type AppResponse } from '@holi/shared'
+import { APP_METHODS, appHost, appName, type AppMethod, type AppResponse } from '@holi/shared'
 import { Button, Tooltip } from '@/primitives'
 import { trpc } from '../../lib/trpc'
-import { appIdsAtom, closeAppAtom } from '../../state/apps'
+import { appPathsAtom, closeAppAtom } from '../../state/apps'
 import { activeModeAtom } from '../../state/color-scheme'
 import { openNoteTabAtom } from '../../state/panes'
 import { activeRemoteAtom } from '../../state/vaults'
@@ -43,15 +43,15 @@ function pathOf(params: unknown): string | null {
   return typeof path === 'string' ? path : null
 }
 
-export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
-  const appIds = useAtomValue(appIdsAtom)
+export function AppFrame({ path }: { path: string }): React.JSX.Element {
+  const appPaths = useAtomValue(appPathsAtom)
   const remote = useAtomValue(activeRemoteAtom)
   const mode = useAtomValue(activeModeAtom)
   const openNote = useSetAtom(openNoteTabAtom)
   const closeApp = useSetAtom(closeAppAtom)
   const [reloads, setReloads] = useState(0)
   const frameRef = useRef<HTMLIFrameElement>(null)
-  const exists = appIds.includes(appId)
+  const exists = appPaths.includes(path)
 
   const answer = useCallback(
     async (method: AppMethod, params: unknown): Promise<unknown> => {
@@ -107,9 +107,9 @@ export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-sm">
         <p className="text-muted-foreground">
-          <span className="text-foreground">{appId}</span> was deleted.
+          <span className="text-foreground">{appName(path)}</span> was deleted.
         </p>
-        <Button variant="ghost" onClick={() => closeApp(appId)}>
+        <Button variant="ghost" onClick={() => closeApp(path)}>
           close tab
         </Button>
       </div>
@@ -138,11 +138,11 @@ export function AppFrame({ appId }: { appId: string }): React.JSX.Element {
         ref={frameRef}
         // The mode in force goes in the URL, since main themes the document and
         // cannot see the renderer. A mode change reloads the frame.
-        src={`holi-app://${appId}/index.html?mode=${mode}`}
+        src={`holi-app://${appHost(path)}/index.html?mode=${mode}`}
         // The frame's accessible name. `title` is the usual attribute for an
         // iframe and is the one the gate bans (it is a browser tooltip on every
         // other element), so the label goes on aria-label.
-        aria-label={appId}
+        aria-label={appName(path)}
         // `allow-scripts` alone. Adding `allow-same-origin` would let the app
         // remove its own sandbox and give it a real origin, which is the
         // isolation this whole feature rests on.

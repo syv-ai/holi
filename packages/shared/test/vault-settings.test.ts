@@ -221,9 +221,16 @@ describe('parseLandingTarget — the trust boundary', () => {
     [{ kind: 'agenda' }],
     [{ kind: 'mail' }],
     [{ kind: 'note', path: 'Notes/Standup.md' }],
-    [{ kind: 'app', appId: 'retro' }],
+    [{ kind: 'app', path: 'Finance/Budget.app' }],
   ])('round-trips %j', (value) => {
     expect(parseLandingTarget(value)).toEqual(value)
+  })
+
+  it('reads a pre-D107 app id as the bundle opening the vault moved it to', () => {
+    expect(parseLandingTarget({ kind: 'app', appId: 'retro' })).toEqual({
+      kind: 'app',
+      path: 'retro.app',
+    })
   })
 
   it('builds a fresh narrow object rather than passing the input through', () => {
@@ -240,8 +247,9 @@ describe('parseLandingTarget — the trust boundary', () => {
     ['an empty note path', { kind: 'note', path: '' }],
     ['a missing note path', { kind: 'note' }],
     ['a non-string note path', { kind: 'note', path: 42 }],
+    ['an empty app path', { kind: 'app', path: '' }],
     ['an empty app id', { kind: 'app', appId: '' }],
-    ['a missing app id', { kind: 'app' }],
+    ['a missing app path', { kind: 'app' }],
     ['an unknown kind', { kind: 'nowhere' }],
     ['a missing kind', { path: 'a.md' }],
     ['an array', [{ kind: 'daily' }]],
@@ -270,10 +278,10 @@ describe('resolveVaultSettings — landing', () => {
 
   it('keeps a valid committed landing when the local file says nothing about it', () => {
     const s = resolveVaultSettings(
-      committed({ landing: { kind: 'app', appId: 'retro' } }),
+      committed({ landing: { kind: 'app', path: 'retro.app' } }),
       committed({ colorScheme: 'dark' }),
     )
-    expect(s.landing).toEqual({ kind: 'app', appId: 'retro' })
+    expect(s.landing).toEqual({ kind: 'app', path: 'retro.app' })
   })
 })
 

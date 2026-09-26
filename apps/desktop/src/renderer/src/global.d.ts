@@ -32,11 +32,11 @@ declare global {
       reminders: {
         onOpen(cb: (payload: { remote: string; path: string }) => void): () => void
       }
-      /** The agent ran `holi app open <id>`. Nothing else opens an app tab by
+      /** The agent ran `holi app open <path>`. Nothing else opens an app tab by
        *  itself: apps sync, so opening on *appearance* would put a teammate in
        *  charge of your screen. Returns its unsubscribe. */
       apps: {
-        onOpen(cb: (appId: string) => void): () => void
+        onOpen(cb: (bundle: string) => void): () => void
       }
       /** The Developer menu, dev builds only. Returns its unsubscribe. */
       dev: {

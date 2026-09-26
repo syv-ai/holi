@@ -6,7 +6,7 @@
  * answer only the frame it mounted, and it must pass the vault its own idea of
  * which app is speaking rather than the app's.
  */
-import { emptyVaultSnapshot } from '@holi/shared'
+import { appHost, emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { render, screen, waitFor } from '@/test/render'
@@ -34,21 +34,24 @@ vi.mock('../../../lib/trpc', () => ({
 const REMOTE = 'syv-ai/1brain'
 const store = getDefaultStore()
 
-function withApps(...ids: string[]) {
+function withApps(...bundles: string[]) {
   store.set(activeRemoteAtom, REMOTE)
   store.set(snapshotAtom, {
     ...emptyVaultSnapshot(),
     // Both files: registration is the manifest plus the entry document.
-    files: ids
-      .flatMap((id) => [`.holi/apps/${id}/index.html`, `.holi/apps/${id}/app.yaml`])
+    files: bundles
+      .flatMap((b) => [`${b}/index.html`, `${b}/app.yaml`])
       .map((path) => ({ path, updatedAt: '' })),
   })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  withApps('retro')
-  store.set(workspaceAtom, openApp({ panes: [{ tabs: [], active: -1 }], active: 0 }, 'retro'))
+  withApps('Team/Retro.app')
+  store.set(
+    workspaceAtom,
+    openApp({ panes: [{ tabs: [], active: -1 }], active: 0 }, 'Team/Retro.app'),
+  )
 })
 
 const frameOf = () => document.querySelector('iframe')!
@@ -58,9 +61,11 @@ function fromFrame(data: unknown, source: Window | null = frameOf().contentWindo
   window.dispatchEvent(new MessageEvent('message', { data, source }))
 }
 
-test('serves the app from its own origin', async () => {
-  render(<AppFrame appId="retro" />)
-  expect(frameOf().getAttribute('src')).toBe('holi-app://retro/index.html?mode=dark')
+test('serves the app from its own origin, the host encoding its bundle', async () => {
+  render(<AppFrame path="Team/Retro.app" />)
+  expect(frameOf().getAttribute('src')).toBe(
+    `holi-app://${appHost('Team/Retro.app')}/index.html?mode=dark`,
+  )
 })
 
 test('is sandboxed WITHOUT allow-same-origin', () => {
@@ -69,12 +74,12 @@ test('is sandboxed WITHOUT allow-same-origin', () => {
   // Granting both is the footgun that lets framed content drop its own sandbox;
   // here it would also give the app a real origin, and with it localStorage,
   // cookies, and a reachable holi-vault://.
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   expect(frameOf().getAttribute('sandbox')).toBe('allow-scripts')
 })
 
 test('ignores a message that did not come from the frame', async () => {
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   // `event.origin` is the string "null" for an opaque origin, so it is useless
   // as identity. The source is what says who spoke.
   fromFrame({ id: '1', method: 'docs.list' }, window)
@@ -83,7 +88,7 @@ test('ignores a message that did not come from the frame', async () => {
 })
 
 test('answers a docs.read with the value, addressed to the frame', async () => {
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'a.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -92,7 +97,7 @@ test('answers a docs.read with the value, addressed to the frame', async () => {
 })
 
 test('answers docs.list and tasks.list from the vault the frame is in', async () => {
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'd', method: 'docs.list' })
   fromFrame({ id: 't', method: 'tasks.list' })
@@ -103,7 +108,7 @@ test('answers docs.list and tasks.list from the vault the frame is in', async ()
 
 test('a refusal comes back as a value, not as a thrown error', async () => {
   readMock.mockRejectedValueOnce(new Error('FORBIDDEN'))
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'r1', method: 'docs.read', params: { path: 'MEMORY.md' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -111,7 +116,7 @@ test('a refusal comes back as a value, not as a thrown error', async () => {
 })
 
 test('an unknown method is refused rather than ignored', async () => {
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   const post = vi.spyOn(frameOf().contentWindow!, 'postMessage')
   fromFrame({ id: 'x', method: 'docs.write', params: { path: 'a.md', text: 'no' } })
   await waitFor(() => expect(post).toHaveBeenCalled())
@@ -119,7 +124,7 @@ test('an unknown method is refused rather than ignored', async () => {
 })
 
 test('reload rebuilds the frame rather than reusing it', async () => {
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   const before = frameOf()
   await userEvent.click(screen.getByRole('button', { name: /reload/i }))
   expect(frameOf()).not.toBe(before)
@@ -127,9 +132,9 @@ test('reload rebuilds the frame rather than reusing it', async () => {
 
 test('a deleted app leaves a tombstone, not a frame', async () => {
   withApps() // the app is gone — a teammate deleted it and the pull landed
-  render(<AppFrame appId="retro" />)
+  render(<AppFrame path="Team/Retro.app" />)
   expect(document.querySelector('iframe')).toBeNull()
-  expect(screen.getByText(/retro/)).toBeTruthy()
+  expect(screen.getByText(/Retro/)).toBeTruthy()
   expect(screen.getByText(/deleted/i)).toBeTruthy()
   // A tab that evaporates while you are looking at it reads as a crash, so
   // closing it is the user's move, not ours.

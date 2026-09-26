@@ -24,7 +24,6 @@ import {
   openTab,
   pinActive,
   pinTab,
-  retargetAppTab,
   retargetTab,
   retargetTabs,
   splitPane,
@@ -197,33 +196,33 @@ describe('closeTabsForPaths', () => {
 
 describe('openApp', () => {
   it('opens an app tab and focuses it', () => {
-    const w = openApp(emptyWorkspace(), 'retro')
-    expect(w.panes[0]!.tabs).toEqual([{ kind: 'app', appId: 'retro' }])
+    const w = openApp(emptyWorkspace(), 'retro.app')
+    expect(w.panes[0]!.tabs).toEqual([{ kind: 'app', path: 'retro.app' }])
     expect(w.panes[0]!.active).toBe(0)
   })
 
   it('focuses an app that is already open instead of opening it twice', () => {
     // Same rule as a note, for the same reason: two frames over one app are two
     // running copies of it, and the second one is not the one you were looking at.
-    let w = openApp(emptyWorkspace(), 'retro')
+    let w = openApp(emptyWorkspace(), 'retro.app')
     w = openTab(w, { kind: 'note', path: 'a.md' })
-    w = openApp(w, 'retro')
+    w = openApp(w, 'retro.app')
     expect(w.panes[0]!.tabs).toHaveLength(2)
     expect(w.panes[0]!.active).toBe(0)
   })
 
   it('keeps two different apps apart', () => {
-    let w = openApp(emptyWorkspace(), 'a')
-    w = openApp(w, 'b')
+    let w = openApp(emptyWorkspace(), 'a.app')
+    w = openApp(w, 'Sub/b.app')
     expect(w.panes[0]!.tabs).toEqual([
-      { kind: 'app', appId: 'a' },
-      { kind: 'app', appId: 'b' },
+      { kind: 'app', path: 'a.app' },
+      { kind: 'app', path: 'Sub/b.app' },
     ])
     expect(w.panes[0]!.active).toBe(1)
   })
 
   it('behaves like any other tab when closed', () => {
-    let w = openApp(emptyWorkspace(), 'retro')
+    let w = openApp(emptyWorkspace(), 'retro.app')
     w = openTab(w, { kind: 'note', path: 'a.md' })
     w = closeTab(w, 0)
     expect(w.panes[0]!.tabs).toEqual([{ kind: 'note', path: 'a.md' }])
@@ -233,42 +232,50 @@ describe('openApp', () => {
     // The regression this reshape exists to prevent. SingletonTab used to be
     // DERIVED (`Exclude<Tab, {kind:'note'}>['kind']`), which quietly meant
     // "every non-note tab is unique" — so this call would have typechecked and
-    // opened a tab with no appId at all.
+    // opened a tab with no path at all.
     // @ts-expect-error 'app' is not a singleton surface
     openSingleton(emptyWorkspace(), 'app')
   })
 })
 
-describe('retargetAppTab', () => {
+describe('retargetTabs, for an app', () => {
   const kinds = (w: Workspace) =>
-    w.panes[0]!.tabs.map((t) => (t.kind === 'app' ? `app:${t.appId}` : t.kind))
+    w.panes[0]!.tabs.map((t) => (t.kind === 'app' ? `app:${t.path}` : t.kind))
+  const moveBundle = (from: string, to: string, files = ['index.html', 'app.yaml']) =>
+    files.map((f) => ({ from: `${from}/${f}`, to: `${to}/${f}` }))
 
-  it('follows a renamed app to its new id, in place', () => {
+  it('follows a moved bundle to its new path, in place', () => {
     let w = emptyWorkspace()
-    w = openApp(w, 'retro')
-    w = openApp(w, 'burndown')
+    w = openApp(w, 'retro.app')
+    w = openApp(w, 'burndown.app')
 
-    const next = retargetAppTab(w, 'retro', 'standup')
+    const next = retargetTabs(w, moveBundle('retro.app', 'Team/standup.app'))
 
-    expect(kinds(next)).toEqual(['app:standup', 'app:burndown'])
+    expect(kinds(next)).toEqual(['app:Team/standup.app', 'app:burndown.app'])
     // The active selection is untouched — the user stays on what they were on.
     expect(next.panes[0]!.active).toBe(w.panes[0]!.active)
   })
 
-  it('leaves a note tab whose path merely mentions the id alone', () => {
-    // The app id is a directory name, not a path: a note called `retro.md` is
-    // not the app, and a rename must not touch it.
+  it('follows a folder move that carries the bundle with it', () => {
     let w = emptyWorkspace()
-    w = openTab(w, { kind: 'note', path: 'retro.md' })
-
-    expect(retargetAppTab(w, 'retro', 'standup')).toEqual(w)
+    w = openApp(w, 'Team/retro.app')
+    const next = retargetTabs(w, [
+      { from: 'Team/notes.md', to: 'Old/Team/notes.md' },
+      { from: 'Team/retro.app/lib/a.js', to: 'Old/Team/retro.app/lib/a.js' },
+    ])
+    expect(kinds(next)).toEqual(['app:Old/Team/retro.app'])
   })
 
-  it('is a no-op when the renamed app has no tab open', () => {
+  it('leaves an app alone when only a sibling whose name it prefixes moves', () => {
     let w = emptyWorkspace()
-    w = openApp(w, 'burndown')
+    w = openApp(w, 'retro.app')
+    expect(retargetTabs(w, moveBundle('retro.apple', 'x.apple'))).toEqual(w)
+  })
 
-    expect(retargetAppTab(w, 'retro', 'standup')).toEqual(w)
+  it('is a no-op when the moved app has no tab open', () => {
+    let w = emptyWorkspace()
+    w = openApp(w, 'burndown.app')
+    expect(retargetTabs(w, moveBundle('retro.app', 'standup.app'))).toEqual(w)
   })
 })
 
@@ -448,11 +455,11 @@ describe('one buffer per file, across panes', () => {
       {
         panes: [
           { tabs: [], active: -1 },
-          { tabs: [{ kind: 'app', appId: 'dash' }], active: 0 },
+          { tabs: [{ kind: 'app', path: 'dash.app' }], active: 0 },
         ],
         active: 0,
       },
-      'dash',
+      'dash.app',
     )
 
     expect(w.panes.flatMap((p) => p.tabs)).toHaveLength(1)
