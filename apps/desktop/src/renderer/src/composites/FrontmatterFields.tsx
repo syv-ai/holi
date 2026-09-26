@@ -281,6 +281,12 @@ function AddFieldRow({
   )
 }
 
+/** Whether a key holds anything to remove: the scaffold's `tags: []` does not. */
+function isSet(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return false
+  return !Array.isArray(value) || value.length > 0
+}
+
 /** A list of strings, read leniently: a hand-written `tags: ops` is one tag. */
 function asList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string')
@@ -430,7 +436,14 @@ export function FrontmatterFields({
         </FieldRow>
       )}
       {frontmatterRows(schema, Object.keys(values)).map((field) => (
-        <FieldRow key={field.key} label={field.key} hover>
+        <FieldRow
+          key={field.key}
+          label={field.key}
+          hover
+          // Removing unsets a schema key (its row stays, empty) and deletes any
+          // other key with its row.
+          onRemove={isSet(values[field.key]) ? () => set(field.key, undefined) : null}
+        >
           {control(field)}
         </FieldRow>
       ))}

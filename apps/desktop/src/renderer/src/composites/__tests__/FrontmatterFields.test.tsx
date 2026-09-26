@@ -209,3 +209,43 @@ test('the agent surface draws nothing either — its frontmatter is not ours', (
   )
   expect(container).toBeEmptyDOMElement()
 })
+
+test('the × on a key you added deletes it, row and all', async () => {
+  const onWrite = fields('tags: [ops]\nsource: email\n', 'notes/meeting.md')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'remove field source' }))
+
+  const written = onWrite.mock.calls[0]![0] as string
+  expect(written).not.toContain('source')
+  expect(written).toContain('ops')
+})
+
+test('the × on a schema key unsets it', async () => {
+  const onWrite = fields('status: todo\npriority: high\n')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('button', { name: 'remove field priority' }))
+
+  expect(onWrite.mock.calls[0]![0]).not.toContain('priority')
+})
+
+test('a row with nothing set has no × to press', () => {
+  fields('status: todo\n')
+  expect(screen.queryByRole('button', { name: 'remove field due' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'remove field status' })).toBeInTheDocument()
+})
+
+test('pressing a row outside its control focuses the control', async () => {
+  fields('tags: [ops]\nsource: email\n', 'notes/meeting.md')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByText('source'))
+
+  expect(screen.getByRole('textbox', { name: 'source' })).toHaveFocus()
+})
+
+test('an empty list has no ×: there is nothing in it to remove', () => {
+  fields('tags: []\n', 'notes/meeting.md')
+  expect(screen.queryByRole('button', { name: 'remove field tags' })).not.toBeInTheDocument()
+})
