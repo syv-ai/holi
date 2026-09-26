@@ -32,6 +32,7 @@ import { FilePlaceholder } from '@/features/files/FilePlaceholder'
 import { AppFrame } from '@/features/apps/AppFrame'
 import { AppsSection } from '@/features/apps/AppsSection'
 import { FileTree } from '@/features/explorer/FileTree'
+import { NavTree } from '@/features/explorer/NavTree'
 import { ImageViewer } from '@/features/files/ImageViewer'
 import { VaultPicker } from '@/features/vault/VaultPicker'
 import { syncLabel } from '../lib/sync-label'
@@ -87,7 +88,7 @@ import { sessionsWorthAsking } from '@/lib/agent-notices'
 /** One shared empty array, so a pane not being dragged over keeps the same
  *  `allowed` reference between renders. */
 const NO_ZONES: PaneDropZone[] = []
-import { navOpenAtom, usePanelLayout } from '../state/preferences'
+import { navOpenAtom, navTreeExperimentAtom, usePanelLayout } from '../state/preferences'
 import { appsSectionOpenAtom, hasAppsAtom } from '../state/apps'
 import { useVaultTheme } from '../state/theme'
 import {
@@ -130,6 +131,7 @@ export function Shell() {
   const sweepDaily = useSetAtom(sweepDailyAtom)
   const setHistoryOpen = useSetAtom(historyOpenAtom)
   const [navOpen, setNavOpen] = useAtom(navOpenAtom)
+  const [navTreeOn, setNavTreeOn] = useAtom(navTreeExperimentAtom)
   const historyTarget = useAtomValue(historyTargetPathAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
   // The one place that asks main whether Google is connected; settings shares
@@ -396,14 +398,24 @@ export function Shell() {
                 }}
               >
                 <ResizablePanel id="tree" minSize={80}>
-                  <FileTree
-                    activePath={tab?.kind === 'note' ? tab.path : null}
-                    onOpenPreview={open}
-                    onOpenPinned={openPin}
-                    onOpenInNewPane={(path) =>
-                      setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
-                    }
-                  />
+                  {navTreeOn ? (
+                    <NavTree
+                      activePath={tab?.kind === 'note' ? tab.path : null}
+                      onOpenPreview={open}
+                      onOpenPinned={openPin}
+                      onLeaveExperiment={() => setNavTreeOn(false)}
+                    />
+                  ) : (
+                    <FileTree
+                      activePath={tab?.kind === 'note' ? tab.path : null}
+                      onOpenPreview={open}
+                      onOpenPinned={openPin}
+                      onOpenInNewPane={(path) =>
+                        setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
+                      }
+                      onTryNavTree={() => setNavTreeOn(true)}
+                    />
+                  )}
                 </ResizablePanel>
                 {hasApps && (
                   <>

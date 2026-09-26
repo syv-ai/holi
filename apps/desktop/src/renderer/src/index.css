@@ -410,6 +410,33 @@
     width: 0;
   }
 }
+/* A tree folder discloses its contents (A): the row track runs 0fr → 1fr, the
+ * height of whatever is inside without measuring it. A TRANSITION, like the
+ * drawer, so a second click mid-way reverses from where it is; the component
+ * unmounts the contents on the closing `transitionend`. */
+[data-slot='disclose'] {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--motion-arrive) var(--ease-settle),
+    opacity var(--motion-arrive) var(--ease-settle);
+}
+[data-slot='disclose'][data-state='closed'] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition-duration: var(--motion-leave);
+}
+[data-slot='disclose'] > * {
+  min-height: 0;
+  overflow: hidden;
+}
+@starting-style {
+  [data-slot='disclose'][data-state='open'] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
 
 @keyframes motion-in-right {
   from {
@@ -700,6 +727,7 @@
     animation-duration: 1ms;
   }
   [data-slot='drawer'],
+  [data-slot='disclose'],
   [data-drawer-rail],
   [data-slot='drawer'][data-state='closed'] [data-drawer-rail] {
     transition-duration: 1ms;

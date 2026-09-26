@@ -1,4 +1,12 @@
-import { ChevronsDownUp, Eye, EyeOff, FilePlus, FolderPlus, ListTodo } from 'lucide-react'
+import {
+  ChevronsDownUp,
+  Eye,
+  EyeOff,
+  FilePlus,
+  FlaskConical,
+  FolderPlus,
+  ListTodo,
+} from 'lucide-react'
 import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
 
@@ -46,9 +54,11 @@ export function ExplorerHeader({
   onToggleHidden,
   tasksShown,
   onToggleTasks,
+  experiment,
 }: {
-  onNewFile: () => void
-  onNewFolder: () => void
+  /** Absent where the tree cannot create yet (the NavTree experiment). */
+  onNewFile?: () => void
+  onNewFolder?: () => void
   onCollapseAll: () => void
   /** Whether hidden (dot-prefixed) entries are currently shown. */
   hiddenShown: boolean
@@ -56,12 +66,16 @@ export function ExplorerHeader({
   /** Whether task files (`task.*.md`) are shown in the tree. */
   tasksShown: boolean
   onToggleTasks: () => void
+  /** Switches between `FileTree` and the `NavTree` experiment. */
+  experiment?: { on: boolean; onToggle: () => void }
 }) {
   return (
     <div className="motion-respond pointer-events-none absolute right-3 top-1 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
       <span className="flex shrink-0 items-center gap-0.5 rounded-md bg-popover/90 px-1 py-0.5 text-muted-foreground shadow-sm ring-1 ring-border backdrop-blur-sm">
-        <Action icon={<FilePlus size={15} />} label="New File" onClick={onNewFile} />
-        <Action icon={<FolderPlus size={15} />} label="New Folder" onClick={onNewFolder} />
+        {onNewFile && <Action icon={<FilePlus size={15} />} label="New File" onClick={onNewFile} />}
+        {onNewFolder && (
+          <Action icon={<FolderPlus size={15} />} label="New Folder" onClick={onNewFolder} />
+        )}
         <Action icon={<ChevronsDownUp size={15} />} label="Collapse All" onClick={onCollapseAll} />
         <Action
           icon={<ListTodo size={15} />}
@@ -75,6 +89,14 @@ export function ExplorerHeader({
           active={hiddenShown}
           onClick={onToggleHidden}
         />
+        {experiment && (
+          <Action
+            icon={<FlaskConical size={15} />}
+            label={experiment.on ? 'Back to the file tree' : 'Try the new tree'}
+            active={experiment.on}
+            onClick={experiment.onToggle}
+          />
+        )}
       </span>
     </div>
   )

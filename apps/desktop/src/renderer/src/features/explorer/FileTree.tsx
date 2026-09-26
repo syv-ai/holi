@@ -103,12 +103,15 @@ export function FileTree({
   onOpenPreview,
   onOpenPinned,
   onOpenInNewPane,
+  onTryNavTree,
 }: {
   activePath: string | null
   onOpenPreview: (path: string) => void
   onOpenPinned: (path: string) => void
   /** Open the file beside the current pane rather than in it. */
   onOpenInNewPane: (path: string) => void
+  /** Swaps in the `NavTree` experiment. */
+  onTryNavTree?: () => void
 }) {
   const snapshot = useAtomValue(snapshotAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
@@ -588,6 +591,7 @@ export function FileTree({
         onToggleHidden={toggleHidden}
         tasksShown={showTasks}
         onToggleTasks={toggleTasks}
+        experiment={{ on: false, onToggle: () => onTryNavTree?.() }}
       />
       <div
         // pt-10 reserves the band the hover toolbar (ExplorerHeader, absolute
