@@ -55,7 +55,9 @@ component pasted from shadcn upstream with the 3px halo fails before it is mount
     leaving reverses it.
   - **A, arrive**: entering or leaving the layout, from the direction it belongs to, leaving
     faster than arriving (`motion-in-*`, `motion-out-*`). An animation, not a transition, because
-    Radix `Presence` waits for `animationend`.
+    Radix `Presence` waits for `animationend`. Two exceptions are transitions, so a second press
+    mid-way reverses from where it is: a drawer's width, and a tree folder's contents
+    (`data-slot='disclose'`, the grid row track running `0fr → 1fr`).
   - **K, acknowledge**: one beat, once, for an act the user committed (`motion-ack-*` via
     `lib/use-ack.ts`). Never blocks or queues; a repeat replays, which needs a forced reflow.
   - **F, in flight**: the only loop (`motion-pulse`, `-shimmer`, `-orbit`), bound to a real

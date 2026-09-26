@@ -6,9 +6,9 @@
  * section is always the one you are in and the rail cannot disagree with the
  * content.
  *
- * **Not `FileTree`, deliberately.** That is `@headless-tree` wiring for
- * drag-and-drop, rename, hotkeys and context menus over the vault snapshot;
- * this is a few static items one level deep. The two share only the row's look,
+ * **Not `FileTree`, deliberately.** That is the vault explorer, with
+ * drag-and-drop, rename, keys and context menus over the snapshot; this is a
+ * few static items one level deep. The two share only the row's look,
  * which is tokens.
  */
 import { Fragment } from 'react'

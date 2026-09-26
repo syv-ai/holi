@@ -28,8 +28,8 @@ const inputVariants = cva(
   },
 )
 
-// forwardRef (shadcn's form) so a ref reaches the DOM node: headless-tree's
-// getRenameInputProps() focuses the rename field through a callback ref.
+// forwardRef (shadcn's form) so a ref reaches the DOM node: the file tree's
+// name field focuses itself through one.
 const Input = React.forwardRef<
   HTMLInputElement,
   React.ComponentProps<'input'> & VariantProps<typeof inputVariants>

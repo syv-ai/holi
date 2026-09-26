@@ -12,9 +12,9 @@ import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { ExplorerActions } from './useExplorerActions'
 
 /**
- * A tree row's context menu, shared by `FileTree` and `NavTree`. A single row
- * gets the create, rename and path actions; a multi-selection is limited to
- * the batch ops that make sense across a set.
+ * A file tree row's context menu. A single row gets the create, rename and
+ * path actions; a multi-selection is limited to the batch ops that make sense
+ * across a set.
  */
 export function RowMenu({
   path,

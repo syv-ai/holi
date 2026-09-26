@@ -1,9 +1,9 @@
 /**
  * "Show me this file in the explorer."
  *
- * The explorer's expansion, selection and focus live inside `FileTree`'s
- * headless-tree instance, which nothing outside the component can reach. So
- * revealing is a request: anywhere writes a path here, and `FileTree` answers.
+ * The explorer's expansion, selection and focus are `FileTree`'s own state,
+ * which nothing outside the component can reach. So revealing is a request:
+ * anywhere writes a path here, and `FileTree` answers.
  *
  * The nonce gives the effect an edge to fire on when the same path is revealed
  * again (click Edit Source twice), which a settled atom value would not.

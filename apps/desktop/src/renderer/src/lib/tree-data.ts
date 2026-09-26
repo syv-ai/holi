@@ -1,5 +1,6 @@
 /**
- * The vault snapshot as headless-tree's flat data record.
+ * The vault snapshot as the file tree's data: a flat record from path to
+ * name, kind and children.
  *
  * Ids are paths. A folder exists if a doc is inside it or it is named in
  * `folders`: the on-disk directories (`snapshot.dirs`) plus client-only ones

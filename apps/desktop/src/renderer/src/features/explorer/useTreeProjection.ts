@@ -14,7 +14,6 @@ import {
  * per-vault toggles, plus the per-path facts a row paints (icon, task, ignored).
  * The tree data itself is built by the caller, which adds the folders still
  * being named (they live in the explorer actions, which need `docPaths`).
- * The rebuilt tree's copy of what `FileTree` computes inline.
  */
 export function useTreeProjection() {
   const snapshot = useAtomValue(snapshotAtom)

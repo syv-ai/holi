@@ -6,7 +6,7 @@ import {
   rangeBetween,
   typeahead,
   visibleRows,
-} from '../src/renderer/src/lib/nav-tree'
+} from '../src/renderer/src/lib/tree-view'
 
 const data = buildTreeData(['a/x.md', 'a/y.md', 'a/b/z.md', 'root.md'])
 const ids = (open: string[]) => visibleRows(data, new Set(open)).map((r) => r.id)

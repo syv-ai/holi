@@ -43,7 +43,7 @@ const rowFor = (path: string) => document.querySelector(`[data-path="${path}"]`)
 
 /** Whether the row's own contents are dimmed. Asked of the name span rather
  *  than the row, because the dim is deliberately NOT on the row — see below. */
-const nameOf = (path: string) => rowFor(path).querySelector('.min-w-0.flex-1.truncate')!
+const nameOf = (path: string) => rowFor(path).querySelector('[data-slot="row-name"]')!
 
 beforeEach(() => {
   store.set(snapshotAtom, EMPTY)
@@ -77,9 +77,9 @@ test('dims a wholly-ignored folder too', () => {
 test('dims the icon as well as the name, so the row reads as one thing', () => {
   tree(['USER.md'], ['USER.md'])
 
-  const spans = [...rowFor('USER.md').querySelectorAll('span.flex.w-4')]
-  expect(spans.length).toBeGreaterThan(0)
-  expect(spans.every((s) => s.className.includes('opacity-50'))).toBe(true)
+  expect(rowFor('USER.md').querySelector('[data-slot="row-icon"]')!.className).toContain(
+    'opacity-50',
+  )
 })
 
 test('leaves the ROW undimmed, so a selection highlight stays solid', () => {
@@ -88,7 +88,9 @@ test('leaves the ROW undimmed, so a selection highlight stays solid', () => {
   // file, and dimming the row would take the selection background with it.
   tree(['USER.md'], ['USER.md'])
 
-  expect(rowFor('USER.md').className).not.toContain('opacity-50')
+  // The class itself: the row is a Button, whose own `disabled:opacity-50` is
+  // not a dim.
+  expect(rowFor('USER.md').classList.contains('opacity-50')).toBe(false)
 })
 
 test('dims nothing when git could not be asked', () => {

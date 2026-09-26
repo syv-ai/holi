@@ -4,9 +4,8 @@
  * folders) and turns the pure plans from `lib/tree-actions` into batch-atom
  * dispatches.
  *
- * Method identities are stable (useCallback with no deps) and read the freshest
- * doc-path set / clipboard / preview through refs, because headless-tree captures
- * its hotkey-handler closures exactly once.
+ * Method identities are stable (useCallback with no deps): they read the
+ * freshest doc-path set, clipboard and preview through refs.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
@@ -86,8 +85,7 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
    *  import's: a file that silently did not arrive is the worst outcome. */
   const [exportFailures, setExportFailures] = useState<{ name: string; reason: string }[]>([])
 
-  // headless-tree captures handler closures once; refs keep the stable methods
-  // below reading the latest values.
+  // Refs keep the stable methods below reading the latest values.
   const docPathsRef = useRef(docPaths)
   docPathsRef.current = docPaths
   const clipboardRef = useRef(clipboard)

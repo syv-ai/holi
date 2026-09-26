@@ -1,19 +1,16 @@
 /**
- * A drag carrying OS files, dropped on a **row** of the tree.
+ * Files dropped on the tree. There is one mechanism: a row's drag is a native
+ * OS drag, so every drop arrives as files, and the path decides. A source
+ * inside this vault is a move; anything else is an import. The folder under
+ * the pointer is the destination.
  *
- * headless-tree's row handlers call `e.stopPropagation()` first, so the
- * container's import handler never sees a drop on a row; and when the library
- * refuses the drag it returns *without* `preventDefault()`, so the file drop
- * becomes a navigation and Electron opens the file in a new window. The in-tree
- * move arrives as a file drop too (a row's drag is a native `startDrag`).
- *
- * `preventDefault` is therefore the assertion that matters, asserted directly:
- * nothing renders differently when the browser steals a drop.
+ * `preventDefault` is asserted directly where it matters: an unclaimed file
+ * drop is a navigation, and Electron answers a navigation with a new window.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
-import { render, waitFor } from '@/test/render'
+import { render } from '@/test/render'
 import { FileTree } from '../FileTree'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '../../../state/vaults'
 
@@ -150,9 +147,8 @@ test('a dragover carrying files over a row is accepted, so the drop can fire at 
 })
 
 test('a dragover carrying something other than files is refused', () => {
-  // The library's own default here accepts any foreign drag whose
-  // `effectAllowed` is not 'none', which would light a folder up for a dragged
-  // text selection the tree cannot do anything with.
+  // A dragged text selection is nothing the tree can take, so no folder
+  // lights up for it.
   tree()
   const event = dragEvent('dragover', new FakeDataTransfer([], ['text/plain']))
 
@@ -161,20 +157,22 @@ test('a dragover carrying something other than files is refused', () => {
   expect(event.defaultPrevented).toBe(false)
 })
 
-test('the row that received a drop takes focus', async () => {
-  // headless-tree ends a valid drop with `updateDomFocus()`, which dereferences
-  // `getFocusedItem()` unguarded — so leaving focus unset here does not merely
-  // look untidy, it throws when a drag arrives before anything has been clicked.
-  // The focused row is the only one in the tab order (`tabIndex` 0 vs -1).
-  //
-  // Dropped on `b.md` rather than on `notes` deliberately: with focus left
-  // unset, `updateDomFocus` recovers by focusing `getItems()[0]` — which IS
-  // `notes` — so a drop on the first row passes whether or not this works.
+test('a file dropped on the folder it is already in is refused, moving nothing', async () => {
   tree()
+  window.holi = { pathForFile: () => `${VAULT_PATH}/notes/a.md` } as never
 
-  rowFor('b.md').dispatchEvent(dragEvent('drop', new FakeDataTransfer()))
+  rowFor('notes').dispatchEvent(dragEvent('drop', new FakeDataTransfer([{ name: 'a.md' }])))
 
-  // RTL's `waitFor`, not Vitest's: the focus lands from inside a `setTimeout`
-  // in the library, and only RTL's wraps the flush in `act`.
-  await waitFor(() => expect(rowFor('b.md')).toHaveAttribute('tabindex', '0'))
+  await new Promise((r) => setTimeout(r, 0))
+  expect(moveMock).not.toHaveBeenCalled()
+  expect(importMock).not.toHaveBeenCalled()
+})
+
+test('a file dropped on empty space imports into the vault root', () => {
+  const { container } = tree()
+  const tree_ = container.querySelector('[role="tree"]')!.parentElement!
+
+  tree_.dispatchEvent(dragEvent('drop', new FakeDataTransfer()))
+
+  expect(importMock).toHaveBeenCalledWith(expect.objectContaining({ folder: '' }))
 })

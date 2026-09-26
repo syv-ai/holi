@@ -1,5 +1,5 @@
 /**
- * The NavTree's rules, apart from its DOM: which rows are showing, what a
+ * The file tree's rules, apart from its DOM: which rows are showing, what a
  * range selection spans, where typeahead lands, and where a drop may go.
  */
 import { ROOT_ID, type TreeItemData } from './tree-data'

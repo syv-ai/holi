@@ -76,6 +76,3 @@ export function useGlobalPanelLayout(groupId: string): PanelLayoutBinding {
   )
   return { defaultLayout: map[groupId], onLayoutChanged }
 }
-
-/** The explorer shows the `NavTree` experiment instead of `FileTree`. */
-export const navTreeExperimentAtom = atomWithStorage<boolean>('holi:navTreeExperiment', false)

@@ -46,7 +46,7 @@ function tree(
 const rowFor = (path: string) => document.querySelector(`[data-path="${path}"]`)!
 
 /** The row's icon slot, found by its own marker rather than by position: a
- *  folder's first `w-4` span is the expand chevron and a file has none. */
+ *  folder leads with its chevron, and a folder's emoji follows it. */
 const iconSlotOf = (path: string) => rowFor(path).querySelector('[data-slot="row-icon"]')!
 
 beforeEach(() => {
@@ -63,19 +63,26 @@ test('a note with an entry shows the emoji instead of its type glyph', () => {
   expect(slot.innerHTML).not.toContain('<svg')
 })
 
-test('a note without one keeps the markdown glyph', () => {
+test('a note without one has no glyph at all, only the empty slot', () => {
+  // A note is the unmarked row; the slot stays so every name lines up.
   tree(['plain.md'])
 
   const slot = iconSlotOf('plain.md')
-  expect(slot.textContent).not.toContain('🎯')
-  expect(slot.innerHTML).toContain('<svg')
+  expect(slot.textContent).toBe('')
+  expect(slot.innerHTML).not.toContain('<svg')
+})
+
+test('any other file keeps its type glyph', () => {
+  tree([], { files: ['spec.pdf'] })
+
+  expect(iconSlotOf('spec.pdf').innerHTML).toContain('<svg')
 })
 
 test('the emoji does not leak into the row label', () => {
   tree(['roadmap.md'], { icons: { 'roadmap.md': '🎯' } })
-  // The name is still the filename: the icon lives in a map keyed BY that name,
-  // so there is nothing to strip out of it.
-  expect(screen.getByText('roadmap.md')).toBeTruthy()
+  // The name is still the filename (a note's shown without `.md`): the icon
+  // lives in a map keyed BY that name, so there is nothing to strip out of it.
+  expect(screen.getByText('roadmap')).toBeTruthy()
 })
 
 test('an entry decorates a folder', () => {
