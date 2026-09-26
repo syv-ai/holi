@@ -403,6 +403,9 @@ export function Shell() {
                       activePath={tab?.kind === 'note' ? tab.path : null}
                       onOpenPreview={open}
                       onOpenPinned={openPin}
+                      onOpenInNewPane={(path) =>
+                        setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
+                      }
                       onLeaveExperiment={() => setNavTreeOn(false)}
                     />
                   ) : (

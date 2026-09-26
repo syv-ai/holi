@@ -1,7 +1,6 @@
 import { useMemo } from 'react'
 import { useAtom, useAtomValue } from 'jotai'
 import { isHiddenPath, isLocalOnlyPath } from '@holi/shared'
-import { buildTreeData } from '@/lib/tree-data'
 import { revealRequestAtom } from '@/state/reveal'
 import {
   activeRemoteAtom,
@@ -13,6 +12,8 @@ import {
 /**
  * The snapshot as the explorer shows it: hidden and task files filtered by the
  * per-vault toggles, plus the per-path facts a row paints (icon, task, ignored).
+ * The tree data itself is built by the caller, which adds the folders still
+ * being named (they live in the explorer actions, which need `docPaths`).
  * The rebuilt tree's copy of what `FileTree` computes inline.
  */
 export function useTreeProjection() {
@@ -24,25 +25,30 @@ export function useTreeProjection() {
   const showHidden = activeRemote !== null && hiddenByVault[activeRemote] === true
   const showTasks = activeRemote !== null && tasksByVault[activeRemote] === true
 
-  const data = useMemo(() => {
-    const paths = [
+  /** Every path the explorer can act on, for the explorer actions. */
+  const docPaths = useMemo(
+    () => [
       ...snapshot.docs.map((d) => d.path),
       ...snapshot.files.map((f) => f.path),
       ...(showTasks ? snapshot.tasks.map((t) => t.path) : []),
-    ]
-    const visible = showHidden
-      ? paths
-      : paths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
+    ],
+    [snapshot, showTasks],
+  )
+  const visible = useMemo(() => {
+    const paths = showHidden
+      ? docPaths
+      : docPaths.filter((p) => p === revealPath || (!isHiddenPath(p) && !isLocalOnlyPath(p)))
     const dirs = showHidden ? snapshot.dirs : snapshot.dirs.filter((d) => !isHiddenPath(d))
-    return buildTreeData(visible, dirs)
-  }, [snapshot, showHidden, showTasks, revealPath])
+    return { paths, dirs }
+  }, [docPaths, snapshot.dirs, showHidden, revealPath])
 
   const taskByPath = useMemo(() => new Map(snapshot.tasks.map((t) => [t.path, t])), [snapshot])
   const iconByPath = useMemo(() => new Map(Object.entries(snapshot.icons)), [snapshot.icons])
   const ignored = useMemo(() => new Set(snapshot.ignored), [snapshot.ignored])
 
   return {
-    data,
+    docPaths,
+    visible,
     taskByPath,
     iconByPath,
     ignored,

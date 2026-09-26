@@ -15,7 +15,7 @@ import {
   type TreeInstance,
 } from '@headless-tree/core'
 import { useTree } from '@headless-tree/react'
-import { fileKind, ICONS_FILE, isAppRootPath, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
+import { isAppRootPath, isHiddenPath, isLocalOnlyPath } from '@holi/shared'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { useArrivals } from '@/lib/use-arrivals'
 import { cn } from '@/lib/cn'
@@ -23,21 +23,13 @@ import { pendingSlot } from '@/lib/pending-slot'
 import { todayDailyPathAtom } from '@/state/daily'
 import { todayLinkCountAtom } from '@/state/tasks'
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  Button,
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuTrigger,
-  Input,
-} from '@/primitives'
+import { Button, ContextMenu, ContextMenuTrigger, Input } from '@/primitives'
 import { DeleteConfirm } from '@/composites'
 import { ExplorerHeader } from './ExplorerHeader'
 import { AppFolderIcon, ChevronIcon, FolderIcon, MarkdownIcon, TaskIcon } from './icons'
 import { fileIconFor } from '@/composites/file-icons'
 import { useExplorerActions } from './useExplorerActions'
+import { RowMenu } from './RowMenu'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import {
   ancestorsOf,
@@ -57,7 +49,6 @@ import {
   snapshotAtom,
   vaultsAtom,
 } from '@/state/vaults'
-import { openDialogAtom } from '@/state/dialogs'
 import { revealRequestAtom } from '@/state/reveal'
 
 /** The inline editable row shown when creating a file or folder. */
@@ -136,7 +127,6 @@ export function FileTree({
   const importDropped = useSetAtom(importFilesAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
-  const openDialog = useSetAtom(openDialogAtom)
 
   const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
   /** A drag from outside the app is over the tree. */
@@ -426,125 +416,6 @@ export function FileTree({
     return sel.length > 1 && sel.includes(id) ? sel : [id]
   }
 
-  // A single row gets the create/rename/path actions; a multi-selection is
-  // limited to the batch ops that make sense across a set.
-  const rowMenu = (path: string, isFolder: boolean, targets: string[]) => {
-    const folderDest = isFolder ? path : parentOf(path)
-    const multi = targets.length > 1
-    return (
-      <ContextMenuContent
-        // Keep focus on whatever an action opens (a rename field, a new-file row)
-        // instead of Radix pulling it back to the row when the menu closes.
-        onCloseAutoFocus={(e) => e.preventDefault()}
-      >
-        {!multi && !isFolder && (
-          <>
-            {/* A file's action, not a folder's. If the file is already open in
-                another pane it goes there (`openInNewPane`): one buffer per file
-                holds across panes. */}
-            <ContextMenuItem onSelect={() => onOpenInNewPane(path)}>
-              Open in a New Pane
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-          </>
-        )}
-        {!multi && (
-          <>
-            <ContextMenuItem onSelect={() => setPending({ kind: 'file', parent: folderDest })}>
-              New File…
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => setPending({ kind: 'folder', parent: folderDest })}>
-              New Folder…
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => tree.getItemInstance(path).startRenaming()}>
-              Rename…
-              <ContextMenuShortcut>F2</ContextMenuShortcut>
-            </ContextMenuItem>
-            {/* Every row, not just notes: the icon map covers every path. */}
-            <ContextMenuItem
-              onSelect={() =>
-                activeRemote !== null &&
-                openDialog({
-                  id: 'edit-icon',
-                  size: 'sm',
-                  // Its footer has Cancel; the corner ✕ would be a second one.
-                  closable: false,
-                  remote: activeRemote,
-                  path,
-                  current: snapshot.icons[path] ?? null,
-                  onOpenMap: () => onOpenPinned(ICONS_FILE),
-                })
-              }
-            >
-              Edit Icon…
-            </ContextMenuItem>
-          </>
-        )}
-        <ContextMenuItem
-          variant="destructive"
-          onSelect={() => actions.startDelete(targets, isFolder)}
-        >
-          Delete
-          <ContextMenuShortcut>⌫</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => actions.cut(targets)}>
-          Cut
-          <ContextMenuShortcut>⌘X</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => actions.copy(targets)}>
-          Copy
-          <ContextMenuShortcut>⌘C</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => actions.paste(folderDest)}>
-          Paste
-          <ContextMenuShortcut>⌘V</ContextMenuShortcut>
-        </ContextMenuItem>
-        <ContextMenuItem onSelect={() => actions.duplicate(targets)}>
-          Duplicate
-          <ContextMenuShortcut>⌘D</ContextMenuShortcut>
-        </ContextMenuItem>
-        {/* Out of the vault. Outside the `!multi` guard because both act on a
-            whole selection and on folders, as Cut/Copy/Delete do. This is the
-            only way out: dropping a row into Finder does not work
-            (docs/not-built.md). */}
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => actions.copyOut(targets)}>Copy to Folder…</ContextMenuItem>
-        <ContextMenuItem onSelect={() => actions.startMoveOut(targets, isFolder)}>
-          Move to Folder…
-        </ContextMenuItem>
-        {!multi && (
-          <>
-            {fileKind(path) === 'markdown' && (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() =>
-                    activeRemote !== null &&
-                    openDialog({ id: 'convert-to-pdf', size: 'md', remote: activeRemote, path })
-                  }
-                >
-                  Convert to PDF…
-                </ContextMenuItem>
-              </>
-            )}
-            <ContextMenuSeparator />
-            <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(absPathFor(path))}>
-              Copy Path
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => void navigator.clipboard.writeText(path)}>
-              Copy Relative Path
-            </ContextMenuItem>
-            <ContextMenuItem onSelect={() => void window.holi.openPath(absPathFor(path))}>
-              Reveal in Finder
-            </ContextMenuItem>
-          </>
-        )}
-      </ContextMenuContent>
-    )
-  }
-
   /**
    * Where the "new file" / "new folder" input opens: as a child of the target
    * folder, at the indent its contents will have.
@@ -779,7 +650,16 @@ export function FileTree({
                   )}
                 </div>
               </ContextMenuTrigger>
-              {rowMenu(id, isFolder, rowTargets(id))}
+              <RowMenu
+                path={id}
+                isFolder={isFolder}
+                targets={rowTargets(id)}
+                actions={actions}
+                onOpenInNewPane={onOpenInNewPane}
+                onOpenPinned={onOpenPinned}
+                onNew={(kind, parent) => setPending({ kind, parent })}
+                onRename={() => tree.getItemInstance(id).startRenaming()}
+              />
             </ContextMenu>
           )
           // The input opens where the file will land.
