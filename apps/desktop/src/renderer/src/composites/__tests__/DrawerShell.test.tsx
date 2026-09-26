@@ -134,3 +134,15 @@ test('a close control calls onClose', async () => {
   await userEvent.setup().click(screen.getByRole('button', { name: 'Close History' }))
   expect(onClose).toHaveBeenCalledOnce()
 })
+
+test('the edge control stays live open and closed, outside the inert content', () => {
+  const { rerender } = drawer({
+    id: 'nav',
+    side: 'left',
+    rail: <Button>orb</Button>,
+    edgeControl: <Button>toggle</Button>,
+  })
+  expect(screen.getByRole('button', { name: 'toggle' }).closest('[inert]')).toBeNull()
+  rerender({ open: false })
+  expect(screen.getByRole('button', { name: 'toggle' }).closest('[inert]')).toBeNull()
+})

@@ -31,6 +31,12 @@
  * its width, not when the close starts (it arrived first and the drawer slid
  * away under it), and out as soon as an open starts.
  *
+ * **An edge control** (the nav's show/hide toggle) is pinned to the drawer's
+ * moving edge in the header row, outside the content that goes inert. So it
+ * travels with the slide and lands in the rail's top slot when the drawer
+ * closes, one button sliding into place rather than one disappearing and
+ * another blinking in; the rest of the rail fades in under it.
+ *
  * **The edge** is `--drawer-edge`, a vault theme token, transparent by default:
  * a drawer lies flat on the page. The handle shows `--divider` under the
  * pointer, so the seam can be found without being drawn.
@@ -61,6 +67,7 @@ export function DrawerShell({
   onClose,
   keepMounted = false,
   rail,
+  edgeControl,
   className,
   children,
 }: {
@@ -88,6 +95,9 @@ export function DrawerShell({
   /** What the drawer closes to, in a `DRAWER_RAIL_WIDTH` column at its edge,
    *  rather than to nothing. Implies the content stays mounted. */
   rail?: React.ReactNode
+  /** A control pinned to the drawer's inner edge, in the header row, that
+   *  moves with the slide and stays live open or closed (the nav's toggle). */
+  edgeControl?: React.ReactNode
   className?: string
   children: React.ReactNode
 }): React.JSX.Element | null {
@@ -174,7 +184,11 @@ export function DrawerShell({
         <PanelHeader
           actions={actions}
           close={onClose ? { icon: <X />, label: `Close ${label}`, onSelect: onClose } : undefined}
-          className="border-drawer-edge"
+          className={cn(
+            'border-drawer-edge',
+            // Room for the edge control, which sits over the header's end.
+            edgeControl !== undefined && (side === 'left' ? 'pr-11' : 'pl-11'),
+          )}
         >
           {header}
           {aside !== undefined && (
@@ -192,10 +206,25 @@ export function DrawerShell({
             // Its fade is timed to the slide, in `index.css`.
             'absolute inset-y-0 z-10 flex w-(--drawer-closed-w) flex-col items-center gap-1 bg-background pb-2',
             side === 'left' ? 'left-0' : 'right-0',
+            // The edge control holds the rail's first slot.
+            edgeControl !== undefined && 'pt-11',
           )}
         >
           {rail}
         </nav>
+      )}
+      {edgeControl !== undefined && (
+        <div
+          data-drawer-edge-control=""
+          className={cn(
+            // 44px, the rail's width (`DRAWER_RAIL_WIDTH`), so closed it is the
+            // rail's first slot exactly.
+            'absolute top-0 z-20 flex h-11 w-11 items-center justify-center',
+            side === 'left' ? 'right-0' : 'left-0',
+          )}
+        >
+          {edgeControl}
+        </div>
       )}
       <div
         role="separator"

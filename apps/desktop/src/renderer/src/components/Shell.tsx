@@ -373,45 +373,39 @@ export function Shell() {
           side="left"
           open={navOpen}
           label="Sidebar"
-          // Hidden, the nav closes to a rail rather than to nothing: the way
-          // back, an orb per running session (its status, a press to open
+          // Hidden, the nav closes to a rail rather than to nothing: under the
+          // toggle, an orb per running session (its status, a press to open
           // it), then the apps. The nav is the only place any of them can be
           // clicked, and the orbs are where you see which session needs you.
+          // One toggle on the drawer's moving edge: it slides with the nav and
+          // lands in the rail's top slot when it closes, then the rest of the
+          // rail fades in under it.
+          edgeControl={
+            <Tooltip
+              content={
+                <span className="inline-flex items-center gap-1.5">
+                  {navOpen ? 'Hide sidebar' : 'Show sidebar'}
+                  <Kbd>⌥⌘S</Kbd>
+                </span>
+              }
+            >
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                className="text-muted-foreground"
+                aria-label={navOpen ? 'Hide sidebar' : 'Show sidebar'}
+                onClick={() => setNavOpen((open) => !open)}
+              >
+                {navOpen ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+              </Button>
+            </Tooltip>
+          }
           rail={
             <>
-              <div className="flex h-11 shrink-0 items-center">
-                <Tooltip
-                  content={
-                    <span className="inline-flex items-center gap-1.5">
-                      Show sidebar
-                      <Kbd>⌥⌘S</Kbd>
-                    </span>
-                  }
-                >
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    className="text-muted-foreground"
-                    aria-label="Show sidebar"
-                    onClick={() => setNavOpen(true)}
-                  >
-                    <PanelLeftOpen size={16} />
-                  </Button>
-                </Tooltip>
-              </div>
               <SessionOrbs />
               <AppsMenu />
             </>
           }
-          actions={[
-            {
-              icon: <PanelLeftClose />,
-              label: 'Hide sidebar',
-              hotkey: '⌥⌘S',
-              boundByCommand: true,
-              onSelect: () => setNavOpen(false),
-            },
-          ]}
           header={
             <VaultPicker
               vaults={vaults}
