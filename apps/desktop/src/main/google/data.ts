@@ -1,21 +1,13 @@
 /**
- * The **UI's** Google data — the one place caching is decided.
+ * The **UI's** Google data: the one place caching is decided.
  *
  * **The agent does not come through here to read, and does to write** (D70).
- * The two halves point in opposite directions on purpose.
- *
- * It must never be handed a stale *answer* (D67, "Do not cache"), so the ops
- * server in `main/index.ts` is wired straight to `listAgenda` / `listThreads` —
- * functions that take no cache and therefore cannot read one.
- *
- * Its *writes* go through the four methods below, because a thread the agent
- * archived has to leave the list the UI is painting from at the same moment it
- * leaves Gmail. A write that skipped this would leave Holi showing a thread
- * that is no longer in the inbox until the next delta sync noticed.
- *
- * `main/index.ts` passes those four methods, never this object — so the
- * structural exclusion D68 §6 built survives: the ops server still has no way
- * to read a cached anything.
+ * It must never be handed a stale *answer*, so the ops server in
+ * `main/index.ts` is wired straight to `listAgenda` / `listThreads`, which take
+ * no cache and therefore cannot read one. Its *writes* go through the methods
+ * below, so a thread the agent archived leaves the list the UI is painting from
+ * at the same moment it leaves Gmail. `main/index.ts` passes those methods,
+ * never this object, so the ops server has no way to read a cached anything.
  *
  * The two surfaces are cached differently because the APIs differ:
  *
@@ -64,17 +56,14 @@ export interface GoogleData {
   /**
    * The address book, fetched **once per connected account**.
    *
-   * In memory rather than on disk, and single-flighted like the token refresh:
-   * the renderer asks on every `MailView` mount, and without this each mount
-   * cost up to four People requests against a rate-limited API to populate a
-   * dropdown. An address book is also the least time-sensitive thing this
-   * connector holds — a contact added today is not why completion missed
-   * someone. Cleared when the account changes.
+   * In memory rather than on disk, and single-flighted: the renderer asks on
+   * every `MailView` mount, and each ask costs up to four People requests
+   * against a rate-limited API. Cleared on disconnect.
    */
   contacts(): Promise<MailAddress[]>
   /**
-   * The four writes (D68). Each calls Google **first** and touches the cache
-   * only once Google has agreed — see the note above `write`.
+   * The label writes (D68). Each calls Google **first** and touches the cache
+   * only once Google has agreed: see the note above `write`.
    */
   setRead(id: string, read: boolean): Promise<void>
   setStarred(id: string, starred: boolean): Promise<void>
@@ -83,24 +72,22 @@ export interface GoogleData {
   /**
    * The composer's writes (D71), on the same Google-first ordering.
    *
-   * A sent *message* is not a label delta and `patchThread` cannot express one
-   * — but a draft appearing and disappearing **is** one, which is what lets the
-   * thread's *Continue draft* chip arrive and leave without a refetch.
+   * A sent *message* is not a label delta, but a draft appearing and
+   * disappearing **is** one, which lets the thread's *Continue draft* chip
+   * arrive and leave without a refetch.
    */
   sendMail(input: ComposeWrite): Promise<{ id: string | null }>
   saveDraft(input: ComposeWrite): Promise<{ id: string | null }>
   discardDraft(input: { draftId: string; threadId?: string }): Promise<void>
   /**
-   * Every address this account may send from, fetched **once per connected
-   * account** — the same one-promise-not-one-value trick as `contacts()`, so
-   * two mounts make one request. Needed by reply-all, which has to exclude
-   * every alias and not merely the connected address.
+   * Every address this account may send from, memoized like `contacts()`.
+   * Needed by reply-all, which has to exclude every alias and not merely the
+   * connected address.
    */
   sendAs(): Promise<string[]>
   /** Wipe if the cached row shape predates this release. Call before first use.
-   *  It no longer carries an account: one `GoogleData` serves one account (D87),
-   *  so the file it holds and the address book it memoizes are that account's by
-   *  construction rather than by a check. */
+   *  One `GoogleData` serves one account (D87), so its file and memos are that
+   *  account's by construction rather than by a check. */
   ensureShape(): void
   /** Disconnect. Leaves no file on disk. */
   forget(): void
@@ -119,31 +106,27 @@ export interface ComposeWrite {
    * Forward the attachments of this message (D71).
    *
    * A message id rather than the files themselves: main fetches the bytes and
-   * hands them to `buildRfc822`, so nothing base64 crosses the IPC seam. That
-   * is what makes forwarding work with no file picker and no size-cap UI.
+   * hands them to `buildRfc822`, so nothing base64 crosses the IPC seam.
    */
   forwardOf?: { messageId: string }
 }
 
 export interface GoogleDataDeps {
-  /** Built per call, like everywhere else — a held client outlives a
-   *  disconnect. */
+  /** Built per call: a held client outlives a disconnect. */
   api: () => GoogleApi
   cache: GoogleCache
 }
 
 export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
   /** The in-flight or settled address book. A promise rather than a value, so
-   *  two mounts racing produce one request instead of two. `listContacts` never
-   *  rejects, so this can never latch a failure permanently — a refusal caches
-   *  `[]` until the account changes, which is the same answer it would give. */
+   *  two mounts racing produce one request. `listContacts` never rejects, so
+   *  this can never latch a failure. */
   let addressBook: Promise<MailAddress[]> | null = null
   /**
-   * The send-as aliases, held the same way — but with one difference that
-   * matters. `listContacts` never rejects, so `addressBook` can never latch a
-   * failure. `listSendAs` *can* reject (a missing scope is a 403), and a
-   * memoised rejection would keep every reply-all copying the user on their own
-   * messages until the account changed. So a failure clears the memo.
+   * The send-as aliases, held the same way. Unlike `listContacts`, `listSendAs`
+   * *can* reject (a missing scope is a 403), and a memoised rejection would
+   * keep every reply-all copying the user on their own messages. So a failure
+   * clears the memo.
    */
   let aliases: Promise<string[]> | null = null
 
@@ -151,25 +134,18 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
    * The most recently forwarded message's bytes, held so the autosave does not
    * fetch them again every two seconds.
    *
-   * **One slot, not a map.** A composer forwards exactly one message, so a slot
-   * is all that is ever live — and the bytes are the largest thing in this
-   * module, which is an argument against keeping a history of them. Switching
-   * forwards evicts the previous one.
-   *
-   * A rejection is never latched: memoising one would strand every later
-   * forward of that message on a failure that has since passed. Same rule as
-   * `aliases`, and for the same reason.
+   * **One slot, not a map.** A composer forwards exactly one message, and the
+   * bytes are the largest thing in this module. A rejection is never latched,
+   * same rule as `aliases`.
    */
   let forwarded: { messageId: string; bytes: Promise<MailPart[]> } | null = null
 
   /**
    * The mail, with a forwarded message's attachments fetched and attached.
    *
-   * The fetch is memoised because the *write* is not a one-off: autosave runs
-   * on every 2s of idle typing, and each run rebuilt the whole message. A 20MB
-   * forward meant re-downloading and re-uploading 20MB per pause, against a
-   * rate-limited API, with all of it in main's heap each time. The bytes cannot
-   * change while the source message id does not.
+   * The fetch is memoised because autosave rebuilds the whole message on every
+   * 2s of idle typing; without it a 20MB forward is re-downloaded per pause.
+   * The bytes cannot change while the source message id does not.
    */
   const resolved = async (input: ComposeWrite): Promise<OutgoingMail> => {
     if (input.forwardOf === undefined) return input.mail
@@ -187,7 +163,7 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
     }
     // An empty list stays absent, so forwarding a message with nothing attached
     // takes the multipart/alternative path rather than building an empty
-    // multipart/mixed — which displays as a mysteriously missing attachment.
+    // multipart/mixed, which displays as a mysteriously missing attachment.
     if (attachments.length === 0) return input.mail
     return { ...input.mail, attachments }
   }
@@ -314,12 +290,11 @@ export function createGoogleData({ api, cache }: GoogleDataDeps): GoogleData {
 /**
  * A write, and the ordering that keeps the cache honest.
  *
- * **Google first; the cache only once Google has agreed.** The reverse — patch
- * optimistically, undo on failure — is tempting because it paints faster, and
- * it is wrong here: a cache that records a write Google refused is the one
- * divergence a delta sync can never repair. `history.list` reports what changed
- * *at Gmail*, and for a refused request nothing did, so there is no event to
- * correct it and the wrong value survives every refresh and every restart.
+ * **Google first; the cache only once Google has agreed.** Patching
+ * optimistically is wrong here: a cache that records a write Google refused is
+ * the one divergence a delta sync can never repair. `history.list` reports
+ * what changed *at Gmail*, and for a refused request nothing did, so the wrong
+ * value would survive every refresh and every restart.
  *
  * Optimism belongs in the renderer, where a revert costs a re-render and
  * nothing is persisted. It does not belong on disk.
@@ -337,9 +312,8 @@ async function write<T>(send: () => Promise<T>, record: () => void): Promise<T> 
  * colleague's calendar the user has since switched off, would both be a cache
  * answering a question it was not asked.
  *
- * Keyed on the *overrides* rather than the resolved calendar ids on purpose —
- * resolving ids costs a request, and a key that cannot be computed offline is
- * useless to a cache whose whole job is to answer before the network does.
+ * Keyed on the *overrides* rather than the resolved calendar ids on purpose:
+ * resolving ids costs a request, and the key must be computable offline.
  */
 export function agendaKey(window: AgendaWindow, overrides: CalendarOverrides): string {
   const choices = Object.keys(overrides)

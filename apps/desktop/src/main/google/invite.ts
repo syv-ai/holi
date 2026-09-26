@@ -1,20 +1,13 @@
 /**
  * Where a mail thread and a calendar event turn out to be the same meeting.
  *
- * The problem: a Teams invite sits in the inbox, the meeting sits on the agenda,
- * and Holi treated them as two unrelated things. The agenda could join the
- * meeting; the reader — where a person is actually looking when they decide to
- * attend — could not.
- *
  * **The `.ics`'s `UID` is the whole mechanism, and the reason there is no second
  * conferencing-link parser here.** iCalendar defines the UID as the event's
  * identity and Google indexes it, so a thread can be matched to an event
  * exactly, rather than guessed at from a subject line and a start time. Once the
- * event is in hand, the join link is whatever `calendar.ts` already resolves —
- * one implementation of "where is the video call", not two that will drift.
+ * event is in hand, the join link is whatever `calendar.ts` already resolves.
  *
- * So this module is deliberately thin: read a UID, ask the calendar. It parses
- * exactly one property out of the `.ics` and nothing else.
+ * So this module is deliberately thin: read a UID, ask the calendar.
  */
 import type { GoogleApi } from './api'
 import { findEventByICalUid, type CalendarOverrides } from './calendar'
@@ -28,13 +21,11 @@ export interface ThreadMeeting {
   start: string
   end: string
   /**
-   * What a Join button opens, or `null` when the meeting has no video call at
-   * all — which is a different answer from "no such meeting", and the reason
-   * this field is nullable while the whole result being `null` means the other
-   * thing.
+   * What a Join button opens, or `null` when the meeting has no video call.
+   * "No such meeting" is the whole result being `null`.
    */
   conferenceUrl: string | null
-  /** Google Calendar's own page for it — always available, so the reader has
+  /** Google Calendar's own page for it: always available, so the reader has
    *  something to offer even when there is nothing to join. */
   htmlLink: string
 }
@@ -44,8 +35,7 @@ export interface ThreadMeeting {
  * behind a single space or tab.
  *
  * Not a nicety. An Outlook UID is around a hundred characters, so it is folded
- * essentially always — and a UID read as its first 70 characters matches no
- * event, produces no Join button, and reports nothing at all about why.
+ * essentially always, and a truncated UID silently matches no event.
  */
 function unfold(ics: string): string {
   return ics.replace(/\r?\n[ \t]/g, '')
@@ -59,8 +49,8 @@ function unfold(ics: string): string {
  */
 export function icsUid(ics: string): string | null {
   for (const line of unfold(ics).split(/\r?\n/)) {
-    // Anchored, so `X-ALT-UID` — which Outlook does send — is not read as the
-    // UID. The optional `;params` is the iCalendar property grammar.
+    // Anchored, so Outlook's `X-ALT-UID` is not read as the UID. The optional
+    // `;params` is the iCalendar property grammar.
     const match = /^UID(?:;[^:]*)?:(.*)$/i.exec(line.trim())
     if (match !== null && match[1]!.trim() !== '') return match[1]!.trim()
   }
@@ -71,7 +61,7 @@ export function icsUid(ics: string): string | null {
  * The meeting a thread is about, or null.
  *
  * Null covers three different situations on purpose, because the reader treats
- * them the same way — it says nothing:
+ * them the same way (it says nothing):
  *
  * - the thread holds no invite;
  * - it holds one, but the event is not on any calendar the user has enabled

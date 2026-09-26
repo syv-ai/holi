@@ -1,53 +1,41 @@
 /**
- * The connected Google account — and **the only thing in Holi allowed to mint
+ * One connected Google account, and **the only thing in Holi allowed to mint
  * an access token** (D67).
  *
- * That exclusivity is the whole design, not a tidiness preference. Google
- * *rotates* refresh tokens: a refresh may return a new one and invalidate the
- * old. Two independent refreshers — main and, later, the `holi-google` CLI —
- * racing on one stored refresh token therefore invalidate each other, and the
+ * That exclusivity is the whole design. Google *rotates* refresh tokens: a
+ * refresh may return a new one and invalidate the old. Two independent
+ * refreshers racing on one stored refresh token invalidate each other, and the
  * symptom is an intermittent "reconnect Google" that nobody can reproduce. So
- * every consumer asks *this* object for a token; nothing else calls Google's
- * token endpoint, and nothing else reads the keychain.
+ * every consumer (including the agent's `holi-google`, via the ops server) asks
+ * *this* object for a token; nothing else calls Google's token endpoint.
  *
- * The same rule applies *within* this object: `getAccessToken()` single-flights,
- * so ten concurrent callers produce one refresh, not ten.
- *
- * Modelled on `github/session.ts` — `account` is a getter with no tokens in it,
- * for the same reason `viewer` is.
+ * `getAccessToken()` single-flights, so ten concurrent callers produce one
+ * refresh, not ten. `account` is a getter with no tokens in it.
  */
 import { post, startLoopbackFlow, TOKEN_URL, type Listen, type LoopbackFlow } from './loopback-flow'
 import { resolveClientId, resolveClientSecret } from './credentials'
 import { GoogleTokenStore, type GoogleAccounts, type StoredGoogleAuth } from './token-store'
 
 /**
- * **Mail is read-write within a bounded set; calendar stays read-only** (D68,
- * amending D67 §4).
+ * The scopes Holi asks Google for (D68, D70; docs/features/google.md).
  *
- * `gmail.modify` replaces `gmail.readonly` — it is a superset, so asking for
- * both is redundant. It buys the four things a mailbox is actually triaged
- * with: read state, star, archive and trash.
+ * `gmail.modify` is a superset of `gmail.readonly`. It buys read state, star,
+ * archive, trash, drafts and send.
  *
  * **Two boundaries, and only one of them is Google's.**
  *
  * - *Permanent delete is impossible.* It needs `https://mail.google.com/`,
- *   which is not requested and will not be. Trash is recoverable; that is what
- *   makes it not-delete.
- * - *Sending is merely unbuilt.* `gmail.modify` permits `messages.send`, and no
- *   lesser scope grants `threads.modify` — so there is no way to buy archive
- *   without also buying send. Nothing here stops a send; the absence of a
- *   function that sends does. Do not write a comment claiming otherwise: this
- *   is a code boundary wearing a scope boundary's clothes, and the agent's
- *   `Bash(holi-google …)` gate (D67 §5) is now the only wall, not the second.
+ *   which is not requested and will not be. Trash is recoverable.
+ * - *Sending is not stopped by scope.* `gmail.modify` permits `messages.send`,
+ *   and no lesser scope grants `threads.modify`. Never write "the agent cannot
+ *   send": the agent's sends are gated by the seeded `google-send-gate.mjs`
+ *   `PreToolUse` hook (D70), and that hook is the wall.
  *
- * **Contacts is two scopes, not one**, and that is not a belt-and-braces
- * duplicate. `contacts.readonly` covers `people/me/connections` — the contacts
- * someone explicitly saved. The auto-collected ones, which is what an address
- * book is actually made of, live at `otherContacts` and are covered only by
- * `contacts.other.readonly`. Asking for the first alone yields an address book
- * that answers every request successfully and is empty for most Workspace
- * accounts; the 403 is swallowed by `people.ts`'s `[]` policy, so nothing says
- * so. See the module note there.
+ * **Contacts is two scopes, not one.** `contacts.readonly` covers
+ * `people/me/connections`, the contacts someone explicitly saved. The
+ * auto-collected ones live at `otherContacts` and are covered only by
+ * `contacts.other.readonly`; without it the address book is silently empty for
+ * most Workspace accounts. See the module note in `people.ts`.
  *
  * `openid`/`email` are what make the `id_token` carry the `sub` we key on.
  */
@@ -58,14 +46,11 @@ export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
   'https://www.googleapis.com/auth/contacts.readonly',
   'https://www.googleapis.com/auth/contacts.other.readonly',
-  // Calendar WRITE (D70) — time-blocking: the agent turns tasks into blocks on
-  // the user's own calendar. Deliberately narrower than it looks: Holi refuses
-  // any event carrying attendees, so this scope never sends an invitation or a
-  // cancellation. `calendar.readonly` stays alongside it because reading the
-  // full calendar list is not implied by the events scope.
-  //
-  // *Sensitive*, the same tier as `calendar.readonly` — so this costs a
-  // consent-screen edit and one re-consent, and no new verification.
+  // Calendar WRITE (D70), for time-blocking on the user's own calendar.
+  // Narrower than it looks: Holi refuses any event carrying attendees, so this
+  // scope never sends an invitation or a cancellation. `calendar.readonly`
+  // stays alongside it because reading the full calendar list is not implied
+  // by the events scope.
   'https://www.googleapis.com/auth/calendar.events',
 ]
 
@@ -76,16 +61,12 @@ const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
  *
  * **A token response does not echo the strings you sent.** Ask for `email` and
  * the grant comes back as `https://www.googleapis.com/auth/userinfo.email`;
- * `profile` expands the same way. Everything else — `openid`, and every
- * `.../auth/…` URL — is returned verbatim.
+ * `profile` expands the same way. Everything else (`openid`, and every
+ * `.../auth/…` URL) is returned verbatim. Without this, `email` reads as
+ * missing on a correct grant and settings demands a reconnect that cannot help.
  *
- * Comparing the request against the grant without this reports `email` missing
- * on a grant that is entirely correct, and settings then demands a reconnect
- * that cannot possibly help: the mismatch is in the comparison, not the token.
- * That is exactly how it failed in real use.
- *
- * Checked in both directions, because which side holds the short form is a
- * detail of how the list was written rather than a fact worth relying on.
+ * Checked in both directions, because which side holds the short form is not
+ * worth relying on.
  */
 const SCOPE_ALIASES: Record<string, string> = {
   email: 'https://www.googleapis.com/auth/userinfo.email',
@@ -96,8 +77,7 @@ const SCOPE_ALIASES: Record<string, string> = {
  * Refresh this long before the token actually dies.
  *
  * Refreshing at exact expiry loses the race against clock skew and the flight
- * time of the request that is about to use it — the symptom is a 401 on maybe
- * one call in fifty, which reads as a flaky API rather than a clock problem.
+ * time of the request that is about to use it.
  */
 const EXPIRY_SKEW_MS = 60_000
 
@@ -106,7 +86,7 @@ export interface GoogleAccount {
   email: string
 }
 
-/** The grant is gone on Google's side — revoked, expired, or password-changed.
+/** The grant is gone on Google's side: revoked, expired, or password-changed.
  *  Distinct from a network failure because only this one means "reconnect". */
 export class GoogleReconnectRequiredError extends Error {
   constructor() {
@@ -118,12 +98,10 @@ export class GoogleReconnectRequiredError extends Error {
 /**
  * A handle on **one** account's record (D87).
  *
- * A session used to hold the whole accounts map and call itself the first entry.
- * One session per account is what makes per-vault work, and N sessions each
- * holding a copy of that map would clobber each other on `store.write` — so the
- * map has exactly one owner (`accounts.ts`) and a session is handed a reference
- * to its own row. `read` is synchronous because the owner has already loaded it;
- * a session never touches the disk itself.
+ * N sessions each holding a copy of the accounts map would clobber each other
+ * on `store.write`, so the map has exactly one owner (`accounts.ts`) and a
+ * session is handed a reference to its own row. `read` is synchronous because
+ * the owner has already loaded it; a session never touches the disk itself.
  */
 export interface AccountRef {
   read(): StoredGoogleAuth | null
@@ -143,12 +121,12 @@ export class GoogleSession {
   #deps: GoogleSessionDeps
   #listeners = new Set<(account: GoogleAccount | null) => void>()
   /**
-   * The in-flight refresh, if any — the single-flight latch.
+   * The in-flight refresh, if any: the single-flight latch.
    *
    * **This is why sessions are per account rather than one session taking a
    * `sub` per call.** One latch shared across accounts would serialise refreshes
    * that have nothing to do with each other, and let one account's failure be
-   * awaited — and thrown — by another.
+   * awaited and thrown by another.
    */
   #refreshing: Promise<string> | null = null
 
@@ -169,13 +147,8 @@ export class GoogleSession {
    * is the trap this exists for. The refresh token keeps minting access tokens
    * for whatever was consented to originally, so a build that asks for more
    * gets a working connection whose every new call 403s with
-   * `insufficientPermissions` — a failure that looks like a bug in the feature
-   * rather than a missing consent, and that no amount of retrying fixes. The
-   * one cure is to send the user back through consent, which needs someone to
-   * notice first.
-   *
-   * `scopes` had been written on every connect since the connector landed and
-   * read by nothing until this.
+   * `insufficientPermissions`. The one cure is to send the user back through
+   * consent, which needs someone to notice first.
    *
    * Empty with no account: "not connected" is a different state, and the UI
    * already renders it.
@@ -199,10 +172,9 @@ export class GoogleSession {
   /**
    * Google's stable id for the connected account, or `null`.
    *
-   * **Main only** — deliberately not on `GoogleAccount`, which is what the
-   * renderer is allowed to know. What needs it is the cache, which must be
-   * scoped to an account by something that does not change: an email address
-   * can be renamed, and `sub` is what the token store already keys on.
+   * **Main only**: deliberately not on `GoogleAccount`, which is what the
+   * renderer is allowed to know. The cache is scoped by it, because an email
+   * address can be renamed.
    */
   get accountSub(): string | null {
     return this.#current()?.sub ?? null
@@ -211,10 +183,8 @@ export class GoogleSession {
   /**
    * A valid access token, refreshing if needed. **The only way to get one.**
    *
-   * Single-flighted: concurrent callers share one in-flight refresh. Without
-   * this, opening the agenda while a mail fetch is running fires two refreshes
-   * against a rotating refresh token — which is the exact race this class
-   * exists to make impossible.
+   * Single-flighted: concurrent callers share one in-flight refresh, so two
+   * refreshes never race on a rotating refresh token.
    */
   async getAccessToken(): Promise<string> {
     const auth = this.#current()
@@ -236,7 +206,7 @@ export class GoogleSession {
    *
    * Revoking server-side is the point: deleting only the local copy leaves a
    * live grant on someone's Google account with nothing in Holi to show for it.
-   * A failed revoke still clears locally — the user asked to disconnect, and
+   * A failed revoke still clears locally: the user asked to disconnect, and
    * refusing to because Google is unreachable would trap them.
    */
   async disconnect(): Promise<void> {
@@ -266,11 +236,10 @@ export class GoogleSession {
       })
     } catch (err) {
       // `invalid_grant` is the one refusal that means the grant itself is dead
-      // (revoked, expired, password changed) — everything else is transient and
+      // (revoked, expired, password changed); everything else is transient and
       // must NOT drop a working connection. Google reports it as a 400.
       if (err instanceof Error && 'status' in err && err.status === 400) {
-        // This account's record goes; every other account's is untouched, which
-        // is the whole difference a per-account ref makes here.
+        // This account's record goes; every other account's is untouched.
         await this.#deps.account.remove()
         this.#emit()
         throw new GoogleReconnectRequiredError()

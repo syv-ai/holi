@@ -8,10 +8,8 @@
  *
  * **Calendar has no equivalent, and that is a decision rather than an
  * omission.** `events.list`'s `syncToken` cannot be combined with `timeMin` or
- * `timeMax` (Google's own reference lists both among the parameters that
- * "cannot be specified together with nextSyncToken"), so incremental calendar
- * sync would mean mirroring every event at every date, per calendar, to serve
- * an agenda that shows seven days. Refused. See D67.
+ * `timeMax`, so incremental calendar sync would mean mirroring every event at
+ * every date, per calendar, to serve an agenda that shows seven days.
  *
  * Two failure modes are **normal outcomes**, not errors:
  * - `history.list` 404s when `startHistoryId` is older than Gmail keeps
@@ -37,9 +35,9 @@ const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
  * Which labels a cached summary can be repatched from, rather than refetched.
  *
  * Read/unread is the most common delta there is, and paying a request for it
- * would spend the whole saving. The set and the mapping that applies it live in
- * `gmail.ts` beside `MailThreadSummary`, because the cache needs the same
- * answer for a write this app just made — see `applyLabelDelta`.
+ * would spend the whole saving. The set lives in `gmail.ts` beside
+ * `applyLabelDelta`, because the cache needs the same answer for a write this
+ * app just made.
  */
 const PATCHABLE = PATCHABLE_LABELS
 
@@ -47,18 +45,15 @@ const PATCHABLE = PATCHABLE_LABELS
  * Labels whose movement means a thread **left the mailbox** rather than merely
  * changed inside it.
  *
- * This is the distinction `messagesDeleted` does not cover and that nothing
- * covered before: archive is `INBOX` removed, trash and spam are a label added,
- * and none of the three is a deletion. Without it a refetched summary comes
- * back through `merge`'s "new mail" branch and the thread reappears at the top
- * of the list it was just archived out of — permanently, because the cursor
- * advances past the event that would have explained it.
+ * `messagesDeleted` does not cover this: archive is `INBOX` removed, trash and
+ * spam are a label added, and none of the three is a deletion. Without it a
+ * refetched summary comes back through `merge`'s "new mail" branch and the
+ * thread reappears at the top of the list it was just archived out of,
+ * permanently, because the cursor advances past the event.
  *
- * **Which label counts as "removed" depends on the mailbox**, which is why it is
- * a parameter and not a constant here. For the inbox it is `INBOX`; for Sent it
- * is `SENT`, a label a message never actually loses — so in Sent the only
- * departures are the two below, which is correct. Archiving a conversation you
- * sent does not un-send it.
+ * **Which label counts as "removed" depends on the mailbox**, so it is a
+ * parameter. For the inbox it is `INBOX`; for Sent it is `SENT`, a label a
+ * message never loses, so in Sent the only departures are the two below.
  */
 const LEFT_WHEN_ADDED = new Set(['TRASH', 'SPAM'])
 
@@ -90,33 +85,29 @@ export async function syncThreads(
   cache: GoogleCache,
   options: ListThreadsOptions = {},
 ): Promise<MailPage> {
-  // "Load more" asks for what is past the tail — by definition the one thing a
-  // last-N cache does not hold, so it never consults it.
+  // "Load more" asks for what is past the tail: the one thing a last-N cache
+  // does not hold.
   if (options.pageToken !== undefined) return listThreads(api, options)
 
   const key = cacheKey(options)
   const cached = cache.readThreads(key)
   // The cursor THIS list was written at. Gmail's cursor is mailbox-wide, but
-  // each cached list was written at a different moment — asking "what changed
-  // since 200?" against a list last written at 100 loses everything between.
+  // each cached list was written at a different moment.
   const since = cache.historyId(key)
 
   if (cached === null || since === null) return fullSync(api, cache, options, key)
 
-  // The mailbox this list is of, as Gmail labels it. Used twice, and both uses
-  // were hardcoded to INBOX before Sent existed: the scope of the delta, and
-  // the label whose removal means a thread has left.
+  // The mailbox this list is of, as Gmail labels it: the scope of the delta,
+  // and the label whose removal means a thread has left.
   const label = mailboxLabel(options.mailbox)
 
   let page: RawHistoryPage
   try {
     page = await api.get<RawHistoryPage>(`${BASE}/history`, {
       startHistoryId: since,
-      // Scoped to this mailbox: everything else that happens elsewhere — a
-      // label on an archived thread, a message in Spam — is noise to this list.
-      // Asking about the INBOX while showing Sent would mean a message the user
-      // just sent never arrived, and never arrived *again* either: the cursor
-      // advances past the event that would have explained it.
+      // Scoped to this mailbox: everything that happens elsewhere is noise to
+      // this list, and asking about the wrong mailbox would lose events for
+      // good once the cursor advances past them.
       labelId: label,
     })
   } catch (error) {
@@ -134,18 +125,16 @@ export async function syncThreads(
    * "Left the mailbox" only means "left this list" for a list that IS a mailbox.
    *
    * A search (`from:jane`) may still legitimately match an archived thread, so
-   * there the same event becomes a **refetch** instead — which is what it was
-   * before departures existed, and it keeps the row while bringing it up to
-   * date. The category and unread lists are mailbox-scoped, so they get the
-   * removal; only an explicit query opts out.
+   * there the same event becomes a **refetch** instead, keeping the row while
+   * bringing it up to date. The category and unread lists are mailbox-scoped,
+   * so they get the removal; only an explicit query opts out.
    */
   const mailbox = scopedToMailbox(options)
   const gone = mailbox ? new Set([...deleted, ...left]) : deleted
   if (!mailbox) for (const id of left) changed.add(id)
 
   // Only the threads that actually moved, and never one we already know has
-  // gone — refetching a thread in order to drop it is a request spent on
-  // nothing. This is the win: two changed threads cost two requests, not 25.
+  // gone. Two changed threads cost two requests, not 25.
   const refetched = await fetchThreadSummaries(api, [...changed].filter((id) => !gone.has(id)))
 
   const threads = merge(cached, refetched, gone, patches, options)
@@ -195,9 +184,9 @@ interface Changes {
   /** Permanently gone from the mailbox. */
   deleted: Set<string>
   /**
-   * Still in the mailbox, but no longer in the inbox — archived, trashed or
+   * Still in the mailbox, but no longer in the inbox: archived, trashed or
    * marked spam. Distinct from `deleted` because `threads.get` still answers
-   * for these, which is exactly how they used to come back as "new mail".
+   * for these, so they would otherwise come back as "new mail".
    */
   left: Set<string>
   /** threadId → the label ids now on it, as far as history says. */
@@ -208,7 +197,7 @@ interface Changes {
  * What history says happened, sorted into "refetch this", "patch this" and
  * "this is no longer here".
  *
- * A thread that is both patched and refetched is only refetched — the fetched
+ * A thread that is both patched and refetched is only refetched: the fetched
  * summary is authoritative and a patch on top of it could only be older.
  *
  * Records arrive in chronological order, so a thread archived and then moved
@@ -248,12 +237,10 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
         if (threadId === undefined) continue
         for (const labelId of entry.labelIds ?? []) {
           // Left the mailbox, or came back to it. Checked before `PATCHABLE`
-          // because these are not flags on a row — they decide whether the row
-          // belongs to the list at all. Each label reads in both directions:
-          // INBOX removed is an archive and INBOX added is an un-archive; TRASH
-          // added is a trashing and TRASH removed is a restore. In Sent the
-          // first pair never fires — a message does not lose SENT — so trash
-          // and spam are the only ways out, which is the whole difference.
+          // because these decide whether the row belongs to the list at all.
+          // Each label reads in both directions: INBOX removed is an archive and
+          // INBOX added is an un-archive; TRASH added is a trashing and TRASH
+          // removed is a restore.
           const home = labelId === leftWhenRemoved
           const banished = LEFT_WHEN_ADDED.has(labelId)
           if (home || banished) {
@@ -267,8 +254,8 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
             }
             continue
           }
-          // A label this cannot reconstruct locally — a user label, whose NAME
-          // the cache holds and whose id says nothing — means refetch.
+          // A label this cannot reconstruct locally (a user label, whose NAME
+          // the cache holds and whose id says nothing) means refetch.
           if (!PATCHABLE.has(labelId)) changed.add(threadId)
           else patchFor(threadId)[side].add(labelId)
         }
@@ -285,7 +272,7 @@ function readHistory(records: RawHistoryRecord[], leftWhenRemoved: string): Chan
  * Is this list a whole mailbox?
  *
  * `composeQuery` uses the mailbox as its base term when there is no explicit
- * query, and ANDs the category and unread filters onto it — so every list
+ * query, and ANDs the category and unread filters onto it, so every list
  * except an explicit search is mailbox-scoped, and only those may treat
  * "left the mailbox" as "gone from this list".
  */
@@ -296,21 +283,15 @@ function scopedToMailbox(options: ListThreadsOptions): boolean {
 /**
  * Does this thread still answer the question the list asked?
  *
- * **"Left the mailbox" and "left this list" are not the same thing**, and only
- * the first was ever modelled. `LEFT_WHEN_ADDED` and the mailbox label handle a
- * thread leaving the *place*; nothing handled a thread falling out of the
- * *filter*, because the filter is expressed in a Gmail query and Gmail is not
- * asked again on the delta path.
+ * **"Left the mailbox" and "left this list" are not the same thing.**
+ * `LEFT_WHEN_ADDED` and the mailbox label handle a thread leaving the *place*;
+ * this handles a thread falling out of the *filter*, because the filter is a
+ * Gmail query and Gmail is not asked again on the delta path. E.g. opening a
+ * thread marks it read, and without this "unread only" would keep the row.
  *
- * The symptom was the unread list: opening a thread marks it read, which
- * arrives as a `UNREAD` removal, which `applyLabelDelta` faithfully applies to
- * the cached summary — and then the row stayed, so "unread only" served back a
- * list of mail that had been read. A cold cache was correct, which is exactly
- * why it survived: the list is only wrong on the second visit.
- *
- * Local, and free: the summary already carries both flags, so this costs no
- * request. It is deliberately only the filters this module can evaluate — an
- * explicit user query is Gmail's grammar and is not re-interpreted here.
+ * Local, and free: the summary already carries both flags. It is deliberately
+ * only the filters this module can evaluate: an explicit user query is Gmail's
+ * grammar and is not re-interpreted here.
  */
 function stillMatches(thread: MailThreadSummary, options: ListThreadsOptions): boolean {
   if (options.unread === true && !thread.unread) return false
@@ -336,10 +317,9 @@ function merge(
 
   // A thread whose first message just arrived is not in the cached list at all.
   //
-  // **`gone` is filtered here too, not only above.** Filtering `kept` alone is
-  // what let an archived thread return: the cache had already dropped it (this
-  // app's own write), so it failed the "is it cached?" test and arrived through
-  // this branch as new mail — at the top of the list, since the sort is by date.
+  // **`gone` is filtered here too, not only above.** The cache may already have
+  // dropped an archived thread (this app's own write), so it would fail the "is
+  // it cached?" test and arrive through this branch as new mail.
   const added = refetched.filter(
     (thread) => !gone.has(thread.id) && !cached.some((c) => c.id === thread.id),
   )
@@ -363,13 +343,10 @@ function patch(
  *
  * **Every option that narrows the list, or the key is a lie.** The query, the
  * category and the unread filter all become part of the Gmail query
- * (`composeQuery`), so all three belong here. `unread` was missing, and the
- * consequence was not a stale list but a wrong one: flipping "unread only" with
- * a warm cache served the whole inbox back unfiltered, and a cold one wrote the
- * unread-only list under the plain inbox's key so the unfiltered list then
- * showed only unread threads.
+ * (`composeQuery`), so all of them belong here; a missing one serves one
+ * list's answer under another list's key.
  *
- * `pageToken` is deliberately absent — a later page never consults the cache
+ * `pageToken` is deliberately absent: a later page never consults the cache
  * (see `syncThreads`), so it has no key to belong to.
  */
 export function cacheKey(options: ListThreadsOptions): string {

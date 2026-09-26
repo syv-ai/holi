@@ -3,14 +3,10 @@
  *
  * **It lives in main, and that is the whole point.** The agenda panel and the
  * agent's `holi-google agenda` both resolve their calendars through this file,
- * so switching a colleague's calendar off is one fact about the account rather
- * than a preference the UI holds and the agent has never heard of. Putting it
- * in the renderer would have meant the agent quietly reading four other
- * people's days.
+ * so switching a colleague's calendar off also hides it from the agent.
  *
- * Plain JSON, unencrypted, unlike `token-store.ts` next door: there is no
- * credential here, only a set of ids the user chose. Holi's users are
- * developers, and a config file they can open and fix is worth more than
+ * Plain JSON, unencrypted, unlike `token-store.ts`: there is no credential
+ * here, and a config file developers can open and fix is worth more than
  * hiding a list of calendar names.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -30,7 +26,7 @@ export function createCalendarPrefs(path: string): CalendarPrefsStore {
     try {
       raw = await readFile(path, 'utf8')
     } catch {
-      // Not written yet — every calendar follows the default.
+      // Not written yet: every calendar follows the default.
       return {}
     }
     try {

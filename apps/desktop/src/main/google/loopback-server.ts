@@ -1,9 +1,7 @@
 /**
- * The real redirect catcher — a `node:http` server that lives for one request.
- *
+ * The real redirect catcher: a `node:http` server that lives for one request.
  * Split from `loopback-flow.ts` so the flow's state machine can be tested with
- * a three-line fake instead of a socket, and so the only thing that binds a
- * port is the thing whose job is binding a port.
+ * a fake instead of a socket.
  */
 import { createServer } from 'node:http'
 import { CLOSE_PAGE, type LoopbackServer } from './loopback-flow'
@@ -12,8 +10,7 @@ import { CLOSE_PAGE, type LoopbackServer } from './loopback-flow'
  * Bind `127.0.0.1:0` and hand back the port the OS assigned.
  *
  * **Port 0, never a fixed one.** A hardcoded port is a collision waiting for
- * the one user who already has something on it, and the failure surfaces as
- * "connecting Google is broken on my machine" with nothing to point at.
+ * the one user who already has something on it.
  *
  * **`127.0.0.1`, not `localhost`.** The literal cannot be redirected by a hosts
  * file, and it is what gets registered as the redirect URI.
@@ -34,9 +31,8 @@ export function listenLoopback(): Promise<LoopbackServer> {
         return
       }
 
-      // Answer *before* handing off: the tab is a real browser window waiting on
-      // this response, and closing the server with the request unanswered leaves
-      // the user staring at a spinner on a page that already succeeded.
+      // Answer *before* handing off: closing the server with the request
+      // unanswered leaves the browser tab spinning on a page that succeeded.
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(`<!doctype html><meta charset="utf-8"><title>Holi</title><p>${CLOSE_PAGE}</p>`)
 

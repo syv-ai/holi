@@ -1,10 +1,9 @@
 /**
- * Gmail's user labels — id → the name a person would recognise.
+ * Gmail's user labels: id → the name a person would recognise.
  *
  * A message carries `Label_12`; only this endpoint knows that means
  * `Work/Clients`. The lookup is **one request per `listThreads` call, not one
- * per thread** — the whole mail area is an invitation to an N+1, and this is
- * the cheapest place to get it wrong.
+ * per thread**, to avoid an N+1.
  *
  * **A failure returns an empty map.** Labels are decoration on a row; losing
  * them must cost the chips, never the inbox they sit on.

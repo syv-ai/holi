@@ -1,13 +1,12 @@
 /**
- * PKCE — the thing that makes a public desktop client safe to ship.
+ * PKCE: the thing that makes a public desktop client safe to ship.
  *
  * A desktop app cannot keep a secret, so the authorization code alone is not
  * enough: anything that can intercept the loopback redirect could redeem it.
  * PKCE binds the code to a random secret this process invented and never sent
  * over the wire until the exchange, so an intercepted code is worthless.
  *
- * Pure and dependency-injected down to the random bytes, so the whole flow is
- * reproducible in a test without stubbing crypto globally.
+ * Injectable down to the random bytes, so tests need not stub crypto globally.
  */
 import { createHash, randomBytes } from 'node:crypto'
 
@@ -29,7 +28,7 @@ export function createVerifier(random: RandomBytes = randomBytes): string {
 /**
  * **`S256`, never `plain`.** `plain` sends the verifier itself in the
  * authorization request, which hands an interceptor the one secret the exchange
- * depends on — it exists in the spec for clients that cannot hash, and we can.
+ * depends on.
  */
 export function challengeFor(verifier: string): string {
   return base64url(createHash('sha256').update(verifier).digest())

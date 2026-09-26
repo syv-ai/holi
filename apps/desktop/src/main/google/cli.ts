@@ -1,14 +1,14 @@
 /**
- * `holi-google` — the command the agent actually types.
+ * `holi-google`: the command the agent actually types.
  *
  * A generated shell script rather than a shipped binary, for three reasons: it
  * needs no build step or packaging entry, it is readable by the person whose
  * machine it is on, and it re-reads `$HOLI_GOOGLE_PORT`/`$HOLI_GOOGLE_TOKEN` at
- * every invocation — so it keeps working across app restarts that move the port.
+ * every invocation, so it keeps working across app restarts that move the port.
  *
  * It is a thin curl wrapper on purpose. All it does is name the operations, so
- * the agent has one documented command instead of a URL to assemble, and so a
- * future write operation can be gated as its own subcommand rather than hiding
+ * the agent has one documented command instead of a URL to assemble, and so
+ * `send`/`reply` can be gated as their own subcommands rather than hiding
  * inside a general-purpose `curl`.
  */
 import { chmod, mkdir, writeFile } from 'node:fs/promises'

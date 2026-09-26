@@ -1,23 +1,18 @@
 /**
- * Gmail — search, read, triage, and the stable link that goes into a note.
- *
- * **Read plus four writes** (D68, amending D67 §4): the granted scope is
- * `gmail.modify`, and the writes live at the foot of this file — mark read,
- * star, archive, trash. Composing is still a `mailto:` handoff, because no
- * compose surface is built; the scope would allow one. Read the note above
- * those functions before adding a fifth.
+ * Gmail: search, read, triage, compose, and the stable link that goes into a
+ * note (D68, D70, D71; docs/features/google.md). The writes live at the foot of
+ * this file; read the note above them before adding one.
  *
  * **A message carries both representations, and each consumer gets the one it
- * wants.** `body` is plain text — the sender's own `text/plain` part when there
+ * wants.** `body` is plain text: the sender's own `text/plain` part when there
  * is one, converted from HTML when there is not. `html` is the raw HTML part,
  * untouched, or `null`.
  *
  * - The **UI** reads `html`, and sanitizes it in the renderer
  *   (`renderer/src/lib/mail-html.ts`, which also blocks remote content by
- *   default). Mail is designed, and a reader that flattens every newsletter to
- *   text is not a mail reader.
+ *   default).
  * - The **agent** reads `body`, via `textOnly()` below. An LLM wants prose, not
- *   a table layout, and markup would be tokens spent on nothing.
+ *   a table layout.
  *
  * Nothing here sanitizes, and that is deliberate: main hands over exactly what
  * Google returned, so there is one sanitizer, in the one process with a DOM,
@@ -30,14 +25,14 @@ import { buildRfc822, toBase64Url, type MailPart, type OutgoingMail } from './mi
 const BASE = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
 /** Gmail's own inbox tabs. `primary` is what Gmail calls `CATEGORY_PERSONAL`
- *  internally — the two names are not interchangeable in the API. */
+ *  internally; the two names are not interchangeable in the API. */
 export type MailCategory = 'primary' | 'social' | 'promotions' | 'updates' | 'forums'
 
 /**
  * A person on a message, as the header spelled them.
  *
  * Both halves are kept: `name` is what a list shows, `email` is what identifies
- * them. See `parseAddress` for why keeping only the name was a mistake.
+ * them.
  */
 export interface MailAddress {
   /** The display name, falling back to the address when the header had none. */
@@ -57,7 +52,7 @@ export interface MailThreadSummary {
   snippet: string
   unread: boolean
   /**
-   * The last message in the thread is one the user sent — so they have replied
+   * The last message in the thread is one the user sent, so they have replied
    * and are waiting on the other side.
    *
    * Deliberately not "a sent message exists somewhere in this thread": in a long
@@ -71,27 +66,24 @@ export interface MailThreadSummary {
   starred: boolean
   important: boolean
   /**
-   * An unsent draft sits in this thread — you started replying and stopped.
-   *
-   * A third state, distinct from both `answered` and untouched, and the one
-   * most easily forgotten: nothing else in the list says it exists.
+   * An unsent draft sits in this thread: you started replying and stopped.
    */
   hasDraft: boolean
   category: MailCategory | null
   /**
    * The labels the user filed this under. Ids at this layer; `listThreads`
    * resolves them to names through `labels.ts` before the summary leaves main.
-   * Gmail's own system labels are excluded — INBOX and UNREAD are not filing.
+   * Gmail's own system labels are excluded: INBOX and UNREAD are not filing.
    */
   labels: string[]
   /** From the List-Unsubscribe header: a URL to **open**, never a request Holi
-   *  sends. The `mailto:` form is ignored — acting on it would mean composing
-   *  mail on the user's behalf, which the read-only scope forbids anyway. */
+   *  sends. The `mailto:` form is ignored: acting on it would mean sending mail
+   *  on the user's behalf. */
   unsubscribeUrl: string | null
   /**
    * A calendar invite (`.ics`) is attached somewhere in this thread.
    *
-   * The one field here that does **not** come from the thread's own metadata —
+   * The one field here that does **not** come from the thread's own metadata:
    * see `fetchInviteIds` for why it cannot, and what is asked instead.
    */
   hasInvite: boolean
@@ -114,21 +106,20 @@ export interface MailMessage {
   /**
    * Who saw it without the others knowing.
    *
-   * **Empty on delivered mail, and that is Gmail's doing rather than a gap
-   * here.** The header is stripped on delivery by design; it survives only on
-   * the account's own copy of a message it sent — the Sent mailbox. Carried so
-   * the reader can show it there. It is never fed to reply-all: copying
+   * **Empty on delivered mail**: the header is stripped on delivery by design
+   * and survives only on the account's own copy of a message it sent. Carried
+   * so the reader can show it in Sent. It is never fed to reply-all: copying
    * somebody the sender deliberately hid is not a thing a reply decides on its
    * own. See `composeFrom`, which reads `to` and `cc` only.
    */
   bcc: MailAddress[]
   date: string
-  /** Every part with a filename, however deep. **No extra request** — the
+  /** Every part with a filename, however deep. **No extra request**: the
    *  thread is already fetched at `format=full`, so the parts are in hand. */
   attachments: MailAttachment[]
   /** Plain text, for the agent and as the UI's fallback. See the module note. */
   body: string
-  /** The raw HTML part, or `null`. **Unsanitized** — the renderer sanitizes it
+  /** The raw HTML part, or `null`. **Unsanitized**: the renderer sanitizes it
    *  before it becomes markup, and nothing else may render it. */
   html: string | null
 }
@@ -183,7 +174,7 @@ interface RawThread {
  *
  * **Not `/mail/u/0/#inbox/<id>`.** The `u/N` segment is a *login slot*, not an
  * account: with two Google accounts signed in, `u/0` is whoever logged in
- * first, so a saved link opens the wrong mailbox — or nothing. Searching by
+ * first, so a saved link opens the wrong mailbox, or nothing. Searching by
  * RFC-822 message id resolves against whichever account actually holds the
  * message, which is what makes the link survive in a file that outlives the
  * session that wrote it.
@@ -191,7 +182,7 @@ interface RawThread {
 export function messageUrl(rfc822MessageId: string | null, threadId: string): string {
   if (rfc822MessageId === null || rfc822MessageId === '') {
     // No Message-ID header (rare, but legal). The thread id still opens, in
-    // whatever account is slot 0 — worse, and only used when there is no better.
+    // whatever account is slot 0: worse, and only used when there is no better.
     return `https://mail.google.com/mail/u/0/#all/${threadId}`
   }
   const bare = rfc822MessageId.replace(/^</, '').replace(/>$/, '')
@@ -206,12 +197,9 @@ function headerOf(part: RawPart | undefined, name: string): string | null {
 /**
  * `"Ada Holm" <ada@syv.ai>` → `{ name, email }`.
  *
- * **Both halves travel**, where this used to keep only the name. The name is
- * still what a list shows — a column of addresses is far harder to scan than a
- * column of names — but the address is the only thing that identifies a person,
- * and dropping it in the parser meant nothing downstream could ever offer a
- * `mailto:`, group two spellings of the same colleague, or say who a sender
- * actually is. A renderer cannot recover what main threw away.
+ * **Both halves travel.** The name is what a list shows, but the address is the
+ * only thing that identifies a person, and a renderer cannot recover what main
+ * threw away.
  *
  * `email` is lowercased because addresses are compared, not just shown, and the
  * local part's case is not significant in any mail system anyone uses. `name`
@@ -233,7 +221,7 @@ function parseAddress(value: string | null): MailAddress {
 
 function parseAddresses(value: string | null): MailAddress[] {
   if (value === null) return []
-  // Split on commas that are not inside quotes — a display name may contain one
+  // Split on commas that are not inside quotes: a display name may contain one
   // ("Holm, Ada" <…>), and splitting naively mangles it into two people.
   return value
     .split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/)
@@ -256,7 +244,7 @@ function decodeBody(data: string | undefined): string {
  * Find the best text for a message, walking the MIME tree.
  *
  * Prefers `text/plain`; falls back to converting `text/html`. Attachments are
- * skipped — a part with a filename is a file, not the message.
+ * skipped: a part with a filename is a file, not the message.
  */
 export function bodyTextOf(payload: RawPart | undefined, { trim = true } = {}): string {
   const plain = findPart(payload, 'text/plain')
@@ -286,7 +274,7 @@ export function bodyHtmlOf(payload: RawPart | undefined): string | null {
   const html = findPart(payload, 'text/html')
   if (html === null) return null
   const raw = decodeBody(html.body?.data)
-  // An empty part is "no HTML", not "empty HTML" — the UI branches on null, and
+  // An empty part is "no HTML", not "empty HTML": the UI branches on null, and
   // a blank string would render a blank message instead of the text body.
   return raw === '' ? null : raw
 }
@@ -295,8 +283,7 @@ export function bodyHtmlOf(payload: RawPart | undefined): string | null {
  * Every attachment in a message, however deep in the MIME tree.
  *
  * **A filename is what makes a part a file.** That is the same rule `findPart`
- * uses in reverse to refuse an attachment as the body — one definition, read
- * from both ends, rather than two that can drift apart.
+ * uses in reverse to refuse an attachment as the body.
  */
 export function attachmentsOf(part: RawPart | undefined): MailAttachment[] {
   if (part === undefined) return []
@@ -383,17 +370,14 @@ export interface ListThreadsOptions {
   /**
    * Composed into the Gmail query as `category:<name>`.
    *
-   * A **query**, not a client-side filter: Gmail's grammar already has
-   * `category:primary`, the search box passes that grammar through verbatim,
-   * and composing the two keeps one way to narrow a list instead of two that
-   * can disagree.
+   * A **query**, not a client-side filter, so there is one way to narrow a
+   * list instead of two that can disagree.
    */
   category?: MailCategory
   /**
    * Only threads with something unread in them, as `is:unread`.
    *
-   * Composed the same way `category` is, and for the same reason — but note the
-   * two behave differently at the UI, deliberately. A category is a *place*, so
+   * Composed the same way `category` is. At the UI a category is a *place*, so
    * a search leaves it; unread is a *state*, so a search keeps it. That choice
    * belongs to the caller; this just ANDs what it is given.
    */
@@ -401,20 +385,16 @@ export interface ListThreadsOptions {
   /**
    * Which mailbox this list is of. `inbox` when absent.
    *
-   * A **query term**, like `category` and `unread` beside it — `in:sent` is
-   * grammar Gmail already speaks and the search box already passes through, so
-   * Sent costs one word rather than a second listing path with its own summary
-   * shape and its own bugs.
-   *
-   * It is the base term rather than an extra one, so an explicit query replaces
-   * it entirely: a search escapes the mailbox exactly as it escapes the tabs.
-   * `mail-sync` reads it for a second purpose — see `mailboxLabel` there, where
-   * it decides which label's movement means a thread has left this list.
+   * A **query term**, like `category` and `unread`, rather than a second
+   * listing path. It is the base term, so an explicit query replaces it
+   * entirely: a search escapes the mailbox exactly as it escapes the tabs.
+   * `mail-sync` also reads it (via `mailboxLabel`) to decide which label's
+   * movement means a thread has left this list.
    */
   mailbox?: MailboxName
 }
 
-/** The mailboxes the list can be of. Not every Gmail label — only the two that
+/** The mailboxes the list can be of. Not every Gmail label: only the two that
  *  are places the user navigates to. */
 export type MailboxName = 'inbox' | 'sent'
 
@@ -430,7 +410,7 @@ export interface MailPage {
   nextPageToken: string | null
   /** When these threads were actually obtained from Google, ISO. The footer
    *  shows it, and a served-from-cache page carries the *cache's* time rather
-   *  than now — the whole point is to say how old what you are reading is. */
+   *  than now: the point is to say how old what you are reading is. */
   syncedAt: string
 }
 
@@ -438,10 +418,8 @@ export interface MailPage {
  * How much mail there is, from Gmail's own bookkeeping.
  *
  * **Exact, not an estimate.** `labels.get` returns counts Gmail maintains for
- * the label; this is not `resultSizeEstimate`, which the category picker
- * deliberately refuses to show because it is approximate and a wrong number is
- * worse than no number. One request, and it answers for the whole mailbox
- * rather than the page in hand.
+ * the label, not `resultSizeEstimate`. One request, and it answers for the
+ * whole mailbox rather than the page in hand.
  */
 export interface MailCounts {
   /** Threads in the inbox with something unread in them. */
@@ -469,18 +447,16 @@ export async function fetchMailCounts(api: GoogleApi): Promise<MailCounts | null
  * **Counted, not estimated, and not read off the label.** Three ways to get
  * this number and only one of them is right:
  *
- * - `resultSizeEstimate` is an estimate, and the category picker has always
- *   refused to show one — a number people trust and that is wrong is worse
- *   than no number.
+ * - `resultSizeEstimate` is an estimate: a number people trust and that is
+ *   wrong is worse than no number.
  * - `labels.get` on `CATEGORY_PROMOTIONS` is exact but counts the **whole
- *   mailbox**, archived mail included. It would answer a question nobody asked,
- *   and Holi can now archive without reading, so the gap is one this app makes.
+ *   mailbox**, archived mail included.
  * - `threads.list` scoped to the inbox returns the actual ids. Counting them is
  *   exact and scoped to what the tab holds. Ids only, so a page of 500 is a
- *   small response and never the N+1 a list view pays.
+ *   small response.
  *
- * `more` is what honesty costs past the page: at 500 the answer becomes "500+"
- * rather than a number that quietly means "at least".
+ * Past the page, the answer becomes "500+" rather than a number that quietly
+ * means "at least".
  */
 export interface CategoryCount {
   count: number
@@ -510,7 +486,7 @@ export async function fetchCategoryUnread(
 
 export type CategoryCounts = Partial<Record<MailCategory, CategoryCount | null>>
 
-/** Every tab's unread count, concurrently — five requests, and only when the
+/** Every tab's unread count, concurrently: five requests, and only when the
  *  picker is actually opened. See `MailView`. */
 export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCounts> {
   const categories: MailCategory[] = ['primary', 'social', 'promotions', 'updates', 'forums']
@@ -521,8 +497,8 @@ export async function fetchCategoryCounts(api: GoogleApi): Promise<CategoryCount
 /**
  * Threads matching a query, newest first.
  *
- * Gmail's list endpoint returns **ids and a snippet, nothing else** — no
- * subject, no sender — so each thread is fetched at `metadata` detail to fill
+ * Gmail's list endpoint returns **ids and a snippet, nothing else** (no
+ * subject, no sender), so each thread is fetched at `metadata` detail to fill
  * the row. That is the N+1 this pools; asking for `full` here would download
  * every body to render a list.
  */
@@ -563,7 +539,7 @@ export async function fetchThreadSummaries(
 ): Promise<MailThreadSummary[]> {
   if (ids.length === 0) return []
 
-  // ONCE per call, not once per thread — resolving a chip must not cost a
+  // ONCE per call, not once per thread: resolving a chip must not cost a
   // request. It runs concurrently with the threads for the same reason.
   const labelNames = fetchLabelNames(api)
 
@@ -571,11 +547,8 @@ export async function fetchThreadSummaries(
     api.get<RawThread>(`${BASE}/threads/${id}`, {
       format: 'metadata',
       // An ARRAY, so `GoogleApi.get` emits one `metadataHeaders=` per name.
-      // Comma-joining these is not a shorthand — Gmail reads the whole string
-      // as one header name, matches nothing, and returns 200 with no headers,
-      // which renders every thread as "(no subject)" from an empty sender.
-      // The recipient and unsubscribe headers are free — same request, same
-      // response size to any degree that matters.
+      // Comma-joined, Gmail reads the whole string as one header name, matches
+      // nothing, and returns 200 with no headers.
       metadataHeaders: [
         'Subject',
         'From',
@@ -603,17 +576,14 @@ export async function fetchThreadSummaries(
  *
  * **The question is asked backwards, deliberately.** A thread's attachments are
  * not knowable from the summary fetch: it asks for `format: 'metadata'`, which
- * returns headers and no `payload.parts`, and `attachmentsOf` reads parts.
- * `format: 'full'` would answer it — by downloading every body in the page to
- * draw one icon, which is the N+1 this module exists to avoid. So instead of
- * asking each thread what it holds, Gmail is asked once which threads hold an
- * `.ics`, and the answer is intersected with the page in hand. Same move as
- * `fetchCategoryUnread`: a scoped list rather than a fatter per-thread fetch.
+ * returns headers and no `payload.parts`. `format: 'full'` would download every
+ * body in the page to draw one icon. So Gmail is asked once which threads hold
+ * an `.ics`, and the answer is intersected with the page in hand.
  *
  * **The date window is what makes the intersection sound.** `threads.list` is
  * newest-first across the whole mailbox, so unbounded this answers "the most
- * recent threads with an .ics" — intersect that with a page from three years ago
- * and it matches nothing, silently dropping every badge. The window is taken
+ * recent threads with an .ics", which would match nothing on an older page. The
+ * window is taken
  * from the dates of the threads being intersected, with a day of slack either
  * side because Gmail reads `after:`/`before:` in the account's own timezone.
  *
@@ -635,7 +605,7 @@ async function fetchInviteIds(
 
   const page = await api.get<{ threads?: { id?: string }[] }>(`${BASE}/threads`, {
     q: `has:attachment filename:ics after:${after} before:${before}`,
-    // Gmail's ceiling, and ids are all that comes back — a list costs the same
+    // Gmail's ceiling, and ids are all that comes back: a list costs the same
     // quota whether it answers one or five hundred. Deliberately far above any
     // real window rather than a cap that would silently lose badges.
     maxResults: '500',
@@ -645,12 +615,11 @@ async function fetchInviteIds(
   return new Set(summaries.map((s) => s.id).filter((id) => ids.has(id)))
 }
 
-/** The user's own query, the category tab and the unread filter, in Gmail's one
- *  grammar — so there is one way to narrow a list rather than several that can
- *  disagree with each other. */
+/** The user's own query, the mailbox, the category tab and the unread filter,
+ *  in Gmail's one grammar. */
 function composeQuery(options: ListThreadsOptions): string {
   // The mailbox is the BASE term, so an explicit query replaces it rather than
-  // ANDing with it — searching from inside Sent searches the mailbox, the same
+  // ANDing with it: searching from inside Sent searches the mailbox, the same
   // way searching from inside a category tab leaves the tab.
   const base = options.mailbox === 'sent' ? 'in:sent' : 'in:inbox'
   const parts = [options.query !== undefined && options.query !== '' ? options.query : base]
@@ -680,7 +649,7 @@ const SYSTEM_LABELS = new Set([
   'SCHEDULED',
 ])
 
-/** Gmail's label name for each tab. `CATEGORY_PERSONAL` is the Primary tab —
+/** Gmail's label name for each tab. `CATEGORY_PERSONAL` is the Primary tab:
  *  the one mapping that is silently wrong if it is guessed. */
 const CATEGORY_BY_LABEL: Record<string, MailCategory> = {
   CATEGORY_PERSONAL: 'primary',
@@ -702,10 +671,10 @@ function isSystemLabel(id: string): boolean {
 /**
  * The unsubscribe link a newsletter advertises, if it offers a web one.
  *
- * The header may hold both forms — `<mailto:…>, <https://…>` — and only the
- * https one is something to hand the browser. A `mailto:` would mean composing
- * mail on the user's behalf, which is not what the read-only scope granted and
- * not what a one-click affordance should ever do silently.
+ * The header may hold both forms (`<mailto:…>, <https://…>`), and only the
+ * https one is something to hand the browser. A `mailto:` would mean sending
+ * mail on the user's behalf, which a one-click affordance should never do
+ * silently.
  */
 export function unsubscribeUrlOf(header: string | null): string | null {
   if (header === null) return null
@@ -716,8 +685,8 @@ export function unsubscribeUrlOf(header: string | null): string | null {
   return null
 }
 
-/** Everything derivable from the metadata fetch — which is everything except
- *  `hasInvite`, whose absence here is the point. */
+/** Everything derivable from the metadata fetch: everything except
+ *  `hasInvite`. */
 function summarize(
   thread: RawThread,
   labelNames: Map<string, string>,
@@ -727,8 +696,7 @@ function summarize(
   const last = messages[messages.length - 1]
   if (thread.id === undefined || first === undefined || last === undefined) return null
 
-  // A label anywhere in the thread applies to the thread — the same rule Gmail's
-  // own list follows, and `unread` already followed.
+  // A label anywhere in the thread applies to the thread, as in Gmail's own list.
   const allLabels = messages.flatMap((m) => m.labelIds ?? [])
   const category = last.labelIds?.map((id) => CATEGORY_BY_LABEL[id]).find((c) => c !== undefined)
 
@@ -742,11 +710,11 @@ function summarize(
     from: parseAddress(headerOf(last.payload, 'From')),
     date: isoDate(last),
     snippet: last.snippet ?? '',
-    // Unread if ANY message in the thread is — that is what Gmail's own bolding
+    // Unread if ANY message in the thread is: that is what Gmail's own bolding
     // means, and the thread is the unit the user acts on.
     unread: messages.some((m) => m.labelIds?.includes('UNREAD') === true),
     // `SENT` is Gmail's own label for "this account sent this", so it needs no
-    // comparison against the connected address — which would be wrong anyway
+    // comparison against the connected address, which would be wrong anyway
     // for aliases and send-as addresses.
     answered: last.labelIds?.includes('SENT') === true,
     messageCount: messages.length,
@@ -767,7 +735,7 @@ function summarize(
   }
 }
 
-/** `internalDate` is epoch ms as a string, and is the reliable one — the `Date`
+/** `internalDate` is epoch ms as a string, and is the reliable one: the `Date`
  *  header is written by the sender and is routinely wrong or absent. */
 function isoDate(message: RawMessage): string {
   const internal = Number(message.internalDate)
@@ -792,7 +760,7 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
       from: parseAddress(headerOf(message.payload, 'From')),
       to: parseAddresses(headerOf(message.payload, 'To')),
       cc: parseAddresses(headerOf(message.payload, 'Cc')),
-      // Present only on the account's own sent copy — see `MailMessage.bcc`.
+      // Present only on the account's own sent copy: see `MailMessage.bcc`.
       // No extra request: this thread is already read at `format=full`.
       bcc: parseAddresses(headerOf(message.payload, 'Bcc')),
       date: isoDate(message),
@@ -807,11 +775,9 @@ export async function readThread(api: GoogleApi, threadId: string): Promise<Mail
  * The thread as the agent should see it: text bodies, no markup.
  *
  * Applied at the ops server (`main/index.ts`) rather than left to the agent to
- * ignore. Two reasons, and the second is the one that matters: an HTML body is
- * many times the size of its text twin, so shipping it would spend the agent's
- * context on table layout; and unsanitized markup should exist in exactly one
- * place, which is the renderer that sanitizes it. Sending it down a second path
- * means a second consumer that might one day render it.
+ * ignore: an HTML body is many times the size of its text twin, and
+ * unsanitized markup should reach exactly one consumer, the renderer that
+ * sanitizes it.
  */
 export function textOnly(thread: MailThread): AgentMailThread {
   return {
@@ -822,31 +788,24 @@ export function textOnly(thread: MailThread): AgentMailThread {
   }
 }
 
-/** The boolean columns of a summary, named by the type rather than by hand — so
+/** The boolean columns of a summary, named by the type rather than by hand, so
  *  a flag that is renamed or stops being a boolean fails to compile here. */
 type MailFlag = {
   [K in keyof MailThreadSummary]: MailThreadSummary[K] extends boolean ? K : never
 }[keyof MailThreadSummary]
 
 /**
- * Which system label sets which flag — **one table, read from both ends.**
- *
- * The set of patchable labels and the mapping that applies them used to be two
- * declarations that had to agree: a label in the set with no entry in the
- * mapping is silently ignored, and the reverse makes a delta refetch when it
- * did not need to. Deriving `PATCHABLE_LABELS` from the table's own keys makes
- * that drift inexpressible rather than merely warned against.
+ * Which system label sets which flag: **one table, read from both ends.**
+ * `PATCHABLE_LABELS` is derived from its keys, so the set and the mapping
+ * cannot drift apart.
  *
  * A *user* label is deliberately absent: the cache holds label NAMES, and
- * `Label_12` cannot become one without a lookup — so that case refetches, which
- * is both correct and rare. `INBOX`, `TRASH` and `SPAM` are absent for a
- * different reason: they are not flags on a row, they decide whether the row is
+ * `Label_12` cannot become one without a lookup, so that case refetches.
+ * `INBOX`, `TRASH` and `SPAM` are absent because they decide whether the row is
  * in the list at all, and `mail-sync` handles them as departures.
  *
- * Two callers, and they arrive from opposite directions: `mail-sync` applying
- * what `history.list` reports, and `cache` applying a write this app just made.
- * Both are "a label moved; update the flags", and neither should own its own
- * copy of the answer.
+ * Two callers: `mail-sync` applying what `history.list` reports, and `cache`
+ * applying a write this app just made.
  */
 const LABEL_FLAGS = {
   UNREAD: 'unread',
@@ -870,19 +829,14 @@ export function applyLabelDelta(
 }
 
 /**
- * The four writes (D68) — everything Holi can change about a thread.
+ * The writes (D68, D70, D71): thread labels, then sending and drafts.
  *
- * **This is the whole write surface, and it is meant to stay that way.** The
- * scope behind it (`gmail.modify`) permits more than these: it also permits
- * `messages.send`, because no lesser scope grants `threads.modify` and archive
- * cannot be bought without it. So "Holi cannot send" is true only for as long
- * as this file has no function that sends — a code boundary, not a granted one.
- * Adding one is a decision, not a refactor.
+ * `gmail.modify` permits everything here, including `messages.send`; the scope
+ * is not what bounds the agent's sends (see `GOOGLE_SCOPES`). Adding a write is
+ * a decision, not a refactor.
  *
- * None of these touch the cache. A function that both calls Google and mutates
- * local state cannot be tested as either, and the ordering that keeps the two
- * honest — Google first, cache only on success — belongs to `data.ts`, which
- * owns the cache.
+ * None of these touch the cache. The ordering that keeps the two honest (Google
+ * first, cache only on success) belongs to `data.ts`, which owns the cache.
  */
 
 /**
@@ -893,8 +847,7 @@ export function applyLabelDelta(
  * the label (see `summarize`), so a partial removal would leave it set.
  *
  * The other direction exists for the agent: "leave this one for me" is a real
- * triage move, and having only one direction here would have made the ops
- * server carry a special case that no other label needs.
+ * triage move.
  */
 export async function setThreadRead(api: GoogleApi, id: string, read: boolean): Promise<void> {
   await modifyThread(api, id, read ? { remove: ['UNREAD'] } : { add: ['UNREAD'] })
@@ -905,13 +858,13 @@ export async function setThreadStarred(api: GoogleApi, id: string, starred: bool
 }
 
 /** Archive is the *absence* of `INBOX`, not the presence of anything. The
- *  thread is untouched otherwise — still searchable, still in All Mail. */
+ *  thread is untouched otherwise: still searchable, still in All Mail. */
 export async function archiveThread(api: GoogleApi, id: string): Promise<void> {
   await modifyThread(api, id, { remove: ['INBOX'] })
 }
 
 /**
- * Trash — **its own endpoint, not a label change.**
+ * Trash: **its own endpoint, not a label change.**
  *
  * `modify` with `addLabelIds: ['TRASH']` is the intuitive version and it does
  * not work: Gmail answers 200 and leaves the thread where it was. There is no
@@ -925,8 +878,7 @@ export async function trashThread(api: GoogleApi, id: string): Promise<void> {
 }
 
 /** The one shape every label write shares, so the URL and the body exist once.
- *  Empty arrays are omitted rather than sent: Gmail accepts them, but a request
- *  that says `removeLabelIds: []` reads like a bug in the log it appears in. */
+ *  Empty arrays are omitted rather than sent. */
 async function modifyThread(
   api: GoogleApi,
   id: string,
@@ -941,7 +893,7 @@ async function modifyThread(
 /**
  * Send a message (D70).
  *
- * `id: null` is a **success** — `postJson` returns `null` when Google accepted
+ * `id: null` is a **success**: `postJson` returns `null` when Google accepted
  * the request and the response body could not be read. The field is named `id`
  * rather than the result being `string | null` so that no caller can mistake
  * the absence of an id for the absence of a sent mail.
@@ -957,7 +909,7 @@ export async function sendMessage(
 }
 
 /**
- * Create a draft — the outbound operation that reaches nobody, and the one the
+ * Create a draft: the outbound operation that reaches nobody, and the one the
  * skill teaches as the default.
  *
  * `threadId` is what files it in the conversation. Without it Gmail creates a
@@ -987,7 +939,7 @@ export async function createDraft(
  * `References` from the message being answered instead of the whole chain.
  *
  * Reads the raw thread rather than going through `readThread`, which drops the
- * two things this needs — the RFC-822 `Message-ID` of each message, and the
+ * two things this needs: the RFC-822 `Message-ID` of each message, and the
  * `SENT` label that says which ones are the user's own.
  */
 export async function replyToThread(
@@ -1006,7 +958,7 @@ export async function replyToThread(
   }
 
   // The last message the user did NOT send. `SENT` is Gmail's own label, so it
-  // needs no comparison against the connected address — which would be wrong
+  // needs no comparison against the connected address, which would be wrong
   // for aliases and send-as addresses anyway (see `summarize`). Falling back to
   // the last message covers a thread the user started and nobody answered.
   const inbound = [...messages].reverse().find((m) => m.labelIds?.includes('SENT') !== true)
@@ -1016,14 +968,10 @@ export async function replyToThread(
     .map((address) => address.email)
     .filter((email) => email !== '')
   /**
-   * **Reply, not reply-all — and the default matters more here than usual.**
-   *
-   * Copying the thread's `Cc` turns one instruction into a message to six
-   * people, on the single operation that reaches people at all. And the user
-   * approving the confirmation cannot check it: a reply's recipients are
-   * *derived from the thread*, so they never appear in the command being
-   * approved. A default that silently widens an audience nobody can see is the
-   * wrong default; reply-all stays available, but has to be asked for.
+   * **Reply, not reply-all, by default.** The user approving the confirmation
+   * cannot check the audience: a reply's recipients are *derived from the
+   * thread*, so they never appear in the command being approved. Reply-all
+   * stays available, but has to be asked for.
    */
   const cc =
     options.all === true
@@ -1064,12 +1012,10 @@ export async function replyToThread(
 /**
  * The composer's Gmail surface (D71).
  *
- * Everything below either reaches another human or edits something that will,
- * and none of it existed while replying meant opening a browser. The agent's
- * functions above are deliberately left alone: `createDraft` and
- * `replyToThread` derive their own recipients, which is right for an LLM
- * working from an instruction and wrong for a UI where the user has already
- * been shown chips they may have edited.
+ * Separate from the agent's functions above: `createDraft` and `replyToThread`
+ * derive their own recipients, which is right for an LLM working from an
+ * instruction and wrong for a UI where the user has already been shown chips
+ * they may have edited.
  */
 
 export interface DraftSummary {
@@ -1089,16 +1035,15 @@ export interface DraftBody {
   subject: string
   /**
    * The markdown source, byte-exact, when `X-Holi-Source` says this draft came
-   * from Holi. `null` means the renderer must convert `html` itself — main
+   * from Holi. `null` means the renderer must convert `html` itself: main
    * cannot, because `turndown` needs a DOM and main has none.
    */
   markdown: string | null
   html: string | null
   /**
    * The `text/plain` part, always. The fallback for a foreign draft with no
-   * `text/html` at all — every draft the agent wrote before the marker existed,
-   * and anything from a plain-text client. Without it "convert the html"
-   * converts nothing and the composer opens blank over a real message.
+   * `text/html` at all (e.g. from a plain-text client). Without it the
+   * composer opens blank over a real message.
    */
   text: string
   /** No `X-Holi-Source`. Not a gate: a foreign draft opens for editing after a
@@ -1117,9 +1062,7 @@ const SOURCE_HEADER_NAME = 'X-Holi-Source'
  * replaces the whole draft, so a save that omits these strips them, and a draft
  * later sent from a phone starts a new conversation.
  *
- * The cost is one cheap metadata read per autosave. If that ever shows up as
- * slow the tunable is to resolve on create and send only — and the price of
- * that is exactly the phone case above.
+ * The cost is one cheap metadata read per autosave.
  */
 async function threadingHeaders(
   api: GoogleApi,
@@ -1163,11 +1106,10 @@ export async function sendInThread(
 }
 
 /**
- * Create or replace the composer's draft — the one call the autosave loop wants.
+ * Create or replace the composer's draft: the one call the autosave loop wants.
  *
- * `createDraft` above is the agent's and stays as it is; this one exists
- * because an autosave has to be able to *update*. A create on every save makes
- * a second draft, and the user watches their message fork.
+ * Separate from the agent's `createDraft` because an autosave has to be able to
+ * *update*. A create on every save makes a second draft.
  */
 export async function saveDraft(
   api: GoogleApi,
@@ -1200,8 +1142,7 @@ export async function saveDraft(
  *
  * `drafts.send`, **not** `messages.send` followed by `drafts.delete`. Gmail
  * removes the draft atomically; the two-call version leaves an orphan draft
- * whenever the second call fails — a message the user already sent, still
- * sitting in Drafts looking unsent.
+ * whenever the second call fails.
  */
 export async function sendDraft(api: GoogleApi, draftId: string): Promise<{ id: string | null }> {
   const sent = await api.postJson<{ id?: string }>(`${BASE}/drafts/send`, { id: draftId })
@@ -1213,7 +1154,7 @@ export async function deleteDraft(api: GoogleApi, draftId: string): Promise<void
 }
 
 /** `drafts.list` carries no headers at all, so each draft costs a metadata
- *  read. Capped rather than unbounded — a Drafts view is a list a human reads. */
+ *  read. Capped: a Drafts view is a list a human reads. */
 const DRAFT_LIST_CAP = 50
 
 export async function listDrafts(api: GoogleApi): Promise<DraftSummary[]> {
@@ -1262,12 +1203,9 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
     // The marker means the text/plain part IS the markdown that produced this
     // draft, so it round-trips byte-exact. Without it there is nothing here to
     // trust, and the renderer converts the html instead.
-    // Untrimmed, unlike everywhere else this is read. Trimming is right for a
-    // message being *displayed* and wrong for one being *reopened for editing*:
-    // `replyBody` starts a reply with two blank lines so the cursor sits above
-    // the quote, and trimming deletes exactly that — the user saves, reopens,
-    // and their writing space is gone with their text flush against the `---`.
-    // "Byte-exact" has to include the bytes nobody looks at.
+    // Untrimmed, unlike everywhere else this is read: `replyBody` starts a reply
+    // with two blank lines so the cursor sits above the quote, and trimming
+    // would delete exactly that on reopen.
     markdown: foreign ? null : bodyTextOf(payload, { trim: false }),
     html: bodyHtmlOf(payload),
     text: bodyTextOf(payload, { trim: false }),
@@ -1276,11 +1214,9 @@ export async function readDraft(api: GoogleApi, draftId: string): Promise<DraftB
 }
 
 /**
- * Every address this account may send from — the connected one plus its aliases.
+ * Every address this account may send from: the connected one plus its aliases.
  *
- * Needed so reply-all can exclude *all* of them. Missing an alias copies the
- * user on their own reply, which reads as a bug in the recipient's client
- * rather than in this one. No new OAuth scope: `gmail.modify` already permits
+ * Needed so reply-all can exclude *all* of them. `gmail.modify` already permits
  * `settings.sendAs.list`.
  */
 export async function listSendAs(api: GoogleApi): Promise<string[]> {
@@ -1296,10 +1232,9 @@ export async function listSendAs(api: GoogleApi): Promise<string[]> {
  * Fetch one attachment's bytes, ready for `buildRfc822`.
  *
  * **The conversion is the point.** `attachments.get` answers base64**url**;
- * MIME needs standard base64. The alphabets differ in three characters, so the
- * mistake produces a file that opens as garbage — and only the recipient ever
- * sees it. The filename and type come from the caller because the wire answer
- * carries neither.
+ * MIME needs standard base64. The mistake produces a file that opens as
+ * garbage, visible only to the recipient. The filename and type come from the
+ * caller because the wire answer carries neither.
  */
 export async function fetchAttachment(
   api: GoogleApi,
@@ -1320,7 +1255,7 @@ export async function fetchAttachment(
 }
 
 /**
- * The `.ics` in a thread, as text — or null when there is none.
+ * The `.ics` in a thread, as text, or null when there is none.
  *
  * Owns the Gmail half of the meeting lookup and nothing else: which part is the
  * invite, and how to get its bytes. What the bytes *mean* is `invite.ts`.
@@ -1328,13 +1263,11 @@ export async function fetchAttachment(
  * Two shapes, because invites arrive in both and only one of them costs a
  * request. Outlook attaches the invite (`filename: 'invite.ics'`, bytes behind
  * an `attachmentId`); Google Calendar sends `text/calendar` **inline**, with the
- * data in the part itself — for which there is no attachment id to fetch even if
- * one wanted to.
+ * data in the part itself.
  *
- * `format: 'full'`, which is the expensive fetch this module normally refuses.
- * It is affordable here for the reason it is not in a list: this runs for ONE
- * thread, only when a reader has already opened it — so the body was being
- * downloaded anyway.
+ * `format: 'full'`, the expensive fetch this module normally refuses. It is
+ * affordable here because this runs for ONE thread, only when a reader has
+ * already opened it.
  */
 export async function fetchThreadIcs(api: GoogleApi, threadId: string): Promise<string | null> {
   const thread = await api.get<RawThread>(`${BASE}/threads/${encodeURIComponent(threadId)}`, {
@@ -1390,7 +1323,7 @@ function threadIdOf(message: RawMessage | undefined): string | null {
 
 /**
  * An attachment as it appears in a message payload, with the id needed to
- * fetch it. `attachmentsOf` deliberately drops that id — it feeds the reader,
+ * fetch it. `attachmentsOf` deliberately drops that id: it feeds the reader,
  * which shows names and sizes and never downloads anything.
  */
 interface AttachmentRef {
@@ -1418,10 +1351,8 @@ function attachmentRefsOf(part: RawPart | undefined): AttachmentRef[] {
 /**
  * Every attachment on a message, as MIME parts ready for `buildRfc822` (D71).
  *
- * **This is why a forward carries its files without a file picker.** The
- * renderer names a message; main fetches the bytes and hands them straight to
- * the assembler. Nothing base64 ever crosses the IPC seam, so there is no
- * attachment blob in renderer state and no size cap to design.
+ * The renderer names a message; main fetches the bytes and hands them straight
+ * to the assembler. Nothing base64 ever crosses the IPC seam.
  */
 export async function fetchMessageAttachments(
   api: GoogleApi,

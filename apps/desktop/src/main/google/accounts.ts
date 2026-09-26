@@ -1,18 +1,15 @@
 /**
  * Who Holi is connected to at Google, and which vault uses whom (D87).
  *
- * This is the owner. It holds the accounts map — **the only thing that does** —
+ * This is the owner. It holds the accounts map (**the only thing that does**),
  * hands out one `GoogleSession` per account, and resolves a vault to the session
- * it should use. D67 kept one machine-wide connection; D87 makes a vault's Google
- * account its own, and this is where that resolution lives.
+ * it should use.
  *
- * **`connect` is here rather than on a session**, and that is forced rather than
- * chosen: a connect creates an account whose `sub` is unknown until the grant
- * comes back, so it cannot belong to an object identified by its `sub`.
+ * **`connect` is here rather than on a session**, and that is forced: a connect
+ * creates an account whose `sub` is unknown until the grant comes back, so it
+ * cannot belong to an object identified by its `sub`.
  *
  * **No `electron` import**, like every file in `google/` except `electron.ts`.
- * That is what keeps the suite running under plain Node, and it is a structural
- * fact rather than a lucky one only while nobody adds the second import.
  */
 import {
   GoogleSession,
@@ -35,8 +32,8 @@ export interface ConnectedAccount extends GoogleAccount {
 export interface GoogleAccountsManager {
   /** Every connected account, for the picker. */
   list(): ConnectedAccount[]
-  /** The session this vault should use, or null when it has never connected —
-   *  or when the account it named is gone. Never throws: "not connected" is a
+  /** The session this vault should use, or null when it has never connected
+   *  or the account it named is gone. Never throws: "not connected" is a
    *  state the UI already renders. */
   sessionFor(remote: string): Promise<GoogleSession | null>
   sessionForSub(sub: string): GoogleSession | null
@@ -159,8 +156,7 @@ export async function createGoogleAccounts(
           if (result.kind !== 'granted') return result
 
           const { tokens } = result
-          // Additive, unlike D67's single-account connect which replaced: another
-          // vault may be using the account already in the store.
+          // Additive: another vault may be using an account already in the store.
           await persist({
             ...accounts,
             [tokens.sub]: {
@@ -205,7 +201,7 @@ export async function createGoogleAccounts(
       if (auth === undefined) return
       // Revoking server-side is the point: dropping only the local copy leaves a
       // live grant on someone's Google account with nothing in Holi to show for
-      // it. A failed revoke still clears locally — the user asked for this, and
+      // it. A failed revoke still clears locally: the user asked for this, and
       // refusing because Google is unreachable would trap them.
       await (deps.fetch ?? globalThis.fetch)(REVOKE_URL, {
         method: 'POST',

@@ -1,25 +1,20 @@
 /**
  * Senders whose remote images always load.
  *
- * Blocking remote content is the default and stays the default (see
- * `renderer/src/lib/mail-html.ts`): an image fetched from a sender's server is
- * a read receipt nobody agreed to. What this holds is the *exceptions* — the
- * addresses the user has decided they do not mind telling.
+ * Blocking remote content is the default (see `renderer/src/lib/mail-html.ts`):
+ * an image fetched from a sender's server is a read receipt nobody agreed to.
+ * This holds the *exceptions*: addresses the user has decided they do not mind
+ * telling.
  *
- * **On disk rather than in memory**, unlike the per-message choice beside it.
- * The two are different promises: "load images" answers "show me this one",
- * which has no reason to outlive the session, while "always from Jane" is a
- * standing decision about a person and would be worthless if it evaporated on
- * restart. Keeping both is why the banner offers both.
+ * **On disk rather than in memory**, unlike the per-message "load images"
+ * choice: "always from Jane" is a standing decision about a person and would be
+ * worthless if it evaporated on restart.
  *
- * Plain JSON, unencrypted, for the same reason as `calendar-prefs.ts` next
- * door: there is no credential here, only a list of addresses the user chose,
- * and Holi's users are developers who are better served by a file they can open
- * and fix than by a list of names they cannot see.
+ * Plain JSON, unencrypted, like `calendar-prefs.ts`: there is no credential here.
  *
- * **Addresses are lowercased on the way in.** They are compared, not displayed,
- * and `Jane@Syv.ai` and `jane@syv.ai` are one person — matching case-sensitively
- * would silently re-block a sender the user had already allowed.
+ * **Addresses are lowercased on the way in.** `Jane@Syv.ai` and `jane@syv.ai`
+ * are one person; matching case-sensitively would silently re-block a sender
+ * the user had already allowed.
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -28,9 +23,8 @@ export interface ImagePrefsStore {
   /** Lowercased addresses. Order is not meaningful. */
   read(): Promise<string[]>
   allow(sender: string): Promise<void>
-  /** Forget every exception. The only way back to "block everything", and the
-   *  reason settings shows a count at all — a standing permission the user
-   *  cannot see or revoke is not a permission they gave. */
+  /** Forget every exception. The only way back to "block everything": a
+   *  standing permission the user cannot see or revoke is not one they gave. */
   clear(): Promise<void>
 }
 
@@ -40,17 +34,14 @@ export function createImagePrefs(path: string): ImagePrefsStore {
     try {
       raw = await readFile(path, 'utf8')
     } catch {
-      // Not written yet — nothing is allowed, which is the safe default and
-      // also the state the feature ships in.
+      // Not written yet: nothing is allowed, which is the safe default.
       return []
     }
     try {
       const parsed: unknown = JSON.parse(raw)
       if (!Array.isArray(parsed)) return []
-      // A hand-edit gone wrong drops the bad entry rather than the file: the
-      // failure mode of keeping a non-string here is an address that can never
-      // match, and the failure mode of discarding everything is re-blocking
-      // senders the user allowed months ago.
+      // A hand-edit gone wrong drops the bad entry rather than the file, which
+      // would re-block every sender the user allowed.
       return parsed
         .filter((entry): entry is string => typeof entry === 'string')
         .map((entry) => entry.trim().toLowerCase())

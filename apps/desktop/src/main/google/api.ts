@@ -1,32 +1,27 @@
 /**
- * The authenticated Google request — the one place a token meets a URL.
+ * The authenticated Google request: the one place a token meets a URL.
  *
- * Like `github/api.ts`, deliberately not a generated client: Holi makes a
- * handful of reads and four writes, and the SDK that wrapped them would be
- * larger than they are. What this owns instead is the part a generic client
- * would not do for us — **classifying a refusal** so the caller can tell
- * "reconnect Google" apart from "you are rate limited" apart from "that scope
- * was never granted".
+ * Like `github/api.ts`, deliberately not a generated client. What this owns is
+ * **classifying a refusal** so the caller can tell "reconnect Google" apart
+ * from "you are rate limited" apart from "that scope was never granted".
  *
- * `post` and `postJson` are the verbs that change anything at Google (D68,
- * D70) — they differ only in whether the answer is read, and that difference
- * exists because a write reported as failed after Google accepted it is a
- * second email rather than a stale button. Everything they can reach is
- * bounded by `GOOGLE_SCOPES`, which buys thread state, drafts and sends, and no
- * ability to delete a mailbox's contents outright.
+ * The write verbs (D68, D70) differ mainly in whether the answer is read,
+ * because a write reported as failed after Google accepted it can be a second
+ * email rather than a stale button. Everything they can reach is bounded by
+ * `GOOGLE_SCOPES`, which buys thread state, drafts, sends and calendar events,
+ * and no ability to delete a mailbox's contents outright.
  *
  * The token arrives as a **getter returning a promise**, never a string: it is
  * `GoogleSession.getAccessToken()`, which refreshes transparently and
- * single-flights. Passing a resolved string would freeze a token that expires
- * in an hour.
+ * single-flights. A resolved string would freeze a token that expires in an
+ * hour.
  */
 
 export type GoogleErrorCode =
   /** The grant is gone, or the token could not be minted. Reconnect. */
   | 'reconnect'
-  /** Authenticated, but this scope was not granted. Reconnecting with the right
-   *  scopes is the fix — a different message from `reconnect`, because the user
-   *  must approve something new rather than merely re-approve. */
+  /** Authenticated, but this scope was not granted. Distinct from `reconnect`
+   *  because the user must approve something new rather than re-approve. */
   | 'scope'
   /** Google is throttling. Backing off is the fix; nothing is wrong. */
   | 'rate-limit'
@@ -69,11 +64,9 @@ export class GoogleApi {
     for (const [k, v] of Object.entries(params)) {
       if (v === undefined) continue
       // An array becomes REPEATED keys, not a joined value. Google's list-valued
-      // parameters (`metadataHeaders`, …) are repeated-key parameters, and the
-      // comma form is not a shorthand for them — it reads as one long value that
-      // matches nothing, and the request still returns 200 with the field
-      // silently missing. That is what made every mail thread show "(no
-      // subject)": the headers were never requested in a form Gmail understood.
+      // parameters (`metadataHeaders`, …) are repeated-key parameters; the comma
+      // form reads as one long value that matches nothing, and the request still
+      // returns 200 with the field silently missing.
       if (Array.isArray(v)) for (const item of v) query.append(k, item)
       else query.set(k, v)
     }
@@ -103,13 +96,10 @@ export class GoogleApi {
 
   /**
    * The shared write path: token, request, and Google's refusal turned into a
-   * `GoogleApiError`. What each verb does with a *successful* response is the
-   * only thing that differs, so that is the only thing left to the callers.
+   * `GoogleApiError`. Each verb only decides what to do with a success.
    *
-   * No query-parameter path, deliberately: every write this app makes carries
-   * its arguments in the body, bar the one literal `?sendUpdates=none` the
-   * calendar appends itself. A second `URLSearchParams` builder would be an
-   * unused branch of the one function that can do damage.
+   * No query-parameter path, deliberately: every write carries its arguments in
+   * the body, bar the literal `?sendUpdates=none` the calendar appends itself.
    */
   async #write(method: string, url: string, body?: unknown): Promise<Response> {
     let token: string
@@ -136,23 +126,20 @@ export class GoogleApi {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
 
-    // A 403 here is most often `insufficientPermissions` — a grant older than
-    // GOOGLE_SCOPES — which `classify` maps to `scope` so the UI can offer the
-    // reconnect that actually fixes it. See `GoogleSession.missingScopes`.
+    // A 403 here is most often `insufficientPermissions` (a grant older than
+    // GOOGLE_SCOPES), which `classify` maps to `scope` so the UI can offer the
+    // reconnect that fixes it. See `GoogleSession.missingScopes`.
     if (!res.ok) throw await classify(res)
     return res
   }
 
   /**
-   * A write. **The verb the four mail label changes go through** (D68).
+   * A write whose answer is not read, e.g. the mail label changes (D68).
    *
    * **Returns nothing, deliberately.** Gmail's write endpoints do not all
-   * answer with a body, so a parsed result would be `T | null` and every caller
-   * would have to handle a `null` that means "it worked". None of them wants
-   * the body at all — so the response is drained and discarded here, and the
-   * only thing a caller learns is whether it threw. Reading `res.json()` and
-   * letting it throw would report a *completed* archive as failed, which then
-   * reverts the UI to a state the mailbox no longer has.
+   * answer with a body. Reading `res.json()` and letting it throw would report
+   * a *completed* archive as failed, which then reverts the UI to a state the
+   * mailbox no longer has.
    */
   async post(url: string, body: unknown): Promise<void> {
     const res = await this.#write('POST', url, body)
@@ -162,7 +149,7 @@ export class GoogleApi {
   }
 
   /**
-   * A partial update — `events.patch` (D70).
+   * A partial update: `events.patch` (D70).
    *
    * `PATCH` rather than `PUT`: `events.update` replaces the whole resource, so
    * every field the caller did not think to send comes back blank. Moving an
@@ -173,44 +160,35 @@ export class GoogleApi {
     await res.text().catch(() => '')
   }
 
-  /** A delete — `events.delete` (D70). Answers 204 with no body. */
+  /** A delete: `events.delete` (D70). Answers 204 with no body. */
   async del(url: string): Promise<void> {
     const res = await this.#write('DELETE', url)
     await res.text().catch(() => '')
   }
 
   /**
-   * A write whose answer is worth reading — `messages.send` and `drafts.create`
-   * both return an id the agent is handed back (D70).
+   * A write whose answer is worth reading: `messages.send` and `drafts.create`
+   * both return an id (D70).
    *
-   * **Not `post` with a parse bolted on, and the difference is the point.**
-   * `post` drains and discards because reporting a completed archive as failed
-   * reverts the UI to a state the mailbox no longer has. Here the same mistake
-   * costs more: a send Google *accepted*, reported as failed, is a second email
-   * to a real person once the caller retries.
-   *
-   * So the two outcomes are split by what Google said, not by what we could
-   * read. A non-2xx throws, exactly as `post` throws. A 2xx whose body is empty
-   * or unparseable resolves to **`null`** — "it worked; we could not read what
-   * it said". `null` is a success with an unknown id, and no caller may treat
-   * it as a failure.
+   * Outcomes are split by what Google said, not by what we could read. A
+   * non-2xx throws. A 2xx whose body is empty or unparseable resolves to
+   * **`null`**: a success with an unknown id, and no caller may treat it as a
+   * failure, because a send Google *accepted*, reported as failed, is a second
+   * email to a real person once the caller retries.
    */
   async postJson<T>(url: string, body: unknown): Promise<T | null> {
     const res = await this.#write('POST', url, body)
-    // The catch is the whole design, not defensiveness: past this line Google
-    // has already done the thing.
+    // The catch is the design, not defensiveness: past this line Google has
+    // already done the thing.
     return await res.json().catch(() => null)
   }
 
   /**
-   * A replacing write whose answer is worth reading — `drafts.update` (D71).
+   * A replacing write whose answer is worth reading: `drafts.update` (D71).
    *
-   * `PUT`, and the contrast with `patch` above is the whole reason both exist.
-   * `patch` is used where a partial update is wanted precisely *because*
-   * replacing would erase fields the caller did not send. Here replacement is
-   * what Gmail offers and what is wanted: a draft is rewritten whole on every
-   * save, threading headers included, because a saved draft can be sent from a
-   * phone and has to carry them itself.
+   * `PUT`, unlike `patch`: a draft is rewritten whole on every save, threading
+   * headers included, because a saved draft can be sent from a phone and has
+   * to carry them itself.
    *
    * `null` on an unreadable 2xx means the same as it does in `postJson`: it
    * worked, and we could not read what it said.
@@ -223,10 +201,8 @@ export class GoogleApi {
   /**
    * Follow `nextPageToken` until the pages run out.
    *
-   * Google paginates *everything*, and the default page size is small enough
-   * that "my agenda is missing the afternoon" is what a forgotten page looks
-   * like. `cap` bounds a pathological loop rather than trusting the server to
-   * stop.
+   * Google paginates *everything*, and the default page size is small. `cap`
+   * bounds a pathological loop rather than trusting the server to stop.
    */
   async getAll<T>(
     url: string,
@@ -254,8 +230,8 @@ export class GoogleApi {
  *
  * The distinction that matters most is 401-vs-403: a 401 means the credential
  * is bad (reconnect), while a 403 usually means the credential is fine and the
- * *scope* or the quota is not — sending someone to reconnect for a rate limit
- * is exactly the wrong-fix problem `classifyPushFailure` exists to avoid.
+ * *scope* or the quota is not. Sending someone to reconnect for a rate limit
+ * sends them to fix the wrong thing.
  */
 async function classify(res: Response): Promise<GoogleApiError> {
   const body = await res.text().catch(() => '')

@@ -1,10 +1,6 @@
 /**
- * The agenda — Google Calendar, flattened into the shape the panel renders.
- *
- * Everything here is **read-only** (D67): Holi shows your day and lets you make
- * a task out of an event; it cannot create or move one. That is a scope
- * decision, not a politeness — `calendar.readonly` makes a write impossible
- * rather than merely undone.
+ * The agenda: Google Calendar, flattened into the shape the panel renders, plus
+ * the agent's attendee-free calendar writes at the bottom (D70).
  */
 import type { GoogleApi } from './api'
 import { fetchEventColors } from './event-colors'
@@ -17,9 +13,9 @@ export type RsvpStatus = 'needsAction' | 'tentative' | 'accepted' | 'declined'
 /**
  * What kind of block this is.
  *
- * `workingLocation` is deliberately absent — Google writes one of those per
+ * `workingLocation` is deliberately absent: Google writes one of those per
  * working day and they are a setting rather than an event, so they are filtered
- * out entirely rather than given a kind.
+ * out entirely.
  */
 export type EventKind = 'default' | 'outOfOffice' | 'focusTime' | 'birthday' | 'fromGmail'
 
@@ -36,10 +32,9 @@ export interface CalendarEvent {
   allDay: boolean
   location?: string
   /**
-   * Google's own permalink for the event — **the link Holi writes into a task
-   * or note** (D67). Taken from the API rather than assembled from the id: the
-   * id alone is not enough to build a working URL, and a hand-built one breaks
-   * across accounts.
+   * Google's own permalink for the event: **the link Holi writes into a task
+   * or note** (D67). Taken from the API rather than assembled from the id,
+   * which is not enough to build a working URL.
    */
   htmlLink: string
   /** Which calendar it came from; an agenda merges several. */
@@ -48,36 +43,32 @@ export interface CalendarEvent {
   /**
    * From a calendar the user owns, rather than one they are subscribed to.
    *
-   * On the row this is the difference between "I am in this meeting" and "Jane
-   * is busy then" — and it is the same distinction the agent needs, which is
-   * why it travels on the event rather than being recomputed per surface.
+   * "I am in this meeting" versus "Jane is busy then". The agent needs the same
+   * distinction, so it travels on the event rather than being recomputed.
    */
   mine: boolean
   /** Google's own hex colour for the source calendar, or `null`. */
   color: string | null
-  /** A video link, when the event has one. The single most-clicked thing on an
-   *  agenda row, so it is lifted out rather than left buried in the payload. */
+  /** Meet's `hangoutLink`, when the event has one. */
   meetLink?: string
   /**
    * The user's own RSVP, or `null` when they are not an attendee at all.
    *
-   * The most valuable field on the row: `needsAction` is the one entry on an
-   * agenda that is a *task* rather than a fact.
+   * `needsAction` is the one entry on an agenda that is a *task* rather than a
+   * fact.
    */
   myResponse: RsvpStatus | null
   kind: EventKind
-  /** `false` when Google says `transparency: 'transparent'` — it is on the
+  /** `false` when Google says `transparency: 'transparent'`: it is on the
    *  calendar but does not claim the time. */
   busy: boolean
-  /** Where the dial-in and the agenda live; also what makes a task made from an
-   *  event worth more than its title. */
   description: string | null
-  /** People, not rooms — a booked room is an `attendee` to Google. */
+  /** People, not rooms: a booked room is an `attendee` to Google. */
   attendeeCount: number
   organizer: string | null
   /** Meet, Zoom or Teams. `conferenceData`'s video entry point, then
    *  `hangoutLink` (Meet-only), then a join link recognised in the invite's own
-   *  body — see `conferenceUrlOf` for why the third is needed. */
+   *  body. See `conferenceUrlOf` for why the third is needed. */
   conferenceUrl: string | null
   recurring: boolean
 }
@@ -150,11 +141,9 @@ export type CalendarOverrides = Record<string, boolean>
 /**
  * The calendars an agenda should draw from.
  *
- * **`selected` is honoured** — it is the checkbox state in the user's own
- * Google Calendar UI, so respecting it means Holi shows the same set they
- * already curated, instead of every calendar they have ever been added to
- * (which for a Workspace account includes rooms, birthdays, and every
- * colleague's calendar they once peeked at).
+ * **`selected` is honoured**: it is the checkbox state in the user's own
+ * Google Calendar UI, so Holi starts from the set they already curated rather
+ * than every calendar they have ever been added to.
  */
 export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]> {
   const items = await api.getAll<CalendarListEntry>(
@@ -167,7 +156,7 @@ export async function listCalendars(api: GoogleApi): Promise<CalendarListEntry[]
 
 /** Yours to answer for, rather than a colleague's you happen to watch. Google
  *  gives write access to shared team calendars too, but `owner` is the line
- *  that matches "my day" — a calendar you can edit is not necessarily one whose
+ *  that matches "my day": a calendar you can edit is not necessarily one whose
  *  events are yours. */
 function isMine(calendar: CalendarListEntry): boolean {
   return calendar.primary === true || calendar.accessRole === 'owner'
@@ -177,15 +166,13 @@ function isMine(calendar: CalendarListEntry): boolean {
  * Every calendar the user could draw from, each with whether it is on.
  *
  * **The default is "calendars you own, and nothing else."** A Workspace account
- * accumulates subscriptions — colleagues whose calendars you compare against,
- * meeting rooms, birthdays — and Google's own `selected` flag says they are
- * visible *in Google Calendar*, where they sit in their own columns. Flattened
- * into one agenda they stop being comparable and start being noise, so Holi
+ * accumulates subscriptions (colleagues, rooms, birthdays) that sit in their own
+ * columns in Google Calendar; flattened into one agenda they are noise, so Holi
  * starts from your own and lets you switch a colleague on deliberately.
  *
- * Overrides are stored **per calendar rather than as "the enabled set"**, which
- * is what makes a calendar created next month follow the rule instead of
- * arriving silently switched off because it was not in a list written today.
+ * Overrides are stored **per calendar rather than as "the enabled set"**, so a
+ * calendar created next month follows the rule instead of arriving silently
+ * switched off.
  */
 export async function resolveCalendars(
   api: GoogleApi,
@@ -207,7 +194,7 @@ export function enabledCalendarIds(calendars: CalendarChoice[]): string[] {
 }
 
 export interface AgendaWindow {
-  /** ISO instants. The caller owns "today" — main never computes it, because
+  /** ISO instants. The caller owns "today": main never computes it, because
    *  the machine's local date is the renderer's fact (the daily-notes rule). */
   timeMin: string
   timeMax: string
@@ -218,10 +205,8 @@ export interface AgendaWindow {
  * order.
  *
  * **`singleEvents=true` is load-bearing.** Without it a weekly stand-up comes
- * back once, as a recurrence *rule* with the series' original start date — so
- * an agenda built on the raw response shows today's meetings as whatever day
- * the series began. With it, Google expands the rule into the instances that
- * actually fall in the window, which is the only thing an agenda can render.
+ * back once, as a recurrence *rule* with the series' original start date. With
+ * it, Google expands the rule into the instances that fall in the window.
  */
 export async function listAgenda(
   api: GoogleApi,
@@ -229,13 +214,11 @@ export async function listAgenda(
   options: { overrides?: CalendarOverrides } = {},
 ): Promise<CalendarEvent[]> {
   // Filtered BEFORE fetching, not after: a calendar that is off costs no
-  // request, which is what keeps a Workspace account's twenty subscriptions
-  // from turning one agenda into twenty round-trips.
+  // request.
   const calendars = (await resolveCalendars(api, options.overrides ?? {})).filter((c) => c.enabled)
 
-  // The palette runs *concurrently with* the events rather than before them: it
-  // is one request, it cannot fail the agenda (it returns `{}` instead), and
-  // awaiting it first would add its latency to every load for a tint.
+  // The palette runs *concurrently with* the events: it cannot fail the agenda
+  // (it returns `{}` instead), and awaiting it first would add its latency.
   const [palette, perCalendar] = await Promise.all([
     fetchEventColors(api),
     Promise.all(
@@ -265,21 +248,15 @@ export async function listAgenda(
 /**
  * The one event an invite is about, found by the `UID` in its `.ics`.
  *
- * The UID is the identity iCalendar itself defines, and Google indexes it — so
- * this is an exact match rather than a guess from a subject line and a time,
- * which is what "the mail thread and the calendar event are the same meeting"
- * needs in order to be a fact rather than a heuristic.
+ * The UID is the identity iCalendar itself defines, and Google indexes it, so
+ * this is an exact match rather than a guess from a subject line and a time.
  *
  * **Instances, from now on, one of them.** `singleEvents` expands a series, and
- * without it a weekly meeting resolves to the series rule — whose start is the
- * day the series began, so a Join built from it opens a link that may be a year
- * stale. `timeMin` then makes "the invite you are reading" resolve to the
- * occurrence actually coming up, which is the one a person reading their mail
- * means. A meeting entirely in the past therefore answers `null`, deliberately:
- * there is nothing to join.
+ * `timeMin` makes "the invite you are reading" resolve to the occurrence
+ * actually coming up. A meeting entirely in the past therefore answers `null`,
+ * deliberately: there is nothing to join.
  *
- * No palette request — the caller wants a link, not a tint, and the colour is
- * one whole round-trip.
+ * No palette request: the caller wants a link, not a tint.
  */
 export async function findEventByICalUid(
   api: GoogleApi,
@@ -302,15 +279,14 @@ export async function findEventByICalUid(
 
 /** Cancelled instances of a recurring series still come back (that is how a
  *  client learns they were cancelled), and an event the user declined is one
- *  they have already said they are not attending — neither belongs on an
- *  agenda that answers "what am I doing today". */
+ *  they have already said they are not attending. */
 function isWorthShowing(event: RawEvent): boolean {
   if (event.status === 'cancelled') return false
   // Google writes a `workingLocation` entry for every working day. It is a
   // setting rendered as an event, and on a week's agenda it is half the rows.
   if (event.eventType === 'workingLocation') return false
-  // Note the asymmetry with `needsAction`, which is deliberately kept: an
-  // unanswered invitation is precisely what the agenda now wants to surface.
+  // `needsAction` is deliberately kept: an unanswered invitation is what the
+  // agenda wants to surface.
   return event.attendees?.some((a) => a.self === true && a.responseStatus === 'declined') !== true
 }
 
@@ -323,7 +299,7 @@ const EVENT_KINDS: readonly EventKind[] = [
   'fromGmail',
 ]
 
-/** Google's own value, or the safe default — never a string the UI has to
+/** Google's own value, or the safe default, never a string the UI has to
  *  switch on blindly. An unknown `eventType` reads as an ordinary event. */
 function asKind(eventType: string | undefined): EventKind {
   return EVENT_KINDS.find((k) => k === eventType) ?? 'default'
@@ -339,12 +315,10 @@ function asRsvp(status: string | undefined): RsvpStatus | null {
  *
  * An allowlist, and deliberately not "the first `https://` in the body". A real
  * Teams invite also carries `aka.ms/JoinTeamsMeeting`, a "Learn More" page and
- * often a dial-in lookup — any of which wins a first-URL race and sends the user
- * to a help page instead of the meeting.
+ * often a dial-in lookup, any of which would win a first-URL race.
  *
- * Scoped to the three the type already promises: Meet, Zoom, Teams. Adding a
- * host here is cheap; guessing at one is not, because the failure is silent — a
- * Join button that opens the wrong page.
+ * Scoped to Meet, Zoom, Teams. Adding a host here is cheap; guessing at one is
+ * not, because the failure is silent.
  */
 const JOIN_LINKS: RegExp[] = [
   /^https:\/\/teams\.microsoft\.(?:com|us)\/l\/meetup-join\//i,
@@ -357,7 +331,7 @@ const JOIN_LINKS: RegExp[] = [
  * The first recognised join link in a block of text, or null.
  *
  * The text is an invite body, which Google hands over as HTML, so a URL arrives
- * inside `href="…"` with its ampersands escaped — hence both the delimiter set
+ * inside `href="…"` with its ampersands escaped, hence both the delimiter set
  * and the `&amp;` unescape. Trailing sentence punctuation is trimmed, because a
  * link written into prose ends up with the full stop attached.
  */
@@ -375,17 +349,14 @@ function joinLinkIn(text: string | undefined): string | null {
  *
  * Four sources, in descending order of how much Google itself vouches for them:
  *
- * 1. `conferenceData`'s video entry point — the structured answer.
- * 2. `hangoutLink` — Meet-only, so a fallback rather than the answer.
+ * 1. `conferenceData`'s video entry point: the structured answer.
+ * 2. `hangoutLink`: Meet-only, so a fallback rather than the answer.
  * 3. the invite's own body, then its location.
  *
  * (3) exists because Google only fills `conferenceData` for conferences *it*
- * created — Meet, or an add-on that writes the field. A Teams meeting organised
- * in Outlook and synced in over Exchange has neither structured field, and its
- * join link lives in the body as an anchor. Without this, the agenda's Join
- * button was silently missing from exactly the meetings a Teams shop has all
- * day. `location` is second because "Microsoft Teams Meeting" is what it usually
- * says, and on the occasions it holds the URL the body holds it too.
+ * created. A Teams meeting organised in Outlook and synced in over Exchange has
+ * neither structured field, and its join link lives in the body as an anchor.
+ * `location` is second because it usually just says "Microsoft Teams Meeting".
  *
  * Google's structured fields win over the prose deliberately: when a meeting is
  * moved, `conferenceData` is rewritten and a link left in the description is
@@ -432,8 +403,7 @@ function toCalendarEvent(
     kind: asKind(event.eventType),
     busy: event.transparency !== 'transparent',
     description: event.description ?? null,
-    // Rooms and equipment are attendees to Google; "2 people" for a solo
-    // meeting in a booked room is a lie the count would tell constantly.
+    // Rooms and equipment are attendees to Google.
     attendeeCount: attendees.filter((a) => a.resource !== true).length,
     organizer,
     conferenceUrl: conferenceUrlOf(event),
@@ -445,7 +415,7 @@ function toCalendarEvent(
  * All-day events sort before timed ones on the same date.
  *
  * An all-day `start` is `YYYY-MM-DD`, which compares *less than* any
- * `YYYY-MM-DDTHH:MM` for the same day under plain string comparison — so the
+ * `YYYY-MM-DDTHH:MM` for the same day under plain string comparison, so the
  * desired order falls out of comparing the raw strings, but only because the
  * dates share a prefix. Anything else needs a real instant.
  */
@@ -460,28 +430,25 @@ function byStart(a: CalendarEvent, b: CalendarEvent): number {
 }
 
 /**
- * Calendar writes — the agent's time-blocking surface (D70).
+ * Calendar writes: the agent's time-blocking surface (D70).
  *
  * **Every function here is bounded by one rule: it must not email anyone.**
  * An event carrying attendees sends invitations on create and cancellations on
- * delete, which makes it the calendar's version of `send` — and `send` is the
- * one thing on the far side of the line the agent may not cross alone.
+ * delete, which makes it the calendar's version of `send`.
  *
  * The bound is enforced here rather than in `SKILL.md` on purpose: the agent is
  * the thing being bounded, so a rule it can read and reason about is not a
  * bound. `NewEvent` has no `attendees` field at all, which handles creation;
- * `updateEvent` and `deleteEvent` read the event first, which is what covers
- * the events the agent did not create.
+ * `updateEvent` and `deleteEvent` read the event first.
  *
- * Writes target `primary` only. A subscribed calendar is someone else's, and
- * "which of your twenty calendars did you mean" is not a question worth an API.
+ * Writes target `primary` only. A subscribed calendar is someone else's.
  */
 const PRIMARY_EVENTS = `${BASE}/calendars/primary/events`
 
 /**
  * `sendUpdates=none` on every write, belt-and-braces with the attendee refusal.
  *
- * The refusal is the real wall — this is the second one, for the case where an
+ * The refusal is the real wall; this is the second one, for the case where an
  * event acquires attendees between the read and the write.
  */
 const NO_MAIL = 'sendUpdates=none'
@@ -509,7 +476,7 @@ export interface EventPatch {
  *
  * Sending `dateTime` for an all-day event does not fail. It creates a
  * midnight-to-midnight timed block, which reads correctly in an agenda list and
- * is visibly wrong in a day view — the kind of bug that ships.
+ * is visibly wrong in a day view.
  */
 function endpoint(value: string, allDay: boolean): Record<string, string> {
   if (allDay) return { date: value }
@@ -530,7 +497,7 @@ interface RawAttendees {
 /**
  * Refuse anything that would put mail in someone's inbox.
  *
- * An empty `attendees` array is *not* attendees — Google returns one on some
+ * An empty `attendees` array is *not* attendees: Google returns one on some
  * solo events, and refusing those would leave the agent unable to move its own
  * blocks.
  */
@@ -564,7 +531,7 @@ export async function createEvent(api: GoogleApi, event: NewEvent): Promise<{ id
 /**
  * Move or retitle an event. Refuses if anyone is invited.
  *
- * A `PATCH`, so fields the caller did not mention keep their values — an
+ * A `PATCH`, so fields the caller did not mention keep their values: an
  * `update` would blank the description of every event the agent moved.
  */
 export async function updateEvent(api: GoogleApi, id: string, patch: EventPatch): Promise<void> {
@@ -576,7 +543,7 @@ export async function updateEvent(api: GoogleApi, id: string, patch: EventPatch)
   })
 }
 
-/** Delete an event. Refuses if anyone is invited — a delete would email them a
+/** Delete an event. Refuses if anyone is invited: a delete would email them a
  *  cancellation, which is not something the agent may do on its own. */
 export async function deleteEvent(api: GoogleApi, id: string): Promise<void> {
   await assertNobodyIsInvited(api, id)

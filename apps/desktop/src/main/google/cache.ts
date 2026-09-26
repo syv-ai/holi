@@ -1,25 +1,19 @@
 /**
- * The Google cache — what a launch paints before Google answers.
+ * The Google cache: what a launch paints before Google answers.
  *
- * **This overturns D67 §7's "nothing persisted", by an explicit call.** What it
- * is not is a mirror: it holds the last N threads for the questions actually
- * asked, and Google stays the source of truth. Anything past the tail is a
- * request, an account change wipes it, and Disconnect deletes the file. What it
- * buys is real — with `mail-sync.ts` on top, a refresh with nothing new costs
- * **one request instead of twenty-six**.
+ * Not a mirror: it holds the last N threads for the questions actually asked,
+ * and Google stays the source of truth. One file per account (D87), and
+ * Disconnect deletes the file. With `mail-sync.ts` on top, a refresh with
+ * nothing new costs **one request instead of twenty-six**.
  *
- * **The database is unencrypted, deliberately.** SQLCipher is a native module
- * (and `node:sqlite` is precisely the dependency this avoids), and encrypting
- * the columns by hand would foreclose the FTS5 search this schema is shaped
- * for. The protection is the OS account and full-disk encryption — the same
- * protection every desktop mail client relies on, and the same one already
- * protecting the vault's own notes sitting beside it.
+ * **The database is unencrypted, deliberately.** SQLCipher is a native module,
+ * and encrypting the columns by hand would foreclose FTS5 search. The
+ * protection is the OS account and full-disk encryption, the same protection
+ * every desktop mail client relies on.
  *
- * `node:sqlite` is **synchronous**, and this API is synchronous with it. Async
- * wrappers here would buy nothing but the appearance of one.
+ * `node:sqlite` is **synchronous**, and this API is synchronous with it.
  *
- * NOTE: no runtime `electron` import — every file in `google/` except
- * `electron.ts` avoids it, so the suite runs under plain Node.
+ * No runtime `electron` import, so the suite runs under plain Node.
  */
 import { DatabaseSync } from 'node:sqlite'
 import { rmSync } from 'node:fs'
@@ -39,15 +33,10 @@ const MAX_THREADS = 500
 const SIDECARS = ['-wal', '-shm', '-journal']
 
 export interface GoogleCache {
-  /** Wipes everything if `sub` differs from the stored account. **Call before
-   *  any read** — it is what stops one account seeing another's mail. */
   /**
    * Wipe if the stored row shape is from an older release. Call before first use.
-   *
-   * This is the half of the old `useAccount(sub)` that was doing a different job.
-   * Accounts are kept apart by living in **different files** now (D87) — that
-   * wipe fired on every vault switch and cost a full re-fetch of mail and
-   * calendar, which is exactly the case per-vault accounts exist for.
+   * Accounts are kept apart by living in **different files** (D87), not by a
+   * wipe here.
    */
   ensureShape(): void
   readThreads(key: string): MailThreadSummary[] | null
@@ -56,23 +45,21 @@ export interface GoogleCache {
    * Apply a label change to one thread **in every list that holds it**.
    *
    * The key is `query|category`, so a thread is cached once per question it
-   * answered — the inbox, the unread filter, a search. Patching only the list on
-   * screen is the bug this signature forbids: bold clearing in the inbox while
-   * the unread filter still lists the thread leaves two views disagreeing, with
-   * neither obviously wrong.
+   * answered: the inbox, the unread filter, a search. Patching only the list on
+   * screen would leave two views disagreeing, with neither obviously wrong.
    *
    * Optimism, not truth. `history.list` reports this app's own writes, so the
    * next `syncThreads` reconciles every list regardless of what happened here.
    */
   patchThread(id: string, change: { added: string[]; removed: string[] }): void
-  /** Remove a thread from every cached list — what archive and trash do. Also
+  /** Remove a thread from every cached list: what archive and trash do. Also
    *  optimism: a search that still legitimately matches gets it back on the
    *  next sync, because this is a cache and not a mirror. */
   dropThread(id: string): void
   readAgenda(key: string): CalendarEvent[] | null
   writeAgenda(key: string, events: CalendarEvent[]): void
   /**
-   * Gmail's `historyId` for one cached list — the cursor its next delta
+   * Gmail's `historyId` for one cached list: the cursor its next delta
    * resumes from.
    *
    * **Per list, not per mailbox**, even though Gmail's cursor is mailbox-wide.
@@ -92,20 +79,9 @@ export interface GoogleCache {
  *
  * `threads` and `agenda` hold whole objects as JSON, so a change to
  * `MailThreadSummary` or `CalendarEvent` is invisible to SQLite and invisible
- * on read — the row parses fine and is simply wrong. **Bump this whenever a
- * cached type changes.** `2` is where `from` became `{ name, email }` instead
- * of a bare display name.
- *
- * `3` is not a type change: `cacheKey` gained the unread filter, so every key
- * written before it is a question this build no longer asks. The rows would
- * never be read again and would sit on disk until the account changed — wiping
- * is both free and the only way the old keys ever leave.
- *
- * `4` is `MailThreadSummary.hasInvite`, and with it every cached `CalendarEvent`
- * whose `conferenceUrl` predates the join-link fallback. Both are the same
- * failure the version exists to prevent: the old row parses cleanly and is
- * simply missing something the UI now draws, so a Teams meeting would keep
- * showing no Join and an invite no badge until the cache happened to turn over.
+ * on read: the row parses fine and is simply wrong. **Bump this whenever a
+ * cached type changes**, or when `cacheKey` changes (old keys would otherwise
+ * sit on disk unread forever).
  */
 const SHAPE_VERSION = '4'
 
@@ -137,9 +113,9 @@ const SCHEMA = `
 /**
  * Open the cache, replacing it if the file is not a database.
  *
- * The same stance as `token-store`: a corrupt file costs the cache and never
- * the app. SQLite reports the corruption on first use rather than on open, so
- * the schema statement is the probe.
+ * A corrupt file costs the cache and never the app. SQLite reports the
+ * corruption on first use rather than on open, so the schema statement is the
+ * probe.
  */
 export function openGoogleCache(path: string): GoogleCache {
   let handle: DatabaseSync | null = open(path)
@@ -148,9 +124,8 @@ export function openGoogleCache(path: string): GoogleCache {
   /**
    * The database, reopened if `destroy` took it away.
    *
-   * Lazy rather than eager, so `destroy()` genuinely leaves nothing on disk —
-   * reopening on the spot would put the file straight back, and Disconnect
-   * promises an empty disk, not an empty table.
+   * Lazy rather than eager, so `destroy()` genuinely leaves nothing on disk:
+   * Disconnect promises an empty disk, not an empty table.
    */
   function database(): DatabaseSync {
     if (closed) throw new Error('the Google cache is closed')
@@ -162,7 +137,7 @@ export function openGoogleCache(path: string): GoogleCache {
    * Has this question been answered before?
    *
    * Tracked separately from the rows, because "cached, and the answer was
-   * nothing" is a different fact from "never asked" — and only the second one
+   * nothing" is a different fact from "never asked", and only the second one
    * means go and ask Google.
    */
   function isAnswered(kind: string, key: string): boolean {
@@ -181,11 +156,9 @@ export function openGoogleCache(path: string): GoogleCache {
           | undefined)?.value
 
       // Rows are stored as whole objects, so a release that changes
-      // `MailThreadSummary` would serve yesterday's JSON into today's UI: a field
-      // that changed type arrives looking like the old one and breaks at the
-      // render, far from the change that caused it. Wiping is free: this is a
-      // cache. The `account` row this used to check is gone — the FILE is the
-      // account now, so re-checking it here would only re-introduce the wipe.
+      // `MailThreadSummary` would serve yesterday's JSON into today's UI and
+      // break at the render, far from the change that caused it. Wiping is
+      // free: this is a cache.
       if (read('shape') === SHAPE_VERSION) return
 
       database().exec('DELETE FROM threads; DELETE FROM agenda; DELETE FROM answered; DELETE FROM meta;')
@@ -214,9 +187,8 @@ export function openGoogleCache(path: string): GoogleCache {
     },
 
     patchThread(id, change) {
-      // The `id` column has been written since this table existed and read by
-      // nothing until now. It is what makes "every list holding this thread"
-      // a query rather than an enumeration of keys and a JSON parse per row.
+      // The `id` column makes "every list holding this thread" a query rather
+      // than an enumeration of keys and a JSON parse per row.
       const rows = database()
         .prepare('SELECT key, position, json FROM threads WHERE id = ?')
         .all(id) as { key: string; position: number; json: string }[]
@@ -233,7 +205,7 @@ export function openGoogleCache(path: string): GoogleCache {
 
     dropThread(id) {
       // `position` is deliberately NOT renumbered. `readThreads` only orders by
-      // it, so a gap is invisible — and rewriting every later row is a second
+      // it, so a gap is invisible, and rewriting every later row is a second
       // chance to corrupt an order that was already correct.
       database().prepare('DELETE FROM threads WHERE id = ?').run(id)
     },
@@ -269,8 +241,7 @@ export function openGoogleCache(path: string): GoogleCache {
     destroy() {
       // The FILE, not the rows. Emptying the tables would leave recoverable
       // pages on a disk Disconnect said it had cleaned. Nothing is reopened
-      // here either — `database()` does that on the next use, so a disconnect
-      // followed by a reconnect works without leaving a file behind meanwhile.
+      // here either: `database()` does that on the next use.
       handle?.close()
       handle = null
       removeFiles(path)
@@ -294,7 +265,7 @@ function open(at: string): DatabaseSync {
     return opened
   } catch {
     // Not a database, or one this build cannot read. Start over rather than
-    // fail the connector — nothing in here is authoritative.
+    // fail the connector: nothing in here is authoritative.
     opened.close()
     removeFiles(at)
     const fresh = new DatabaseSync(at)
@@ -303,7 +274,7 @@ function open(at: string): DatabaseSync {
   }
 }
 
-/** Namespaced so a list key can never collide with `account`. */
+/** Namespaced so a list key can never collide with `shape`. */
 function historyKey(key: string): string {
   return `historyId:${key}`
 }

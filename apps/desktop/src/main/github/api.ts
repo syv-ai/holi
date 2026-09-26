@@ -1,16 +1,12 @@
 /**
- * The GitHub REST surface Holi actually uses — four reads and one write.
+ * The GitHub REST surface Holi actually uses: a handful of reads and two writes.
  *
- * Deliberately not Octokit: we make five kinds of request, and the client that
- * wraps them would be larger than they are. What this module owns instead is
- * the part a generic client would not do for us — **classifying a refusal**.
- *
- * The classification is the whole point. GitHub says no in four materially
- * different ways that all arrive as a 401 or a 403, and each one sends the user
- * somewhere different: re-authenticate, authorize the token for the org, wait
- * for the rate limit, or accept that this repo is not yours. Reporting the
- * wrong one sends someone to fix the wrong thing — the same failure mode
- * `classifyPushFailure` exists to avoid on the git side.
+ * Deliberately not Octokit: the client would be larger than the requests. What
+ * this module owns instead is the part a generic client would not do for us:
+ * **classifying a refusal**. GitHub says no in four materially different ways
+ * that all arrive as a 401 or a 403, and each one sends the user somewhere
+ * different: re-authenticate, authorize the token for the org, wait for the
+ * rate limit, or accept that this repo is not yours.
  */
 import type { Collaborator } from '@holi/shared'
 import { isRemote } from '../vault/registry'
@@ -18,17 +14,15 @@ import { isRemote } from '../vault/registry'
 /**
  * The GitHub repo topic that marks a repo as a Holi vault.
  *
- * A vault IS a repo (D60), but not every repo you can push to is a vault — most
- * are ordinary code. The topic is set on creation and rides back in the repos
- * listing for free, so the "join a vault" picker can show only real vaults
- * without a per-repo probe, and `vaults.add` can refuse to seed a code repo
- * (which would otherwise commit `AGENTS.md`/`.claude/` into it). The durable
- * on-disk twin of this flag is `.holi/vault`, written by the seed.
+ * A vault IS a repo (D60), but not every repo you can push to is a vault. The
+ * topic rides back in the repos listing for free, so the "join a vault" picker
+ * can show only real vaults without a per-repo probe, and `vaults.add` can
+ * refuse to seed a code repo. The on-disk twin of this flag is `.holi/vault`.
  */
 export const HOLI_VAULT_TOPIC = 'holi-vault'
 
 export interface Viewer {
-  /** FR-6: the identity key. A login is display only — it can be renamed. */
+  /** The identity key. A login is display only: it can be renamed. */
   accountId: number
   login: string
   name?: string
@@ -36,16 +30,16 @@ export interface Viewer {
 }
 
 export interface Repo {
-  /** `owner/repo` — the same identity `VaultEntry` and `cloneRepo` speak. */
+  /** `owner/repo`: the same identity `VaultEntry` and `cloneRepo` speak. */
   remote: string
   private: boolean
   /**
    * Surfaced because a vault silently becoming public is the highest-severity
-   * thing that can happen to it, and nothing else in the product would show it
-   * (PRD §Edge cases). `internal` is a third state, not a synonym for either.
+   * thing that can happen to it. `internal` is a third state, not a synonym
+   * for either.
    */
   visibility: 'public' | 'private' | 'internal'
-  /** ISO. The picker's sort key (FR-7: "sorted by recent push"). */
+  /** ISO. The picker's sort key. */
   pushedAt: string
   defaultBranch: string
   /**
@@ -55,37 +49,33 @@ export interface Repo {
    */
   canPush: boolean
   owner: { login: string; kind: 'user' | 'org' }
-  /** Whether the repo carries the `holi-vault` topic — i.e. is a Holi vault
-   *  rather than an ordinary code repo. Drives the "join a vault" filter. */
+  /** Carries the `holi-vault` topic. Drives the "join a vault" filter. */
   isVault: boolean
 }
 
-/** An organization the viewer belongs to — an owner "New vault" can offer. */
+/** An organization the viewer belongs to: an owner "New vault" can offer. */
 export interface Org {
   login: string
   avatarUrl?: string
 }
 
 export interface ApiDeps {
-  /** A getter, not a string — the same reason `GitDeps.token` is one: a
-   * sign-out then takes effect on the next call, not the next restart. */
+  /** A getter, not a string, so a sign-out takes effect on the next call. */
   token: () => string | null
   /**
-   * FR-14. Called on a **401 and nothing else**. A 403 is a repo you lack
-   * access to, a rate limit, or SAML — none of them mean the token is dead.
+   * Called on a **401 and nothing else**. A 403 is a repo you lack access to,
+   * a rate limit, or SAML: none of them mean the token is dead.
    *
    * Awaited before the error is thrown, so a caller handling the rejection
-   * always sees a session that already reflects the sign-out. The alternative —
-   * firing it and moving on — makes the ordering depend on how the caller
-   * happens to yield.
+   * always sees a session that already reflects the sign-out.
    */
   onUnauthorized?: () => void | Promise<void>
   fetch?: typeof globalThis.fetch
   baseUrl?: string
 }
 
-/** The five refusals that change what the user is told. Everything else is
- * `other`, because inventing a fifth meaning is how a wrong message ships. */
+/** The refusals that change what the user is told. Everything else is
+ * `other`, because inventing a meaning is how a wrong message ships. */
 export type GitHubErrorKind =
   'unauthorized' | 'forbidden' | 'saml-required' | 'rate-limited' | 'not-found' | 'other'
 
@@ -126,10 +116,9 @@ export class GitHubApi {
 
   /** Every page, newest push first. */
   async repos(): Promise<Repo[]> {
-    // `affiliation` is stated rather than left to the default. The default
-    // happens to be exactly this today, and it is the single line that makes
-    // org-owned vaults appear in the picker — a changed default would remove
-    // them silently, which is the worst way for a vault to go missing.
+    // `affiliation` is stated rather than left to the default: it is what makes
+    // org-owned vaults appear in the picker, and a changed default would remove
+    // them silently.
     const url =
       `${this.#base}/user/repos?per_page=100&sort=pushed&direction=desc` +
       `&affiliation=owner,collaborator,organization_member`
@@ -138,7 +127,6 @@ export class GitHubApi {
     return raw.map(toRepo).sort((a, b) => b.pushedAt.localeCompare(a.pushedAt))
   }
 
-  /** One repo. */
   async repo(remote: string): Promise<Repo> {
     return toRepo(await this.#request(`${this.#base}/repos/${assertRemote(remote)}`))
   }
@@ -151,9 +139,9 @@ export class GitHubApi {
   }
 
   /**
-   * The viewer's organizations — the only thing the `read:org` scope was
-   * requested for. It exists so "New vault" can offer an org as the owner;
-   * *listing* org repos never needed it, because `affiliation` covers that.
+   * The viewer's organizations: the only thing the `read:org` scope is for,
+   * so "New vault" can offer an org as the owner. *Listing* org repos does not
+   * need it; `affiliation` covers that.
    */
   async orgs(): Promise<Org[]> {
     const raw = await this.#paginate(`${this.#base}/user/orgs?per_page=100`)
@@ -164,13 +152,10 @@ export class GitHubApi {
   }
 
   /**
-   * FR-8. **Always private**, and there is no parameter to say otherwise — a
-   * vault created public is the highest-severity thing in the PRD's edge cases,
-   * so the signature is what makes it unsayable rather than a default someone
-   * can pass around.
-   *
-   * Seeding the repo is not this module's job: what goes *in* a vault belongs
-   * with the code that knows what a vault contains.
+   * **Always private**, and there is no parameter to say otherwise: a vault
+   * created public is the highest-severity failure, so the signature makes it
+   * unsayable rather than a default someone can pass around. Seeding is not
+   * this module's job.
    */
   async createRepo(args: { name: string; owner?: string }): Promise<Repo> {
     const url = args.owner
@@ -185,8 +170,8 @@ export class GitHubApi {
         }),
       )
     } catch (err) {
-      // A collision is something the user can fix themselves — but only if they
-      // are told which name collided, and GitHub's 422 does not say.
+      // A collision is something the user can fix, but only if they are told
+      // which name collided, and GitHub's 422 does not say.
       if (err instanceof GitHubApiError && err.status === 422) {
         throw new GitHubApiError(
           422,
@@ -202,11 +187,9 @@ export class GitHubApi {
    * Stamp the `holi-vault` topic onto a freshly-created repo, so it reads as a
    * vault in the listing and passes the `vaults.add` guard.
    *
-   * `PUT /topics` *replaces* the topic set — safe here because this only ever
-   * runs on a repo Holi just created, which has none. It is deliberately not
-   * folded into `createRepo`: creation is the GitHub write, marking is a second
-   * one that can fail on its own (and a repo without the topic is a recoverable
-   * state, not a broken vault).
+   * `PUT /topics` *replaces* the topic set: safe because this only runs on a
+   * repo Holi just created, which has none. Not folded into `createRepo`: it can
+   * fail on its own, and a repo without the topic is recoverable, not broken.
    */
   async markVault(remote: string): Promise<void> {
     await this.#request(`${this.#base}/repos/${assertRemote(remote)}/topics`, {
@@ -254,8 +237,8 @@ export class GitHubApi {
     })
     if (res.ok) return res
 
-    // The body may hold GitHub's message, which is often good. The request
-    // headers must never appear here — they carry the token.
+    // The body may hold GitHub's message. The request headers must never
+    // appear here: they carry the token.
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
     const message = typeof body.message === 'string' ? body.message : res.statusText
     const err = classify(res, message)
@@ -314,8 +297,8 @@ function nextLink(header: string | null): string | null {
 }
 
 function assertRemote(remote: string): string {
-  // The value is interpolated into a URL path. `isRemote` is the validator the
-  // registry already uses — a second one here could drift from it.
+  // The value is interpolated into a URL path. Reuse the registry's validator
+  // so the two cannot drift.
   if (!isRemote(remote)) throw new Error(`not an owner/repo remote: ${remote}`)
   return remote
 }
@@ -324,8 +307,7 @@ function toViewer(raw: Record<string, unknown>): Viewer {
   return {
     accountId: Number(raw.id),
     login: String(raw.login),
-    // GitHub really does send `null` here, and "null" rendered in a UI is the
-    // classic tell that nobody checked.
+    // GitHub really does send `null` here.
     name: typeof raw.name === 'string' ? raw.name : undefined,
     avatarUrl: typeof raw.avatar_url === 'string' ? raw.avatar_url : undefined,
   }
@@ -362,10 +344,9 @@ function toRepo(raw: Record<string, unknown>): Repo {
 /**
  * Read the permission from the `permissions` object rather than `role_name`.
  *
- * Both are returned. The object is a fixed set of booleans; `role_name` is a
- * vocabulary GitHub can extend with custom org roles, and an unrecognised
- * string there would have no safe default — guessing high grants access we
- * cannot verify, guessing low hides collaborators who really are admins.
+ * The object is a fixed set of booleans; `role_name` is a vocabulary GitHub can
+ * extend with custom org roles, and an unrecognised string there would have no
+ * safe default.
  */
 function toCollaborator(raw: Record<string, unknown>): Collaborator {
   const p = (raw.permissions ?? {}) as Record<string, unknown>

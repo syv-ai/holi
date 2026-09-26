@@ -2,15 +2,14 @@
  * The Google tokens, on disk, encrypted by the OS keychain.
  *
  * A deliberate sibling of `github/token-store.ts` rather than a generalization
- * of it: the two hold different shapes, version independently, and a shared
- * abstraction over two callers would be the wrong kind of DRY. The two
+ * of it: the two hold different shapes and version independently. The two
  * invariants *are* copied, because both are load-bearing and both are tested:
  *
  *   - **It never writes plaintext.** If the platform cannot encrypt, `write`
  *     throws rather than falling back. A refresh token in a readable file is a
  *     standing grant to someone's mail.
  *   - **A file it cannot read is a disconnect, not a crash.** Corrupt JSON, an
- *     envelope from a future version, a keychain re-keyed by an OS upgrade —
+ *     envelope from a future version, a keychain re-keyed by an OS upgrade:
  *     all read as "no accounts". "Connect again" is a recovery a user can
  *     perform; a bricked app is not.
  */
@@ -22,8 +21,7 @@ export interface StoredGoogleAuth {
   /**
    * Google's stable account id, and the identity key. Never the email: a
    * Workspace address can be renamed and a freed one reassigned, so a record
-   * keyed on it can silently come to mean a different person — the same
-   * reasoning that keys GitHub on `accountId` rather than `login`.
+   * keyed on it can silently come to mean a different person.
    */
   sub: string
   email: string
@@ -36,14 +34,7 @@ export interface StoredGoogleAuth {
   scopes: string[]
 }
 
-/**
- * Keyed by `sub`, even though v1 connects exactly one account.
- *
- * A map is the same amount of code as a single record here, and it is the
- * difference between "multi-account is an additive change" and "multi-account
- * is a storage migration". D67 chose single-account deliberately; it did not
- * choose to make the second one expensive.
- */
+/** Every connected account, keyed by `sub` (D87). */
 export type GoogleAccounts = Record<string, StoredGoogleAuth>
 
 /** Bump when the shape changes; an unrecognised value reads as disconnected. */

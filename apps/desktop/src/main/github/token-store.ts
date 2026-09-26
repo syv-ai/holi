@@ -1,20 +1,16 @@
 /**
- * The GitHub token, on disk, encrypted by the OS keychain.
- *
- * The only file in the app that knows a keychain exists. Everything above it
- * deals in a `StoredAuth` and never learns where it slept.
+ * The GitHub token, on disk, encrypted by the OS keychain. The only file in the
+ * app that knows a keychain exists.
  *
  * Two properties are load-bearing, and both are tested:
  *
  *   - **It never writes plaintext.** If the platform cannot encrypt, `write`
- *     throws rather than falling back — a token in a readable file is exactly
- *     what auth PRD FR-5 exists to prevent, and a fallback is how one gets
- *     there while every test still passes.
+ *     throws rather than falling back: a fallback is how a token ends up in a
+ *     readable file while every test still passes.
  *   - **A file it cannot read is a sign-out, not a crash.** Corrupt JSON, an
- *     envelope from a future version, a keychain re-keyed by an OS upgrade —
- *     all read as `null`. This is `registry.ts`'s policy for the same reason:
- *     a bad file must not brick the app into a state with no way back, and
- *     "sign in again" is a recovery a user can perform.
+ *     envelope from a future version, a keychain re-keyed by an OS upgrade:
+ *     all read as `null`, because "sign in again" is a recovery a user can
+ *     perform and a bricked app is not.
  */
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -29,9 +25,9 @@ import { dirname } from 'node:path'
 export interface StoredAuth {
   token: string
   /**
-   * GitHub's numeric account id, and the identity key (FR-6). Never `login`: a
-   * login can be renamed by its owner and the freed name claimed by someone
-   * else, so a record keyed on it can silently come to mean a different person.
+   * GitHub's numeric account id, and the identity key. Never `login`: a login
+   * can be renamed by its owner and the freed name claimed by someone else, so
+   * a record keyed on it can silently come to mean a different person.
    */
   accountId: number
   login: string

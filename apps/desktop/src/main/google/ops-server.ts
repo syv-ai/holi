@@ -1,5 +1,5 @@
 /**
- * The agent's door to Google — a tiny localhost server that serves **results,
+ * The agent's door to Google: a tiny localhost server that serves **results,
  * never tokens** (D67).
  *
  * The agent runs as its own `claude` process, so it cannot reach main's IPC and
@@ -8,15 +8,11 @@
  * token authority**: there is exactly one refresher, so nothing races the
  * rotating refresh token, and a disconnect takes effect everywhere at once.
  *
- * It is deliberately the same shape as `agent/hook-server.ts` — ephemeral port,
- * per-instance token, `127.0.0.1` only — because that pattern is already proven
- * here and a second bespoke transport would be a second thing to get wrong.
+ * The same shape as `agent/hook-server.ts`: ephemeral port, bearer token,
+ * `127.0.0.1` only. It is why Google needs no MCP server: the agent reaches it
+ * with `Bash` and a documented command (`holi-google`).
  *
- * **This is why the pillar needs no MCP server** (and why the "pure Claude Code"
- * stance survives phase 2): the agent reaches external data with `Bash` and a
- * documented command, exactly as it reaches everything else with native tools.
- *
- * NOTE: no runtime `electron` import — this loads under vitest.
+ * No runtime `electron` import: this loads under vitest.
  */
 import {
   createServer,
@@ -35,15 +31,14 @@ export interface GoogleOps {
   thread(id: string): Promise<unknown>
 
   /**
-   * Writes (D70). POST with a JSON body — a mail body does not belong in a
-   * query string, and putting one there would also print the whole message
-   * into the text of the confirmation prompt the user reads.
+   * Writes (D70). POST with a body: a mail body does not belong in a query
+   * string, where it would also be printed into the confirmation prompt the
+   * user reads.
    *
    * **`send` and `reply` are the two that reach another human.** Nothing here
    * enforces that; the gate is a `PreToolUse` hook on the agent's side, because
-   * this server cannot tell an approved call from an unapproved one. What this
-   * layer does guarantee is that the two are *nameable* — a separate route each,
-   * rather than hiding inside a general-purpose verb the gate cannot match.
+   * this server cannot tell an approved call from an unapproved one. This layer
+   * guarantees only that the two are *nameable*: a separate route each.
    */
   setRead(id: string, read: boolean): Promise<void>
   star(id: string, on: boolean): Promise<void>
@@ -54,10 +49,9 @@ export interface GoogleOps {
    * Send a composed message, or send a draft that already exists.
    *
    * **The draft form is not a convenience.** `draft` followed by a composed
-   * `send` produces *two* messages and orphans the draft — found against a real
-   * account on 2026-08-14, after the agent had done exactly that. `drafts.send`
-   * makes Gmail delete the draft atomically, which is the only way "draft it,
-   * then send it" ends with one message.
+   * `send` produces *two* messages and orphans the draft. `drafts.send` makes
+   * Gmail delete the draft atomically, which is the only way "draft it, then
+   * send it" ends with one message.
    */
   send(input: { mail: OutgoingMail } | { draftId: string }): Promise<{ id: string | null }>
   reply(threadId: string, body: string, all: boolean): Promise<{ id: string | null }>
@@ -73,19 +67,18 @@ export interface GoogleOps {
  */
 const MAX_BODY_BYTES = 1024 * 1024
 
-/** Thrown for a body that is missing or not JSON — a mistake by the caller,
+/** Thrown for a body that is missing or not JSON: a mistake by the caller,
  *  which is a different answer from Google being unreachable. */
 class BadRequest extends Error {}
 
-/** Its own type, because it is its own status code (413) and because "you sent
- *  too much" is worth saying rather than folding into "that was malformed". */
+/** Its own type, because it is its own status code (413). */
 class TooLarge extends Error {}
 
 /**
  * What a `Promise<void>` operation returns to the router.
  *
  * `undefined` already means "no such route" here, so an operation that
- * genuinely resolves to nothing needs a value that is not `undefined` — else
+ * genuinely resolves to nothing needs a value that is not `undefined`, else
  * every successful archive would answer 404.
  */
 const NO_CONTENT = Symbol('no-content')
@@ -110,11 +103,9 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
     const buffer = chunk as Buffer
     size += buffer.length
     if (size > MAX_BODY_BYTES) {
-      // Stop *accumulating*, but keep draining. Destroying the socket here is
-      // the obvious move and it is wrong: it kills the connection before the
-      // 413 can be written, so the caller sees a connection reset and has no
-      // idea what it did. Memory is what needs bounding, and discarding bounds
-      // it just as well as hanging up does.
+      // Stop *accumulating*, but keep draining. Destroying the socket kills the
+      // connection before the 413 can be written, so the caller sees only a
+      // connection reset. Discarding bounds memory just as well.
       oversize = true
       chunks.length = 0
       continue
@@ -125,12 +116,10 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
   const text = Buffer.concat(chunks).toString('utf8')
   if (text.trim() === '') return {}
 
-  // Form-encoded is what the generated `holi-google` sends, and that is not an
-  // accident: `curl --data-urlencode "body@-"` reads the message from stdin and
-  // encodes it, so a mail body containing quotes, `$`, or a newline needs no
-  // escaping in POSIX `sh` at all. Assembling JSON by hand in a shell script is
-  // the same class of bug as hand-rolling percent-encoding, which is why the
-  // read subcommands already use `-G --data-urlencode`.
+  // Form-encoded is what the generated `holi-google` sends: `curl
+  // --data-urlencode "body@-"` reads the message from stdin and encodes it, so
+  // a mail body containing quotes, `$`, or a newline needs no escaping in POSIX
+  // `sh`. Assembling JSON by hand in a shell script is a bug class of its own.
   const contentType = req.headers['content-type'] ?? ''
   if (contentType.includes('application/x-www-form-urlencoded')) return fromForm(text)
 
@@ -152,8 +141,8 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
  * Two rules, both chosen so a caller never has to say which it meant: a key
  * that appears more than once is an **array** (`to=a&to=b`), and the exact
  * strings `true`/`false` are **booleans**. Without the second one, `read=false`
- * would arrive as the string `"false"` — which is truthy, so "mark it unread"
- * would mark it read and answer 200.
+ * would arrive as the truthy string `"false"`, so "mark it unread" would mark
+ * it read and answer 200.
  */
 function fromForm(text: string): Record<string, unknown> {
   const params = new URLSearchParams(text)
@@ -179,11 +168,9 @@ export interface GoogleOpsServer {
    * A bearer bound to one vault, for one agent session (D87).
    *
    * Per session rather than per app run, for two reasons. An agent session
-   * **outlives a vault switch** — it keeps running against its original vault's
-   * cwd while Holi shows another — so resolving by "whatever is active" would
-   * have a backgrounded agent read a different vault's mail, which is D87's own
-   * complaint arriving late and harder to see. And a token that dies with its
-   * session stops being valid for as long as the app is open.
+   * **outlives a vault switch**, so resolving by "whatever is active" would
+   * have a backgrounded agent read a different vault's mail. And a token that
+   * dies with its session does not stay valid for as long as the app is open.
    */
   mintToken(remote: string): string
   revoke(token: string): void
@@ -191,7 +178,7 @@ export interface GoogleOpsServer {
 
 /**
  * @param opsFor the operations for one vault. Called per request, from the
- *  vault named by the request's bearer — never from the active vault.
+ *  vault named by the request's bearer, never from the active vault.
  */
 export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): GoogleOpsServer {
   /** token → the vault it speaks for. */
@@ -203,8 +190,8 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1')
 
-      // The port is ephemeral, but that is not a boundary — this closes the
-      // "some other local process reads your mail" gap.
+      // The port is ephemeral, but that is not a boundary: the token is what
+      // stops some other local process reading your mail.
       const remote = tokens.get(url.searchParams.get('t') ?? '')
       if (remote === undefined) {
         res.writeHead(403).end()
@@ -229,10 +216,9 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
       } catch (err) {
         // 400 and 502 are read apart by the agent: one means "fix the request",
         // the other means "Google is unreachable, try again later". Collapsing
-        // them into one code makes it retry the one that will never work.
+        // them makes it retry the one that will never work.
         const status = err instanceof BadRequest ? 400 : err instanceof TooLarge ? 413 : 502
-        // The agent reads this text, so it has to say what to do rather than
-        // just that something failed.
+        // The agent reads this text, so it has to say what to do.
         res.writeHead(status, { 'Content-Type': 'application/json' })
         res.end(
           JSON.stringify({ error: err instanceof Error ? err.message : 'the Google request failed' }),
@@ -275,7 +261,7 @@ export function createGoogleOpsServer(opsFor: (remote: string) => GoogleOps): Go
       if (typeof value !== 'string' || value === '') throw new BadRequest('this operation needs an id')
       return value
     }
-    /** One recipient or several. A form body cannot tell them apart — `to=a`
+    /** One recipient or several. A form body cannot tell them apart: `to=a`
      *  is a scalar and `to=a&to=b` is an array — so both are accepted rather
      *  than making the caller know which shape it produced. */
     const addresses = (value: unknown): string[] => {

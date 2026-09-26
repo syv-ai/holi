@@ -1,30 +1,27 @@
 /**
  * The Google grant: **authorization code + PKCE, redirected to loopback**.
  *
- * This is deliberately a *sibling* of `github/device-flow.ts`, not a reuse of
- * it. GitHub uses the device-code grant; Google's limited-input device flow is
+ * Not a reuse of `github/device-flow.ts`: Google's limited-input device flow is
  * not approved for the Gmail/Calendar scopes we need, so the sanctioned desktop
  * pattern is this one: open the system browser, catch the redirect on a
  * short-lived listener bound to `127.0.0.1`, and exchange the code for tokens.
  *
- * What *does* port verbatim is the shape, because it is what makes the flow
- * testable at zero wall-clock cost and with no network or browser:
- * everything from the outside — `fetch`, `now`, `openBrowser`, the listener,
- * even the random bytes — is injected, and a flow **outcome** never rejects.
- * A network or protocol fault still throws, because those are not outcomes.
+ * Everything from the outside (`fetch`, `now`, `openBrowser`, the listener, the
+ * random bytes) is injected, and a flow **outcome** never rejects. A network or
+ * protocol fault still throws, because those are not outcomes.
  */
 import { challengeFor, createVerifier, randomState, type RandomBytes } from './pkce'
 
 /** Everything a connected account needs, as the exchange returns it. */
 export interface GoogleTokens {
   accessToken: string
-  /** The durable half. Google returns it only when asked correctly — see
-   *  `AUTH_PARAMS` and the `prompt=consent` note there. */
+  /** The durable half. Google returns it only when asked correctly: see the
+   *  `prompt=consent` note in `startLoopbackFlow`. */
   refreshToken: string
   /** Epoch ms. The session refreshes against it, with a skew margin. */
   expiresAt: number
   scopes: string[]
-  /** Google's stable account id — the identity key, never the email. An email
+  /** Google's stable account id: the identity key, never the email. An email
    *  can be renamed or reassigned; `sub` cannot. */
   sub: string
   email: string
@@ -52,12 +49,11 @@ export interface LoopbackFlow {
  * The redirect catcher, behind a seam.
  *
  * A real one binds a `node:http` server (see `loopback-server.ts`); a test one
- * is three lines and a promise. This is the difference between a flow that is
- * unit-testable and one that needs a browser.
+ * is three lines and a promise.
  */
 export interface LoopbackServer {
-  /** The **assigned** port — bind `:0` and read it back. A fixed port collides
-   *  with whatever else is listening, and the failure looks like a broken app. */
+  /** The **assigned** port: bind `:0` and read it back. A fixed port collides
+   *  with whatever else is listening. */
   readonly port: number
   /** The redirect's query params, once the browser arrives. */
   waitForRedirect(): Promise<Record<string, string>>
@@ -70,8 +66,8 @@ export interface LoopbackFlowDeps {
   clientId: string
   /**
    * Google issues one even for "Desktop app" clients. It is **not
-   * confidential** — it ships in the binary and PKCE is the actual protection —
-   * and it is optional here: sent only when the registration requires it.
+   * confidential**: it ships in the binary and PKCE is the actual protection.
+   * Sent only when present.
    */
   clientSecret?: string
   scopes: string[]
@@ -96,8 +92,8 @@ const REQUEST_TIMEOUT_MS = 15_000
  *  account; short enough that an abandoned flow releases the port. */
 const DEFAULT_TIMEOUT_MS = 5 * 60_000
 
-/** What the user sees in the tab that catches the redirect. Kept deliberately
- *  plain — it is a courtesy page, and it must render with no network. */
+/** What the user sees in the tab that catches the redirect. Kept plain: it
+ *  must render with no network. */
 const CLOSE_PAGE = 'Holi is connected. You can close this tab.'
 
 export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<LoopbackFlow> {
@@ -155,7 +151,7 @@ export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<Loopbac
   }
 
   async function run(): Promise<LoopbackFlowResult> {
-    // Cancelled before anyone awaited it — the listener is already down, so
+    // Cancelled before anyone awaited it: the listener is already down, so
     // racing on a dead server would hang forever.
     if (cancelled) return { kind: 'cancelled' }
 
@@ -256,7 +252,7 @@ export async function startLoopbackFlow(deps: LoopbackFlowDeps): Promise<Loopbac
  * **The signature is deliberately not verified, and that is safe *here* and
  * only here:** this token came straight back from Google's token endpoint over
  * TLS, in response to a request we made, so there is no untrusted party in
- * between to forge it — Google's own documentation says a JWKS round-trip is
+ * between to forge it; Google's own documentation says a JWKS round-trip is
  * unnecessary in exactly this case. Do not copy this into a context where the
  * token arrives from a client; there it must be verified.
  */
@@ -283,7 +279,7 @@ export class GoogleHttpError extends Error {
   }
 }
 
-/** Form-encoded out, JSON back — Google's token endpoint speaks no other way. */
+/** Form-encoded out, JSON back. */
 export async function post(
   fetchImpl: typeof globalThis.fetch,
   url: string,

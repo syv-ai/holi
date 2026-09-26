@@ -1,10 +1,7 @@
 /**
- * The production wiring — **the only file in `google/` that imports Electron**.
- *
- * Same reasoning as `github/electron.ts`: a static `import … from 'electron'`
- * is a module-load side effect, and every other file here is loaded by the test
- * suite. Keeping the import in a file nothing but `main/index.ts` reaches makes
- * "the suite runs under plain Node" a structural fact rather than a lucky one.
+ * The production wiring: **the only file in `google/` that imports Electron**,
+ * for the same reason as `github/electron.ts` (the test suite runs under plain
+ * Node).
  */
 import { app, safeStorage, shell } from 'electron'
 import { join } from 'node:path'
@@ -17,9 +14,8 @@ import { listenLoopback } from './loopback-server'
  * Build the Google accounts manager against the real OS keychain and a real
  * loopback listener.
  *
- * Call this **after `app.whenReady()`** — `safeStorage.isEncryptionAvailable()`
- * is not reliable before it, and a connect that fails on the first launch of the
- * day and works on the second is a miserable bug to go looking for.
+ * Call this **after `app.whenReady()`**: `safeStorage.isEncryptionAvailable()`
+ * is not reliable before it.
  */
 export function createGoogleAccountsManager(
   userDataDir = app.getPath('userData'),

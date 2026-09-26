@@ -1,15 +1,14 @@
 /**
- * The OAuth **device flow** — the grant designed for clients that cannot hold a
- * client secret, which a desktop app cannot (auth PRD FR-2).
+ * The OAuth **device flow**: the grant for clients that cannot hold a client
+ * secret, which a desktop app cannot (docs/features/auth.md).
  *
  * Two phases, deliberately. `startDeviceFlow` resolves as soon as GitHub hands
  * back a user code, and polling only begins when the caller awaits `wait()`.
  * A one-shot `signIn(): Promise<token>` would hide the code until it was
  * already spent, and the code is the entire user-facing half of this flow.
  *
- * Everything the flow needs from the outside — `fetch`, `now`, `sleep` — is
- * injected, so the whole state machine is testable at zero wall-clock cost and
- * without a network.
+ * `fetch`, `now` and `sleep` are injected so the state machine is testable
+ * without a network or wall-clock cost.
  */
 
 /** What the renderer shows. The `device_code` is deliberately absent: it is the
@@ -25,8 +24,7 @@ export type DeviceFlowResult =
   | { kind: 'granted'; token: string; scopes: string[] }
   /** The user pressed Cancel on github.com. A normal outcome, not a failure. */
   | { kind: 'denied' }
-  /** The code timed out — GitHub said so, or the deadline passed. FR-4 offers
-   * to restart. */
+  /** The code timed out: GitHub said so, or the deadline passed. */
   | { kind: 'expired' }
   /** We stopped: a closed window, or a second sign-in superseding this one. */
   | { kind: 'cancelled' }
