@@ -144,7 +144,10 @@ export function NavTree({
     setBar(row ? { top: row.offsetTop, height: row.offsetHeight } : null)
   }, [focusRoot, data, open])
 
-  /** A note is named without its `.md`; the type glyph already says it is one. */
+  /**
+   * A note is the default row: no `.md` and no glyph (its slot stays, so names
+   * line up). Everything else keeps its extension and type glyph.
+   */
   const label = (id: string, node: TreeItemData) =>
     !node.isFolder && fileKind(id) === 'markdown' ? node.name.replace(/\.md$/i, '') : node.name
 
@@ -163,7 +166,13 @@ export function NavTree({
       const task = taskByPath.get(id)
       return (
         <span className={slot}>
-          {task && !emoji ? <TaskIcon status={task.status} /> : fileIconFor(id, emoji)}
+          {emoji ? (
+            fileIconFor(id, emoji)
+          ) : task ? (
+            <TaskIcon status={task.status} />
+          ) : fileKind(id) === 'markdown' ? null : (
+            fileIconFor(id)
+          )}
         </span>
       )
     }
