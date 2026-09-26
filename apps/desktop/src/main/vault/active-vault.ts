@@ -173,9 +173,9 @@ export async function openActiveVault(args: {
 }): Promise<ActiveVault> {
   const timings: SyncTimings = { ...DEFAULT_TIMINGS, ...args.timings }
   const root = args.repo.root
-  // The size cap is a per-vault synced setting, read once at open (a config
-  // change takes effect on the next open, same as the seeded pre-commit hook).
-  const maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
+  // The size cap is a synced setting the settings pane edits while the vault is
+  // open, so every commit re-reads it (`currentCap`).
+  let maxCommittedFileBytes = await readMaxCommittedFileBytes(root)
   let heldBack: HeldBackFile[] = []
   // The same gate for the agent's own commits: a machine-local pre-commit hook,
   // regenerated each open so a threshold change takes effect. Best-effort: a
@@ -189,6 +189,19 @@ export async function openActiveVault(args: {
   await writeHookEndpoint(root, args.hookEndpoint?.(args.remote) ?? null).catch((err) =>
     console.error('[vault] hook endpoint write failed:', err),
   )
+
+  /** The cap as the settings file says now. When it moved, the git hook the
+   *  agent's commits go through has the old number baked in, so reinstall it. */
+  async function currentCap(): Promise<number> {
+    const cap = await readMaxCommittedFileBytes(root)
+    if (cap !== maxCommittedFileBytes) {
+      maxCommittedFileBytes = cap
+      await installGitHook(root, cap).catch((err) =>
+        console.error('[vault] pre-commit hook install failed:', err),
+      )
+    }
+    return cap
+  }
 
   let closed = false
   let cached: VaultSnapshot = await scanVault(root)
@@ -354,7 +367,7 @@ export async function openActiveVault(args: {
       const partitioned = partitionBySize(
         status.dirtyPaths,
         (p) => sizes.get(p) ?? null,
-        maxCommittedFileBytes,
+        await currentCap(),
       )
       heldBack = partitioned.heldBack
       // Push the surface every tick, even when empty, so a resolved file clears it.

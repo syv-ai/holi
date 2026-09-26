@@ -22,7 +22,7 @@ A vault is a GitHub repository cloned into a directory Holi owns. Sync runs both
 
 **Commit hooks.** Each open writes `.git/hooks/pre-commit`: the large-file guard, then a `curl` to the running Holi on loopback with a per-vault token from `.holi/state/hook-endpoint.local.txt` (0600, removed on close), then `exit 0`. Holi reads the staged set (`git diff --cached -M -z`, deletions included) and runs the enabled transforms in order: `relink` (rewrite `[[links]]` for renames git detected), `archive-done` (off by default; see [tasks](tasks.md)), `scaffold-md` (see [frontmatter](frontmatter.md)), `normalize-md` (invisible tidy), `memory-index` (see [agent memory](agent-memory.md); last, because it reads the whole tree). Rewritten files are restaged into the same commit. Every run appends to `.holi/state/hooks.local.log`, capped at 2000 lines.
 
-**Large files.** Autosave stages only files at or under `maxCommittedFileBytes` (default 10 MB, read at open); deletions always commit. Oversized files stay on disk, unpushed, and a tree holding only those reads as clean. A footer callout offers **Commit anyway** (`--no-verify`) or **Keep local** (`.git/info/exclude`). The hook applies the same cap to the agent and terminal commits and points at Git LFS without setting it up.
+**Large files.** Autosave stages only files at or under `maxCommittedFileBytes` (default 10 MB, re-read on every commit); deletions always commit. Oversized files stay on disk, unpushed, and a tree holding only those reads as clean. A footer callout offers **Commit anyway** (`--no-verify`) or **Keep local** (`.git/info/exclude`). The hook applies the same cap to the agent and terminal commits and points at Git LFS without setting it up.
 
 ## Rules
 

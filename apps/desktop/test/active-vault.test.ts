@@ -287,6 +287,32 @@ describe('ActiveVault — commit', () => {
     await expect(readFile(join(dir, 'big.bin'), 'utf8')).resolves.toHaveLength(2000)
   })
 
+  it('applies a changed size cap to the next commit, not the next open', async () => {
+    // The settings pane edits the cap while the vault is open, and says it
+    // applies to every commit. So does the pre-commit hook the agent's own
+    // commits go through.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await mkdir(join(dir, '.holi/settings'), { recursive: true })
+    await writeFile(join(dir, SETTINGS_FILE), 'maxCommittedFileBytes: 1024\n', 'utf8')
+    await writeFile(join(dir, 'big.bin'), 'x'.repeat(2000), 'utf8')
+    await active.commitNow()
+
+    expect(active.heldBack()).toEqual([{ path: 'big.bin', bytes: 2000 }])
+    await expect(readFile(join(dir, '.git/hooks/pre-commit'), 'utf8')).resolves.toContain(
+      'limit=1024',
+    )
+  })
+
   it('does not spin an empty commit when only held-back files remain', async () => {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
