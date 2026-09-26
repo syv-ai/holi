@@ -22,12 +22,19 @@ describe('buildTreeData', () => {
   it('includes an empty pending folder that has no docs', () => {
     const data = buildTreeData(['note.md'], ['drafts'])
     expect(data[ROOT_ID].children).toEqual(['drafts', 'note.md'])
-    expect(data['drafts']).toEqual({ name: 'drafts', isFolder: true, children: [] })
+    expect(data['drafts']).toEqual({ name: 'drafts', isFolder: true, isApp: false, children: [] })
   })
 
   it('does not duplicate a folder that is both pending and has a doc', () => {
     const data = buildTreeData(['drafts/x.md'], ['drafts'])
     expect(data['drafts'].children).toEqual(['drafts/x.md'])
     expect(data[ROOT_ID].children).toEqual(['drafts'])
+  })
+
+  it('marks an app bundle, and sorts it with the files rather than the folders', () => {
+    const data = buildTreeData(['Zed.app/index.html', 'zoo/x.md', 'alpha.md', 'site/index.html'])
+    expect(data['Zed.app']).toMatchObject({ isFolder: true, isApp: true })
+    expect(data['site']?.isApp).toBe(false)
+    expect(data[ROOT_ID].children).toEqual(['site', 'zoo', 'alpha.md', 'Zed.app'])
   })
 })

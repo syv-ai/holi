@@ -7,6 +7,7 @@ import {
   ContextMenuShortcut,
 } from '@/primitives'
 import { parentOf } from '@/lib/tree-paths'
+import { registerAppAtom } from '@/state/apps'
 import { openDialogAtom } from '@/state/dialogs'
 import { activeRemoteAtom, snapshotAtom, vaultsAtom } from '@/state/vaults'
 import type { ExplorerActions } from './useExplorerActions'
@@ -19,6 +20,8 @@ import type { ExplorerActions } from './useExplorerActions'
 export function RowMenu({
   path,
   isFolder,
+  app,
+  onToggleContents,
   targets,
   actions,
   onOpenInNewPane,
@@ -28,6 +31,11 @@ export function RowMenu({
 }: {
   path: string
   isFolder: boolean
+  /** Set when the row is an app bundle (D107): whether its files are showing,
+   *  and whether it still lacks the manifest that finishes it. */
+  app: { open: boolean; unfinished: boolean } | null
+  /** Show or hide an app's files in the tree. */
+  onToggleContents: () => void
   /** The whole selection when the row is part of it, else just the row. */
   targets: string[]
   actions: ExplorerActions
@@ -41,9 +49,11 @@ export function RowMenu({
   const vaults = useAtomValue(vaultsAtom)
   const icons = useAtomValue(snapshotAtom).icons
   const openDialog = useSetAtom(openDialogAtom)
+  const registerApp = useSetAtom(registerAppAtom)
   const entry = vaults.find((v) => v.remote === activeRemote)
   const absPathFor = (rel: string) => (entry ? `${entry.path}/${rel}` : rel)
-  const folderDest = isFolder ? path : parentOf(path)
+  // Something made or pasted on an app lands beside it, as on a file.
+  const folderDest = isFolder && app === null ? path : parentOf(path)
   const multi = targets.length > 1
   return (
     <ContextMenuContent
@@ -51,6 +61,28 @@ export function RowMenu({
       // instead of Radix pulling it back to the row when the menu closes.
       onCloseAutoFocus={(e) => e.preventDefault()}
     >
+      {!multi && app !== null && (
+        <>
+          {app.unfinished ? (
+            // It has no manifest, so there is nothing to open yet. This writes
+            // the manifest and nothing else.
+            <ContextMenuItem onSelect={() => void registerApp(path)}>
+              Finish this app
+            </ContextMenuItem>
+          ) : (
+            <>
+              <ContextMenuItem onSelect={() => onOpenPinned(path)}>Open</ContextMenuItem>
+              <ContextMenuItem onSelect={() => onOpenInNewPane(path)}>
+                Open in a New Pane
+              </ContextMenuItem>
+            </>
+          )}
+          <ContextMenuItem onSelect={onToggleContents}>
+            {app.open ? 'Hide Contents' : 'Show Contents'}
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+        </>
+      )}
       {!multi && !isFolder && (
         <>
           {/* A file's action, not a folder's. If the file is already open in

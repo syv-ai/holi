@@ -6,7 +6,7 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { History, PanelLeftClose, PanelLeftOpen, PanelRight, Settings } from 'lucide-react'
 import { Fragment, useEffect, useRef, useState } from 'react'
-import { fileKind, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
+import { fileKind, isAppBundlePath, isTaskFilePath, isVaultConfigPath } from '@holi/shared'
 import {
   Button,
   Kbd,
@@ -46,6 +46,7 @@ import {
   moveTab,
   moveTabToNewPane,
   openAgenda,
+  openApp,
   openBoard,
   openHistory,
   openMail,
@@ -274,8 +275,12 @@ export function Shell() {
   const label = syncLabel(syncState)
   // Single-click / link-nav opens a preview tab (browsing costs one tab);
   // double-click pins. Editing a preview promotes it (see EditorPane onEdit).
-  const open = (path: string) => setWorkspace((w) => openPreview(w, path))
-  const openPin = (path: string) => setWorkspace((w) => openPinned(w, path))
+  // A bundle path is an app (D107): the tree opens one with a note's gestures,
+  // and it opens as an app tab, which has no preview state.
+  const open = (path: string) =>
+    setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPreview(w, path)))
+  const openPin = (path: string) =>
+    setWorkspace((w) => (isAppBundlePath(path) ? openApp(w, path) : openPinned(w, path)))
 
   /** Both live in `state/vault-switch.ts` (D102): a switch is a command, and
    *  the confirm it may need is asked there, before the remote moves. */
@@ -397,11 +402,16 @@ export function Shell() {
               >
                 <ResizablePanel id="tree" minSize={80}>
                   <FileTree
-                    activePath={tab?.kind === 'note' ? tab.path : null}
+                    activePath={tab?.kind === 'note' || tab?.kind === 'app' ? tab.path : null}
                     onOpenPreview={open}
                     onOpenPinned={openPin}
                     onOpenInNewPane={(path) =>
-                      setWorkspace((w) => openInNewPane(w, { kind: 'note', path }))
+                      setWorkspace((w) =>
+                        openInNewPane(
+                          w,
+                          isAppBundlePath(path) ? { kind: 'app', path } : { kind: 'note', path },
+                        ),
+                      )
                     }
                   />
                 </ResizablePanel>

@@ -11,10 +11,10 @@ import {
   type ReactNode,
 } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { fileKind } from '@holi/shared'
+import { APP_SUFFIX } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { DeleteConfirm } from '@/composites'
-import { fileIconFor } from '@/composites/file-icons'
+import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import { canMoveInto, dropFolder, rangeBetween, typeahead, visibleRows } from '@/lib/tree-view'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
@@ -27,6 +27,7 @@ import {
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
 import { Button, ContextMenu, ContextMenuTrigger, Input } from '@/primitives'
+import { unregisteredAppPathsAtom } from '@/state/apps'
 import { todayDailyPathAtom } from '@/state/daily'
 import { revealRequestAtom } from '@/state/reveal'
 import { todayLinkCountAtom } from '@/state/tasks'
@@ -39,7 +40,6 @@ import {
   vaultsAtom,
 } from '@/state/vaults'
 import { ExplorerHeader } from './ExplorerHeader'
-import { TaskIcon } from './icons'
 import { RowMenu } from './RowMenu'
 import { useExplorerActions } from './useExplorerActions'
 import { useTreeProjection } from './useTreeProjection'
@@ -49,6 +49,9 @@ import { useTreeProjection } from './useTreeProjection'
  * focused one marked by a bar at their left that slides between them, and each
  * open folder's contents hung from a rounded connector whose path to the open
  * file is drawn in the brand colour.
+ *
+ * An app bundle (D107) is a folder that behaves as a file: a click opens the
+ * app, and its files show only when it is expanded, by → or Show Contents.
  *
  * A view of the snapshot that owns no vault data. Its rules (which rows show,
  * ranges, typeahead, where a drop may go) are in `lib/tree-view.ts`; this is
@@ -81,6 +84,9 @@ const LABEL =
  * Block-level `flex`, not the Button's `inline-flex`: an inline row sits on a
  * line box, whose baseline strut adds a few pixels under a row with no glyph.
  */
+/** A folder for grouping: an app sits with the files, as it sorts. */
+const isGroupFolder = (node: TreeItemData | undefined) => node?.isFolder === true && !node.isApp
+
 const ROW_RESET =
   'flex h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
 
@@ -207,6 +213,7 @@ export function FileTree({
   const revealRequest = useAtomValue(revealRequestAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
   const todayLinkCount = useAtomValue(todayLinkCountAtom)
+  const unfinished = useAtomValue(unregisteredAppPathsAtom)
   const activeRemote = useAtomValue(activeRemoteAtom)
   const vault = useAtomValue(vaultsAtom).find((v) => v.remote === activeRemote)
   const vaultPrefix = vault ? `${vault.path}/` : null
@@ -298,9 +305,11 @@ export function FileTree({
     el.scrollIntoView({ block: 'nearest' })
   })
 
-  const rename = (from: string, isFolder: boolean, name: string) => {
+  const rename = (from: string, node: TreeItemData, name: string) => {
     setRenaming(null)
-    if (isFolder) return actions.renameFolder(from, name)
+    // An app is named without its `.app`, as a note is without its `.md`.
+    if (node.isApp) return actions.renameFolder(from, `${name}${APP_SUFFIX}`)
+    if (node.isFolder) return actions.renameFolder(from, name)
     const to = joinPath(parentOf(from), withMdExtension(name))
     if (to !== from) void renameNote({ from, to })
   }
@@ -329,7 +338,7 @@ export function FileTree({
    * ⌘⇧ adds or removes one row, ⇧ selects a range, ⌘ opens a file in a new
    * pane; a plain click selects the row and opens it (a folder toggles).
    */
-  const onRowClick = (e: MouseEvent, id: string, isFolder: boolean) => {
+  const onRowClick = (e: MouseEvent, id: string, node: TreeItemData) => {
     setFocusId(id)
     if (e.metaKey && e.shiftKey) {
       const next = new Set(selected)
@@ -342,7 +351,7 @@ export function FileTree({
     if (e.shiftKey && anchor !== null) return setSelected(new Set(rangeBetween(rows, anchor, id)))
     select([id], id)
     setFocusRoot(id.split('/')[0]!)
-    if (isFolder) toggle(id)
+    if (node.isFolder && !node.isApp) toggle(id)
     else if (e.metaKey) onOpenInNewPane(id)
     else onOpenPreview(id)
   }
@@ -350,7 +359,8 @@ export function FileTree({
   const typed = useRef({ query: '', at: 0 })
 
   /** A key on a focused row. Returns whether it acted, so the caller can claim it. */
-  const rowKey = (e: KeyboardEvent, id: string, isFolder: boolean): boolean => {
+  const rowKey = (e: KeyboardEvent, id: string, node: TreeItemData): boolean => {
+    const { isFolder, isApp } = node
     const mod = e.metaKey || e.ctrlKey
     const i = rows.findIndex((r) => r.id === id)
     const next = rows[i + 1]
@@ -384,7 +394,7 @@ export function FileTree({
         )
       else if (e.code === 'KeyX') actions.cut(targets(id))
       else if (e.code === 'KeyC') actions.copy(targets(id))
-      else if (e.code === 'KeyV') actions.paste(isFolder ? id : parentOf(id))
+      else if (e.code === 'KeyV') actions.paste(isFolder && !isApp ? id : parentOf(id))
       else if (e.code === 'KeyD') actions.duplicate(targets(id))
       else return false
       return true
@@ -404,7 +414,7 @@ export function FileTree({
         moveTo(rows[rows.length - 1]?.id)
         break
       case 'ArrowRight':
-        // Opens a folder, then steps into it.
+        // Opens a folder, then steps into it. An app's contents open the same way.
         if (isFolder && !open.has(id)) toggle(id)
         else if (isFolder && next && parentOf(next.id) === id) moveTo(next.id)
         break
@@ -414,7 +424,7 @@ export function FileTree({
         else moveTo(parentOf(id) || undefined)
         break
       case 'Enter':
-        if (isFolder) toggle(id)
+        if (isFolder && !isApp) toggle(id)
         else onOpenPreview(id)
         break
       case 'Escape':
@@ -448,7 +458,8 @@ export function FileTree({
   const dropAt = (e: DragEvent) => {
     const row = (e.target as HTMLElement).closest<HTMLElement>('[data-path]')
     const id = row?.getAttribute('data-path') ?? null
-    const isFolder = id !== null && data[id]?.isFolder === true
+    // A drop on an app lands beside it, as on a file, not among its files.
+    const isFolder = id !== null && data[id]?.isFolder === true && !data[id]?.isApp
     return { id, isFolder, dest: dropFolder(id, isFolder) }
   }
   const onDragOver = (e: DragEvent) => {
@@ -492,10 +503,11 @@ export function FileTree({
 
   /**
    * A note is the default row: no `.md` and no glyph (its slot stays, so names
-   * line up). Everything else keeps its extension and type glyph.
+   * line up). Everything else keeps its extension and type glyph. The rule is
+   * `pathLabel`/`pathGlyph`, which the tabs share.
    */
   const label = (id: string, node: TreeItemData) =>
-    !node.isFolder && fileKind(id) === 'markdown' ? node.name.replace(/\.md$/i, '') : node.name
+    node.isFolder && !node.isApp ? node.name : pathLabel(id)
 
   /**
    * What a row leads with: a folder's chevron, or a file's type glyph in the
@@ -510,17 +522,26 @@ export function FileTree({
       ignored.has(id) && 'opacity-50',
     )
     const emoji = iconByPath.get(id)
+    // An app leads with its glyph, as a file does; the chevron joins it only
+    // while its contents are shown, which is when there is something to close.
+    if (node.isApp) {
+      return (
+        <>
+          {isOpen && (
+            <span className={slot}>
+              <ChevronRight className="motion-respond size-3! rotate-90" />
+            </span>
+          )}
+          <span data-slot="row-icon" className={slot}>
+            {pathGlyph(id, { emoji })}
+          </span>
+        </>
+      )
+    }
     if (!node.isFolder) {
-      const task = taskByPath.get(id)
       return (
         <span data-slot="row-icon" className={slot}>
-          {emoji ? (
-            fileIconFor(id, emoji)
-          ) : task ? (
-            <TaskIcon status={task.status} />
-          ) : fileKind(id) === 'markdown' ? null : (
-            fileIconFor(id)
-          )}
+          {pathGlyph(id, { emoji, task: taskByPath.get(id)?.status })}
         </span>
       )
     }
@@ -559,7 +580,7 @@ export function FileTree({
           <NameInput
             // As listed: a note without its `.md`, which the rename adds back.
             initial={label(id, node)}
-            onCommit={(name) => rename(id, node.isFolder, name)}
+            onCommit={(name) => rename(id, node, name)}
             onCancel={() => setRenaming(null)}
           />
         </div>
@@ -581,10 +602,10 @@ export function FileTree({
               e.preventDefault()
               if (vaultPrefix) window.holi.startDrag(targets(id).map((p) => vaultPrefix + p))
             }}
-            onClick={(e) => onRowClick(e, id, node.isFolder)}
-            onDoubleClick={() => !node.isFolder && onOpenPinned(id)}
+            onClick={(e) => onRowClick(e, id, node)}
+            onDoubleClick={() => (!node.isFolder || node.isApp) && onOpenPinned(id)}
             onKeyDown={(e) => {
-              if (rowKey(e, id, node.isFolder)) e.preventDefault()
+              if (rowKey(e, id, node)) e.preventDefault()
             }}
             className={cn(
               ROW_RESET,
@@ -606,7 +627,7 @@ export function FileTree({
               className={cn(
                 LABEL,
                 taskByPath.get(id)?.status === 'done' && 'line-through',
-                ignored.has(id) && 'opacity-50',
+                (ignored.has(id) || unfinished.includes(id)) && 'opacity-50',
               )}
             >
               {label(id, node)}
@@ -622,6 +643,8 @@ export function FileTree({
         <RowMenu
           path={id}
           isFolder={node.isFolder}
+          app={node.isApp ? { open: isOpen, unfinished: unfinished.includes(id) } : null}
+          onToggleContents={() => toggle(id)}
           targets={targets(id)}
           actions={actions}
           onOpenInNewPane={onOpenInNewPane}
@@ -760,7 +783,9 @@ export function FileTree({
                 key={id}
                 // A break between the root's folders and its loose files
                 // (folders sort first), so the two groups read apart.
-                className={cn(!node.isFolder && i > 0 && data[roots[i - 1]!]?.isFolder && 'mt-3')}
+                className={cn(
+                  !isGroupFolder(node) && i > 0 && isGroupFolder(data[roots[i - 1]!]) && 'mt-3',
+                )}
               >
                 {row(
                   id,

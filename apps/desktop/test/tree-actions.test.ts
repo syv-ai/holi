@@ -39,6 +39,14 @@ describe('planMoveInto', () => {
 })
 
 describe('planDuplicate', () => {
+  it('names a bundle copy before its .app, so the copy is still an app', () => {
+    const docs = ['Budget.app/index.html', 'Budget.app/app.yaml']
+    expect(planDuplicate(docs, ['Budget.app'])).toEqual([
+      { from: 'Budget.app/index.html', to: 'Budget copy.app/index.html' },
+      { from: 'Budget.app/app.yaml', to: 'Budget copy.app/app.yaml' },
+    ])
+  })
+
   it('clones a file to its first free copy name', () => {
     expect(planDuplicate(DOCS, ['a.md'])).toEqual([{ from: 'a.md', to: 'a copy.md' }])
   })

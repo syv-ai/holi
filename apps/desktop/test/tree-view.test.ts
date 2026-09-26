@@ -18,6 +18,17 @@ describe('visibleRows', () => {
     expect(ids(['a', 'a/b'])).toEqual(['a', 'a/b', 'a/b/z.md', 'a/x.md', 'a/y.md', 'root.md'])
   })
 
+  it("shows an app's files only once it is expanded, like a folder's", () => {
+    const withApp = buildTreeData(['Budget.app/index.html', 'Budget.app/app.yaml'])
+    const rows = (open: string[]) => visibleRows(withApp, new Set(open)).map((r) => r.id)
+    expect(rows([])).toEqual(['Budget.app'])
+    expect(rows(['Budget.app'])).toEqual([
+      'Budget.app',
+      'Budget.app/app.yaml',
+      'Budget.app/index.html',
+    ])
+  })
+
   it('hides an open folder whose parent is closed', () => {
     expect(ids(['a/b'])).toEqual(['a', 'root.md'])
   })

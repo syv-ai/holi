@@ -1,6 +1,6 @@
 /**
  * The popup's glyphs, as plain SVG fragments, matching the explorer's
- * `lucide-react` icons (`features/explorer/icons.tsx`).
+ * `lucide-react` icons (`composites/file-icons.tsx`).
  *
  * Hand-copied rather than imported: a CodeMirror option is plain DOM, and
  * lucide's geometry (`__iconNode`) is reachable only by a deep `dist/` import.
