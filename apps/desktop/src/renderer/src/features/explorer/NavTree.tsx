@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
+import { fileKind } from '@holi/shared'
 import { fileIconFor } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import { Button } from '@/primitives'
@@ -143,6 +144,10 @@ export function NavTree({
     setBar(row ? { top: row.offsetTop, height: row.offsetHeight } : null)
   }, [focusRoot, data, open])
 
+  /** A note is named without its `.md`; the type glyph already says it is one. */
+  const label = (id: string, node: TreeItemData) =>
+    !node.isFolder && fileKind(id) === 'markdown' ? node.name.replace(/\.md$/i, '') : node.name
+
   /**
    * What a row leads with: a folder's chevron, or a file's type glyph in the
    * chevron's column, so the two read apart at a glance.
@@ -218,7 +223,7 @@ export function NavTree({
                     taskByPath.get(id)?.status === 'done' && 'line-through',
                   )}
                 >
-                  {node.name}
+                  {label(id, node)}
                 </span>
               </Button>
               {node.isFolder && (
@@ -284,7 +289,7 @@ export function NavTree({
                   )}
                 >
                   {lead(id, node, isOpen, id === activePath)}
-                  <span className="truncate">{node.name}</span>
+                  <span className="truncate">{label(id, node)}</span>
                 </Button>
                 {node.isFolder && (
                   // Hangs from the centre of the heading's chevron.
