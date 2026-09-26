@@ -1,14 +1,6 @@
 /**
- * The strip's drag wiring — and only the wiring.
- *
- * jsdom has neither `DragEvent` nor `DataTransfer`, and it computes no layout,
- * so every pill measures `0×0` here. What this file can honestly check is that
- * the pill offers itself to a drag, that the right payload goes on the wire,
- * that a `dragover` carrying a tab is `preventDefault`ed (without which the drop
- * never fires at all), and that a drop hands the parsed tab back.
- *
- * Where the caret actually lands is `test/tab-drop.test.ts`, on numbers. That
- * split is the whole reason `lib/tab-drop.ts` exists.
+ * The strip's drag wiring, and only the wiring: jsdom has no `DragEvent`,
+ * `DataTransfer` or layout. Where a drop lands is `test/tab-drop.test.ts`.
  */
 import { act, fireEvent, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
@@ -33,9 +25,8 @@ class FakeDataTransfer {
   }
 }
 
-/** A drag event React will route to its synthetic handlers. Built by hand
- *  rather than through `fireEvent.dragStart`, so the test does not depend on
- *  how Testing Library papers over jsdom's missing `DragEvent`. */
+/** A drag event React routes to its synthetic handlers, built by hand so the
+ *  test does not depend on how Testing Library fills in `DragEvent`. */
 function dragEvent(type: string, dataTransfer: FakeDataTransfer): Event {
   const event = new Event(type, { bubbles: true, cancelable: true })
   Object.defineProperty(event, 'dataTransfer', { value: dataTransfer })
@@ -48,9 +39,8 @@ const tabs: Tab[] = [
   { kind: 'note', path: 'notes/b.md' },
 ]
 
-/** Both pills are in the DOM: the strip lays every tab out and scrolls, so
- *  nothing is conditionally rendered any more. They all measure 0×0, which is
- *  what keeps the drop *index* out of these assertions. */
+/** Every pill is in the DOM. They all measure 0×0, which keeps the drop index
+ *  out of these assertions. */
 function strip(onDropTab = vi.fn()) {
   render(
     <TabStrip
@@ -88,9 +78,7 @@ test('the drag carries the tab’s identity under the custom MIME type', () => {
 })
 
 test('a dragover carrying a tab is accepted', () => {
-  // `preventDefault` on dragover is what makes an element a drop target at all.
-  // Without it the drop event never fires, which is the single most common way
-  // HTML5 drag-and-drop silently does nothing.
+  // Without `preventDefault` on dragover the drop event never fires.
   const { host } = strip()
   const dataTransfer = new FakeDataTransfer()
   dataTransfer.setData(TAB_MIME, '{"kind":"note","path":"notes/a.md"}')
@@ -138,17 +126,13 @@ test('a drop carrying junk is ignored rather than guessed at', () => {
 
 /* ── Auto-scroll, and the per-side counts ────────────────────────────────
  *
- * jsdom cannot *compute* layout, but a test can *supply* it. Stubbing the four
- * measurements the strip actually takes — `clientWidth` for the viewport,
- * `getBoundingClientRect` for hit-testing, and `offsetLeft`/`offsetWidth` for
- * where each pill sits in the scroll content — is enough to make the strip
- * overflow for real. What is under test here is the wiring and the state
- * machine, not the arithmetic: `test/tab-overflow.test.ts` owns which tabs are
- * off which edge, and `test/tab-drop.test.ts` owns where a drop lands.
+ * jsdom cannot compute layout, but a test can supply it: stubbing
+ * `clientWidth`, `getBoundingClientRect` and `offsetLeft`/`offsetWidth` makes
+ * the strip overflow for real. Under test is the wiring and state machine; the
+ * arithmetic is `test/tab-overflow.test.ts` and `test/tab-drop.test.ts`.
  *
- * `scrollLeft` needs supplying too. jsdom has no layout box, so scrolling an
- * element is specified to do nothing at all and the property is permanently 0 —
- * an own accessor on the host shadows it and records what the strip asks for.
+ * jsdom's `scrollLeft` is permanently 0, so an own accessor on the host
+ * records what the strip asks for.
  * ───────────────────────────────────────────────────────────────────── */
 
 /** Five tabs, 60px each, in a 200px strip: three fit, two hang off the right. */
@@ -273,9 +257,8 @@ test('hovering an end scrolls the strip, and the first step lands immediately', 
     const afterFirst = scrollLeft()
     expect(afterFirst).toBeGreaterThan(0)
 
-    // `dragover` fires continuously. A second one at the same edge must NOT
-    // re-arm: restarting the interval on each event would reset it forever and
-    // the strip would freeze one step from where it started.
+    // A second `dragover` at the same edge must not re-arm, or the interval
+    // resets forever.
     act(() => hoverRightEdge(host, dataTransfer))
     expect(scrollLeft()).toBe(afterFirst)
 
@@ -310,8 +293,7 @@ test('the scroll stops when the drag leaves, and takes its timer with it', () =>
 })
 
 test('a vertical wheel scrolls the strip sideways', () => {
-  // A mouse without a horizontal wheel would otherwise have no gesture at all,
-  // and there is nothing to scroll vertically in a one-line row.
+  // For a mouse without a horizontal wheel.
   const restore = withFakeLayout()
   try {
     const { host } = manyStrip()
@@ -333,9 +315,8 @@ test('tabs past an edge are counted on the side they went', () => {
 
     // 200px of viewport holds three 60px pills; d.md and e.md hang off the
     // right, and nothing has scrolled off the left yet.
-    // By ROLE, not by label: both controls are always in the DOM so that they
-    // can fade rather than blink, and the empty one is `aria-hidden`. A role
-    // query respects that, which is the same question a user's eyes ask.
+    // By role: both controls are always in the DOM, and a role query respects
+    // the empty one's `aria-hidden`.
     expect(screen.getByRole('button', { name: '2 tabs off the right' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /off the left/ })).toBeNull()
 
@@ -352,10 +333,8 @@ test('tabs past an edge are counted on the side they went', () => {
 })
 
 test('a count that empties fades out instead of being ripped out of the row', () => {
-  // The bug this pins: reaching the end of a scroll used to unmount the count
-  // on a single frame, and because it sat in the flex row, removing it handed
-  // ~24px back to the viewport and re-laid every pill out mid-scroll. It is now
-  // out of the layout and always mounted, so what happens is a fade.
+  // The count is out of the layout and always mounted, so reaching the end of
+  // a scroll fades it rather than unmounting it and re-laying the pills out.
   const restore = withFakeLayout()
   try {
     const { host } = manyStrip()
@@ -368,8 +347,7 @@ test('a count that empties fades out instead of being ripped out of the row', ()
 
     // Gone to the eye and to the accessibility tree...
     expect(screen.queryByRole('button', { name: /off the right/ })).toBeNull()
-    // ...but still in the DOM, still saying what it said, so it has something to
-    // fade *out*. A blank pill fading away reads as the same glitch.
+    // ...but still in the DOM with its last text, so it fades out non-blank.
     expect(document.querySelector('[aria-label="2 tabs off the right"]')).not.toBeNull()
   } finally {
     restore()
@@ -441,9 +419,7 @@ test('dragging a pill inside the strip opens a hole instead of drawing a caret',
 })
 
 test('a tab arriving from another pane still gets the caret', () => {
-  // No `dragstart` here: this strip is not the source, so it has no slot to move
-  // out of and no idea how wide the incoming pill will be. Nothing to open a
-  // hole from.
+  // No `dragstart`: this strip is not the source, so there is no hole to open.
   const restore = withFakeLayout()
   vi.useFakeTimers()
   try {
@@ -461,10 +437,8 @@ test('a tab arriving from another pane still gets the caret', () => {
 })
 
 test('a drop takes the preview away WITH its transition, so the move is not replayed', () => {
-  // The layout is about to become exactly what the preview was showing. A
-  // transform that vanished while a transition was still declared would animate
-  // back from it — the pill would jump a slot and glide home, which is the
-  // snap the preview exists to remove.
+  // The layout becomes what the preview showed. A transform removed while a
+  // transition is still declared would animate back from it.
   const restore = withFakeLayout()
   vi.useFakeTimers()
   try {
@@ -477,9 +451,8 @@ test('a drop takes the preview away WITH its transition, so the move is not repl
     act(() => void fireEvent(host, dragEvent('drop', dataTransfer)))
 
     expect(styleOf('a.md').transform).toBe('')
-    // Only the PROPERTY LIST is conditional now (duration and easing come from
-    // `motion-respond`), so the assertion is that transform has dropped OUT of
-    // it. Asserting `style.transition` is empty would pass whatever happened.
+    // Only the property list is conditional, so assert transform dropped out of
+    // it; an empty `style.transition` would pass whatever happened.
     expect(styleOf('a.md').transitionProperty).not.toContain('transform')
     expect(pillFor('a.md')).not.toHaveClass('opacity-40')
   } finally {
@@ -512,10 +485,8 @@ test('a drag that ends without a drop glides home instead of snapping', () => {
 })
 
 test('the strip reports crossings only, not every dragover', () => {
-  // The workspace hides the panes' landing strips while a drag is over a tab
-  // strip (a reorder has no business lighting up the pane below). `dragover`
-  // fires continuously, so "still here" must not reach it sixty times a second
-  // — every pane would re-render for an answer that had not changed.
+  // `dragover` fires continuously; only crossings may reach the workspace, or
+  // every pane re-renders.
   const restore = withFakeLayout()
   vi.useFakeTimers()
   try {

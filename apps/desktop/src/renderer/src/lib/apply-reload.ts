@@ -1,13 +1,10 @@
 /**
  * Apply a reload's text to the live buffer as a *co-author's* edit, not your own.
  *
- * Two things make this not-your-edit: the change is dispatched with
- * `addToHistory:false`, so ⌘Z never lands on foreign or stale text (CodeMirror
- * still remaps your own history through it, so your keystrokes stay undoable at
- * the right positions); and it is a `minimalChange` diff rather than a
- * whole-document replace, so CodeMirror's selection mapping carries the caret
- * through untouched. No `scrollIntoView`: a background reload must not move the
- * viewport. See `docs/features/editor.md`.
+ * `addToHistory:false`, so ⌘Z never lands on foreign text (your own history is
+ * still remapped through it); a `minimalChange` diff rather than a whole
+ * replace, so selection mapping keeps the caret. No `scrollIntoView`: a
+ * background reload must not move the viewport. See `docs/features/editor.md`.
  */
 import { Transaction } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'

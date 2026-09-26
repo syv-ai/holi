@@ -1,13 +1,6 @@
 /**
- * The compose intent (D71).
- *
- * A discriminated union rather than a query string, because ultramail's finding
- * was that a typo in the kind silently produced an empty composer — no error,
- * no clue, just a blank message where a reply should have been.
- *
- * Everything here is a rule about who receives a message, which is the class of
- * bug that is invisible to the sender and obvious to everybody else on the
- * thread.
+ * The compose intent (D71): rules about who receives a message, bugs invisible
+ * to the sender and obvious to everybody else on the thread.
  */
 import { describe, expect, it } from 'vitest'
 import { composeFrom, type ComposeIntent } from '../compose-intent'
@@ -52,8 +45,7 @@ describe('composeFrom — subject', () => {
   })
 
   it('leaves a subject that was already Re: Re: alone rather than tidying it', () => {
-    // Idempotent, not normalising. Rewriting somebody else's subject line
-    // changes what the thread is called for every participant.
+    // Idempotent, not normalising: tidying renames the thread for everyone.
     const intent = { ...reply(), subject: 'Re: Re: Q2 budget' } as ComposeIntent
 
     expect(composeFrom(intent, SELF).subject).toBe('Re: Re: Q2 budget')
@@ -114,9 +106,8 @@ describe('composeFrom — recipients', () => {
   })
 
   it('reply-all excludes every alias in self, not just the connected address', () => {
-    // The alias half is the one that breaks: replying to a message addressed to
-    // an alias copies the user on their own reply, and it looks like a bug in
-    // the recipient's client rather than in ours.
+    // The alias half is the one that breaks: the user would be copied on their
+    // own reply.
     const draft = composeFrom(
       reply(
         {
@@ -163,8 +154,7 @@ describe('composeFrom — recipients', () => {
   })
 
   it('drops an address the header carried no address for', () => {
-    // Rendering it as a chip would offer the user something unmailable, and
-    // sending it would fail at Google with a message about a header.
+    // An unmailable chip would fail at Google on send.
     const to = [
       { name: 'Nobody', email: '' },
       { name: 'Dan', email: 'dan@example.com' },
@@ -176,9 +166,8 @@ describe('composeFrom — recipients', () => {
   })
 
   it('still addresses the sender when replying to your own message', () => {
-    // Subtracting `self` from `to` as well would leave no recipient at all, a
-    // disabled Send, and nothing on screen saying why. An address the user can
-    // see and edit is recoverable; a silently empty field is not.
+    // Subtracting `self` from `to` would leave no recipient and an unexplained
+    // disabled Send.
     const draft = composeFrom(reply({ from: { name: 'Ada Holm', email: 'ada@syv.ai' } }), SELF)
 
     expect(draft.to.map((a) => a.email)).toEqual(['ada@syv.ai'])
@@ -227,8 +216,7 @@ describe('composeFrom — the quoted body', () => {
   })
 
   it('quotes real markdown when the parent exists only as html', () => {
-    // The correction §5 needed: a quoted table stays a table, which a
-    // blockquote of `bodyTextOf` could never manage.
+    // A quoted table stays a table.
     const html =
       '<table><thead><tr><th>a</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>'
 

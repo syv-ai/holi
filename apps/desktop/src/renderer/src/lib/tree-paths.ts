@@ -14,10 +14,8 @@ export const joinPath = (parent: string, name: string): string =>
 /**
  * Every folder between the vault root and `path`, outermost first.
  *
- * Outermost first matters: expanding a tree walks down, and a child cannot be
- * expanded before its parent has been. The path itself is not included — it is
- * the thing being revealed, not a folder on the way — and neither is the root,
- * which is not addressed by a path.
+ * Outermost first, since a child cannot expand before its parent. Excludes the
+ * path itself and the root.
  */
 export const ancestorsOf = (path: string): string[] => {
   const segments = path.split('/')
@@ -25,10 +23,8 @@ export const ancestorsOf = (path: string): string[] => {
   return segments.map((_, i) => segments.slice(0, i + 1).join('/'))
 }
 
-/** A New File / rename name, defaulted to markdown. The vault is mostly markdown,
- *  so a bare name becomes a note (`note` → `note.md`); but a typed extension is
- *  kept literally — the vault holds arbitrary files now, so `hello.json` is a real
- *  JSON file, not a coerced note (spec §Arbitrary files). */
+/** A New File / rename name, defaulted to markdown: `note` → `note.md`, but a
+ *  typed extension is kept (`hello.json` is a real JSON file). */
 export const withMdExtension = (name: string): string =>
   /\.[^./]+$/.test(name) ? name : `${name}.md`
 
@@ -59,8 +55,6 @@ export const pathTaken = (paths: Iterable<string>, path: string): boolean => {
   return false
 }
 
-/** The first non-colliding `… copy` / `… copy N` name for `path` (VS Code's
- *  Duplicate). Re-exported so the tree's own imports stay local; the rule now
- *  lives in `@holi/shared` because main applies it too, to a real directory on
- *  disk (`export-files.ts`), and the two must pick the same names. */
+/** The first non-colliding `… copy` / `… copy N` name for `path`. In
+ *  `@holi/shared` because main (`export-files.ts`) must pick the same names. */
 export { freeCopyPath } from '@holi/shared'

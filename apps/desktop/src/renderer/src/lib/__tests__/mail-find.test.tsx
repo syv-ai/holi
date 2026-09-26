@@ -27,8 +27,7 @@ describe('findIn', () => {
   })
 
   test('matches several times inside one text node', () => {
-    // The splitting is done right to left so an earlier index survives a later
-    // split. Two in one node is what catches getting that backwards.
+    // Two matches in one node catch getting the split offsets wrong.
     root.innerHTML = '<p>budget budget budget</p>'
 
     expect(findIn(root, 'budget')).toHaveLength(3)
@@ -40,7 +39,7 @@ describe('findIn', () => {
     const marks = findIn(root, 'budget')
 
     expect(marks).toHaveLength(1)
-    // Not re-cased to the search term — the message said "Budget".
+    // Not re-cased to the search term: the message said "Budget".
     expect(marks[0]!.textContent).toBe('Budget')
     expect(root.textContent).toBe('The Budget')
   })
@@ -64,10 +63,8 @@ describe('findIn', () => {
   })
 
   test('finds the same word twice in a row', () => {
-    // The regression `normalize()` exists for: unwrapping leaves the text in
-    // three adjacent nodes, and without joining them the second search cannot
-    // match a term straddling the seam. The highlight worked once and then
-    // stopped working on the same word.
+    // What `normalize()` is for: unwrapping leaves adjacent text nodes, and a
+    // second search could not match across the seam.
     root.innerHTML = '<p>the budget report</p>'
     findIn(root, 'budget')
 
@@ -79,8 +76,8 @@ describe('findIn', () => {
 
     const style = findIn(root, 'budget')[0]!.getAttribute('style')!
 
-    // Mail brings hostile CSS. A highlight a newsletter can switch off is worse
-    // than none, because the counter still claims the match is there.
+    // A highlight mail CSS can switch off is worse than none: the counter still
+    // claims the match.
     expect(style).toContain('!important')
   })
 })

@@ -1,20 +1,12 @@
 /**
  * The shortcuts the date pickers offer, resolved (D79).
  *
- * A preset is a **label and a finished stamp**: choosing "1 day before" writes
- * `2026-08-24T09:00` and you adjust from there. That is the whole trick that
- * let the reminder grammar go — the convenience of "a day before" survives, and
- * the file still says the moment rather than an offset that has to be resolved
- * against a field you could edit somewhere else.
+ * A preset is a label and a finished stamp: "1 day before" writes
+ * `2026-08-24T09:00`, so the file holds the moment, never an offset resolved
+ * against another field. `now` is passed in, for testability.
  *
- * Pure, and `now` is passed in rather than read from the clock, so this is
- * testable without a DOM or a frozen timer.
- *
- * **Two vocabularies for a reminder, and that is the point.** With a due date,
- * a reminder is naturally expressed *against* it — "1 day before". Without one
- * there is nothing to be before, so the same shortcuts read forward from now —
- * "in 1 day". The old grammar had only the first, which is why a reminder on a
- * task with no due date was silently inert.
+ * A reminder reads against the due date when there is one ("1 day before"),
+ * and forward from now when there is not ("in 1 day").
  */
 import { ANCHOR_HOUR, formatStamp, parseStamp, stampDate, stampTime } from '@holi/shared'
 import type { DatePreset } from '@/composites'
@@ -29,8 +21,7 @@ const EVENING = 18
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-/** `2026-08-24T09:00` → `24 Aug, 09:00`. What the rail shows beside a label, so
- *  choosing a shortcut is never a guess about where it lands. */
+/** `2026-08-24T09:00` → `24 Aug, 09:00`, shown beside a preset's label. */
 export function shortStamp(stamp: string): string {
   const date = stampDate(stamp)
   if (date === null) return stamp
@@ -53,19 +44,15 @@ function dayStart(stamp: string): number | null {
 }
 
 /**
- * Shortcuts for a **due date**: days, not moments. A task is due on a day
- * unless you say otherwise, so every one of these writes a timeless stamp and
- * the time row is where you add an hour if you want one.
+ * Shortcuts for a due date: timeless stamps, since a task is due on a day
+ * unless you add an hour.
  */
 export function duePresets(now: string): DatePreset[] {
   const start = dayStart(now)
   if (start === null) return []
   const day = (n: number) => formatStamp(start + n * DAY_MS, false)
 
-  // Days to the coming Monday, in a Monday-first week. On a Monday this is 7,
-  // not 0 — "next Monday" has to move, or the row does nothing. That falls out
-  // of the subtraction rather than needing a case: a mutation check proved the
-  // guard that used to be here could not change an answer.
+  // Days to the coming Monday, in a Monday-first week: 7 on a Monday, not 0.
   const weekday = (new Date(start).getUTCDay() + 6) % 7
   const untilMonday = 7 - weekday
 
@@ -81,9 +68,8 @@ export function duePresets(now: string): DatePreset[] {
 }
 
 /**
- * Shortcuts for a **reminder**: moments, always — a notification with no time
- * is not a notification. Relative to `due` when there is one, and to `now` when
- * there is not.
+ * Shortcuts for a reminder: always timed. Relative to `due` when there is one,
+ * else to `now`.
  */
 export function reminderPresets(due: string | undefined, now: string): DatePreset[] {
   const dueParsed = due === undefined ? null : parseStamp(due)
@@ -100,8 +86,7 @@ function beforeDue(due: string, dueIsTimed: boolean): DatePreset[] {
 
   return [
     preset('on the day', before(0)),
-    // Only offered when the due date names an hour — "1 hour before" a day is
-    // not a thing anyone can mean.
+    // Only when the due date names an hour.
     ...(dueIsTimed ? [preset('1 hour before', formatStamp(at.epoch - HOUR_MS, true))] : []),
     preset('1 day before', before(1)),
     preset('2 days before', before(2)),
@@ -121,8 +106,7 @@ function forwardFromNow(now: string): DatePreset[] {
 
   return [
     preset('in an hour', formatStamp(at.epoch + HOUR_MS, true)),
-    // Dropped once the evening has arrived: a shortcut that resolves to a
-    // moment already past is a row that does nothing.
+    // Dropped once the evening has passed.
     ...(at.epoch < tonight ? [preset('this evening', formatStamp(tonight, true))] : []),
     preset('tomorrow', morning(1)),
     preset('in 2 days', morning(2)),

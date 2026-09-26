@@ -27,10 +27,8 @@ export function App() {
     if (session) void loadVaults()
   }, [session, loadVaults])
 
-  // Developer → Test onboarding: walk the ritual against nothing. Subscribed
-  // unconditionally because the channel only ever fires in a dev build — main
-  // installs no Developer menu in a packaged app — which keeps the gate in one
-  // place instead of two that have to agree.
+  // Developer → Test onboarding. Subscribed unconditionally: main installs the
+  // menu only in dev builds, so the gate lives in one place.
   const [dryRunOnboarding, setDryRunOnboarding] = useState(false)
   useEffect(() => window.holi.dev.onTestOnboarding(() => setDryRunOnboarding(true)), [])
 

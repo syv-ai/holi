@@ -1,15 +1,11 @@
 /**
  * A recipient field: committed addresses as chips, plus somewhere to type.
  *
- * **A primitive because of the boundaries gate, not because it is generic.** An
- * AST selector in `eslint.config.mjs` bans native `button|input|select|
- * textarea|dialog|form` outside `primitives/`, and this needs a real `<input>`
- * to accept typing. Nothing else in the app wants a chip field.
+ * A primitive because it needs a native `<input>`, which the lint gate allows
+ * only in `primitives/`, not because it is generic.
  *
- * The rule worth stating: **a typo is refused where it was made.** An address
- * that cannot be mailed never becomes a chip, so by the time Send is pressed
- * there is nothing left to validate — which is why the composer's send path
- * checks recipients for presence and never for shape.
+ * A typo is refused where it was made: an unmailable address never becomes a
+ * chip, so the send path checks recipients for presence, never shape.
  */
 import * as React from 'react'
 import { cn } from '@/lib/cn'
@@ -18,21 +14,15 @@ import type { MailAddress } from '@/lib/mail-types'
 export interface ChipInputProps {
   value: MailAddress[]
   onChange: (next: MailAddress[]) => void
-  /**
-   * Already ranked by `google.contacts`, which puts real senders ahead of
-   * address-book entries. **Filtered here, never re-sorted** — re-sorting would
-   * throw that ranking away and put a stranger at the top.
-   */
+  /** Already ranked by `google.contacts`: filtered here, never re-sorted. */
   suggestions?: MailAddress[]
   placeholder?: string
   label: string
 }
 
 /**
- * Deliberately loose. This is a typo check, not an RFC 5322 parser: the
- * authority on whether an address exists is the mail server, and a stricter
- * pattern here would refuse legal addresses that Gmail accepts. It exists to
- * catch `ada@` and `ada syv.ai`, which are mistakes rather than exotica.
+ * Deliberately loose: a typo check (`ada@`, `ada syv.ai`), not RFC 5322. The
+ * mail server is the authority, and stricter would refuse legal addresses.
  */
 const PLAUSIBLE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -50,8 +40,7 @@ function parseOne(text: string): MailAddress | null {
   }
 
   if (!PLAUSIBLE.test(trimmed)) return null
-  // No display name was offered, so the address is the name. `MailAddress`'s
-  // contract is that `name` is what a list shows, falling back to the address.
+  // No display name, so the address is the name.
   return { name: trimmed, email: trimmed.toLowerCase() }
 }
 
@@ -97,8 +86,7 @@ export function ChipInput({
     }
     const parsed = parseOne(raw)
     if (parsed === null) {
-      // Left in the field on purpose. Clearing it would delete something the
-      // user typed, on the screen where they are least able to retype it.
+      // Left in the field so the user can fix it.
       setInvalid(true)
       return false
     }
@@ -125,8 +113,7 @@ export function ChipInput({
       return
     }
     if (event.key === 'Tab') {
-      // NOT prevented: Tab still moves on. Committing first is what stops an
-      // address being lost by leaving the field the way people leave fields.
+      // Not prevented: Tab still moves on, after committing.
       commit(text)
       return
     }
@@ -147,8 +134,7 @@ export function ChipInput({
     for (const part of parts) {
       if (part.trim() === '') continue
       const parsed = parseOne(part)
-      // An unparseable fragment stays as text rather than being dropped — a
-      // paste of six addresses where one is malformed must not lose it.
+      // An unparseable fragment stays as text rather than being lost.
       if (parsed === null) leftover.push(part.trim())
       else if (!has(value, parsed.email) && !has(added, parsed.email)) added.push(parsed)
     }
@@ -167,10 +153,9 @@ export function ChipInput({
           className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
         >
           <span data-testid="chip-name">{address.name}</span>
-          {/* The address, for a screen reader and for the accessible name. Not
-              a `title=` — the house rule bans the native tooltip — and not the
-              Tooltip primitive either, which needs a TooltipProvider ancestor
-              and would make every consumer of this primitive supply one. */}
+          {/* The address for screen readers. Not `title=` (banned), nor the
+              Tooltip primitive, which would force every consumer to supply a
+              TooltipProvider. */}
           {address.name !== address.email && <span className="sr-only">{address.email}</span>}
           <button
             type="button"
@@ -188,9 +173,8 @@ export function ChipInput({
           id={inputId}
           aria-label={label}
           aria-invalid={invalid}
-          // The listbox is not an ARIA combobox: it has no `aria-activedescendant`
-          // wiring, and claiming the role without it describes navigation that
-          // does not exist to a screen reader.
+          // Not an ARIA combobox: without `aria-activedescendant` wiring the
+          // role would describe navigation that does not exist.
           placeholder={placeholder}
           value={text}
           className={cn(
@@ -223,9 +207,8 @@ export function ChipInput({
                     'flex w-full flex-col items-start px-2 py-1 text-left text-sm',
                     index === active && 'bg-accent',
                   )}
-                  // `onMouseDown` rather than `onClick`: the input's blur fires
-                  // first otherwise, committing the typed fragment and closing
-                  // the list before the click can land.
+                  // `onMouseDown`: with `onClick` the input's blur commits and
+                  // closes the list before the click lands.
                   onMouseDown={(event) => {
                     event.preventDefault()
                     add(person)

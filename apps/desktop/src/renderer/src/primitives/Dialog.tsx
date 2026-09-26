@@ -3,32 +3,20 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { cn } from '@/lib/cn'
 
 /**
- * The dialog shell. Overlay + focus-trap + portal + Escape/backdrop-close come
- * from Radix (shadcn's dialog primitive); `size` is a guarded union (Replace
- * Primitive with Object), not a free-form string. Feature dialogs stop existing:
- * a content block fills the Header/Body/Footer slots and a registry entry supplies
- * the size. We keep this opinionated `open`/`onClose`/`size` wrapper rather than
- * shadcn's compound API — the block + registry pattern is the grilled house shape;
- * the styling below is shadcn's (animations, close button, tokens).
+ * The dialog shell: Radix (shadcn's dialog primitive) supplies overlay, focus
+ * trap, portal and Escape/backdrop close. A content block fills the
+ * Header/Body/Footer slots and a registry entry supplies the size, so this
+ * keeps an `open`/`onClose`/`size` wrapper rather than shadcn's compound API.
  */
 export type DialogSize = 'sm' | 'md' | 'lg' | 'full'
 
-// Each size is self-contained: its width AND the layout that width implies.
-// sm/md/lg are content-height form dialogs that scroll as one column; `full` is
-// a fixed-height workspace modal whose body scrolls internally, so the modal
-// itself must not become a scroll box. **`full` currently has no consumer**: the
-// vault history was the only one and became a tab, for the reason settings did.
-// Kept because it is two lines and the shape it describes is a real one, not
-// because anything needs it today.
+// Each size carries its width and the layout it implies: sm/md/lg scroll as one
+// column; `full` is a fixed-height modal whose body scrolls internally. `full`
+// currently has no consumer.
 //
-// `[&>*]:min-w-0` is load-bearing, not tidying. A grid child defaults to
-// `min-width: auto`, which refuses to shrink below its content — so one long
-// unbreakable string (a filename with no spaces) made the whole column wider
-// than the panel, and everything laid out against that column went with it. The
-// footer is `justify-end`, so its buttons aligned to the right edge of a box
-// wider than the visible panel and left the screen entirely: a confirmation
-// dialog you could read but not answer. Measured at 544px of content in a 372px
-// panel before this.
+// `[&>*]:min-w-0` is load-bearing: a grid child's `min-width: auto` let one
+// unbreakable filename widen the column past the panel, pushing the
+// `justify-end` footer buttons off screen.
 const panel: Record<DialogSize, string> = {
   sm: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-sm [&>*]:min-w-0',
   md: 'grid max-h-[85vh] gap-4 overflow-y-auto p-6 max-w-md [&>*]:min-w-0',
@@ -41,13 +29,8 @@ type DialogProps = {
   onClose: () => void
   size?: DialogSize
   /**
-   * Show the corner ✕. Default true.
-   *
-   * Off when the dialog's own footer already offers a way out — a Cancel button
-   * beside a corner ✕ is two controls for one intent, and the ✕ is the one with
-   * no label. It stays the default because a dialog without a footer — which a
-   * `full`-size workspace modal has no room for — has nothing else offering a
-   * way out; Esc and click-outside work either way, but neither is visible.
+   * Show the corner ✕. Default true, since Esc and click-outside are not
+   * visible. Turn it off when the footer already has a Cancel.
    */
   closable?: boolean
   children: React.ReactNode
@@ -80,15 +63,8 @@ export function Dialog({
           aria-describedby={undefined}
           className={cn(
             'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
-            // `bg-popover`, like every other floating surface in the app (the
-            // context menu, the dropdown). It used to be `bg-background` — the
-            // PAGE's own colour — separated from the page by a hairline border
-            // and a shadow at 0.1 alpha, which on a near-black background left
-            // it reading flat rather than raised. The overlay was carrying that
-            // job alone, and `bg-black/50` over an already-black app dims very
-            // little. The border goes with it: a raised surface with its own
-            // shadow does not need a second edge, which is the reasoning the
-            // popover shadow's own comment in index.css already records.
+            // `bg-popover` and a shadow, no border, like every floating surface:
+            // the page colour read flat on a near-black app.
             'rounded-lg bg-popover',
             'text-sm text-popover-foreground shadow-popover outline-none',
             // Motion from the shared tier (index.css): fade + slight zoom on the token easing.
@@ -121,13 +97,8 @@ Dialog.Header = function DialogHeader({
   children: React.ReactNode
 }): React.JSX.Element {
   return (
-    // `break-words` because a header names things the user chose the name of —
-    // a note, a file, a vault — and those arrive with no spaces to wrap at.
-    //
-    // `pr-6` reserves the close button's corner. It is absolutely positioned, so
-    // it takes no space in flow and a long title ran straight underneath it —
-    // invisible until a title was long enough to reach, which is exactly when
-    // the title matters most.
+    // `break-words`: user-chosen names arrive with no spaces to wrap at.
+    // `pr-6` reserves the absolutely positioned close button's corner.
     <DialogPrimitive.Title className="min-w-0 break-words pr-6 text-sm font-medium text-foreground">
       {children}
     </DialogPrimitive.Title>

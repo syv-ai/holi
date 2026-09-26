@@ -1,9 +1,8 @@
 /**
  * The sentence the sign-out dialog shows when "also delete local clones" would
- * throw away commits that were never pushed (FR-15). Advisory, not a guarantee:
- * the summary is best-effort (a clone whose status can't be read is simply
- * absent), so the copy warns rather than promises. `null` = nothing to warn
- * about, and the dialog shows no warning at all.
+ * throw away commits that were never pushed. Advisory: the summary is
+ * best-effort (an unreadable clone is absent), so the copy warns rather than
+ * promises. `null` means no warning.
  */
 export interface UnpushedEntry {
   remote: string

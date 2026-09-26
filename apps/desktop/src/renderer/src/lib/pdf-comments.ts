@@ -2,10 +2,9 @@
  * The open PDF's comment threads, read from the viewer's own store, for an ask
  * sent from the top bar (D106).
  *
- * The store rather than the file, so a mark made a moment ago is in the ask
- * before its one-second save. The threads themselves, and how they are written
- * down, are `@holi/shared`'s: `holi pdf comments` reads the saved file through
- * the same rules, so the two read alike.
+ * The store rather than the file, so a mark made a moment ago is included
+ * before its save. Threading rules are `@holi/shared`'s, shared with
+ * `holi pdf comments`.
  */
 import {
   commentThreads,

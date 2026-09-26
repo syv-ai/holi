@@ -1,24 +1,14 @@
 /**
  * Making a PDF's marks read-only, as pure rules.
  *
- * A whole-document toggle on the viewer's top bar sets or clears the PDF
- * `readOnly` annotation flag on every mark, comment and signature. It is part of
- * the PDF specification (ISO 32000): the viewer honours it by making an
- * annotation unselectable, so it cannot be moved, edited or deleted, and other
- * readers honour it too. Anyone may do either; a mark added afterwards stays
- * editable until the next toggle. There is no record of Holi's own beside the
- * flags: they are the state, read back from the viewer's store.
- *
- * Why a whole-document toggle and not a per-mark one: a `readOnly` annotation
- * cannot be selected, so nothing on the mark itself could clear the flag again.
- *
- * No React, no DOM: `features/files/PdfDocument` consumes this,
- * `test/pdf-read-only.test.ts` pins it.
+ * A whole-document toggle sets or clears the PDF spec's `readOnly` annotation
+ * flag (ISO 32000) on every mark, comment and signature; other readers honour
+ * it too. The flags are the only state. Whole-document because a `readOnly`
+ * annotation cannot be selected, so nothing on it could clear the flag.
  */
 
-/** The two commands, one per direction, each shown only when it applies: a
- *  viewer command's label is fixed text, so one toggling command could not
- *  say which way it goes. */
+/** One command per direction: a viewer command's label is fixed, so one toggle
+ *  could not say which way it goes. */
 export const MAKE_READ_ONLY = 'holi:make-marks-read-only'
 export const MAKE_EDITABLE = 'holi:make-marks-editable'
 
@@ -65,9 +55,8 @@ export function readOnlyState(marks: readonly Pick<Mark, 'type' | 'flags'>[]): {
 }
 
 /**
- * The document's annotations out of the viewer's store, which is what a
- * command's dynamic state is handed. Read there rather than kept by Holi, so
- * the button follows every change the viewer makes without being told.
+ * The document's annotations out of the viewer's store, so the button follows
+ * every change the viewer makes.
  */
 export function marksIn(state: unknown, documentId: string): Mark[] {
   const byUid = (

@@ -1,18 +1,12 @@
 /**
  * Which tabs are out of reach, and on which side.
  *
- * The strip scrolls: every pill is laid out and a viewport moves over them, so
- * the question is no longer *which tabs survive a clip* (that was
- * `tab-window.ts`, and it is gone) but *what is currently off each edge*. Two
- * answers, not one — a single count cannot say which way your tab went, and a
- * strip that has scrolled has tabs on both sides of you.
- *
- * Pure, and tested on numbers: jsdom computes no layout, so a rendered strip
- * measures 0×0 and could not check any of this. Same split `tab-drop.ts` makes.
+ * One answer per side: a single count cannot say which way your tab went. Pure,
+ * because jsdom computes no layout.
  */
 
-/** A laid-out pill, in the scroll container's **content** coordinates — i.e.
- *  `offsetLeft`/`offsetWidth`, which do not move when the strip is scrolled. */
+/** A laid-out pill, in the scroller's content coordinates (`offsetLeft`), which
+ *  do not move when the strip scrolls. */
 export interface PillSpan {
   left: number
   width: number
@@ -24,22 +18,17 @@ export interface Offscreen {
   right: number[]
 }
 
-/** Slack for fractional layout. Real pill widths are not integers, and a pill
- *  ending a third of a pixel past the edge is visible, not missing. */
+/** Slack for fractional layout: a third of a pixel past the edge is visible. */
 const EPSILON = 1
 
 /**
  * The tabs you cannot fully read at this scroll position.
  *
- * **Partly visible counts as offscreen.** The count exists to answer "is there
- * more that way, and how much", and half a filename answers neither — so a pill
- * the viewport cuts is listed, and clicking it in the menu is what brings it
- * fully into view. A pill clipped at *both* edges (wider than the viewport) is
- * reported on the left, since that is the direction its start lies in.
+ * Partly visible counts as offscreen: half a filename is not readable, and the
+ * menu brings it into view. A pill clipped at both edges is reported left.
  *
- * An unmeasured strip (`viewport <= 0`, before the first ResizeObserver
- * callback) reports nothing. The alternative is a count that flashes on mount
- * saying every tab is missing.
+ * An unmeasured strip (`viewport <= 0`) reports nothing, or every tab would
+ * flash as missing on mount.
  */
 export function offscreenTabs(pills: PillSpan[], scrollLeft: number, viewport: number): Offscreen {
   const left: number[] = []

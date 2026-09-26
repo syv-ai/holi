@@ -8,17 +8,12 @@ import { cn } from '@/lib/cn'
  * shadcn's Command (registry `command`, shadcn 4.21, cmdk 1.1.1), for the
  * palette (D102). Every export is the registry's, with one exception:
  *
- * **`CommandDialog` composes Radix directly.** The registry item builds it from
- * shadcn's compound `Dialog`/`DialogContent`/`DialogHeader`, which this repo
- * deliberately does not have — `Dialog.tsx` is an opinionated
- * `{open, onClose, size}` wrapper, and a palette is a different overlay class
- * from a form dialog: top-anchored, no dimmed backdrop, no close button,
- * VS Code's shape. Radix still gives it the portal, focus trap, Escape and
- * focus return; the overlay is transparent so a click outside closes without
- * ever having darkened the page.
+ * `CommandDialog` composes Radix directly: this repo has no compound shadcn
+ * `Dialog`, and a palette is a different overlay from a form dialog
+ * (top-anchored, no dimmed backdrop, no close button). The overlay is
+ * transparent so a click outside still closes.
  *
- * Filtering is the caller's: the palette runs `shouldFilter={false}` and ranks
- * with the same pure function its node tests use (`lib/palette-rows.ts`).
+ * Filtering is the caller's (`lib/palette-rows.ts`, `shouldFilter={false}`).
  */
 function Command({
   className,
@@ -116,10 +111,8 @@ function CommandInput({
 
 /**
  * Mark on `frame` which edges of the scroller `ref` have rows beyond them, so
- * `.scroll-edges` (index.css) can shade them. Re-measured on scroll and
- * whenever the content resizes, which is what a filtered list does on every
- * keystroke. The marks go on the frame around the scroller rather than on it,
- * so the shade can span the scrollbar's gutter.
+ * `.scroll-edges` (index.css) can shade them. Re-measured on scroll and on
+ * content resize (every filter keystroke).
  */
 function useScrollEdges(
   ref: React.RefObject<HTMLDivElement | null>,
@@ -159,9 +152,7 @@ function CommandList({
       <CommandPrimitive.List
         ref={ref}
         data-slot="command-list"
-        // Taller than the registry's 300px, and the scrollbar is always painted
-        // (`.scrollbar-always`, index.css) so the list's length can be read off
-        // the thumb rather than discovered by scrolling.
+        // Always-painted scrollbar, so the list's length reads off the thumb.
         className={cn(
           'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
           className,

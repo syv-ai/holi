@@ -1,23 +1,16 @@
 /**
- * The order of cards inside one board cell (`features/tasks.md`).
- *
- * A cell is `(column, lane)`, and a card's place in it is its `order` — a
- * sparse rank in the task's own frontmatter. Sorting lives here rather than in
- * the view because it is a rule with two halves worth stating: **absent sorts
- * last**, and **ties break by title**.
+ * The order of cards inside one board cell (`docs/features/tasks.md`). A cell is
+ * `(column, lane)`; a card's place is its `order`, a sparse rank in its own
+ * frontmatter.
  */
 import { rankBetween, type Task } from '@holi/shared'
 
 /**
  * Cards in the order the column shows them.
  *
- * Unranked last: that is where a task the agent just wrote belongs — at the
- * bottom, not above everything a person deliberately placed. Reading absent as
- * rank zero would do exactly that.
- *
- * Then title, because a comparator that returns 0 leaves the order to the input
- * and the input is a filesystem scan. Without the tiebreak the board reshuffles
- * on an unrelated rescan, which reads as the board losing your work.
+ * Unranked last, so a task the agent just wrote does not jump above cards a
+ * person placed. Then title: otherwise the order is the filesystem scan's, and
+ * the board reshuffles on unrelated rescans.
  */
 export function sortCell(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => {
@@ -34,9 +27,8 @@ export function sortCell(tasks: Task[]): Task[] {
  * The rank a dragged card takes when it is dropped on `targetPath`, or **null**
  * when the drop would not move it.
  *
- * The dragged card is taken out of the cell before the neighbours are read —
- * without that, dropping a card just below the one above it would compute a
- * rank between itself and its neighbour and land it back where it started.
+ * The dragged card is removed before reading neighbours, or it would rank
+ * against itself.
  */
 export function reorderRank(
   cell: Task[],
@@ -51,15 +43,10 @@ export function reorderRank(
 
   const at = before ? target : target + 1
 
-  // A drag that ends where it started is the commonest miss, and every rank
-  // written is a file rewritten. The test is **positional**, not numeric: the
-  // rank a no-op computes is not always the one the card already holds (drop
-  // `1.5` back between `1` and `3` and the midpoint is `2`), but the sequence
-  // it produces is the one already on screen.
-  // `without` is `sorted` with the dragged card removed, so re-inserting it at
-  // its own old index reproduces the old sequence exactly — and any other index
-  // does not. Widening this by one in either direction swallows a real move:
-  // dropping the first card below the second reads as "already there".
+  // A no-op drop must write no file. The test is positional, not numeric: a
+  // no-op can compute a different rank (`1.5` between `1` and `3` gives `2`).
+  // Re-inserting at its old index reproduces the old sequence, and no other
+  // index does; widening by one would swallow a real move.
   const wasAt = sorted.findIndex((t) => t.path === draggedPath)
   if (wasAt === at) return null
 

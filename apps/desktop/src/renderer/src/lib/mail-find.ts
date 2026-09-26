@@ -1,27 +1,16 @@
 /**
  * Finding a word inside a document that is not the app's.
  *
- * A mail body lives in its own sandboxed frame ([[mail-frame]]), so "find in
- * this thread" is not one search over one DOM — it is one search per message,
- * each in a separate document, and the results have to be ordered as the
- * messages are. That coordination belongs to the component; what belongs here
- * is the half that has no React and no iframes in it: given *a* document, mark
- * the matches and give them back in order.
+ * Each mail body is its own sandboxed frame (`mail-frame.ts`), so find runs
+ * per document; the component orders results across messages. This is the
+ * React-free half: mark the matches in one document and return them in order.
  *
- * **Marks are real elements, not a `CSS.highlights` range.** The Custom
- * Highlight API would be tidier and does not survive what actually happens
- * here: the frame's document is rewritten whenever the theme or the image
- * policy changes, and a highlight registry lives on the window, so the two go
- * out of step invisibly. An element in the tree goes away with the tree it was
- * in, which is the behaviour that cannot desynchronise.
+ * Marks are real elements, not `CSS.highlights`: the frame document is
+ * rewritten on theme or image-policy changes while a highlight registry lives
+ * on the window, so the two desynchronise invisibly.
  *
- * **The mark carries its own colours with `!important`.** Mail brings hostile
- * CSS — a newsletter setting `mark { background: none }` is not hypothetical,
- * and a highlight the message can turn off is worse than none, because the
- * counter still says the match is there.
- *
- * Nothing here fetches, and nothing here is given untrusted *strings* — the
- * documents it walks have already been through the sanitiser.
+ * Mark colours are `!important`: mail CSS can hide `mark`, and a hidden match
+ * the counter still reports is worse than none.
  */
 
 /** The attribute every mark carries, so clearing can find them all again. */
@@ -29,18 +18,15 @@ const MARK_ATTR = 'data-holi-find'
 /** Set on the one match the user is standing on. */
 const ACTIVE_ATTR = 'data-holi-find-active'
 
-/** Inline styles rather than a class: the frame document has no stylesheet of
- *  ours, and adding one per message is more moving parts than two attributes. */
+/** Inline styles: the frame document has no stylesheet of ours. */
 const MARK_STYLE = 'background:#fde047!important;color:#111827!important'
 const ACTIVE_STYLE = 'background:#fb923c!important;color:#111827!important'
 
 /**
  * Every text node worth searching.
  *
- * `SCRIPT` and `STYLE` cannot appear — the sanitiser forbids both — but a
- * previous run's own `<mark>` elements can, which is why clearing happens
- * before finding rather than being merged into it. Searching over marked text
- * would nest marks and make the second search's offsets meaningless.
+ * `SCRIPT` and `STYLE` cannot appear (sanitised). A previous run's marks can,
+ * which is why `findIn` clears first: marks would otherwise nest.
  */
 function textNodesIn(root: Node, doc: Document): Text[] {
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT)
@@ -56,13 +42,8 @@ function textNodesIn(root: Node, doc: Document): Text[] {
 /**
  * Mark every occurrence of `term` under `root`, in document order.
  *
- * Case-insensitive, and matches are found **within a single text node**. A term
- * split across an element boundary (`he<b>llo</b>`) is not found, which is what
- * every in-page find in a browser also does — reassembling the visible string
- * across elements would mean deciding where a mark starts and ends across a
- * tree, for a case that does not arise in prose.
- *
- * Returns the mark elements, so the caller can count them and scroll to one.
+ * Case-insensitive, within a single text node: a term split across elements
+ * (`he<b>llo</b>`) is not found.
  */
 export function findIn(root: Element, term: string): HTMLElement[] {
   clearIn(root)
@@ -72,14 +53,12 @@ export function findIn(root: Element, term: string): HTMLElement[] {
   const needle = term.toLowerCase()
   const marks: HTMLElement[] = []
 
-  // Collected BEFORE mutating: splitting a text node inserts new ones, and a
-  // live walker would then walk into the text it had just marked.
+  // Collected before mutating, or a live walker walks into its own marks.
   for (const node of textNodesIn(root, doc)) {
     const text = node.nodeValue ?? ''
     const haystack = text.toLowerCase()
     if (!haystack.includes(needle)) continue
 
-    // Right to left, so an earlier index is still valid after a later split.
     const starts: number[] = []
     let at = haystack.indexOf(needle)
     while (at !== -1) {
@@ -112,10 +91,8 @@ export function findIn(root: Element, term: string): HTMLElement[] {
 /**
  * Undo every mark, and put the text back the way it was.
  *
- * `normalize()` is the part that matters and the part that is easy to leave
- * out: unwrapping a mark leaves the text in three adjacent nodes, and a second
- * search would then be unable to match a term that straddles the seam — the
- * highlight would work once and then stop working on the same word.
+ * `normalize()` matters: unwrapping leaves adjacent text nodes, and a later
+ * search could not match across the seams.
  */
 export function clearIn(root: Element): void {
   for (const mark of root.querySelectorAll(`[${MARK_ATTR}]`)) {

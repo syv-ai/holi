@@ -1,15 +1,8 @@
 /**
- * What the embedded PDF viewer may do, as data (D103).
- *
- * embedpdf's ready-made viewer ships a toolbar and a commands plugin that binds
- * shortcuts on `document`. What about it is Holi's to decide lives here as
- * pure values so a node test can hold them still: which command categories are
- * switched off, how its palette is fed from Holi's theme tokens, the CSS put
- * into its shadow root, the zoom a document opens at, and how a keydown is
- * spelled the way its shortcut table spells one.
- *
- * No React, no DOM globals beyond the `KeyboardEvent` type: `features/files/`
- * consumes this, `test/pdf-viewer-config.test.ts` pins it.
+ * What the embedded PDF viewer (embedpdf) may do, as pure data (D103), so a
+ * node test can pin it: disabled command categories, the palette in Holi's
+ * tokens, the CSS put into its shadow root, the opening zoom, and keydown
+ * spelling. No React, no DOM globals beyond the `KeyboardEvent` type.
  */
 import { DRAWER_WIDTH } from './drawer'
 import { ASK_AGENT_PDF, ASK_AGENT_THREAD } from './pdf-comments'
@@ -18,20 +11,15 @@ import { MAKE_EDITABLE, MAKE_READ_ONLY } from './pdf-read-only'
 /**
  * Disabled by category, which removes the command AND its shortcut together.
  *
- * The first block is what would collide: `document-open` is ⌘O and a file
- * picker; `document-print` is ⌘P, which the plugin would `stopPropagation` on
- * before Holi's palette saw it; `document-close` is ⌘W, which is a menu
- * accelerator and closes Holi's tab, not the viewer's document; `capture` is
- * ⌘⇧S. The second block is what a pane is not for: exporting, protecting,
- * fullscreen, the hamburger menu they hang from, and the annotation families
- * outside "highlight and mark up": redaction, stamps, forms, and the Insert
- * tab's rubber stamp, image and attachment. Signatures are the one Insert item
- * kept (D104), and they sit on the top bar (`withHoliButtons`), so the
- * Insert tab itself (`mode-insert`) goes as well: it would only repeat them.
+ * The first block would collide with Holi: ⌘O, ⌘P (the plugin would
+ * `stopPropagation` before the palette saw it), ⌘W (closes Holi's tab) and
+ * ⌘⇧S. The second is what a pane is not for: export, protect, fullscreen,
+ * their menu, and annotation families outside highlight and mark-up.
+ * Signatures are the one Insert item kept (D104) and sit on the top bar, so
+ * the Insert tab (`mode-insert`) goes too.
  *
- * The names are the viewer's own, read from its commands and UI schema, and a
- * name that matches nothing fails silently: this list once said `signature`,
- * which is not a category, and the whole Insert tab leaked in through it.
+ * The names are the viewer's own, and a name that matches no category fails
+ * silently.
  */
 export const PDF_DISABLED_CATEGORIES: readonly string[] = [
   'document-open',
@@ -59,12 +47,10 @@ const v = (slug: string): string => `var(--${slug})`
 /**
  * The viewer's palette, in Holi's tokens.
  *
- * Its UI is Preact inside a shadow root, but the palette is a token map written
- * as `--ep-*` custom properties on that root, and a custom property inherits
- * across the shadow boundary — so a value of `var(--background)` is accepted
- * verbatim and resolves to whatever the vault's theme (D64) put on the document
- * root. The same map serves light and dark because the variables already flip
- * with the mode; only `preference` carries the mode itself.
+ * The palette becomes `--ep-*` custom properties on the viewer's shadow root,
+ * and custom properties inherit across the shadow boundary, so
+ * `var(--background)` resolves to the vault's theme (D64). The same map serves
+ * light and dark because the variables already flip with the mode.
  */
 export function pdfViewerTheme(mode: 'light' | 'dark') {
   const colors = {
@@ -128,101 +114,69 @@ export function pdfViewerTheme(mode: 'light' | 'dark') {
 /**
  * The page before it is painted, in Holi's tokens instead of white.
  *
- * embedpdf's page renderer hard-codes `backgroundColor: "#fff"` inline on every
- * page wrapper, with no config for it, and PDFium's bitmap arrives some tens of
- * milliseconds later. On a dark PDF that gap is a white flash. The bitmap is
- * rendered onto opaque white paper of its own (the engine fills it before
- * drawing), so the wrapper is only ever a placeholder and a white PDF still
- * looks white. Put into the viewer's shadow root, where `!important` beats
- * the inline style; the selector is the library's own white, so it catches
- * every place it paints one and nothing else.
+ * embedpdf hard-codes an inline white background on every page wrapper, and
+ * PDFium's bitmap arrives tens of milliseconds later: a white flash on a dark
+ * theme. The bitmap carries its own white paper, so the wrapper is only a
+ * placeholder. `!important` beats the inline style.
  */
 export const PDF_PAGE_PLACEHOLDER_CSS = `[style*="background-color: rgb(255, 255, 255)"] { background-color: ${v('muted')} !important; }`
 
 /**
  * The page scroller keeps room for its scrollbar from the start.
  *
- * The scrollbar appears only once the pages lay out taller than the pane, and
- * takes its width from the viewport. The viewer recomputes fit-width on that
- * resize, 150 ms later, which on a narrow pane was a visible second zoom
- * during the arrival fade (93.9% to 92.5%). A stable gutter means the width
- * the first fit-width sees is the width it keeps. The scroller is the
- * viewport, painted `bg-bg-app` with an inline `overflow: auto`.
+ * Otherwise the scrollbar appearing narrows the viewport and the viewer
+ * recomputes fit-width 150 ms later: a visible second zoom. The scroller is
+ * the element painted `bg-bg-app` with an inline `overflow: auto`.
  */
 export const PDF_VIEWPORT_CSS = `.bg-bg-app[style*="overflow: auto"] { scrollbar-gutter: stable; }`
 
 /**
  * No lines between regions, the way Holi's own chrome has none.
  *
- * The viewer draws a rule under each toolbar, beside each sidebar, between
- * sections of its panels and menus, and around floating things like the page
- * pill, all as `border-border-default` or `-subtle`; the dividers between
- * toolbar groups are 1px boxes painted `bg-border-default`. Those go clear.
- * Dividers stay as space, so the toolbar keeps its rhythm, and a menu or the
- * page pill is separated from the page by the shadow it already has, which is
- * how Holi's own menus and tooltips are drawn. Form controls keep their
- * outline, dimmed to `--divider`: every one sits on `bg-bg-input`, and an input
- * with no edge is hard to find. The dimming stands aside under `:focus`, so a
- * focused field still brightens to its accent. The selectors' two classes
- * outrank the single-class utilities they override, so no `!important`.
+ * The viewer's rules (`border-border-*`) and 1px group dividers
+ * (`bg-border-default`) go clear; dividers stay as space, and floating things
+ * keep their shadow. Form controls (all on `bg-bg-input`) keep an outline
+ * dimmed to `--divider`, except under `:focus`. Two-class selectors outrank
+ * the utilities they override, so no `!important`.
  */
 export const PDF_BORDERLESS_CSS = [
   ':is(.border-border-default, .border-border-subtle):not(.bg-bg-input) { border-color: transparent; }',
   ':is(.w-px, .h-px).bg-border-default { background-color: transparent; }',
   '.ring-border-default { --tw-ring-color: transparent; }',
   `.bg-bg-input.border-border-default:not(:focus) { border-color: ${v('divider')}; }`,
-  // A toolbar button is selected (the pointer, pan) or hovered by its
-  // background alone: the 1px ring both drew is a Tailwind `--tw-ring`, a
-  // box-shadow keyed on this colour, and the mode select's edge an outline.
-  // The selected one also had a drop shadow of its own, and drew its icon in
-  // the accent, blue on the blue selection: its icon is the foreground, like
-  // every other button's. A mode tab is `text-accent` with no background, so
-  // its underline and text still mark it.
+  // A toolbar button shows selected or hovered by background alone: no ring
+  // (a `--tw-ring` box-shadow), no drop shadow, and a foreground icon rather
+  // than accent on the accent selection. A mode tab has no background, so its
+  // `text-accent` underline still marks it.
   'button:is(.ring-accent, .hover\\:ring-accent:hover) { --tw-ring-color: transparent; }',
   'button.ring-accent { box-shadow: none; }',
   `button.bg-interactive-selected.text-accent { color: ${v('foreground')}; }`,
-  // The zoom group (level select, zoom out, zoom in) sat on the hover colour
-  // at rest, so it read as a grey block on the toolbar. It stands on the
-  // toolbar's own colour; its buttons still take the hover fill. The only
-  // other static uses of the class are buttons (a menu's highlighted row, the
-  // comment Cancel), where the fill is the state, so the rule names the div.
+  // The zoom group's div sits on the hover colour at rest. Only the div: on
+  // buttons that class is their state.
   'div.bg-interactive-hover { background-color: transparent; }',
   '.outline-border-default { outline-color: transparent; }',
-  // A sidebar (thumbnails, signatures, search, comments) lies flat on the
-  // pane, `--background` with nothing between them, the way Holi's own file
-  // tree does; the viewer drew a border on `surface`. Nothing inside it has an
-  // edge either, a selected search hit included, except a form field's dimmed
-  // outline.
+  // A sidebar lies flat on the pane like Holi's file tree. Nothing inside has
+  // an edge except a form field's dimmed outline.
   `[data-sidebar-id], [data-sidebar-id] .bg-bg-surface { background-color: ${v('background')}; }`,
   '[data-sidebar-id] :not(input, textarea) { border-color: transparent !important; }',
-  // Nor a ring or a shadow: the selected comment drew a 2px focus-ring blue
-  // ring, the comment and edit fields a ring on focus, the cards a shadow. A
-  // menu floating over the panel (`bg-bg-elevated`) keeps its shadow, which is
-  // what lifts it off the panel. The selected comment is marked by colour,
-  // and a field keeps its dimmed edge whether focused or not.
+  // Nor a ring or shadow, except a floating menu (`bg-bg-elevated`). The
+  // selected comment is marked by colour.
   '[data-sidebar-id] :not(.bg-bg-elevated) { box-shadow: none !important; }',
   `[data-sidebar-id] .ring-interactive-focus-ring { background-color: ${v('accent')}; }`,
   `[data-sidebar-id] :is(input, textarea) { border-color: ${v('divider')} !important; }`,
-  // A comment card leads with its author's name, not a circle: the viewer
-  // drew the mark's type icon in one beside each comment, and each reply's
-  // initials on a colour picked from the name's first letter.
+  // A comment card leads with its author's name: hide the viewer's type-icon
+  // and initials circles.
   '[data-sidebar-id="comment-panel"] .rounded-full:is(.bg-bg-surface-alt, .text-white) { display: none; }',
-  // Each page's heading ("Page 9", "3 comments") starts where the comments
-  // under it do: the cards' text is inset by their 1px edge, clear now, and
-  // their 1rem padding, past the heading's own 0.25rem.
+  // Align each page heading with the cards' text (1px edge + 1rem padding).
   '[data-sidebar-id="comment-panel"] .sticky.top-0:has(h3) { padding-inline-start: calc(0.25rem + 1px + 1rem); }',
 ].join('\n')
 
 /**
  * Holi's scrollbar, inside the viewer.
  *
- * `index.css` styles every scrollbar in the app with a bare `::-webkit-scrollbar`
- * rule, but a document stylesheet does not reach into a shadow root, so the
- * viewer kept its own: 8px, always painted. This is Holi's shape again (10px, a
- * clear track, a thumb inset from the edge that shows while the pointer is over
- * the scroller) written against `:host *`, the same selector as the viewer's
- * rule it replaces, and later in the root so it wins. The colours are the
- * palette's `scrollbar` group.
+ * `index.css`'s scrollbar rule does not reach into a shadow root, so this
+ * repeats Holi's shape against `:host *`, the viewer's own selector, and wins
+ * by coming later.
  */
 export const PDF_SCROLLBAR_CSS = [
   ':host *::-webkit-scrollbar { width: 10px; height: 10px; }',
@@ -234,50 +188,35 @@ export const PDF_SCROLLBAR_CSS = [
 /**
  * The Create Signature dialog (D104).
  *
- * Its panel painted `surface`, which is the pane's colour here, so it sat on
- * the page with nothing to lift it; it is Holi's dialog surface, `--popover`,
- * as `primitives/Dialog.tsx` is. Its three places to make a signature (the
- * Draw canvas, the Type field, the Upload zone) were outlined, and the
- * borderless rules took the outlines away. They are paper instead, because a
- * signature is black ink: drawn, typed or uploaded, the mark was invisible on
- * a dark pad. `light-dark()` picks by the colour scheme the viewer inherits
- * from the root, so dark mode gets white paper and light mode, whose dialog is
- * already white, gets `--muted`. White is the one literal in these rules, and
- * it is the paper, not chrome, for the same reason PDFium paints pages white.
+ * The panel is Holi's dialog surface, `--popover`. The Draw, Type and Upload
+ * areas are paper, because a signature is black ink and was invisible on a
+ * dark pad: white in dark mode, `--muted` in light. White is the one literal,
+ * as the paper, not chrome.
  *
- * The Upload zone showed a file dragged over it by its border; that is now
- * `--selection`. One class more than the paper rule, because `:is()` takes
- * its most specific argument and would otherwise win.
+ * A drag over the Upload zone shows as `--selection`; one class more than the
+ * paper rule, because `:is()` takes its most specific argument.
  */
 const SIGNATURE_HEADER = '[data-sidebar-id="signature-panel"] .border-b.p-3:has(> h2)'
 export const PDF_SIGNATURE_DIALOG_CSS = [
   `.bg-bg-overlay > .bg-bg-surface { background-color: ${v('popover')}; }`,
   `.bg-bg-overlay :is(canvas.border-border-default, .border-dashed.border-border-default, .border-border-default:has(> input[type="text"])) { background-color: light-dark(${v('muted')}, white); }`,
   `.bg-bg-overlay .border-dashed.border-border-default.border-accent { background-color: ${v('selection')}; }`,
-  // The panel's header is one row: the title, and Create New Signature as a
-  // plus beside it rather than a full-width bar under it, drawn like the top
-  // bar's icon buttons: 32px, no fill until hovered, the icon in the
-  // foreground at the weight of the viewer's 20px icons. It is still the
-  // viewer's own button, so its action, focus and accessible name (the text,
-  // kept at no size) are unchanged. The plus is two bars in the foreground.
+  // The header is one row: the title, and Create New Signature restyled as a
+  // plus icon button (two gradient bars). It is still the viewer's button, so
+  // its action, focus and accessible name (text at font-size 0) are intact.
   `${SIGNATURE_HEADER} { display: flex; align-items: center; justify-content: space-between; gap: 8px; }`,
   `${SIGNATURE_HEADER} > button { flex: none; width: 32px; height: 32px; margin: 0; padding: 0; border-radius: 6px; font-size: 0; background-color: transparent; background-image: linear-gradient(${v('foreground')}, ${v('foreground')}), linear-gradient(${v('foreground')}, ${v('foreground')}); background-size: 12px 1.5px, 1.5px 12px; background-position: center; background-repeat: no-repeat; }`,
   `${SIGNATURE_HEADER} > button:hover { background-color: ${v('accent')}; }`,
-  // `PDF_SIGNATURE_NOTE`, at the foot of the Signatures panel. Tailwind's
-  // classes do not reach into the shadow root, so its look is here.
+  // `PDF_SIGNATURE_NOTE`: Tailwind does not reach into the shadow root.
   `.holi-signature-note { margin: 0; padding: 12px 16px; font-size: 12px; line-height: 1.5; color: ${v('muted-foreground')}; }`,
 ].join('\n')
 
 /**
  * The viewer's fonts, none of them fetched.
  *
- * Left to itself the viewer adds Google Fonts stylesheets to Holi's page: Open
- * Sans for its UI whenever it starts, and Caveat, Dancing Script, Great Vibes
- * and Pacifico for typed signatures when that dialog opens. That is a request
- * on every PDF, from an app whose viewer was chosen partly for making none.
- * The UI is Holi's own font instead, and the four script faces are bundled
- * with the app (`@fontsource/*`, OFL-1.1, imported by `PdfDocument`) under the
- * family names the viewer already lists, so its font picker is unchanged.
+ * Left alone the viewer fetches Google Fonts on every PDF. The UI uses Holi's
+ * font, and the four signature script faces are bundled (`@fontsource/*`,
+ * imported by `PdfDocument`) under the family names the viewer lists.
  */
 export const PDF_FONTS = {
   ui: { family: 'var(--font-sans)', stylesheetUrl: null },
@@ -286,8 +225,7 @@ export const PDF_FONTS = {
 
 /**
  * The bundled script faces, by the family names the viewer lists. Loaded when
- * the signature panel opens: the viewer used to load them with the Google
- * stylesheet, and without that nothing asks for them before the Type tab's
+ * the signature panel opens: nothing else asks for them before the Type tab's
  * canvas draws, so a quickly typed signature could be saved in a fallback face.
  */
 export const PDF_SIGNATURE_FONT_FAMILIES: readonly string[] = [
@@ -307,10 +245,9 @@ export interface PdfToolbarItem {
 }
 
 /**
- * Holi's name for the viewer's comment tool (`annotation:add-comment`, the
- * `textComment` tool), so it can sit on the top bar as "Add comment": the
- * viewer labels it "Comment", as it does the comments panel's button beside
- * it, and a command's label is fixed.
+ * Holi's command for the viewer's comment tool, so the top bar can label it
+ * "Add comment": the viewer's label ("Comment") is fixed and clashes with the
+ * comments panel button beside it.
  */
 export const ADD_COMMENT = 'holi:add-comment'
 
@@ -377,14 +314,10 @@ const ASK_BUTTONS: readonly PdfToolbarItem[] = [
 const COMMENTS_BUTTON = 'comment-button'
 
 /**
- * The main toolbar's items with Holi's buttons at the top level of the
- * right-hand group: first, before Search and Comment, Signatures, which the
- * viewer keeps in the Insert tab's secondary bar (at a narrow pane itself inside
- * the tab overflow menu), Add comment and the read-only toggle
- * (`lib/pdf-read-only.ts`); and Ask agent right after the comments button, or
- * last if the viewer has none. Fed to `ui.mergeSchema`, which replaces a
- * toolbar's item list wholesale, so this returns the whole list; applying it
- * twice changes nothing.
+ * The main toolbar's items with Holi's buttons first in the right-hand group,
+ * and Ask agent right after the comments button (or last). `ui.mergeSchema`
+ * replaces the item list wholesale, so this returns the whole list; it is
+ * idempotent.
  */
 export function withHoliButtons(items: readonly PdfToolbarItem[]): PdfToolbarItem[] {
   return items.map((item) => {
@@ -420,13 +353,10 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
 /**
  * Holi's buttons keep their places as they come and go.
  *
- * A command that is not visible leaves its item's wrapper in the row, empty,
- * and an empty wrapper is still a flex item with a gap on either side. The
- * read-only toggle is two items of which one is always hidden, so the lock
- * sat 8px further from one neighbour than the other and the extra gap changed
- * sides with the state: the lock stepped right when locked and back when
- * unlocked. The viewer's own spacers are empty too, on purpose, so the rule
- * names Holi's items and nothing else.
+ * A hidden command leaves an empty wrapper that is still a flex item with
+ * gaps, so the read-only toggle (two items, one hidden) stepped sideways when
+ * it flipped. The viewer's own spacers are empty on purpose, so the rule names
+ * only Holi's items.
  */
 export const PDF_TOOLBAR_CSS = `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
 
@@ -445,10 +375,9 @@ const PDF_SIDEBAR_IDS = [
 /**
  * The sidebars' widths, as a `ui.mergeSchema` partial: the viewer's schema
  * gives every sidebar a `width` (250px by default) and merges a partial into
- * each one field by field. Every one opens at the width every drawer in Holi
- * does (`DRAWER_WIDTH`). The viewer offers no way to drag one wider, so unlike
- * a `DrawerShell` these do not resize; adding a handle would mean writing into
- * the library's DOM against its own layout.
+ * each one field by field. Every one opens at `DRAWER_WIDTH`. Unlike a
+ * `DrawerShell` they do not resize: a handle would mean writing into the
+ * library's DOM against its own layout.
  */
 export const PDF_SIDEBAR_WIDTHS: Readonly<Record<string, { width: string }>> = Object.fromEntries(
   PDF_SIDEBAR_IDS.map((id) => [id, { width: `${DRAWER_WIDTH.default}px` }]),
@@ -462,26 +391,6 @@ export const PDF_SIDEBAR_LEAVING = 'holi-sidebar-leaving'
  *  add one: the drawer width too, so the slide is never the wrong distance. */
 const VIEWER_SIDEBAR_WIDTH = `${DRAWER_WIDTH.default}px`
 
-/**
- * A sidebar slides its whole width in from the edge it docks on, and back out
- * (D98's arrive/leave, a sidebar being the spec's "width, from its edge").
- *
- * Thumbnails and Signatures dock left, drawn with `border-r`; Search and
- * Comments dock right, with `border-l`. The narrow-pane bottom sheet has
- * neither class and keeps its own motion. The slide is a negative margin as
- * wide as the panel, on the side it docks on, so the panel keeps its width
- * (nothing inside it reflows) while the pages beside it, `flex-1`, move over
- * with it; the row they share clips what is past its edge. The width is not
- * readable from CSS (it is an inline style), so it is written here from the
- * same widths the schema is given.
- *
- * The timing is `--motion-slide` and `--ease-slide` (`index.css`): eased in
- * and out, slower than an arrival, and the same both ways, where D98 would
- * have a leaving thing go faster, so a slide reads as one smooth motion. The
- * viewer unmounts a closing panel in the same render, so the leave is played
- * by a stand-in (`PDF_SIDEBAR_LEAVING`). Keyframe names do not reach into a
- * shadow root, so they are declared here; the motion tokens do.
- */
 /**
  * A sidebar's header and edge, drawn as a `DrawerShell`'s are: a 44px row with
  * the title at 12px medium, a rule under it and a line on the inner edge, both
@@ -499,6 +408,18 @@ export const PDF_SIDEBAR_FORM_CSS = [
   `[data-sidebar-id].border-l.border-l { border-left-color: ${v('drawer-edge')} !important; }`,
 ].join('\n')
 
+/**
+ * A sidebar slides its whole width in from the edge it docks on, and back out
+ * (D98). Left docks draw `border-r`, right docks `border-l`; the narrow-pane
+ * bottom sheet has neither and keeps its own motion. The slide is a negative
+ * margin, so the panel keeps its width while the `flex-1` pages move with it.
+ * The width is an inline style, unreadable from CSS, so it is written here.
+ *
+ * `--motion-slide`/`--ease-slide` are the same both ways so a slide reads as
+ * one motion. The viewer unmounts a closing panel in the same render, so the
+ * leave is played by a stand-in (`PDF_SIDEBAR_LEAVING`). Keyframe names do not
+ * reach into a shadow root, so they are declared here.
+ */
 export const PDF_SIDEBAR_MOTION_CSS = [
   `[data-sidebar-id] { --holi-sidebar-width: ${VIEWER_SIDEBAR_WIDTH}; }`,
   ...Object.entries(PDF_SIDEBAR_WIDTHS).map(
@@ -518,13 +439,10 @@ export const PDF_SIDEBAR_MOTION_CSS = [
  * Holi's comment field (`features/files/PdfCommentField.tsx`) in the viewer's
  * comment row, in place of the viewer's one-line input.
  *
- * The row is the viewer's: its input, then its send button, spaced by
- * `space-x-2`. The textarea is portalled in after them, so it is ordered first
- * and the row spaced by a gap instead. The input stays focusable, because
- * selecting a comment focuses it and that focus is what Holi's field takes
- * over; it is only out of sight. The field grows with its text up to about
- * eight lines, then scrolls, and is drawn like the viewer's fields: `--input`,
- * with the dimmed edge every sidebar field has.
+ * The textarea is portalled in after the viewer's input and send button, so
+ * it is ordered first and the row uses a gap. The viewer's input stays
+ * focusable but out of sight: selecting a comment focuses it, and Holi's field
+ * takes that focus over. The field grows to about eight lines, then scrolls.
  */
 const COMMENT_ROW = '[data-sidebar-id="comment-panel"] div:has(> .holi-comment-field)'
 export const PDF_COMMENT_FIELD_CSS = [
@@ -641,10 +559,8 @@ export const PDF_OPENING_ZOOM_MAX = 1.5
 
 /**
  * A PDF opens at 150%, or at fit-width when the page would overflow the pane
- * at 150%. The viewer has no such mode (its `automatic` is fit-width capped at
- * 100%), so it opens at fit-width and this caps the result. Asked of the first
- * zoom a document gets and no later one, so choosing Fit Width from the menu
- * still fits the width. `null` is "leave it".
+ * at 150%. The viewer has no such mode, so it opens at fit-width and this caps
+ * the first zoom only, so a later Fit Width still fits. `null` is "leave it".
  */
 export function openingZoomCap(level: string | number, zoom: number): number | null {
   return level === 'fit-width' && zoom > PDF_OPENING_ZOOM_MAX ? PDF_OPENING_ZOOM_MAX : null

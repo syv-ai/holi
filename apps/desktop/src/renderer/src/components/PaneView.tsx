@@ -1,12 +1,8 @@
 /**
  * One pane: its tab strip, and whatever its active tab is showing.
  *
- * This was inline in `Shell` while there was exactly one of them. A split makes
- * it a thing that exists more than once, so it becomes a component — and the
- * component is deliberately dumb: it is handed its pane and its callbacks, and
- * every callback Shell builds already knows which pane index it belongs to. A
- * pane that reached for `workspaceAtom` itself would have to answer "which pane
- * am I" from global state, which is the question the props already answer.
+ * Deliberately dumb: Shell hands it its pane and callbacks already bound to
+ * the pane index, so it never asks `workspaceAtom` "which pane am I".
  */
 import { fileKind, isTaskFilePath } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
@@ -33,30 +29,23 @@ import type { Pane, Tab } from '@/state/panes'
 import { useArrivalOnChange } from '@/lib/use-arrivals'
 import { TabStrip, tabKey } from './TabStrip'
 
-/** What every drop target shares: a plain wash, positioned out of flow.
- *
- *  `pointer-events-none` is the load-bearing half — it is what keeps the
- *  overlay a single event target, so crossing a band fires no `dragleave` and
- *  the highlight cannot flicker. The fill is left to the caller. */
+/** What every drop target shares. `pointer-events-none` keeps the overlay a
+ *  single event target, so crossing a band fires no `dragleave` flicker. */
 const DROP_BAND = 'pointer-events-none absolute'
 
 /**
  * A landing strip for a split, down one side of the pane.
  *
- * **Drawn from the moment a tab is picked up**, not when the pointer arrives.
- * A target that only exists once you have guessed where it is teaches nobody
- * the gesture — the edges have to be visible *before* you aim at them, or
- * splitting by drag is a feature you either already know about or never find.
- * Dim while it waits, lit when the pointer is actually inside it.
+ * Visible before the pointer aims at it (once the drag leaves the tab strip),
+ * or nobody would discover splitting by drag. Dim while waiting, lit when the
+ * pointer is inside.
  */
 function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean }) {
   return (
     <div
       data-testid={`pane-drop-${side}`}
       className={`${DROP_BAND} inset-y-0 ${side === 'before' ? 'left-0' : 'right-0'} ${
-        // No outline: the fill alone says where it is. The resting state is
-        // heavier than it would be with one, because the border was carrying
-        // most of a waiting strip's visibility and it still has to be findable.
+        // No outline, so the resting fill is heavy enough to be findable.
         active ? 'bg-primary/25' : 'bg-primary/10'
       }`}
       style={{ width: 'min(25%, 120px)' }}
@@ -66,17 +55,14 @@ function EdgeBand({ side, active }: { side: 'before' | 'after'; active: boolean 
 
 export interface PaneViewProps {
   pane: Pane
-  /** Whether this is the pane that "open" means. Drives the strip's focus cue;
-   *  with a single pane it is always true and the cue never shows. */
+  /** Whether this is the pane that "open" means. */
   focused: boolean
   /** Closing: play the exit, and stop taking input while it runs. */
   leaving?: boolean
-  /** This is the only pane and it is showing a note (`isSoloNote`), so the
-   *  note's column centres (#13). Only the workspace can know it, which is why it is
-   *  handed in rather than worked out from `pane`. */
+  /** The only pane, showing a note (`isSoloNote`), so the column centres. Only
+   *  the workspace can know it. */
   solo?: boolean
-  /** Clicking anywhere in the pane focuses it — including in its content, so
-   *  putting a caret in an editor moves the focus with it. */
+  /** Clicking or focusing anywhere in the pane, content included, focuses it. */
   onFocus: () => void
   onSelect: (index: number) => void
   onPin: (index: number) => void
@@ -85,23 +71,17 @@ export interface PaneViewProps {
   onEdit: () => void
   onOpenNote: (path: string) => void
   onConflict: (path: string, resolve: ConflictResolvers) => void
-  /** A tab was dropped on this pane — on its strip, or into the middle of its
-   *  body. `index` is absolute within this pane's tabs. */
+  /** A tab was dropped on this pane's strip or body. `index` is absolute within
+   *  this pane's tabs. */
   onDropTab?: (tab: Tab, index: number) => void
-  /** A tab was dropped on this pane's left or right quarter: it wants a pane of
-   *  its own, on that side. */
+  /** A tab was dropped on this pane's left or right quarter: a new pane there. */
   onDropEdge?: (tab: Tab, side: 'before' | 'after') => void
-  /** Which of this pane's zones the drag in flight could actually use, from
-   *  `dropZones` — empty when nothing is being dragged, which is also what
-   *  keeps the overlay off screen. A pane does not work this out for itself:
-   *  whether an edge would do anything depends on where the dragged tab lives
-   *  and on the pane *next door*, and only the workspace knows both. */
+  /** The zones the drag in flight could use, from `dropZones`; empty hides the
+   *  overlay. Only the workspace knows the neighbouring pane, so it decides. */
   allowed?: PaneDropZone[]
   /** A drag started in this pane's strip, carrying that tab. */
   onDragBegin?: (tab: Tab) => void
-  /** Whether a tab drag is currently over this pane's strip. The workspace uses
-   *  it to keep the landing strips out of sight while a reorder is being aimed
-   *  — see `overStrip` in Shell. */
+  /** Whether a tab drag is over this pane's strip (see `overStrip` in Shell). */
   onDragOverStrip?: (over: boolean) => void
   /** Controls at the right-hand end of this pane's strip. */
   trailing?: ReactNode
@@ -128,17 +108,14 @@ export function PaneView({
 }: PaneViewProps) {
   const tab = pane.active < 0 ? null : (pane.tabs[pane.active] ?? null)
   const syncState = useAtomValue(syncStateAtom)
-  /** What a session spawned from anywhere should be born at: the last geometry
-   *  a visible terminal actually measured. A session started for an ask has no
-   *  tab of its own yet and so nothing of its own to measure. */
+  /** The last geometry a visible terminal measured, for sessions spawned
+   *  without a tab of their own to measure. */
   const setGeometry = useSetAtom(agentGeometryAtom)
 
   /** Which zone the pointer is in, or null where this pane offers nothing. */
   const [zone, setZone] = useState<PaneDropZone | null>(null)
 
-  // A drag that ended elsewhere leaves no highlight behind: `allowed` empties
-  // the moment the workspace stops reporting a drag, and the overlay goes with
-  // it — but the hovered zone is local, so it is cleared here.
+  // The hovered zone is local, so clear it when `allowed` empties.
   useEffect(() => {
     if (allowed.length === 0) setZone(null)
   }, [allowed.length])
@@ -151,15 +128,12 @@ export function PaneView({
   const bodyRef = useArrivalOnChange<HTMLDivElement>(tab == null ? 'empty' : tabKey(tab))
 
   return (
-    // `onFocusCapture` as well as the pointer: tabbing into a pane, or a
-    // CodeMirror instance taking focus, has to move the workspace's idea of
-    // "here" too, or the next file opened from the tree lands somewhere else.
+    // `onFocusCapture` too: keyboard or CodeMirror focus must also move the
+    // workspace's idea of "here".
     <main
       className={cn(
         'flex h-full min-w-0 flex-col',
-        // On its way out of a split. `pointer-events-none` because a pane you
-        // have already closed must not accept a click during the 190ms it
-        // spends leaving.
+        // A closed pane must not take clicks while it leaves.
         leaving && 'motion-out-origin pointer-events-none',
       )}
       onPointerDownCapture={onFocus}
@@ -178,26 +152,15 @@ export function PaneView({
         trailing={trailing}
       />
 
-      {/* The body is a drop surface too — dropping into the middle moves the tab
-          here, and dropping on a quarter-width edge gives it a pane of its own.
-          Wrapped rather than handled in place because the overlay needs
-          somewhere to be absolutely positioned, and it must cover the content
-          WITHOUT covering the strip, which has drop handling of its own. */}
+      {/* The body is a drop surface too. Wrapped so the overlay covers the
+          content but not the strip, which handles its own drops. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
-        {/* Arrive on a swap. Opening a different note, or moving between a note
-            and the board, used to be an instant replacement — the pane simply
-            contained something else on the next frame. A short fade gives the
-            navigation somewhere to land. Opacity only, because this wraps a
-            CodeMirror instance and anything that changes the layout box drags
-            its measure loop into every frame.
+        {/* Fade on a swap. Opacity only: this wraps CodeMirror, and a layout
+            change would drag its measure loop into every frame.
 
-            The fade wraps only what a swap REPLACES. A session's terminal is
-            rendered below, outside this wrapper, because it stays mounted while
-            another tab is showing — and it is left out of the fade for the same
-            reason: its pixels were already there, so fading them in on every
-            switch read as the terminal blinking. Rendered as nothing rather
-            than as an empty flex-1 box, which would take the height the
-            terminals need. */}
+            Sessions render below, outside the fade: they stay mounted, and
+            fading them read as blinking. Nothing rather than an empty flex-1
+            box, which would take the terminals' height. */}
         {tab?.kind === 'session' ? null : (
           <div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
             {tab?.kind === 'app' ? (
@@ -217,19 +180,17 @@ export function PaneView({
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'pdf' ? (
               <PdfViewer path={tab.path} />
             ) : tab?.kind === 'note' && fileKind(tab.path) === 'doc' ? (
-              // Rich formats we can't yet render open a typed placeholder — a
-              // real per-type viewer replaces it later (spec §Arbitrary files).
-              // Text files (json/yaml/…) fall through to the plain editor below.
+              // Rich formats we cannot render open a typed placeholder. Text
+              // files fall through to the plain editor below.
               <FilePlaceholder path={tab.path} kind="doc" />
             ) : (
               <EditorPane
                 path={tab?.kind === 'note' ? tab.path : null}
-                // A non-markdown text file (.json/.yaml/.env/…) edits in the
-                // plain stack — no wiki-links, no frontmatter, syntax
-                // highlighting by extension. Markdown notes keep the full editor.
+                // Non-markdown text edits in the plain stack: no wiki-links or
+                // frontmatter, syntax highlighting by extension.
                 plain={tab?.kind === 'note' && fileKind(tab.path) === 'text'}
                 centred={solo}
-                // FR-19: a file the running reconcile is resolving opens locked.
+                // A file the running reconcile is resolving opens locked.
                 readOnly={tab?.kind === 'note' && isLockedForReconcile(syncState, tab.path)}
                 onOpenNote={onOpenNote}
                 onEdit={onEdit}
@@ -243,11 +204,8 @@ export function PaneView({
          * Every session tab in this pane, mounted, with only the active one
          * shown (D101).
          *
-         * Outside the switch above and keyed by session id, because a terminal
-         * that unmounts on a tab switch throws away its scrollback and has to
-         * replay main's mirror to get it back — a repaint you can see. The same
-         * rule the drawer's tab strip followed; what changed is which container
-         * enforces it.
+         * Outside the switch and keyed by session id: an unmounted terminal
+         * loses its scrollback and must visibly replay main's mirror.
          */}
         {pane.tabs.map((t, i) =>
           t.kind !== 'session' ? null : (
@@ -260,9 +218,8 @@ export function PaneView({
                 visible={i === pane.active}
                 onGeometry={(cols, rows) => setGeometry({ cols, rows })}
               />
-              {/* Under the terminal it belongs to. Keyed, so the chip's own
-                  "did this just land" refs are about ONE session and do not
-                  bloom for a turn that ended minutes ago in another. */}
+              {/* Keyed, so the chip's "just landed" refs belong to one
+                  session. */}
               <div className="shrink-0 border-t border-divider px-2 py-1">
                 <TurnChip key={t.id} sessionId={t.id} />
               </div>
@@ -270,9 +227,8 @@ export function PaneView({
           ),
         )}
 
-        {/* One event target, always. The bands inside are `pointer-events-none`,
-            so crossing them fires no `dragleave` — which is the papercut that
-            makes hand-rolled HTML5 drop zones flicker. */}
+        {/* One event target: the bands inside are `pointer-events-none`, so
+            crossing them fires no flickering `dragleave`. */}
         {allowed.length > 0 && (
           <div
             className="absolute inset-0 z-10"
@@ -280,9 +236,7 @@ export function PaneView({
             onDragOver={(e) => {
               if (!e.dataTransfer.types.includes(TAB_MIME)) return
               const side = zoneAt(e)
-              // A zone this pane does not offer stays inert: no highlight, and
-              // no `preventDefault`, so the cursor says "not here" rather than
-              // promising a drop that would be a no-op.
+              // An unoffered zone stays inert, so the cursor says "not here".
               if (!allowed.includes(side)) return setZone(null)
               // Without this the drop never fires.
               e.preventDefault()
@@ -300,11 +254,9 @@ export function PaneView({
               else onDropEdge?.(dropped, side)
             }}
           >
-            {/* `min(25%, 120px)` inside `EdgeBand` is `paneDropZone`'s rule drawn
-                rather than computed. The two have to agree, so they say the
-                same thing. The middle has no waiting state — it is the whole
-                pane, and a full-pane wash that appeared on every drag is what
-                this overlay was narrowed to stop. */}
+            {/* `EdgeBand`'s `min(25%, 120px)` must agree with `paneDropZone`.
+                The middle has no waiting state: a full-pane wash on every drag
+                is noise. */}
             {allowed.includes('before') && <EdgeBand side="before" active={zone === 'before'} />}
             {allowed.includes('after') && <EdgeBand side="after" active={zone === 'after'} />}
             {zone === 'into' && (

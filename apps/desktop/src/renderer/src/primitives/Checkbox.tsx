@@ -5,13 +5,8 @@ import { Checkbox as CheckboxPrimitive } from 'radix-ui'
 import { cn } from '@/lib/cn'
 
 /**
- * `shape="circle"` is for a TASK, not for a preference.
- *
- * A task's status is drawn as a circle everywhere else in the app — the file
- * tree's leaf glyph, the `@`-mention list, the orb on a wiki-link chip — so a
- * board card's completion control is a circle too. Everything that is genuinely
- * a checkbox (a setting, a filter, a PDF field) stays square, which is why this
- * is a variant rather than a new default.
+ * `shape="circle"` is for a TASK, whose status is a circle everywhere else in
+ * the app. Genuine checkboxes (settings, filters, PDF fields) stay square.
  */
 function Checkbox({
   className,

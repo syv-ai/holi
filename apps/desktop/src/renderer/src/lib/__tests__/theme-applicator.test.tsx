@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ThemeApplicator } from '../theme-applicator'
 
-// Pure DOM logic — a bare element, no React, no jotai, no tRPC. This is the
-// point of extracting the applicator: the fiddly diff/clear is testable on its
-// own, and the hook test (state/__tests__/theme.test.tsx) only has to prove the
-// wiring.
+// Pure DOM logic on a bare element; the hook test
+// (state/__tests__/theme.test.tsx) proves the wiring.
 describe('ThemeApplicator', () => {
   let root: HTMLElement
   beforeEach(() => {

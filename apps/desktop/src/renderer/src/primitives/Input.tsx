@@ -28,10 +28,8 @@ const inputVariants = cva(
   },
 )
 
-// forwardRef (the pre-React-19 shadcn form): this project is on React 18, where a
-// plain function component silently drops a `ref`. Consumers that hand the input
-// a ref — e.g. headless-tree's getRenameInputProps(), whose callback ref focuses
-// the rename field — need it to reach the DOM node.
+// forwardRef (shadcn's form) so a ref reaches the DOM node: headless-tree's
+// getRenameInputProps() focuses the rename field through a callback ref.
 const Input = React.forwardRef<
   HTMLInputElement,
   React.ComponentProps<'input'> & VariantProps<typeof inputVariants>

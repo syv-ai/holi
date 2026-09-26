@@ -1,16 +1,12 @@
 /**
  * Why a send or save did not happen, and what the user can do about it (D71).
  *
- * Separated from the composer because the *action* is the point. A message
- * alone leaves the user reading an apology; `scope` and `reconnect` have a fix
- * the user can perform, `rate-limit` has one worth offering, and everything
- * else has none — in which case the right outcome is to hand the text back
- * unchanged and say so.
+ * The action is the point: permission failures have a fix the user can
+ * perform, rate limits one worth offering, and the rest none, so the text is
+ * handed back unchanged.
  *
- * **The code first, the prose second**, for the same reason `MailView` does it:
- * `rethrowGoogle` maps `GoogleApiError.code` onto a tRPC code precisely so the
- * UI does not have to read Google's sentences. The regexes below are the
- * fallback for an error that arrived without a code.
+ * The code first (`rethrowGoogle` maps Google's errors onto tRPC codes); the
+ * regexes are the fallback for an error without one.
  */
 
 export type SendFailureAction = 'reconnect' | 'retry' | null
@@ -57,9 +53,8 @@ export function describeSendFailure(error: unknown): SendFailure {
   if (/rate limit/i.test(message)) return RATE_LIMITED
   return {
     message: message === '' ? 'That didn’t send. Your message is still here.' : message,
-    // Deliberately not `retry`. **Never auto-retry a send**, and never invite a
-    // one-click retry for a failure nobody has diagnosed: the failure mode of a
-    // send is a duplicate arriving at a real person, not a message lost.
+    // Deliberately not `retry`: never invite a retry for an undiagnosed send
+    // failure, whose risk is a duplicate reaching a real person.
     action: null,
   }
 }

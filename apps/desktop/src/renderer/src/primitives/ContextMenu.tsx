@@ -72,15 +72,10 @@ function ContextMenuSubContent({
   )
 }
 
-// The house context-menu look: a fixed-width (w-56), rounded-lg, text-xs popover
-// with a heavy shadow and NO border; items compact (px-2 py-1) with their keyboard
-// hint floated right via ContextMenuShortcut. Every context menu is this primitive
-// fed different items — there is no per-surface menu component (decided 2026-08-01).
-//
-// The border came off on 2026-08-14, here and on Tooltip/DropdownMenu/Popover
-// together: elevation separates a floating surface, and a hairline over it draws
-// a second edge. `--shadow-popover` was deepened in the same change, because md
-// was only ever enough beside a drawn border.
+// The house context-menu look: fixed width, compact items, keyboard hints via
+// ContextMenuShortcut, and no border, since the shadow separates a floating
+// surface. Every context menu is this primitive fed different items; there is
+// no per-surface menu component.
 function ContextMenuContent({
   className,
   ...props

@@ -1,47 +1,33 @@
 /**
  * The file changed underneath the editor. Now what?
  *
- * **The editor's own save needs no attribution**, and that is the entire
- * design. `base` is the text the editor last loaded *or saved*; a save advances
- * it before the watcher can report the write, so by the time the change comes
- * back around `disk === base` and this returns `none`. Nothing has to ask "was
- * that me?", which matters because the snapshot push carries no path and could
- * not answer that question anyway.
+ * The editor's own save needs no attribution: `base` is the text last loaded
+ * or saved, advanced before the watcher reports the write, so the echo arrives
+ * as `disk === base`. The snapshot push carries no path anyway.
  *
- * The three alternatives all race, and `notes-editor.md` §Risks names this as
- * the most likely bug in that PRD:
- *
- *   - **path + mtime bookkeeping** — two writes inside one mtime tick are
- *     indistinguishable, and a coalesced watcher event covers both.
- *   - **pausing the watcher across the write** — the event arrives after the
- *     unpause on a slow filesystem, and is then treated as foreign.
- *   - **content comparison** — cannot race, because it compares the only two
- *     things that matter and holds no timing assumption at all.
- *
- * This is `notes-editor.md` §External writes, first bullet.
+ * Rejected, because they race: path + mtime bookkeeping (two writes in one
+ * tick), and pausing the watcher across the write (a late event reads as
+ * foreign). Content comparison holds no timing assumption.
+ * See docs/features/editor.md.
  */
 import { merge3, normalizeText, type ConflictRegion } from '@holi/shared'
 
 export type Reload =
   /** Nothing happened that concerns this editor. */
   | { kind: 'none' }
-  /** Clean buffer: take what is on disk, silently (FR-11). */
+  /** Clean buffer: take what is on disk, silently. */
   | { kind: 'reload'; text: string }
   /** Dirty buffer, and the two edits did not overlap. */
   | { kind: 'merged'; text: string }
   /** Not a foreign edit at all: Holi's own commit-time tidy. `base` moves to
    *  what is on disk and the buffer is left exactly as it is. */
   | { kind: 'rebase'; text: string }
-  /** Dirty buffer, and they did. Routed to the vault's reconcile affordance —
-   *  a merger that silently picked a side would remove the feature. */
+  /** Dirty buffer, and they did. Surfaced, never silently resolved. */
   | { kind: 'conflict'; regions: ConflictRegion[] }
 
 /**
- * The two ways out of a conflict, handed up with it.
- *
- * They are closures rather than a path, because only the editor still holds
- * both texts that disagreed: the buffer lives in its `EditorView` and the
- * buffer registry is anonymous, so nothing above can reconstruct either side.
+ * The two ways out of a conflict, handed up with it. Closures, because only
+ * the editor holds both texts that disagreed.
  */
 export interface ConflictResolvers {
   /** Write the buffer over what is on disk. */
@@ -56,28 +42,18 @@ export function decideReload(
   disk: string,
   path: string,
 ): Reload {
-  // Whoever wrote it, the bytes now on disk are the bytes this editor last saw.
-  // Includes the editor's own autosave, an agent write that produced identical
-  // content, and every push about some *other* file.
+  // Our own save echoing back, or a push about some other file.
   if (disk === base) return { kind: 'none' }
 
-  // Clean buffer: there is nothing to lose. The common case by a wide margin,
-  // because autosave fires on idle.
+  // Clean buffer: nothing to lose. The common case, since autosave fires on
+  // idle.
   if (buffer === base) return { kind: 'reload', text: disk }
 
-  // Holi's own commit-time tidy, arriving after the save that triggered it.
-  // `normalize-md` runs in the pre-commit hook, so it rewrites the file AFTER
-  // `base` was advanced — the one write this module's invariant cannot see
-  // coming, and the reason it is recognised here rather than attributed.
-  //
-  // Keeping the buffer is safe precisely because the tidy is idempotent and
-  // re-derivable: the next commit applies it again to whatever is written next,
-  // so nothing is lost by preferring what is being typed. That is also why this
-  // is scoped to normalization alone — `relink` rewrites carry real content, and
-  // dropping one in favour of the buffer would silently undo a rename.
-  //
-  // Ordered after the clean-buffer check on purpose: with nothing to protect,
-  // taking the tidied bytes outright is simpler and leaves base === disk.
+  // Holi's commit-time tidy (`normalize-md`, pre-commit), which rewrites the
+  // file after `base` advanced. Keeping the buffer is safe because the tidy is
+  // idempotent and reapplied next commit. Scoped to normalization alone:
+  // `relink` rewrites carry real content, and dropping one would undo a rename.
+  // After the clean-buffer check, which simply takes the tidied bytes.
   if (disk === normalizeText(base, path)) return { kind: 'rebase', text: disk }
 
   const merged = merge3(base, buffer, disk)
@@ -90,11 +66,9 @@ export function decideReload(
  * The single contiguous change that turns `current` into `target`: the span
  * between their common prefix and common suffix. `null` when they are equal.
  *
- * A one-span diff is coarser than a multi-hunk one, but it is always correct —
- * and for a `merged` reload the diff of the buffer against the merged text *is*
- * the foreign edit, so the changed span never covers the caret, and CodeMirror's
- * selection mapping preserves it for free. Framework-free on purpose: the return
- * is a CodeMirror `ChangeSpec` shape, but this module holds no view dependency.
+ * Coarse but always correct. For a `merged` reload the span is the foreign
+ * edit, so CodeMirror's selection mapping preserves the caret. Returns a
+ * `ChangeSpec` shape without depending on CodeMirror.
  */
 export function minimalChange(
   current: string,
@@ -104,8 +78,7 @@ export function minimalChange(
   const maxPrefix = Math.min(current.length, target.length)
   let prefix = 0
   while (prefix < maxPrefix && current[prefix] === target[prefix]) prefix++
-  // Cap the suffix so it cannot reach back past the prefix in either string —
-  // otherwise "aaa" -> "aa" would double-count the shared run.
+  // Cap the suffix at the prefix, or "aaa" -> "aa" double-counts the run.
   const maxSuffix = Math.min(current.length - prefix, target.length - prefix)
   let suffix = 0
   while (

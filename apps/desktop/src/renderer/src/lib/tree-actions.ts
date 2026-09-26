@@ -1,9 +1,7 @@
 /**
- * Pure planning for the explorer's batch actions. Each function turns the current
- * doc-path set + a request into the concrete `{ from, to }` moves/copies (or the
- * delete label) — no atoms, no React, no side effects. The `useExplorerActions`
- * hook orchestrates these onto the batch atoms; keeping the planning pure is what
- * makes the subtle link-rewrite / collision-suffix logic testable in isolation.
+ * Pure planning for the explorer's batch actions: the current doc paths plus a
+ * request become concrete `{ from, to }` moves or copies. `useExplorerActions`
+ * applies them.
  */
 import {
   basename,

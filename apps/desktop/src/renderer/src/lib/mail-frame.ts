@@ -1,40 +1,25 @@
 /**
- * The document a mail message renders into — a sandboxed frame of its own.
+ * The document a mail message renders into: a sandboxed frame of its own.
+ * Sanitizing (`mail-html.ts`) decides what markup is allowed; this decides
+ * where it lives.
  *
- * Sanitizing (`mail-html.ts`) decides what markup is *allowed*; this decides
- * where it *lives*. Putting a message in its own document rather than inline in
- * the app is structural containment: the message gets a page, and the app is no
- * longer that page. Two things follow, and both are why the frame exists.
+ * 1. The message cannot reach the app: its document holds no app elements, so
+ *    its stylesheet is safe to honour. The sheet arrives as `css` text written
+ *    into a `<style>` this module builds; the `<style>` tag stays forbidden in
+ *    the markup for a parser reason (`mail-html.ts`).
+ * 2. A far stricter CSP applies (`default-src 'none'`), so the browser blocks
+ *    remote content, including routes a sanitizer cannot see like `@import`.
+ *    Loading images widens that policy in one place.
  *
- * 1. **The message cannot reach the app.** No selector it writes can match an
- *    app element, because there are none in its document. That is what makes a
- *    message's *stylesheet* safe to honour — a newsletter without its stylesheet
- *    is a newsletter with its design removed. Note the sheet arrives as `css`
- *    text and is written into a `<style>` element *this* module builds; the
- *    `<style>` **tag** stays forbidden in the markup, for a parser reason that
- *    has nothing to do with framing ([[mail-html]]).
- * 2. **A second, far stricter CSP applies.** The frame document declares
- *    `default-src 'none'`, so remote content is blocked by the *browser* and
- *    not only by our attribute pass — including the routes a sanitizer cannot
- *    see, like `@import` inside a stylesheet. When the user loads images, that
- *    policy is what widens, in one place.
+ * `sandbox="allow-same-origin"` and nothing else. Never add `allow-scripts`:
+ * both together let content remove its own sandbox. Same-origin lets the app
+ * write, measure and intercept clicks in the document.
  *
- * **`sandbox="allow-same-origin"` and nothing else.** No `allow-scripts`, so
- * nothing in the frame executes; the notorious footgun is granting *both*
- * (content can then remove its own sandbox), which is exactly what is refused
- * here. Same-origin is required so the app can write the document, measure it,
- * and intercept clicks — all of which is the app's script reaching in, never
- * the message's script running out.
+ * `document.write` rather than `srcdoc` gives the app the document handle on
+ * the same tick instead of after a load event.
  *
- * The frame is written with `document.write` rather than `srcdoc` because the
- * app needs a handle on the document anyway (height, links), and writing gives
- * that on the same tick instead of after a load event.
- *
- * **Two canvases, not one.** The frame originally always took the app's theme,
- * which is right for prose and wrong for mail: real mail declares its ink and
- * inherits its paper, so a dark theme rendered a great deal of it black on
- * black. `bringsOwnDesign` decides which of the two a block gets, and `PAPER`
- * is the other one.
+ * Two canvases: mail usually declares its ink and inherits white paper, so
+ * `bringsOwnDesign` picks `PAPER` or the app theme per block.
  */
 import { useEffect, useState } from 'react'
 
@@ -64,19 +49,12 @@ const TOKENS: Record<Exclude<keyof MailPalette, 'scheme'>, string> = {
 /**
  * The canvas mail was designed for: white paper, dark ink.
  *
- * **Not a fallback — a deliberate second mode.** Mail is written for a white
- * background and says so only partially: a newsletter sets `color: #333` on its
- * text and leaves the background to the client, because for thirty years the
- * client's background has been white. Render that on a dark surface and the
- * message is dark-on-dark — and the images go with it, because a logo is
- * usually dark ink on transparency and simply disappears.
+ * A deliberate second mode: mail sets its text colour and leaves the
+ * background to the client, which has always been white, so on a dark surface
+ * it and its transparent logos disappear. See `bringsOwnDesign`.
  *
- * So a message that brings any design of its own gets paper, and only a message
- * that brings none inherits the app's theme. See `bringsOwnDesign`.
- *
- * It doubles as the value used when a token reads empty — which happens in
- * tests, where there is no stylesheet, and would otherwise emit `background:;`
- * and leave the frame transparent.
+ * Also the fallback when a token reads empty (tests have no stylesheet), which
+ * would otherwise leave the frame transparent.
  */
 const PAPER: MailPalette = {
   background: '#ffffff',
@@ -92,30 +70,18 @@ const FALLBACK = PAPER
 /**
  * Does this message bring its own design, or is it prose in an HTML wrapper?
  *
- * **Conservative on purpose: any signal at all means paper.** The failure this
- * guards is asymmetric. Giving paper to a message that did not need it costs a
- * white block in a dark app — visible, ordinary, exactly what every other mail
- * client does. Giving the theme to a message that *did* need paper costs black
- * text on a black background, which is unreadable and reads as a broken app.
+ * Any signal means paper, because the failure is asymmetric: unneeded paper is
+ * a white block, as in every mail client; a missing one is black on black.
+ * Images count too: they were drawn to sit on white.
  *
- * Four signals, and the last one is not about text at all: a message with
- * images is a designed message even if every colour it uses is the default,
- * because those images were drawn to sit on white.
- *
- * Read from the **raw** HTML rather than the sanitized output, so the answer
- * cannot change when the user loads images — a message must not change colour
- * as a side effect of unblocking a picture. That means it also sees inside
- * `<style>` blocks the sanitizer strips, which errs towards paper. Correct
- * direction.
+ * Read from the raw HTML, so unblocking images cannot change a message's
+ * colour. It also sees `<style>` blocks the sanitizer strips, erring towards
+ * paper.
  */
 export function bringsOwnDesign(html: string): boolean {
   return (
-    // Any CSS property whose name contains `color` or `background` —
-    // `color`, `background-color`, `background-image`, `border-color`. Written
-    // as a family rather than a list because the list is the thing that goes
-    // stale: `background-color:` was missed by a pattern that only allowed
-    // `background:` and `color:`, and a table cell with a background is the
-    // most ordinary designed-mail construct there is.
+    // Any CSS property whose name contains `color` or `background`, as a
+    // family rather than a list that goes stale.
     /(?:^|[\s;"'{])[a-z-]*(?:color|background)[a-z-]*\s*:/i.test(html) ||
     /<font\b/i.test(html) ||
     /\sbgcolor\s*=/i.test(html) ||
@@ -132,11 +98,9 @@ export function canvasFor(html: string, themed: MailPalette): MailPalette {
 /**
  * Anything that could end a declaration or open a tag is dropped.
  *
- * Theme values are vault content (D64) — whitelisted and validated in main, so
- * this is not the gate that stops a hostile theme. It is the cheap second one,
- * because these values are interpolated into a stylesheet by hand: without it,
- * a value containing `}` would escape its rule and could restyle the message
- * around it.
+ * Theme values (D64) are validated in main; this is the cheap second gate,
+ * since they are interpolated into a stylesheet by hand and a `}` would escape
+ * its rule.
  */
 function safeCssValue(value: string): string {
   return value.trim().replace(/[^\w\s#(),./%-]/g, '')
@@ -145,17 +109,10 @@ function safeCssValue(value: string): string {
 /**
  * A whole stylesheet, made safe to interpolate into a `<style>` element.
  *
- * The same job as `safeCssValue` above and a much lighter touch, because the
- * input is a whole sheet rather than one value: everything CSS legitimately
- * contains has to survive, including `>` child combinators, `<` in range media
- * queries, and every brace. Exactly one sequence is removed — `</`, which no
- * stylesheet needs and which is the only way out of the element.
- *
- * That is the whole guard, deliberately. This is not a CSS validator: the sheet
- * lands in a document holding nothing but the message, so a rule that restyles
- * `body` is the message restyling itself. What it must not do is stop being CSS,
- * and what it must not reach is the network — the second is `sanitizeMailHtml`'s
- * (`@import` and remote `url()`) and the CSP's.
+ * Only `</` is removed: it is the one way out of the element, and no
+ * stylesheet needs it. Deliberately not a CSS validator: the sheet can only
+ * restyle the message itself. The network is `sanitizeMailHtml`'s and the
+ * CSP's job.
  */
 function safeStylesheet(css: string): string {
   return css.replace(/<\//g, '')
@@ -186,11 +143,9 @@ function same(a: MailPalette, b: MailPalette): boolean {
 /**
  * The palette, kept current as the theme changes.
  *
- * A vault switch rewrites custom properties on `document.documentElement`
- * (`ThemeApplicator`), which no React state observes — so this watches the
- * attribute directly. Identity is held stable when nothing changed, because the
- * palette is an effect dependency of the frame: returning a fresh object each
- * render would rewrite every open message on every render.
+ * A vault switch rewrites custom properties on the root, which no React state
+ * observes, so this watches the attributes. Identity is stable when nothing
+ * changed: the palette is an effect dependency of every open frame.
  */
 export function useMailPalette(): MailPalette {
   const [palette, setPalette] = useState(readMailPalette)
@@ -217,12 +172,7 @@ export function useMailPalette(): MailPalette {
 export interface MailFrameOptions {
   /** Already through `sanitizeMailHtml`. Nothing else may be passed here. */
   html: string
-  /**
-   * The message's own stylesheet, from the same `sanitizeMailHtml` call.
-   *
-   * Optional because most mail has none, and because a caller that has not
-   * thought about it should get today's behaviour rather than a type error.
-   */
+  /** The message's own stylesheet, from the same `sanitizeMailHtml` call. */
   css?: string
   palette: MailPalette
   /** Widens the frame's `img-src`. The sanitizer has made the matching
@@ -230,13 +180,7 @@ export interface MailFrameOptions {
   allowRemoteContent: boolean
 }
 
-/**
- * The full HTML document for one message.
- *
- * The base stylesheet is deliberately *first* and specificity-free, so a
- * message's own rules win: these are defaults for mail that brings none, not a
- * restyling of mail that does.
- */
+/** The full HTML document for one message. */
 export function mailFrameDocument({
   html,
   css = '',
@@ -250,8 +194,8 @@ export function mailFrameDocument({
     '; ',
   )
 
-  // Three sheets, and the order is the design: defaults the message may
-  // override, then the message, then the handful of rules it may not.
+  // Order matters: defaults the message may override, the message, then the
+  // rules it may not.
   const sheets = [defaults(palette), css === '' ? '' : safeStylesheet(css), INVARIANTS]
     .filter((sheet) => sheet !== '')
     .map((sheet) => `<style>${sheet}</style>`)
@@ -265,8 +209,8 @@ ${sheets}
 </head><body>${html}</body></html>`
 }
 
-/** Defaults for mail that brings none — first, and specificity-free, so a
- *  message's own rules win. Not a restyling of mail that brought its own. */
+/** Defaults for mail that brings none: first and specificity-free, so a
+ *  message's own rules win. */
 function defaults(palette: MailPalette): string {
   return `
 html { color-scheme: ${palette.scheme}; }
@@ -287,28 +231,18 @@ blockquote {
 }
 
 /**
- * The rules a message does not get to override, and the only ones — **last**,
- * where the message's own stylesheet cannot reach them.
- *
- * These are structural rather than aesthetic. The frame is sized to its content
- * by the app, so a message that turns vertical scrolling back on becomes a
- * scroll area inside the thread, and the wheel stops meaning one thing.
- * `overflow-x: auto` is the other half of the same: a wide table has to go
- * somewhere, and a message setting `visible` would push it under the frame edge,
- * where it is silently clipped rather than reachable.
- *
- * Before the message's sheet was honoured this sat among the defaults, where it
- * happened to be safe because nothing could override anything. It is here now
- * because that stopped being true.
+ * The only rules a message may not override, placed last. Structural: the app
+ * sizes the frame to its content, so vertical scrolling would nest a scroll
+ * area in the thread, and a wide table needs `overflow-x: auto` rather than
+ * being clipped under the frame edge.
  */
 const INVARIANTS = `
 html { overflow-y: hidden; }
 body { overflow-x: auto; }
 `
 
-/** Schemes a mail link may hand to the OS, or `null` to refuse. DOMPurify has
- *  already dropped `javascript:`; this is the second gate, at the point of
- *  action, where a URL would actually leave the app. */
+/** Schemes a mail link may hand to the OS, or `null` to refuse. The second
+ *  gate after DOMPurify, where a URL would actually leave the app. */
 export function openableLink(href: string | null): string | null {
   if (href === null) return null
   return /^\s*(https?|mailto):/i.test(href) ? href.trim() : null

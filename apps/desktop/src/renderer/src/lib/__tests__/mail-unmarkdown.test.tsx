@@ -1,15 +1,9 @@
 /**
  * HTML → markdown (D71).
  *
- * Two callers, and they are the reason this file exists: opening a draft Holi
- * did not write, and quoting a parent that only ever existed as HTML. Both are
- * third-party markup arriving from a mailbox, which is why the sanitiser runs
- * *before* the converter rather than after — `turndown` builds a DOM from the
- * string it is given, so handing it raw newsletter HTML means parsing untrusted
- * markup with the app's own parser.
- *
- * This is the file that makes "no read-only state ever" true. Every failure
- * here shows up as a message the user can look at but not edit.
+ * Two callers: opening a draft Holi did not write, and quoting an HTML-only
+ * parent. Both are third-party markup, so the sanitiser runs before `turndown`,
+ * which builds a DOM from its input.
  */
 import { describe, expect, it } from 'vitest'
 import { renderMailMarkdown } from '../mail-markdown'
@@ -29,8 +23,7 @@ describe('mailHtmlToMarkdown', () => {
   })
 
   it('keeps a table as a markdown table', () => {
-    // The wart this task exists to remove. Without the GFM rules a table
-    // flattens to a run of prose and the quoted message becomes unreadable.
+    // Without the GFM rules a table flattens to prose.
     const markdown = mailHtmlToMarkdown(
       '<table><thead><tr><th>a</th><th>b</th></tr></thead>' +
         '<tbody><tr><td>1</td><td>2</td></tr></tbody></table>',
@@ -42,17 +35,9 @@ describe('mailHtmlToMarkdown', () => {
   })
 
   /**
-   * A LAYOUT table is not a data table, and mail is built almost entirely out of
-   * the first kind.
-   *
-   * `turndown-plugin-gfm` converts a table only when its first row is a heading
-   * row, and calls `turndown.keep()` on every other one — so an MJML newsletter,
-   * which nests borderless spacer tables several deep and has never heard of
-   * `<th>`, came through the reply quote as raw `<table>` markup. The user saw
-   * three screens of `cellpadding="0"` where the message should have been.
-   *
-   * The fixture is the shape that actually arrives: nested, `role="presentation"`,
-   * inline styles, no heading row anywhere.
+   * A layout table is not a data table. `turndown-plugin-gfm` keeps any table
+   * without a heading row as raw markup, and mail layouts have none. The
+   * fixture is the real shape: nested, `role="presentation"`, inline styles.
    */
   it('unwraps a layout table instead of emitting its markup', () => {
     const markdown = mailHtmlToMarkdown(
@@ -67,22 +52,10 @@ describe('mailHtmlToMarkdown', () => {
   })
 
   /**
-   * The email that actually did it, trimmed but not simplified.
-   *
-   * The hand-built fixture above is the *shape*; this is the thing itself — an
-   * MJML build (Claude.ai's sign-in mail), which is what a real inbox is full
-   * of. Every property that made the bug possible is kept: sibling section
-   * tables at the top level, four levels of `role="presentation"` nesting,
-   * `font-size:0px` spacer cells, a button that is an `<a>` inside a `<p>`
-   * inside a `bgcolor` cell, a two-column footer, and — the whole reason the
-   * plugin's fallback fired — no `<th>` anywhere in the document.
-   *
-   * A reply sent from the build between `0f57f6f` and `2b3098f` put this
-   * message's raw markup into the mail as text, starting `<table align="center"
-   * border="0" cellpadding="0"`, which is what the recipient received. The
-   * synthetic fixture would not have caught it any better than it did; what
-   * this adds is that the regression is now pinned to real markup rather than
-   * to markup written by someone who already knew the answer.
+   * A real MJML mail, trimmed but not simplified, so the regression is pinned
+   * to real markup: sibling section tables, four levels of
+   * `role="presentation"` nesting, `font-size:0px` spacers, a button `<a>` in a
+   * `bgcolor` cell, a two-column footer, and no `<th>` anywhere.
    */
   it('converts a real MJML newsletter to prose, not markup', () => {
     const mjml =
@@ -146,15 +119,12 @@ describe('mailHtmlToMarkdown', () => {
     expect(markdown).toContain('Click the button below to finish signing in.')
     expect(markdown).toContain('[Sign in](https://claude.test/magic-link)')
     expect(markdown).toContain('Anthropic, PBC')
-    // The two footer columns are separate blocks. `\s*` would be wrong here —
-    // the blank line between them IS the separation; what must not happen is
-    // the two ending up on one line.
+    // The two footer columns are separate blocks, not one line.
     expect(markdown).not.toMatch(/Anthropic, PBC[^\n]*!\[/)
   })
 
   it('keeps the cells of a layout table as separate blocks', () => {
-    // Unwrapping must not run two unrelated cells together into one line —
-    // a two-column layout is two things, not one sentence.
+    // Unwrapping must not join two cells into one line.
     const markdown = mailHtmlToMarkdown(
       '<table><tbody><tr><td>left</td><td>right</td></tr>' +
         '<tr><td>second row</td><td>and its neighbour</td></tr></tbody></table>',
@@ -175,15 +145,14 @@ describe('mailHtmlToMarkdown', () => {
       '<ul><li>one<ul><li>one a</li></ul></li><li>two</li></ul>',
     )
 
-    // The exact indent width is turndown's business; that the nesting survives
-    // at all is this module's.
+    // The indent width is turndown's business; that nesting survives is ours.
     expect(markdown).toMatch(/^- +one$/m)
     expect(markdown).toMatch(/^ {2,}- +one a$/m)
     expect(markdown).toMatch(/^- +two$/m)
   })
 
   it('drops a script before the converter ever sees it', () => {
-    // Sanitised first, not after. `turndown` would otherwise parse this.
+    // Sanitised first: `turndown` would otherwise parse this.
     const markdown = mailHtmlToMarkdown('<p>hi</p><script>steal()</script>')
 
     expect(markdown).toBe('hi')
@@ -199,7 +168,7 @@ describe('mailHtmlToMarkdown', () => {
   })
 
   it('collapses long runs of blank lines', () => {
-    // Newsletter HTML produces dozens, and they push the reply box off screen.
+    // Newsletter HTML produces dozens.
     const markdown = mailHtmlToMarkdown('<p>one</p><br><br><br><br><br><p>two</p>')
 
     expect(markdown).not.toMatch(/\n{3,}/)
@@ -219,10 +188,8 @@ describe('mailHtmlToMarkdown', () => {
 
 describe('the round trip', () => {
   /**
-   * The pair, not either half. A foreign draft is converted by this module and
-   * then rendered by `renderMailMarkdown` for the preview and for sending — so
-   * a mark that survives conversion but not the re-render still reaches the
-   * recipient as plain text, and the user never sees it happen.
+   * The round trip: a foreign draft is converted here, then rendered by
+   * `renderMailMarkdown` for preview and send, so both halves must agree.
    */
   it.each([
     ['bold', '<p><strong>bold</strong></p>', '<strong>bold</strong>'],
@@ -235,11 +202,8 @@ describe('the round trip', () => {
   })
 
   /**
-   * The second caller, and the one with the higher stakes.
-   *
-   * A quote that unwraps badly is ugly. A *draft* that unwraps badly has eaten
-   * something the user wrote and is about to send — and a Gmail-composed draft
-   * is exactly the case that arrives full of layout tables.
+   * Drafts: the higher stakes, since a bad unwrap eats something the user is
+   * about to send, and Gmail drafts arrive full of layout tables.
    */
   it('leaves a foreign draft editable rather than full of markup', () => {
     const draft =
@@ -278,8 +242,7 @@ describe('quoteAsMarkdown', () => {
   })
 
   it('quotes an empty string as an empty string, not as a lone marker', () => {
-    // A parent with no body must not produce a quote block containing nothing,
-    // which reads as a rendering bug directly above the user's cursor.
+    // A parent with no body produces no empty quote block.
     expect(quoteAsMarkdown('')).toBe('')
   })
 

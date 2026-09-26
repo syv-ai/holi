@@ -1,6 +1,6 @@
 /**
- * What the agent panel owes the user in words, kept pure so it can be tested
- * without standing up an xterm.
+ * What a session's indicators say in words, kept pure so it can be tested
+ * without an xterm.
  */
 
 /** The mode actually in force — `activeModeAtom`'s resolution (D85). */
@@ -10,15 +10,12 @@ export type ColorMode = 'light' | 'dark'
  * The theme nudge, or null.
  *
  * Claude Code reads its `settings.json` at start, so the `theme` Holi stamps
- * into the vault's config directory (D86) reaches a session that is already
- * running only when it restarts. That is a known limit and gets a sentence
- * rather than an attempt to hot-swap another program's settings.
+ * (D86) reaches a running session only on restart. A known limit: a sentence,
+ * not a hot-swap of another program's settings.
  *
- * **Compared here rather than fingerprinted in main**, deliberately: the setting
- * lives in `.holi/settings/app.local.yaml`, which is outside `AGENT_CONFIG_FILES`
- * because `*.local.*` never syncs and so no collaborator's pull can change it.
- * Widening that set to catch a local theme flip would contradict the reason it
- * is drawn where it is. The renderer already knows both modes.
+ * Compared here rather than fingerprinted in main: the setting is in
+ * `app.local.yaml`, deliberately outside `AGENT_CONFIG_FILES` because local
+ * files never sync.
  */
 export function agentThemeNote(args: {
   running: boolean
@@ -31,26 +28,23 @@ export function agentThemeNote(args: {
   return "restart to change Claude's theme"
 }
 
-/** How the vault assistant is doing, in the one form both places that show it use. */
+/** How one session is doing, in the form every place that shows it uses. */
 export interface AgentIndicator {
   /** Utility classes for the status dot. */
   dot: string
   /** The word beside the dot: short enough for a crowded header. */
   state: string
-  /** The tooltip: the whole sentence, on both the dot and the footer control. */
+  /** The tooltip: the whole sentence. */
   title: string
 }
 
 /**
- * The single derivation of ONE session's state, so a tab, a sidebar card and the
- * footer door cannot drift into saying different things about it.
+ * The single derivation of one session's state, so its tab, sidebar card and
+ * other indicators cannot disagree.
  *
- * The restart nudges used to be amber sentences spelled out in the header, which
- * was noise in the one strip that is meant to be glanceable. They are a *dot*
- * now: steady amber says "this session wants restarting", the reason is on hover,
- * and the Restart button is already an inch away. An open turn outranks a nudge
- * because it is the transient thing; the nudge is still true when the turn ends,
- * and a session waiting on YOU outranks both.
+ * A restart nudge is a steady amber dot with the reason on hover. Precedence:
+ * waiting on you, then an open turn (transient), then the nudge (still true
+ * after the turn).
  */
 export function agentIndicator(args: {
   /** Claude Code's own answer for this session. */
@@ -69,8 +63,7 @@ export function agentIndicator(args: {
     return { dot: 'bg-muted-foreground', state: 'ended', title: 'this session has ended' }
   }
 
-  // The loudest state, and the only one that is about YOU rather than about
-  // Claude: it is blocked on a dialog and nothing moves until it is answered.
+  // The loudest state: blocked on a dialog until you answer.
   if (state === 'needs-you') {
     return {
       dot: 'bg-orange-500',
@@ -119,12 +112,9 @@ export interface FleetSession {
  * The sessions that make a vault switch worth stopping for: live, and either
  * mid-turn or waiting on an answer (D100).
  *
- * **Every live session ends on a switch**, idle ones included — a session left
- * running in the vault you walked away from has no repo, no watcher and no sync
- * loop behind it. Only these are worth a question, for the same reason the
- * sidebar's End only asks about these: ending an idle session costs a
- * conversation you can resume, and ending one of these costs work part way
- * through or a question nobody answered.
+ * Every live session ends on a switch, idle ones included: a session in a
+ * vault you left has no watcher or sync behind it. Only these are worth asking
+ * about; an idle one's conversation can be resumed.
  */
 export function sessionsWorthAsking<T extends FleetSession>(sessions: T[]): T[] {
   return sessions.filter((s) => !s.exited && (s.state === 'working' || s.state === 'needs-you'))

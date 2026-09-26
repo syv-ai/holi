@@ -1,14 +1,9 @@
 /**
  * `.holi/settings/icons.yaml` decorates a tab pill, exactly as it decorates a tree row (D82).
  *
- * The strip's icon is `fileIconFor`, the same function the tree calls, so what
- * is under test here is only the plumbing: the map lives in the snapshot and
- * `tabIcon` is module-level, so the component has to hand it down. Whether an
- * emoji beats the type glyph is `FileTree.icon.test.tsx`'s question, answered
- * once in `fileIconFor`.
- *
- * `active={0}` with one tab is load-bearing: jsdom measures every pill at 0×0,
- * so `tabWindow` keeps only the active one in the DOM (see TabStrip.test.tsx).
+ * The strip's icon is `fileIconFor`, the same function the tree calls, so only
+ * the plumbing from the snapshot is under test here. Whether an emoji beats the
+ * type glyph is `FileTree.icon.test.tsx`'s question.
  */
 import { emptyVaultSnapshot } from '@holi/shared'
 import { getDefaultStore } from 'jotai'
@@ -26,8 +21,8 @@ function strip(tab: Tab, icons: Record<string, string> = {}) {
   render(
     <TabStrip tabs={[tab]} active={0} onSelect={() => {}} onPin={() => {}} onClose={() => {}} />,
   )
-  // The pill's label button — it holds the icon and the name, and nothing else
-  // in it draws an <svg>, which is what makes "no glyph" assertable.
+  // The pill's label button: nothing else in it draws an <svg>, which makes
+  // "no glyph" assertable.
   return screen.getByText('roadmap.md').closest('button')!
 }
 

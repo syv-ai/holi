@@ -1,7 +1,7 @@
 /**
- * `turndown-plugin-gfm` ships no typings and has no `@types` package (checked
- * 2026-08-14). Only the rules the composer needs are declared — `gfm` is the
- * bundle of tables, strikethrough, task lists and fenced code.
+ * `turndown-plugin-gfm` ships no typings and has no `@types` package. Only
+ * what the composer needs is declared: `gfm` bundles tables, strikethrough,
+ * task lists and fenced code.
  */
 declare module 'turndown-plugin-gfm' {
   import type TurndownService from 'turndown'

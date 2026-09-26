@@ -2,13 +2,9 @@
  * Every session terminal that has been built, by session id — so that a paste
  * into a session can put the keyboard where the text just landed.
  *
- * Opening a session's tab focuses its terminal already (`SessionTerminal`'s
- * visible effect), and that covers every ask that arrives in a tab you were
- * not looking at. The case it misses is the one where the tab was ALREADY
- * showing: nothing becomes visible, so nothing focuses, and the keystrokes
- * meant to finish a `/rename ` go to whatever had focus before — the tab you
- * just double-clicked, usually. This is the other half: a terminal registers
- * itself when it is built, and a send asks for it by id.
+ * A terminal focuses itself when its tab becomes visible. This covers the tab
+ * that was already showing, where nothing becomes visible and keystrokes (say,
+ * finishing a `/rename `) would go to whatever had focus before.
  */
 
 type Focus = () => void
@@ -26,9 +22,8 @@ export function registerSessionTerminal(id: string, focus: Focus): () => void {
 }
 
 /**
- * Focus a session's terminal. False when it has none yet, which is fine: the
- * terminal being built for it focuses itself on its first show, and a hidden
- * one does the same the moment its tab comes forward.
+ * Focus a session's terminal. False when it has none yet, which is fine: it
+ * focuses itself on first show.
  */
 export function focusSessionTerminal(id: string): boolean {
   const focus = terminals.get(id)

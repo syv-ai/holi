@@ -37,14 +37,8 @@ test('only the rows that appeared arrive, and they stagger in order', () => {
 })
 
 /**
- * The whole reason this is computed rather than declared: a list that re-renders
- * for an unrelated reason must not REPLAY its arrival — the shape of the bug D92
- * hit, where every heading animated shut on file open.
- *
- * Replaying needs the class to be removed and re-added; a class that simply
- * stays put does nothing. So the assertion is that the class attribute is not
- * touched at all across an unrelated re-render, which is stronger than checking
- * its value and is what the browser actually keys a restart on.
+ * An unrelated re-render must not replay the arrival (D92). Asserted as the
+ * class attribute not being touched at all, which is what a restart keys on.
  */
 test('a re-render with the same rows does not replay the arrival', async () => {
   const view = render(<List ids={['a']} />)
@@ -88,18 +82,14 @@ test('under reduced motion rows still arrive, but all at once', () => {
   )
   const view = render(<List ids={['a']} />)
   view.rerender(<List ids={['a', 'b', 'c']} />)
-  // The class stays — index.css shortens the arrival itself to 1ms — but the
-  // ramp flattens, so nothing is queued behind anything.
+  // The class stays (index.css shortens it to 1ms) but the ramp flattens.
   expect(row(view, 'c')).toHaveClass('motion-in-fade')
   expect(row(view, 'c').style.animationDelay).toBe('0ms')
 })
 
 /**
- * The app mounts under React.StrictMode (main.tsx), which double-invokes render
- * in development. A previous-list ref written DURING render makes the second
- * pass compare the new list against itself, find nothing new, and win — so
- * nothing animates in the dev app while every test above still passes. This is
- * the test that catches that.
+ * StrictMode double-invokes render: a previous-list ref written during render
+ * would make nothing animate in dev while the tests above pass.
  */
 test('arrivals survive StrictMode double rendering', () => {
   const view = render(
@@ -117,21 +107,15 @@ test('arrivals survive StrictMode double rendering', () => {
 })
 
 /**
- * The reason the arrival map is held rather than recomputed every render.
- *
- * An arrival takes 300ms plus its stagger. Deriving the map fresh each render
- * looks equivalent and is not: any unrelated re-render inside that window finds
- * nothing new, drops the class off a row that is still animating, and cuts it
- * short. In the file tree an unrelated re-render is routine — the watcher, a
- * selection, a task update — so this is the difference between a stagger that
- * plays and one that flickers.
+ * The arrival map is held, not recomputed: an unrelated re-render mid-arrival
+ * (routine in the tree) would drop the class and cut the animation short.
  */
 test('an unrelated re-render does not cut a running arrival short', () => {
   const view = render(<List ids={['a']} />)
   view.rerender(<List ids={['a', 'b']} />)
   expect(row(view, 'b')).toHaveClass('motion-in-fade')
 
-  // Same ids, new array — which is what React hands a component on most renders.
+  // Same ids, new array, as most renders hand it.
   view.rerender(<List ids={['a', 'b']} />)
   expect(row(view, 'b')).toHaveClass('motion-in-fade')
 
@@ -176,10 +160,8 @@ test('changing document plays the fade', () => {
 })
 
 /**
- * The reason this is a hook and not a class chosen during render: React does not
- * touch an attribute whose value has not changed, so writing the same class for
- * a second navigation would replay nothing. a → b → c must fade three times, not
- * once, and the class has to be genuinely removed and re-added to do it.
+ * React leaves an unchanged class alone, so a → b → c would fade once. The
+ * class must be genuinely removed and re-added each time.
  */
 test('navigating again replays rather than doing nothing', async () => {
   const view = render(<Pane doc="a.md" />)

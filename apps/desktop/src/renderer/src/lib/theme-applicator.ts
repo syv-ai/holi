@@ -1,12 +1,7 @@
 /**
- * Writes a set of CSS custom properties onto a root element and remembers what
- * it wrote, so the next apply can drop whatever is no longer wanted and a clear
- * can strip everything it owns — and nothing it doesn't.
- *
- * This is the one genuinely fiddly part of theming (diff without flashing the
- * defaults, clear on the way out) pulled out of the React hook into a plain
- * object, so it can be tested with a bare element and no framework. The hook
- * (`state/theme.ts`) is the humble shell that drives it from atoms + tRPC.
+ * Writes CSS custom properties onto a root element and remembers what it
+ * wrote, so the next apply drops what is no longer wanted and a clear strips
+ * everything it owns, and nothing it does not. Driven by `state/theme.ts`.
  */
 export class ThemeApplicator {
   /** The custom-property names this applicator currently has set on `root`. */
@@ -16,9 +11,8 @@ export class ThemeApplicator {
 
   /**
    * Make `root` carry exactly `vars`: overwrite or add each, and remove any
-   * property a previous apply set that is not in `vars` now. It never clears
-   * first, so re-theming (a vault switch) doesn't flash the defaults, and it
-   * only ever touches properties it set itself.
+   * property a previous apply set that is not in `vars` now. Never clears
+   * first, so a vault switch does not flash the defaults.
    */
   apply(vars: Record<string, string>): void {
     const next = new Set(Object.keys(vars))

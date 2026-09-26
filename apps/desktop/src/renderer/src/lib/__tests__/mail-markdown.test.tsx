@@ -1,14 +1,9 @@
 /**
  * Markdown → HTML, the renderer's half of the composer (D71).
  *
- * The decision this file guards is that **markdown is the only authoring
- * language**. Inline HTML is escaped rather than passed through, which buys
- * three things at once: the `text/plain` part stays a message a human can read,
- * `value < 5` survives being typed, and a paste from a web page cannot smuggle
- * markup into a mail the user believes they wrote by hand.
- *
- * `dompurify` still runs downstream — this is not the security boundary, it is
- * the authoring one. The two are separate and both are load-bearing.
+ * Markdown is the only authoring language: inline HTML is escaped, so
+ * `value < 5` survives and a web paste cannot smuggle markup. The authoring
+ * boundary, not the security one; `dompurify` still runs downstream.
  */
 import { describe, expect, it } from 'vitest'
 import { renderMailMarkdown } from '../mail-markdown'
@@ -21,7 +16,7 @@ describe('renderMailMarkdown', () => {
   })
 
   it('renders a GFM table as a table', () => {
-    // The wart this exists to remove: a quoted table flattening to prose.
+    // A quoted table must not flatten to prose.
     const html = renderMailMarkdown('| a | b |\n| --- | --- |\n| 1 | 2 |')
 
     expect(html).toContain('<table>')
@@ -43,12 +38,8 @@ describe('renderMailMarkdown', () => {
   })
 
   it('escapes inline HTML too', () => {
-    // marked 18 routes block and inline HTML through the same `html` hook, but
-    // they are separate token types and only one of them is the obvious case.
-    //
-    // Asserted against the DOM rather than the string: an escaped tag still
-    // *contains* the characters `onclick`, as inert text the reader sees. Only
-    // parsing can tell markup that runs from text that reads like markup.
+    // Block and inline HTML are separate token types through one hook. Asserted
+    // against the DOM: an escaped tag still contains `onclick` as inert text.
     const host = document.createElement('div')
     host.innerHTML = renderMailMarkdown('a <span onclick="x()">word</span> here')
 
@@ -57,8 +48,7 @@ describe('renderMailMarkdown', () => {
   })
 
   it('leaves a less-than that was never a tag alone', () => {
-    // Typing `value < 5` in a mail is not markup and must not become one, nor
-    // vanish. This is the case a naive `stripTags` gets wrong.
+    // `value < 5` must neither become markup nor vanish.
     const html = renderMailMarkdown('if value < 5 then stop')
 
     expect(html).toContain('value &lt; 5')
@@ -72,8 +62,7 @@ describe('renderMailMarkdown', () => {
   })
 
   it('does not turn a single newline into a line break', () => {
-    // `breaks` stays off. Mail written in an editor with soft wrapping would
-    // otherwise sprout a <br> at every wrap point the author never typed.
+    // `breaks` stays off, or soft wraps sprout <br>s.
     const html = renderMailMarkdown('one\ntwo')
 
     expect(html).not.toContain('<br')
@@ -94,8 +83,7 @@ describe('renderMailMarkdown', () => {
   })
 
   it('is pure — the same input renders the same bytes twice', () => {
-    // `marked.use` mutates a global. Using it would make this module's output
-    // depend on whatever else in the app had configured marked first.
+    // `marked.use` mutates a global other modules could configure.
     const markdown = '**bold** and `code`'
 
     expect(renderMailMarkdown(markdown)).toBe(renderMailMarkdown(markdown))

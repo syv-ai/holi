@@ -1,29 +1,13 @@
 /**
- * When a message arrived, in the two lengths mail needs.
+ * When a message arrived, in the two lengths mail needs. Both always carry the
+ * time of day, so two messages an hour apart never look simultaneous.
  *
- * There used to be two `shortDate` functions — one in `MailView`, one in
- * `DraftsList` — and both showed the day OR the time, never both: a time for
- * things that arrived today, a bare date for everything else. That is the
- * standard mail-list compression and it loses the one thing a reader scanning a
- * thread actually wants, which is *when in the day* something landed. Two
- * messages an hour apart looked simultaneous.
+ * - `listStamp` sits in a narrow column, so it drops what the reader can
+ *   infer: "Today", and the current year.
+ * - `messageStamp` is read against the thread's other messages, so it is fully
+ *   qualified and never relative.
  *
- * So both lengths now say both, and the difference between them is how much
- * room they have:
- *
- * - `listStamp` sits in a 320px column that narrows to 220px, so it drops
- *   everything the reader can infer. Today is "Today"; this year omits the year.
- * - `messageStamp` sits in the reader, has the width, and is read *against the
- *   other messages in the thread* — so it is fully qualified and never relative.
- *   "Today" inside a thread is a word you have to resolve against a date you
- *   cannot see.
- *
- * **`now` is a parameter**, so a test does not depend on the clock. It defaults,
- * because every caller in the app means "now".
- *
- * **An unparseable date is `''`.** `DraftsList` guarded this and `MailView` did
- * not, which is the kind of split that only shows up as `Invalid Date` in front
- * of a user. A `Date` header is written by the sender and can hold anything.
+ * An unparseable date is `''`: the sender writes the `Date` header.
  */
 
 function parsed(iso: string): Date | null {
@@ -38,10 +22,7 @@ function timeOf(date: Date): string {
 
 /**
  * A thread row's stamp: `Today 14:22`, `2 Mar 09:15`, `30 Nov 2025 09:15`.
- *
- * The year appears only when it differs from the current one — in a mailbox,
- * "this year" is the overwhelming default and printing it on every row spends
- * four characters of a narrow column on nothing.
+ * `now` is a parameter for tests.
  */
 export function listStamp(iso: string, now: Date = new Date()): string {
   const date = parsed(iso)

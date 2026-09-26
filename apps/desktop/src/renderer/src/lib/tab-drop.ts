@@ -1,15 +1,8 @@
 /**
  * Where a drop lands, and what is on the wire.
  *
- * The strip and the pane both hit-test a drag against rectangles they measure
- * themselves. None of that can be tested in place: jsdom computes no layout, so
- * every `getBoundingClientRect` is `0×0` — `test/setup.dom.ts` says so at length
- * and parks the resizable handles at (10000, 10000) to keep clicks working
- * around it. So the arithmetic lives here, takes numbers, and is checked on
- * numbers. It is the same split `tab-overflow.ts` makes: scrolling is a
- * stylesheet's job, deciding what has scrolled out of reach is not.
- *
- * The components read rectangles and dispatch. That is all they do.
+ * jsdom computes no layout, so the hit-testing arithmetic lives here and takes
+ * numbers; the components only read rectangles and dispatch.
  */
 
 import type { Tab } from '@/state/panes'
@@ -17,12 +10,8 @@ import type { Tab } from '@/state/panes'
 /**
  * The custom MIME type a tab drag carries.
  *
- * It is also the *"is a tab being dragged"* predicate, which is why it has to be
- * custom. `dataTransfer.getData` returns an empty string during `dragover` by
- * spec — only `types` is exposed while a drag is in flight — so a target cannot
- * ask *what* is being dragged before it decides whether to accept the drop. It
- * can only ask whether a type it recognises is present. `BoardView` uses bare
- * `text/plain` because it never needs that question answered mid-drag.
+ * Custom because it is also the "is a tab being dragged" predicate: during
+ * `dragover` only `types` is exposed, never the data.
  */
 export const TAB_MIME = 'application/x-holi-tab'
 
@@ -33,9 +22,8 @@ const EDGE_MAX_PX = 120
 /** The band at each end of a strip that arms auto-slide. */
 const SLIDE_BAND_PX = 28
 
-/** Auto-scroll while a drag hovers an end of the strip: how far each tick moves
- *  it, and how often. 12px every 16ms is ~750px/s — fast enough to cross a full
- *  strip in about a second, slow enough to stop on the position you want. */
+/** Auto-scroll step and interval: ~750px/s, fast enough to cross a strip,
+ *  slow enough to stop where you want. */
 export const AUTOSCROLL_PX = 12
 export const AUTOSCROLL_MS = 16
 
@@ -50,14 +38,8 @@ export interface PillBox {
 /**
  * The absolute index a drop at `x` should insert before.
  *
- * `pills` are the laid-out pills, in order, carrying their absolute indices —
- * `PillBox` rather than a plain width array because a scrolled strip's leftmost
- * pill is very often not tab 0, and an index computed from the rendered offset
- * would reorder a different tab than the one under the pointer.
- *
- * Past the last pill this returns `last.index + 1`. This function is
- * deliberately never told how many tabs exist: the answer is where the pointer
- * is, and the caller owns the clamping.
+ * Pills carry absolute indices: a scrolled strip's leftmost pill is often not
+ * tab 0. Past the last pill this returns `last.index + 1`; the caller clamps.
  */
 export function dropIndex(pills: PillBox[], x: number): number {
   for (const pill of pills) {
@@ -73,10 +55,8 @@ export type PaneDropZone = 'before' | 'into' | 'after'
  * Which third of a pane a drop at `x` is aimed at: a new column on either side,
  * or into the pane itself.
  *
- * A quarter of the width, **capped**. Proportional alone is wrong at both ends
- * of the range this app runs at: at the 179px-per-pane split measured on
- * 2026-08-20 a quarter is a usable 45px, but at 1200px it would turn half the
- * window into a split target and make dropping *into* a pane the hard gesture.
+ * A quarter of the width, capped: on a wide pane an uncapped quarter makes
+ * dropping into the pane the hard gesture.
  */
 export function paneDropZone(rect: { left: number; width: number }, x: number): PaneDropZone {
   const edge = Math.min(rect.width * EDGE_FRACTION, EDGE_MAX_PX)
@@ -88,10 +68,8 @@ export function paneDropZone(rect: { left: number; width: number }, x: number): 
 /**
  * Which end of the strip a drag is hovering, or null in the middle.
  *
- * This is what makes an off-screen drop position reachable at all: the wheel is
- * not available while a drag is in flight, so without it "move this to position
- * 9 of 12" is not expressible. On a strip narrower than two bands the left one
- * wins, which is harmless — scrolling left from the left end is already a no-op.
+ * The wheel is unavailable mid-drag, so this is what reaches off-screen
+ * positions. On a strip narrower than two bands the left one wins, harmlessly.
  */
 export function stripEdge(
   rect: { left: number; width: number },
@@ -103,13 +81,9 @@ export function stripEdge(
 }
 
 /**
- * What rides on the drag: the tab's **identity**, and nothing else.
- *
- * Not its pane, not its index — `findTab` spans the workspace, so the drop can
- * look it up, and a pair of indices could go stale between `dragstart` and
- * `drop` (close a tab mid-drag and they point somewhere else). Not `preview`
- * either: `moveTab` pins from the tab it finds in the workspace, so a stale flag
- * on the wire could never contradict it.
+ * What rides on the drag: the tab's identity only. Indices could go stale
+ * mid-drag, and `findTab` spans the workspace. `preview` is read from the
+ * workspace's own tab by `moveTab`.
  */
 export function tabPayload(tab: Tab): string {
   return JSON.stringify(
@@ -124,10 +98,8 @@ export function tabPayload(tab: Tab): string {
 /**
  * Read a payload back, or null.
  *
- * The trust boundary. This string crossed a `DataTransfer`, which any drag
- * source on the machine can write to, so every field is checked and a fresh
- * narrow object is built per kind — returning the parsed value would let
- * whatever else was in the JSON ride into the workspace.
+ * The trust boundary: any drag source on the machine can write a
+ * `DataTransfer`, so every field is checked and a fresh narrow object built.
  */
 export function parseTabPayload(text: string): Tab | null {
   let value: unknown

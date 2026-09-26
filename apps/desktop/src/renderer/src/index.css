@@ -1,25 +1,21 @@
 @import 'tailwindcss';
 
-/* Dark-mode switch driven by the data-theme root stamp (not prefers-color-scheme).
-   Kept instead of shadcn's default `.dark` — Holi stamps `data-theme` on the root. */
+/* Dark mode follows the `data-theme` root stamp, not prefers-color-scheme or
+   shadcn's `.dark`. */
 @custom-variant dark (&:where([data-theme='dark'] *));
 
 /* shadcn's semantic token vocabulary, mapped onto Tailwind's built-in neutral/sky
    palette. Plain selectors (NOT @theme) so the values re-cascade per theme scope.
    Holi is dark-first: :root shares the dark values; [data-theme='light'] overrides.
-   Role note: `--primary` is the brand action colour (sky) and is a FILL — it is
-   paired with `--primary-foreground` on top of it. `--brand` is the same brand
-   as TEXT, and the two cannot be one token: dark-first means a fill dark enough
-   to carry near-white text (sky-700) is far too dark to BE text on a
-   near-black background — sky-700 on neutral-950 is about 3:1. Reach for
-   `text-brand`, never `text-primary`. `--accent` is shadcn's SUBTLE hover
-   surface (neutral) — do not confuse it with the old brand `accent`. */
+   `--primary` is the brand as a FILL, under `--primary-foreground`. `--brand`
+   is the brand as TEXT: a fill dark enough to carry near-white text is too dark
+   to be text on near-black (about 3:1). Use `text-brand`, never
+   `text-primary`. `--accent` is shadcn's subtle neutral hover surface, not a
+   brand colour. */
 :root,
 [data-theme='dark'] {
-  /* Tell the engine which way round this page is, so everything we do NOT paint
-     ourselves — a scrollbar we did not reach, a native form control, the canvas
-     behind the app — comes up dark instead of defaulting to light. It was unset,
-     which reads as `normal`, i.e. light. */
+  /* So everything we do not paint ourselves (native controls, the canvas)
+     comes up dark instead of the light default. */
   color-scheme: dark;
 
   --background: var(--color-neutral-950);
@@ -45,25 +41,18 @@
 
   /* ── Chrome tokens (per-vault themeable) ─────────────────────────────
    * Paint-only knobs a vault theme may override alongside the colours above.
-   * Every default here reproduces today's look, so nothing changes until a
-   * vault sets one. Defined via `:root` (the list's first arm always matches
-   * html), so the light block below only re-states what actually differs.
-   * `--radius` lives in the `@theme` block further down. */
+   * The light block below only re-states what differs. `--radius` lives in
+   * the `@theme` block further down. */
   --scrollbar-thumb: var(--color-neutral-700);
   --scrollbar-thumb-hover: var(--color-neutral-600);
 
-  /* Code + data token colours for the plain/code editor. These lived as
-     hardcoded hexes in `editor/theme.ts`, which is why a .json or .mjs file was
-     unreadable the moment light mode shipped: 300-tint colours chosen to glow on
-     near-black wash out completely on white. As tokens they follow the theme,
-     and a vault theme could eventually reach them. Values here are the originals
-     verbatim, so the dark editor is unchanged. */
+  /* Code-editor syntax colours. Tokens, so they follow the theme: 300 tints
+     that glow on near-black wash out on white, hence the light arm below. */
   --syntax-keyword: var(--color-fuchsia-300);
   --syntax-property: var(--color-sky-300);
   --syntax-string: var(--color-green-300);
-  /* Numbers were amber-400, and a theme file is mostly numbers: every hex, every
-     rgb() channel, every length. The result was a wall of yellow. Violet keeps
-     them distinct from the sky keys and green strings without shouting. */
+  /* Violet, not amber: a theme file is mostly numbers, and amber read as a
+     wall of yellow. */
   --syntax-number: var(--color-violet-300);
   --syntax-type: var(--color-blue-300);
   --syntax-variable: var(--color-neutral-200);
@@ -71,21 +60,13 @@
   --syntax-comment: var(--color-neutral-500);
   --syntax-punctuation: var(--color-neutral-400);
   --syntax-invalid: var(--color-red-400);
-  /* The hairline between two pieces of CHROME — the split between panes, the
-     sidebar's edge, a panel header's underline, the footer's top rule. Split
-     off from `--border`, which stays the edge of an OBJECT: a card, a chip, a
-     popover. The two want opposite things. An object's border has to be seen,
-     because it is what says where the object ends; a chrome rule only has to be
-     *noticed*, and at `--border`'s weight a window full of panes reads as a
-     grid of drawn boxes rather than one surface with seams in it.
+  /* The hairline between pieces of CHROME (pane splits, panel rules), distinct
+     from `--border`, the edge of an OBJECT (card, chip). An object's edge must
+     be seen; a chrome rule only noticed, or the window reads as drawn boxes.
 
-     Derived rather than stated, so it survives re-theming: fade the border
-     toward the page it sits on. A vault that recolours `--border` or
-     `--background` gets a divider that still belongs to them, and one that
-     wants an outright colour sets `--divider` itself (a flat colour — the
-     theme validator does not accept `color-mix`). One definition covers both
-     modes: the light block re-states `--border`/`--background` on this same
-     element, so the substitution resolves per theme. */
+     Derived, so it survives re-theming and covers both modes; a vault wanting
+     an outright colour sets `--divider` itself (flat: the theme validator does
+     not accept `color-mix`). */
   --divider: color-mix(in srgb, var(--border) 55%, var(--background));
   /* A drawer's inner edge and header rule (DrawerShell). None by default: a
      drawer lies flat on the page, colour not borders. A vault theme draws it. */
@@ -93,28 +74,22 @@
   /* Selection follows the brand by default, so recolouring --primary alone
      recolours the selection; a theme can still set --selection outright. */
   --selection: color-mix(in srgb, var(--primary) 30%, transparent);
-  /* Elevation. Themable because they're consumed through var() — Tailwind bakes
-     its own shadow-* in.
+  /* Elevation. Themable because consumed through var(); Tailwind bakes its
+     own shadow-* in.
 
-     `--shadow-popover` is deliberately HEAVIER than Tailwind's md, which it used
-     to copy verbatim. Overlays used to carry a 1px border as well, and md was
-     enough beside a drawn edge; without the border the shadow is the only thing
-     separating a floating surface from the page, and at 0.1 alpha it was not
-     doing that job. `--shadow-dialog` is untouched — a dialog sits over a
-     scrim, which is its own separation. */
+     `--shadow-popover` is heavier than Tailwind's md because overlays have no
+     border: the shadow alone separates them from the page. A dialog sits over
+     a scrim, so `--shadow-dialog` stays light. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
   /* The shade a scroll edge casts over rows that have gone out of sight. */
   --shadow-scroll-edge: rgb(0 0 0 / 0.32);
   --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* ── Editor chip tokens (per-vault themeable) ────────────────────────
-   * Wiki-link chips and task-status orbs in the CodeMirror editor. Defined
-   * here (not in the light block) because the editor is a `baseTheme` — one
-   * mode-independent palette — so these stay constant, and the defaults
-   * reproduce today's look. A chip's low-alpha tint is derived from its colour
-   * with color-mix, so recolouring the token recolours the fill too. The
-   * done-strike reuses `--muted-foreground`; there is no `link` token for
-   * markdown links vs wiki-links because they read as one "link" colour. */
+   * Wiki-link chips and task-status orbs in the CodeMirror editor. No light
+   * arm: the editor is a mode-independent `baseTheme`. A chip's tint is
+   * color-mixed from its colour, so recolouring the token recolours the fill.
+   * Markdown links and wiki-links share `--link`. */
   --link: #7dd3fc;
   --link-missing: #f0abfc;
   --task: #fbbf24;
@@ -123,74 +98,38 @@
   --task-done: #3fb950;
 
   /* ── Diff tokens ─────────────────────────────────────────────────
-   * The two hues a diff is made of, stated once so every part of one derives
-   * from them: changed text, deleted text, the line tint under each, and the
-   * change gutter's stripe.
+   * The two hues every part of a diff derives from, so `DiffView` need not
+   * know the mode (`@codemirror/merge` hardcodes `&light`/`&dark` hexes; D85).
    *
-   * `@codemirror/merge` writes its whole palette as `&light`/`&dark` pairs of
-   * hardcoded hexes, and `DiffView` used to answer that by declaring itself
-   * dark unconditionally. That was true of the app until light mode shipped
-   * (D85), after which a light vault got a black `#0a0a0a` band across every
-   * diff. Naming the hues here is what lets the view stop caring which mode it
-   * is in.
+   * Mid-ramp 500s and no light arm: every use is a translucent wash or a 3px
+   * stripe, which reads on near-black and near-white alike.
    *
-   * Mid-ramp 500s on purpose, and no light arm: every use below is either a
-   * translucent wash over the page or a 3px stripe beside it, and a 500 reads
-   * against near-black and near-white alike. A tint is not text, so the
-   * darker-on-light rule the syntax ramp needs does not apply.
-   *
-   * Not in the theme whitelist, like `--syntax-*` and unlike `--link`: red is
-   * removed and green is added is close to a convention, and nothing has asked
-   * to recolour it. A vault theme could eventually reach them. */
+   * Not in the theme whitelist, like `--syntax-*`: red removed, green added is
+   * close to a convention. */
   --diff-added: var(--color-green-500);
   --diff-removed: var(--color-red-500);
-  /* The same two hues as TEXT, for a churn count beside a commit (`+40 −3`).
-     Separate tokens, and the paragraph above is the reason: a 500 is chosen to
-     read as a wash behind words, and green-500 as text on white paper is about
-     2.2:1. So this pair does take a light arm, exactly as the syntax ramp does
-     and for its reason — on white the job is contrast against the paper, not
-     glow against the ink. Same split as `--primary` (a fill) and `--brand`
-     (the same brand as text), which cannot be one token either. */
+  /* The same hues as TEXT, for a churn count (`+40 −3`). Separate tokens with a
+     light arm: green-500 as text on white is about 2.2:1. Same split as
+     `--primary` and `--brand`. */
   --diff-added-foreground: var(--color-green-400);
   --diff-removed-foreground: var(--color-red-400);
 
   /* ── Rendered-table tokens (per-vault themeable) ───────────────────
-   * `codemirror-markdown-tables` paints a rendered table entirely from its own
-   * `--tbl-theme-*` properties, and it picks between its built-in light and
-   * dark arms from `EditorView.darkTheme` — a flag Holi never sets, because its
-   * editor is a `baseTheme` and its own switch is the `data-theme` stamp above,
-   * which the widget cannot see. So the widget came up in its LIGHT arm in both
-   * of Holi's modes, painting hardcoded hexes (#ffffff, #dcdcdc, #2483e2…).
+   * `codemirror-markdown-tables` paints from its own `--tbl-theme-*`
+   * properties and picks light or dark from `EditorView.darkTheme`, which Holi
+   * never sets, so it would paint its light hexes in both modes.
    *
-   * Restated here rather than passed as a `TableTheme.dark.with({…})` object to
-   * `markdownTables()`: an argument bakes the values at build time, which would
-   * cut per-vault themes out entirely. As custom properties they re-cascade,
-   * so a vault that recolours `--border` or `--popover` recolours its tables
-   * too, with no TypeScript involved. The package sets its own defaults through
-   * `:where(:root:has(&))` — specificity 0, deliberately, "to make it easy to
-   * override" — so a plain `:root` declaration wins.
+   * Custom properties here rather than a `TableTheme` argument, which bakes
+   * values at build time and cuts out per-vault themes. The package's defaults
+   * are `:where()` (specificity 0), so plain `:root` wins. Every value is
+   * derived, so one definition covers both modes.
    *
-   * Every value is derived, so as with `--divider` one definition covers both
-   * modes: the light block re-states `--background`, `--border` and the rest on
-   * this same element, and the substitutions resolve per theme.
-   *
-   * `--border` and not `--divider` for a cell edge: a table cell is an OBJECT,
-   * and the split above is exactly that distinction.
-   *
-   * The two derived-from-`--foreground` mixes are the hover and drag states of
-   * a column/row divider, which is also the resize grip's fill — it has to be
-   * seen. The package derives them toward black, which is right for its light
-   * arm and backwards on a dark surface; toward `--foreground` is right in both
-   * (near-white on dark, near-black on light) and survives re-theming.
-   *
-   * even/odd row backgrounds are left alone: the package already defaults both
-   * to `var(--tbl-theme-row-background)`, so they follow the one set here. */
+   * A cell edge is `--border`: a cell is an object. Hover and drag mix toward
+   * `--foreground`, not black as the package does, so they show on dark too.
+   * Even/odd rows already default to the row background. */
   --tbl-theme-row-background: var(--background);
-  /* `--card` and not `--muted` for the header: dark-first, `--muted` and
-     `--border` are the same neutral-800, so a `--muted` header swallowed its
-     own cell borders. Against `--card` the ramp is three distinct steps in both
-     modes (page → header → edge), and "the header is the raised surface" is
-     what `--card` already means everywhere else. */
+  /* `--card`, not `--muted`: dark-first, `--muted` equals `--border`, so the
+     header swallowed its own cell borders. */
   --tbl-theme-header-row-background: var(--card);
   --tbl-theme-border-color: var(--border);
   --tbl-theme-border-hover-color: color-mix(in srgb, var(--border), var(--foreground) 25%);
@@ -202,9 +141,8 @@
   --tbl-theme-menu-border-color: var(--border);
   --tbl-theme-menu-hover-background: var(--accent);
   --tbl-theme-menu-hover-text-color: var(--accent-foreground);
-  /* The select-all corner tints the whole table; `--selection` is already the
-     brand-derived translucent wash used for a text selection, and the blurred
-     state falls back to a neutral so it reads as "was selected", not "is". */
+  /* Select-all tints like a text selection; blurred, a neutral reads as "was
+     selected". */
   --tbl-theme-select-all-focus-overlay: var(--selection);
   --tbl-theme-select-all-blur-overlay: color-mix(in srgb, var(--muted-foreground) 22%, transparent);
 }
@@ -222,11 +160,8 @@
   /* Light inverts the problem: text must be DARKER than the surface, so the
      text arm goes down a step where the dark arm went up. */
   --brand: var(--color-sky-700);
-  /* One step deeper than the first pass at this block, all for the same reason:
-     perceptual distance at the light end of a neutral ramp is much smaller than
-     at the dark end. `neutral-800` on `neutral-950` is an obvious edge; the
-     mirror-image `neutral-200` on `neutral-50` is very nearly nothing, and the
-     app read as a white page with invisible furniture. */
+  /* Not a mirror of the dark ramp: perceptual distance is smaller at the light
+     end, so surfaces sit a step deeper to stay visible. */
   --secondary: var(--color-neutral-200);
   --secondary-foreground: var(--color-neutral-900);
   --muted: var(--color-neutral-200);
@@ -242,9 +177,7 @@
   --scrollbar-thumb: var(--color-neutral-400);
   --scrollbar-thumb-hover: var(--color-neutral-500);
 
-  /* The light arm of the syntax ramp. Same hues, taken down to the 600/700 end
-     so they are dark ENOUGH rather than bright enough: on white the job is
-     contrast against the paper, not glow against the ink. */
+  /* Same hues at the 600/700 end: on white the job is contrast, not glow. */
   --syntax-keyword: var(--color-fuchsia-700);
   --syntax-property: var(--color-sky-700);
   --syntax-string: var(--color-green-700);
@@ -256,18 +189,12 @@
   --syntax-punctuation: var(--color-neutral-600);
   --syntax-invalid: var(--color-red-600);
 
-  /* Down to the 600/700 end, for the syntax ramp's reason. The tint tokens
-     `--diff-added`/`--diff-removed` deliberately have no light arm; these do,
-     because they are read as text. */
+  /* Text, so a light arm; the diff tints deliberately have none. */
   --diff-added-foreground: var(--color-green-700);
   --diff-removed-foreground: var(--color-red-700);
 
-  /* The popover shadow is softened here, and it did not use to be overridden at
-     all — the old note said black-alpha "reads fine on a light surface", which
-     was true of the 0.1 alpha it described. The dark-first value is now carrying
-     the edge a border used to draw, and that weight on white paper reads as
-     smudge rather than elevation. --selection stays brand-derived and needs no
-     light arm. */
+  /* Softer on white, where the dark-first weight reads as smudge. --selection
+     is brand-derived and needs no light arm. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
   --shadow-scroll-edge: rgb(0 0 0 / 0.14);
 }
@@ -295,9 +222,8 @@
   --color-border: var(--border);
   --color-divider: var(--divider);
   --color-drawer-edge: var(--drawer-edge);
-  /* The diff hues as TEXT utilities, so a churn count beside a commit reads in
-     the same green and red as the diff it summarises. The tint tokens are not
-     exposed here: nothing outside `DiffView` paints with them. */
+  /* The diff hues as text utilities. The tints are not exposed: only
+     `DiffView` paints with them. */
   --color-diff-added-foreground: var(--diff-added-foreground);
   --color-diff-removed-foreground: var(--diff-removed-foreground);
   --color-input: var(--input);
@@ -313,15 +239,8 @@
   --radius: 0.5rem;
 
   /* ── Motion tier ─────────────────────────────────────────────────────
-   * The app's ONE motion vocabulary. Two curves, five durations and a stagger
-   * step, and every moving part in the app draws from exactly these.
-   *
-   * **Named for what they are FOR, not for how big they are.** The tier this
-   * replaced was `--duration-micro/base/enter`, which tells a reader nothing
-   * about when to reach for one; that is how the app ended up with
-   * `transition-all` on a button, `transition-colors` on a tree row, Radix
-   * defaults on the overlays and a spin on the mailbox refresh, none of which
-   * were chosen. Every animation now names which of four behaviours it is:
+   * The app's ONE motion vocabulary, named for what each is FOR. Every
+   * animation names which of four behaviours it is:
    *
    *   R  respond      it notices you. Under your pointer or caret, nowhere else.
    *                   Always a TRANSITION, never an animation, so it reverses
@@ -335,15 +254,11 @@
    *
    * Anything that cannot name one of the four does not animate.
    *
-   * **No overshoot.** Weight comes from direction and easing, not from a bounce.
-   * `--ease-spring` and the `pop` keyframe it drove now live in
-   * `features/onboarding/onboarding-ritual.css`, their only consumer: a
-   * one-time ceremony is allowed one spring, the daily app is not.
+   * No overshoot: weight comes from direction and easing. The one spring lives
+   * in `features/onboarding/onboarding-ritual.css`, a one-time ceremony.
    *
-   * 300ms was chosen against 160 and 220 side by side, and every other duration
-   * is scaled off it. Re-pacing the app is an edit to THIS block and nothing
-   * else — see `lib/motion.ts` for why the stagger is a calc() string.
-   * Design of record: docs/ui-system.md (D98). */
+   * Every duration scales off the 300ms arrive. Re-pacing the app is an edit
+   * to this block only. See docs/ui-system.md (D98). */
   --ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
   /* Symmetric, for F only. A loop eased like an entrance reads as a stutter. */
   --ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
@@ -356,28 +271,16 @@
   /* --motion-stagger is NOT here. See the :root block below. */
 }
 
-/* The stagger step, deliberately NOT in `@theme` — a plain `:root` rule, which
- * always emits.
+/* Motion tokens NOT in `@theme`: a plain `:root` rule always emits.
  *
- * **Measured, not assumed.** Tailwind v4 tree-shakes `@theme` variables: it
- * emits the ones the CSS references and drops the rest. Every other motion
- * token survives because a `@utility` body above names it. This one's only
- * consumer is `lib/motion.ts`, which builds a `calc(var(--motion-stagger) * n)`
- * string at RUNTIME — a string Tailwind can never see. Declared in `@theme` it
- * was absent from the built stylesheet entirely, and the stagger silently
- * resolved to nothing.
+ * Tailwind v4 tree-shakes `@theme` variables the CSS does not reference. The
+ * stagger's only consumer is a runtime `calc()` string in `lib/motion.ts`, and
+ * in `@theme` it silently resolved to nothing. Any motion token consumed only
+ * from JavaScript or a string belongs here. `test/motion.test.ts` guards it.
  *
- * Any future motion token whose only consumer is JavaScript belongs here too,
- * for the same reason. `test/motion.test.ts` guards it.
- *
- * **Slide**, the same for the same reason: its only consumer is the CSS put
- * into the PDF viewer's shadow root (`lib/pdf-viewer-config.ts`), a string
- * Tailwind never reads. It is A (arrive/leave) for a panel that slides its
- * whole width in from an edge and back out, moving what is beside it. Over
- * that distance `--ease-settle` covers most of the way in the first frames
- * and then crawls, which read as abrupt; a slide is eased in and out, and
- * slower, and leaves at the pace it came, so it reads as one smooth motion
- * each way (a design call, 2026-09-23). */
+ * Slide is A (arrive/leave) for a panel moving its whole width. Over that
+ * distance `--ease-settle` front-loads and then crawls, so a slide is eased in
+ * and out, slower, and the same both ways. */
 :root {
   --motion-stagger: 45ms;
   --motion-slide: 400ms;
@@ -398,8 +301,8 @@
  * scroll) tracks the pointer 1:1 and is never eased, so motion applies to
  * the RELEASE and not the drag; nothing is ever on the critical path of an
  * action, so a dialog takes typing the instant it starts arriving; and
- * inside CodeMirror it is PAINT ONLY — never width, height, font-size or
- * margin, because that is what pegs CM's measure loop (features/editor.md).
+ * inside CodeMirror it is PAINT ONLY, never width, height, font-size or
+ * margin, because that pegs CM's measure loop (docs/features/editor.md).
  */
 
 /* ── R · respond ──────────────────────────────────────────────────────
@@ -408,18 +311,13 @@
  * on hover does it with a transform, never with padding or margin, so it runs
  * on the compositor and cannot reflow its siblings.
  *
- * **`translate`, `scale` and `rotate` are listed alongside `transform`, and
- * they are not redundant.** Tailwind v4 emits its transform utilities as the
- * INDEPENDENT properties — `active:scale-[0.97]` is `scale: .97`, not
- * `transform: scale(.97)` — so a list naming only `transform` transitions none
- * of them and every one snaps. Tailwind's own `transition-transform` lists all
- * four for exactly this reason. (Measured: `.active\:scale-\[0\.97\]:active
- * { scale: .97 }` in the built stylesheet.)
+ * `translate`, `scale` and `rotate` are not redundant with `transform`:
+ * Tailwind v4 emits its transform utilities as those independent properties,
+ * so a list naming only `transform` would let them snap.
  *
- * The KEYFRAMES below go the other way and use `transform`, also on purpose: a
- * keyframe setting `translate` would override an element's own Tailwind
- * `translate-*`, whereas one setting `transform` composes with it. That is what
- * lets a dialog centred with `-translate-x-1/2` also arrive. */
+ * The keyframes below use `transform` on purpose: it composes with an
+ * element's own `translate-*` (a dialog centred with `-translate-x-1/2` can
+ * still arrive), where `translate` would override it. */
 @utility motion-respond {
   transition-property:
     color, background-color, border-color, box-shadow, opacity, filter, fill, stroke,
@@ -439,8 +337,7 @@
  *
  * `-origin` scales from `transform-origin`, for menus that should grow out
  * of their trigger; pair it with Radix's `origin-(--radix-*-transform-origin)`.
- * It goes 0.96 → 1 and NEVER above 1: undershoot is fine, overshoot is the
- * thing that was ruled out. */
+ * It goes 0.96 → 1 and never above 1: no overshoot. */
 @utility motion-in-right {
   animation: motion-in-right var(--motion-arrive) var(--ease-settle) both;
 }
@@ -477,16 +374,12 @@
 @utility motion-out-fade {
   animation: motion-out-fade var(--motion-leave) var(--ease-settle) both;
 }
-/* A drawer (`composites/DrawerShell.tsx`): the nav, history, the last turn.
- * It pushes: its column's width runs 0 → --drawer-w and back, moving what is
- * beside it, at the slide pace (`--motion-slide`, `--ease-slide`, see :root),
- * eased in and out and the SAME both ways, so opening and closing read as one
- * motion reversed (a design call, 2026-09-25/26). A TRANSITION, so a press
- * mid-slide reverses from where it is. Off while the handle is dragged: direct
- * manipulation tracks the pointer and is never eased. Width is the one layout
- * property animated anywhere outside CodeMirror, and it is outside it: the
- * editor beside a drawer reflows during the slide, which was the accepted cost
- * of pushing rather than covering. */
+/* A drawer (`composites/DrawerShell.tsx`) pushes: its column's width runs
+ * 0 → --drawer-w and back at the slide pace, the same both ways. A TRANSITION,
+ * so a press mid-slide reverses from where it is. Off while the handle is
+ * dragged: direct manipulation is never eased. Width is the one layout
+ * property animated anywhere; the editor beside it reflowing during the slide
+ * is the accepted cost of pushing rather than covering. */
 [data-slot='drawer'] {
   width: var(--drawer-w);
   transition: width var(--motion-slide) var(--ease-slide);
@@ -635,16 +528,10 @@
   }
 }
 
-/* ── Solo note column (#13) ───────────────────────────────────────────
- * When a note is alone in the window (`isSoloNote`; `EditorPane` sets
- * `data-solo-column`), the notes editor centres its column. Otherwise it is
- * anchored left, for the reason `editor/theme.ts` gives at `.cm-content`.
- *
- * No motion: the change happens on a split or an unsplit, a layout event big
- * enough to carry it, and inside CodeMirror only paint may move.
- *
- * The frontmatter is middle-aligned in every layout, so it has no rule here
- * (`editor/frontmatter.ts`).
+/* ── Solo note column ─────────────────────────────────────────────────
+ * A note alone in the window (`data-solo-column`, set by `EditorPane`)
+ * centres its column; otherwise it is anchored left (see `editor/theme.ts`).
+ * No motion: inside CodeMirror only paint may move.
  *
  * The child combinators are load-bearing: the frontmatter widget nests a whole
  * CodeMirror inside the note, and its `.cm-content` must not centre too. */
@@ -661,8 +548,7 @@
  * survive it; `tick` and `nudge` MOVE and do not.
  *
  * color-mix, never `hsl(var(--primary) / a)`: `--primary` holds a full colour,
- * so hsl() around it is invalid and the ring silently never draws. That cost
- * a debugging session once already. */
+ * so hsl() around it is invalid and the ring silently never draws. */
 @utility motion-ack-bloom {
   animation: motion-ack-bloom var(--motion-ack) var(--ease-settle) both;
 }
@@ -824,32 +710,18 @@
 /**
  * Scrollbars, app-wide.
  *
- * Two halves, and only one of them can be global.
+ * The paint is global: a bare `::-webkit-scrollbar` rule reaches every
+ * scroller, including ones we cannot name (CodeMirror, xterm, Radix menus).
  *
- * **The paint is global.** A bare `::-webkit-scrollbar` rule reaches every scroll
- * container there is, including the ones no stylesheet of ours can name: the
- * CodeMirror scroller, the terminal viewport, a Radix menu that outgrew the
- * screen. That is the whole point. This was a `.holi-scroll` class, worn by three
- * elements out of the twenty-eight that scroll; the other twenty-five got
- * Chromium's default slab, and the root's `color-scheme` is `normal`, so
- * "default" meant the LIGHT default painted into a dark-first app.
+ * The gutter cannot be. `scrollbar-gutter: stable` stops content reflowing
+ * when a scrollbar appears, but styled scrollbars are not overlays, so a
+ * blanket rule would also inset every `overflow: hidden` box by 10px. It is
+ * keyed to the utilities that make a vertical scroller instead.
+ * `overflow-x-auto` is absent: it would reserve a vertical bar that never
+ * comes.
  *
- * **The gutter cannot be.** `scrollbar-gutter: stable` reserves the track's width
- * whether or not the pane overflows, so content never reflows sideways when a
- * scrollbar appears or when the thumb fades in. But styling a scrollbar makes
- * Chromium give up overlay scrollbars, and a reserved gutter then applies to
- * `overflow: hidden` boxes as well — measured in the running app, a 200px hidden
- * box reports `clientWidth` 190. A blanket `* { scrollbar-gutter: stable }` would
- * therefore inset every clipped box in the app by 10px. CSS has no selector for
- * "computed overflow is auto", so the gutter is keyed to the utilities that
- * actually make a vertical scroller: writing `overflow-y-auto` reserves the
- * gutter, with nothing else to remember, which is exactly what `.holi-scroll`
- * failed to be. `overflow-x-auto` is deliberately absent — a horizontal scroller
- * reserving a VERTICAL gutter is an inset for a bar that never comes.
- *
- * `::-webkit-scrollbar` rather than the standard `scrollbar-color`: both work in
- * Chromium, but setting `scrollbar-color` makes it ignore these pseudo-elements,
- * and per-element hover on the thumb is what buys the fade.
+ * `::-webkit-scrollbar`, not `scrollbar-color`: setting the latter makes
+ * Chromium ignore these pseudo-elements, and thumb hover is what buys the fade.
  */
 :where(
   .overflow-auto,
@@ -897,24 +769,13 @@
 /**
  * The plate an image is viewed on.
  *
- * A PNG with an alpha channel is *ink on nothing*, and the vault is full of them
- * — logos, diagrams, screenshots with rounded corners. Painted straight onto
- * `--background`, a black-ink logo in a dark-first app is a 180x180 rectangle of
- * background: the file opens, the viewer mounts, the image loads, and the pane
- * looks empty except for the filename underneath. That is not a rendering
- * failure anyone can diagnose by looking at it, which is what made it worth
- * fixing properly rather than nudging a colour.
+ * A transparent PNG with black ink is invisible on a dark background. The
+ * checkerboard is every image tool's convention and says the transparency is
+ * in the file.
  *
- * The checkerboard is the convention every image tool shares (Preview, Figma,
- * the browser's own image view), and it says the thing no flat colour can: this
- * transparency is in the FILE, not in the app.
- *
- * **Light in both themes, deliberately.** The plate is paper, not chrome — a
- * dark plate would hide exactly the dark ink this exists to reveal, and light
- * ink on transparent is rare enough (and obviously an app icon when it happens)
- * to be the acceptable half of the trade. It is applied to the `<img>` itself,
- * so it covers precisely the image's own footprint: an opaque photo hides it
- * completely, and no plate is drawn in the letterboxing around it.
+ * Light in both themes: it is paper, not chrome, and a dark plate would hide
+ * the dark ink it exists to reveal. Applied to the `<img>` itself, so it
+ * covers only the image's footprint.
  */
 .holi-image-plate {
   --plate: #ffffff;
@@ -952,12 +813,9 @@
   box-shadow: var(--shadow-popover);
 }
 
-/* A wrapper around a scroller that shades its edges once rows have gone out
-   of sight: a soft shadow along the top while scrolled down, and along the
-   bottom while more remains. On the WRAPPER, not the scroller, so the shade
-   spans the scrollbar's gutter as well; `data-scroll-top` /
-   `data-scroll-bottom` are set from the scroller's own measurement
-   (primitives/Command.tsx). */
+/* Shades a scroller's edges while rows are out of sight that way. On the
+   wrapper, not the scroller, so the shade spans the gutter; the data
+   attributes come from the scroller's measurement (primitives/Command.tsx). */
 .scroll-edges {
   position: relative;
 }
@@ -994,7 +852,5 @@
   background: var(--selection);
 }
 
-/* A mail message's own styling is NOT here. It renders in a sandboxed frame
-   with its own document, so its base stylesheet is built in
-   `lib/mail-frame.ts` and the app's cascade deliberately cannot reach it —
-   which is the whole point of the frame. */
+/* A mail message's styling is in `lib/mail-frame.ts`: it renders in a
+   sandboxed frame the app's cascade deliberately cannot reach. */

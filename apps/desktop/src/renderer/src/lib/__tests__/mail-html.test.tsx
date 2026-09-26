@@ -1,18 +1,12 @@
 /**
- * The mail sanitizer — the one place in Holi that turns attacker-controlled
- * input into markup.
- *
- * Every test here is an attack or a leak, not a formatting preference. A message
- * body is written by whoever felt like emailing the user, so the interesting
- * cases are the ones where the output *looks* fine and quietly does something:
- * a pixel that reports the mail was opened, a `<style>` block that restyles the
- * app around it, a form that posts somewhere on click.
+ * The mail sanitizer: the one place Holi turns attacker-controlled input into
+ * markup. Every test is an attack or a leak whose output looks fine: a tracking
+ * pixel, a restyling `<style>`, a form that posts on click.
  */
 import { describe, expect, it } from 'vitest'
 import { sanitizeMailHtml } from '../mail-html'
 
-/** Parse the result so assertions ask about the DOM, not about string spelling
- *  — `src=""` vs no attribute is a serialisation detail, not a behaviour. */
+/** Parse the result so assertions ask about the DOM, not string spelling. */
 function parse(html: string): HTMLElement {
   const host = document.createElement('div')
   host.innerHTML = html
@@ -52,10 +46,8 @@ describe('sanitizeMailHtml — script execution', () => {
   })
 
   it('survives the mXSS shapes that defeat regex strippers', () => {
-    // A naive `<[^>]+>` stripper leaves something live behind in both of these.
-    // What survives here is inert: escaped text in the first, and in the second
-    // an <img> with neither a handler nor a source. Assert that, not absence —
-    // "the element is gone" is a stronger claim than safety actually needs.
+    // A naive tag stripper leaves something live in both. Assert inertness,
+    // not absence: that is all safety needs.
     const nested = sanitizeMailHtml('<scr<script>ipt>alert(1)</scr</script>ipt>')
     const svg = sanitizeMailHtml('<svg><style><img src=x onerror=alert(1)></style></svg>')
 
@@ -96,15 +88,9 @@ describe('sanitizeMailHtml — embedding and exfiltration', () => {
 
 describe('sanitizeMailHtml — styling', () => {
   it('keeps <style> out of the markup, and hands the sheet over separately', () => {
-    // Why the tag stays forbidden: DOMPurify strips stylesheet contents as an
-    // mXSS mitigation, and forcing them back changes how it *parses* — measured,
-    // on the payload in the mXSS test above, which stops being neutralised.
-    //
-    // What changed is that this no longer costs the newsletter its design. The
-    // sheet is lifted from the raw markup before sanitizing and travels in `css`,
-    // so DOMPurify's input is untouched and the frame still gets the stylesheet.
-    // Both halves are asserted here, because the value of this design is exactly
-    // that they hold at the same time.
+    // The tag stays forbidden: allowing it changes how DOMPurify parses, and the
+    // mXSS payload above stops being neutralised. The sheet still travels in
+    // `css`. Both halves are asserted, because they must hold together.
     const { html, css } = sanitizeMailHtml('<style>body{display:none}</style><p>hi</p>')
 
     expect(html).not.toContain('display:none')
@@ -126,7 +112,7 @@ describe('sanitizeMailHtml — remote content', () => {
 
     expect(result.blockedRemoteCount).toBe(1)
     expect(result.html).not.toContain('tracker.test')
-    // The element stays — removing it would reflow designed mail into nonsense.
+    // The element stays: removing it would reflow designed mail.
     expect(parse(result.html).querySelector('img')?.hasAttribute('src')).toBe(false)
   })
 
@@ -163,11 +149,8 @@ describe('sanitizeMailHtml — remote content', () => {
   })
 
   it('leaves a stylesheet no route to fetch, now that the stylesheet survives', () => {
-    // `@import` and `url()` inside a <style> are remote fetches no attribute
-    // pass can see. Once the sheet is carried into the frame instead of dropped,
-    // "nothing scrubs them because nothing has to" stops being true — the frame's
-    // `default-src 'none'` is still the backstop, but it is no longer the only
-    // thing standing there.
+    // `@import` and `url()` in a <style> are fetches no attribute pass sees. The
+    // frame's CSP is the backstop, not the only guard.
     const result = sanitizeMailHtml(
       '<style>@import "https://tracker.test/x.css";p{background:url(https://tracker.test/p.png)}</style>',
     )
@@ -178,12 +161,8 @@ describe('sanitizeMailHtml — remote content', () => {
   })
 
   /**
-   * The stylesheet is carried, not dropped — and this is the case it exists for.
-   *
-   * MJML puts column widths in a `min-width` media query and leaves the inline
-   * width at 100%, which is its *mobile* fallback. With the sheet gone, every
-   * multi-column newsletter rendered permanently stacked: a two-column footer
-   * became two rows, and a product grid became one tall column.
+   * The stylesheet is carried, not dropped: MJML puts column widths in a
+   * media query, and without it multi-column mail renders stacked.
    */
   it('carries the stylesheet that holds a column layout', () => {
     const result = sanitizeMailHtml(
@@ -194,7 +173,7 @@ describe('sanitizeMailHtml — remote content', () => {
 
     expect(result.css).toContain('min-width:480px')
     expect(result.css).toContain('.mj-column-per-65{width:65%!important}')
-    // And it is still not in the markup — see the mXSS reasoning above.
+    // And it is still not in the markup (see the mXSS reasoning above).
     expect(parse(result.html).querySelector('style')).toBeNull()
     expect(result.html).not.toContain('65%')
   })
@@ -212,8 +191,8 @@ describe('sanitizeMailHtml — remote content', () => {
       '<style>.hero{background:url(https://tracker.test/p.png);color:red}</style>',
     )
 
-    // Same promise as the inline-style pass: the declaration goes, its
-    // neighbours stay, and the count is what makes the banner honest.
+    // As with inline styles: the declaration goes, its neighbours stay, and it
+    // is counted.
     expect(result.css).not.toContain('tracker.test')
     expect(result.css).toContain('color:red')
     expect(result.blockedRemoteCount).toBe(1)
@@ -239,9 +218,7 @@ describe('sanitizeMailHtml — remote content', () => {
   })
 
   it('leaves a data: url in CSS alone, and does not count it', () => {
-    // The count drives a banner that says the sender would have been told the
-    // mail was opened. A data: url tells nobody anything, so counting it here
-    // would put a false statement in front of the user.
+    // A data: url discloses nothing, so counting it would make the banner lie.
     const result = sanitizeMailHtml(
       '<div style="background-image:url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)">x</div>',
     )

@@ -1,10 +1,7 @@
 /**
- * The frame document — the containment half of mail rendering.
- *
- * `mail-html.test.tsx` covers what markup survives; this covers the page that
- * markup lands on: that the frame carries its own strict CSP, that the theme
- * actually reaches a document the app's cascade cannot, and that a message's
- * own styling still wins inside its own page.
+ * The frame document, the containment half of mail rendering: its strict CSP,
+ * the theme reaching a document the app's cascade cannot, and the message's own
+ * styling winning inside its page. What markup survives is `mail-html.test.tsx`.
  */
 import { renderHook, act } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -45,8 +42,8 @@ afterEach(() => {
 
 describe('mailFrameDocument — the frame’s own policy', () => {
   it('denies everything by default, so a route the sanitizer missed is still dead', () => {
-    // The point of a second layer: `@import` inside a stylesheet is a remote
-    // fetch no attribute pass can see, and `default-src 'none'` kills it.
+    // `@import` is a fetch no attribute pass can see; `default-src 'none'`
+    // kills it.
     expect(cspOf(doc())).toContain("default-src 'none'")
   })
 
@@ -90,10 +87,8 @@ describe('mailFrameDocument — theming', () => {
 
 describe('mailFrameDocument — the message’s own stylesheet', () => {
   /**
-   * The sheet is lifted out of the markup by `sanitizeMailHtml` and arrives here
-   * as text, which is the whole point: it never goes through DOMPurify's HTML
-   * parser, so the mXSS behaviour that made `<style>` a forbidden *tag* is
-   * untouched, and the message still gets its design.
+   * The sheet arrives as text and never passes DOMPurify's HTML parser, so
+   * `<style>` stays a forbidden tag and the message keeps its design.
    */
   it('carries the message stylesheet, after its own defaults so the message wins', () => {
     const html = doc({ css: '@media (min-width:480px){.col{width:65%}}' })
@@ -103,19 +98,13 @@ describe('mailFrameDocument — the message’s own stylesheet', () => {
   })
 
   it('adds no empty stylesheet for a message that brought none', () => {
-    // Two <style> elements are the floor (defaults, then the invariants); a
-    // third empty one would be noise in every message that is just prose.
+    // Two <style> elements are the floor (defaults, invariants); no empty third.
     expect(doc().match(/<style>/g)).toHaveLength(2)
   })
 
   /**
-   * The two modules, composed the way `SandboxedHtml` composes them.
-   *
-   * Each half is covered on its own — `mail-html` lifts the sheet, this file
-   * carries it — and the bug that would survive both is the seam: the sheet
-   * being lifted correctly and then not passed on. That is not a hypothetical
-   * shape, it is the whole fix, and it would put the stacked layout back with
-   * every unit test still green.
+   * The two modules composed as `SandboxedHtml` does, because the bug both unit
+   * suites would miss is the seam: a sheet lifted but not passed on.
    */
   it('carries an MJML column layout all the way from raw markup into the document', () => {
     const raw =
@@ -137,19 +126,15 @@ describe('mailFrameDocument — the message’s own stylesheet', () => {
   })
 
   /**
-   * A stylesheet is interpolated into markup by hand, exactly like the palette
-   * values `safeCssValue` guards — so it gets the same treatment for the same
-   * reason. `</` is the only sequence that matters and no stylesheet needs one.
+   * A stylesheet is interpolated by hand, like the palette values, so `</` is
+   * stripped: the only way out of the element.
    */
   it('neutralises a stylesheet that tries to close its own element', () => {
     const html = doc({ css: '}</style><img src=x onerror=alert(1)><style>' })
     const parsed = new DOMParser().parseFromString(html, 'text/html')
 
-    // The payload survives as *text* — that is the correct outcome, not a
-    // near-miss. Asserting the substring is absent would be asserting the wrong
-    // thing; what matters is that the browser never sees an element. So: no
-    // <img> anywhere in the document, and the payload still sitting in a
-    // stylesheet where it means nothing.
+    // The payload survives as inert text; what matters is that no <img>
+    // element exists.
     expect(parsed.querySelector('img')).toBeNull()
     expect(parsed.querySelectorAll('style')).toHaveLength(3)
     const sheets = [...parsed.querySelectorAll('style')]
@@ -157,9 +142,8 @@ describe('mailFrameDocument — the message’s own stylesheet', () => {
   })
 
   /**
-   * The frame is sized by the app, so a message that can turn scrolling back on
-   * becomes a scroll area inside the thread — the one thing a reader must never
-   * do. Aesthetics go before the message; this goes after it.
+   * The app sizes the frame, so a message must not turn scrolling back on.
+   * Aesthetics go before the message; this goes after it.
    */
   it('keeps the no-scroll rule after the message, which cannot override it', () => {
     const html = doc({ css: 'html{overflow-y:scroll}body{overflow:visible}' })
@@ -172,8 +156,8 @@ describe('mailFrameDocument — the message’s own stylesheet', () => {
 
 describe('readMailPalette', () => {
   it('falls back to a readable page when the tokens are not resolvable', () => {
-    // jsdom loads no stylesheet, so every token reads empty — the same shape as
-    // a theme that omits a key. `background: ;` would render a transparent frame.
+    // jsdom loads no stylesheet, so every token reads empty; `background: ;`
+    // would render a transparent frame.
     const palette = readMailPalette()
 
     expect(palette.background).not.toBe('')
@@ -204,8 +188,8 @@ describe('useMailPalette', () => {
     const { result } = renderHook(() => useMailPalette())
     const first = result.current
 
-    // A vault switch writes custom properties straight onto the root — no React
-    // state is involved, which is why this is observed rather than subscribed.
+    // A vault switch writes properties onto the root without React state, so
+    // this is observed.
     await act(async () => {
       document.documentElement.style.setProperty('--card', '#abcdef')
       await Promise.resolve()
@@ -220,8 +204,7 @@ describe('useMailPalette', () => {
       await Promise.resolve()
     })
 
-    // Identity matters: the palette is a frame effect dependency, so a fresh
-    // object per render would rewrite every open message on every render.
+    // Identity matters: the palette is a frame effect dependency.
     expect(result.current).toBe(second)
   })
 })
@@ -241,17 +224,9 @@ describe('openableLink', () => {
 })
 
 /**
- * Which canvas a block of HTML renders on.
- *
- * **The bug: a dark theme made real mail unreadable.** A newsletter declares
- * its ink (`color: #333`) and inherits its paper, because for thirty years the
- * client's paper has been white. Rendering that on the app's dark surface is
- * black text on a black background — and the images go with it, since a logo is
- * usually dark ink on transparency and simply disappears.
- *
- * So the rule is asymmetric on purpose: any sign of design at all means paper.
- * Wrongly giving paper costs a white block in a dark app, which is what every
- * other mail client shows. Wrongly giving the theme costs an unreadable message.
+ * Which canvas a block of HTML renders on. Mail declares its ink and assumes
+ * white paper, so any sign of design means paper: a wrong white block is
+ * ordinary, a wrong dark canvas is unreadable.
  */
 describe('canvasFor', () => {
   const paper = { background: '#ffffff', scheme: 'light' }
@@ -261,7 +236,7 @@ describe('canvasFor', () => {
   })
 
   it('gives paper to a message that sets a text colour', () => {
-    // The exact shape that was unreadable: ink declared, paper assumed.
+    // Ink declared, paper assumed.
     expect(canvasFor('<p style="color:#333333">hello</p>', PALETTE)).toMatchObject(paper)
   })
 
@@ -275,16 +250,12 @@ describe('canvasFor', () => {
   })
 
   it('counts an image even with no colour anywhere', () => {
-    // Not about text at all: those pixels were drawn to sit on white, and a
-    // dark-ink logo on a dark canvas reads as "the images did not load".
+    // Images were drawn to sit on white.
     expect(bringsOwnDesign('<img src="https://cdn.test/logo.png">')).toBe(true)
   })
 
   it('does not change its mind when the images are unblocked', () => {
-    // Read from the RAW html, so the canvas cannot flip underneath a message as
-    // a side effect of pressing "Load images" — the sanitizer strips the `src`
-    // while blocking, and a rule reading the sanitized output would see a
-    // different document before and after.
+    // Read from the raw html, so "Load images" cannot flip the canvas.
     const html = '<p style="color:#222">hi</p><img src="https://cdn.test/logo.png">'
     const blocked = '<p style="color:#222">hi</p><img>'
 
@@ -292,8 +263,7 @@ describe('canvasFor', () => {
   })
 
   it('sets color-scheme to light with the paper, so the frame’s own defaults follow', () => {
-    // Scrollbars and any control a message contains would otherwise stay dark
-    // on a white page.
+    // Or scrollbars and controls stay dark on a white page.
     const html = mailFrameDocument({
       html: '<p>x</p>',
       palette: canvasFor('<p style="color:#333">x</p>', PALETTE),

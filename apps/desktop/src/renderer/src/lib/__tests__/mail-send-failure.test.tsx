@@ -1,10 +1,8 @@
 /**
  * Why a send failed, and what the user can do (D71).
  *
- * The action is the point. A message alone leaves the reader with an apology;
- * only some failures have a fix the user can perform, and offering a Retry for
- * the ones that do not is worse than offering nothing — the failure mode of a
- * send is a duplicate arriving at a real person.
+ * Only some failures have a fix the user can perform; a Retry for the rest
+ * risks a duplicate reaching a real person.
  */
 import { describe, expect, it } from 'vitest'
 import { describeSendFailure } from '../mail-send-failure'
@@ -29,15 +27,13 @@ describe('describeSendFailure', () => {
   })
 
   it('offers no action for a failure nobody has diagnosed', () => {
-    // Deliberately not `retry`. A one-click retry on an unexplained failure is
-    // how a real person receives the same email twice.
+    // Deliberately not `retry`: that is how someone gets the same email twice.
     expect(describeSendFailure(withCode('INTERNAL_SERVER_ERROR')).action).toBeNull()
     expect(describeSendFailure(new Error('boom')).action).toBeNull()
   })
 
   it('falls back to the message when the code was lost in transit', () => {
-    // An error can still arrive from somewhere that never had a code, and
-    // "the code was lost" should degrade to the old answer.
+    // An error without a code falls back to reading the message.
     expect(describeSendFailure(new Error('insufficient permission')).action).toBe('reconnect')
     expect(describeSendFailure(new Error('rate limit reached')).action).toBe('retry')
   })
@@ -50,8 +46,7 @@ describe('describeSendFailure', () => {
   })
 
   it('prefers the code over the prose', () => {
-    // Matching on Google's sentences made the wording in `google/api.ts`
-    // load-bearing UI behaviour with no test between the two.
+    // The code wins, so Google's wording is not load-bearing.
     const misleading = Object.assign(new Error('rate limit'), { data: { code: 'FORBIDDEN' } })
 
     expect(describeSendFailure(misleading).action).toBe('reconnect')

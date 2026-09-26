@@ -3,11 +3,9 @@
  * session started from the thread header, the same seam
  * `buildReconcilePrompt` uses.
  *
- * A seeded session rather than a headless call, deliberately: the answer to
- * "what is this thread about" is usually followed by another question, and the
- * session is where that conversation already lives. A one-shot summary rendered
- * in the header would be a second way to invoke the agent, with its own
- * spinner and error state, that you cannot reply to.
+ * A seeded session rather than a headless call, deliberately: a summary is
+ * usually followed by another question, and a one-shot summary would be a
+ * second way to invoke the agent that you cannot reply to.
  */
 export function buildSummarizePrompt(thread: {
   subject: string

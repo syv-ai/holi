@@ -3,11 +3,9 @@ import { Tooltip as TooltipPrimitive } from 'radix-ui'
 import { cn } from '@/lib/cn'
 
 /**
- * The one tooltip provider, mounted once at the app root (main.tsx). It owns the
- * shared timing: `delayDuration` before the first tooltip opens, and Radix's
- * skip-delay grace so moving across a toolbar of controls shows the next one
- * instantly. A single provider is what makes that coordination possible — hence
- * one at the root rather than one per tooltip.
+ * The one tooltip provider, mounted at the app root (main.tsx). A single
+ * provider is what lets Radix's skip-delay show the next tooltip in a toolbar
+ * instantly.
  */
 export function TooltipProvider({
   delayDuration = 400,
@@ -23,15 +21,12 @@ export function TooltipProvider({
 }
 
 /**
- * The house tooltip — our own, never the native `title` attribute. One ergonomic
- * component: wrap any trigger, pass `content`. It relies on the root
- * TooltipProvider (above), and passes through untouched when `content` is empty,
- * so a conditional tooltip is a one-liner.
+ * The house tooltip, never the native `title`. Passes through when `content`
+ * is empty.
  *
- * The trigger is `asChild`, so the child must forward a ref (Radix anchors and
- * binds hover to it) — our Button/Input primitives do. `content` is the VISIBLE
- * label; an icon-only trigger still needs its own aria-label for the accessible
- * name, since Radix wires `content` as a description, not the name.
+ * The trigger is `asChild`, so the child must forward a ref. Radix wires
+ * `content` as a description, so an icon-only trigger still needs its own
+ * aria-label.
  */
 export function Tooltip({
   content,
@@ -56,11 +51,8 @@ export function Tooltip({
           side={side}
           sideOffset={4}
           className={cn(
-            // Theme-consistent with the other overlays (ContextMenu/DropdownMenu):
-            // the popover surface in both themes — NOT shadcn's inverted bg-foreground,
-            // which reads light-on-dark in dark mode. Arrowless, like the menus,
-            // and borderless: `--shadow-popover` is what separates it from the
-            // page, so a hairline on top of it would be a second edge.
+            // The popover surface like the menus, not shadcn's inverted
+            // bg-foreground. Arrowless and borderless: the shadow separates it.
             'z-50 w-fit origin-(--radix-tooltip-content-transform-origin) motion-in-origin rounded-md bg-popover px-2 py-1 text-xs text-balance text-popover-foreground shadow-popover data-[state=closed]:motion-out-origin',
             className,
           )}

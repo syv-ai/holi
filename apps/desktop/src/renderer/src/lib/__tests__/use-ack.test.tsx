@@ -20,11 +20,7 @@ function mount() {
   return { view, node, child: view.getByTestId('child'), ack: (v: AckVariant) => act(() => ack(v)) }
 }
 
-/**
- * jsdom runs no animations, so the end of one only ever happens on purpose —
- * and jsdom has no `AnimationEvent` constructor either, so this is a plain
- * bubbling Event carrying the one field the hook reads.
- */
+/** jsdom has no `AnimationEvent`, so a plain bubbling Event. */
 function endAnimation(from: HTMLElement, animationName = 'motion-ack-bloom') {
   act(() => {
     const e = new Event('animationend', { bubbles: true, composed: true })
@@ -69,13 +65,9 @@ test('each variant wears its own class, and only one at a time', () => {
 })
 
 /**
- * The reason this is a hook and not a class toggle.
- *
- * Removing and re-adding a class in one tick does not restart a CSS animation:
- * the browser coalesces the two mutations and nothing plays. The fix is to force
- * a reflow between them, and both halves are asserted here because neither is
- * visible in jsdom on its own — the DOM has to go present → absent → present,
- * AND a layout property has to be read in the gap.
+ * Why this is a hook: remove and re-add in one tick coalesce, so a reflow must
+ * be forced between them. Both halves are asserted: the class toggles, and a
+ * layout property is read in the gap.
  */
 test('acking twice in a row replays rather than doing nothing', async () => {
   const { node, ack } = mount()
@@ -101,11 +93,7 @@ test('acking twice in a row replays rather than doing nothing', async () => {
   expect(reflows).toHaveBeenCalled()
 })
 
-/**
- * `animationend` bubbles. Without a target check, any animating descendant would
- * end the parent's ack early — and inside this app a K frequently lands on a row
- * that contains chips, icons and spinners.
- */
+/** `animationend` bubbles; a descendant's must not end the parent's ack. */
 test("a child's animation ending does not clear the parent's ack", () => {
   const { node, child, ack } = mount()
   ack('bloom')

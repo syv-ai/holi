@@ -1,11 +1,9 @@
 /**
  * A most-recent-first list of things opened or run (D102).
  *
- * Pure, so the rule is one place and node-tested: an entry moves to the
- * front rather than appearing twice, the list is capped, and a dead entry is
- * pruned when the caller says what is still live. What is "live" is the
- * caller's to say — the snapshot for paths, main's list for sessions —
- * because this module knows nothing but keys.
+ * An entry moves to the front rather than appearing twice, the list is capped,
+ * and dead entries are pruned by a caller-supplied liveness test, since this
+ * module knows only keys.
  */
 import type { Tab } from '../state/panes'
 

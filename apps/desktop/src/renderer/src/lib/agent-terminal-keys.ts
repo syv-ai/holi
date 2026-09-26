@@ -1,23 +1,15 @@
 /**
  * What the agent terminal should do with a key chord, decided without xterm.
  *
- * xterm turns a keystroke into bytes, and for the macOS editing chords there
- * are no bytes to turn it into: it sends `\r` for Enter whether or not Shift is
- * held (there is no CSI-u or `modifyOtherKeys` encoding enabled here), and ⌘ is
- * not a terminal modifier at all, so a ⌘+arrow chord is dropped on the floor.
- * Claude Code's Ink input is not failing to read those keys — the information
- * never reaches it. So the panel writes the sequences the TUI *does* understand
- * and takes the event away from xterm.
+ * xterm has no bytes for the macOS editing chords: Enter is `\r` with or
+ * without Shift (no CSI-u or `modifyOtherKeys`), and ⌘ is not a terminal
+ * modifier. So the terminal writes sequences Claude Code's TUI understands and
+ * takes the event from xterm. Each sequence was confirmed against a live
+ * session: ESC CR opens a new input line, `\x1b[H`/`\x1b[F` move within the
+ * current line, the meta bindings do readline word motion.
  *
- * Every sequence below was confirmed against a live Claude Code session rather
- * than reasoned about: ESC CR opens a second input line, `\x1b[H`/`\x1b[F` move
- * within the current line (not the whole input), and the meta bindings do
- * readline word motion.
- *
- * Split out of the handler so the truth table can be tested without a Terminal:
- * the awkward cases are the ones about what must NOT be taken — ⌃C with no
- * selection is the interrupt, and Ctrl+arrow is word motion xterm already
- * encodes.
+ * The awkward cases are what must NOT be taken: ⌃C with no selection is the
+ * interrupt, and Ctrl+arrow is word motion xterm already encodes.
  */
 
 /** `null` means "leave it to xterm", which is the answer for almost every key. */
@@ -38,9 +30,8 @@ export function terminalKeyAction(e: KeyChord, hasSelection: boolean): TerminalK
   if (e.type !== 'keydown') return null
   const mod = e.metaKey || e.ctrlKey
 
-  // ⇧⏎ → ESC CR: the same sequence Claude Code's own `/terminal-setup` writes
-  // into iTerm2 and VS Code, which is why the Ink input reads it as a newline.
-  // Ahead of the `mod` gate below, because this chord does not pass it.
+  // ⇧⏎ → ESC CR, what Claude Code's own `/terminal-setup` configures. Ahead of
+  // the `mod` gate, which this chord does not pass.
   if (e.key === 'Enter' && e.shiftKey && !mod) return { kind: 'write', seq: '\x1b\r' }
 
   // ⌥←/→/⌫ — word motion and word delete, the readline meta bindings.
@@ -52,25 +43,19 @@ export function terminalKeyAction(e: KeyChord, hasSelection: boolean): TerminalK
 
   if (!mod) return null
 
-  // ⌘←/→ → Home/End. Gated on `metaKey` alone rather than `mod`: Ctrl+arrow is
-  // already word motion in a terminal and xterm encodes it properly, so taking
-  // it here would be a downgrade.
+  // ⌘←/→ → Home/End. `metaKey` alone: xterm already encodes Ctrl+arrow.
   if (e.metaKey && !e.ctrlKey) {
     if (e.key === 'ArrowLeft') return { kind: 'write', seq: '\x1b[H' }
     if (e.key === 'ArrowRight') return { kind: 'write', seq: '\x1b[F' }
-    // ⌘⌫ → Ctrl-U, readline's kill-to-start-of-line, which is exactly what
-    // macOS means by it. A kill and not a delete: Claude Code offers it back on
-    // Ctrl-Y, so a mis-hit is recoverable the way ⌘⌫ is everywhere else.
+    // ⌘⌫ → Ctrl-U, kill to start of line; recoverable with Ctrl-Y.
     if (e.key === 'Backspace') return { kind: 'write', seq: '\x15' }
-    // Not a PTY write: the scrollback is xterm's, and Claude Code neither knows
-    // nor needs to know that it is being scrolled.
+    // Not a PTY write: the scrollback is xterm's.
     if (e.key === 'ArrowUp') return { kind: 'scroll', to: 'top' }
     if (e.key === 'ArrowDown') return { kind: 'scroll', to: 'bottom' }
   }
 
-  // ⌘/⌃C with a selection copies, like a native terminal. WITHOUT one it must
-  // fall through untouched — that is the interrupt, and swallowing it would
-  // leave no way to stop a running turn.
+  // ⌘/⌃C copies a selection. Without one it must fall through: it is the
+  // interrupt.
   if (e.code === 'KeyC' && hasSelection) return { kind: 'copy' }
   if (e.code === 'KeyV') return { kind: 'paste' }
   return null

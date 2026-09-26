@@ -1,23 +1,18 @@
 /**
- * FR-21's one sync state, in words.
+ * The vault's one sync state, in words (docs/features/vaults-sync.md).
  *
- * The vocabulary is fixed by the requirement and this file does not extend it.
- * In particular there is **no word for "saving"**: `up-to-date` over a
- * not-yet-committed tree is a bounded transient, accepted on purpose: the bytes
- * are on disk, every explicit action commits, and a chip that toggled every
- * three seconds of typing would cost a steady indicator to report nothing.
+ * No word for "saving": `up-to-date` over an uncommitted tree is a bounded
+ * transient accepted on purpose, since the bytes are on disk and a label
+ * toggling every few seconds of typing reports nothing.
  *
- * It also does not decide priority. If a vault is both paused and conflicted,
- * `computeState` in main already chose which of those you see, and it has a
- * comment explaining what it costs to get that order backwards.
+ * Priority is not decided here: `computeState` in main chooses.
  */
 import type { SyncState } from '../../../main/vault/active-vault'
 
 export interface SyncLabel {
   text: string
   /** `quiet` = nothing is wrong, `busy` = a network operation is running,
-   *  `warn` = it wants attention. Three, because the indicator lives in the
-   *  vault dropdown and has room for a colour, not a sentence. */
+   *  `warn` = it wants attention. */
   tone: 'quiet' | 'busy' | 'warn'
 }
 
@@ -29,18 +24,16 @@ export function syncLabel(state: SyncState): SyncLabel {
       return { text: 'pulling', tone: 'busy' }
     case 'offline':
       // Push is automatic, so unpushed commits are only worth naming when the
-      // network is stopping them (`features/vaults-sync.md`). The
-      // count is what tells you how much is waiting; a bare "offline" hides it.
+      // network is stopping them.
       return {
         text: state.count > 0 ? `offline — ${state.count} waiting` : 'offline',
         tone: 'warn',
       }
     case 'no-access':
-      // FR-16: a permission refusal is its own thing, not a network failure.
+      // A permission refusal is not a network failure.
       return { text: 'no write access', tone: 'warn' }
     case 'conflict':
-      // FR-17 wants the count named on the banner; the dropdown has room for
-      // the number but not the paths, and the banner carries those.
+      // The count only; the banner carries the paths.
       return {
         text: `${state.paths.length} file${state.paths.length === 1 ? '' : 's'} conflict`,
         tone: 'warn',
@@ -49,14 +42,10 @@ export function syncLabel(state: SyncState): SyncLabel {
       return { text: 'reconciling', tone: 'warn' }
     case 'paused':
       // A manual pause is the assistant holding the vault for its turn. It
-      // lifts itself, nothing is asked of the user, and the footer's Claude dot
-      // is already pulsing to say so — spelling "the assistant is working" out
-      // here in the attention colour said one thing twice and shouted it. FR-8
-      // still wants the vault to say it is paused, so it says exactly that,
-      // in the same tone as "up to date".
+      // lifts itself and asks nothing of the user, so it is quiet; the session
+      // indicators already say the assistant is working.
       if (state.manual) return { text: 'sync paused', tone: 'quiet' }
-      // Main writes a blocked reason as a whole sentence, because only main
-      // knows why. Prefixing it here yields "paused: … — sync paused".
+      // Main writes a blocked reason as a whole sentence; do not prefix it.
       return { text: state.reason, tone: 'warn' }
   }
 }

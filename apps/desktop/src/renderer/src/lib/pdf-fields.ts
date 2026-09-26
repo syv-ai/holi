@@ -3,9 +3,7 @@ import { parse as parseYaml } from 'yaml'
 
 /**
  * Which required fields the user still has to fill. A checkbox is never
- * "missing" — false is a legitimate value — so it's excluded even when required.
- * Everything else counts as blank when it trims to empty. Pure so the block can
- * validate without owning the rule (and so it can be unit-tested directly).
+ * missing (false is a value); anything else is blank when it trims to empty.
  */
 export function missingRequired(
   fields: TemplateField[],
@@ -73,9 +71,8 @@ function coerce(field: TemplateField, value: unknown): string | null {
 
 /**
  * Seed the Convert dialog's field values: a note's frontmatter pre-fills any
- * field whose `key` it declares (coerced to the widget's string form), and every
- * other field keeps its type default (`initialValue`). Exact key match only.
- * The user overrides any pre-filled value in the dialog before converting.
+ * field whose `key` it declares (exact match), and every other field keeps
+ * its type default (`initialValue`).
  */
 export function prefillValues(
   fields: TemplateField[],

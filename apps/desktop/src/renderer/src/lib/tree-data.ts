@@ -1,13 +1,9 @@
 /**
  * The vault snapshot as headless-tree's flat data record.
  *
- * headless-tree consumes a `Record<id, {name,isFolder,children}>` addressed by a
- * synchronous data loader (getItem/getChildren). Ids are paths; folders exist iff
- * a doc is inside them, OR they are named in `folders` — the real on-disk
- * directories (`snapshot.dirs`, kept alive by a `.gitkeep`) plus the transient,
- * client-only ones still being named. That second list is what lets an empty
- * folder, or one whose whole content is filtered away, still show (spec §Empty
- * folders).
+ * Ids are paths. A folder exists if a doc is inside it or it is named in
+ * `folders`: the on-disk directories (`snapshot.dirs`) plus client-only ones
+ * still being named, so an empty or fully filtered folder still shows.
  */
 export const ROOT_ID = '__root__'
 
@@ -26,8 +22,8 @@ export function buildTreeData(
   const root: TreeItemData = { name: '', isFolder: true, children: [] }
   const data: Record<string, TreeItemData> = { [ROOT_ID]: root }
 
-  // Returns the folder node so callers hold a reference rather than re-indexing
-  // (keeps the whole function clean under `noUncheckedIndexedAccess`).
+  // Returns the node, so callers need not re-index under
+  // `noUncheckedIndexedAccess`.
   const ensureFolder = (path: string): TreeItemData => {
     const existing = data[path]
     if (existing) return existing
@@ -48,8 +44,7 @@ export function buildTreeData(
     parent.children.push(path)
   }
 
-  // Hidden-entry filtering (dotfiles) happens upstream in FileTree, keyed off the
-  // per-vault show/hide toggle, so this stays a pure projection of the paths given.
+  // Hidden-entry filtering happens upstream in FileTree.
   const nameOf = (id: string): string => data[id]?.name ?? ''
 
   const rank = (id: string) => (data[id]?.isFolder ? 0 : 1)
