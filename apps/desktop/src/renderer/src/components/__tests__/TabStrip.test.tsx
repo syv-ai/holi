@@ -61,14 +61,14 @@ const pillFor = (name: string) => screen.getByText(name).closest('[draggable]')
 test('a pill offers itself to a drag', () => {
   strip()
 
-  expect(pillFor('a.md')).not.toBeNull()
+  expect(pillFor('a')).not.toBeNull()
 })
 
 test('the drag carries the tab’s identity under the custom MIME type', () => {
   strip()
   const dataTransfer = new FakeDataTransfer()
 
-  fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer))
+  fireEvent(pillFor('a')!, dragEvent('dragstart', dataTransfer))
 
   expect(parseTabPayload(dataTransfer.getData(TAB_MIME))).toEqual({
     kind: 'note',
@@ -362,7 +362,7 @@ test('picking a tab from an overflow menu selects it', async () => {
     trackScroll(host)
 
     await user.click(screen.getByRole('button', { name: '2 tabs off the right' }))
-    await user.click(await screen.findByRole('menuitem', { name: /e\.md/ }))
+    await user.click(await screen.findByRole('menuitem', { name: 'e' }))
 
     // The last of five, by absolute index — the menu lists what is off the edge,
     // and its entries have to point at the tab they name.
@@ -400,18 +400,18 @@ test('dragging a pill inside the strip opens a hole instead of drawing a caret',
     trackScroll(host)
     const dataTransfer = tabDrag()
 
-    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void fireEvent(pillFor('a')!, dragEvent('dragstart', dataTransfer)))
     act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
 
     // The hole says where it lands, so the line saying so is redundant.
     expect(screen.queryByTestId('tab-caret')).toBeNull()
     // a.md steps over b.md — one pill (60) plus the strip's gap (4) — and b.md
     // comes back by exactly what a.md vacated. Nothing past them moves.
-    expect(styleOf('a.md').transform).toBe('translateX(64px)')
-    expect(styleOf('b.md').transform).toBe('translateX(-64px)')
-    expect(styleOf('c.md').transform).toBe('translateX(0px)')
+    expect(styleOf('a').transform).toBe('translateX(64px)')
+    expect(styleOf('b').transform).toBe('translateX(-64px)')
+    expect(styleOf('c').transform).toBe('translateX(0px)')
     // And you can see which one you picked up.
-    expect(pillFor('a.md')).toHaveClass('opacity-40')
+    expect(pillFor('a')).toHaveClass('opacity-40')
   } finally {
     vi.useRealTimers()
     restore()
@@ -429,7 +429,7 @@ test('a tab arriving from another pane still gets the caret', () => {
     act(() => void dragOverAt(host, tabDrag(), OVER_THIRD_PILL))
 
     expect(screen.getByTestId('tab-caret')).toBeInTheDocument()
-    expect(styleOf('a.md').transform).toBe('')
+    expect(styleOf('a').transform).toBe('')
   } finally {
     vi.useRealTimers()
     restore()
@@ -446,15 +446,15 @@ test('a drop takes the preview away WITH its transition, so the move is not repl
     trackScroll(host)
     const dataTransfer = tabDrag()
 
-    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void fireEvent(pillFor('a')!, dragEvent('dragstart', dataTransfer)))
     act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
     act(() => void fireEvent(host, dragEvent('drop', dataTransfer)))
 
-    expect(styleOf('a.md').transform).toBe('')
+    expect(styleOf('a').transform).toBe('')
     // Only the property list is conditional, so assert transform dropped out of
     // it; an empty `style.transition` would pass whatever happened.
-    expect(styleOf('a.md').transitionProperty).not.toContain('transform')
-    expect(pillFor('a.md')).not.toHaveClass('opacity-40')
+    expect(styleOf('a').transitionProperty).not.toContain('transform')
+    expect(pillFor('a')).not.toHaveClass('opacity-40')
   } finally {
     vi.useRealTimers()
     restore()
@@ -471,13 +471,13 @@ test('a drag that ends without a drop glides home instead of snapping', () => {
     trackScroll(host)
     const dataTransfer = tabDrag()
 
-    act(() => void fireEvent(pillFor('a.md')!, dragEvent('dragstart', dataTransfer)))
+    act(() => void fireEvent(pillFor('a')!, dragEvent('dragstart', dataTransfer)))
     act(() => void dragOverAt(host, dataTransfer, OVER_THIRD_PILL))
     act(() => void fireEvent.dragLeave(host, { relatedTarget: document.body }))
 
-    expect(styleOf('a.md').transform).toBe('translateX(0px)')
-    expect(styleOf('a.md').transitionProperty).toContain('transform')
-    expect(pillFor('a.md')).not.toHaveClass('opacity-40')
+    expect(styleOf('a').transform).toBe('translateX(0px)')
+    expect(styleOf('a').transitionProperty).toContain('transform')
+    expect(pillFor('a')).not.toHaveClass('opacity-40')
   } finally {
     vi.useRealTimers()
     restore()

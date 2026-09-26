@@ -11,7 +11,7 @@
  * Every other position change glides rather than snaps.
  */
 import { useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Button,
   DropdownMenu,
@@ -20,16 +20,9 @@ import {
   DropdownMenuTrigger,
   Tooltip,
 } from '@/primitives'
-import {
-  CalendarDays,
-  ChevronLeft,
-  ChevronRight,
-  LayoutGrid,
-  Mail,
-  SquareKanban,
-} from 'lucide-react'
-import { appName } from '@holi/shared'
-import { fileIconFor } from '@/composites/file-icons'
+import { CalendarDays, ChevronLeft, ChevronRight, Mail, SquareKanban } from 'lucide-react'
+import { appName, type TaskStatus } from '@holi/shared'
+import { pathGlyph, pathLabel } from '@/composites/file-icons'
 import { offscreenTabs, type Offscreen } from '@/lib/tab-overflow'
 import { reorderOffsets } from '@/lib/tab-reorder'
 import {
@@ -110,11 +103,20 @@ export function tabKey(tab: Tab): string {
         : tab.kind
 }
 
-/** `icons` is `.holi/settings/icons.yaml` as the snapshot resolved it (D82),
- *  keyed by vault-relative path. Only a note tab can carry one. */
-function tabIcon(tab: Tab, icons: Record<string, string>, sessions: AgentSession[]): ReactNode {
-  if (tab.kind === 'note') return fileIconFor(tab.path, icons[tab.path])
-  if (tab.kind === 'app') return <LayoutGrid size={14} />
+/** What a vault file or app is marked with here and in the tree alike. `icons`
+ *  is `.holi/settings/icons.yaml` as the snapshot resolved it (D82), and
+ *  `tasks` each task file's status, both keyed by vault-relative path. */
+interface PathMarks {
+  icons: Record<string, string>
+  tasks: ReadonlyMap<string, TaskStatus>
+}
+
+/** A note leads with nothing, as its tree row does; the pill keeps no empty
+ *  slot, since nothing here lines up with it. */
+function tabIcon(tab: Tab, marks: PathMarks, sessions: AgentSession[]): ReactNode {
+  if (tab.kind === 'note' || tab.kind === 'app') {
+    return pathGlyph(tab.path, { emoji: marks.icons[tab.path], task: marks.tasks.get(tab.path) })
+  }
   if (tab.kind === 'agenda') return <CalendarDays size={14} />
   if (tab.kind === 'mail') return <Mail size={14} />
   // A session's glyph is its state: the same dot, from the same derivation, as
@@ -131,8 +133,7 @@ function tabIcon(tab: Tab, icons: Record<string, string>, sessions: AgentSession
 }
 
 function tabName(tab: Tab, sessions: AgentSession[]): string {
-  if (tab.kind === 'note') return tab.path.split('/').at(-1) ?? tab.path
-  if (tab.kind === 'app') return appName(tab.path)
+  if (tab.kind === 'note' || tab.kind === 'app') return pathLabel(tab.path)
   // Claude Code's own name, pushed by main. A gone session's tab keeps a label
   // for the frame until the tab goes too.
   if (tab.kind === 'session') return sessions.find((s) => s.id === tab.id)?.name ?? 'Session'
@@ -170,14 +171,14 @@ function OverflowMenu({
   side,
   indices,
   tabs,
-  icons,
+  marks,
   sessions,
   onReveal,
 }: {
   side: 'left' | 'right'
   indices: number[]
   tabs: Tab[]
-  icons: Record<string, string>
+  marks: PathMarks
   sessions: AgentSession[]
   onReveal: (index: number) => void
 }) {
@@ -229,7 +230,7 @@ function OverflowMenu({
                 className="gap-2 text-xs"
                 onSelect={() => onReveal(index)}
               >
-                {tabIcon(tab, icons, sessions)}
+                {tabIcon(tab, marks, sessions)}
                 <span className={tab.kind === 'note' && tab.preview ? 'italic' : ''}>
                   {tabName(tab, sessions)}
                 </span>
@@ -277,7 +278,14 @@ export function TabStrip({
   onDragOverStrip,
   trailing,
 }: TabStripProps) {
-  const icons = useAtomValue(snapshotAtom).icons
+  const snapshot = useAtomValue(snapshotAtom)
+  const marks = useMemo<PathMarks>(
+    () => ({
+      icons: snapshot.icons,
+      tasks: new Map(snapshot.tasks.map((t) => [t.path, t.status])),
+    }),
+    [snapshot],
+  )
   const sessions = useAtomValue(agentSessionsAtom)
   const rename = useSetAtom(renameSessionAtom)
   const renameSession = (id: string) => {
@@ -631,7 +639,7 @@ export function TabStrip({
                     // Double-click pins a preview note; a session renames.
                     onDoubleClick={() => (t.kind === 'session' ? renameSession(t.id) : onPin(i))}
                   >
-                    {tabIcon(t, icons, sessions)}
+                    {tabIcon(t, marks, sessions)}
                     <span>{tabName(t, sessions)}</span>
                   </Button>
                 </Tooltip>
@@ -654,7 +662,7 @@ export function TabStrip({
           side="left"
           indices={offscreen.left}
           tabs={tabs}
-          icons={icons}
+          marks={marks}
           sessions={sessions}
           onReveal={reveal}
         />
@@ -662,7 +670,7 @@ export function TabStrip({
           side="right"
           indices={offscreen.right}
           tabs={tabs}
-          icons={icons}
+          marks={marks}
           sessions={sessions}
           onReveal={reveal}
         />
