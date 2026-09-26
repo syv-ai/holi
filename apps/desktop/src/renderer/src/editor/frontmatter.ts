@@ -72,17 +72,19 @@ function summaryLine(
   view: EditorView,
   lead: HTMLElement,
   chars: number,
-  commit: FrontmatterCommit | null,
+  commit: FrontmatterCommit | null | undefined,
   path: string,
 ): HTMLElement {
-  const { text, author, version } = frontmatterSummaryParts(chars, commit)
+  const { text, author, version } = frontmatterSummaryParts(chars, commit ?? null)
   const summary = document.createElement('span')
   summary.className = 'cm-fm-summary'
   summary.textContent = author === null ? text : `${text},`
   lead.appendChild(summary)
 
   const line = document.createElement('div')
-  line.className = 'cm-fm-line'
+  // Held invisible, its height kept, until the commit is known: drawn early it
+  // shows a count alone and then grows the date, name and version.
+  line.className = commit === undefined ? 'cm-fm-line cm-fm-pending' : 'cm-fm-line'
   line.appendChild(lead)
   if (author !== null) {
     const url = `https://github.com/${encodeURIComponent(author)}`
@@ -199,12 +201,14 @@ export interface FrontmatterCommit {
   revisions: number
 }
 
-/** Set by EditorPane once the file's last commit is fetched (async, over IPC);
- *  null while it loads and for a file with no history yet. */
+/** Set by EditorPane once the file's last commit is fetched (async, over IPC):
+ *  null for a file with no history yet, or when the fetch failed. */
 export const setFrontmatterCommit = StateEffect.define<FrontmatterCommit | null>()
 
-export const frontmatterCommitField = StateField.define<FrontmatterCommit | null>({
-  create: () => null,
+/** The last commit; `undefined` until the fetch has answered, so the summary
+ *  can wait for it rather than draw a half line that grows. */
+export const frontmatterCommitField = StateField.define<FrontmatterCommit | null | undefined>({
+  create: () => undefined,
   update(value, tr) {
     for (const e of tr.effects) if (e.is(setFrontmatterCommit)) return e.value
     return value
@@ -289,8 +293,11 @@ function paintChevron(el: HTMLElement, body: string): void {
   el.title = valid ? `frontmatter · ${n} field${n === 1 ? '' : 's'}` : 'frontmatter — invalid YAML'
 }
 
-function commitEq(a: FrontmatterCommit | null, b: FrontmatterCommit | null): boolean {
-  if (a === null || b === null) return a === b
+function commitEq(
+  a: FrontmatterCommit | null | undefined,
+  b: FrontmatterCommit | null | undefined,
+): boolean {
+  if (!a || !b) return a === b
   return a.date === b.date && a.author === b.author && a.revisions === b.revisions
 }
 
@@ -329,8 +336,8 @@ class FrontmatterWidget extends WidgetType {
      *  then the widget is a bar that only reports. */
     readonly body: string | null,
     readonly chars: number,
-    /** Null until fetched. */
-    readonly commit: FrontmatterCommit | null,
+    /** Undefined until fetched, null for a file with no history. */
+    readonly commit: FrontmatterCommit | null | undefined,
     /** Decides whether this block has a schema. */
     readonly path: string,
   ) {
@@ -360,6 +367,9 @@ class FrontmatterWidget extends WidgetType {
     if (from.path !== this.path || from.expanded !== this.expanded || live.body !== this.body)
       return false
     const header = this.header(view, dom, live)
+    // The one change a reader should see arrive: the line appearing at all.
+    if (from.commit === undefined && this.commit !== undefined && !prefersReducedMotion())
+      header.classList.add('cm-fm-arrive')
     live.header.replaceWith(header)
     live.header = header
     return true
@@ -526,7 +536,7 @@ export function frontmatterDecorations(state: EditorState): DecorationSet {
   const expanded = state.field(frontmatterExpandedField, false) ?? false
   // Body-only char count, trimmed. `bodyStart` is 0 when there is no block.
   const chars = doc.slice(bodyStart(doc)).trim().length
-  const commit = state.field(frontmatterCommitField, false) ?? null
+  const commit = state.field(frontmatterCommitField, false)
   const path = state.facet(notePathFacet)
   if (block === null) {
     // No frontmatter: insert the bar above the first line. `side: -1` so the
@@ -624,6 +634,10 @@ const frontmatterTheme = EditorView.baseTheme({
     whiteSpace: 'nowrap',
   },
   '.cm-fm-line > .cm-fm-pill, .cm-fm-line > .cm-fm-bare': { minWidth: '0', overflow: 'hidden' },
+  '.cm-fm-pending': { visibility: 'hidden' },
+  '.cm-fm-arrive': {
+    animation: 'cm-fm-fields-in var(--motion-arrive, 300ms) var(--ease-settle, ease-out)',
+  },
   '.cm-fm-summary': {
     color: 'inherit',
     minWidth: '0',

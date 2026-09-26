@@ -22,7 +22,11 @@ afterEach(() => {
 function mount(
   doc: string,
   openExternal: (url: string) => void,
-  { openHistory, notePath = 'notes/plan.md' }: { openHistory?: () => void; notePath?: string } = {},
+  {
+    openHistory,
+    notePath = 'notes/plan.md',
+    fetched = true,
+  }: { openHistory?: () => void; notePath?: string; fetched?: boolean } = {},
 ): EditorView {
   const parent = document.createElement('div')
   document.body.appendChild(parent)
@@ -44,13 +48,14 @@ function mount(
     }),
     parent,
   })
-  view.dispatch({
-    effects: setFrontmatterCommit.of({
-      date: '2026-09-24T09:30:00Z',
-      author: 'ada-holm',
-      revisions: 14,
-    }),
-  })
+  if (fetched)
+    view.dispatch({
+      effects: setFrontmatterCommit.of({
+        date: '2026-09-24T09:30:00Z',
+        author: 'ada-holm',
+        revisions: 14,
+      }),
+    })
   return view
 }
 
@@ -87,6 +92,18 @@ it('shows no link while the last commit is unknown', () => {
   const v = mount(DOC, () => {})
   v.dispatch({ effects: setFrontmatterCommit.of(null) })
   expect(v.dom.querySelector('.cm-fm-author')).toBeNull()
+})
+
+it('holds the line invisible until the last commit is known, then fades it in', () => {
+  // Drawn early it would show the count alone and then grow the rest.
+  const v = mount(DOC, () => {}, { fetched: false })
+  expect(v.dom.querySelector('.cm-fm-line')?.classList.contains('cm-fm-pending')).toBe(true)
+
+  v.dispatch({ effects: setFrontmatterCommit.of(null) })
+
+  const line = v.dom.querySelector('.cm-fm-line')!
+  expect(line.classList.contains('cm-fm-pending')).toBe(false)
+  expect(line.classList.contains('cm-fm-arrive')).toBe(true)
 })
 
 const press = (el: Element) =>

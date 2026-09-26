@@ -230,7 +230,11 @@ export function EditorPane({
               ),
             })
           })
-          .catch(() => {})
+          // Answered either way, or the summary would wait for it forever.
+          .catch(() => {
+            if (!disposed && viewRef.current === view)
+              view.dispatch({ effects: setFrontmatterCommit.of(null) })
+          })
       }
     })
 
