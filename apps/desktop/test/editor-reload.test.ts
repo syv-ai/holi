@@ -1,16 +1,15 @@
 /**
  * What the editor does when the file changes underneath it.
  *
- * This is plan 4's decision 7 as a function, and it is the whole
+ * This is the whole
  * write-attribution design: **the editor's own save needs no attribution.** It
  * saved, so it advanced `base`; when the watcher reports that write, `disk`
  * equals `base` and nothing happens. No path bookkeeping, no mtime comparison,
  * no pausing the watcher across the write — all three of which race, and one of
- * which (`notes-editor.md` §Risks) is named as the most likely bug in the PRD.
+ * which is the most likely bug in the editor.
  *
- * `notes-editor.md` §External writes records the answer — content comparison,
- * because it is the only one of the three that cannot race — and these tests are
- * what closed it.
+ * `features/editor.md` (External writes) records the answer: content comparison,
+ * because it is the only one of the three that cannot race.
  */
 import { describe, expect, it } from 'vitest'
 import { normalizeText } from '@holi/shared'
@@ -33,7 +32,7 @@ describe('decideReload', () => {
   })
 
   it('reloads silently when the buffer is clean', () => {
-    // FR-11: a clean merge is silent. This is the overwhelmingly common
+    // A clean merge is silent. This is the overwhelmingly common
     // external-write case, because autosave fires on idle.
     expect(decideReload('hello\n', 'hello\n', 'from a teammate\n', 'note.md')).toEqual({
       kind: 'reload',

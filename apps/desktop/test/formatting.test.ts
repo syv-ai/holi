@@ -11,7 +11,7 @@ function apply(s: EditorState, spec: ReturnType<typeof toggleInline>) {
   return s.update(spec).state
 }
 
-describe('toggleInline (FR-3: toggle-aware wrap/unwrap)', () => {
+describe('toggleInline (toggle-aware wrap/unwrap)', () => {
   it('wraps a selection in ** and places the selection inside', () => {
     const next = apply(state('hello world', 0, 5), toggleInline(state('hello world', 0, 5), '**'))
     expect(next.doc.toString()).toBe('**hello** world')

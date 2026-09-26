@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { resolveLinkClick } from '../src/renderer/src/editor/links'
 
-describe('resolveLinkClick (FR-6 wiki-links, FR-7 markdown links)', () => {
+describe('resolveLinkClick (wiki-links, markdown links)', () => {
   it('opens a wiki-link chip on a plain click', () => {
     expect(resolveLinkClick({ wikiTarget: 'notes/a.md', modifier: false })).toEqual({
       kind: 'note',

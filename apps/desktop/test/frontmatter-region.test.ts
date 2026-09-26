@@ -1,6 +1,6 @@
 /**
  * Where the frontmatter block is, and whether its YAML parses — the two pure
- * decisions behind the frontmatter widget (FR-2 hide / FR-16 reveal). Kept out
+ * decisions behind the frontmatter widget (hide / reveal). Kept out
  * of the CodeMirror wiring so they can be tested as plain string functions.
  */
 import { describe, expect, it } from 'vitest'

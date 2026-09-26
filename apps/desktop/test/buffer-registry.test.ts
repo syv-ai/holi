@@ -2,9 +2,9 @@
  * The registry every open buffer joins.
  *
  * Two channels, deliberately: an **unconditional flush** for the points where
- * losing keystrokes is the worst outcome (quit, blur, tab close — FR-6), and a
+ * losing keystrokes is the worst outcome (quit, blur, tab close), and a
  * **gated save** for ⌘S, which must not write a half-typed `tags: [` into a
- * file the parsers will then refuse (FR-16).
+ * file the parsers will then refuse.
  */
 import { describe, expect, it } from 'vitest'
 import { registerBuffer, saveAllBuffers } from '../src/renderer/src/lib/buffer-registry'

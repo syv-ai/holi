@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { APP_METHODS } from '../src/app-bridge'
 
 describe('APP_METHODS', () => {
-  it('is exactly slice 1 and no more', () => {
+  it('is exactly the shipped set and no more', () => {
     // Asserted against a literal on purpose: this is the test that goes red
     // when someone adds a method to the shim without adding a handler to the
     // renderer's dispatch, which would otherwise fail only at runtime, in the

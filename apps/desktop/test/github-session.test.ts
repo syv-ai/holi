@@ -119,7 +119,7 @@ describe('GitHubSession', () => {
   })
 
   it('loads the cached viewer offline', async () => {
-    // FR-6 caches identity for offline display, and FR-16 says a vault opens
+    // Identity is cached for offline display, and a vault opens
     // with no network at all. So load() must not reach for the network — the
     // assertion is that it made no request, not that it recovered from one.
     const t = await session({}, stored())
@@ -179,7 +179,7 @@ describe('GitHubSession', () => {
   })
 
   it('does not touch the clone paths on sign-out', async () => {
-    // FR-15: deleting someone's files — which may hold unpushed commits — is
+    // Deleting someone's files — which may hold unpushed commits — is
     // not a sign-out side effect. The session does not even know the registry
     // exists, and this is the test that keeps it that way.
     const dir = await scratch()

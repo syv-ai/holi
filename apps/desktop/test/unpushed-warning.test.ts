@@ -1,5 +1,5 @@
 /**
- * The sign-out dialog's unpushed-work warning (FR-15 / auth-identity Open-Q3).
+ * The sign-out dialog's unpushed-work warning.
  * Pure so the exact wording — the thing standing between a user and deleting a
  * clone that still holds unpublished commits — is pinned here, not in a
  * screenshot.

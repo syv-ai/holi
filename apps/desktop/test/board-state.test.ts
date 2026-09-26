@@ -22,7 +22,7 @@ const task = (over: Partial<Task> = {}): Task => ({
   ...over,
 })
 
-describe('countOpenTasksLinking (daily-notes FR-6)', () => {
+describe('countOpenTasksLinking', () => {
   const DAILY = '14-07-2026.md'
 
   it('counts open tasks whose body links to the note, labelled links included', () => {

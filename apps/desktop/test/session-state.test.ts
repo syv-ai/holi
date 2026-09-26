@@ -51,7 +51,7 @@ describe('session', () => {
     await store.set(signOutAtom)
 
     expect(store.get(sessionAtom)).toBeNull()
-    // FR-15: signing out drops the keychain entry, not the clones. A renderer
+    // Signing out drops the keychain entry, not the clones. A renderer
     // that also cleared the vault list would imply the checkouts had gone.
     expect(holi.calls.map((c) => c.path)).toEqual(['auth.status', 'auth.signOut'])
   })

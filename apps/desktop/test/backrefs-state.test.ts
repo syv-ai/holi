@@ -1,5 +1,5 @@
 /**
- * The renderer's read side of FR-12: what links here, fetched on demand for the
+ * The renderer's read side of backlinks: what links here, fetched on demand for the
  * delete-preview dialog. Kept in a `.ts` atom rather than the component so the
  * "no vault, no query" guard is testable without a DOM.
  */

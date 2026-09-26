@@ -2,8 +2,8 @@
  * The git engine, tested against real repositories.
  *
  * Nothing here mocks `execFile`, deliberately. The whole reason Holi shells out
- * to the system binary is that git's *refusal* to merge is load-bearing — FR-12
- * and the entire reconcile path rest on it — so a mock would test this file's
+ * to the system binary is that git's *refusal* to merge is load-bearing, the conflict
+ * abort and the entire reconcile path rest on it — so a mock would test this file's
  * idea of git rather than git.
  *
  * Every test builds a bare repo in a tmpdir and clones it. That is a real remote
@@ -161,7 +161,7 @@ describe('status', () => {
     expect(status.branch).toBe('main')
   })
 
-  it('reports a detached HEAD, which FR-2 refuses to sync', async () => {
+  it('reports a detached HEAD, which sync refuses', async () => {
     const dir = await makeClone(await makeRemote())
     await plainGit(dir, ['checkout', '--detach', 'HEAD'])
     expect((await openRepo(dir).status()).detached).toBe(true)
@@ -184,7 +184,7 @@ describe('status', () => {
 
 describe('commitAll', () => {
   it('commits a burst of changes as ONE commit', async () => {
-    // FR-5: a board drag across three lanes, or an agent turn touching ten
+    // A board drag across three lanes, or an agent turn touching ten
     // files, is one commit — not three, and not ten.
     const dir = await makeClone(await makeRemote())
     const before = await plainGit(dir, ['rev-list', '--count', 'HEAD'])
@@ -198,7 +198,7 @@ describe('commitAll', () => {
   })
 
   it('leaves the tree clean, which is what lets a pull always merge', async () => {
-    // FR-7. This is the invariant the whole auto-pull design rests on.
+    // This is the invariant the whole auto-pull design rests on.
     const dir = await makeClone(await makeRemote())
     await writeFile(join(dir, 'a.md'), 'a\n', 'utf8')
     const repo = openRepo(dir)
@@ -352,8 +352,8 @@ describe('pull', () => {
     // This is the boundary features/tasks.md states: two people
     // editing different fields of one task both survive only when the changed
     // lines are not neighbours, and in a five-line frontmatter block neighbours
-    // are the common case. `status` and `due` are adjacent in the PRD's own
-    // example format, and are the two fields most likely to be edited at once.
+    // are the common case. `status` and `due` are adjacent in the task
+    // frontmatter format, and are the two fields most likely to be edited at once.
     // Adjacent edits fall into the same Reconcile path as a same-field conflict.
     const { ours, theirs } = await pair()
     await publish(theirs, 'task.a.md', taskFile())
@@ -366,7 +366,7 @@ describe('pull', () => {
   })
 
   it('reports a conflict AND leaves the tree clean', async () => {
-    // FR-12, and the most important assertion in this file. A conflicted tree
+    // The most important assertion in this file. A conflicted tree
     // contains <<<<<<< markers, and autosave would happily commit them — so the
     // abort must have already run by the time this returns. Ignore the banner
     // and you keep working on an unbroken vault.
@@ -384,7 +384,7 @@ describe('pull', () => {
   })
 
   it('merges rather than rebases, so local commits keep their identity', async () => {
-    // FR-10. A rebase would replay our commit onto theirs and give it a new
+    // A rebase would replay our commit onto theirs and give it a new
     // sha — and with dozens of autosave commits it would conflict repeatedly on
     // the same hunk. Merge resolves the divergence once.
     const { ours, theirs } = await pair()
@@ -442,7 +442,7 @@ describe('push', () => {
   })
 
   it('pushes the whole history to an empty remote (a new vault), not nothing', async () => {
-    // FR-8: "New vault" makes an empty GitHub repo (auto_init:false), so there
+    // "New vault" makes an empty GitHub repo (auto_init:false), so there
     // is no `origin/main` to diff HEAD against. The entire local history is
     // waiting — the push must send it. Regression: `origin/main..HEAD` errored
     // on the missing ref and was swallowed as "nothing to push", leaving every
@@ -460,7 +460,7 @@ describe('push', () => {
   })
 
   it('distinguishes a non-fast-forward rejection', async () => {
-    // FR-14 hands this to the pull that was going to happen anyway, so it must
+    // Sync hands this to the pull that was going to happen anyway, so it must
     // be told apart from a permission failure rather than lumped in with it.
     const remote = await makeRemote()
     const dir = await makeClone(remote)
@@ -478,7 +478,7 @@ describe('push', () => {
       // A read-only local bare repo fails at the object-write layer ("unpacker
       // error"), which is NOT an auth failure — so it must not be reported as
       // one. Claiming "you lack permission" when the remote's disk is full is
-      // exactly the misreporting FR-16 exists to prevent.
+      // exactly the misreporting this classification exists to prevent.
       const remote = await makeRemote()
       const dir = await makeClone(remote)
       await commitFile(dir, 'ours.md', 'ours\n')
@@ -499,7 +499,7 @@ describe('classifyPushFailure', () => {
   // actually emit; the integration tests above cover the paths that CAN be
   // reproduced.
 
-  it('reads GitHub’s permission refusal as permission (auth FR-13)', () => {
+  it('reads GitHub’s permission refusal as permission', () => {
     expect(
       classifyPushFailure(
         '',
@@ -551,7 +551,7 @@ describe('log', () => {
   })
 
   it('follows a file through a rename', async () => {
-    // The history PRD promises the open file's timeline survives a rename, and
+    // History promises the open file's timeline survives a rename, and
     // a rename is how a note moves lanes.
     const dir = await makeClone(await makeRemote())
     await commitFile(dir, 'old.md', 'content\n')
@@ -685,7 +685,7 @@ describe('abortMerge', () => {
     const after = await repo.status()
     expect(after.merging).toBe(false)
     expect(after.dirty).toBe(false)
-    // FR-20: the pre-merge state is a commit, so nothing was ever at risk.
+    // The pre-merge state is a commit, so nothing was ever at risk.
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Ours\n')
   })
 

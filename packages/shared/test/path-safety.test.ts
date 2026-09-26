@@ -59,7 +59,7 @@ describe('isKeepFile (folder marker)', () => {
 describe('isVaultConfigPath (config-conflict prominence)', () => {
   it('matches exactly the shared, committed config files', () => {
     // A conflict in these can leave the vault misconfigured while it lasts —
-    // vaults-sync.md Edge cases singles them out as worth showing prominently.
+    // `features/vaults-sync.md` gives them a louder banner.
     for (const p of VAULT_CONFIG_FILES) {
       expect(isVaultConfigPath(p)).toBe(true)
     }

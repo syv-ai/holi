@@ -210,7 +210,7 @@ describe('buildDecorations — list indentation', () => {
     expect(all.some((d) => d.from === markAt - 2 && d.to === markAt)).toBe(true)
   })
 
-  // FR-3b: a conditional conceal would move the line when the caret arrived.
+  // A conditional conceal would move the line when the caret arrived.
   it('conceals them with the caret on the line too', () => {
     const doc = '- top\n  - child'
     const markAt = doc.indexOf('- child')
@@ -329,7 +329,7 @@ describe('buildDecorations — list indentation', () => {
   })
 
   // Same contract as every other mark in the file, and the two states wear the
-  // same box, so the line does not move (FR-3b).
+  // same box, so the line does not move.
   it('shows the raw marker on the line the caret is on', () => {
     const { all } = decos('- item', 3)
     const marker = all.find((d) => d.from === 0 && d.to === 1)

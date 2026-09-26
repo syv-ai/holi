@@ -12,7 +12,7 @@ const DATA = {
   tasks: [{ path: 'projects/task.ship-it.md', title: 'Ship it', status: 'todo' as const }],
 }
 
-describe('mentionCompletions (FR-8)', () => {
+describe('mentionCompletions', () => {
   it('offers note completions anchored at the @, when the caret follows @', () => {
     const result = mentionCompletions(ctx('see @'), DATA)
     expect(result).not.toBeNull()

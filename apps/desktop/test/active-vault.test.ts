@@ -166,7 +166,7 @@ describe('ActiveVault — snapshot', () => {
   })
 
   it('heals a change the watcher never reported', async () => {
-    // The justification for decision 6, made into a test. The macOS backend
+    // Why the watcher carries no payload, made into a test. The macOS backend
     // genuinely drops add/unlink events, so correctness cannot rest on
     // delivery. Rather than trying to make the OS drop one, the debounce is set
     // beyond the lifetime of the test — an event that never fires and one that
@@ -226,7 +226,7 @@ describe('ActiveVault — commit', () => {
     await writeFile(join(dir, 'note.md'), 'a thought\n', 'utf8')
     await waitFor('the autosave commit', async () => (await count(dir)) === before + 1)
 
-    expect((await active.repo.status()).dirty).toBe(false) // FR-7
+    expect((await active.repo.status()).dirty).toBe(false)
   })
 
   it('commits a tree that was ALREADY dirty when the vault opened', async () => {
@@ -273,7 +273,7 @@ describe('ActiveVault — commit', () => {
       onSnapshot: () => {},
       onSyncState: () => {},
       onHeldBack: (f) => held.push(f),
-      // Loops off; if it commits, opening did. FR-7 aside, this pins the gate.
+      // Loops off; if it commits, opening did. This pins the gate.
       timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
     })
     open.push(active)
@@ -322,7 +322,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('coalesces a burst into ONE commit', async () => {
-    // FR-5: an agent turn touching ten files is one commit, not ten.
+    // An agent turn touching ten files is one commit, not ten.
     const { dir } = await vault({ rescanDebounceMs: 30, commitQuietMs: 120 })
     const before = await count(dir)
 
@@ -334,9 +334,9 @@ describe('ActiveVault — commit', () => {
   })
 
   it('commits a file the watcher never reported', async () => {
-    // Decision 8, and the test that would fail under a watcher-driven loop.
+    // The test that would fail under a watcher-driven loop.
     // git status is the truth about what needs committing; the watcher only
-    // decides how soon we ask. An uncommitted file breaks FR-7's clean tree,
+    // decides how soon we ask. An uncommitted file breaks the clean tree,
     // and a tree that is not clean is one the next pull cannot merge.
     const { dir } = await vault({ rescanDebounceMs: 60_000, healIntervalMs: 80 })
     const before = await count(dir)
@@ -350,7 +350,7 @@ describe('ActiveVault — commit', () => {
     await writeFile(join(dir, 'roadmap.md'), 'plans\n', 'utf8')
     await waitFor('the commit', async () => (await subject(dir)) !== 'seed')
 
-    expect(await subject(dir)).toBe('Update roadmap.md') // FR-4
+    expect(await subject(dir)).toBe('Update roadmap.md')
   })
 
   it('names a count in the message when several changed', async () => {
@@ -362,7 +362,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('commitNow() commits without waiting for the timer', async () => {
-    // ⌘S. FR-4 calls it a real commit point, not a placebo.
+    // ⌘S is a real commit point, not a placebo.
     const { active, dir } = await vault({ commitQuietMs: 60_000, healIntervalMs: 60_000 })
     const before = await count(dir)
 
@@ -381,7 +381,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('stops committing while paused, and resumes', async () => {
-    // FR-8: autosave pauses during a reconcile, and while paused the vault
+    // Autosave pauses during a reconcile, and while paused the vault
     // says so.
     const { active, dir } = await vault(quick)
     const before = await count(dir)
@@ -405,7 +405,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('refuses to commit on a branch that is not the default one', async () => {
-    // Decision 11 / FR-2. The vault stays open and readable — only sync stops.
+    // The vault stays open and readable — only sync stops.
     const { active, dir } = await vault(quick)
     await plainGit(dir, ['checkout', '-b', 'spike/idea'])
     const before = await count(dir)
@@ -414,7 +414,7 @@ describe('ActiveVault — commit', () => {
     await waitFor('sync to report itself paused', () => active.syncState().kind === 'paused')
 
     expect(await count(dir)).toBe(before)
-    // Still open, still readable — FR-2 constrains sync, not open.
+    // Still open, still readable: the branch rule constrains sync, not open.
     expect(await readFile(join(dir, 'README.md'), 'utf8')).toBe('# Vault\n')
     expect(active.snapshot().docs.length).toBeGreaterThan(0)
   })
@@ -452,7 +452,7 @@ describe('ActiveVault — commit', () => {
   })
 
   it('commits in an unborn repo — the first autosave of a new vault', async () => {
-    // Decision 11's exception. `github.createRepo` makes an empty repo, so the
+    // The exception to the branch rule. `github.createRepo` makes an empty repo, so the
     // clone has no commits at all, and its first autosave must land rather
     // than be mistaken for a broken checkout.
     const base = await tmp('holi-unborn-')
@@ -513,7 +513,7 @@ describe('ActiveVault — sync', () => {
    * arriving inside that window fails outright rather than waiting. This test
    * hit it about 40% of the time at an 80 ms heal interval.
    *
-   * It is a real property of the design, not a test artifact — `vaults-sync.md`
+   * It is a real property of the design, not a test artifact — `features/vaults-sync.md`
    * makes the clone deliberately legible, and the agent has Bash. In production
    * the heal tick is 30 s and a commit is ~300 ms, so the window is small, but
    * it is not zero and a person who just wanted to switch branch would simply
@@ -540,7 +540,7 @@ describe('ActiveVault — sync', () => {
   }
 
   it('pulls on the interval, and the tree updates itself', async () => {
-    // FR-9 and FR-11: a teammate's work arrives without anyone remembering
+    // A teammate's work arrives without anyone remembering
     // anything, and a clean merge is silent.
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
     await theyPublish(teammate, 'theirs.md', 'their note\n')
@@ -579,7 +579,7 @@ describe('ActiveVault — sync', () => {
 
   it('shows offline with the waiting count when a push cannot reach the remote', async () => {
     // The one time unpushed commits are worth naming: the network is gone and
-    // they are piling up. FR-22 forbids saying "synced" then, and a bare
+    // they are piling up. The indicator must not say "synced" then, and a bare
     // "offline" hides how much is waiting.
     const origin = await makeRemote()
     const dir = await makeClone(origin)
@@ -607,7 +607,7 @@ describe('ActiveVault — sync', () => {
     )
   })
 
-  it('reports a permission rejection as no-access, not offline (FR-16)', async () => {
+  it('reports a permission rejection as no-access, not offline', async () => {
     // "You lost write access" and "you are offline" send someone to two
     // entirely different places, so they must never be the same word.
     const origin = await makeRemote()
@@ -631,7 +631,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('reports a conflict, leaves the tree clean, and stops retrying', async () => {
-    // FR-12, and the most important assertion here. A conflicted tree contains
+    // The most important assertion here. A conflicted tree contains
     // <<<<<<< markers and autosave would happily commit them, so the abort has
     // already run by the time the state changes. Auto-pull then pauses for this
     // vault, or it retries and re-aborts forever.
@@ -657,7 +657,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('reconcile() re-materialises the conflict in the tree for the agent', async () => {
-    // FR-18 step 2: pull() aborted, so the tree is clean with a sticky banner.
+    // pull() aborted, so the tree is clean with a sticky banner.
     // reconcile() re-runs the merge so the agent has markers to resolve.
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
     await theyPublish(teammate, 'README.md', '# Theirs\n')
@@ -671,7 +671,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('reports a live reconcile as `reconciling`, naming the files being resolved', async () => {
-    // FR-21's seventh state, and FR-19's input: while the agent works, the vault
+    // While the agent works, the vault
     // is not merely "paused" — it is reconciling, and the editor needs the paths
     // to lock. A merge in progress is a `blockedReason`, so without this the
     // paths are lost behind a generic pause.
@@ -686,7 +686,7 @@ describe('ActiveVault — sync', () => {
 
   it('calls a merge nobody asked Holi for `paused`, not `reconciling`', async () => {
     // The distinction the state rests on. Someone merging in a terminal is a
-    // vault Holi must not touch (FR-2), not a reconcile in progress — and the
+    // vault Holi must not touch, not a reconcile in progress — and the
     // editor must not lock their files on the strength of it.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 80,
@@ -706,7 +706,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('ends the reconcile by itself when the agent finishes the merge', async () => {
-    // FR-18(d): "resumes normal operation once the tree is clean". Nobody tells
+    // A reconcile "resumes normal operation once the tree is clean". Nobody tells
     // Holi the agent is done — the merge commit is the signal, and until it is
     // read the vault stays latched with autosave and auto-pull off.
     const { active, dir, teammate } = await withTeammate({
@@ -732,7 +732,7 @@ describe('ActiveVault — sync', () => {
 
   it('commits again once the reconcile is over', async () => {
     // The other half of "resumes normal operation": the state going quiet is
-    // worth nothing if autosave stays off. FR-8 pauses it for the reconcile;
+    // worth nothing if autosave stays off. The reconcile pauses it;
     // this is the resume.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 80,
@@ -756,7 +756,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('abandon() takes the merge back out of the tree and restores the banner', async () => {
-    // FR-20. The pre-reconcile state is a clean tree with a conflict still
+    // The pre-reconcile state is a clean tree with a conflict still
     // waiting, so that is what abandoning returns to — not "nothing is wrong",
     // which would lose the teammate's change, and not a second reconcile.
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
@@ -775,8 +775,8 @@ describe('ActiveVault — sync', () => {
 
   it('survives the agent turn ending — a turn is not the reconcile', async () => {
     // Git coexistence pauses the vault for the assistant's turn and `resume()`
-    // lifts it, clearing the sticky conflict pause on the way out (FR-12's
-    // escape). A reconcile runs *through* the agent, so its first turn ending
+    // lifts it, clearing the sticky conflict pause on the way out (the conflict
+    // pause's escape). A reconcile runs *through* the agent, so its first turn ending
     // must not be read as the merge being done — the markers are still there.
     const { active, dir, teammate } = await withTeammate({ pullIntervalMs: 80 })
     await theyPublish(teammate, 'README.md', '# Theirs\n')
@@ -815,8 +815,8 @@ describe('ActiveVault — sync', () => {
   })
 
   it('keeps committing while a conflict banner is up', async () => {
-    // FR-17: the banner is non-blocking — ignore it and you keep working on an
-    // unbroken vault. Only a reconcile (FR-8) pauses autosave.
+    // The banner is non-blocking — ignore it and you keep working on an
+    // unbroken vault. Only a reconcile pauses autosave.
     const { active, dir, teammate } = await withTeammate({
       pullIntervalMs: 80,
       rescanDebounceMs: 30,
@@ -875,8 +875,8 @@ describe('ActiveVault — sync', () => {
   })
 
   it('resume() clears the conflict and lets auto-pull start again', async () => {
-    // FR-18: a reconcile "resumes normal operation once the tree is clean".
-    // Found by running the app: FR-12's pause is sticky by design, so if
+    // A reconcile "resumes normal operation once the tree is clean".
+    // The conflict pause is sticky by design, so if
     // nothing ever clears it the vault is stranded — the banner stays up
     // forever and no pull is ever attempted again, even after the conflict has
     // actually been resolved. resume() is the only way back, so it has to
@@ -916,7 +916,7 @@ describe('ActiveVault — sync', () => {
 
     // And it really is syncing again, not just displaying differently. The
     // interval is off in this test, so the next pull is driven by focus —
-    // which is itself the FR-9 trigger, and would equally have been refused
+    // which is itself a pull trigger, and would equally have been refused
     // while the conflict pause was still latched.
     await theyPublish(teammate, 'after-recovery.md', 'arrived\n')
     await waitFor('a pull after recovering', async () => {
@@ -945,7 +945,7 @@ describe('ActiveVault — sync', () => {
   it('does not call a lost index.lock "offline"', async () => {
     // Every failure inside the pull lands in one catch, and that catch says
     // offline — right for a laptop on a plane, wrong for a lock the user's own
-    // git held for 200 ms. FR-16 makes the same point about push: a permission
+    // git held for 200 ms. Push has the same rule: a permission
     // failure must never be confused with a network one, and the inverse is
     // just as bad. Telling someone their vault is offline sends them to look at
     // their wifi for a problem that is already over.
@@ -985,7 +985,7 @@ describe('ActiveVault — sync', () => {
   it('a focus arriving during a pull does not spend the throttle window', async () => {
     // `onFocus` stamped the throttle and only then hit `maybePull`'s in-flight
     // guard, so a focus that achieved nothing still bought 30 s of silence —
-    // and FR-9's "on window focus" quietly stopped holding for the next
+    // and pull "on window focus" quietly stopped holding for the next
     // alt-tab, which is the one the user is waiting on.
     const origin = await makeRemote()
     const dir = await makeClone(origin)
@@ -1030,7 +1030,7 @@ describe('ActiveVault — sync', () => {
     // A non-fast-forward push triggers a recovery pull; when that merge is
     // refused before it starts — a tree that went dirty, an index.lock lost to
     // the user's own git — it comes back naming nothing. `maybePull` already
-    // refuses to latch FR-12's sticky pause on that, and pushNow inherits it by
+    // refuses to latch the sticky conflict pause on that, and pushNow inherits it by
     // delegating: otherwise one transient race would disable auto-pull forever.
     const origin = await makeRemote()
     const dir = await makeClone(origin)
@@ -1069,7 +1069,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('reports a real conflict during a push recovery and pushes nothing', async () => {
-    // FR-15 preserved: the user's work stays local and intact, the remote is
+    // The user's work stays local and intact, the remote is
     // untouched, and the tree is left clean for the reconcile path.
     const { active, dir, teammate } = await withTeammate()
     await theyPublish(teammate, 'README.md', '# Theirs\n')
@@ -1083,7 +1083,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('pulls on window focus', async () => {
-    // FR-9. Focus is the trigger that makes the interval nearly irrelevant.
+    // Focus is the trigger that makes the interval nearly irrelevant.
     const { active, dir, teammate } = await withTeammate()
     await theyPublish(teammate, 'focus.md', 'arrived\n')
 
@@ -1116,8 +1116,8 @@ describe('ActiveVault — sync', () => {
   })
 
   it('does not pull a vault opened on a branch that is not the default one', async () => {
-    // The branch is switched BEFORE the vault opens, which is the state FR-2
-    // actually describes ("if the clone is on another branch ... on open").
+    // The branch is switched BEFORE the vault opens, which is the state the
+    // branch rule actually describes (another branch on open).
     //
     // Switching *while* a pull is already in flight is a different and much
     // narrower thing: the pull is authorised against a status read moments
@@ -1149,7 +1149,7 @@ describe('ActiveVault — sync', () => {
   })
 
   it('pauses when the branch changes under an open vault, and resumes on the way back', async () => {
-    // Decision 11: the FR-2 refusal is derived fresh from `git status` rather
+    // The branch refusal is derived fresh from `git status` rather
     // than latched, so it clears itself when the user switches back instead of
     // needing anyone to notice.
     const { active, dir } = await withTeammate({ pullIntervalMs: 60_000, healIntervalMs: 80 })
@@ -1216,7 +1216,7 @@ describe('VaultHost', () => {
    * changed and pushed nothing at all. The renderer holds one sync state for the
    * whole app, so it kept displaying the *previous* vault's: switching from a
    * vault stuck offline to an empty one still read the offline count from the
-   * one before it. FR-22 is that the indicator must never claim a state that is
+   * one before it. The indicator must never claim a state that is
    * not true, and that cuts both ways.
    */
   it('announces the opening sync state, even when nothing changed', async () => {
@@ -1266,7 +1266,7 @@ describe('VaultHost', () => {
   })
 
   it('tears the previous vault down when switching', async () => {
-    // Decision 2's entire content: exactly one watcher and one set of timers
+    // Exactly one watcher and one set of timers
     // exist at a time, so a switch is a teardown rather than a leak.
     const { registry, a } = await twoVaults()
     const { h, snaps } = host(registry, { rescanDebounceMs: 30 })
@@ -1331,7 +1331,7 @@ describe('VaultHost', () => {
   })
 
   it('commits a dirty vault before switching away from it', async () => {
-    // FR-6: work is flushed and committed on a vault switch. A tree left dirty
+    // Work is flushed and committed on a vault switch. A tree left dirty
     // is one the next pull cannot merge — and nothing is watching it any more
     // to notice.
     const { registry, a } = await twoVaults()

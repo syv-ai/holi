@@ -15,14 +15,14 @@ describe('isLockedForReconcile', () => {
   })
 
   it('leaves every other file in the vault editable', () => {
-    // FR-19's second sentence. A reconcile is not a mode the vault enters; it
+    // A reconcile is not a mode the vault enters; it
     // is a lock on the files that actually hold markers.
     const state = { kind: 'reconciling', paths: ['README.md'] } as const
     expect(isLockedForReconcile(state, 'notes/other.md')).toBe(false)
   })
 
   it('does not lock for a conflict banner over a clean tree', () => {
-    // FR-17 is non-blocking: the merge was aborted, the files have no markers
+    // The banner is non-blocking: the merge was aborted, the files have no markers
     // in them, and the whole point of the banner is that you can ignore it and
     // keep working. Locking here would make a teammate's waiting change stop
     // yours.

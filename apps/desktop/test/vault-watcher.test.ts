@@ -1,7 +1,7 @@
 /**
  * The watcher, which says only *when*.
  *
- * It carries no payload on purpose (plan 4 decision 6): the snapshot is the
+ * It carries no payload on purpose: the snapshot is the
  * truth and a rescan is cheap, so an unaddressed "something changed" is all the
  * loop needs — and being coarse is what makes a dropped event survivable.
  *
@@ -125,7 +125,7 @@ describe('watchVault', () => {
   })
 
   it('coalesces a burst into ONE call', async () => {
-    // FR-5: a board drag across lanes, or an agent turn touching ten files, is
+    // A board drag across lanes, or an agent turn touching ten files, is
     // one commit rather than ten. The coalescing is what makes that true.
     //
     // Runs at the PRODUCTION debounce rather than this file's 30 ms, because

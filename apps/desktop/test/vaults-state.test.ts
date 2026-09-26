@@ -86,7 +86,7 @@ describe('vaults', () => {
 })
 
 /**
- * FR-7 and FR-8. Both procedures existed, were tested, and had no caller at all
+ * Adopt and create. Both procedures existed, were tested, and had no caller at all
  * — the shell listed vaults and opened them, and offered no way for one to get
  * into the list. Found by signing in on a clean machine and finding nothing to
  * click.

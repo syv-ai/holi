@@ -4,7 +4,7 @@
  * The theme running through all of it: **this thing maintains, it never
  * enforces**. Every test below that feeds it a broken file asserts that it
  * produced a sensible entry rather than that it complained, because the caller
- * is a pre-commit transform and FR-9 says a transform may never block a commit.
+ * is a pre-commit transform and a transform may never block a commit.
  */
 import { describe, expect, it } from 'vitest'
 import {

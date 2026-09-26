@@ -1,5 +1,5 @@
 /**
- * The renderer half of rename (FR-11).
+ * The renderer half of rename.
  *
  * The property that matters is the *order*: flush the buffer, commit a clean
  * restore point, rename, then commit again — so the rename lands as one commit

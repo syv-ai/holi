@@ -89,7 +89,7 @@ describe('openLandingAtom', () => {
   })
 
   it('still mints today’s daily when landing somewhere else', async () => {
-    // FR-4: `landing` picks what you LOOK at; `dailyNotes` decides whether the
+    // `landing` picks what you LOOK at; `dailyNotes` decides whether the
     // vault keeps a journal. A vault that opens on its board must not quietly
     // stop journalling — that is a hole in the record you find weeks later,
     // looking for a day you know you worked.

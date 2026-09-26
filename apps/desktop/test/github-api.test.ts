@@ -303,9 +303,9 @@ describe('GitHubApi.collaborators', () => {
 describe('GitHubApi.repo', () => {
   it('returns a single repo with its visibility', async () => {
     // The members panel needs this and cannot get it from repos() without
-    // listing every repo the user has to read one field. PRD §Edge cases calls
-    // a vault silently becoming public the highest-severity thing that can
-    // happen to it, and nothing else in the product would show it.
+    // listing every repo the user has to read one field. A vault silently
+    // becoming public is the highest-severity thing that can happen to it, and
+    // nothing else in the product would show it.
     const t = api([{ body: repo({ visibility: 'public', private: false }) }])
 
     const r = await t.client.repo('nthomsencph/notes')
@@ -349,7 +349,7 @@ describe('GitHubApi.createRepo', () => {
 
   it('is private with no way for a caller to ask otherwise', async () => {
     // Not a default the caller may override. A vault created public is the
-    // highest-severity thing in the PRD's edge cases, and the type is what
+    // highest-severity thing that can happen to it, and the type is what
     // makes it unsayable.
     const t = api([{ status: 201, body: repo() }])
     await t.client.createRepo({ name: 'vault', owner: 'syv-ai' })

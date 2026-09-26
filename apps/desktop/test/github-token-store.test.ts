@@ -71,7 +71,7 @@ describe('TokenStore', () => {
   })
 
   it('writes no plaintext token to disk', async () => {
-    // The assertion that actually pins auth PRD FR-5. Read the raw bytes rather
+    // The assertion that actually pins encrypted storage. Read the raw bytes rather
     // than going back through the store, because the store is the thing on trial.
     const file = await scratch()
     await new TokenStore(file, fakeStorage()).write(auth())
@@ -113,7 +113,7 @@ describe('TokenStore', () => {
 
   it('throws EncryptionUnavailableError rather than writing plaintext', async () => {
     // Linux with no keyring, or macOS before app.whenReady(). A token in a
-    // plaintext file is precisely what FR-5 exists to prevent.
+    // plaintext file is precisely what encrypted storage exists to prevent.
     const file = await scratch()
     const storage = fakeStorage()
     storage.available = false

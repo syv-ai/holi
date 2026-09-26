@@ -1051,7 +1051,7 @@ describe('auth', () => {
     expect(JSON.stringify(await caller.auth.status())).not.toContain(TOKEN)
   })
 
-  it('status returns exactly the three fields FR-5 names', async () => {
+  it('status returns exactly three fields', async () => {
     // accountId is our identity key, not the renderer's, and it is absent.
     // Asserted on the *keys*: searching the JSON for the id itself would
     // always hit, because GitHub embeds the account id in the avatar URL.
@@ -1190,7 +1190,7 @@ describe('github', () => {
   })
 
   it('opens the repo collaborator settings page', async () => {
-    // FR-11: Holi does not implement invitation, it deep-links to the flow
+    // Holi does not implement invitation, it deep-links to the flow
     // that does.
     const { caller, openExternal } = await authRig({}, seeded())
     await caller.github.openCollaboratorSettings({ remote: REMOTE })
@@ -1400,7 +1400,7 @@ describe('vaults.create', () => {
     // The new repo is stamped a vault, so it reads as one and passes the guard.
     expect(markVault).toHaveBeenCalledWith('syv-ai/fresh')
     expect(snap.docs.map((d) => d.path).sort()).toContain('AGENTS.md')
-    // FR-8: seeded, committed AND pushed, so the vault exists for everyone else.
+    // Seeded, committed AND pushed, so the vault exists for everyone else.
     // The push is automatic (open-drain + the explicit kick in vaults.create),
     // and can land a moment after create() returns — so poll origin/main rather
     // than assuming it is there the instant the mutation resolves.
@@ -1496,7 +1496,7 @@ describe('sync', () => {
   })
 
   it('pushNow leaves a conflicting divergence in the conflict state, pushing nothing', async () => {
-    // FR-15. A non-fast-forward push recovers by pulling; a real conflict routes
+    // A non-fast-forward push recovers by pulling; a real conflict routes
     // to the reconcile path, and the user's work stays local and intact.
     const { caller, base } = await rig()
     const origin = await makeRemote()

@@ -12,7 +12,7 @@ function ctx(doc: string, pos = doc.length, explicit = false) {
   return new CompletionContext(EditorState.create({ doc }), pos, explicit)
 }
 
-describe('slashCommands (FR-9)', () => {
+describe('slashCommands', () => {
   it('offers commands anchored at the / when it starts a line', () => {
     const result = slashCommands(ctx('/'))
     expect(result).not.toBeNull()

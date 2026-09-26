@@ -187,7 +187,7 @@ describe('memory-index inside the runner', () => {
     expect(staged).toContain(MEMORY_INDEX)
   })
 
-  it('lets the commit through when the indexer throws (FR-9)', async () => {
+  it('lets the commit through when the indexer throws', async () => {
     const run = await runPreCommit(repo, added('memory/a.md'), {
       settings,
       transforms: [

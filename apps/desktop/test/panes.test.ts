@@ -1,10 +1,8 @@
 /**
  * What is on screen, as a shape that can grow a second pane.
  *
- * `notes-editor.md` §Panes names the flat `Map<path, …>` as the thing that
- * forecloses split panes and non-note tabs, so the state is `panes[] → tabs[]`
- * and a tab is a discriminated union from the first commit. Plan 5 renders one
- * pane; the shape is the expensive half to undo, not the UI.
+ * A flat `Map<path, …>` forecloses split panes and non-note tabs, so the state
+ * is `panes[] → tabs[]` and a tab is a discriminated union.
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -78,7 +76,7 @@ describe('closeTab', () => {
   })
 
   it('leaves an empty pane rather than removing it', () => {
-    // Plan 5 renders one pane, so a pane that deleted itself when its last tab
+    // The last pane never goes, so a pane that deleted itself when its last tab
     // closed would leave nothing to render into. An empty pane IS the
     // empty-editor state.
     let w = openTab(emptyWorkspace(), { kind: 'note', path: 'only.md' })

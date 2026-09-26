@@ -1,5 +1,5 @@
 /**
- * FR-21's vocabulary, and nothing beyond it.
+ * The sync indicator's vocabulary, and nothing beyond it.
  *
  * Push is automatic (`features/vaults-sync.md`), so there is no "N to
  * publish" and no `publishing`: the words are up to date, pulling, offline
@@ -28,7 +28,7 @@ describe('syncLabel', () => {
     expect(syncLabel({ kind: 'offline', count: 0 })).toEqual({ text: 'offline', tone: 'warn' })
   })
 
-  it('reports a permission refusal as its own thing, not offline (FR-16)', () => {
+  it('reports a permission refusal as its own thing, not offline', () => {
     expect(syncLabel({ kind: 'no-access' })).toEqual({ text: 'no write access', tone: 'warn' })
   })
 
@@ -56,8 +56,8 @@ describe('syncLabel', () => {
 
   it('says a manual pause quietly, without repeating who asked for it', () => {
     // The assistant's hold lifts itself, so nothing is asked of the user, and
-    // the footer's Claude dot is already pulsing beside this. FR-8 still wants
-    // the vault to say it is paused; it does not want it shouted twice.
+    // the footer's Claude dot is already pulsing beside this. The footer still
+    // says the vault is paused; it does not shout it twice.
     expect(syncLabel({ kind: 'paused', reason: 'the assistant is working', manual: true })).toEqual(
       { text: 'sync paused', tone: 'quiet' },
     )

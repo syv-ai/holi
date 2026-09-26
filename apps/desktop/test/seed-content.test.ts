@@ -61,7 +61,7 @@ function runHook(
 }
 
 describe('SEED_FILES', () => {
-  it("covers exactly the spec's managed set (USER.local.md is machine-local, never seeded)", () => {
+  it('covers exactly the managed set (USER.local.md is machine-local, never seeded)', () => {
     expect(Object.keys(SEED_FILES).sort()).toEqual([
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-overview.mjs',
@@ -368,7 +368,7 @@ describe('ensureSeeded — the .gitignore', () => {
   })
 
   it('APPENDS to a .gitignore that already exists, keeping what was there', async () => {
-    // Decision 10's hole, and the reason .gitignore is not create-if-missing
+    // The reason .gitignore is not create-if-missing
     // like the rest. An adopted repo usually already has one, so ours would
     // never be written — and `commitAll` runs `git add -A`, which means a
     // `*.local.*` file reaches the shared history on the very first commit.

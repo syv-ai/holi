@@ -112,7 +112,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     restore() {
       // Actually removed, not left behind. A leaked fake makes the NEXT test
       // file talk to a seam that is not there, and the failure surfaces
-      // somewhere unrelated — the same shape as plan 4's leaked ActiveVault.
+      // somewhere unrelated.
       if (priorWindow === undefined) delete (globalThis as Record<string, unknown>).window
       else (globalThis as Record<string, unknown>).window = priorWindow
     },

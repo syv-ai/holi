@@ -108,7 +108,7 @@ describe('startDeviceFlow', () => {
   })
 
   it('returns the user code and verification uri without polling yet', async () => {
-    // FR-2's whole point: the code must be displayable before the grant exists.
+    // The whole point: the code must be displayable before the grant exists.
     // A one-shot signIn() could not surface it until it was already spent.
     const t = start([{ body: CODE }])
     const flow = await t.flow

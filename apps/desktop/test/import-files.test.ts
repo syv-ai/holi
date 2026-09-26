@@ -34,7 +34,7 @@ describe('importFiles', () => {
   })
 
   it('refuses to land on a name the vault already uses', async () => {
-    // The vault's standing rule (FR-11): reject a colliding destination rather
+    // The vault's standing rule: reject a colliding destination rather
     // than overwrite. A drop is the easiest way to hit one — the source name is
     // chosen by whatever folder the file came from, not by the person dropping.
     const root = await scratch('holi-vault-')
