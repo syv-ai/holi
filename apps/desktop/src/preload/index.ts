@@ -31,6 +31,10 @@ const onSyncState = pushChannel<unknown>('vault:sync')
  * Pushed every commit tick; empty clears the callout. */
 const onHeldBack = pushChannel<unknown>('vault:heldback')
 
+/** History moved: the paths a commit took, or null after a merged pull (any
+ * file may have). The disk does not change on a commit, so no snapshot says so. */
+const onCommitted = pushChannel<unknown>('vault:committed')
+
 /**
  * The one thing main ASKS the renderer, rather than telling it.
  *
@@ -78,6 +82,7 @@ contextBridge.exposeInMainWorld('holi', {
     onSnapshot,
     onSyncState,
     onHeldBack,
+    onCommitted,
     onFlushRequest,
     flushDone: () => ipcRenderer.send('vault:flush-done'),
   },

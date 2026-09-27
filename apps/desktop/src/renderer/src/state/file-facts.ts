@@ -3,12 +3,14 @@
  * git history and how it is linked (`main/vault/file-facts.ts`).
  *
  * Asked for when the block mounts, which is when it opens: the backlink half
- * reads every note in the vault, and a collapsed block never needs it.
+ * reads every note in the vault, and a collapsed block never needs it. Asked
+ * again when a commit takes the file, so a note opened before its first
+ * autosave commit gains its "created" part when that lands.
  */
 import { useAtomValue } from 'jotai'
 import { useEffect, useState } from 'react'
 import { trpc } from '../lib/trpc'
-import { activeRemoteAtom } from './vaults'
+import { activeRemoteAtom, historyEpoch, historyEpochsAtom } from './vaults'
 
 export interface CommitFact {
   date: string
@@ -21,23 +23,24 @@ export interface FileFacts {
   links: { in: number; out: number } | null
 }
 
-/** Null until the first answer arrives. Either half failing leaves that half
- *  null rather than hiding the other. */
+/** Null until the first answer for this path arrives; a refetch keeps the
+ *  last answer showing. Either half failing leaves that half null rather than
+ *  hiding the other. */
 export function useFileFacts(path: string): FileFacts | null {
   const remote = useAtomValue(activeRemoteAtom)
-  const [facts, setFacts] = useState<FileFacts | null>(null)
+  const epoch = historyEpoch(useAtomValue(historyEpochsAtom), path)
+  const [answer, setAnswer] = useState<{ path: string; facts: FileFacts } | null>(null)
   useEffect(() => {
     let live = true
-    setFacts(null)
     void Promise.all([
       trpc.notes.fileHistory.query({ path }).catch(() => null),
       remote === null ? null : trpc.notes.links.query({ remote, path }).catch(() => null),
     ]).then(([history, links]) => {
-      if (live) setFacts({ history, links })
+      if (live) setAnswer({ path, facts: { history, links } })
     })
     return () => {
       live = false
     }
-  }, [path, remote])
-  return facts
+  }, [path, remote, epoch])
+  return answer?.path === path ? answer.facts : null
 }

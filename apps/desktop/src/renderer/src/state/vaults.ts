@@ -71,6 +71,31 @@ export const syncStateAtom = atom<SyncState>({ kind: 'up-to-date' })
  *  Pushed from main every commit tick (empty clears it, incl. on a vault switch). */
 export const heldBackAtom = atom<HeldBackFile[]>([])
 
+/**
+ * How often each file's history has moved since launch: `all` counts merged
+ * pulls (which may touch any file), `byPath` counts the commits that took that
+ * path. Read through `historyEpoch`; only its changes matter, never its value.
+ */
+export interface HistoryEpochs {
+  all: number
+  byPath: Readonly<Record<string, number>>
+}
+
+export const historyEpochsAtom = atom<HistoryEpochs>({ all: 0, byPath: {} })
+
+/** Bumps the epochs for one `onCommitted` push. */
+export function bumpHistoryEpochs(epochs: HistoryEpochs, paths: string[] | null): HistoryEpochs {
+  if (paths === null) return { ...epochs, all: epochs.all + 1 }
+  const byPath = { ...epochs.byPath }
+  for (const p of paths) byPath[p] = (byPath[p] ?? 0) + 1
+  return { ...epochs, byPath }
+}
+
+/** A number that changes whenever `path`'s git history may have. */
+export function historyEpoch(epochs: HistoryEpochs, path: string): number {
+  return epochs.all + (epochs.byPath[path] ?? 0)
+}
+
 export const loadVaultsAtom = atom(null, async (get, set) => {
   const vaults = await trpc.vaults.list.query()
   set(vaultsAtom, vaults)
@@ -154,6 +179,9 @@ export function subscribeToVault(store: JotaiStore): () => void {
   const offSnapshot = window.holi.vault.onSnapshot((snapshot) => store.set(snapshotAtom, snapshot))
   const offSync = window.holi.vault.onSyncState((state) => store.set(syncStateAtom, state))
   const offHeldBack = window.holi.vault.onHeldBack((files) => store.set(heldBackAtom, files))
+  const offCommitted = window.holi.vault.onCommitted((paths) =>
+    store.set(historyEpochsAtom, (e) => bumpHistoryEpochs(e, paths)),
+  )
   // A clicked reminder opens its task. Cross-vault, the switch runs here, not in
   // main, so `activeRemoteAtom` stays truthful; the task opens once the new
   // vault's snapshot is in (`openVaultAtom` sets it before this resolves).
@@ -174,6 +202,7 @@ export function subscribeToVault(store: JotaiStore): () => void {
     offSnapshot()
     offSync()
     offHeldBack()
+    offCommitted()
     offReminder()
     offAppOpen()
   }

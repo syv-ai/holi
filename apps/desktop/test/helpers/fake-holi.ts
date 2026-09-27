@@ -23,6 +23,7 @@ export interface FakeHoli {
   pushSnapshot(snapshot: VaultSnapshot): void
   pushSyncState(state: SyncState): void
   pushHeldBack(files: HeldBackFile[]): void
+  pushCommitted(paths: string[] | null): void
   /** Fire `onFlushRequest` and resolve once the renderer calls `flushDone()`. */
   requestFlush(): Promise<void>
   restore(): void
@@ -39,6 +40,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
   const snapshotSubs = new Set<(s: VaultSnapshot) => void>()
   const syncSubs = new Set<(s: SyncState) => void>()
   const heldBackSubs = new Set<(f: HeldBackFile[]) => void>()
+  const committedSubs = new Set<(p: string[] | null) => void>()
   const flushSubs = new Set<() => void>()
   const reminderSubs = new Set<(p: { remote: string; path: string }) => void>()
   const appOpenSubs = new Set<(bundle: string) => void>()
@@ -64,6 +66,7 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
       onSnapshot: subscribe(snapshotSubs),
       onSyncState: subscribe(syncSubs),
       onHeldBack: subscribe(heldBackSubs),
+      onCommitted: subscribe(committedSubs),
       onFlushRequest: subscribe(flushSubs),
       flushDone: () => onFlushed?.(),
     },
@@ -103,6 +106,9 @@ export function installFakeHoli(handle: (op: TrpcOpWire) => unknown = () => unde
     },
     pushHeldBack: (files) => {
       for (const cb of heldBackSubs) cb(files)
+    },
+    pushCommitted: (paths) => {
+      for (const cb of committedSubs) cb(paths)
     },
     requestFlush: () =>
       new Promise<void>((resolve) => {

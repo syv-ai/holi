@@ -29,11 +29,38 @@ import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { historyOpenAtom } from '@/state/history'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
-import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
+import {
+  activeRemoteAtom,
+  historyEpoch,
+  historyEpochsAtom,
+  snapshotAtom,
+} from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
  *  purpose: the file has to be there before the commit timer decides to look. */
 const SAVE_QUIET_MS = 600
+
+/**
+ * The frontmatter summary's last commit, into `view`. Null for an untracked
+ * file. `live` guards the answer, so a fast tab switch can't write into a
+ * replaced view.
+ */
+function loadCommit(view: EditorView, path: string, live: () => boolean): void {
+  void trpc.notes.fileHistory
+    .query({ path })
+    .then((history) => {
+      if (!live()) return
+      view.dispatch({
+        effects: setFrontmatterCommit.of(
+          history === null ? null : { ...history.last, revisions: history.revisions },
+        ),
+      })
+    })
+    // Answered either way, or the summary would wait for it forever.
+    .catch(() => {
+      if (live()) view.dispatch({ effects: setFrontmatterCommit.of(null) })
+    })
+}
 
 export function EditorPane({
   path,
@@ -217,25 +244,7 @@ export function EditorPane({
       playOnce(host, 'motion-in-fade')
       view.focus()
 
-      // The frontmatter summary's last commit. Null for an untracked file.
-      // Guarded so a fast tab switch can't write into a replaced view.
-      if (!plain) {
-        void trpc.notes.fileHistory
-          .query({ path })
-          .then((history) => {
-            if (disposed || viewRef.current !== view) return
-            view.dispatch({
-              effects: setFrontmatterCommit.of(
-                history === null ? null : { ...history.last, revisions: history.revisions },
-              ),
-            })
-          })
-          // Answered either way, or the summary would wait for it forever.
-          .catch(() => {
-            if (!disposed && viewRef.current === view)
-              view.dispatch({ effects: setFrontmatterCommit.of(null) })
-          })
-      }
+      if (!plain) loadCommit(view, path, () => !disposed && viewRef.current === view)
     })
 
     // Window blur is a flush point, as is the unmount below (tab close, vault
@@ -264,6 +273,22 @@ export function EditorPane({
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
     // you see the markers the agent is working on. The teardown flushes first.
   }, [path, remote, plain, readOnly])
+
+  /**
+   * A commit took this file: ask again for its last commit. Opened before its
+   * first autosave commit (a note or task just made), the summary would
+   * otherwise stay a bare char count until the file is reopened. Only when the
+   * epoch moves under the same path: a new path is the open effect's job.
+   */
+  const epoch = historyEpoch(useAtomValue(historyEpochsAtom), path ?? '')
+  const seen = useRef({ path, epoch })
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = { path, epoch }
+    if (prev.path !== path || prev.epoch === epoch || plain || path === null) return
+    const view = viewRef.current
+    if (view !== null) loadCommit(view, path, () => viewRef.current === view)
+  }, [path, epoch, plain])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

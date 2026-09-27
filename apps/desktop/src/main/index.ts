@@ -257,6 +257,7 @@ async function main(): Promise<void> {
     // The large-file gate's held-back set (empty clears the callout). Pushed
     // every commit tick and once at open, so a vault switch resets it.
     onHeldBack: (files) => send('vault:heldback', files),
+    onCommitted: (paths) => send('vault:committed', paths),
     // A switch ends the vault's agent sessions, and this is the only place that
     // still holds the vault they ran in. The conversations stay reachable
     // through `claude --resume`.

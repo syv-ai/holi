@@ -164,6 +164,13 @@ export async function openActiveVault(args: {
   /** The large-file gate's held-back set, pushed every commit tick (including
    *  empty, so a resolved file clears the surface). */
   onHeldBack?: (files: HeldBackFile[]) => void
+  /**
+   * History moved: the paths an autosave commit took, or null after a merged
+   * pull, which may have touched any file. Whatever shows a file's last or
+   * first commit refetches on it, because nothing on disk changes when a file
+   * is committed, so the snapshot says nothing.
+   */
+  onCommitted?: (paths: string[] | null) => void
   /** Where this vault's git hook calls back (D76). Takes the remote so the
    *  token is minted for THIS vault (D87): the endpoint is written into this
    *  clone's `.git/hooks`, and a shared token would let a commit here run the
@@ -382,6 +389,7 @@ export async function openActiveVault(args: {
       }
       const sha = await args.repo.commitAll(commitMessage(partitioned.commit), partitioned.commit)
       await refreshState()
+      if (sha !== null && !closed) args.onCommitted?.(partitioned.commit)
       // A commit that landed is work the remote does not have yet. Arm the
       // coalescer rather than pushing now, so a burst of commits (a board drag,
       // an agent turn) becomes one push. The leave points push immediately.
@@ -466,6 +474,7 @@ export async function openActiveVault(args: {
       // land inside a coalescing window.
       if (result.kind === 'merged') {
         await rescan()
+        if (!closed) args.onCommitted?.(null)
         // A merge writes a merge commit, which the remote does not have. Push
         // it, coalesced rather than immediate because we are inside the pull's
         // `pullInFlight` guard here; `pushNow` would decline until it clears.
@@ -734,6 +743,7 @@ export function createVaultHost(args: {
   onSnapshot: (snapshot: VaultSnapshot) => void
   onSyncState: (state: SyncState) => void
   onHeldBack?: (files: HeldBackFile[]) => void
+  onCommitted?: (paths: string[] | null) => void
   /** Where this vault's git hook calls back (D76). Takes the remote so the
    *  token is minted for THIS vault (D87): the endpoint is written into this
    *  clone's `.git/hooks`, and a shared token would let a commit here run the
@@ -819,6 +829,7 @@ export function createVaultHost(args: {
           onSnapshot: args.onSnapshot,
           onSyncState: args.onSyncState,
           onHeldBack: args.onHeldBack,
+          onCommitted: args.onCommitted,
           hookEndpoint: args.hookEndpoint,
           timings: args.timings,
         })

@@ -399,6 +399,31 @@ describe('ActiveVault — commit', () => {
     expect(await count(dir)).toBe(before + 1)
   })
 
+  it('reports the paths a commit took, so open files can refresh their history', async () => {
+    // Nothing on disk changes when a file is committed, so no snapshot says
+    // so; a task opened before its first autosave commit showed no history.
+    const origin = await makeRemote()
+    const dir = await makeClone(origin)
+    const committed: (string[] | null)[] = []
+    const active = await openActiveVault({
+      remote: 'syv-ai/notes',
+      repo: openRepo(dir),
+      onSnapshot: () => {},
+      onSyncState: () => {},
+      onCommitted: (paths) => committed.push(paths),
+      timings: { commitQuietMs: 60_000, healIntervalMs: 60_000, pullIntervalMs: 60_000 },
+    })
+    open.push(active)
+
+    await writeFile(join(dir, 'task.buy-milk.md'), '# buy milk\n', 'utf8')
+    await active.commitNow()
+    expect(committed).toEqual([['task.buy-milk.md']])
+
+    // A clean tree commits nothing and reports nothing.
+    await active.commitNow()
+    expect(committed).toHaveLength(1)
+  })
+
   it('commitNow() returns null and commits nothing on a clean tree', async () => {
     const { active, dir } = await vault(quick)
     const before = await count(dir)
@@ -512,7 +537,10 @@ describe('ActiveVault — sync', () => {
   const count = async (dir: string) => Number(await plainGit(dir, ['rev-list', '--count', 'HEAD']))
 
   /** A vault plus a second clone of the same bare repo, playing the teammate. */
-  async function withTeammate(timings?: Parameters<typeof openActiveVault>[0]['timings']) {
+  async function withTeammate(
+    timings?: Parameters<typeof openActiveVault>[0]['timings'],
+    onCommitted?: (paths: string[] | null) => void,
+  ) {
     const origin = await makeRemote()
     const dir = await makeClone(origin)
     const teammate = await makeClone(origin, 'teammate')
@@ -523,6 +551,7 @@ describe('ActiveVault — sync', () => {
       repo: openRepo(dir),
       onSnapshot: snaps.push,
       onSyncState: () => {},
+      onCommitted,
       // Pulling is off unless a test asks for it, so an unrelated fetch cannot
       // change the repo under an assertion.
       timings: { pullIntervalMs: 60_000, healIntervalMs: 60_000, ...timings },
@@ -578,6 +607,15 @@ describe('ActiveVault — sync', () => {
     await waitFor('the tree to show it', () =>
       active.snapshot().docs.some((d) => d.path === 'theirs.md'),
     )
+  })
+
+  it('reports a merged pull as history moving for any file', async () => {
+    const committed: (string[] | null)[] = []
+    const { teammate } = await withTeammate({ pullIntervalMs: 80 }, (paths) =>
+      committed.push(paths),
+    )
+    await theyPublish(teammate, 'theirs.md', 'their note\n')
+    await waitFor('the pull to report', () => committed.includes(null))
   })
 
   it('reports up-to-date when nothing has changed', async () => {

@@ -16,6 +16,9 @@ declare global {
         onSyncState(cb: (state: SyncState) => void): () => void
         /** The large-file gate's held-back set; empty clears the callout. */
         onHeldBack(cb: (files: HeldBackFile[]) => void): () => void
+        /** The paths a commit took, or null when a merged pull may have
+         *  moved any file's history. */
+        onCommitted(cb: (paths: string[] | null) => void): () => void
         /**
          * Main is quitting and wants the buffer on disk before it commits.
          * Write every dirty buffer, then call `flushDone()`.
