@@ -26,14 +26,14 @@ describe('historyTargetPathAtom', () => {
     expect(store.get(historyTargetPathAtom)).toBe('b.md')
   })
 
-  it('is null for the board, a task file, or a non-markdown file', () => {
+  it('is null for the board or a non-markdown file, and a task file has history like a note', () => {
     const store = createStore()
     const target = (tab: Tab) => {
       store.set(workspaceAtom, ws([tab], 0))
       return store.get(historyTargetPathAtom)
     }
     expect(target({ kind: 'board' })).toBeNull()
-    expect(target({ kind: 'note', path: 'task.foo.md' })).toBeNull()
+    expect(target({ kind: 'note', path: 'task.foo.md' })).toBe('task.foo.md')
     expect(target({ kind: 'note', path: 'diagram.png' })).toBeNull()
     expect(target({ kind: 'note', path: 'notes/plan.md' })).toBe('notes/plan.md')
   })

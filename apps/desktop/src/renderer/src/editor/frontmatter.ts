@@ -73,7 +73,6 @@ function summaryLine(
   lead: HTMLElement,
   chars: number,
   commit: FrontmatterCommit | null | undefined,
-  path: string,
 ): HTMLElement {
   const { text, author, version } = frontmatterSummaryParts(chars, commit ?? null)
   const summary = document.createElement('span')
@@ -101,7 +100,7 @@ function summaryLine(
     line.appendChild(link)
     const tail = document.createElement('span')
     tail.className = 'cm-fm-version'
-    tail.append('· ', versionLink(view, version ?? '', path))
+    tail.append('· ', versionLink(view, version ?? ''))
     line.appendChild(tail)
   }
   return line
@@ -109,12 +108,11 @@ function summaryLine(
 
 /**
  * The `v.N` after the name, as a link that opens the history sidebar. Plain
- * text where that sidebar cannot open: a task file (it follows notes only,
- * `historyTargetPathAtom`) or an editor with no `openHistory`.
+ * text in an editor with no `openHistory`.
  */
-function versionLink(view: EditorView, version: string, path: string): HTMLElement | string {
+function versionLink(view: EditorView, version: string): HTMLElement | string {
   const openHistory = view.state.facet(linkNavFacet)?.().openHistory
-  if (openHistory === undefined || isTaskFilePath(path)) return version
+  if (openHistory === undefined) return version
   const link = document.createElement('a')
   link.className = 'cm-fm-history'
   link.href = '#'
@@ -385,7 +383,7 @@ class FrontmatterWidget extends WidgetType {
       live.mark = null
       const bare = document.createElement('span')
       bare.className = 'cm-fm-bare'
-      return summaryLine(view, bare, this.chars, this.commit, this.path)
+      return summaryLine(view, bare, this.chars, this.commit)
     }
     const pill = document.createElement('button')
     pill.type = 'button'
@@ -402,7 +400,7 @@ class FrontmatterWidget extends WidgetType {
       e.preventDefault()
       pressToggle(view, wrap, open)
     }
-    return summaryLine(view, pill, this.chars, this.commit, this.path)
+    return summaryLine(view, pill, this.chars, this.commit)
   }
 
   override toDOM(view: EditorView): HTMLElement {

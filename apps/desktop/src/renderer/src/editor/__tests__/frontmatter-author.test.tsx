@@ -120,13 +120,14 @@ it('the version opens the history sidebar, and leaves the block closed', () => {
   expect(v.state.field(frontmatterExpandedField)).toBe(false)
 })
 
-it('the version is plain text on a task, whose history the sidebar does not show', () => {
+it('the version opens the history sidebar on a task too', () => {
+  const openHistory = vi.fn()
   const v = mount('---\nstatus: todo\n---\n\n# Fix\n', () => {}, {
-    openHistory: vi.fn(),
+    openHistory,
     notePath: 'projects/task.fix.md',
   })
-  expect(v.dom.querySelector('.cm-fm-history')).toBeNull()
-  expect(v.dom.querySelector('.cm-fm-version')?.textContent).toBe('· v.14')
+  press(v.dom.querySelector('.cm-fm-history')!)
+  expect(openHistory).toHaveBeenCalledOnce()
 })
 
 it('the version is plain text where no sidebar can be opened', () => {

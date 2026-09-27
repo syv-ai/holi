@@ -5,7 +5,7 @@
  * Everything per-file keys off the open note's **path**, and opening a different
  * note clears the selection and the preview.
  */
-import { fileKind, isTaskFilePath } from '@holi/shared'
+import { fileKind } from '@holi/shared'
 import { atom } from 'jotai'
 import { flushAllBuffers } from '../lib/buffer-registry'
 import { trpc } from '../lib/trpc'
@@ -28,9 +28,9 @@ export interface Version {
 }
 
 /**
- * The path the per-note history panel targets: the **focused tab**, when it is
- * a markdown note (not a task file, not an image/pdf). Null otherwise, which is
- * also when the header History button hides.
+ * The path the per-file history panel targets: the **focused tab**, when it is
+ * a markdown file, a task included (not an image/pdf). Null otherwise, which
+ * is also when the header History button hides.
  *
  * Keyed off the workspace's active tab, NOT `activeDocAtom`: that atom follows a
  * note being *opened*, not a tab being *focused*, so switching between open tabs
@@ -41,7 +41,7 @@ export const historyTargetPathAtom = atom<string | null>((get) => {
   const pane = w.panes[w.active]
   const tab = pane?.tabs[pane.active]
   if (!tab || tab.kind !== 'note') return null
-  if (fileKind(tab.path) !== 'markdown' || isTaskFilePath(tab.path)) return null
+  if (fileKind(tab.path) !== 'markdown') return null
   return tab.path
 })
 
