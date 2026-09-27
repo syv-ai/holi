@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
-import { MorphingMenu, dockCapacity, type MorphingMenuItem } from '../MorphingMenu'
+import { MorphingMenu, dockCapacity, dockGrid, type MorphingMenuItem } from '../MorphingMenu'
 
 const dot = <span />
 function items(onSelect = vi.fn()): MorphingMenuItem[] {
@@ -42,19 +42,26 @@ const dock = () =>
     .filter((b) => b.closest('[aria-hidden="true"]') === null)
     .map((b) => b.getAttribute('aria-label') ?? b.textContent)
 
-test('the dock takes as many shortcuts as fit, More always last', () => {
-  // 32px a shortcut, 4px inset each end, one slot for More.
-  expect(dockCapacity(0)).toBe(0)
-  expect(dockCapacity(40)).toBe(0)
-  expect(dockCapacity(104)).toBe(2)
-  expect(dockCapacity(320)).toBe(8)
-
-  giveRoom(104)
-  render(<MorphingMenu label="Go to" items={items()} />)
-  expect(dock()).toEqual(['Home', 'Search', 'More'])
+test('the dock fills the width and wraps what does not fit', () => {
+  // 32px a shortcut, 4px inset each end: 264px holds eight.
+  expect(dockGrid(8, 264)).toEqual({ columns: 8, rows: 1 })
+  expect(dockGrid(8, 320)).toEqual({ columns: 8, rows: 1 })
+  expect(dockGrid(8, 200)).toEqual({ columns: 6, rows: 2 })
+  expect(dockGrid(8, 104)).toEqual({ columns: 3, rows: 3 })
+  expect(dockGrid(8, 20)).toEqual({ columns: 1, rows: 8 })
+  // Unmeasured reads as one row.
+  expect(dockGrid(8, 0)).toEqual({ columns: 8, rows: 1 })
 })
 
-test('a vertical dock fits along its height', () => {
+test('every item has a shortcut in the wrapped dock, More last', () => {
+  giveRoom(104)
+  render(<MorphingMenu label="Go to" items={items()} />)
+  expect(dock()).toEqual(['Home', 'Search', 'Apps', 'Board', 'More'])
+})
+
+test('a vertical dock takes what fits along its height', () => {
+  expect(dockCapacity(0)).toBe(0)
+  expect(dockCapacity(104)).toBe(2)
   giveRoom(200)
   render(<MorphingMenu label="Go to" orientation="vertical" items={items()} />)
   expect(dock()).toEqual(['Home', 'Search', 'Apps', 'Board', 'More'])
@@ -86,6 +93,30 @@ test('a group shortcut opens its children directly', async () => {
   // still arriving.
   expect(screen.getByRole('button', { name: 'Budget' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument()
+})
+
+test('Back from a group opened by its shortcut closes the menu', async () => {
+  giveRoom(320)
+  render(<MorphingMenu label="Go to" items={items()} />)
+  await userEvent.click(screen.getByRole('button', { name: 'Apps' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByRole('navigation')).toHaveAttribute('data-view', 'collapsed')
+})
+
+test('Back from a group opened in the list returns to the list', async () => {
+  render(<MorphingMenu label="Go to" items={items()} />)
+  await userEvent.click(screen.getByRole('button', { name: 'More' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Apps' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+  expect(screen.getByRole('navigation')).toHaveAttribute('data-view', 'main')
+})
+
+test('the dock has no surface at rest; the open menu does', async () => {
+  render(<MorphingMenu label="Go to" items={items()} />)
+  const shell = screen.getByRole('navigation').firstElementChild as HTMLElement
+  expect(shell).not.toHaveAttribute('data-pinned')
+  await userEvent.click(screen.getByRole('button', { name: 'More' }))
+  expect(shell).toHaveAttribute('data-pinned')
 })
 
 test('Escape steps back a level, then collapses, restoring keyboard focus', async () => {

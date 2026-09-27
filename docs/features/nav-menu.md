@@ -12,18 +12,22 @@ hidden, the same menu runs down the rail.
   carries the open-task count; Settings, Email and Agenda open their tabs.
 - **Apps is a drill-down.** Its children are the vault's finished apps by name
   ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
-  drills in, and Back returns. It is absent when the vault has no finished apps.
+  drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
+  it returns to the list. It is absent when the vault has no finished apps.
 - **Email and Agenda** appear only while a Google account is connected. `undefined` (not asked
   main yet) hides them too, so they never flash in.
-- **The dock takes what fits.** Items fill it in order for as far as the sidebar's width allows,
-  32px each, and More always ends it. More opens the full list, where every item has its label and
-  the ones the dock had no room for live. At the default 320px width all seven fit.
-- **On the rail** the dock is vertical and fits along the rail's height under the session orbs.
+- **The dock wraps.** Every item has a 32px shortcut and More ends them, in rows as wide as the
+  sidebar allows: one row at the default width, three columns at the 150px minimum. When a resize
+  moves a shortcut to another cell it springs there with a little bounce (`motion`'s layout
+  animation) rather than jumping. More opens the full list, where every item has its label.
+- **On the rail** the dock is one column and takes the shortcuts that fit along the rail's height
+  under the session orbs; the rest are in the list.
 - **One surface.** The collapsed bar and the open list are one element that resizes between them
   with a spring (a squeeze, then the grow), with the rows cascading in. Open, it is pinned
   `position: fixed` at the dock's corner so it can grow out of the drawer and the 44px rail over
-  the panes; it returns to the dock's box once the collapse lands. It is floating, so it takes
-  `--popover` and its shadow in both states.
+  the panes; it returns to the dock's box once the collapse lands. The dock at rest has no surface,
+  only its icons; the open menu floats, so it takes `--popover` and its shadow, from when it pins
+  until the collapse lands.
 - **The active surface** reads as current (`aria-current`, the accent background), and an app's
   parent Apps item with it.
 - **Sessions** keep their resizable, collapsible **chats** panel, now directly above the menu
@@ -39,10 +43,12 @@ hidden, the same menu runs down the rail.
 - Home is a destination, not "close everything": a tab of its own, so it can become a dashboard
   without changing what opening it means, and it closes nothing.
 - The items are memoised: a change of item identity restarts the menu's layout pass.
-- Escape steps back from a drill-down to the list, then collapses; a press outside or tabbing
+- Escape does what Back does, then collapses from the list; a press outside or tabbing
   away dismisses without choosing. Opened from the keyboard, closing returns focus to the shortcut
   it came from, or to More when the dock had no room for it.
-- Reduced motion snaps: no squeeze, spring, blur or cascade.
+- Reduced motion snaps: no squeeze, spring, blur, cascade or reflow.
+- The reflow spring sits on a wrapper around each shortcut, not the button: the button's
+  `motion-respond` transitions `transform`, which would lag every frame the spring writes.
 
 ## Rejected
 
@@ -52,8 +58,8 @@ hidden, the same menu runs down the rail.
   replaces its Edit Source.
 - Home as closing all tabs or emptying the pane: the first destroys the working set, and neither
   can grow into a dashboard.
-- A fixed short dock: the sidebar is 150 to 560px wide, and a dock that ignores it either wastes
-  the room or overflows it.
+- A dock that drops what does not fit into the list: it hides destinations. A fixed column count:
+  the sidebar is 150 to 560px wide, and a fixed grid either wastes the room or overflows it.
 
 ## Where it lives
 

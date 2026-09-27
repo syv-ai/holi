@@ -6,11 +6,18 @@
  * timer (the one Radix provider already gives the delay-then-instant session),
  * no links, and selection owned by the host.
  *
- * **The dock takes what fits.** Items fill it in order for as far as the
- * menu's main axis allows, and More always ends it: the expanded list is where
- * every item has its label, and where the ones the dock had no room for live.
+ * **The dock wraps.** Every item has a shortcut, and More ends them, in a grid
+ * as wide as the menu's box allows: a sidebar wide enough holds one row, a
+ * narrower one wraps. When a resize moves a shortcut to another cell it
+ * springs there (`motion`'s layout animation) rather than jumping. The
+ * expanded list is where every item has its label.
  *
- * **Vertical** is the same dock on its side, for a rail too narrow for a row.
+ * **Vertical** is one column, for a rail too narrow for a row. It takes the
+ * shortcuts that fit along its height; the rest live in the list.
+ *
+ * **No surface at rest.** The dock is bare icons on whatever it sits on; the
+ * popover surface and its shadow belong to the open menu, from the moment it
+ * pins until its collapse lands.
  *
  * **One surface, pinned while open.** The shell is a single element that
  * resizes from the bar into a panel. Collapsed it sits in the menu's own box;
@@ -19,7 +26,7 @@
  * returns to its box once the collapse has landed.
  */
 import { animate } from 'motion'
-import { useReducedMotion } from 'motion/react'
+import { motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
@@ -66,9 +73,23 @@ const THICKNESS = BUTTON + 2 * INSET
 const spring = { type: 'spring', duration: 0.4, bounce: 0.24 } as const
 const compress = { duration: 0.1, ease: [0.4, 0, 0.2, 1] } as const
 
-/** How many shortcuts fit before More, along a main axis `size` px long. */
+/** How a shortcut travels to its new cell when the dock re-wraps: sticky, a
+ *  little past and back. */
+const reflow = { type: 'spring', duration: 0.45, bounce: 0.35 } as const
+
+/** How many shortcuts fit before More, along a main axis `size` px long: the
+ *  vertical dock, which does not wrap. */
 export function dockCapacity(size: number): number {
   return Math.max(0, Math.floor((size - 2 * INSET) / BUTTON) - 1)
+}
+
+/** The horizontal dock's grid for `cells` shortcuts (More included) in a
+ *  `room` px wide box: rows filled to the width, the last one holding the
+ *  rest. Unmeasured (`room` 0) is taken as wide enough for one row. */
+export function dockGrid(cells: number, room: number): { columns: number; rows: number } {
+  const fit = room > 0 ? Math.max(1, Math.floor((room - 2 * INSET) / BUTTON)) : cells
+  const columns = Math.max(1, Math.min(cells, fit))
+  return { columns, rows: Math.ceil(cells / columns) }
 }
 
 export function MorphingMenu({
@@ -89,17 +110,21 @@ export function MorphingMenu({
   const barRef = useRef<HTMLDivElement>(null)
   const previousView = useRef<View>(view)
   const returnTarget = useRef('more')
+  /** A group opened straight from its dock shortcut: Back closes the menu
+   *  rather than showing a list that was never open. */
+  const groupFromDock = useRef(false)
   const openedWithKeyboard = useRef(false)
   const focusNext = useRef<string | null>(null)
   const reducedMotion = useReducedMotion() ?? false
   const expanded = view.kind !== 'collapsed'
-  const barItems = items.slice(0, dockCapacity(room))
+  const barItems = vertical ? items.slice(0, dockCapacity(room)) : items
   const groups = items.filter((item) => item.children?.length)
   const count = barItems.length + 1
-  const barLength = count * BUTTON + 2 * INSET
-  const barSize = vertical
-    ? { width: THICKNESS, height: barLength }
-    : { width: barLength, height: THICKNESS }
+  const grid = vertical ? { columns: 1, rows: count } : dockGrid(count, room)
+  const barSize = {
+    width: grid.columns * BUTTON + 2 * INSET,
+    height: grid.rows * BUTTON + 2 * INSET,
+  }
 
   // The room along the main axis is what decides the dock, so it is watched.
   useLayoutEffect(() => {
@@ -116,6 +141,7 @@ export function MorphingMenu({
     if (!expanded) {
       returnTarget.current = origin
       openedWithKeyboard.current = keyboard
+      groupFromDock.current = next.kind === 'group'
     }
     focusNext.current = 'first'
     setView(next)
@@ -128,6 +154,10 @@ export function MorphingMenu({
 
   function back() {
     if (view.kind !== 'group') return
+    if (groupFromDock.current) {
+      close(true, view.id)
+      return
+    }
     focusNext.current = view.id
     setView({ kind: 'main' })
   }
@@ -166,11 +196,15 @@ export function MorphingMenu({
         bottom: `${window.innerHeight - box.bottom}px`,
         zIndex: '50',
       })
+      shell.dataset.pinned = ''
     }
     // Raised only while pinned: collapsed, the shell must stay under whatever
-    // covers its box, as the rail covers the hidden nav's dock.
-    const unpin = () =>
+    // covers its box, as the rail covers the hidden nav's dock. The surface
+    // goes with it (`data-pinned`), so the dock at rest is bare.
+    const unpin = () => {
       Object.assign(shell.style, { position: '', left: '', bottom: '', zIndex: '' })
+      delete shell.dataset.pinned
+    }
     const settle = () => {
       if (!expanded) unpin()
     }
@@ -276,9 +310,10 @@ export function MorphingMenu({
       running.forEach((animation) => animation.stop())
       window.removeEventListener('resize', resize)
     }
-    // `barSize` is derived from `count`; listing it would re-run every render.
+    // `barSize` is derived from `count` and the grid; listing the object would
+    // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, vertical])
+  }, [view, reducedMotion, items, count, grid.columns, vertical])
 
   useEffect(() => {
     if (!expanded) return
@@ -296,37 +331,39 @@ export function MorphingMenu({
     const hasChildren = Boolean(item.children?.length)
     const active = isActive(item)
     return (
-      <Tooltip key={item.id} content={item.label} side={vertical ? 'right' : 'top'}>
-        <button
-          type="button"
-          data-menu-item={item.id}
-          aria-label={item.label}
-          aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
-          aria-expanded={hasChildren ? false : undefined}
-          aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
-          className={cn(
-            'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring',
-            active && 'bg-accent',
-          )}
-          onClick={(event) =>
-            hasChildren
-              ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
-              : select(item)
-          }
-        >
-          <span className="flex" aria-hidden="true">
-            {active && item.activeIcon ? item.activeIcon : item.icon}
-          </span>
-          {item.badge !== undefined && item.badge > 0 && (
-            <span
-              aria-hidden="true"
-              className="absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-foreground/15 px-1 text-[10px] leading-3.5 text-foreground"
-            >
-              {item.badge}
+      <Cell key={item.id} still={reducedMotion}>
+        <Tooltip content={item.label} side={vertical ? 'right' : 'top'}>
+          <button
+            type="button"
+            data-menu-item={item.id}
+            aria-label={item.label}
+            aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+            aria-expanded={hasChildren ? false : undefined}
+            aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
+            className={cn(
+              'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+              active && 'bg-accent text-foreground',
+            )}
+            onClick={(event) =>
+              hasChildren
+                ? open({ kind: 'group', id: item.id }, item.id, event.detail === 0)
+                : select(item)
+            }
+          >
+            <span className="flex" aria-hidden="true">
+              {active && item.activeIcon ? item.activeIcon : item.icon}
             </span>
-          )}
-        </button>
-      </Tooltip>
+            {item.badge !== undefined && item.badge > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-foreground/15 px-1 text-[10px] leading-3.5 text-foreground"
+              >
+                {item.badge}
+              </span>
+            )}
+          </button>
+        </Tooltip>
+      </Cell>
     )
   }
 
@@ -378,11 +415,9 @@ export function MorphingMenu({
       aria-label={label}
       data-view={view.kind}
       data-orientation={orientation}
-      className={cn(
-        'relative shrink-0',
-        vertical ? 'min-h-0 w-10 flex-1' : 'h-10 w-full',
-        className,
-      )}
+      className={cn('relative shrink-0', vertical ? 'min-h-0 w-10 flex-1' : 'w-full', className)}
+      // A wrapped dock is as tall as its rows.
+      style={vertical ? undefined : { height: barSize.height }}
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || !expanded) return
         event.preventDefault()
@@ -401,34 +436,32 @@ export function MorphingMenu({
     >
       <div
         ref={shellRef}
-        className="absolute bottom-0 left-0 overflow-hidden rounded-[1.25rem] bg-popover text-popover-foreground shadow-popover"
+        className="absolute bottom-0 left-0 overflow-hidden rounded-[1.25rem] text-muted-foreground data-pinned:bg-popover data-pinned:text-popover-foreground data-pinned:shadow-popover"
         style={barSize}
       >
         <div
           ref={barRef}
           aria-hidden={expanded}
           inert={expanded}
-          className={cn(
-            'absolute bottom-0 left-0 flex items-center p-1',
-            vertical && 'flex-col',
-            expanded && 'pointer-events-none',
-          )}
-          style={barSize}
+          className={cn('absolute bottom-0 left-0 grid p-1', expanded && 'pointer-events-none')}
+          style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
         >
           {barItems.map(shortcut)}
-          <Tooltip content={moreLabel} side={vertical ? 'right' : 'top'}>
-            <button
-              type="button"
-              data-menu-item="more"
-              aria-label={moreLabel}
-              aria-expanded={expanded}
-              aria-controls={`${id}-main`}
-              className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
-              onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
-            >
-              <ChevronsUpDown size={16} aria-hidden="true" />
-            </button>
-          </Tooltip>
+          <Cell still={reducedMotion}>
+            <Tooltip content={moreLabel} side={vertical ? 'right' : 'top'}>
+              <button
+                type="button"
+                data-menu-item="more"
+                aria-label={moreLabel}
+                aria-expanded={expanded}
+                aria-controls={`${id}-main`}
+                className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
+              >
+                <ChevronsUpDown size={16} aria-hidden="true" />
+              </button>
+            </Tooltip>
+          </Cell>
         </div>
         <div
           id={`${id}-main`}
@@ -467,5 +500,18 @@ export function MorphingMenu({
         })}
       </div>
     </nav>
+  )
+}
+
+/**
+ * One grid cell of the dock. The layout spring lives here rather than on the
+ * button because the button's `motion-respond` transitions `transform`, which
+ * would drag behind every frame the spring writes.
+ */
+function Cell({ still, children }: { still: boolean; children: ReactNode }) {
+  return (
+    <motion.div layout={!still} transition={reflow} className="flex size-8">
+      {children}
+    </motion.div>
   )
 }
