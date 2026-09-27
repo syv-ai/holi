@@ -562,6 +562,20 @@ describe('log', () => {
     expect(history.map((c) => c.subject)).toEqual(['rename old.md to new.md', 'write old.md'])
   })
 
+  it('starts a new file at its own first commit, not at a similar file it was taken for a copy of', async () => {
+    // Every new task shares its frontmatter with every other, so git's
+    // `--follow` called a new one a copy of an older task and handed it that
+    // task's commits: a file made a second ago read "v.9".
+    const dir = await makeClone(await makeRemote())
+    const task = (title: string) => `---\nstatus: todo\n---\n\n# ${title}\n`
+    await commitFile(dir, 'task.hi.md', task('Hi'))
+    await commitFile(dir, 'task.hi.md', `${task('Hi')}more\n`)
+    await commitFile(dir, 'task.buy-milk.md', task('buy milk'))
+
+    const history = await openRepo(dir).log({ path: 'task.buy-milk.md' })
+    expect(history.map((c) => c.subject)).toEqual(['write task.buy-milk.md'])
+  })
+
   it('respects the limit', async () => {
     const dir = await makeClone(await makeRemote())
     await commitFile(dir, 'a.md', 'a\n')

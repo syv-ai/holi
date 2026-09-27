@@ -15,7 +15,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 - History is append-only. Restore is a new commit, never a reset or rewrite.
 - The log is flat: autosave commits are shown as they are, not folded into landmarks.
 - Git's object store is the only snapshot store. There is no custom version store or retention policy.
-- The file log follows renames.
+- The file log follows renames, never copies. Git's `--follow` also walks a copy, and small files that share their frontmatter (every new task) look like copies of each other, so the log stops at a copy: that commit is the file's birth.
 
 ## Rejected
 

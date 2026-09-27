@@ -464,18 +464,23 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
     const args = ['log', '--numstat', '--format=%x1e%H%x1f%s%x1f%aI%x1f%an']
     if (o.limit !== undefined) args.push(`-n${o.limit}`)
     // `--follow` needs exactly one pathspec, and must precede the `--`.
-    if (o.path !== undefined) args.push('--follow', '--', o.path)
+    // `--raw` beside it, for the status letter that tells a copy from a rename.
+    if (o.path !== undefined) args.push('--raw', '--follow', '--', o.path)
 
     // A repo with no commits makes `git log` fail rather than print nothing.
     // That is not an error here: a brand-new vault simply has no history yet.
     const raw = await runGit(root, args, opts).catch(() => '')
 
-    return raw
+    const commits = raw
       .split('\x1e')
       .filter((record) => record.trim() !== '')
       .map((record) => {
-        const [header = '', ...stats] = record.split('\n')
+        const [header = '', ...lines] = record.split('\n')
         const [sha = '', subject = '', date = '', author = ''] = header.split('\x1f')
+        // `--raw` lines lead with `:` and carry the status: `C055` is a copy.
+        const raws = lines.filter((line) => line.startsWith(':'))
+        const stats = lines.filter((line) => !line.startsWith(':'))
+        const copied = raws.some((line) => line.split('\t')[0]?.split(' ').at(-1)?.startsWith('C'))
 
         // `<added>\t<removed>\t<path>`. The path is deliberately not read: it
         // is the one field git may quote, and the counts are all this needs.
@@ -490,8 +495,18 @@ export function openRepo(root: string, deps: GitDeps = {}): GitRepo {
           removed += Number(r) || 0
         }
 
-        return { sha: sha.trim(), subject, date, author, added, removed }
+        return { commit: { sha: sha.trim(), subject, date, author, added, removed }, copied }
       })
+
+    /**
+     * **A copy is a birth, not a rename.** `--follow` walks copies as well, and
+     * two small files with the same frontmatter (every new task) are similar
+     * enough for git to call one a copy of the other, so a new file inherited
+     * an older one's commits. A rename leaves no source behind and is followed;
+     * at a copy the file's own history starts, and the log stops there.
+     */
+    const birth = commits.findIndex((c) => c.copied)
+    return (birth === -1 ? commits : commits.slice(0, birth + 1)).map((c) => c.commit)
   }
 
   /** A file's content at a commit. Unlike `runGit`, this must **not** trim:
