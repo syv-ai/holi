@@ -109,7 +109,10 @@ const ROWS = '[cmdk-item], [cmdk-group-heading]'
 const appear = { duration: 0.08 } as const
 const widen = { ...spring, duration: 0.22, bounce: 0.12 } as const
 const showInput = { duration: 0.1, delay: 0.14 } as const
-const drop = { ...spring, duration: 0.3, bounce: 0.2, delay: 0.16 } as const
+const drop = { ...spring, duration: 0.3, bounce: 0.08, delay: 0.16 } as const
+/** Calmer than the menu's rows: the palette opens many times a day, so its
+ *  landing only just settles rather than bouncing back. */
+const ROW_BOUNCE = 0.12
 const ROWS_AFTER = 0.2
 const lift = { ...spring, duration: 0.18, bounce: 0 } as const
 const narrow = { ...spring, duration: 0.15, bounce: 0, delay: 0.1 } as const
@@ -203,7 +206,12 @@ function MorphingShell({
           settle,
         )
         rows.forEach((row, index) =>
-          track(animate(row, rowAt, rowArrive(Math.min(index, MOTION_STAGGER_CAP), ROWS_AFTER))),
+          track(
+            animate(row, rowAt, {
+              ...rowArrive(Math.min(index, MOTION_STAGGER_CAP), ROWS_AFTER),
+              bounce: ROW_BOUNCE,
+            }),
+          ),
         )
       } else {
         // Reopened mid-exit: it grows back from wherever the exit left it.
