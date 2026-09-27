@@ -980,14 +980,6 @@ export function createRouter(deps: RouterDeps) {
   })
 
   /**
-   * Completing a task: the next occurrence if there is one, `done` if there is
-   * not.
-   *
-   * A recurrence with no `due` has nothing to advance from, and one that has run
-   * past its `endDate` has nowhere left to go — both end the series rather than
-   * looking set and never firing again (docs/features/tasks.md).
-   */
-  /**
    * A patch applied to a task. **Done is completion**, wherever it comes from
    * (a field edit, a drop into Done, the card's checkbox): on a recurring task
    * it is the next occurrence, not the end of the series (`completeTask`).
