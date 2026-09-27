@@ -9,7 +9,14 @@
  * and forward from now when there is not ("in 1 day").
  */
 import { ANCHOR_HOUR, formatStamp, parseStamp, stampDate, stampTime } from '@holi/shared'
-import type { DatePreset } from '@/composites'
+
+/** A rail entry: its label, the finished stamp it writes, and a hint saying
+ *  where that lands. */
+export interface DatePreset {
+  label: string
+  value: string
+  hint?: string
+}
 
 const HOUR_MS = 3_600_000
 const DAY_MS = 86_400_000

@@ -43,7 +43,9 @@ A markdown file's YAML frontmatter is drawn as one block at the top of the edito
 ## Code
 
 - `apps/desktop/src/renderer/src/editor/frontmatter.ts`, `frontmatter-region.ts`, `frontmatter-portals.ts`
-- `apps/desktop/src/renderer/src/composites/FrontmatterFields.tsx` (kind to control), `frontmatter/` (one file per control), `FrontmatterFieldsHost.tsx`, `FileFactsLine.tsx`, `FieldRow.tsx`
+- `apps/desktop/src/renderer/src/features/frontmatter/`: `FrontmatterFields.tsx` (kind to control), one file per control, `FrontmatterFieldsHost.tsx` (mounted by the Shell), `FileFactsLine.tsx`
+- `apps/desktop/src/renderer/src/composites/FieldRow.tsx`, `DateTimePicker.tsx`, `RecurrenceField.tsx`: the domain-agnostic rows and pickers, shared with task creation
+- `apps/desktop/src/renderer/src/lib/date-presets.ts`: the date pickers' shortcuts
 - `apps/desktop/src/renderer/src/primitives/Field.tsx`, `Combobox.tsx`, `field-look.ts`
 - `packages/shared/src/frontmatter-schema.ts`, `yaml-document.ts`, `scaffold-md.ts`
 - `apps/desktop/src/main/vault/hooks/scaffold-md.ts`

@@ -7,7 +7,7 @@
  */
 import { useRef, useState } from 'react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/primitives'
-import { useFieldControlId } from '../FieldRow'
+import { useFieldControlId } from '@/composites'
 
 /** The VALUE that means "unset" in a Radix Select, which forbids ''. A real
  *  option so a set field can be cleared; an unset field shows nothing. */

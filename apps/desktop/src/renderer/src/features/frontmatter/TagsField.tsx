@@ -18,7 +18,7 @@ import {
   ComboboxItem,
   ComboboxList,
 } from '@/primitives'
-import { useFieldControlId } from '../FieldRow'
+import { useFieldControlId } from '@/composites'
 
 export function TagsField({
   name,

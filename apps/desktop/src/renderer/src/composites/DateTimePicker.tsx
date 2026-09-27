@@ -21,18 +21,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from '@/primitives'
 import { useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
+import type { DatePreset } from '@/lib/date-presets'
 
 /** The selected day's treatment. */
 const SELECTED_DAY =
   'bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground'
-
-/** A rail entry: its label, the finished stamp it writes, and a hint saying
- *  where that lands. */
-export interface DatePreset {
-  label: string
-  value: string
-  hint?: string
-}
 
 const WEEKDAY_HEADS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 const MONTHS = [

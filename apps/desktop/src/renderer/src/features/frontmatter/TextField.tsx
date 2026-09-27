@@ -5,7 +5,7 @@
  */
 import { useState } from 'react'
 import { Input } from '@/primitives'
-import { useFieldControlId } from '../FieldRow'
+import { useFieldControlId } from '@/composites'
 
 export function TextField({
   name,
