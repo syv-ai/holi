@@ -3,9 +3,10 @@
  * hand, because the registry's `CommandDialog` wants a compound Dialog this
  * repo does not have. What is worth pinning is the part that is ours: it
  * opens with its input focused (cmdk's arrow keys need focus inside the root),
- * Escape asks to close, and it filters nothing on its own when told not to.
+ * Escape asks to close, it plays its exit before it unmounts, and it filters
+ * nothing on its own when told not to.
  */
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { CommandDialog, CommandInput, CommandItem, CommandList } from '../Command'
@@ -46,4 +47,20 @@ test('renders nothing while closed', () => {
     </CommandDialog>,
   )
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+})
+
+test('closing keeps the dialog for its exit, then unmounts it', async () => {
+  const view = (open: boolean) => (
+    <CommandDialog open={open} onOpenChange={() => {}}>
+      <CommandList>
+        <CommandItem value="alpha">Alpha</CommandItem>
+      </CommandList>
+    </CommandDialog>
+  )
+  const { rerender } = render(view(true))
+  rerender(view(false))
+  expect(screen.getByRole('dialog', { hidden: true })).toHaveAttribute('data-state', 'closed')
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { hidden: true })).not.toBeInTheDocument(),
+  )
 })

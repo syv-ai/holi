@@ -28,6 +28,10 @@ app-level action is one row of one command table that keys, palette and menu all
 - **The overlay** is its own atom, mounted once in Shell: top-anchored, no dimmed backdrop, 60vh
   list with an always-painted scrollbar, ↑ on the first row wraps. Every chosen row closes the
   palette first, then opens or runs.
+- **It is the [nav menu](nav-menu.md)'s family:** the same surface, rows and springs. Opening, it
+  appears as a pill and springs to its size while the rows it opened with cascade in; closing, the
+  rows drop away and it squeezes back as it fades. A keystroke's re-rank does not cascade. Reduced
+  motion snaps.
 - **The command table** (`state/commands.ts`): each row is an id, a label, an optional hotkey
   glyph, an optional `when`, and a Jotai write. One `keydown` listener installed by Shell matches
   the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.
@@ -57,6 +61,9 @@ app-level action is one row of one command table that keys, palette and menu all
   write regenerates the file; a list that changes on every tab switch is UI state.
 - Command declarations in `@holi/shared` with the menu built from them: each accelerator is a
   deliberate choice.
+- The exit on Radix's own `Presence`: it waits for a CSS animation, and the morph is a `motion`
+  spring, so `forceMount` hands unmounting to `AnimatePresence`. Radix drops the focus trap as
+  `open` turns false, so a row that focuses a terminal keeps it through the exit.
 - The palette as a sixth entry in the form-dialog registry: it is a different overlay class, and
   its keys must work while a form dialog is up.
 - Rebindable keys and a keybindings file; VS Code's other prefixes (`@`, `:`, `#`, `?`);
@@ -67,7 +74,9 @@ app-level action is one row of one command table that keys, palette and menu all
 - `apps/desktop/src/renderer/src/state/commands.ts`: the table, `runCommandAtom`,
   `useCommandHotkeys`.
 - `apps/desktop/src/renderer/src/features/palette/CommandPalette.tsx`: the overlay, ⌃⇥, the Ask row.
-- `apps/desktop/src/renderer/src/primitives/Command.tsx`: shadcn Command on `cmdk`.
+- `apps/desktop/src/renderer/src/primitives/Command.tsx`: shadcn Command on `cmdk`, and the
+  morphing shell.
+- `apps/desktop/src/renderer/src/primitives/springs.ts`: the springs it shares with the nav menu.
 - `apps/desktop/src/renderer/src/lib/palette-rows.ts`: rows and ranking.
 - `apps/desktop/src/renderer/src/state/palette.ts`, `state/recents.ts`, `lib/recents.ts`.
 - `apps/desktop/src/renderer/src/state/pane-exit.ts`, `state/vault-switch.ts`.

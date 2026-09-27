@@ -30,6 +30,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, ChevronRight, ChevronsUpDown } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
+import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
 import { Tooltip } from './Tooltip'
 
 export type MorphingMenuAction = {
@@ -69,11 +70,6 @@ type View = { kind: 'collapsed' } | { kind: 'main' } | { kind: 'group'; id: stri
 const BUTTON = 32
 const INSET = 4
 const THICKNESS = BUTTON + 2 * INSET
-
-// The morph's character: tune here. A spring is physics rather than one of the
-// vocabulary's durations, so these are the component's own.
-const spring = { type: 'spring', duration: 0.4, bounce: 0.24 } as const
-const compress = { duration: 0.1, ease: [0.4, 0, 0.2, 1] } as const
 
 /** How a shortcut travels to its new cell when the dock re-wraps: sticky, a
  *  little past and back. */
@@ -225,8 +221,8 @@ export function MorphingMenu({
       settle()
     } else if (crossingBar) {
       const squeezed = vertical
-        ? { width: 28, height: Math.min(barSize.height, 200) }
-        : { width: Math.min(barSize.width, 200), height: 28 }
+        ? { width: PILL, height: Math.min(barSize.height, 200) }
+        : { width: Math.min(barSize.width, 200), height: PILL }
       const compression = track(animate(shell, squeezed, compress))
       void compression.finished
         .then(() => {
@@ -262,27 +258,19 @@ export function MorphingMenu({
       for (const [index, row] of [
         ...layer.querySelectorAll<HTMLElement>('[data-morph-row]'),
       ].entries()) {
-        if (visible && crossingBar && !snap) {
-          Object.assign(row.style, {
-            opacity: '0',
-            transform: 'translateY(48px)',
-            filter: 'blur(4px)',
-          })
-        }
+        const arriving = visible && crossingBar && !snap
+        if (arriving) Object.assign(row.style, rowFrom)
         track(
           animate(
             row,
-            {
-              opacity: visible ? 1 : 0,
-              y: visible || reducedMotion ? 0 : 16,
-              filter: visible || reducedMotion ? 'blur(0px)' : 'blur(2px)',
-            },
-            {
-              ...spring,
-              duration: snap ? 0 : visible ? (crossingBar ? 0.4 : 0.25) : 0.12,
-              bounce: crossingBar ? 0.3 : 0,
-              delay: !snap && visible ? (crossingBar ? 0.2 : 0) + index * 0.02 : 0,
-            },
+            visible || reducedMotion ? { ...rowAt, opacity: visible ? 1 : 0 } : rowGone,
+            snap
+              ? { ...spring, duration: 0 }
+              : arriving
+                ? rowArrive(index)
+                : visible
+                  ? { ...spring, duration: 0.25, bounce: 0, delay: index * 0.02 }
+                  : rowLeave,
           ),
         )
       }

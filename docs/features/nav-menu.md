@@ -69,6 +69,8 @@ hidden, the same menu runs down the rail.
 
 - `apps/desktop/src/renderer/src/primitives/MorphingMenu.tsx`: the menu, a port of Danny
   Williams's morphing menu (dannyjpwilliams.com/playground/morphing-menu) on `motion`.
+- `apps/desktop/src/renderer/src/primitives/springs.ts`: its springs, shared with the
+  [command palette](command-palette.md).
 - `apps/desktop/src/renderer/src/features/nav/NavMenu.tsx`: the items.
 - `apps/desktop/src/renderer/src/features/home/HomeView.tsx`: the home tab.
 - `apps/desktop/src/renderer/src/components/Shell.tsx`: the sidebar and rail placement.
