@@ -47,6 +47,7 @@ import {
 import { linkNavFacet } from './links'
 import { notePathFacet } from './livePreview'
 import { codeHighlighting } from './theme'
+import { formatCommitDate } from '@/lib/commit-date'
 import { prefersReducedMotion } from '@/lib/motion'
 
 /** Flip the reveal state. The pill and the header chevron both dispatch this. */
@@ -212,14 +213,6 @@ export const frontmatterCommitField = StateField.define<FrontmatterCommit | null
     return value
   },
 })
-
-/** ISO date → `DD/MM/YY`. Empty string when it can't be parsed. */
-export function formatCommitDate(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return ''
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${pad(d.getFullYear() % 100)}`
-}
 
 /** A char count as it reads in the summary: the number under a thousand, then
  *  `1.8K` / `2.3M`. One decimal, rounded DOWN, so a note just short of 2K never

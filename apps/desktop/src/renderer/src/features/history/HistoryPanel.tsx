@@ -8,7 +8,7 @@
  * links to the commit on the remote; Restore writes the old content as a new commit.
  */
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Churn, DiffView, DrawerShell, DrawerTitle } from '@/composites'
 import { Button, Tooltip } from '@/primitives'
 import { cn } from '@/lib/cn'
@@ -25,7 +25,7 @@ import {
   versionsAtom,
   type Version,
 } from '@/state/history'
-import { activeRemoteAtom } from '@/state/vaults'
+import { activeRemoteAtom, historyEpoch, historyEpochsAtom } from '@/state/vaults'
 
 /** `date` is an ISO string, not a Date: no superjson transformer on the ipcLink. */
 const when = (iso: string) =>
@@ -60,6 +60,19 @@ export function HistoryPanel() {
     reset()
     void loadVersions()
   }, [open, targetPath, loadVersions, reset])
+
+  // A commit took the file while the drawer shows it: ask for the list again,
+  // keeping the selection. The count follows on its own (`fileHistoryAtom`), and
+  // the list must not lag behind it. Only when the epoch moves under the same
+  // path: a new path is the effect above's job.
+  const epoch = historyEpoch(useAtomValue(historyEpochsAtom), targetPath ?? '')
+  const seen = useRef({ targetPath, epoch })
+  useEffect(() => {
+    const prev = seen.current
+    seen.current = { targetPath, epoch }
+    if (prev.targetPath !== targetPath || prev.epoch === epoch || !open) return
+    void loadVersions()
+  }, [targetPath, epoch, open, loadVersions])
 
   const guard = (fn: () => Promise<unknown>) => async () => {
     setBusy(true)

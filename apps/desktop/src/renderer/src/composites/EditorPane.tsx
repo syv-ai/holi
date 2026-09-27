@@ -13,7 +13,7 @@
 import { EditorSelection, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import type { Task } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useEffect, useRef } from 'react'
 import { baseEditorExtensions, plainTextExtensions } from '@/editor/extensions'
 import { bodyStart, frontmatterValid, setFrontmatterCommit } from '@/editor/frontmatter'
@@ -29,37 +29,36 @@ import { askTargetsAtom, defaultAgentTargetAtom } from '@/state/agent'
 import { historyOpenAtom } from '@/state/history'
 import { sendToAgentAtom } from '@/state/agent-send'
 import { trpc } from '@/lib/trpc'
-import {
-  activeRemoteAtom,
-  historyEpoch,
-  historyEpochsAtom,
-  snapshotAtom,
-} from '@/state/vaults'
+import { fileHistoryAtom } from '@/state/file-history'
+import { activeRemoteAtom, snapshotAtom } from '@/state/vaults'
 
 /** Quiet before the buffer reaches disk. Shorter than main's commit debounce on
  *  purpose: the file has to be there before the commit timer decides to look. */
 const SAVE_QUIET_MS = 600
 
+type JotaiStore = ReturnType<typeof useStore>
+
 /**
- * The frontmatter summary's last commit, into `view`. Null for an untracked
- * file. `live` guards the answer, so a fast tab switch can't write into a
- * replaced view.
+ * The frontmatter summary's last commit, into `view`, now and whenever the
+ * file's history moves: a note opened before its first autosave commit gains
+ * its "Last updated" when that lands. Returns the unsubscribe.
  */
-function loadCommit(view: EditorView, path: string, live: () => boolean): void {
-  void trpc.notes.fileHistory
-    .query({ path })
-    .then((history) => {
-      if (!live()) return
-      view.dispatch({
-        effects: setFrontmatterCommit.of(
-          history === null ? null : { ...history.last, revisions: history.revisions },
-        ),
-      })
+function followCommit(view: EditorView, path: string, store: JotaiStore): () => void {
+  const history = fileHistoryAtom(path)
+  const push = () => {
+    const answer = store.get(history)
+    // Undefined is "not answered yet": the summary waits rather than drawing
+    // a half line that grows.
+    if (answer === undefined) return
+    view.dispatch({
+      effects: setFrontmatterCommit.of(
+        answer === null ? null : { ...answer.last, revisions: answer.revisions },
+      ),
     })
-    // Answered either way, or the summary would wait for it forever.
-    .catch(() => {
-      if (live()) view.dispatch({ effects: setFrontmatterCommit.of(null) })
-    })
+  }
+  const off = store.sub(history, push)
+  push()
+  return off
 }
 
 export function EditorPane({
@@ -93,6 +92,7 @@ export function EditorPane({
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
+  const store = useStore()
   const hostRef = useRef<HTMLDivElement>(null)
 
   /** The text last loaded or saved; advanced by the save before the watcher
@@ -154,6 +154,7 @@ export function EditorPane({
   useEffect(() => {
     if (path === null || remote === null || hostRef.current === null) return
     let disposed = false
+    let unfollow = () => {}
     editedRef.current = false
     const host = hostRef.current
 
@@ -244,7 +245,7 @@ export function EditorPane({
       playOnce(host, 'motion-in-fade')
       view.focus()
 
-      if (!plain) loadCommit(view, path, () => !disposed && viewRef.current === view)
+      if (!plain) unfollow = followCommit(view, path, store)
     })
 
     // Window blur is a flush point, as is the unmount below (tab close, vault
@@ -258,6 +259,7 @@ export function EditorPane({
 
     return () => {
       disposed = true
+      unfollow()
       window.removeEventListener('blur', onBlur)
       unregister()
       if (saveTimer.current !== null) clearTimeout(saveTimer.current)
@@ -272,23 +274,7 @@ export function EditorPane({
     }
     // `readOnly` rebuilds the view: entering a reconcile re-reads the file, so
     // you see the markers the agent is working on. The teardown flushes first.
-  }, [path, remote, plain, readOnly])
-
-  /**
-   * A commit took this file: ask again for its last commit. Opened before its
-   * first autosave commit (a note or task just made), the summary would
-   * otherwise stay a bare char count until the file is reopened. Only when the
-   * epoch moves under the same path: a new path is the open effect's job.
-   */
-  const epoch = historyEpoch(useAtomValue(historyEpochsAtom), path ?? '')
-  const seen = useRef({ path, epoch })
-  useEffect(() => {
-    const prev = seen.current
-    seen.current = { path, epoch }
-    if (prev.path !== path || prev.epoch === epoch || plain || path === null) return
-    const view = viewRef.current
-    if (view !== null) loadCommit(view, path, () => viewRef.current === view)
-  }, [path, epoch, plain])
+  }, [path, remote, plain, readOnly, store])
 
   /**
    * The vault changed somewhere: re-read our own file and decide. The snapshot

@@ -4,7 +4,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 
 ## How it works
 
-**The file drawer.** A right-hand drawer, opened by the history button in the active pane's tab strip or by the `v.N` at the end of a markdown file's frontmatter header, task files included. It follows the focused file. Its header shows the file's revision count, uncapped, the same number as `v.N`. The list is a flat `git log --follow` for that file, newest first and capped at 200 rows, each showing message, date, author, lines added and removed, and short sha. Picking a commit shows the diff it made to this file against its parent in a read-only merge view. The sha opens the commit on GitHub.
+**The file drawer.** A right-hand drawer, opened by the history button in the active pane's tab strip or by the `v.N` at the end of a markdown file's frontmatter header, task files included. It follows the focused file. Its header shows the file's revision count, uncapped, the same number as `v.N` and read from the same lookup. While it is open, a commit that takes the file refreshes the count and the list together, keeping the selection. The list is a flat `git log --follow` for that file, newest first and capped at 200 rows, each showing message, date, author, lines added and removed, and short sha. Picking a commit shows the diff it made to this file against its parent in a read-only merge view. The sha opens the commit on GitHub.
 
 **Restore.** "Restore this version" asks for confirmation, flushes open buffers, writes that commit's content to the file and commits it through the ordinary autosave, so it lands as `Update <path>` and pushes like any edit. The version you left stays in the log.
 
@@ -29,6 +29,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 - `apps/desktop/src/renderer/src/features/history/HistoryPanel.tsx`: the file drawer
 - `apps/desktop/src/renderer/src/features/history/HistoryView.tsx`: the vault tab
 - `apps/desktop/src/renderer/src/state/history.ts`: loading, selection, restore
+- `apps/desktop/src/renderer/src/state/file-history.ts`: `fileHistoryAtom(path)`, the one per-file lookup the frontmatter header, the facts line and the drawer's count share
 - `apps/desktop/src/main/router.ts` (`history.*`, `notes.fileHistory`): log, changed files, per-file diff, restore
 - `apps/desktop/src/main/vault/file-facts.ts`: revision count, first and last commit
 - `apps/desktop/src/main/git.ts` (`log`, `show`, `changedFiles`): the git side

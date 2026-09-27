@@ -12,7 +12,7 @@
  * piece.
  */
 import { useFileFacts } from '@/state/file-facts'
-import { formatCommitDate } from '@/editor/frontmatter'
+import { formatCommitDate } from '@/lib/commit-date'
 import { cn } from '@/lib/cn'
 import { Tooltip } from '@/primitives'
 
