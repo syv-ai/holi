@@ -21,13 +21,27 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 
 **Keyboard.** The tree is one tab stop. ↑/↓, Home and End move it, and the selection with it. → opens a folder and then steps into it; ← closes it and then steps out to the parent. Enter opens a file or toggles a folder. Letters typed in quick succession jump to the next row whose name begins with them. Escape collapses the selection to the focused row. F2, ⌫ and ⌘X/C/V/D do what the menu says.
 
+**Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
+that corner and opening downward: bare icons while the tree is hovered or the menu has focus, kept
+while it is open. **+** unfolds into New Task, New File, New Folder and New App; Collapse All, Show
+task files and Show hidden files are shortcuts, the two filters pressed while on, and More lists
+them all with labels.
+
+- **Where a new item goes** is next to the focused row (`newItemPlace`): inside a focused folder as
+  its first row, right after a focused file or app in its folder, and at the root when nothing is
+  focused. The name field slides in there, making room with the disclose motion.
+- **A task** is named by its title; main names the file and it opens pinned, as ⌘⇧T's does, whether
+  or not the tree shows task files. **An app** is `holi app init`'s scaffold (`index.html` and an
+  `app.yaml`, never overwriting), and its `index.html` opens, which expands the bundle. A typed
+  `.app` is not doubled.
+
 **Row menu.** Open in a New Pane, New File, New Folder, Rename (F2), Edit Icon, Delete (⌫), Cut, Copy, Paste, Duplicate, Copy to Folder, Move to Folder, Convert to PDF (markdown only), Copy Path, Copy Relative Path, Reveal in Finder. An app row leads with Open (or Finish this app), Open in a New Pane, and Show or Hide Contents. A multi-selection gets only the batch actions: delete, clipboard, duplicate and the two out-of-vault ones.
 
 - Rename, cut-and-paste and drag are one batch move: a single-pass link rewrite over the whole `from → to` map, open tabs retargeted, and a commit before and after. A move that would change nothing, or put a folder inside itself, is refused.
 - Copy, paste and Duplicate make new files and leave links pointing at the originals. Duplicate appends ` copy`.
 - Create, move and copy refuse to overwrite an existing path.
 - Delete previews inbound links from outside the deleted set; they are left dangling, not cascaded.
-- The name field opens in place: a rename in the row, a new file or folder as the first row of the folder it lands in. Enter commits; Escape or leaving the field cancels. A note is renamed without its `.md`, which is added back, and New File appends `.md` when no extension is typed.
+- The name field opens in place: a rename in the row, a new file or folder from the row menu as the first row of the folder it lands in. Enter commits; Escape or leaving the field cancels. A note is renamed without its `.md`, which is added back, and New File appends `.md` when no extension is typed.
 
 **Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, and the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.
 
@@ -66,8 +80,8 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 ## Code
 
 - `apps/desktop/src/renderer/src/features/explorer/FileTree.tsx`: the tree, its state, keys and drops
-- `apps/desktop/src/renderer/src/lib/tree-view.ts`: visible rows, ranges, typeahead, move validity
-- `apps/desktop/src/renderer/src/features/explorer/RowMenu.tsx`, `ExplorerHeader.tsx`: the row menu; New File, New Folder, Collapse All and the two toggles
+- `apps/desktop/src/renderer/src/lib/tree-view.ts`: visible rows, ranges, typeahead, move validity, where a new item goes
+- `apps/desktop/src/renderer/src/features/explorer/RowMenu.tsx`, `ExplorerHeader.tsx`: the row menu; the toolbar
 - `apps/desktop/src/renderer/src/features/explorer/useTreeProjection.ts`, `lib/tree-data.ts`: snapshot to tree data, filters
 - `apps/desktop/src/renderer/src/features/explorer/useExplorerActions.ts`, `lib/tree-actions.ts`: clipboard, delete preview, planned moves
 - `apps/desktop/src/renderer/src/composites/file-icons.tsx`, `features/explorer/EditIcon.tsx`: glyphs and the icon dialog

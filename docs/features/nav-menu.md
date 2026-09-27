@@ -42,7 +42,8 @@ hidden, the same menu runs down the rail.
 ## Rules
 
 - The menu is two layers: `primitives/MorphingMenu` owns the dock, the morph, focus and dismissal
-  and knows nothing of Holi; `features/nav/NavMenu` builds the items from shared state only
+  and knows nothing of Holi. It also serves the [file tree](file-tree.md)'s toolbar, anchored
+  `top-right` so it opens downward, with `pressed` toggles; `features/nav/NavMenu` builds the items from shared state only
   (`appPathsAtom`, `openTaskCountAtom`, `googleAccountAtom`, the workspace, the palette).
 - Home is a destination, not "close everything": a tab of its own, so it can become a dashboard
   without changing what opening it means, and it closes nothing.

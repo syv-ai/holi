@@ -3,6 +3,7 @@ import { buildTreeData } from '../src/renderer/src/lib/tree-data'
 import {
   canMoveInto,
   dropFolder,
+  newItemPlace,
   rangeBetween,
   typeahead,
   visibleRows,
@@ -79,5 +80,23 @@ describe('dropFolder', () => {
     expect(dropFolder('a/x.md', false)).toBe('a')
     expect(dropFolder('root.md', false)).toBe('')
     expect(dropFolder(null, false)).toBe('')
+  })
+})
+
+describe('newItemPlace', () => {
+  const withApp = buildTreeData(['a/x.md', 'a/b/z.md', 'root.md', 'a/Budget.app/index.html'])
+  it('is the root, first, with nothing focused or a focus that is gone', () => {
+    expect(newItemPlace(null, withApp)).toEqual({ parent: '', after: null })
+    expect(newItemPlace('gone.md', withApp)).toEqual({ parent: '', after: null })
+  })
+  it('is inside a focused folder, first', () => {
+    expect(newItemPlace('a/b', withApp)).toEqual({ parent: 'a/b', after: null })
+  })
+  it('is right after a focused file, in its folder', () => {
+    expect(newItemPlace('a/x.md', withApp)).toEqual({ parent: 'a', after: 'a/x.md' })
+    expect(newItemPlace('root.md', withApp)).toEqual({ parent: '', after: 'root.md' })
+  })
+  it('is beside a focused app, which is a file to the tree', () => {
+    expect(newItemPlace('a/Budget.app', withApp)).toEqual({ parent: 'a', after: 'a/Budget.app' })
   })
 })

@@ -162,3 +162,33 @@ test('the active item, and the group holding it, read as current', async () => {
   await userEvent.click(screen.getByRole('button', { name: 'More' }))
   expect(screen.getByRole('button', { name: 'Apps' })).toHaveAttribute('aria-current', 'true')
 })
+
+test('a toggle reports its state on its shortcut and its row', async () => {
+  render(
+    <MorphingMenu
+      label="Tools"
+      items={[
+        { id: 'on', label: 'On', icon: dot, pressed: true },
+        { id: 'off', label: 'Off', icon: dot, pressed: false },
+        { id: 'plain', label: 'Plain', icon: dot },
+      ]}
+    />,
+  )
+  expect(screen.getByRole('button', { name: 'On' })).toHaveAttribute('aria-pressed', 'true')
+  expect(screen.getByRole('button', { name: 'Off' })).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByRole('button', { name: 'Plain' })).not.toHaveAttribute('aria-pressed')
+  await userEvent.click(screen.getByRole('button', { name: 'More' }))
+  const row = document.querySelector('[data-morph-row][data-menu-item="on"]')
+  expect(row).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('anchored top-right, the open menu pins by its top-right corner', async () => {
+  render(<MorphingMenu label="Tools" anchor="top-right" items={items()} />)
+  await userEvent.click(screen.getByRole('button', { name: 'More' }))
+  const shell = document.querySelector<HTMLElement>('[data-pinned]')!
+  expect(shell.style.position).toBe('fixed')
+  expect(shell.style.top).not.toBe('')
+  expect(shell.style.right).not.toBe('')
+  expect(shell.style.bottom).toBe('')
+  expect(shell.style.left).toBe('')
+})

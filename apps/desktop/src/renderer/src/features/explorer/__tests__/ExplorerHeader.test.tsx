@@ -1,3 +1,8 @@
+/**
+ * The explorer's toolbar is the nav menu's morphing menu, anchored at the
+ * tree's top-right: "+" unfolds into what can be made, and the rest are
+ * shortcuts. Where a new item lands is the tree's (`FileTree`, `newItemPlace`).
+ */
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
@@ -5,8 +10,7 @@ import { ExplorerHeader } from '../ExplorerHeader'
 
 function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
   const props = {
-    onNewFile: vi.fn(),
-    onNewFolder: vi.fn(),
+    onNew: vi.fn(),
     onCollapseAll: vi.fn(),
     hiddenShown: false,
     onToggleHidden: vi.fn(),
@@ -18,13 +22,24 @@ function setup(over: Partial<Parameters<typeof ExplorerHeader>[0]> = {}) {
   return props
 }
 
-test('each action button invokes its handler', async () => {
+test('"+" unfolds into task, file, folder and app, each asking for its kind', async () => {
   const p = setup()
-  await userEvent.click(screen.getByRole('button', { name: 'New File' }))
-  await userEvent.click(screen.getByRole('button', { name: 'New Folder' }))
+  for (const [label, kind] of [
+    ['New Task', 'task'],
+    ['New File', 'file'],
+    ['New Folder', 'folder'],
+    ['New App', 'app'],
+  ] as const) {
+    await userEvent.click(screen.getByRole('button', { name: 'New' }))
+    await userEvent.click(screen.getByRole('button', { name: label }))
+    expect(p.onNew).toHaveBeenLastCalledWith(kind)
+  }
+  expect(p.onNew).toHaveBeenCalledTimes(4)
+})
+
+test('Collapse All is a shortcut', async () => {
+  const p = setup()
   await userEvent.click(screen.getByRole('button', { name: 'Collapse All' }))
-  expect(p.onNewFile).toHaveBeenCalledOnce()
-  expect(p.onNewFolder).toHaveBeenCalledOnce()
   expect(p.onCollapseAll).toHaveBeenCalledOnce()
 })
 

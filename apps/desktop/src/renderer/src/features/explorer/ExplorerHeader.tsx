@@ -1,54 +1,36 @@
-import { ChevronsDownUp, Eye, EyeOff, FilePlus, FolderPlus, ListTodo } from 'lucide-react'
-import { Button, Tooltip } from '@/primitives'
-import { cn } from '@/lib/cn'
+import {
+  AppWindow,
+  ChevronsDownUp,
+  CircleCheck,
+  Eye,
+  EyeOff,
+  FilePlus,
+  FolderPlus,
+  ListTodo,
+  Plus,
+} from 'lucide-react'
+import { useMemo, useRef } from 'react'
+import { MorphingMenu, type MorphingMenuItem } from '@/primitives'
 
-/** One explorer toolbar action: a ghost icon button with the house tooltip (its
- *  `label` is both the tooltip and the accessible name). `active` renders the
- *  pressed state for the toggles; omit it for the plain actions. */
-function Action({
-  icon,
-  label,
-  active,
-  onClick,
-}: {
-  icon: React.ReactNode
-  label: string
-  active?: boolean
-  onClick: () => void
-}) {
-  return (
-    <Tooltip content={label}>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label={label}
-        aria-pressed={active}
-        className={cn(
-          'hover:text-foreground',
-          active ? 'text-foreground' : 'text-muted-foreground',
-        )}
-        onClick={onClick}
-      >
-        {icon}
-      </Button>
-    </Tooltip>
-  )
-}
+/** What "+" makes. Where it lands is the tree's to decide. */
+export type NewKind = 'task' | 'file' | 'folder' | 'app'
 
-/** The explorer's action buttons. Hidden until the tree is hovered (or focused),
- *  then floated in as a small toolbar in the top-right — VS Code's section-action
- *  pattern. The parent FileTree carries `group/explorer`. Icons are lucide. */
+/**
+ * The explorer's toolbar: the nav menu's morphing menu, anchored at the tree's
+ * top-right and opening downward. "+" unfolds into what can be made; Collapse
+ * All and the two filters are shortcuts, the filters pressed while on. Bare
+ * icons, shown while the tree is hovered or anything in the menu has focus,
+ * and kept while the menu is open. The parent FileTree carries `group/explorer`.
+ */
 export function ExplorerHeader({
-  onNewFile,
-  onNewFolder,
+  onNew,
   onCollapseAll,
   hiddenShown,
   onToggleHidden,
   tasksShown,
   onToggleTasks,
 }: {
-  onNewFile: () => void
-  onNewFolder: () => void
+  onNew: (kind: NewKind) => void
   onCollapseAll: () => void
   /** Whether hidden (dot-prefixed) entries are currently shown. */
   hiddenShown: boolean
@@ -57,25 +39,66 @@ export function ExplorerHeader({
   tasksShown: boolean
   onToggleTasks: () => void
 }) {
+  // The menu restarts its layout pass when its items change identity, so the
+  // items depend on the two states only and call the latest handlers.
+  const handlers = useRef({ onNew, onCollapseAll, onToggleHidden, onToggleTasks })
+  handlers.current = { onNew, onCollapseAll, onToggleHidden, onToggleTasks }
+
+  const items = useMemo((): MorphingMenuItem[] => {
+    const make = (kind: NewKind) => () => handlers.current.onNew(kind)
+    return [
+      {
+        id: 'new',
+        label: 'New',
+        icon: <Plus size={16} />,
+        children: [
+          {
+            id: 'new-task',
+            label: 'New Task',
+            icon: <CircleCheck size={16} />,
+            onSelect: make('task'),
+          },
+          {
+            id: 'new-file',
+            label: 'New File',
+            icon: <FilePlus size={16} />,
+            onSelect: make('file'),
+          },
+          {
+            id: 'new-folder',
+            label: 'New Folder',
+            icon: <FolderPlus size={16} />,
+            onSelect: make('folder'),
+          },
+          { id: 'new-app', label: 'New App', icon: <AppWindow size={16} />, onSelect: make('app') },
+        ],
+      },
+      {
+        id: 'collapse',
+        label: 'Collapse All',
+        icon: <ChevronsDownUp size={16} />,
+        onSelect: () => handlers.current.onCollapseAll(),
+      },
+      {
+        id: 'tasks',
+        label: tasksShown ? 'Hide task files' : 'Show task files',
+        icon: <ListTodo size={16} />,
+        pressed: tasksShown,
+        onSelect: () => handlers.current.onToggleTasks(),
+      },
+      {
+        id: 'hidden',
+        label: hiddenShown ? 'Hide hidden files' : 'Show hidden files',
+        icon: hiddenShown ? <Eye size={16} /> : <EyeOff size={16} />,
+        pressed: hiddenShown,
+        onSelect: () => handlers.current.onToggleHidden(),
+      },
+    ]
+  }, [tasksShown, hiddenShown])
+
   return (
-    <div className="motion-respond pointer-events-none absolute right-3 top-1 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100">
-      <span className="flex shrink-0 items-center gap-0.5 rounded-md bg-popover/90 px-1 py-0.5 text-muted-foreground shadow-sm ring-1 ring-border backdrop-blur-sm">
-        <Action icon={<FilePlus size={15} />} label="New File" onClick={onNewFile} />
-        <Action icon={<FolderPlus size={15} />} label="New Folder" onClick={onNewFolder} />
-        <Action icon={<ChevronsDownUp size={15} />} label="Collapse All" onClick={onCollapseAll} />
-        <Action
-          icon={<ListTodo size={15} />}
-          label={tasksShown ? 'Hide task files' : 'Show task files'}
-          active={tasksShown}
-          onClick={onToggleTasks}
-        />
-        <Action
-          icon={hiddenShown ? <Eye size={15} /> : <EyeOff size={15} />}
-          label={hiddenShown ? 'Hide hidden files' : 'Show hidden files'}
-          active={hiddenShown}
-          onClick={onToggleHidden}
-        />
-      </span>
+    <div className="motion-respond pointer-events-none absolute top-1 right-3 left-3 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100 has-[nav:not([data-view=collapsed])]:pointer-events-auto has-[nav:not([data-view=collapsed])]:opacity-100">
+      <MorphingMenu label="Explorer" anchor="top-right" items={items} />
     </div>
   )
 }

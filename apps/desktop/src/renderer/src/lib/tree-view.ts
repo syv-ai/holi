@@ -1,6 +1,7 @@
 /**
  * The file tree's rules, apart from its DOM: which rows are showing, what a
- * range selection spans, where typeahead lands, and where a drop may go.
+ * range selection spans, where typeahead lands, where a drop may go, and where
+ * a new item goes.
  */
 import { ROOT_ID, type TreeItemData } from './tree-data'
 import { parentOf } from './tree-paths'
@@ -63,4 +64,20 @@ export function canMoveInto(sources: string[], dest: string): boolean {
 export function dropFolder(id: string | null, isFolder: boolean): string {
   if (id === null) return ''
   return isFolder ? id : parentOf(id)
+}
+
+/**
+ * Where a new file, folder, task or app goes when made from the toolbar: next
+ * to the focused row. Inside a focused folder, as its first row; right after a
+ * focused file (an app is one) in that file's folder; at the root when nothing
+ * is focused, or the focused row is no longer in the tree.
+ */
+export function newItemPlace(
+  focusId: string | null,
+  data: Record<string, TreeItemData>,
+): { parent: string; after: string | null } {
+  const node = focusId === null ? undefined : data[focusId]
+  if (focusId === null || node === undefined) return { parent: '', after: null }
+  if (node.isFolder && !node.isApp) return { parent: focusId, after: null }
+  return { parent: parentOf(focusId), after: focusId }
 }

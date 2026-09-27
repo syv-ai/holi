@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -16,7 +17,14 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { DeleteConfirm } from '@/composites'
 import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
-import { canMoveInto, dropFolder, rangeBetween, typeahead, visibleRows } from '@/lib/tree-view'
+import {
+  canMoveInto,
+  dropFolder,
+  newItemPlace,
+  rangeBetween,
+  typeahead,
+  visibleRows,
+} from '@/lib/tree-view'
 import { buildTreeData, ROOT_ID, type TreeItemData } from '@/lib/tree-data'
 import {
   ancestorsOf,
@@ -27,10 +35,10 @@ import {
 } from '@/lib/tree-paths'
 import { useArrivals } from '@/lib/use-arrivals'
 import { Button, ContextMenu, ContextMenuTrigger, Input } from '@/primitives'
-import { unregisteredAppPathsAtom } from '@/state/apps'
+import { registerAppAtom, unregisteredAppPathsAtom } from '@/state/apps'
 import { todayDailyPathAtom } from '@/state/daily'
 import { revealRequestAtom } from '@/state/reveal'
-import { todayLinkCountAtom } from '@/state/tasks'
+import { createTaskAtom, todayLinkCountAtom } from '@/state/tasks'
 import {
   activeRemoteAtom,
   createFolderAtom,
@@ -39,7 +47,7 @@ import {
   renameNoteAtom,
   vaultsAtom,
 } from '@/state/vaults'
-import { ExplorerHeader } from './ExplorerHeader'
+import { ExplorerHeader, type NewKind } from './ExplorerHeader'
 import { RowMenu } from './RowMenu'
 import { useExplorerActions } from './useExplorerActions'
 import { useTreeProjection } from './useTreeProjection'
@@ -84,14 +92,32 @@ const LABEL =
  * Block-level `flex`, not the Button's `inline-flex`: an inline row sits on a
  * line box, whose baseline strut adds a few pixels under a row with no glyph.
  */
+/** The new item's field says what it is naming. */
+const PLACEHOLDERS: Record<NewKind, string> = {
+  task: 'task title',
+  file: 'note name',
+  folder: 'folder name',
+  app: 'app name',
+}
+
 /** A folder for grouping: an app sits with the files, as it sorts. */
 const isGroupFolder = (node: TreeItemData | undefined) => node?.isFolder === true && !node.isApp
 
 const ROW_RESET =
   'flex h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
 
-/** A folder's contents, rendered while open and through the closing transition. */
-function Disclose({ open, children }: { open: boolean; children: ReactNode }) {
+/** A folder's contents, rendered while open and through the closing transition.
+ *  Also the slide that makes room for a new item's name field, which is not a
+ *  group of rows (`group={false}`). */
+function Disclose({
+  open,
+  group = true,
+  children,
+}: {
+  open: boolean
+  group?: boolean
+  children: ReactNode
+}) {
   const [mounted, setMounted] = useState(open)
   useEffect(() => {
     if (open) setMounted(true)
@@ -105,13 +131,13 @@ function Disclose({ open, children }: { open: boolean; children: ReactNode }) {
         if (e.target === e.currentTarget && !open) setMounted(false)
       }}
     >
-      <div role="group">{children}</div>
+      <div role={group ? 'group' : undefined}>{children}</div>
     </div>
   )
 }
 
 /**
- * The inline name field, for a rename and for a new file or folder. Enter
+ * The inline name field, for a rename and for a new file, folder, task or app. Enter
  * commits, Escape and blur cancel, as FileTree's do. A rename preselects the
  * name without its extension.
  */
@@ -209,6 +235,8 @@ export function FileTree({
   const renameNote = useSetAtom(renameNoteAtom)
   const createNote = useSetAtom(createNoteAtom)
   const createFolder = useSetAtom(createFolderAtom)
+  const createTask = useSetAtom(createTaskAtom)
+  const registerApp = useSetAtom(registerAppAtom)
   const importFiles = useSetAtom(importFilesAtom)
   const revealRequest = useAtomValue(revealRequestAtom)
   const todayDailyPath = useAtomValue(todayDailyPathAtom)
@@ -228,8 +256,13 @@ export function FileTree({
   const [focusId, setFocusId] = useState<string | null>(null)
   /** The row whose name is being edited. */
   const [renaming, setRenaming] = useState<string | null>(null)
-  /** A new file or folder being named, and the folder it lands in ('' = root). */
-  const [pending, setPending] = useState<{ kind: 'file' | 'folder'; parent: string } | null>(null)
+  /** A new item being named, the folder it lands in ('' = root), and the row
+   *  its field shows under (`null`: first in the folder). */
+  const [pending, setPending] = useState<{
+    kind: NewKind
+    parent: string
+    after: string | null
+  } | null>(null)
   /** The folder a drag from the OS would land in ('' = root), while one is over the tree. */
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   /** Files the last drop refused, held until dismissed or superseded: a file that
@@ -314,24 +347,45 @@ export function FileTree({
     if (to !== from) void renameNote({ from, to })
   }
 
-  /** Open the name input inside `parent`, which opens so the input shows. */
-  const startNew = (kind: 'file' | 'folder', parent: string) => {
+  /** Open the name input inside `parent`, which opens so the input shows:
+   *  first, or right under the row `after`. */
+  const startNew = (kind: NewKind, parent: string, after: string | null = null) => {
     if (parent !== '') openBranch(parent, true)
-    setPending({ kind, parent })
+    setPending({ kind, parent, after })
   }
 
   const create = (name: string) => {
     if (pending === null) return
-    if (pending.kind === 'folder') {
-      // Shown at once, and made real with a `.gitkeep` so it persists.
-      const folder = joinPath(pending.parent, name)
-      actions.addPendingFolder(folder)
-      void createFolder(folder)
-    } else {
-      const path = joinPath(pending.parent, withMdExtension(name))
-      void createNote(path).then(() => onOpenPreview(path))
-    }
+    const { kind, parent } = pending
     setPending(null)
+    switch (kind) {
+      case 'folder': {
+        // Shown at once, and made real with a `.gitkeep` so it persists.
+        const folder = joinPath(parent, name)
+        actions.addPendingFolder(folder)
+        void createFolder(folder)
+        return
+      }
+      case 'file': {
+        const path = joinPath(parent, withMdExtension(name))
+        void createNote(path).then(() => onOpenPreview(path))
+        return
+      }
+      case 'task':
+        // The name is the title; main names the file. It opens to be filled
+        // in, as ⌘⇧T's does, whether or not the tree shows task files.
+        void createTask({ title: name, status: 'todo', folder: parent }).then(
+          (path) => path !== null && onOpenPinned(path),
+        )
+        return
+      case 'app': {
+        // `holi app init`'s scaffold. Opening its entry expands the bundle.
+        const bundle = joinPath(parent, name.endsWith(APP_SUFFIX) ? name : `${name}${APP_SUFFIX}`)
+        void registerApp(bundle).then((result) => {
+          if (result.ok) onOpenPreview(`${bundle}/index.html`)
+        })
+      }
+    }
   }
 
   /**
@@ -657,20 +711,23 @@ export function FileTree({
     )
   }
 
-  /** The name input for a new file or folder, as a row of the group it joins. */
+  /** The name input for a new item, as a row of the group it joins. It
+   *  slides in, making room, with a folder's disclose motion. */
   const pendingInput = (className: string, style?: CSSProperties) =>
     pending && (
-      <div className={cn(className, 'flex items-center')} style={style}>
-        <span className="flex w-3.5 shrink-0 justify-center text-muted-foreground">
-          {pending.kind === 'folder' && <ChevronRight className="size-3" />}
-        </span>
-        <NameInput
-          initial=""
-          placeholder={pending.kind === 'folder' ? 'folder name' : 'note name'}
-          onCommit={create}
-          onCancel={() => setPending(null)}
-        />
-      </div>
+      <Disclose open group={false}>
+        <div className={cn(className, 'flex items-center')} style={style}>
+          <span className="flex w-3.5 shrink-0 justify-center text-muted-foreground">
+            {pending.kind === 'folder' && <ChevronRight className="size-3" />}
+          </span>
+          <NameInput
+            initial=""
+            placeholder={PLACEHOLDERS[pending.kind]}
+            onCommit={create}
+            onCancel={() => setPending(null)}
+          />
+        </div>
+      </Disclose>
     )
 
   /** A folder's children, hung from its connector; a new name's input first. */
@@ -686,32 +743,39 @@ export function FileTree({
             ? 'text-foreground'
             : 'text-muted-foreground hover:text-foreground',
       )
+    const here = pending?.parent === parent ? pending : null
+    /** The new item's field as a child of this group: first, or under `after`. */
+    const field = (last: boolean, litThrough: boolean) => (
+      <div className="relative" style={{ paddingLeft: ELBOW }}>
+        <Connector last={last} lit={false} litThrough={litThrough} />
+        {pendingInput('gap-2 pr-3', { height: ROW })}
+      </div>
+    )
     return (
       <div className="relative py-1">
-        {pending?.parent === parent && (
-          <div className="relative" style={{ paddingLeft: ELBOW }}>
-            <Connector last={children.length === 0} lit={false} litThrough={litIndex >= 0} />
-            {pendingInput('gap-2 pr-3', { height: ROW })}
-          </div>
-        )}
+        {here?.after === null && field(children.length === 0, litIndex >= 0)}
         {children.map((id, i) => {
           const node = data[id]
           if (!node) return null
+          const fieldAfter = here?.after === id
           return (
-            <div key={id} className="relative" style={{ paddingLeft: ELBOW }}>
-              <Connector
-                last={i === children.length - 1}
-                lit={i === litIndex}
-                litThrough={litIndex > i}
-              />
-              {row(id, node, nested(id), { height: ROW })}
-              {node.isFolder && (
-                // Hangs from the centre of the chevron above it.
-                <div style={{ marginLeft: 7 }}>
-                  <Disclose open={open.has(id)}>{group(id)}</Disclose>
-                </div>
-              )}
-            </div>
+            <Fragment key={id}>
+              <div className="relative" style={{ paddingLeft: ELBOW }}>
+                <Connector
+                  last={i === children.length - 1 && !fieldAfter}
+                  lit={i === litIndex}
+                  litThrough={litIndex > i}
+                />
+                {row(id, node, nested(id), { height: ROW })}
+                {node.isFolder && (
+                  // Hangs from the centre of the chevron above it.
+                  <div style={{ marginLeft: 7 }}>
+                    <Disclose open={open.has(id)}>{group(id)}</Disclose>
+                  </div>
+                )}
+              </div>
+              {fieldAfter && field(i === children.length - 1, litIndex > i)}
+            </Fragment>
           )
         })}
       </div>
@@ -725,8 +789,10 @@ export function FileTree({
   return (
     <div className="group/explorer relative flex min-h-0 flex-1 flex-col">
       <ExplorerHeader
-        onNewFile={() => startNew('file', '')}
-        onNewFolder={() => startNew('folder', '')}
+        onNew={(kind) => {
+          const { parent, after } = newItemPlace(focusId, data)
+          startNew(kind, parent, after)
+        }}
         onCollapseAll={() => setOpen(new Set())}
         hiddenShown={projection.showHidden}
         onToggleHidden={projection.toggleHidden}
@@ -775,36 +841,42 @@ export function FileTree({
               }}
             />
           )}
-          {pending?.parent === '' && pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
+          {pending?.parent === '' &&
+            pending.after === null &&
+            pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
           {roots.map((id, i) => {
             const node = data[id]
             if (!node) return null
             return (
-              <div
-                key={id}
-                // A break between the root's folders and its loose files
-                // (folders sort first), so the two groups read apart.
-                className={cn(
-                  !isGroupFolder(node) && i > 0 && isGroupFolder(data[roots[i - 1]!]) && 'mt-3',
-                )}
-              >
-                {row(
-                  id,
-                  node,
-                  cn(
-                    'group h-7 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
-                    focusRoot === id || onPath(id)
-                      ? 'text-foreground'
-                      : 'text-muted-foreground/70 hover:text-foreground',
-                  ),
-                )}
-                {node.isFolder && (
-                  // Hangs from the centre of the heading's chevron.
-                  <div style={{ marginLeft: 31 }}>
-                    <Disclose open={open.has(id)}>{group(id)}</Disclose>
-                  </div>
-                )}
-              </div>
+              <Fragment key={id}>
+                <div
+                  // A break between the root's folders and its loose files
+                  // (folders sort first), so the two groups read apart.
+                  className={cn(
+                    !isGroupFolder(node) && i > 0 && isGroupFolder(data[roots[i - 1]!]) && 'mt-3',
+                  )}
+                >
+                  {row(
+                    id,
+                    node,
+                    cn(
+                      'group h-7 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
+                      focusRoot === id || onPath(id)
+                        ? 'text-foreground'
+                        : 'text-muted-foreground/70 hover:text-foreground',
+                    ),
+                  )}
+                  {node.isFolder && (
+                    // Hangs from the centre of the heading's chevron.
+                    <div style={{ marginLeft: 31 }}>
+                      <Disclose open={open.has(id)}>{group(id)}</Disclose>
+                    </div>
+                  )}
+                </div>
+                {pending?.parent === '' &&
+                  pending.after === id &&
+                  pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
+              </Fragment>
             )
           })}
           {roots.length === 0 && <p className="px-6 text-xs text-muted-foreground">no notes yet</p>}

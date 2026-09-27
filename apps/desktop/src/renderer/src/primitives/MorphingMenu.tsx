@@ -24,6 +24,11 @@
  * open it is `position: fixed` at the same corner, so it can grow out of a
  * clipping ancestor (a drawer, a 44px rail) over whatever is beside it, and
  * returns to its box once the collapse has landed.
+ *
+ * **Anchored at a corner.** By default the menu sits at the foot of what holds
+ * it and opens upward from its bottom-left corner; `anchor="top-right"` puts
+ * it at the top and opens it downward from that corner instead, as a toolbar
+ * over a list does.
  */
 import { animate } from 'motion'
 import { motion, useReducedMotion } from 'motion/react'
@@ -44,6 +49,9 @@ export type MorphingMenuAction = {
   badge?: number
   /** `alert` paints the badge in the destructive colour: something is late. */
   badgeTone?: 'alert'
+  /** A toggle's state: `aria-pressed`, and the accent background while on.
+   *  Absent for an item that is not a toggle. */
+  pressed?: boolean
   onSelect?: () => void
 }
 
@@ -57,6 +65,8 @@ export type MorphingMenuProps = {
   /** The active destination's id, or a child's: its parent reads as active too. */
   activeId?: string | null
   orientation?: 'horizontal' | 'vertical'
+  /** The corner the menu grows from. */
+  anchor?: 'bottom-left' | 'top-right'
   label: string
   moreLabel?: string
   backLabel?: string
@@ -94,6 +104,7 @@ export function MorphingMenu({
   items,
   activeId = null,
   orientation = 'horizontal',
+  anchor = 'bottom-left',
   label,
   moreLabel = 'More',
   backLabel = 'Back',
@@ -101,6 +112,8 @@ export function MorphingMenu({
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
   const vertical = orientation === 'vertical'
+  const top = anchor === 'top-right'
+  const tooltipSide = vertical ? 'right' : top ? 'bottom' : 'top'
   const [view, setView] = useState<View>({ kind: 'collapsed' })
   const [room, setRoom] = useState(0)
   const rootRef = useRef<HTMLElement>(null)
@@ -188,19 +201,31 @@ export function MorphingMenu({
     })
     const pin = () => {
       const box = root.getBoundingClientRect()
-      Object.assign(shell.style, {
-        position: 'fixed',
-        left: `${box.left}px`,
-        bottom: `${window.innerHeight - box.bottom}px`,
-        zIndex: '50',
-      })
+      Object.assign(
+        shell.style,
+        top
+          ? { position: 'fixed', right: `${window.innerWidth - box.right}px`, top: `${box.top}px` }
+          : {
+              position: 'fixed',
+              left: `${box.left}px`,
+              bottom: `${window.innerHeight - box.bottom}px`,
+            },
+        { zIndex: '50' },
+      )
       shell.dataset.pinned = ''
     }
     // Raised only while pinned: collapsed, the shell must stay under whatever
     // covers its box, as the rail covers the hidden nav's dock. The surface
     // goes with it (`data-pinned`), so the dock at rest is bare.
     const unpin = () => {
-      Object.assign(shell.style, { position: '', left: '', bottom: '', zIndex: '' })
+      Object.assign(shell.style, {
+        position: '',
+        left: '',
+        bottom: '',
+        right: '',
+        top: '',
+        zIndex: '',
+      })
       delete shell.dataset.pinned
     }
     const settle = () => {
@@ -303,7 +328,7 @@ export function MorphingMenu({
     // `barSize` is derived from `count` and the grid; listing the object would
     // re-run every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, reducedMotion, items, count, grid.columns, vertical])
+  }, [view, reducedMotion, items, count, grid.columns, vertical, top])
 
   useEffect(() => {
     if (!expanded) return
@@ -322,17 +347,18 @@ export function MorphingMenu({
     const active = isActive(item)
     return (
       <Cell key={item.id} still={reducedMotion}>
-        <Tooltip content={item.label} side={vertical ? 'right' : 'top'}>
+        <Tooltip content={item.label} side={tooltipSide}>
           <button
             type="button"
             data-menu-item={item.id}
             aria-label={item.label}
             aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+            aria-pressed={item.pressed}
             aria-expanded={hasChildren ? false : undefined}
             aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
             className={cn(
               'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
-              active && 'bg-accent text-foreground',
+              (active || item.pressed) && 'bg-accent text-foreground',
             )}
             onClick={(event) =>
               hasChildren
@@ -373,11 +399,12 @@ export function MorphingMenu({
         data-morph-row=""
         data-menu-item={item.id}
         aria-current={active ? (hasChildren ? 'true' : 'page') : undefined}
+        aria-pressed={item.pressed}
         aria-expanded={hasChildren ? view.kind === 'group' && view.id === item.id : undefined}
         aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
         className={cn(
           'flex min-h-8 w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-left text-sm outline-none motion-respond hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring',
-          active && 'bg-accent',
+          (active || item.pressed) && 'bg-accent',
         )}
         onClick={(event) =>
           hasChildren
@@ -409,7 +436,8 @@ export function MorphingMenu({
 
   const hiddenPanel = (hidden: boolean) =>
     cn(
-      'absolute top-0 left-0 max-h-[calc(100dvh-4rem)] w-67 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain p-1.5',
+      'absolute top-0 max-h-[calc(100dvh-4rem)] w-67 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain p-1.5',
+      top ? 'right-0' : 'left-0',
       hidden && 'pointer-events-none',
     )
 
@@ -440,19 +468,27 @@ export function MorphingMenu({
     >
       <div
         ref={shellRef}
-        className="absolute bottom-0 left-0 overflow-hidden rounded-[1.25rem] text-muted-foreground data-pinned:bg-popover data-pinned:text-popover-foreground data-pinned:shadow-popover"
+        className={cn(
+          'absolute overflow-hidden rounded-[1.25rem]',
+          top ? 'top-0 right-0' : 'bottom-0 left-0',
+          'text-muted-foreground data-pinned:bg-popover data-pinned:text-popover-foreground data-pinned:shadow-popover',
+        )}
         style={barSize}
       >
         <div
           ref={barRef}
           aria-hidden={expanded}
           inert={expanded}
-          className={cn('absolute bottom-0 left-0 grid p-1', expanded && 'pointer-events-none')}
+          className={cn(
+            'absolute grid p-1',
+            top ? 'top-0 right-0' : 'bottom-0 left-0',
+            expanded && 'pointer-events-none',
+          )}
           style={{ ...barSize, gridTemplateColumns: `repeat(${grid.columns}, ${BUTTON}px)` }}
         >
           {barItems.map(shortcut)}
           <Cell still={reducedMotion}>
-            <Tooltip content={moreLabel} side={vertical ? 'right' : 'top'}>
+            <Tooltip content={moreLabel} side={tooltipSide}>
               <button
                 type="button"
                 data-menu-item="more"
