@@ -11,6 +11,7 @@
  * `Task.extra` promises. The schema adds controls; it does not take keys away.
  */
 import { isAgentSurfacePath, isHiddenPath } from './path-safety'
+import type { Recurrence } from './types'
 import { isTaskFilePath } from './task-file'
 
 /** How a value is edited. The renderer maps each of these to one control. */
@@ -92,4 +93,48 @@ export function frontmatterRows(
     ...schema.filter((f) => f.hidden !== true),
     ...keys.filter((k) => !known.has(k)).map((key): FieldSpec => ({ key, kind: { kind: 'text' } })),
   ]
+}
+
+/*
+ * Reading a YAML value for its control. Lenient on purpose: the file is
+ * hand-editable, and a value in the wrong shape reads as the nearest thing
+ * the control can show rather than as an error.
+ */
+
+/** Whether a key holds anything to remove: the scaffold's `tags: []` does not. */
+export function isFieldSet(value: unknown): boolean {
+  if (value === undefined || value === null || value === '') return false
+  return !Array.isArray(value) || value.length > 0
+}
+
+/** A list of strings. A hand-written `tags: ops` is one tag; anything that is
+ *  not a string is dropped from the list, never stringified into it. */
+export function fieldList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((v): v is string => typeof v === 'string')
+  return typeof value === 'string' && value.trim() !== '' ? [value] : []
+}
+
+/** A recurrence rule, or undefined when the value is not a map with a
+ *  `frequency`. A missing `interval` is 1. */
+export function fieldRecurrence(value: unknown): Recurrence | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Partial<Recurrence>
+  if (typeof raw.frequency !== 'string') return undefined
+  return { ...raw, frequency: raw.frequency, interval: raw.interval ?? 1 }
+}
+
+/**
+ * A key the frontmatter block may add: one plain YAML word (no colon, no leading `#`,
+ * `-`, `?` or quote, no newline), not already present. Schema keys are refused
+ * too, including hidden ones (`order`), which would otherwise be a back door.
+ */
+export function addableKey(
+  raw: string,
+  existing: readonly string[],
+  schema: readonly FieldSpec[],
+): string | null {
+  const key = raw.trim()
+  if (!/^[^\s:#\-?'"][^:\n]*$/.test(key)) return null
+  if (existing.includes(key) || schema.some((f) => f.key === key)) return null
+  return key
 }

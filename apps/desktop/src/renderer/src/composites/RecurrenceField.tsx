@@ -28,7 +28,7 @@ import {
   SelectValue,
 } from '@/primitives'
 import { DateTimePicker } from './DateTimePicker'
-import { FIELD_CONTROL, FieldRow } from './FieldRow'
+import { FieldRow, useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
 
 const WEEKDAYS: RecurrenceWeekday[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
@@ -37,6 +37,7 @@ export function RecurrenceField({
   value,
   onChange,
   warnNoDue,
+  variant = 'default',
   'data-testid': testId,
 }: {
   value: Recurrence | undefined
@@ -44,8 +45,11 @@ export function RecurrenceField({
   /** The task has no `due` date, so the rule would never fire
    *  (docs/features/tasks.md). */
   warnNoDue?: boolean
+  /** As `DateTimePicker`'s: `field` in a row that frames it. */
+  variant?: 'default' | 'field'
   'data-testid'?: string
 }): React.JSX.Element {
+  const id = useFieldControlId()
   /** Patch the rule as a whole — the frontmatter holds one map, so a partial
    *  write would drop the fields it did not mention. */
   const set = (patch: Partial<Recurrence> | null): void => {
@@ -57,12 +61,12 @@ export function RecurrenceField({
     <Popover>
       <PopoverTrigger asChild>
         <Button
-          variant="ghost"
+          id={id}
+          variant={variant === 'field' ? 'field' : 'outline'}
+          size="sm"
           data-testid={testId}
           className={cn(
-            // The shared field treatment.
-            FIELD_CONTROL,
-            'shrink justify-end hover:bg-transparent focus-visible:border-ring',
+            variant === 'default' && 'w-full shrink justify-end text-xs font-normal',
             value === undefined && 'text-muted-foreground',
           )}
         >
@@ -76,45 +80,57 @@ export function RecurrenceField({
 
       <PopoverContent align="end" className="flex w-64 flex-col gap-1 p-3">
         <FieldRow label="repeats">
-          {/* 'never' is the sentinel for "no recurrence" (Radix forbids ''). */}
-          <Select
-            value={value?.frequency ?? 'never'}
-            onValueChange={(v) =>
-              v === 'never' ? set(null) : set({ frequency: v as RecurrenceFrequency })
-            }
-          >
-            <SelectTrigger size="sm" className="w-28 justify-between" data-detail-recurrence>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="never">never</SelectItem>
-              <SelectItem value="daily">daily</SelectItem>
-              <SelectItem value="weekly">weekly</SelectItem>
-              <SelectItem value="monthly">monthly</SelectItem>
-              <SelectItem value="yearly">yearly</SelectItem>
-            </SelectContent>
-          </Select>
+          {(rowId) => (
+            /* 'never' is the sentinel for "no recurrence" (Radix forbids ''). */
+            <Select
+              value={value?.frequency ?? 'never'}
+              onValueChange={(v) =>
+                v === 'never' ? set(null) : set({ frequency: v as RecurrenceFrequency })
+              }
+            >
+              <SelectTrigger
+                id={rowId}
+                size="sm"
+                className="w-28 justify-between"
+                data-detail-recurrence
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="never">never</SelectItem>
+                <SelectItem value="daily">daily</SelectItem>
+                <SelectItem value="weekly">weekly</SelectItem>
+                <SelectItem value="monthly">monthly</SelectItem>
+                <SelectItem value="yearly">yearly</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </FieldRow>
 
         {value !== undefined && (
           <>
             <FieldRow label="every">
-              <Input
-                type="number"
-                min={1}
-                value={value.interval}
-                aria-label="interval"
-                data-detail-interval
-                className="h-7 w-14 text-right text-xs"
-                onChange={(e) => set({ interval: Math.max(1, Number(e.target.value) || 1) })}
-              />
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {
-                  { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[
-                    value.frequency
-                  ]
-                }
-              </span>
+              {(rowId) => (
+                <>
+                  <Input
+                    id={rowId}
+                    type="number"
+                    min={1}
+                    value={value.interval}
+                    aria-label="interval"
+                    data-detail-interval
+                    className="h-7 w-14 text-right text-xs"
+                    onChange={(e) => set({ interval: Math.max(1, Number(e.target.value) || 1) })}
+                  />
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {
+                      { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[
+                        value.frequency
+                      ]
+                    }
+                  </span>
+                </>
+              )}
             </FieldRow>
 
             {/* Weekly only. None selected is stored as absent: an empty set makes

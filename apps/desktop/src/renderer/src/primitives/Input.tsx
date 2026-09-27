@@ -2,6 +2,7 @@ import * as React from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 
 import { cn } from '@/lib/cn'
+import { FIELD_LOOK } from './field-look'
 
 // The shared bits every input keeps (selection colour, disabled, placeholder).
 // Per-look geometry/typography lives in the variants.
@@ -13,6 +14,9 @@ const inputVariants = cva(
         // The stock shadcn field.
         default:
           'h-9 rounded-md border border-input px-3 py-1 text-base shadow-xs file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground md:text-sm dark:bg-input/30 focus-visible:border-ring aria-invalid:border-destructive',
+        // A value in a labelled row: `field-look.ts`. Right-aligned like the
+        // other values in the column.
+        field: `${FIELD_LOOK} text-right`,
         // No box of its own: the text-entry part of a control whose box is
         // something else (a chip field), so the two never read as nested fields.
         bare: 'h-auto border-0 p-0',

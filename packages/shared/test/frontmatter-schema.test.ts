@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'vitest'
-import { frontmatterRows, frontmatterSchema } from '../src/frontmatter-schema'
+import {
+  addableKey,
+  fieldList,
+  fieldRecurrence,
+  frontmatterRows,
+  frontmatterSchema,
+  isFieldSet,
+} from '../src/frontmatter-schema'
 import { editYamlMapping } from '../src/yaml-document'
 
 describe('frontmatterSchema', () => {
@@ -114,4 +121,39 @@ describe('editYamlMapping', () => {
       'status: todo\nrecurrence:\n  frequency: weekly\n',
     )
   })
+})
+
+describe('reading a value for its control', () => {
+  test('an empty list, an empty string and a null are not set; anything else is', () => {
+    expect([undefined, null, '', []].map(isFieldSet)).toEqual([false, false, false, false])
+    expect([0, false, 'x', ['a']].map(isFieldSet)).toEqual([true, true, true, true])
+  })
+
+  test('a hand-written single tag is a list of one, and non-strings are dropped', () => {
+    expect(fieldList('ops')).toEqual(['ops'])
+    expect(fieldList('  ')).toEqual([])
+    expect(fieldList(['a', 3, 'b', null])).toEqual(['a', 'b'])
+    expect(fieldList({ a: 1 })).toEqual([])
+  })
+
+  test('a recurrence needs a frequency, and its interval defaults to 1', () => {
+    expect(fieldRecurrence({ frequency: 'weekly' })).toEqual({ frequency: 'weekly', interval: 1 })
+    expect(fieldRecurrence({ frequency: 'daily', interval: 3 })).toEqual({
+      frequency: 'daily',
+      interval: 3,
+    })
+    expect(fieldRecurrence({ interval: 2 })).toBeUndefined()
+    expect(fieldRecurrence(['weekly'])).toBeUndefined()
+    expect(fieldRecurrence('weekly')).toBeUndefined()
+  })
+})
+
+test('a key the block already has, a schema key, or YAML syntax is not addable', () => {
+  const schema = frontmatterSchema('projects/task.fix.md')!
+  expect(addableKey(' source ', [], schema)).toBe('source')
+  expect(addableKey('title', ['title'], schema)).toBeNull()
+  // Schema keys have their own rows; `order` is hidden, not a back door.
+  expect(addableKey('due', [], schema)).toBeNull()
+  expect(addableKey('order', [], schema)).toBeNull()
+  for (const bad of ['', 'a: b', '#x', '- x', '"x"']) expect(addableKey(bad, [], schema)).toBeNull()
 })

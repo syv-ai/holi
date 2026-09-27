@@ -19,7 +19,7 @@ import {
 import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Button, Input, Popover, PopoverContent, PopoverTrigger, Tooltip } from '@/primitives'
-import { FIELD_CONTROL } from './FieldRow'
+import { useFieldControlId } from './FieldRow'
 import { cn } from '@/lib/cn'
 
 /** The selected day's treatment. */
@@ -92,6 +92,7 @@ export function DateTimePicker({
   dateOnly,
   placeholder,
   emptyText,
+  variant = 'default',
   'data-testid': testId,
 }: {
   /** A stamp, or null for empty. */
@@ -108,8 +109,12 @@ export function DateTimePicker({
    * `due`, but the control still needs `due` as its accessible name.
    */
   emptyText?: string
+  /** `field` in a labelled row that frames it (the frontmatter block); the
+   *  default keeps an edge, as a form field does in a dialog or popover. */
+  variant?: 'default' | 'field'
   'data-testid'?: string
 }): React.JSX.Element {
+  const id = useFieldControlId()
   const selected = value === null ? null : stampDate(value)
   const time = value === null ? null : stampTime(value)
   const today = todayLocal()
@@ -187,20 +192,17 @@ export function DateTimePicker({
       <Tooltip content={placeholder ?? 'pick a date'}>
         <PopoverTrigger asChild>
           <Button
-            variant="ghost"
+            id={id}
+            variant={variant === 'field' ? 'field' : 'outline'}
+            size="sm"
             data-testid={testId}
             // The visible text is the value, so name the field. The tooltip
             // cannot: Radix wires `content` as a description, not a name.
             aria-label={placeholder}
             className={cn(
-              // The same field treatment as the Selects beside it.
-              FIELD_CONTROL,
-              'justify-end gap-2',
-              //
-              // `shrink` is load-bearing: the Button primitive's base is
-              // `shrink-0`, so `w-full` in the label+control row would take the
-              // whole row and overhang the panel by the label's width.
-              'shrink hover:bg-transparent focus-visible:border-ring',
+              // `shrink`: the Button base is `shrink-0`, and a full-width
+              // trigger in a label+control row would overhang it.
+              variant === 'default' && 'w-full shrink justify-end text-xs font-normal',
               value === null && 'text-muted-foreground',
             )}
           >

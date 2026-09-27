@@ -1,24 +1,19 @@
 import { render, screen } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
-import { frontmatterSchema } from '@holi/shared'
-import { FrontmatterFields, addableKey } from '../FrontmatterFields'
+import { Provider, createStore } from 'jotai'
+import { nowAtom } from '@/state/tasks'
+import { FrontmatterFields } from '../FrontmatterFields'
 
 /** The complete-a-task path, which is the one write that does not go through
  *  the document. Hoisted so the mock and the assertions share it. */
 const { completed } = vi.hoisted(() => ({ completed: vi.fn() }))
 
-vi.mock('@/state/tasks', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/state/tasks')>()),
-  completeTaskAtom: { toString: () => 'completeTaskAtom' },
-}))
-
-vi.mock('jotai', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('jotai')>()
+vi.mock('@/state/tasks', async (importOriginal) => {
+  const { atom } = await import('jotai')
   return {
-    ...actual,
-    useAtomValue: () => '2026-09-12T10:00',
-    useSetAtom: () => completed,
+    ...(await importOriginal<typeof import('@/state/tasks')>()),
+    completeTaskAtom: atom(null, (_get, _set, path: string) => completed(path)),
   }
 })
 
@@ -26,7 +21,13 @@ const TASK = 'projects/task.fix-the-tap.md'
 
 function fields(yaml: string, path = TASK) {
   const onWrite = vi.fn()
-  render(<FrontmatterFields path={path} yaml={yaml} onWrite={onWrite} />)
+  const store = createStore()
+  store.set(nowAtom, '2026-09-12T10:00')
+  render(
+    <Provider store={store}>
+      <FrontmatterFields path={path} yaml={yaml} onWrite={onWrite} />
+    </Provider>,
+  )
   return onWrite
 }
 
@@ -106,7 +107,7 @@ test('a tag is a chip, and removing one writes the rest', async () => {
 
 test('the tag field is one control: pressing its box puts the caret in it', async () => {
   const onWrite = fields('status: todo\ntags: [home]\n')
-  const input = screen.getByRole('textbox', { name: 'add a tag' })
+  const input = screen.getByRole('combobox', { name: 'add to tags' })
   const user = userEvent.setup()
 
   // The box, not the input: before, the input was a small island inside it and
@@ -151,15 +152,6 @@ test('Escape closes the add row and writes nothing', async () => {
   expect(screen.getByRole('button', { name: 'add field' })).toBeInTheDocument()
 })
 
-test('a key the block already has, or YAML syntax, is not addable', () => {
-  const schema = frontmatterSchema(TASK)!
-  expect(addableKey(' source ', [], schema)).toBe('source')
-  expect(addableKey('title', ['title'], schema)).toBeNull()
-  // Schema keys have their own rows; `order` is hidden, not a back door.
-  expect(addableKey('due', [], schema)).toBeNull()
-  expect(addableKey('order', [], schema)).toBeNull()
-  for (const bad of ['', 'a: b', '#x', '- x', '"x"']) expect(addableKey(bad, [], schema)).toBeNull()
-})
 
 test('done on a recurring task rolls forward instead of writing the word', async () => {
   // The one edit that cannot be a text write: `done` on a repeat is the next
@@ -221,13 +213,41 @@ test('a row with nothing set has no × to press', () => {
   expect(screen.getByRole('button', { name: 'remove field status' })).toBeInTheDocument()
 })
 
-test('pressing a row outside its control focuses the control', async () => {
+test("a field's title puts the caret in a text field", async () => {
   fields('tags: [ops]\nsource: email\n', 'notes/meeting.md')
-  const user = userEvent.setup()
-
-  await user.click(screen.getByText('source'))
-
+  await userEvent.setup().click(screen.getByText('source'))
   expect(screen.getByRole('textbox', { name: 'source' })).toHaveFocus()
+})
+
+test("a field's title opens a select", async () => {
+  fields('status: todo\n')
+  const user = userEvent.setup()
+  // Twice: once the trigger has seen a mouse, Radix no longer opens on a click,
+  // which is all a label gives it.
+  await user.click(screen.getByRole('combobox', { name: 'status' }))
+  await user.keyboard('{Escape}')
+  await user.click(screen.getByText('status'))
+  expect(screen.getByRole('listbox')).toBeInTheDocument()
+})
+
+test("a field's title opens a date picker", async () => {
+  fields('status: todo\n')
+  await userEvent.setup().click(screen.getByText('reminder'))
+  expect(screen.getByRole('dialog')).toBeInTheDocument()
+})
+
+test("a field's title puts the caret in the tags", async () => {
+  fields('status: todo\n')
+  await userEvent.setup().click(screen.getByText('tags'))
+  expect(screen.getByRole('combobox', { name: 'add to tags' })).toHaveFocus()
+})
+
+test('a comma commits a tag, as Enter does', async () => {
+  const onWrite = fields('status: todo\ntags: [home]\n')
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox', { name: 'add to tags' }))
+  await user.keyboard('errand,')
+  expect(onWrite).toHaveBeenLastCalledWith(expect.stringMatching(/home[\s\S]*errand/))
 })
 
 test('an empty list has no ×: there is nothing in it to remove', () => {

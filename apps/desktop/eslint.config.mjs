@@ -108,9 +108,9 @@ const external = {
   rules: [
     {
       from: ['composites', 'features'],
-      disallow: ['@radix-ui/*', 'radix-ui', 'radix-ui/*'],
+      disallow: ['@radix-ui/*', 'radix-ui', 'radix-ui/*', '@base-ui/react', '@base-ui/react/*'],
       message:
-        'Radix (radix-ui / @radix-ui/*) is a primitive dependency — import it only inside primitives/.',
+        'Radix (radix-ui / @radix-ui/*) and Base UI (@base-ui/react) are primitive dependencies — import them only inside primitives/.',
     },
   ],
 }

@@ -33,6 +33,11 @@ export const tasksAtom = atom<Map<string, Task>>(
 
 /** Task files that would not parse, rendered as error cards. Never hidden:
  * omitting one from the board is indistinguishable from data loss. */
+/** Every tag used by a task, sorted: what a tags field suggests. */
+export const taskTagsAtom = atom((get) =>
+  [...new Set(get(snapshotAtom).tasks.flatMap((t) => t.tags))].sort((a, b) => a.localeCompare(b)),
+)
+
 export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
 
 /** How many tasks are still open (not done): the badge on the board button. */

@@ -6,7 +6,7 @@ or a test.
 
 ## Component layers
 
-- **`primitives/` → `composites/` → `features/*`.** Primitives are thin shadcn/Radix wrappers.
+- **`primitives/` → `composites/` → `features/*`.** Primitives are thin shadcn wrappers over Radix, or Base UI where shadcn builds on it (the combobox).
   Composites are domain-agnostic patterns (`DrawerShell`, `PanelHeader`). Features are
   domain-aware. A layer may import only layers below it, and a feature may not import another
   feature. The composition root (`components/Shell.tsx`) and `DialogHost` sit above the features.
@@ -14,7 +14,7 @@ or a test.
   `no-restricted-syntax`, at error across the renderer, run by `pnpm lint` and the pre-commit
   lint-staged hook) rejects:
   - native `<button|input|select|textarea|dialog|form>` outside `primitives/`;
-  - Radix imports outside `primitives/`;
+  - Radix and Base UI imports outside `primitives/`;
   - upward and cross-feature imports;
   - native `title=` tooltips on DOM elements (use the `Tooltip` primitive);
   - arbitrary colour literals such as `bg-[#…]` or `text-[oklch(…)]`;

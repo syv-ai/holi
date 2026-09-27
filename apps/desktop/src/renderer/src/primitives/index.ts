@@ -1,6 +1,15 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
 export {
+  Combobox,
+  ComboboxChip,
+  ComboboxChips,
+  ComboboxChipsInput,
+  ComboboxContent,
+  ComboboxItem,
+  ComboboxList,
+} from './Combobox'
+export {
   Command,
   CommandDialog,
   CommandEmpty,
@@ -47,8 +56,10 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from './DropdownMenu'
+export { Field, FieldLabel } from './Field'
 export { Input } from './Input'
 export { Kbd } from './Kbd'
+export { Label } from './Label'
 export { MorphingMenu, type MorphingMenuAction, type MorphingMenuItem } from './MorphingMenu'
 export { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from './Popover'
 export { ResizableHandle, ResizablePanel, ResizablePanelGroup } from './Resizable'

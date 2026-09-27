@@ -3,6 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 
 import { cn } from '@/lib/cn'
+import { FIELD_LOOK } from './field-look'
 
 const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap motion-respond outline-none active:scale-[0.97] focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -28,6 +29,9 @@ const buttonVariants = cva(
         secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
         ghost: 'hover:bg-accent hover:text-accent-foreground dark:hover:bg-accent/50',
         link: 'text-brand underline-offset-4 hover:underline',
+        // A value in a labelled row: `field-look.ts`. `shrink`, because the
+        // base is `shrink-0` and a full-width button would overhang its row.
+        field: `${FIELD_LOOK} shrink gap-2`,
         // The ceremony pill (onboarding ritual CTAs).
         ceremony:
           'h-[38px] gap-2 rounded-full bg-primary px-5 text-[13px] font-medium tracking-[0.005em] text-background shadow-sm hover:brightness-110',
