@@ -53,7 +53,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 ## Code
 
 - `apps/desktop/src/renderer/src/editor/`: `extensions.ts` (stacks), `livePreview.ts` (`revealedSpans`), `heading-slide.ts`, `mermaid.ts`, `completion.ts`, `slash.ts`, `mentions.ts`, `askAgent.ts`, `theme.ts`
-- `apps/desktop/src/renderer/src/composites/EditorPane.tsx`: load, save, flush, reload
+- `apps/desktop/src/renderer/src/features/editor/EditorPane.tsx`: load, save, flush, reload
 - `apps/desktop/src/renderer/src/lib/editor-reload.ts`, `apply-reload.ts`
 - `packages/shared/src/merge3.ts`, `normalize-md.ts`, `file-kind.ts`, `image-ref.ts`
 - `apps/desktop/src/renderer/src/features/files/ImageViewer.tsx`, `FilePlaceholder.tsx`

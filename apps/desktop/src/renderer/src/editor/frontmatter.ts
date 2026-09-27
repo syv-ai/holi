@@ -200,8 +200,9 @@ export interface FrontmatterCommit {
   revisions: number
 }
 
-/** Set by EditorPane once the file's last commit is fetched (async, over IPC):
- *  null for a file with no history yet, or when the fetch failed. */
+/** Set by EditorPane from `fileHistoryAtom`, when the file's history first
+ *  answers and whenever it moves: null for a file with no history yet, or
+ *  when the fetch failed. */
 export const setFrontmatterCommit = StateEffect.define<FrontmatterCommit | null>()
 
 /** The last commit; `undefined` until the fetch has answered, so the summary
