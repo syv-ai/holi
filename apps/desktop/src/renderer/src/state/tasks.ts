@@ -9,7 +9,14 @@
  * body; backrefs are a grep).
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { allLabels, dailyNoteFilename, parseWikiLinks, stampDate, taskArea } from '@holi/shared'
+import {
+  allLabels,
+  dailyNoteFilename,
+  parseWikiLinks,
+  stampDate,
+  taskArea,
+  virtualLabels,
+} from '@holi/shared'
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { closeTabsForPaths, workspaceAtom } from './panes'
@@ -32,6 +39,13 @@ export const brokenTasksAtom = atom((get) => get(snapshotAtom).broken)
 export const openTaskCountAtom = atom(
   (get) => get(snapshotAtom).tasks.filter((t) => t.status !== 'done').length,
 )
+
+/** How many open tasks are overdue, by the board's own `overdue` label: what
+ *  turns the board badge red. Follows `nowAtom`, so it turns over on the minute. */
+export const overdueTaskCountAtom = atom((get) => {
+  const now = get(nowAtom)
+  return get(snapshotAtom).tasks.filter((t) => virtualLabels(t, now).includes('overdue')).length
+})
 
 /** Open (not-done) tasks whose body links to `notePath`. A task counts once no
  * matter how many times it links. */

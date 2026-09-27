@@ -41,6 +41,8 @@ export type MorphingMenuAction = {
   /** A count: on the icon's corner in the dock, at the row's end in the list.
    *  Nothing when absent or zero. */
   badge?: number
+  /** `alert` paints the badge in the destructive colour: something is late. */
+  badgeTone?: 'alert'
   onSelect?: () => void
 }
 
@@ -341,7 +343,7 @@ export function MorphingMenu({
             aria-expanded={hasChildren ? false : undefined}
             aria-controls={hasChildren ? `${id}-group-${item.id}` : undefined}
             className={cn(
-              'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
+              'relative flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring',
               active && 'bg-accent text-foreground',
             )}
             onClick={(event) =>
@@ -356,7 +358,13 @@ export function MorphingMenu({
             {item.badge !== undefined && item.badge > 0 && (
               <span
                 aria-hidden="true"
-                className="absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full bg-foreground/15 px-1 text-[10px] leading-3.5 text-foreground"
+                data-tone={item.badgeTone}
+                className={cn(
+                  'absolute -top-0.5 -right-0.5 min-w-3.5 rounded-full px-1 text-[10px] leading-3.5',
+                  item.badgeTone === 'alert'
+                    ? 'bg-destructive text-destructive-foreground'
+                    : 'bg-foreground/15 text-foreground',
+                )}
               >
                 {item.badge}
               </span>
@@ -394,7 +402,15 @@ export function MorphingMenu({
         </span>
         <span className="min-w-0 truncate">{item.label}</span>
         {item.badge !== undefined && item.badge > 0 && (
-          <span className="ml-auto shrink-0 text-xs text-muted-foreground">{item.badge}</span>
+          <span
+            data-tone={item.badgeTone}
+            className={cn(
+              'ml-auto shrink-0 text-xs',
+              item.badgeTone === 'alert' ? 'text-destructive' : 'text-muted-foreground',
+            )}
+          >
+            {item.badge}
+          </span>
         )}
         {hasChildren && (
           <ChevronRight size={16} aria-hidden="true" className="ml-auto shrink-0 opacity-60" />
@@ -455,7 +471,7 @@ export function MorphingMenu({
                 aria-label={moreLabel}
                 aria-expanded={expanded}
                 aria-controls={`${id}-main`}
-                className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none motion-respond hover:scale-110 hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
                 onClick={(event) => open({ kind: 'main' }, 'more', event.detail === 0)}
               >
                 <ChevronsUpDown size={16} aria-hidden="true" />

@@ -1,7 +1,7 @@
 /**
  * The morphing menu at the foot of the nav, and down the rail while the nav is
- * hidden (D108): Home, Search, Apps, Board, Settings, then Email and Agenda once
- * Google is connected.
+ * hidden (D108): Home, Search, Apps, Board, Email and Agenda once Google is
+ * connected, then Settings beside More.
  *
  * Reads shared state only, never another feature's components: the apps from
  * `appPathsAtom`, the count from `openTaskCountAtom`, Google from the account
@@ -28,7 +28,7 @@ import {
   workspaceAtom,
   type Tab,
 } from '@/state/panes'
-import { openTaskCountAtom } from '@/state/tasks'
+import { openTaskCountAtom, overdueTaskCountAtom } from '@/state/tasks'
 
 /** An app's child id: its bundle path, kept apart from the fixed ids. */
 const appItemId = (path: string): string => `app:${path}`
@@ -59,6 +59,7 @@ export function NavMenu({
   const openPalette = useSetAtom(openPaletteAtom)
   const appPaths = useAtomValue(appPathsAtom)
   const openTaskCount = useAtomValue(openTaskCountAtom)
+  const overdueCount = useAtomValue(overdueTaskCountAtom)
   const googleConnected = useAtomValue(googleAccountAtom) != null
 
   // Stable across renders that change nothing here: the menu re-measures and
@@ -88,13 +89,8 @@ export function NavMenu({
         label: 'Board',
         icon: icon(SquareKanban),
         badge: openTaskCount,
+        badgeTone: overdueCount > 0 ? 'alert' : undefined,
         onSelect: () => setWorkspace(openBoard),
-      },
-      {
-        id: 'settings',
-        label: 'Settings',
-        icon: icon(Settings),
-        onSelect: () => setWorkspace(openSettings),
       },
       ...(googleConnected
         ? [
@@ -112,8 +108,15 @@ export function NavMenu({
             },
           ]
         : []),
+      // Last, so it sits beside More at the dock's end.
+      {
+        id: 'settings',
+        label: 'Settings',
+        icon: icon(Settings),
+        onSelect: () => setWorkspace(openSettings),
+      },
     ]
-  }, [appPaths, openTaskCount, googleConnected, setWorkspace, openPalette])
+  }, [appPaths, openTaskCount, overdueCount, googleConnected, setWorkspace, openPalette])
 
   return (
     <MorphingMenu

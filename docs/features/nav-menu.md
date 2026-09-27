@@ -7,9 +7,11 @@ hidden, the same menu runs down the rail.
 
 ## How it works
 
-- **Items, in order:** Home, Search, Apps, Board, Settings, Email, Agenda. Home opens the home
-  tab; Search opens quick open ([command palette](command-palette.md)); Board opens the board and
-  carries the open-task count; Settings, Email and Agenda open their tabs.
+- **Items, in order:** Home, Search, Apps, Board, Email, Agenda, Settings, so Settings always sits
+  beside More at the dock's end. Home opens the home tab; Search opens quick open
+  ([command palette](command-palette.md)); Board opens the board and carries the open-task count,
+  red while any task is overdue (the board's own `overdue` label); Email, Agenda and Settings open
+  their tabs.
 - **Apps is a drill-down.** Its children are the vault's finished apps by name
   ([vault apps](vault-apps.md)); from the dock it opens straight into them, from the list it
   drills in. Back goes to where it was opened from: from the dock it closes the menu, from the list
@@ -19,7 +21,9 @@ hidden, the same menu runs down the rail.
 - **The dock wraps.** Every item has a 32px shortcut and More ends them, in rows as wide as the
   sidebar allows: one row at the default width, three columns at the 150px minimum. When a resize
   moves a shortcut to another cell it springs there with a little bounce (`motion`'s layout
-  animation) rather than jumping. More opens the full list, where every item has its label.
+  animation) rather than jumping. A shortcut grows slightly under the pointer; the growth is a
+  `scale`, which takes no layout, so a hover never re-wraps the rows. More opens the full list,
+  where every item has its label.
 - **On the rail** the dock is one column and takes the shortcuts that fit along the rail's height
   under the session orbs; the rest are in the list.
 - **One surface.** The collapsed bar and the open list are one element that resizes between them

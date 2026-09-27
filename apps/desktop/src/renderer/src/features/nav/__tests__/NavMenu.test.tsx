@@ -13,22 +13,28 @@ import { paletteAtom } from '@/state/palette'
 import { activeTab, workspaceAtom } from '@/state/panes'
 import { NavMenu } from '../NavMenu'
 
-const { apps, tasks } = vi.hoisted(() => ({
+const { apps, tasks, overdue } = vi.hoisted(() => ({
   apps: { current: [] as string[] },
   tasks: { current: 0 },
+  overdue: { current: 0 },
 }))
 vi.mock('@/state/apps', () => ({ appPathsAtom: atom(() => apps.current) }))
-vi.mock('@/state/tasks', () => ({ openTaskCountAtom: atom(() => tasks.current) }))
+vi.mock('@/state/tasks', () => ({
+  openTaskCountAtom: atom(() => tasks.current),
+  overdueTaskCountAtom: atom(() => overdue.current),
+}))
 
 type Account = { email: string } | null | undefined
 
 function setup({
   appPaths = [],
   openTasks = 0,
+  overdueTasks = 0,
   account = null,
-}: { appPaths?: string[]; openTasks?: number; account?: Account } = {}) {
+}: { appPaths?: string[]; openTasks?: number; overdueTasks?: number; account?: Account } = {}) {
   apps.current = appPaths
   tasks.current = openTasks
+  overdue.current = overdueTasks
   const store = createStore()
   store.set(googleAccountAtom, account as never)
   render(
@@ -53,6 +59,30 @@ test('the items are in their order, without apps or Google when there are none',
       .getAllByRole('button')
       .map((b) => b.textContent),
   ).toEqual(['Home', 'Search', 'Board', 'Settings'])
+})
+
+test('Settings comes last, after Google, so it sits beside More', async () => {
+  const { user } = setup({ appPaths: ['char-count.app'], account: { email: 'ada@syv.ai' } })
+  const list = await openList(user)
+  expect(
+    within(list)
+      .getAllByRole('button')
+      .map((b) => b.textContent),
+  ).toEqual(['Home', 'Search', 'Apps', 'Board', 'Email', 'Agenda', 'Settings'])
+})
+
+test('the board count turns to an alert while a task is overdue', async () => {
+  const { user } = setup({ openTasks: 5, overdueTasks: 1 })
+  await openList(user)
+  const count = within(screen.getByRole('button', { name: /Board/ })).getByText('5')
+  expect(count).toHaveAttribute('data-tone', 'alert')
+})
+
+test('with nothing overdue the board count is plain', async () => {
+  const { user } = setup({ openTasks: 5 })
+  await openList(user)
+  const count = within(screen.getByRole('button', { name: /Board/ })).getByText('5')
+  expect(count).not.toHaveAttribute('data-tone')
 })
 
 test('Home opens the home surface', async () => {
