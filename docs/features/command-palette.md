@@ -29,9 +29,11 @@ app-level action is one row of one command table that keys, palette and menu all
   list with an always-painted scrollbar, ↑ on the first row wraps. Every chosen row closes the
   palette first, then opens or runs.
 - **It is the [nav menu](nav-menu.md)'s family:** the same surface, rows and springs. Opening, it
-  appears as a pill and springs to its size while the rows it opened with cascade in; closing, the
-  rows drop away and it squeezes back as it fades. A keystroke's re-rank does not cascade. Reduced
-  motion snaps.
+  appears as a bar the height of its input, widens to full width, shows the input, then drops to
+  its full height while the rows it opened with cascade in; closing runs that backwards, in about
+  a fifth of a second. A keystroke's re-rank does not cascade. Reduced motion snaps. The input is
+  `text-xs`, like the app's other search fields. There are no scroll-edge shades; the
+  always-painted scrollbar says there is more, and its thumb shows once the palette has its size.
 - **The command table** (`state/commands.ts`): each row is an id, a label, an optional hotkey
   glyph, an optional `when`, and a Jotai write. One `keydown` listener installed by Shell matches
   the table with `lib/hotkey.ts`. The application menu sends a command id over `menu:command`.

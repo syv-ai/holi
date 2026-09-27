@@ -23,9 +23,10 @@ export const rowFrom = { opacity: '0', transform: 'translateY(48px)', filter: 'b
 /** Where an arriving row lands. */
 export const rowAt = { opacity: 1, y: 0, filter: 'blur(0px)' }
 
-/** The nth arriving row's spring: after the squeeze, one step behind the last. */
-export const rowArrive = (index: number) =>
-  ({ ...spring, bounce: 0.3, delay: 0.2 + index * 0.02 }) as const
+/** The nth arriving row's spring: `after` the surface has made room (by
+ *  default, the squeeze), one step behind the last. */
+export const rowArrive = (index: number, after = 0.2) =>
+  ({ ...spring, bounce: 0.3, delay: after + index * 0.02 }) as const
 
 /** Where a leaving row goes, and how fast. */
 export const rowGone = { opacity: 0, y: 16, filter: 'blur(2px)' }

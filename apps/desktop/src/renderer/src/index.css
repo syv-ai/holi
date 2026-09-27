@@ -81,8 +81,6 @@
      border: the shadow alone separates them from the page. A dialog sits over
      a scrim, so `--shadow-dialog` stays light. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.28), 0 4px 8px -4px rgb(0 0 0 / 0.2);
-  /* The shade a scroll edge casts over rows that have gone out of sight. */
-  --shadow-scroll-edge: rgb(0 0 0 / 0.32);
   --shadow-dialog: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
 
   /* ── Editor chip tokens (per-vault themeable) ────────────────────────
@@ -196,7 +194,6 @@
   /* Softer on white, where the dark-first weight reads as smudge. --selection
      is brand-derived and needs no light arm. */
   --shadow-popover: 0 10px 24px -6px rgb(0 0 0 / 0.14), 0 4px 8px -4px rgb(0 0 0 / 0.1);
-  --shadow-scroll-edge: rgb(0 0 0 / 0.14);
 }
 
 /* Expose the semantics as utilities. @theme inline so the generated utility holds
@@ -782,6 +779,13 @@
   background: var(--scrollbar-thumb);
   background-clip: content-box;
 }
+/* Not while a surface is still morphing to its size (`data-morphing`, the
+   palette's shell): a thumb sized for a box mid-spring jumps as it grows. The
+   gutter stays, so nothing reflows when the thumb appears. */
+[data-morphing] ::-webkit-scrollbar-thumb,
+[data-morphing] :hover::-webkit-scrollbar-thumb {
+  background: transparent;
+}
 :hover::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   background-clip: content-box;
@@ -841,36 +845,6 @@
   box-shadow: var(--shadow-popover);
 }
 
-/* Shades a scroller's edges while rows are out of sight that way. On the
-   wrapper, not the scroller, so the shade spans the gutter; the data
-   attributes come from the scroller's measurement (primitives/Command.tsx). */
-.scroll-edges {
-  position: relative;
-}
-.scroll-edges::before,
-.scroll-edges::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  z-index: 1;
-  height: 14px;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-.scroll-edges::before {
-  top: 0;
-  background: linear-gradient(to bottom, var(--shadow-scroll-edge), transparent);
-}
-.scroll-edges::after {
-  bottom: 0;
-  background: linear-gradient(to top, var(--shadow-scroll-edge), transparent);
-}
-.scroll-edges[data-scroll-top='true']::before,
-.scroll-edges[data-scroll-bottom='true']::after {
-  opacity: 1;
-}
 .shadow-dialog {
   box-shadow: var(--shadow-dialog);
 }

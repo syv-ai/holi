@@ -5,7 +5,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { MOTION_STAGGER_CAP } from '@/lib/motion'
-import { compress, PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
+import { PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
 
 /**
  * shadcn's Command (registry `command`, shadcn 4.21, cmdk 1.1.1), for the
@@ -103,16 +103,30 @@ function CommandDialog({
 /** The rows that cascade: cmdk's items and the group headings between them. */
 const ROWS = '[cmdk-item], [cmdk-group-heading]'
 
+/** The palette's sequence, in seconds: it widens as a bar, its input shows,
+ *  then it drops to its full height with the rows cascading in. Quick, since
+ *  it is on the path of a keystroke. */
+const appear = { duration: 0.08 } as const
+const widen = { ...spring, duration: 0.22, bounce: 0.12 } as const
+const showInput = { duration: 0.1, delay: 0.14 } as const
+const drop = { ...spring, duration: 0.3, bounce: 0.2, delay: 0.16 } as const
+const ROWS_AFTER = 0.2
+const lift = { ...spring, duration: 0.18, bounce: 0 } as const
+const narrow = { ...spring, duration: 0.15, bounce: 0, delay: 0.1 } as const
+const vanish = { duration: 0.1, delay: 0.14 } as const
+
 /**
- * The palette's surface, morphing the way the nav menu's does. Opening, it
- * appears as a pill, then springs to its size while the rows it opened with
- * cascade in; closing, the rows drop away and it squeezes back to the pill as
- * it fades. Only the opening rows cascade: a keystroke re-ranks cmdk's list,
- * and a cascade per keystroke would read as flicker.
+ * The palette's surface, morphing in the nav menu's springs. Opening, it
+ * appears as a short bar the height of its input, widens to its full width,
+ * shows the input, then drops to its full height while the rows it opened
+ * with cascade in. Closing runs it backwards: the rows drop away, it lifts to
+ * the bar, narrows and fades. Only the opening rows cascade: a keystroke
+ * re-ranks cmdk's list, and a cascade per keystroke would read as flicker.
  *
  * The shell is sized in px only while it moves, measured off the content,
- * which has a fixed width so nothing re-wraps under the spring. Settled, the
- * size is cleared and follows the list as it filters.
+ * which has a fixed width so nothing re-wraps under the spring, and the input
+ * is hidden while it widens so its text does not slide with the left edge.
+ * Settled, the size is cleared and follows the list as it filters.
  */
 function MorphingShell({
   className,
@@ -139,58 +153,79 @@ function MorphingShell({
     const arriving = present && !exiting.current
     exiting.current = !present
     const rows = [...content.querySelectorAll<HTMLElement>(ROWS)]
-    const pill = { width: Math.min(content.offsetWidth, 200), height: PILL }
+    const input = content.querySelector<HTMLElement>('[data-slot=command-input-wrapper]')
+    // The bar is the input row and the shell's padding under it: the shell is
+    // `fixed`, so it is the input's offset parent.
+    const bar = {
+      width: Math.min(content.offsetWidth, 200),
+      height: input
+        ? input.offsetTop + input.offsetHeight + parseFloat(getComputedStyle(content).paddingBottom)
+        : PILL,
+    }
+    const full = { width: content.offsetWidth, height: content.offsetHeight }
     const running: ReturnType<typeof animate>[] = []
     let cancelled = false
     const track = (animation: ReturnType<typeof animate>) => {
       running.push(animation)
       return animation
     }
-    const settle = () => Object.assign(shell.style, { width: '', height: '' })
+    // The list's scrollbar shows once the shell has its size (`index.css`).
+    const settle = () => {
+      Object.assign(shell.style, { width: '', height: '' })
+      delete shell.dataset.morphing
+    }
+    const whenDone = (animations: ReturnType<typeof animate>[], then: () => void) =>
+      void Promise.all(animations.map((animation) => animation.finished))
+        .then(() => !cancelled && then())
+        .catch(() => {})
 
     if (present) {
       if (reducedMotion) {
         settle()
-        Object.assign(shell.style, { opacity: '' })
-      } else {
-        // Reopened mid-exit, it grows back from wherever the exit left it.
-        if (arriving) {
-          Object.assign(shell.style, { width: `${pill.width}px`, height: `${pill.height}px` })
-          shell.style.opacity = '0'
-          rows.forEach((row) => Object.assign(row.style, rowFrom))
-        }
-        track(animate(shell, { opacity: 1 }, compress))
-        const grow = track(
-          animate(
-            shell,
-            { width: content.offsetWidth, height: content.offsetHeight },
-            { ...spring, delay: compress.duration },
-          ),
+        shell.style.opacity = ''
+        if (input) input.style.opacity = ''
+      } else if (arriving) {
+        shell.dataset.morphing = ''
+        Object.assign(shell.style, {
+          width: `${bar.width}px`,
+          height: `${bar.height}px`,
+          opacity: '0',
+        })
+        if (input) input.style.opacity = '0'
+        rows.forEach((row) => Object.assign(row.style, rowFrom))
+        track(animate(shell, { opacity: 1 }, appear))
+        if (input) track(animate(input, { opacity: 1 }, showInput))
+        whenDone(
+          [
+            track(animate(shell, { width: full.width }, widen)),
+            track(animate(shell, { height: full.height }, drop)),
+          ],
+          settle,
         )
-        void grow.finished.then(() => !cancelled && settle()).catch(() => {})
         rows.forEach((row, index) =>
-          track(
-            animate(
-              row,
-              rowAt,
-              arriving
-                ? rowArrive(Math.min(index, MOTION_STAGGER_CAP))
-                : { ...spring, duration: 0.25 },
-            ),
-          ),
+          track(animate(row, rowAt, rowArrive(Math.min(index, MOTION_STAGGER_CAP), ROWS_AFTER))),
         )
+      } else {
+        // Reopened mid-exit: it grows back from wherever the exit left it.
+        shell.dataset.morphing = ''
+        track(animate(shell, { opacity: 1 }, appear))
+        if (input) track(animate(input, { opacity: 1 }, appear))
+        whenDone([track(animate(shell, full, { ...widen, delay: 0 }))], settle)
+        rows.forEach((row) => track(animate(row, rowAt, { ...spring, duration: 0.25 })))
       }
     } else if (reducedMotion) {
       safeToRemove()
     } else {
+      shell.dataset.morphing = ''
       Object.assign(shell.style, {
         width: `${shell.offsetWidth}px`,
         height: `${shell.offsetHeight}px`,
       })
       rows.forEach((row) => track(animate(row, rowGone, rowLeave)))
-      track(animate(shell, pill, { ...spring, duration: 0.25, bounce: 0 }))
-      const fade = track(animate(shell, { opacity: 0 }, { ...compress, delay: rowLeave.duration }))
-      void fade.finished.then(() => !cancelled && safeToRemove()).catch(() => {})
+      if (input) track(animate(input, { opacity: 0 }, appear))
+      track(animate(shell, { height: bar.height }, lift))
+      track(animate(shell, { width: bar.width }, narrow))
+      whenDone([track(animate(shell, { opacity: 0 }, vanish))], safeToRemove)
     }
     return () => {
       cancelled = true
@@ -225,12 +260,12 @@ function CommandInput({
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Input>): React.JSX.Element {
   return (
-    <div data-slot="command-input-wrapper" className="flex h-10 items-center gap-2 px-2.5">
+    <div data-slot="command-input-wrapper" className="flex h-9 items-center gap-2 px-2.5">
       <SearchIcon className="size-4 shrink-0 text-muted-foreground" />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          'flex h-10 w-full bg-transparent py-3 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+          'flex h-9 w-full bg-transparent py-2 text-xs outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
           className,
         )}
         {...props}
@@ -239,57 +274,20 @@ function CommandInput({
   )
 }
 
-/**
- * Mark on `frame` which edges of the scroller `ref` have rows beyond them, so
- * `.scroll-edges` (index.css) can shade them. Re-measured on scroll and on
- * content resize (every filter keystroke).
- */
-function useScrollEdges(
-  ref: React.RefObject<HTMLDivElement | null>,
-  frame: React.RefObject<HTMLDivElement | null>,
-): void {
-  useEffect(() => {
-    const el = ref.current
-    const box = frame.current
-    if (el === null || box === null) return
-    const measure = (): void => {
-      box.dataset.scrollTop = String(el.scrollTop > 0)
-      box.dataset.scrollBottom = String(el.scrollTop + el.clientHeight < el.scrollHeight - 1)
-    }
-    measure()
-    el.addEventListener('scroll', measure, { passive: true })
-    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
-    observer?.observe(el)
-    for (const child of el.children) observer?.observe(child)
-    return () => {
-      el.removeEventListener('scroll', measure)
-      observer?.disconnect()
-    }
-  }, [ref, frame])
-}
-
 function CommandList({
   className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.List>): React.JSX.Element {
-  const ref = useRef<HTMLDivElement | null>(null)
-  const frame = useRef<HTMLDivElement | null>(null)
-  useScrollEdges(ref, frame)
   return (
-    // The frame carries the edge shades (`.scroll-edges`) over the whole width,
-    // scrollbar included; the list inside is the scroller.
-    <div ref={frame} className="scroll-edges">
-      <CommandPrimitive.List
-        ref={ref}
-        data-slot="command-list"
-        // Always-painted scrollbar, so the list's length reads off the thumb.
-        className={cn(
-          'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
-          className,
-        )}
-        {...props}
-      />
-    </div>
+    <CommandPrimitive.List
+      data-slot="command-list"
+      // Always-painted scrollbar, so the list's length reads off the thumb.
+      className={cn(
+        'scrollbar-always max-h-[60vh] scroll-py-1 overflow-x-hidden overflow-y-scroll',
+        className,
+      )}
+      {...props}
+    />
   )
 }
 
