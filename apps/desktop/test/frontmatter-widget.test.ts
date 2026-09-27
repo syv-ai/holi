@@ -11,8 +11,8 @@ import { EditorSelection, EditorState, type Extension } from '@codemirror/state'
 import type { DecorationSet } from '@codemirror/view'
 import { describe, expect, it } from 'vitest'
 import { buildDecorations, notePathFacet } from '../src/renderer/src/editor/livePreview'
+import { formatCommitDate } from '../src/renderer/src/lib/commit-date'
 import {
-  formatCommitDate,
   frontmatterCommitField,
   frontmatterDecorations,
   frontmatterExpandedField,
