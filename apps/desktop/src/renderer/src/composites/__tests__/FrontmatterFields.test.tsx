@@ -5,18 +5,6 @@ import { Provider, createStore } from 'jotai'
 import { nowAtom } from '@/state/tasks'
 import { FrontmatterFields } from '../FrontmatterFields'
 
-/** The complete-a-task path, which is the one write that does not go through
- *  the document. Hoisted so the mock and the assertions share it. */
-const { completed } = vi.hoisted(() => ({ completed: vi.fn() }))
-
-vi.mock('@/state/tasks', async (importOriginal) => {
-  const { atom } = await import('jotai')
-  return {
-    ...(await importOriginal<typeof import('@/state/tasks')>()),
-    completeTaskAtom: atom(null, (_get, _set, path: string) => completed(path)),
-  }
-})
-
 const TASK = 'projects/task.fix-the-tap.md'
 
 function fields(yaml: string, path = TASK) {
@@ -152,20 +140,30 @@ test('Escape closes the add row and writes nothing', async () => {
   expect(screen.getByRole('button', { name: 'add field' })).toBeInTheDocument()
 })
 
-
-test('done on a recurring task rolls forward instead of writing the word', async () => {
-  // The one edit that cannot be a text write: `done` on a repeat is the next
-  // occurrence, not a status, and a bare write would end the series wherever
-  // somebody happened to set it.
-  completed.mockClear()
-  const onWrite = fields('status: todo\nrecurrence:\n  frequency: weekly\n  interval: 1\n')
+test('done on a recurring task writes its next occurrence, not the word', async () => {
+  // `done` on a repeat is the next occurrence: a bare write would end the
+  // series wherever somebody happened to set it. Today is 2026-09-12.
+  const onWrite = fields(
+    'status: todo\ndue: 2026-09-01\nrecurrence:\n  frequency: weekly\n  interval: 1\n',
+  )
   const user = userEvent.setup()
 
   await user.click(screen.getByRole('combobox', { name: /status/i }))
   await user.click(screen.getByRole('option', { name: 'done' }))
 
-  expect(completed).toHaveBeenCalledWith(TASK)
-  expect(onWrite).not.toHaveBeenCalled()
+  const written = onWrite.mock.lastCall![0] as string
+  expect(written).toContain('status: todo')
+  expect(written).toContain('due: 2026-09-15')
+})
+
+test('done on a task with no rule is just done', async () => {
+  const onWrite = fields('status: doing\n')
+  const user = userEvent.setup()
+
+  await user.click(screen.getByRole('combobox', { name: /status/i }))
+  await user.click(screen.getByRole('option', { name: 'done' }))
+
+  expect(onWrite).toHaveBeenLastCalledWith(expect.stringContaining('status: done'))
 })
 
 test('the recurrence row says the rule in words', () => {

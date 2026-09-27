@@ -237,24 +237,13 @@ export const patchTaskAtom = atom(
   },
 )
 
-/** The card's ONE affordance, and the status select's `done` branch.
- *
- * Goes through `tasks.complete`, never a `status: 'done'` patch: complete is the
- * single roll-forward path, so a recurring task rolls to its next occurrence
- * instead of persisting `done`. A patch would silently end the series. */
-export const completeTaskAtom = atom(null, async (get, set, path: string) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote) return
-  await trpc.tasks.complete.mutate({ remote, path })
-  await set(loadSnapshotAtom)
-})
-
-/** Moves a card between columns: the vertical axis. The horizontal axis is
+/** Moves a card between columns: the vertical axis, and the card's checkbox.
+ * Done is completion, which main applies to any status write, so a recurring
+ * task rolls to its next occurrence (`completeTask`). The horizontal axis is
  * `moveTaskAtom`, because it moves the file and rewrites inbound wiki-links. */
-export const setTaskStatusAtom = atom(null, async (get, set, path: string, status: TaskStatus) => {
-  if (status === 'done') return set(completeTaskAtom, path)
-  return set(patchTaskAtom, path, { status })
-})
+export const setTaskStatusAtom = atom(null, (_get, set, path: string, status: TaskStatus) =>
+  set(patchTaskAtom, path, { status }),
+)
 
 /** The horizontal axis: moves a card to another lane, which moves the file into
  * that folder and rewrites inbound wiki-links in one pass (`tasks.move`). A

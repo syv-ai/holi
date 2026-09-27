@@ -674,10 +674,14 @@ describe('tasks.update', () => {
   })
 })
 
-describe('tasks.complete', () => {
+describe('tasks.update: done is completion', () => {
   it('marks a plain task done', async () => {
     const { caller } = await rig({ 'task.review.md': '---\ntitle: Review\nstatus: doing\n---\n' })
-    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.review.md' })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.review.md',
+      patch: { status: 'done' },
+    })
     expect(task.status).toBe('done')
   })
 
@@ -694,7 +698,11 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.standup.md',
+      patch: { status: 'done' },
+    })
     expect(task.status).toBe('todo')
     expect(task.due).toBe('2026-07-27')
   })
@@ -711,7 +719,11 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.water.md' })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.water.md',
+      patch: { status: 'done' },
+    })
     expect(task.due! >= TODAY).toBe(true)
   })
 
@@ -727,7 +739,11 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.standup.md',
+      patch: { status: 'done' },
+    })
     expect(task.reminder).toBe('2026-07-26T08:30')
   })
 
@@ -744,7 +760,13 @@ describe('tasks.complete', () => {
       ].join('\n'),
     })
     expect(
-      (await caller.tasks.complete({ remote: REMOTE, path: 'task.standup.md' })).reminder,
+      (
+        await caller.tasks.update({
+          remote: REMOTE,
+          path: 'task.standup.md',
+          patch: { status: 'done' },
+        })
+      ).reminder,
     ).toBe('1d')
   })
 
@@ -759,7 +781,11 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    const task = await caller.tasks.complete({ remote: REMOTE, path: 'task.sprint.md' })
+    const task = await caller.tasks.update({
+      remote: REMOTE,
+      path: 'task.sprint.md',
+      patch: { status: 'done' },
+    })
     expect(task.status).toBe('done')
   })
 
@@ -773,9 +799,15 @@ describe('tasks.complete', () => {
         '---',
       ].join('\n'),
     })
-    expect((await caller.tasks.complete({ remote: REMOTE, path: 'task.someday.md' })).status).toBe(
-      'done',
-    )
+    expect(
+      (
+        await caller.tasks.update({
+          remote: REMOTE,
+          path: 'task.someday.md',
+          patch: { status: 'done' },
+        })
+      ).status,
+    ).toBe('done')
   })
 })
 
@@ -893,7 +925,6 @@ describe('path safety', () => {
       await expect(
         caller.tasks.update({ remote: REMOTE, path, patch: { status: 'done' } }),
       ).rejects.toThrow()
-      await expect(caller.tasks.complete({ remote: REMOTE, path })).rejects.toThrow()
       await expect(caller.tasks.delete({ remote: REMOTE, path })).rejects.toThrow()
     }
   })

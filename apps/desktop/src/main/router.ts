@@ -10,13 +10,12 @@ import { readFile, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { initTRPC, TRPCError } from '@trpc/server'
 import {
+  completeTask,
   isAgentSurfacePath,
-  nextDueCatchup,
   parseTaskFile,
   parseTaskPatch,
   serializeTaskFile,
   setFirstHeading,
-  shiftForRollover,
   taskFilePath,
   taskSlug,
   vaultRelPath,
@@ -927,30 +926,8 @@ export function createRouter(deps: RouterDeps) {
         const root = await rootFor(input.remote)
         const rel = safe(input.path)
         // Read-modify-write: the file is the task, so an edit is a parse, a
-        // merge and a full rewrite. The merge SPREADS
-        // rather than testing for undefined: a key present-and-undefined is how
-        // `parseTaskPatch` spells "clear this field".
-        const next = { ...(await readTask(root, rel)), ...input.patch }
-        await writeAtomic(root, rel, serializeTaskFile(next))
-        return next
-      }),
-
-    /**
-     * The single roll-forward path.
-     *
-     * The card's checkbox and a drop into Done both land here rather than writing
-     * `status: done`, because for a recurring task `done` is not the answer — the
-     * next occurrence is. A patch would silently skip the roll and the series
-     * would end wherever someone happened to tick the box.
-     */
-    complete: vaultMutation
-      .input(fields({ remote: 'string', path: 'string' }))
-      .mutation(async ({ input }): Promise<Task> => {
-        const root = await rootFor(input.remote)
-        const rel = safe(input.path)
-        const task = await readTask(root, rel)
-
-        const next = rollForward(task)
+        // merge and a full rewrite.
+        const next = patched(await readTask(root, rel), input.patch)
         await writeAtomic(root, rel, serializeTaskFile(next))
         return next
       }),
@@ -964,7 +941,7 @@ export function createRouter(deps: RouterDeps) {
      * A `status` rides along for a DIAGONAL drop (lane + column in one gesture):
      * it is written in place first, so the single `renameNote` carries the final
      * content to the destination and a card is never half-dropped
-     * (docs/features/tasks.md). `done` routes through `rollForward`, so a
+     * (docs/features/tasks.md). `done` is completion (`patched`), so a
      * recurring task advances instead of persisting done.
      *
      * The basename rides along unchanged (identity slug preserved, not re-slugged
@@ -986,10 +963,7 @@ export function createRouter(deps: RouterDeps) {
 
         if (input.status !== undefined) {
           const task = await readTask(root, from)
-          const next =
-            input.status === 'done'
-              ? rollForward(task)
-              : { ...task, ...patchOrThrow({ status: input.status }) }
+          const next = patched(task, patchOrThrow({ status: input.status }))
           await writeAtomic(root, from, serializeTaskFile(next))
         }
 
@@ -1013,21 +987,16 @@ export function createRouter(deps: RouterDeps) {
    * past its `endDate` has nowhere left to go — both end the series rather than
    * looking set and never firing again (docs/features/tasks.md).
    */
-  function rollForward(task: Task): Task {
-    const rolled =
-      task.recurrence !== undefined && task.due !== undefined
-        ? nextDueCatchup(task.due, task.recurrence, today())
-        : null
-    if (rolled === null) return { ...task, status: 'done' }
-
-    // A reminder is a wall-clock stamp tied to the old occurrence, so it moves
-    // by the same whole-day delta the due date did.
-    const reminder =
-      task.reminder === undefined
-        ? undefined
-        : (shiftForRollover(task.reminder, task.due!, rolled) ?? task.reminder)
-
-    return { ...task, status: 'todo', due: rolled, reminder }
+  /**
+   * A patch applied to a task. **Done is completion**, wherever it comes from
+   * (a field edit, a drop into Done, the card's checkbox): on a recurring task
+   * it is the next occurrence, not the end of the series (`completeTask`).
+   * The merge SPREADS rather than testing for undefined: a key
+   * present-and-undefined is how `parseTaskPatch` spells "clear this field".
+   */
+  function patched(task: Task, patch: TaskPatch): Task {
+    const next = { ...task, ...patch }
+    return patch.status === 'done' ? { ...next, ...completeTask(next, today()) } : next
   }
 
   /**

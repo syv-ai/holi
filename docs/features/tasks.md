@@ -26,7 +26,8 @@ Todo / Doing / Done, with one swim lane per folder.
   writes one file; unranked cards sort last, ties break by title, a no-op drop writes nothing.
 - **Creating.** A column header's `+` adds into that cell. ⌘T is quick create, ⌘⇧T shows every
   field and opens the result; both default to the active note's folder. The agent writes the file.
-- **Completing** is `tasks.complete`, from the checkbox, a drop into Done, or the status row. A
+- **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
+  row; `completeTask` in `packages/shared` says what that writes. A
   recurring task with a `due` rolls forward: `due` advances to on-or-after today via
   `nextDueCatchup`, keeping its time; the reminder shifts by the same whole-day delta, keeping its
   own time; status returns to `todo`. Otherwise it becomes `done`.
@@ -44,7 +45,9 @@ Todo / Doing / Done, with one swim lane per folder.
 ## Rules
 
 - The marker is in the filename, never frontmatter. A pasted `type: task` must not make tasks.
-- Completion always goes through `tasks.complete`. A bare `status: done` ends a recurring series.
+- Done is completion wherever the app writes it: `tasks.update` and `tasks.move` apply
+  `completeTask`, and the frontmatter widget writes its result into the buffer. Only a hand or
+  agent edit of the file can write a bare `status: done`, and that ends a recurring series.
 - A reminder is an absolute moment. A non-stamp reminder is inert, never an error, so a legacy
   `1d` costs a notification rather than the task. `due` is strict.
 - Virtual labels are never stored: `overdue` would be a commit per task at midnight.
@@ -68,9 +71,9 @@ Todo / Doing / Done, with one swim lane per folder.
 
 ## Code
 
-- `packages/shared/src/task-file.ts`, `dates.ts`, `calendar.ts`, `labels.ts`, `recurrence.ts`,
-  `reminder.ts`, `rank.ts`: the format and all the pure rules.
-- `apps/desktop/src/main/router.ts`: `tasks.*` and `rollForward`.
+- `packages/shared/src/task-file.ts`, `completion.ts`, `dates.ts`, `calendar.ts`, `labels.ts`,
+  `recurrence.ts`, `reminder.ts`, `rank.ts`: the format and all the pure rules.
+- `apps/desktop/src/main/router.ts`: `tasks.*` and `patched`, which applies completion.
 - `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes, `nowAtom`.
 - `apps/desktop/src/renderer/src/features/tasks/`, `lib/board-order.ts`, `lib/date-presets.ts`,

@@ -38,7 +38,6 @@ import { FilterBar } from './FilterBar'
 import {
   ROOT_LANE,
   brokenTasksAtom,
-  completeTaskAtom,
   createTaskAtom,
   deleteTaskAtom,
   dropIntent,
@@ -83,12 +82,9 @@ function Card({
 }): React.JSX.Element {
   const now = useAtomValue(nowAtom)
   const { ref: cardRef, ack } = useAck<HTMLDivElement>()
-  const complete = useSetAtom(completeTaskAtom)
   const setStatus = useSetAtom(setTaskStatusAtom)
-  // Completing goes through `complete` so a recurring task rolls forward;
-  // reopening a done task is a plain status change.
-  const toggle = (): Promise<void> =>
-    task.status === 'done' ? setStatus(task.path, 'todo') : complete(task.path)
+  // Done on a recurring task rolls it forward (main's `completeTask`).
+  const toggle = (): Promise<void> => setStatus(task.path, task.status === 'done' ? 'todo' : 'done')
   const open = useSetAtom(openBesideAtom)
   const del = useSetAtom(deleteTaskAtom)
 
@@ -119,8 +115,8 @@ function Card({
       style={arrival?.style}
     >
       <div className="flex items-start gap-2">
-        {/* The card's ONE affordance. Completion goes through tasks.complete, so a
-            recurring task ROLLS FORWARD rather than persisting `done`. */}
+        {/* The card's ONE affordance. Done is completion, so a recurring task
+            ROLLS FORWARD rather than persisting `done`. */}
         <Checkbox
           // A circle, like every other place this app draws a task's status.
           shape="circle"

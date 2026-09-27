@@ -13,6 +13,7 @@
  */
 import {
   type FieldSpec,
+  completeTask,
   editYamlMapping,
   fieldList,
   fieldRecurrence,
@@ -22,7 +23,7 @@ import {
   isTaskFilePath,
   readYamlMapping,
 } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtomValue } from 'jotai'
 import { DateTimePicker } from './DateTimePicker'
 import { FileFactsLine } from './FileFactsLine'
 import { FieldRow } from './FieldRow'
@@ -32,7 +33,7 @@ import { EnumField } from './frontmatter/EnumField'
 import { TagsField } from './frontmatter/TagsField'
 import { TextField } from './frontmatter/TextField'
 import { duePresets, reminderPresets } from '@/lib/date-presets'
-import { completeTaskAtom, nowAtom, taskTagsAtom } from '@/state/tasks'
+import { nowAtom, taskTagsAtom, todayAtom } from '@/state/tasks'
 
 export function FrontmatterFields({
   path,
@@ -51,7 +52,7 @@ export function FrontmatterFields({
   facts?: boolean
 }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
-  const complete = useSetAtom(completeTaskAtom)
+  const today = useAtomValue(todayAtom)
   const tags = useAtomValue(taskTagsAtom)
 
   const schema = frontmatterSchema(path)
@@ -59,12 +60,12 @@ export function FrontmatterFields({
   // Nothing to draw as rows; the widget shows the YAML instead (it checks first).
   if (schema === null || values === null) return null
 
-  const set = (key: string, next: unknown): void => {
-    onWrite(editYamlMapping(yaml, { [key]: next }))
-  }
+  const write = (patch: Record<string, unknown>): void => onWrite(editYamlMapping(yaml, patch))
+  const set = (key: string, next: unknown): void => write({ [key]: next })
 
   const isTask = isTaskFilePath(path)
   const due = typeof values.due === 'string' ? values.due : undefined
+  const reminder = typeof values.reminder === 'string' ? values.reminder : undefined
 
   const control = (field: FieldSpec): React.JSX.Element => {
     const value = values[field.key]
@@ -76,11 +77,16 @@ export function FrontmatterFields({
             value={value}
             options={field.kind.options}
             onChange={(next) =>
-              // `done` on a recurring task is a roll-forward to the next
-              // occurrence, not a status write, which would end the series
-              // (docs/features/tasks.md).
+              // Done is completion: on a recurring task, the next occurrence
+              // rather than the end of the series (docs/features/tasks.md).
+              // Written into this buffer, like every other field edit.
               field.key === 'status' && next === 'done' && isTask
-                ? void complete(path)
+                ? write({
+                    ...completeTask(
+                      { due, reminder, recurrence: fieldRecurrence(values.recurrence) },
+                      today,
+                    ),
+                  })
                 : set(field.key, next)
             }
           />
@@ -127,7 +133,9 @@ export function FrontmatterFields({
           />
         )
       case 'text':
-        return <TextField name={field.key} value={value} onChange={(next) => set(field.key, next)} />
+        return (
+          <TextField name={field.key} value={value} onChange={(next) => set(field.key, next)} />
+        )
     }
   }
 
