@@ -4,9 +4,10 @@
  * list: switching and adding are the same gesture.
  *
  * **Each vault has its options one level down** (D109). The row's ellipsis, or
- * → on the row, drills the same surface into that vault: back, then Leave or
- * Delete as GitHub allows, or Remove when GitHub no longer shows it. A pick
- * there opens the confirm; nothing is removed from the menu itself.
+ * → on the row, drills the same surface into that vault: back, then Leave, or
+ * Remove when GitHub no longer shows it. A pick there opens the confirm;
+ * nothing is removed from the menu itself. **Delete is not here:** it lives in
+ * Settings, Vault only, away from a menu you open to switch.
  */
 import { useSetAtom } from 'jotai'
 import { ArrowLeft, Check, ChevronDown, Ellipsis, Plus } from 'lucide-react'
@@ -176,23 +177,12 @@ function VaultOptions({
         <DropdownMenuItem data-vault-forget onSelect={() => onRemove('forget')}>
           Remove from this machine…
         </DropdownMenuItem>
+      ) : membership.owned ? (
+        <DropdownMenuItem disabled>you own this vault</DropdownMenuItem>
       ) : (
-        <>
-          {!membership.owned && (
-            <DropdownMenuItem data-vault-leave onSelect={() => onRemove('leave')}>
-              Leave vault…
-            </DropdownMenuItem>
-          )}
-          {membership.canAdmin && (
-            <DropdownMenuItem
-              data-vault-delete
-              variant="destructive"
-              onSelect={() => onRemove('delete')}
-            >
-              Delete vault…
-            </DropdownMenuItem>
-          )}
-        </>
+        <DropdownMenuItem data-vault-leave onSelect={() => onRemove('leave')}>
+          Leave vault…
+        </DropdownMenuItem>
       )}
     </>
   )
