@@ -282,13 +282,17 @@ export function FileTree({
   }
 
   // Opening a file (from anywhere: a tab, a link, the palette) opens its
-  // branch and moves the focus to its root.
+  // branch and moves the focus to its root; but only a file the tree shows. A
+  // task opened from the board while tasks are hidden has no row to go to, and
+  // following it would open folders around nothing and slide the bar toward
+  // where it would be. Showing tasks then follows it.
+  const activeShown = activePath !== null && data[activePath] !== undefined
   useEffect(() => {
-    if (activePath === null) return
+    if (activePath === null || !activeShown) return
     openBranch(activePath, false)
     setFocusRoot(activePath.split('/')[0]!)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePath, expansion])
+  }, [activePath, activeShown, expansion])
 
   const onPath = (id: string) =>
     activePath !== null && (id === activePath || activePath.startsWith(`${id}/`))
