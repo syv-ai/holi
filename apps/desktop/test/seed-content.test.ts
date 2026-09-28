@@ -66,6 +66,7 @@ describe('SEED_FILES', () => {
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
+      '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
       '.claude/settings.json',
@@ -259,16 +260,14 @@ describe('SEED_FILES', () => {
     expect(gate).not.toMatch(/permissionDecision:\s*'deny'/)
   })
 
-  it('the turn hooks POST to the local hook server, guarded so they no-op outside Holi', () => {
+  it('the turn hooks run the turn-signal script with their edge', () => {
     const settings = JSON.parse(SEED_FILES['.claude/settings.json']!)
-    const startCmd = settings.hooks.UserPromptSubmit[0].hooks[1].command
-    const endCmd = settings.hooks.Stop[0].hooks[0].command
-    expect(startCmd).toContain('/turn/start')
-    expect(endCmd).toContain('/turn/end')
-    for (const cmd of [startCmd, endCmd]) {
-      expect(cmd).toContain('[ -n "$HOLI_HOOK_PORT" ]') // the no-op-outside-Holi guard
-      expect(cmd).toContain('$HOLI_HOOK_TOKEN')
-    }
+    expect(settings.hooks.UserPromptSubmit[0].hooks[1].command).toBe(
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
+    )
+    expect(settings.hooks.Stop[0].hooks[0].command).toBe(
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" end',
+    )
   })
 
   it('every hook script has its shebang on line 1', () => {
@@ -719,6 +718,7 @@ describe('the managed / once split (D75)', () => {
       '.claude/hooks/google-send-gate.mjs',
       '.claude/hooks/memory-index-guard.mjs',
       '.claude/hooks/memory-overview.mjs',
+      '.claude/hooks/turn-signal.mjs',
       '.claude/hooks/user-prompt-submit.mjs',
       '.claude/hooks/vault-app-check.mjs',
       '.claude/skills/gmail-calendar/SKILL.md',
@@ -1048,5 +1048,66 @@ describe('vault memory (D89)', () => {
 
     expect(twice).toBeNull()
     expect(parse(once).hooks.SessionStart).toHaveLength(1)
+  })
+})
+
+describe('settingsWithRequired — background sessions (D110)', () => {
+  const OLD_START =
+    '[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/start?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1'
+  const OLD_END = OLD_START.replace('/turn/start', '/turn/end')
+  const commands = (entries: Array<{ hooks: Array<{ command: string }> }>) =>
+    entries.flatMap((e) => e.hooks.map((h) => h.command))
+
+  it('reaches a vault that never had the turn bracket', () => {
+    const merged = JSON.parse(settingsWithRequired('{"hooks":{}}')!)
+    expect(commands(merged.hooks.UserPromptSubmit)).toEqual([
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
+    ])
+    expect(commands(merged.hooks.Stop)).toEqual([
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" end',
+    ])
+  })
+
+  it('replaces the old inline curl, keeping the user’s own hooks beside it', () => {
+    const existing = JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: 'node "$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.mjs"',
+              },
+              { type: 'command', command: OLD_START },
+            ],
+          },
+          { hooks: [{ type: 'command', command: 'echo mine' }] },
+        ],
+        Stop: [{ hooks: [{ type: 'command', command: OLD_END }] }],
+      },
+    })
+    const merged = JSON.parse(settingsWithRequired(existing)!)
+    expect(commands(merged.hooks.UserPromptSubmit)).toEqual([
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/user-prompt-submit.mjs"',
+      'echo mine',
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" start',
+    ])
+    expect(commands(merged.hooks.Stop)).toEqual([
+      'node "$CLAUDE_PROJECT_DIR/.claude/hooks/turn-signal.mjs" end',
+    ])
+  })
+
+  it('keeps background sessions in the vault itself, unless the user chose otherwise', () => {
+    expect(JSON.parse(settingsWithRequired('{}')!).worktree).toEqual({ bgIsolation: 'none' })
+    const chosen = JSON.parse(settingsWithRequired('{"worktree":{"bgIsolation":"worktree"}}')!)
+    expect(chosen.worktree).toEqual({ bgIsolation: 'worktree' })
+  })
+
+  it('is a fixed point: a second merge changes nothing', () => {
+    const once = settingsWithRequired(
+      '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"x"}]}]}}',
+    )!
+    expect(settingsWithRequired(once)).toBeNull()
+    expect(settingsWithRequired(SEED_FILES['.claude/settings.json']!)).toBeNull()
   })
 })

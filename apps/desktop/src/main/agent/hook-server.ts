@@ -25,6 +25,17 @@ export interface HookServerDeps {
   onTurnStart(sessionId: string): void
   onTurnEnd(sessionId: string): void
   /**
+   * A turn began or ended in one of this vault's Claude Code background
+   * sessions (D110), named by its short job id.
+   *
+   * The id rides beside the vault's standing token, because a background
+   * session's environment comes from Claude Code's supervisor rather than from
+   * Holi: no per-session bearer can reach it. The seeded `turn-signal.mjs`
+   * reads the token from `$CLAUDE_CONFIG_DIR/holi.env` and the id from
+   * `$CLAUDE_JOB_DIR`.
+   */
+  onJobTurn?: (remote: string, jobId: string, active: boolean) => void
+  /**
    * This session's status line asked what to print (D101).
    *
    * The whole of Claude Code's status JSON arrives as the body, and what comes
@@ -67,6 +78,9 @@ export interface HookServer {
 /** Cap the drained request body — the hooks send nothing we read, so this is
  *  purely a guard against a runaway sender holding the socket open. */
 const MAX_BODY_BYTES = 64 * 1024
+
+/** A Claude Code job id: eight hex characters, the name of its `jobs/` dir. */
+const JOB_ID = /^[0-9a-f]{8}$/
 
 /**
  * What a token speaks for. Always a vault, because that is how an ops route
@@ -144,9 +158,13 @@ export function createHookServer(deps: HookServerDeps): HookServer {
         // A turn signal on the vault's standing token names no session, and with
         // several running there is no honest guess, so it is dropped (still
         // answered empty).
+        const active = url.pathname === '/turn/start'
+        const job = url.searchParams.get('job') ?? ''
         if (bearer.sessionId !== undefined) {
-          if (url.pathname === '/turn/start') deps.onTurnStart(bearer.sessionId)
+          if (active) deps.onTurnStart(bearer.sessionId)
           else deps.onTurnEnd(bearer.sessionId)
+        } else if (JOB_ID.test(job)) {
+          deps.onJobTurn?.(bearer.remote, job, active)
         }
         res.writeHead(204).end() // empty body — never inject text into Claude's context
         return

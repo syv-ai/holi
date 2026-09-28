@@ -19,7 +19,6 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { statusLinePath } from './cli'
 import { resolveColorMode } from '@holi/shared'
 import { readVaultSettings } from '../vault/settings'
 
@@ -57,16 +56,32 @@ export function agentConfigSlug(remote: string): string {
 export type AgentTheme = 'dark' | 'light'
 
 /**
- * A path as one word for `sh`.
- *
- * Claude Code runs a `statusLine` command through a shell, so the setting is a
- * command line, not a path. Holi's script lives under `userData`, which on macOS
- * is `~/Library/Application Support/…`: unquoted, the shell stops at the space
- * and the footer silently falls back to the default. Single quotes, because
- * nothing else in a path then needs escaping.
+ * A path as one word for `sh`. Only used to recognise the status line Holi
+ * used to install, whose command was the quoted script path.
  */
 function shellQuote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`
+}
+
+/** Where Holi's old `holi-statusline` script lived (D101, retired by D110). */
+function retiredStatusLine(userDataDir: string): string {
+  return join(userDataDir, 'bin', 'holi-statusline')
+}
+
+/** What a spawn stamps into the config directory's `settings.json`. */
+export interface ConfigDirStamp {
+  theme?: AgentTheme
+  /**
+   * Variables every session on this directory gets, through Claude Code's own
+   * settings `env` block (D110). A background session's environment is the
+   * supervisor's, not Holi's, but a settings `env` block reaches every session,
+   * a pre-warmed one included. Only static paths go here: anything that changes
+   * per app run lives in `holi.env` (see `endpoint-file.ts`).
+   */
+  env?: Record<string, string>
+  /** Holi's retired status-line script path. A `statusLine` running exactly
+   *  that is removed; anyone else's is left alone. */
+  retiredStatusLine?: string
 }
 
 /**
@@ -77,26 +92,25 @@ function shellQuote(path: string): string {
  * user's own choices, and rewriting it wholesale would discard them. A different
  * required set, because the vault's hook commands mean nothing at user scope.
  *
- * **Two keys, two rules**, and the difference is what each one is:
- *
  * - `disableClaudeAiConnectors` is a **default**, written only when absent. It is
  *   a second layer under the vault's own copy of the same key, so a vault whose
  *   `.claude/settings.json` was deleted still gets no cloud connectors, and a
  *   user who deliberately wrote `false` is not overruled.
- * - `theme` **tracks a setting**, so it is written on every spawn. Claude Code's
- *   `"auto"` detects the terminal background, and inside Holi's embedded PTY
- *   there is nothing reliable to detect.
+ * - `theme` **tracks a setting**, so it is written whenever it differs. Claude
+ *   Code's `"auto"` detects the terminal background, and inside Holi's embedded
+ *   PTY there is nothing reliable to detect.
+ * - `env` keys Holi names **track paths** that move with the app, so they are
+ *   written whenever they differ. The user's own `env` keys stay.
+ *
+ * Written here rather than into the vault's own `.claude/settings.json`, which
+ * syncs: a path on this machine means nothing on a teammate's.
  */
-function settingsWithRequired(
-  existing: string | null,
-  theme?: AgentTheme,
-  statusLine?: string,
-): string | null {
-  const command = statusLine === undefined ? undefined : shellQuote(statusLine)
+function settingsWithRequired(existing: string | null, stamp: ConfigDirStamp = {}): string | null {
+  const { theme, env, retiredStatusLine: retired } = stamp
   if (existing === null || existing.trim() === '') {
     const seed: Record<string, unknown> = { disableClaudeAiConnectors: true }
     if (theme) seed.theme = theme
-    if (command) seed.statusLine = { type: 'command', command }
+    if (env && Object.keys(env).length > 0) seed.env = { ...env }
     return JSON.stringify(seed, null, 2) + '\n'
   }
 
@@ -118,22 +132,30 @@ function settingsWithRequired(
     settings.theme = theme
     changed = true
   }
+  if (env) {
+    const current =
+      settings.env !== null && typeof settings.env === 'object' && !Array.isArray(settings.env)
+        ? (settings.env as Record<string, unknown>)
+        : {}
+    const differs = Object.entries(env).some(([key, value]) => current[key] !== value)
+    if (differs) {
+      settings.env = { ...current, ...env }
+      changed = true
+    }
+  }
   /**
-   * The status line **tracks a path**, so it is written whenever it differs:
-   * the script lives under `userData`, which moves with the app, and a stale
-   * command fails silently.
-   *
-   * Written here rather than into the vault's own `.claude/settings.json`,
-   * which syncs: a path on this machine means nothing on a teammate's.
+   * The status line Holi used to install (D101). Session names now come from
+   * Claude Code's own listing, and the script it ran reached Holi through an
+   * environment a background session never has. Only Holi's own command goes.
    */
-  if (command) {
+  if (retired !== undefined) {
     const current = settings.statusLine
-    const already =
+    if (
       current !== null &&
       typeof current === 'object' &&
-      (current as Record<string, unknown>).command === command
-    if (!already) {
-      settings.statusLine = { type: 'command', command }
+      (current as Record<string, unknown>).command === shellQuote(retired)
+    ) {
+      delete settings.statusLine
       changed = true
     }
   }
@@ -144,9 +166,10 @@ function settingsWithRequired(
 /**
  * Create and top up **this vault's** config directory, returning its absolute path.
  *
- * Run on **every spawn**: a seed that only runs at creation is a migration that
- * never happens, the active vault changes while the app runs, and `theme` has to
- * track a setting the user can flip without restarting.
+ * Run whenever Holi opens a terminal in the vault: a seed that only runs at
+ * creation is a migration that never happens, the active vault changes while
+ * the app runs, and `theme` has to track a setting the user can flip without
+ * restarting.
  *
  * `projects/`, `sessions/` and `.claude.json` are deliberately NOT created:
  * Claude Code owns those, and pre-creating them would guess at its schema.
@@ -154,17 +177,13 @@ function settingsWithRequired(
 export async function ensureAgentConfigDir(
   userDataDir: string,
   remote: string,
-  opts: { theme?: AgentTheme; statusLine?: string } = {},
+  stamp: ConfigDirStamp = {},
 ): Promise<string> {
   const configDir = join(userDataDir, AGENT_CONFIG_DIR_NAME, agentConfigSlug(remote))
   await mkdir(configDir, { recursive: true })
 
   const path = join(configDir, SETTINGS)
-  const next = settingsWithRequired(
-    await readFile(path, 'utf8').catch(() => null),
-    opts.theme,
-    opts.statusLine,
-  )
+  const next = settingsWithRequired(await readFile(path, 'utf8').catch(() => null), stamp)
   if (next !== null) await writeFile(path, next, 'utf8')
 
   return configDir
@@ -226,15 +245,15 @@ export async function resolveVaultAgentConfig(args: {
   /** The vault's clone dir — where `colorScheme` is read from. */
   root: string
   systemPrefersDark: boolean
+  /** Static paths every session should see (`ConfigDirStamp.env`). */
+  env?: Record<string, string>
 }): Promise<AgentConfigResolution> {
   const { colorScheme } = await readVaultSettings(args.root)
   const theme = resolveColorMode(colorScheme, args.systemPrefersDark)
   const dir = await ensureAgentConfigDir(args.userDataDir, args.remote, {
     theme,
-    // D101: the footer says which model is answering and how full the context
-    // is. The script is Holi's, under `userData`, so the path is stamped here on
-    // every spawn the way the theme is.
-    statusLine: statusLinePath(args.userDataDir),
+    ...(args.env === undefined ? {} : { env: args.env }),
+    retiredStatusLine: retiredStatusLine(args.userDataDir),
   })
   return { dir, firstSpawn: await takeFirstSpawn(dir) }
 }

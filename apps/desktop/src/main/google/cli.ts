@@ -33,6 +33,13 @@ const SCRIPT = `#!/bin/sh
 # that has attendees (Holi refuses, because it would email them).
 set -eu
 
+# The port and tokens live in a file in the vault's Claude Code config dir,
+# rewritten by Holi each time it opens the vault. A background session's
+# environment comes from Claude Code's supervisor, so it cannot carry them.
+if [ -n "\${CLAUDE_CONFIG_DIR:-}" ] && [ -f "\$CLAUDE_CONFIG_DIR/holi.env" ]; then
+  . "\$CLAUDE_CONFIG_DIR/holi.env"
+fi
+
 if [ -z "\${HOLI_GOOGLE_PORT:-}" ] || [ -z "\${HOLI_GOOGLE_TOKEN:-}" ]; then
   echo "holi-google: Holi is not running, or Google is not connected." >&2
   exit 1

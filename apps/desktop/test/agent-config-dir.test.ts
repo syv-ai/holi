@@ -1,8 +1,7 @@
 import { SETTINGS_LOCAL_FILE } from '@holi/shared'
-import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   AGENT_CONFIG_DIR_NAME,
@@ -106,67 +105,40 @@ describe('ensureAgentConfigDir', () => {
     expect(after.disableClaudeAiConnectors).toBe(true)
   })
 
-  it('points the status line at the script Holi is about to run', async () => {
+  it("hands every session Holi's static paths through the settings env block", async () => {
+    // A background session's environment is the supervisor's, but a settings
+    // `env` block reaches it (D110). The user's own keys stay; Holi's track.
     const userData = await tempDir()
     const configDir = await ensureAgentConfigDir(userData, VAULT, {
-      statusLine: '/somewhere/bin/holi-statusline',
+      env: { HOLI_BIN: '/old/bin/holi' },
     })
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ env: { HOLI_BIN: '/old/bin/holi', MINE: '1' } }),
+    )
 
-    expect((await settings(configDir)).statusLine).toEqual({
-      type: 'command',
-      command: "'/somewhere/bin/holi-statusline'",
-    })
+    await ensureAgentConfigDir(userData, VAULT, { env: { HOLI_BIN: '/new/bin/holi' } })
+
+    expect((await settings(configDir)).env).toEqual({ HOLI_BIN: '/new/bin/holi', MINE: '1' })
   })
 
-  it('quotes the script for the shell Claude Code runs it in', async () => {
-    // The real path: `userData` is `~/Library/Application Support/…` on macOS,
-    // and Claude Code hands the command to a shell, which stopped at the space
-    // and printed its default footer instead. Proven the way it fails: by
-    // running the setting through `sh`.
+  it('removes the status line Holi used to install, and only that one', async () => {
     const userData = join(await tempDir(), 'Application Support', 'holi')
-    const script = join(userData, 'bin', "it's-statusline")
-    await mkdir(dirname(script), { recursive: true })
-    await writeFile(script, '#!/bin/sh\necho reached\n', { mode: 0o755 })
-    const configDir = await ensureAgentConfigDir(userData, VAULT, { statusLine: script })
-
-    const { command } = (await settings(configDir)).statusLine as { command: string }
-    const out = execFileSync('sh', ['-c', command], { encoding: 'utf8' })
-
-    expect(out.trim()).toBe('reached')
-  })
-
-  it('follows the script when the app moves', async () => {
-    // It lives under `userData`, so the path is not stable across an install or
-    // a rename. A command pointing at where it used to be fails in a footer
-    // nobody reads twice, which is why this tracks rather than seeds.
-    const userData = await tempDir()
-    const configDir = await ensureAgentConfigDir(userData, VAULT, { statusLine: '/old/bin/sl' })
-    await ensureAgentConfigDir(userData, VAULT, { statusLine: '/new/bin/sl' })
-
-    expect((await settings(configDir)).statusLine).toEqual({
-      type: 'command',
-      command: "'/new/bin/sl'",
-    })
-  })
-
-  it('overwrites a hand-written status line, which is the cost of tracking one', async () => {
-    // Stated because it is a real cost: this key is Holi's, and a hand-written
-    // `statusLine` in the vault's config directory is replaced on the next
-    // spawn. The directory is Holi's own (D86), and the alternative is a footer
-    // that silently stops working after an app update.
-    const userData = await tempDir()
+    const retired = join(userData, 'bin', 'holi-statusline')
     const configDir = await ensureAgentConfigDir(userData, VAULT)
+    await writeFile(
+      join(configDir, 'settings.json'),
+      JSON.stringify({ statusLine: { type: 'command', command: `'${retired}'` } }),
+    )
+    await ensureAgentConfigDir(userData, VAULT, { retiredStatusLine: retired })
+    expect((await settings(configDir)).statusLine).toBeUndefined()
+
     await writeFile(
       join(configDir, 'settings.json'),
       JSON.stringify({ statusLine: { type: 'command', command: 'mine.sh' } }),
     )
-
-    await ensureAgentConfigDir(userData, VAULT, { statusLine: '/bin/holi-statusline' })
-
-    expect((await settings(configDir)).statusLine).toEqual({
-      type: 'command',
-      command: "'/bin/holi-statusline'",
-    })
+    await ensureAgentConfigDir(userData, VAULT, { retiredStatusLine: retired })
+    expect((await settings(configDir)).statusLine).toEqual({ type: 'command', command: 'mine.sh' })
   })
 
   it('adds the opt-out to a settings file that predates it', async () => {

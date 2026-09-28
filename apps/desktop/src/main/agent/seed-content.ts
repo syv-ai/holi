@@ -42,6 +42,7 @@ import googleSendGateHook from './hooks/google-send-gate.mjs?raw'
 import vaultAppCheckHook from './hooks/vault-app-check.mjs?raw'
 import memoryOverviewHook from './hooks/memory-overview.mjs?raw'
 import memoryIndexGuardHook from './hooks/memory-index-guard.mjs?raw'
+import turnSignalHook from './hooks/turn-signal.mjs?raw'
 import mdToPdfSkill from './skills/md-to-pdf/SKILL.md?raw'
 import themeSkill from './skills/theme/SKILL.md?raw'
 import gmailCalendarSkill from './skills/gmail-calendar/SKILL.md?raw'
@@ -89,14 +90,19 @@ A memory is one fact in one file under \`memory/\`. Do not use a memory system o
 const hookCommand = (name: string) => `node "$CLAUDE_PROJECT_DIR/.claude/hooks/${name}.mjs"`
 
 /**
- * A turn-bracket hook: POST to Holi's local hook server so it can pause sync
- * while the agent works. Guarded by `[ -n "$HOLI_HOOK_PORT" ]` so it is a silent
- * no-op for a bare `claude` opened outside Holi. Port and token come from the
- * child env, so this committed command needs no per-session rewrite. Hook
- * commands are not the agent's Bash tool, so `permissions.ask` does not gate it.
+ * A turn-bracket hook (D110): tells Holi a turn started or ended so it can pause
+ * sync while the agent works. The script finds Holi through `holi.env` in the
+ * session's config dir and names the session by its job id, because a
+ * background session's environment is Claude Code's supervisor's, not Holi's.
+ * It is a silent no-op outside Holi. Hook commands are not the agent's Bash
+ * tool, so `permissions.ask` does not gate it.
  */
-const turnHook = (endpoint: 'start' | 'end') =>
-  `[ -n "$HOLI_HOOK_PORT" ] || exit 0; curl -s --max-time 2 -X POST "http://127.0.0.1:$HOLI_HOOK_PORT/turn/${endpoint}?t=$HOLI_HOOK_TOKEN" >/dev/null 2>&1`
+const turnHook = (edge: 'start' | 'end') => `${hookCommand('turn-signal')} ${edge}`
+
+/** What the turn hooks this vault used to carry look like: an inline `curl`
+ *  on the per-session environment, which a background session never has. */
+const isOldTurnHook = (command: string): boolean =>
+  command.includes('/turn/start') || command.includes('/turn/end')
 
 const SETTINGS_JSON =
   JSON.stringify(
@@ -185,6 +191,15 @@ const SETTINGS_JSON =
        * Holi's address them by vault path.
        */
       autoMemoryEnabled: false,
+      /**
+       * Background sessions edit the vault itself (D110).
+       *
+       * Claude Code otherwise moves a dispatched session into a git worktree
+       * under `.claude/worktrees/` before it edits: its work stays invisible to
+       * the vault until merged, and the `.local.` files are not there at all.
+       * Holi's sync, turn review and merge flow all assume one working tree.
+       */
+      worktree: { bgIsolation: 'none' },
       permissions: {
         // Seeded egress gating: the user still approves each one, they just
         // don't slip through unasked.
@@ -277,6 +292,7 @@ export const MANAGED_FILES: Record<string, string> = {
   '.claude/hooks/vault-app-check.mjs': vaultAppCheckHook,
   '.claude/hooks/memory-overview.mjs': memoryOverviewHook,
   '.claude/hooks/memory-index-guard.mjs': memoryIndexGuardHook,
+  '.claude/hooks/turn-signal.mjs': turnSignalHook,
   '.claude/skills/md-to-pdf/SKILL.md': mdToPdfSkill,
   '.claude/skills/theme/SKILL.md': themeSkill,
   '.claude/skills/gmail-calendar/SKILL.md': gmailCalendarSkill,
@@ -411,6 +427,7 @@ export function settingsWithRequired(existing: string | null): string | null {
 
   const required = JSON.parse(SETTINGS_JSON) as {
     hooks: { PreToolUse: unknown[]; PostToolUse: unknown[]; SessionStart: unknown[] }
+    worktree: { bgIsolation: string }
     permissions: { ask: string[]; allow: string[] }
     disableClaudeAiConnectors: boolean
     autoMemoryEnabled: boolean
@@ -480,6 +497,40 @@ export function settingsWithRequired(existing: string | null): string | null {
     changed = true
   }
 
+  /**
+   * The turn bracket (D110), which pauses sync while the agent works.
+   *
+   * **This is what reaches existing vaults.** Until now the bracket was only
+   * seeded, never merged, so a vault that already had a `settings.json` never
+   * got it. The old inline `curl` entries read a per-session environment a
+   * background session never has, so they are removed rather than left to fail
+   * quietly beside the new ones. A user's own hooks on these events stay.
+   */
+  for (const [event, edge] of [
+    ['UserPromptSubmit', 'start'],
+    ['Stop', 'end'],
+  ] as const) {
+    const entries = Array.isArray(hooks[event]) ? hooks[event] : []
+    const kept = withoutOldTurnHooks(entries)
+    const hasSignal = JSON.stringify(kept).includes('turn-signal.mjs')
+    if (JSON.stringify(kept) !== JSON.stringify(entries) || !hasSignal) {
+      hooks[event] = hasSignal
+        ? kept
+        : [...kept, { hooks: [{ type: 'command', command: turnHook(edge) }] }]
+      settings.hooks = hooks
+      changed = true
+    }
+  }
+
+  /** Only when absent: a user who chose isolation keeps it, and loses Holi's
+   *  view of that session's edits until it merges. */
+  const worktree = (settings.worktree ?? {}) as Record<string, unknown>
+  if (worktree.bgIsolation === undefined) {
+    worktree.bgIsolation = required.worktree.bgIsolation
+    settings.worktree = worktree
+    changed = true
+  }
+
   // The permission rules, added to whatever the user already asks about.
   const permissions = (settings.permissions ?? {}) as Record<string, unknown>
   const ask = Array.isArray(permissions.ask) ? (permissions.ask as string[]) : []
@@ -500,6 +551,33 @@ export function settingsWithRequired(existing: string | null): string | null {
   }
 
   return changed ? JSON.stringify(settings, null, 2) + '\n' : null
+}
+
+/**
+ * One hook event's entries with the old inline turn `curl` taken out. An entry
+ * left with no hooks goes too; everything else, including an entry that shares
+ * the old command with the user's own hook, keeps its other hooks.
+ */
+function withoutOldTurnHooks(entries: unknown[]): unknown[] {
+  const out: unknown[] = []
+  for (const entry of entries) {
+    if (
+      entry === null ||
+      typeof entry !== 'object' ||
+      !Array.isArray((entry as { hooks?: unknown }).hooks)
+    ) {
+      out.push(entry)
+      continue
+    }
+    const inner = (entry as { hooks: unknown[] }).hooks
+    const keptHooks = inner.filter((h) => {
+      const command = (h as { command?: unknown } | null)?.command
+      return typeof command !== 'string' || !isOldTurnHook(command)
+    })
+    if (keptHooks.length === inner.length) out.push(entry)
+    else if (keptHooks.length > 0) out.push({ ...(entry as object), hooks: keptHooks })
+  }
+  return out
 }
 
 /**

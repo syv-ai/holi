@@ -1,0 +1,231 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createAgentSessions, SIGN_IN_NOTICE } from '../src/main/agent/agent-sessions'
+import type { AgentTerminals, OpenArgs } from '../src/main/agent/agent-terminals'
+import type { ClaudeCli } from '../src/main/agent/claude-cli'
+
+const ROOT = '/Users/ada/Holi/syv/vault'
+const REMOTE = 'syv/vault'
+
+type Row = Record<string, unknown>
+const row = (id: string, over: Row = {}): Row => ({
+  id,
+  cwd: ROOT,
+  kind: 'background',
+  sessionId: `${id}-uuid`,
+  name: `Session ${id}`,
+  pid: 100,
+  status: 'idle',
+  state: 'done',
+  ...over,
+})
+
+function setup(initial: Row[] = []) {
+  let listing: Row[] = initial
+  const cli = {
+    list: vi.fn(async () => JSON.stringify(listing)),
+    stop: vi.fn(async (_t, id: string) => {
+      listing = listing.map((r) => (r.id === id ? { ...r, pid: undefined, state: 'stopped' } : r))
+      return { ok: true as const }
+    }),
+    respawn: vi.fn(async () => ({ ok: true as const })),
+    startBg: vi.fn(async () => {
+      listing = [...listing, row('newnew00', { status: 'idle', state: 'blocked' })]
+      return { ok: true as const, id: 'newnew00' }
+    }),
+    forkBg: vi.fn(async () => {
+      listing = [...listing, row('copy0000')]
+      return { ok: true as const, id: 'copy0000' }
+    }),
+  } satisfies ClaudeCli
+  const opened: OpenArgs[] = []
+  const pastes: Array<[string, string]> = []
+  const launched = new Map<string, string>()
+  const terminals: AgentTerminals = {
+    open: (args) => {
+      opened.push(args)
+      const id = `term-${opened.length}`
+      if (args.attach !== undefined) launched.set(args.attach, id)
+      return { ok: true, id }
+    },
+    attach: async () => '',
+    write: () => {},
+    resize: () => {},
+    paste: (id, text) => {
+      pastes.push([id, text])
+      return true
+    },
+    close: async () => {},
+    closeAll: vi.fn(async () => {}),
+    list: () => [],
+    launchedFor: (id) => launched.get(id) ?? null,
+    listTerminal: () => null,
+  }
+  const sent: Array<[string, unknown]> = []
+  const released = vi.fn(async () => {})
+  const claimed = vi.fn(async () => {})
+  const pauses: string[] = []
+  const vault = {
+    remote: REMOTE,
+    root: ROOT,
+    repo: { head: () => Promise.resolve('base-sha') },
+    commitNow: () => Promise.resolve(null),
+    pause: (reason: string) => pauses.push(reason),
+    resume: () => {},
+  }
+  let active: typeof vault | null = vault
+  const sessions = createAgentSessions({
+    host: { active: () => active as never },
+    getWindow: () =>
+      ({ webContents: { send: (c: string, p: unknown) => sent.push([c, p]) } }) as never,
+    cli,
+    terminals,
+    resolveConfig: async () => ({ dir: '/cfg/vault', firstSpawn: true }),
+    binDir: () => '/holi/bin',
+    claimEndpoint: claimed,
+    releaseEndpoint: released,
+    watch: () => () => {},
+    idleRecheckMs: 5,
+    idleConfirmMs: 10,
+    leaveCapMs: 50,
+    log: () => {},
+  })
+  return {
+    sessions,
+    cli,
+    opened,
+    pastes,
+    sent,
+    claimed,
+    released,
+    terminals,
+    setListing: (rows: Row[]) => {
+      listing = rows
+    },
+    pauses,
+    setActive: (v: typeof active) => {
+      active = v
+    },
+  }
+}
+
+describe('agent sessions', () => {
+  it('lists only live sessions, and claims the endpoint for the vault', async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb', { pid: undefined, status: undefined })])
+    await t.sessions.ensure()
+
+    expect(t.sessions.sessions().map((s) => s.id)).toEqual(['aaaaaaaa'])
+    expect(t.claimed).toHaveBeenCalledWith({ remote: REMOTE, root: ROOT, configDir: '/cfg/vault' })
+    expect(t.sent.at(-1)).toEqual([
+      'agent:sessions',
+      [{ id: 'aaaaaaaa', name: 'Session aaaaaaaa', state: 'idle' }],
+    ])
+  })
+
+  it('holds sync for a session found mid-turn when the vault opens', async () => {
+    const t = setup([row('aaaaaaaa', { status: 'busy', state: 'working' })])
+    await t.sessions.ensure()
+    expect(t.sessions.sessions()[0]?.state).toBe('working')
+    expect(t.pauses).toEqual(['the assistant is working'])
+
+    // It finished while nobody was listening: two idle readings let it go.
+    t.setListing([row('aaaaaaaa', { status: 'idle' })])
+    await t.sessions.refresh()
+    await vi.waitFor(() => expect(t.sessions.sessions()[0]?.state).toBe('idle'))
+  })
+
+  it('takes the turn bracket from the hook, for this vault only', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.sessions.ensure()
+    t.sessions.noteTurn('someone/else', 'aaaaaaaa', true)
+    expect(t.sessions.sessions()[0]?.state).toBe('idle')
+    t.sessions.noteTurn(REMOTE, 'aaaaaaaa', true)
+    expect(t.sessions.sessions()[0]?.state).toBe('working')
+  })
+
+  it('stops a session: it leaves the list', async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
+    await t.sessions.ensure()
+    expect(await t.sessions.stop('aaaaaaaa')).toEqual({ ok: true })
+    expect(t.cli.stop).toHaveBeenCalledWith(
+      { root: ROOT, configDir: '/cfg/vault', binDir: '/holi/bin' },
+      'aaaaaaaa',
+    )
+    expect(t.sessions.sessions().map((s) => s.id)).toEqual(['bbbbbbbb'])
+  })
+
+  it('prints the sign-in notice into the first terminal only', async () => {
+    const t = setup()
+    await t.sessions.open({})
+    await t.sessions.open({ attach: 'aaaaaaaa' })
+    expect(t.opened[0]?.notice).toBe(SIGN_IN_NOTICE)
+    expect(t.opened[1]?.notice).toBeUndefined()
+    expect(t.opened[1]?.attach).toBe('aaaaaaaa')
+  })
+
+  it('sends an ask into the window Holi already has on that session, unsent', async () => {
+    const t = setup([row('aaaaaaaa')])
+    const first = await t.sessions.send({ text: 'look', target: 'aaaaaaaa' })
+    const second = await t.sessions.send({ text: 'again', target: 'aaaaaaaa' })
+    expect(first).toEqual({ ok: true, terminalId: 'term-1' })
+    expect(second).toEqual({ ok: true, terminalId: 'term-1' })
+    expect(t.opened).toHaveLength(1)
+    expect(t.pastes).toEqual([
+      ['term-1', 'look'],
+      ['term-1', 'again'],
+    ])
+  })
+
+  it('starts a new session named from the ask, and pastes into it', async () => {
+    const t = setup()
+    const res = await t.sessions.send({ text: 'Tidy the inbox\nplease', target: 'new' })
+    expect(t.cli.startBg).toHaveBeenCalledWith(expect.anything(), { name: 'Tidy the inbox' })
+    expect(res.ok).toBe(true)
+    expect(t.opened.at(-1)?.attach).toBe('newnew00')
+    expect(t.pastes).toEqual([['term-1', 'Tidy the inbox\nplease']])
+  })
+
+  it('refuses an ask to a session that has ended', async () => {
+    const t = setup([row('aaaaaaaa', { pid: undefined, status: undefined })])
+    expect(await t.sessions.send({ text: 'x', target: 'aaaaaaaa' })).toEqual({
+      ok: false,
+      message: 'That session has ended. Pick another one.',
+    })
+    expect(t.pastes).toEqual([])
+  })
+
+  it('duplicates by the conversation id, named as a copy, and opens it', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.sessions.ensure()
+    const res = await t.sessions.duplicate('aaaaaaaa')
+    expect(t.cli.forkBg).toHaveBeenCalledWith(
+      expect.anything(),
+      'aaaaaaaa-uuid',
+      'Session aaaaaaaa (copy)',
+    )
+    expect(res).toEqual({ ok: true, sessionId: 'copy0000', terminalId: 'term-1' })
+  })
+
+  it('leaves: stops live sessions, closes windows, releases the endpoint', async () => {
+    const t = setup([row('aaaaaaaa'), row('bbbbbbbb')])
+    await t.sessions.ensure()
+    await t.sessions.leave()
+    expect(t.cli.stop).toHaveBeenCalledTimes(2)
+    expect(t.terminals.closeAll).toHaveBeenCalled()
+    expect(t.released).toHaveBeenCalled()
+    expect(t.sessions.sessions()).toEqual([])
+  })
+
+  it('can leave without stopping anything', async () => {
+    const t = setup([row('aaaaaaaa')])
+    await t.sessions.ensure()
+    await t.sessions.leave({ stopSessions: false })
+    expect(t.cli.stop).not.toHaveBeenCalled()
+  })
+
+  it('does nothing without a vault', async () => {
+    const t = setup()
+    t.setActive(null)
+    expect(await t.sessions.open({})).toEqual({ ok: false, message: 'No vault is open.' })
+    expect(t.claimed).not.toHaveBeenCalled()
+  })
+})

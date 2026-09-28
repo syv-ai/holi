@@ -35,6 +35,18 @@ export class TerminalMirror {
     this.term?.write(data)
   }
 
+  /**
+   * The terminal's title, as the program running in it sets it (OSC 0/2).
+   *
+   * A published terminal protocol, read the way any terminal reads it, and used
+   * only as a label: Claude Code sets it to the attached session's name, and to
+   * "claude agents" in its list (D110). It never says which session, so nothing
+   * is keyed on it.
+   */
+  onTitle(cb: (title: string) => void): void {
+    this.term?.onTitleChange(cb)
+  }
+
   resize(cols: number, rows: number): void {
     this.term?.resize(Math.max(1, cols), Math.max(1, rows))
   }
