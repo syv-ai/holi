@@ -29,7 +29,7 @@ import {
 } from 'motion/react'
 import { ChevronRight } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Button, Icon, RollingCount, instant, settle } from '@/primitives'
+import { Button, ConfirmInPlace, Icon, RollingCount, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
 import { rankAt, sortCell } from '@/lib/board-order'
@@ -37,6 +37,7 @@ import {
   ROOT_LANE,
   brokenTasksAtom,
   collapsedLanesAtom,
+  deleteTasksAtom,
   filterAtom,
   laneOf,
   laneOrder,
@@ -146,6 +147,7 @@ export function BoardView(): React.JSX.Element {
   const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
   const rankAll = useSetAtom(rankTasksAtom)
+  const removeAll = useSetAtom(deleteTasksAtom)
   const filter = useAtomValue(filterAtom)
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
@@ -178,6 +180,8 @@ export function BoardView(): React.JSX.Element {
   const lanes = laneOrder(all.map(laneOf))
   const cell = (lane: string, status: TaskStatus) =>
     sortCell(all.filter((t) => shown(t) === status && laneOf(t) === lane))
+
+  const finished = all.filter((t) => shown(t) === 'done')
 
   // "hide done" drops the whole Done column, not just its cards: an empty
   // column that can never fill reads as a layout bug.
@@ -218,7 +222,7 @@ export function BoardView(): React.JSX.Element {
         <div ref={scroller} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           {/* At least the board's height, and as tall as its tallest column:
               the surfaces stretch to whichever is more. */}
-          <motion.div className="flex min-h-full gap-3 p-4" style={{ width }}>
+          <motion.div className="flex min-h-full gap-3 px-8 py-4" style={{ width }}>
             <AnimatePresence initial={false}>
               {columns.map((column) => (
                 <motion.section
@@ -236,106 +240,116 @@ export function BoardView(): React.JSX.Element {
                       value={all.filter((t) => shown(t) === column.status).length}
                       className="font-normal text-muted-foreground"
                     />
+                    {column.status === 'done' && finished.length > 0 && (
+                      // Empties what the column shows. Git keeps the files.
+                      <ConfirmInPlace
+                        label="Delete every done task"
+                        confirmLabel={`Delete ${finished.length}`}
+                        onConfirm={() => void removeAll(finished.map((t) => t.path))}
+                        className="ml-auto font-normal"
+                      />
+                    )}
                   </h2>
 
-                  {lanes.map((lane) => {
-                    const cards = cell(lane, column.status)
-                    const gap = drag.gap(lane, column.status)
-                    const key = cellKey(column.status, lane)
-                    // The root lane has no name, so nothing to fold it by.
-                    const open = !lane || !collapsed.has(key)
-                    // A lane group with cards is laid out plainly. An empty one is
-                    // not there at rest, and springs open only while a drag is on,
-                    // so every cell can take the drop. (Animating every group's
-                    // height left stale pixel heights that clipped cards.)
-                    const group = (
-                      <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
-                        {/* The vault root's lane has no name to show. The lane a
+                  {/* One presence for the column's lane groups, keyed by lane: a
+                      group that empties, fills, or whose folder leaves the
+                      board entirely keeps its element and slides, rather than
+                      remounting under a new wrapper and jumping. */}
+                  <AnimatePresence initial={false}>
+                    {lanes.map((lane) => {
+                      const cards = cell(lane, column.status)
+                      const gap = drag.gap(lane, column.status)
+                      const key = cellKey(column.status, lane)
+                      // The root lane has no name, so nothing to fold it by.
+                      const open = !lane || !collapsed.has(key)
+                      // An empty lane group is not there at rest, and springs open
+                      // only while a drag is on, so every cell can take the drop.
+                      if (cards.length === 0 && !drag.active) return null
+                      return (
+                        <motion.div
+                          key={lane || ROOT_LANE}
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={reduced ? instant : settle}
+                          // Clip only what spills well past the group, so a
+                          // card's flick is not cut.
+                          className="overflow-clip [overflow-clip-margin:8px]"
+                        >
+                          <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
+                            {/* The vault root's lane has no name to show. The lane a
                           drag aims at lights its name, not its surface. A
                           folded lane still takes a drop, at its top. */}
-                        {lane ? (
-                          <div className="pt-2 pb-1">
-                            <Button
-                              variant="ghost"
-                              size="xs"
-                              aria-expanded={open}
-                              data-lane-toggle={key}
-                              onClick={() => toggleLane(key)}
-                              className={cn(
-                                'group/lane h-6 max-w-full justify-start gap-1 px-1.5 font-medium active:scale-100 hover:bg-transparent dark:hover:bg-transparent',
-                                gap ? 'text-foreground' : 'text-muted-foreground',
-                              )}
-                            >
-                              <span className="truncate">{lane}</span>
-                              {!open && <span className="font-normal">{cards.length}</span>}
-                              <Icon
-                                icon={ChevronRight}
-                                size="sm"
-                                className={cn(
-                                  'motion-respond',
-                                  open && 'rotate-90 opacity-0 group-hover/lane:opacity-100',
-                                )}
-                              />
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="h-2" />
-                        )}
-                        <AnimatePresence initial={false}>
-                          {open && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: 'auto', opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={reduced ? instant : settle}
-                              // Clip only what spills well past the cell, so a
-                              // card's flick is not cut while the lane folds.
-                              className="overflow-clip [overflow-clip-margin:8px]"
-                            >
-                              <div className="flex min-h-6 flex-col gap-2.5 pt-1">
-                                <AnimatePresence initial={false}>
-                                  {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
-                                    item.kind === 'gap' ? (
-                                      <Gap key="gap" height={gap!.height} />
-                                    ) : (
-                                      <BoardCard
-                                        key={item.task.path}
-                                        task={item.task}
-                                        shown={shown(item.task)}
-                                        drag={drag}
-                                        parking={parking}
-                                        arrival={
-                                          drag.isFolded(item.task.path)
-                                            ? undefined
-                                            : arrivalProps(item.task.path)
-                                        }
-                                      />
-                                    ),
+                            {lane ? (
+                              <div className="pt-2 pb-1">
+                                <Button
+                                  variant="ghost"
+                                  size="xs"
+                                  aria-expanded={open}
+                                  data-lane-toggle={key}
+                                  onClick={() => toggleLane(key)}
+                                  className={cn(
+                                    'group/lane h-6 max-w-full justify-start gap-1 px-1.5 font-medium active:scale-100 hover:bg-transparent dark:hover:bg-transparent',
+                                    gap ? 'text-foreground' : 'text-muted-foreground',
                                   )}
-                                </AnimatePresence>
+                                >
+                                  <span className="truncate">{lane}</span>
+                                  {!open && <span className="font-normal">{cards.length}</span>}
+                                  <Icon
+                                    icon={ChevronRight}
+                                    size="sm"
+                                    className={cn(
+                                      'motion-respond',
+                                      open && 'rotate-90 opacity-0 group-hover/lane:opacity-100',
+                                    )}
+                                  />
+                                </Button>
                               </div>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </div>
-                    )
-                    if (cards.length > 0) return <div key={lane || ROOT_LANE}>{group}</div>
-                    return (
-                      <AnimatePresence key={lane || ROOT_LANE} initial={false}>
-                        {drag.active && (
-                          <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            transition={reduced ? instant : settle}
-                            className="overflow-hidden"
-                          >
-                            {group}
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    )
-                  })}
+                            ) : (
+                              <div className="h-2" />
+                            )}
+                            <AnimatePresence initial={false}>
+                              {open && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: 'auto', opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={reduced ? instant : settle}
+                                  // Clip only what spills well past the cell, so a
+                                  // card's flick is not cut while the lane folds.
+                                  className="overflow-clip [overflow-clip-margin:8px]"
+                                >
+                                  <div className="flex min-h-6 flex-col gap-2.5 pt-1">
+                                    <AnimatePresence initial={false}>
+                                      {withGap(cards, drag.isFolded, gap?.index ?? null).map(
+                                        (item) =>
+                                          item.kind === 'gap' ? (
+                                            <Gap key="gap" height={gap!.height} />
+                                          ) : (
+                                            <BoardCard
+                                              key={item.task.path}
+                                              task={item.task}
+                                              shown={shown(item.task)}
+                                              drag={drag}
+                                              parking={parking}
+                                              arrival={
+                                                drag.isFolded(item.task.path)
+                                                  ? undefined
+                                                  : arrivalProps(item.task.path)
+                                              }
+                                            />
+                                          ),
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                        </motion.div>
+                      )
+                    })}
+                  </AnimatePresence>
                 </motion.section>
               ))}
             </AnimatePresence>

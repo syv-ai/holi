@@ -265,6 +265,16 @@ export const moveTaskAtom = atom(
   },
 )
 
+/** Deletes several tasks in one pass and one re-read: emptying Done. Git still
+ *  has them. */
+export const deleteTasksAtom = atom(null, async (get, set, paths: string[]) => {
+  const remote = get(activeRemoteAtom)
+  if (!remote || paths.length === 0) return
+  await Promise.all(paths.map((path) => trpc.tasks.delete.mutate({ remote, path })))
+  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
+  await set(loadSnapshotAtom)
+})
+
 export const deleteTaskAtom = atom(null, async (get, set, path: string) => {
   const remote = get(activeRemoteAtom)
   if (!remote) return

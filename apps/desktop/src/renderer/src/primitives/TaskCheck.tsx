@@ -1,6 +1,7 @@
 /**
- * A task's check: a dashed ring that fills with the brand, pops, and draws a
- * tick (ported from rare-ui's task list, fitted to the house tokens).
+ * A task's check: a ring that fills with the brand, pops, and draws a tick
+ * (ported from rare-ui's task list, fitted to the house tokens). Todo is a
+ * plain ring; doing is dotted, in the doing colour.
  *
  * **Presentational.** `filled` is what it shows, not the task's status: the
  * board drives it from its completion sequence, which runs ahead of the write
@@ -26,8 +27,8 @@ export function TaskCheck({
   className,
 }: {
   filled: boolean
-  /** In progress: the ring takes the doing colour, as the file tree's icon
-   *  does (`--task-doing`). The fill on completion is the same. */
+  /** In progress: the ring goes dotted and takes the doing colour, as the
+   *  file tree's icon does (`--task-doing`). The fill on completion is the same. */
   doing?: boolean
   onDrawn?: () => void
   /** The accessible name: "Complete Fix login", "Reopen Fix login". */
@@ -64,9 +65,9 @@ export function TaskCheck({
           r={RING_R}
           fill="none"
           stroke="currentColor"
-          strokeWidth="2.2"
+          strokeWidth={doing ? 2.2 : 1.8}
           strokeLinecap="round"
-          strokeDasharray={RING_DASH}
+          strokeDasharray={doing ? RING_DASH : undefined}
           initial={false}
           animate={{ opacity: filled ? 0 : 1 }}
           transition={timing(check.fill)}

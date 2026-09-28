@@ -16,6 +16,7 @@ import { motion, useReducedMotion } from 'motion/react'
 import { cn } from '@/lib/cn'
 import { shortStamp } from '@/lib/date-presets'
 import {
+  Button,
   ConfirmInPlace,
   ContextMenu,
   ContextMenuContent,
@@ -29,7 +30,7 @@ import {
 } from '@/primitives'
 import { nowAtom, todayAtom } from '@/state/clock'
 import { openBesideAtom } from '@/state/panes'
-import { deleteTaskAtom, setTaskStatusAtom } from '@/state/tasks'
+import { deleteTaskAtom, filterAtom, setTaskStatusAtom } from '@/state/tasks'
 import { useCheckSequence, type Parking } from './use-check-sequence'
 import type { useBoardDrag } from './use-board-drag'
 
@@ -44,8 +45,48 @@ const LABEL_TONE: Record<string, string> = {
   p2: 'text-amber-400',
 }
 
-/** A card's meta line: due, labels, tags. Quick add draws its preview with it. */
-export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
+/** A label or tag that filters the board by itself: the dock's Tags filter,
+ *  toggled. Its own click, so it does not open the card. */
+function FilterWord({
+  word,
+  onFilter,
+  className,
+  children,
+}: {
+  word: string
+  onFilter?: (word: string) => void
+  className?: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  if (!onFilter) return <span className={className}>{children}</span>
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      data-filter-word={word}
+      onClick={(event) => {
+        event.stopPropagation()
+        onFilter(word)
+      }}
+      className={cn(
+        'h-auto rounded-sm px-0 text-[11px] font-normal text-inherit active:scale-100 hover:bg-transparent hover:text-foreground dark:hover:bg-transparent',
+        className,
+      )}
+    >
+      {children}
+    </Button>
+  )
+}
+
+/** A card's meta line: due, labels, tags. Quick add draws its preview with it;
+ *  on the board, `onFilter` makes each label and tag filter by itself. */
+export function TaskMeta({
+  task,
+  onFilter,
+}: {
+  task: Task
+  onFilter?: (word: string) => void
+}): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
@@ -66,12 +107,14 @@ export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
         </motion.span>
       )}
       {labels.map((label) => (
-        <span key={label} className={LABEL_TONE[label]}>
+        <FilterWord key={label} word={label} onFilter={onFilter} className={LABEL_TONE[label]}>
           {label}
-        </span>
+        </FilterWord>
       ))}
       {task.tags.map((tag) => (
-        <span key={tag}>#{tag}</span>
+        <FilterWord key={tag} word={tag} onFilter={onFilter}>
+          #{tag}
+        </FilterWord>
       ))}
     </div>
   )
@@ -97,6 +140,12 @@ export function BoardCard({
   const setStatus = useSetAtom(setTaskStatusAtom)
   const open = useSetAtom(openBesideAtom)
   const remove = useSetAtom(deleteTaskAtom)
+  const setFilter = useSetAtom(filterAtom)
+  const filterBy = (word: string) =>
+    setFilter((f) => ({
+      ...f,
+      tags: f.tags.includes(word) ? f.tags.filter((t) => t !== word) : [...f.tags, word],
+    }))
   const reduced = useReducedMotion() ?? false
   const sequence = useCheckSequence(task, today, parking, setStatus)
   const folded = drag.isFolded(task.path)
@@ -134,10 +183,10 @@ export function BoardCard({
         <div className="min-w-0 flex-1">
           {/* A px down: the line box centres on the orb, but mixed-case text reads
               high in it. */}
-          <div className="relative top-px truncate leading-4">
+          <div className="relative top-px origin-left truncate leading-4 motion-respond group-hover/card:scale-[1.03]">
             <StrikeText text={task.title} struck={sequence.struck} onStruck={sequence.onStruck} />
           </div>
-          <TaskMeta task={task} />
+          <TaskMeta task={task} onFilter={filterBy} />
         </div>
         <ConfirmInPlace
           label={`Delete ${task.title}`}
