@@ -7,6 +7,7 @@
  * replaying main's mirror to get it back is a visible repaint.
  */
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 import { useCallback, useEffect, useRef } from 'react'
@@ -104,6 +105,18 @@ export function SessionTerminal({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(mount)
+    // The WebGL renderer, after `open` (it needs the element). The DOM one
+    // corrects each glyph to the cell with a letter-spacing under 1/64px,
+    // which Chromium rounds to nothing, so a full row drew a few px past the
+    // grid and its last column was clipped. WebGL draws on the grid. A lost
+    // context (the GPU reset, or too many terminals) falls back to DOM.
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => webgl.dispose())
+      term.loadAddon(webgl)
+    } catch {
+      // No WebGL2 here: the DOM renderer stays.
+    }
     termRef.current = term
     fitRef.current = fit
     // So a paste into this session can be followed by the keyboard: see
