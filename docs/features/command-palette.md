@@ -76,8 +76,9 @@ app-level action is one row of one command table that keys, palette and menu all
 - `apps/desktop/src/renderer/src/state/commands.ts`: the table, `runCommandAtom`,
   `useCommandHotkeys`.
 - `apps/desktop/src/renderer/src/features/palette/CommandPalette.tsx`: the overlay, ⌃⇥, the Ask row.
-- `apps/desktop/src/renderer/src/primitives/Command.tsx`: shadcn Command on `cmdk`, and the
-  morphing shell.
+- `apps/desktop/src/renderer/src/primitives/Command.tsx`: shadcn Command on `cmdk`, in
+  `primitives/MorphDialog.tsx`, the morphing top-anchored shell it shares with
+  [quick add](tasks.md).
 - `apps/desktop/src/renderer/src/primitives/springs.ts`: the springs it shares with the nav menu.
 - `apps/desktop/src/renderer/src/lib/palette-rows.ts`: rows and ranking.
 - `apps/desktop/src/renderer/src/state/palette.ts`, `state/recents.ts`, `lib/recents.ts`.

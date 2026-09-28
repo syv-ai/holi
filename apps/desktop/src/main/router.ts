@@ -1064,6 +1064,9 @@ export function createRouter(deps: RouterDeps) {
     }
   }
 
+  /** What a create may set besides title, status, folder and body. */
+  const CREATE_FIELDS = ['due', 'priority', 'tags', 'reminder', 'recurrence']
+
   const tasks = t.router({
     create: vaultMutation
       .input((raw: unknown) => {
@@ -1074,11 +1077,10 @@ export function createRouter(deps: RouterDeps) {
           status: 'string?',
           description: 'string?',
         })(raw)
-        // Quick add sets due, priority and tags before the task exists, so they
+        // Quick add and full create set fields before the task exists, so they
         // go in with the create: one file, one write. Validated by
         // `patchOrThrow` below; typed here for the client.
-        const extra = (raw as { extra?: { due?: string; priority?: string; tags?: string[] } })
-          .extra
+        const extra = (raw as { extra?: Record<string, unknown> }).extra
         return extra === undefined ? base : { ...base, extra }
       })
       .mutation(async ({ input }): Promise<{ path: string }> => {
@@ -1088,7 +1090,7 @@ export function createRouter(deps: RouterDeps) {
         const extra: Record<string, unknown> = ('extra' in input && input.extra) || {}
         const patch = patchOrThrow({
           ...Object.fromEntries(
-            Object.entries(extra).filter(([key]) => ['due', 'priority', 'tags'].includes(key)),
+            Object.entries(extra).filter(([key]) => CREATE_FIELDS.includes(key)),
           ),
           status: input.status ?? 'todo',
         })

@@ -383,9 +383,13 @@ export function MorphingMenu({
     if (focus) {
       const first =
         view.kind === 'panel'
-          ? panel?.querySelector<HTMLElement>(
-              'input, textarea, button, [tabindex]:not([tabindex="-1"])',
-            )
+          ? // The panel's first control, skipping pictures of controls
+            // (`inert`) and anything the keyboard is not meant to land on.
+            [
+              ...(panel?.querySelectorAll<HTMLElement>(
+                'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+              ) ?? []),
+            ].find((element) => element.tabIndex >= 0 && !element.closest('[inert]'))
           : controls[0]
       const target =
         focus === 'first' ? first : controls.find((element) => element.dataset.menuItem === focus)

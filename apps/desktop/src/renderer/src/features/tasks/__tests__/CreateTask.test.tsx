@@ -4,8 +4,8 @@ import { expect, test, vi } from 'vitest'
 import { Dialog } from '@/primitives'
 import { CreateTask } from '../CreateTask'
 
-// The body editor pulls the whole CodeMirror chain at import time; quick mode
-// renders none of it, and this unit test asserts only the footer contract.
+// The body editor pulls the whole CodeMirror chain at import time, and this
+// unit test asserts only the footer contract.
 vi.mock('@/features/tasks/TaskBodyEditor', () => ({
   TaskDescriptionEditor: () => null,
 }))
@@ -14,7 +14,7 @@ vi.mock('@/features/tasks/TaskBodyEditor', () => ({
 test('confirm is disabled until a title is entered', async () => {
   render(
     <Dialog open onClose={() => {}}>
-      <CreateTask mode="quick" onClose={() => {}} />
+      <CreateTask onClose={() => {}} />
     </Dialog>,
   )
   const confirm = screen.getByRole('button', { name: /create/i })

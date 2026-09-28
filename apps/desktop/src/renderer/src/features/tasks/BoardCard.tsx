@@ -47,7 +47,8 @@ const LABEL_TONE: Record<string, string> = {
   p2: 'text-amber-400',
 }
 
-function Meta({ task }: { task: Task }): React.JSX.Element | null {
+/** A card's meta line: due, labels, tags. Quick add draws its preview with it. */
+export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
@@ -133,7 +134,7 @@ export function BoardCard({
             onStruck={sequence.onStruck}
             className="leading-4"
           />
-          <Meta task={task} />
+          <TaskMeta task={task} />
         </div>
         <ConfirmInPlace
           label={`Delete ${task.title}`}

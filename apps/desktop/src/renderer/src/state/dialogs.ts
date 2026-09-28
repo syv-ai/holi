@@ -1,5 +1,4 @@
 import { atom } from 'jotai'
-import type { CreateTaskMode } from './tasks'
 
 /**
  * The dialog registry, as a discriminated union (`docs/ui-system.md`). A dialog
@@ -11,7 +10,7 @@ import type { CreateTaskMode } from './tasks'
  * offers a way out (a Cancel beside a corner ✕ is two controls for one intent).
  */
 export type ActiveDialog = { closable?: boolean } & (
-  | { id: 'create-task'; size: 'md'; mode: CreateTaskMode }
+  | { id: 'create-task'; size: 'md' } // Full create (⌘⇧T); quick add (⌘T) is `QuickAdd`.
   | { id: 'convert-to-pdf'; size: 'md'; remote: string; path: string }
   /**
    * A brand-new mail (D71). Carries no payload, and `draftId` is deliberately

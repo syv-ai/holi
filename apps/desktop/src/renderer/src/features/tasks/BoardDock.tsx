@@ -9,8 +9,8 @@
  * quick add, which is not a filter.
  */
 import { useAtom, useAtomValue } from 'jotai'
-import { Eye, EyeOff, Search, Tag, X } from 'lucide-react'
-import { useMemo, type ReactNode } from 'react'
+import { Eye, EyeOff, Plus, Search, Tag, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
   Icon,
   IconButton,
@@ -21,20 +21,30 @@ import {
   type MorphingMenuItem,
 } from '@/primitives'
 import { nowAtom } from '@/state/clock'
-import { availableLabels, filterAtom, tasksAtom } from '@/state/tasks'
+import { availableLabels, filterAtom, quickAddAtom, tasksAtom } from '@/state/tasks'
+import { QuickAdd } from './QuickAdd'
 
-export function BoardDock({
-  newTask,
-  menuRef,
-}: {
-  /** Quick add's panel item, or nothing. */
-  newTask?: MorphingMenuItem
-  menuRef?: React.Ref<MorphingMenuHandle>
-}): React.JSX.Element {
+const newTask: MorphingMenuItem = {
+  id: 'new',
+  label: 'New task',
+  icon: Plus,
+  panel: () => <QuickAdd flight />,
+}
+
+export function BoardDock(): React.JSX.Element {
   const [filter, setFilter] = useAtom(filterAtom)
+  const [quickAdd, setQuickAdd] = useAtom(quickAddAtom)
   const tasks = useAtomValue(tasksAtom)
   const now = useAtomValue(nowAtom)
   const labels = availableLabels(tasks.values(), now)
+  const menu = useRef<MorphingMenuHandle>(null)
+
+  // ⌘T on the board grows the dock into quick add, and the request is done.
+  useEffect(() => {
+    if (quickAdd?.where !== 'board') return
+    menu.current?.openPanel('new')
+    setQuickAdd(null)
+  }, [quickAdd, setQuickAdd])
 
   const searchPanel = (close: () => void): ReactNode => (
     <div data-morph-row="" className="flex w-80 items-center gap-2 px-2 py-1">
@@ -111,17 +121,17 @@ export function BoardDock({
         pressed: filter.hideDone,
         onSelect: () => setFilter((f) => ({ ...f, hideDone: !f.hideDone })),
       },
-      ...(newTask ? [newTask] : []),
+      newTask,
     ],
     // The panels close over the filter and the labels; the items are memoised
     // because a change of identity restarts the menu's layout pass.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filter, labels.join('\n'), newTask],
+    [filter, labels.join('\n')],
   )
 
   return (
     <MorphingMenu
-      ref={menuRef}
+      ref={menu}
       label="Board"
       anchor="bottom-center"
       surface="float"

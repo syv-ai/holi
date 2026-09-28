@@ -16,7 +16,6 @@ import {
   Tooltip,
 } from '@/primitives'
 import {
-  type CreateTaskMode,
   ROOT_LANE,
   createTaskAtom,
   laneLabel,
@@ -45,19 +44,12 @@ type Draft = {
 }
 
 /**
- * Create a task in any folder. It fills a Dialog's Header/Body/Footer slots and
- * knows nothing about overlays or sizing. `quick` (⌘T) captures
- * title+folder+status and stays put; `full` (⌘⇧T) shows every field as a
- * draft, writes in one go, then opens the task file. Submit is disabled until
- * a title exists.
+ * Full create (⌘⇧T): every field as a draft, written in one go, then the task
+ * file opens to flesh out. It fills a Dialog's Header/Body/Footer slots and
+ * knows nothing about overlays or sizing. Submit is disabled until a title
+ * exists. Quick capture (⌘T) is not this dialog but `QuickAdd`.
  */
-export function CreateTask({
-  mode,
-  onClose,
-}: {
-  mode: CreateTaskMode
-  onClose: () => void
-}): React.JSX.Element {
+export function CreateTask({ onClose }: { onClose: () => void }): React.JSX.Element {
   const snapshot = useAtomValue(snapshotAtom)
   const activeDoc = useAtomValue(activeDocAtom)
   const create = useSetAtom(createTaskAtom)
@@ -114,23 +106,22 @@ export function CreateTask({
     setBusy(true)
     // The body goes in with the create, which puts the title heading above it.
     // A `description` patch afterwards would replace the whole body, heading too.
-    const body = mode === 'full' ? bodyRef.current.trim() : ''
+    const body = bodyRef.current.trim()
+    // Every field goes in with the create: one file, one write.
     const path = await create({
       title: t,
       status,
       folder: folder.trim().replace(/^\/+|\/+$/g, ''),
       ...(body !== '' ? { description: body } : {}),
+      extra: {
+        ...(draft.due ? { due: draft.due } : {}),
+        ...(draft.priority ? { priority: draft.priority } : {}),
+        ...(draft.tags.length ? { tags: draft.tags } : {}),
+        ...(draft.reminder ? { reminder: draft.reminder } : {}),
+        ...(draft.recurrence ? { recurrence: draft.recurrence } : {}),
+      },
     })
-    if (path && mode === 'full') {
-      const extra: Record<string, unknown> = {}
-      if (draft.due) extra.due = draft.due
-      if (draft.priority) extra.priority = draft.priority
-      if (draft.tags.length) extra.tags = draft.tags
-      if (draft.reminder) extra.reminder = draft.reminder
-      if (draft.recurrence) extra.recurrence = draft.recurrence
-      if (Object.keys(extra).length > 0) await patch(path, extra)
-    }
-    if (path && mode === 'full') openTask(path)
+    if (path) openTask(path)
     onClose()
   }
 
@@ -140,7 +131,7 @@ export function CreateTask({
 
   return (
     <>
-      <Dialog.Header>{mode === 'full' ? 'New task — all fields' : 'New task'}</Dialog.Header>
+      <Dialog.Header>New task</Dialog.Header>
 
       <Dialog.Body>
         <FormField label="Title">
@@ -171,7 +162,7 @@ export function CreateTask({
           </datalist>
         </FormField>
 
-        {mode === 'quick' ? (
+        <div className="flex flex-col gap-3 border-t border-divider pt-3">
           <FormField label="Status">
             <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
               <SelectTrigger className="w-full" data-create-task-status>
@@ -186,101 +177,84 @@ export function CreateTask({
               </SelectContent>
             </Select>
           </FormField>
-        ) : (
-          <div className="flex flex-col gap-3 border-t border-divider pt-3">
-            <FormField label="Status">
-              <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
-                <SelectTrigger className="w-full" data-create-task-status>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUSES.map((s) => (
-                    <SelectItem key={s} value={s}>
-                      {s}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FormField>
 
-            <FormField label="Due">
-              <DateTimePicker
-                value={draft.due ?? null}
-                placeholder="no due date"
-                data-testid="create-task-due"
-                presets={duePresets(now)}
-                onChange={(next) => draftSave({ due: next })}
-              />
-            </FormField>
+          <FormField label="Due">
+            <DateTimePicker
+              value={draft.due ?? null}
+              placeholder="no due date"
+              data-testid="create-task-due"
+              presets={duePresets(now)}
+              onChange={(next) => draftSave({ due: next })}
+            />
+          </FormField>
 
-            <FormField label="Priority">
-              {/* Radix Select forbids an empty-string value, so 'none' is the
+          <FormField label="Priority">
+            {/* Radix Select forbids an empty-string value, so 'none' is the
                   sentinel for "no priority" (mapped back to undefined on save). */}
-              <Select
-                value={draft.priority ?? 'none'}
-                onValueChange={(v) => draftSave({ priority: v === 'none' ? null : (v as Priority) })}
-              >
-                <SelectTrigger className="w-full" data-create-task-priority>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">—</SelectItem>
-                  <SelectItem value="high">high</SelectItem>
-                  <SelectItem value="medium">medium</SelectItem>
-                  <SelectItem value="low">low</SelectItem>
-                </SelectContent>
-              </Select>
-            </FormField>
+            <Select
+              value={draft.priority ?? 'none'}
+              onValueChange={(v) => draftSave({ priority: v === 'none' ? null : (v as Priority) })}
+            >
+              <SelectTrigger className="w-full" data-create-task-priority>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">—</SelectItem>
+                <SelectItem value="high">high</SelectItem>
+                <SelectItem value="medium">medium</SelectItem>
+                <SelectItem value="low">low</SelectItem>
+              </SelectContent>
+            </Select>
+          </FormField>
 
-            <FormField label="Tags">
-              <Input
-                data-create-task-tags
-                placeholder="comma, separated"
-                defaultValue={draft.tags.join(', ')}
-                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                onBlur={(e) =>
-                  draftSave({
-                    tags: e.target.value
-                      .split(',')
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
-              />
-            </FormField>
+          <FormField label="Tags">
+            <Input
+              data-create-task-tags
+              placeholder="comma, separated"
+              defaultValue={draft.tags.join(', ')}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={(e) =>
+                draftSave({
+                  tags: e.target.value
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                })
+              }
+            />
+          </FormField>
 
-            <FormField label="Reminder">
-              {/* The shortcuts follow the draft's own due date, so setting Due
+          <FormField label="Reminder">
+            {/* The shortcuts follow the draft's own due date, so setting Due
                   above changes what "1 day before" means down here. */}
-              <DateTimePicker
-                value={draft.reminder ?? null}
-                placeholder="no reminder"
-                data-testid="create-task-reminder"
-                presets={reminderPresets(draft.due, now)}
-                onChange={(next) => draftSave({ reminder: next })}
-              />
-            </FormField>
+            <DateTimePicker
+              value={draft.reminder ?? null}
+              placeholder="no reminder"
+              data-testid="create-task-reminder"
+              presets={reminderPresets(draft.due, now)}
+              onChange={(next) => draftSave({ reminder: next })}
+            />
+          </FormField>
 
-            <FormField label="Repeats">
-              <RecurrenceField
-                value={draft.recurrence}
-                data-testid="create-task-recurrence"
-                onChange={(next) => draftSave({ recurrence: next })}
-              />
-            </FormField>
+          <FormField label="Repeats">
+            <RecurrenceField
+              value={draft.recurrence}
+              data-testid="create-task-recurrence"
+              onChange={(next) => draftSave({ recurrence: next })}
+            />
+          </FormField>
 
-            <div>
-              <span className="mb-1 block text-xs text-muted-foreground">description</span>
-              <TaskDescriptionEditor
-                notePath=""
-                initial=""
-                onChange={(v) => {
-                  bodyRef.current = v
-                }}
-              />
-            </div>
+          <div>
+            <span className="mb-1 block text-xs text-muted-foreground">description</span>
+            <TaskDescriptionEditor
+              notePath=""
+              initial=""
+              onChange={(v) => {
+                bodyRef.current = v
+              }}
+            />
           </div>
-        )}
+        </div>
       </Dialog.Body>
 
       <Dialog.Footer>
@@ -298,7 +272,7 @@ export function CreateTask({
           disabled={busy || title.trim() === ''}
           onClick={() => void submit()}
         >
-          {mode === 'full' ? 'Create & edit →' : 'Create'}
+          Create & edit →
         </Button>
       </Dialog.Footer>
     </>

@@ -1,6 +1,7 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
-export { MorphRow, PillGroup, type PillOption } from './Choice'
+export { MorphRow, PillGroup, Token, type PillOption } from './Choice'
+export { MorphDialog } from './MorphDialog'
 export {
   Combobox,
   ComboboxChip,

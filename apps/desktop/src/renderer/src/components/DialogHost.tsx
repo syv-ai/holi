@@ -18,7 +18,7 @@ export function DialogHost(): React.JSX.Element | null {
   if (active === null) return null
   return (
     <Dialog open size={active.size} closable={active.closable} onClose={() => close()}>
-      {active.id === 'create-task' && <CreateTask mode={active.mode} onClose={() => close()} />}
+      {active.id === 'create-task' && <CreateTask onClose={() => close()} />}
       {active.id === 'convert-to-pdf' && (
         <ConvertToPdf remote={active.remote} path={active.path} onClose={() => close()} />
       )}

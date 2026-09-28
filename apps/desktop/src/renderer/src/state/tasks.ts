@@ -13,7 +13,7 @@ import { allLabels, dailyNoteFilename, parseWikiLinks, taskArea, virtualLabels }
 import { atom } from 'jotai'
 import { trpc } from '../lib/trpc'
 import { nowAtom, todayAtom } from './clock'
-import { closeTabsForPaths, workspaceAtom } from './panes'
+import { activeTab, closeTabsForPaths, workspaceAtom } from './panes'
 import { activeRemoteAtom, loadSnapshotAtom, snapshotAtom } from './vaults'
 
 /** The vault root's lane. The lane IS the containing folder, and the root
@@ -63,9 +63,19 @@ export const todayLinkCountAtom = atom((get) =>
   countOpenTasksLinking(get(snapshotAtom).tasks, dailyNoteFilename(get(todayAtom))),
 )
 
-/** The create-task dialog's mode. `quick` (⌘T) captures a task and stays where
- * you are; `full` (⌘⇧T) captures it and opens it to flesh out. */
-export type CreateTaskMode = 'quick' | 'full'
+/**
+ * Quick add (⌘T), open, and where it shows: in the board's dock when the
+ * focused pane is on the board, otherwise centred at the top like the
+ * palette. The board's dock takes its request and clears it at once; the
+ * centred one stays set while it is open.
+ */
+export const quickAddAtom = atom<{ where: 'board' | 'centre' } | null>(null)
+
+export const openQuickAddAtom = atom(null, (get, set) =>
+  set(quickAddAtom, {
+    where: activeTab(get(workspaceAtom))?.kind === 'board' ? 'board' : 'centre',
+  }),
+)
 
 // ------------------------------------------------------------------ reducers
 // Pure, exported, and tested directly.
@@ -180,8 +190,9 @@ export const createTaskAtom = atom(
       status: TaskStatus
       folder: string
       description?: string
-      /** Set before the task exists (quick add): written with the create. */
-      extra?: { due?: string; priority?: Task['priority']; tags?: string[] }
+      /** Set before the task exists (quick add, full create): written with
+       *  the create, one file, one write. */
+      extra?: Partial<Pick<Task, 'due' | 'priority' | 'tags' | 'reminder' | 'recurrence'>>
     },
   ) => {
     const remote = get(activeRemoteAtom)

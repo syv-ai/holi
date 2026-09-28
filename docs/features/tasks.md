@@ -40,8 +40,16 @@ Todo / Doing / Done, with one swim lane per folder.
   the card unfolds into it. Unranked cards sort last, ties break by title, a no-op drop writes
   nothing.
 - **Creating.** A column header's `+` grows into a new card in that column's first lane; Tab
-  moves it to the next lane, Enter adds and stays open. ⌘T is quick create, ⌘⇧T shows every
-  field and opens the result; both default to the active note's folder. The agent writes the file.
+  moves it to the next lane, Enter adds and stays open.
+- **Quick add (⌘T)** is the card it will make: a tall field (the first line is the title, the
+  rest the description) and a token bar for lane, column, due, priority and tags. On the board it
+  grows out of the dock and the new card flies to its cell; anywhere else it opens centred at the
+  top, on the palette's surface. Keys set everything: Tab walks the tokens, ←/→ step a token's
+  choices with the value following, Space toggles a tag, Backspace clears due or priority, typing
+  on lane finds a folder or names a new one, Enter adds, Escape folds a token then closes. Lane is
+  any folder, defaulting to the active note's; after an add the text clears and lane and column
+  stay. ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one
+  create. The agent writes the file.
 - **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
   row; `completeTask` in `packages/shared` says what that writes. A
   recurring task with a `due` rolls forward: `due` advances to on-or-after today via
@@ -98,7 +106,7 @@ Todo / Doing / Done, with one swim lane per folder.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
 - `apps/desktop/src/renderer/src/features/tasks/`: the board (`BoardView`, `BoardCard`,
   `BoardDock`), the completion sequence (`use-check-sequence.ts`) and the drag
-  (`use-board-drag.ts`); `lib/board-order.ts`, `lib/date-presets.ts`,
+  (`use-board-drag.ts`), quick add (`QuickAdd`, `QuickAddHost`); `lib/board-order.ts`, `lib/date-presets.ts`,
   `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
 - `apps/desktop/src/renderer/src/primitives/TaskCheck.tsx`, `StrikeText.tsx`, `ConfirmInPlace.tsx`,
   `RollingCount.tsx`, `Choice.tsx`, and the board's springs in `springs.ts`.

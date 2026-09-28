@@ -64,6 +64,7 @@ import { ConflictBanner } from '@/composites/ConflictBanner'
 import { SessionsSection } from '@/features/agent/SessionsSection'
 import { VaultSwitchConfirm } from '@/features/agent/VaultSwitchConfirm'
 import { CommandPalette } from '@/features/palette/CommandPalette'
+import { QuickAddHost } from '@/features/tasks/QuickAddHost'
 import { runCommandAtom, useCommandHotkeys } from '../state/commands'
 import { recentOfTab, touchRecentAtom } from '../state/recents'
 import { closePaneWithExitAtom, closeTabWithExitAtom, leavingPaneAtom } from '../state/pane-exit'
@@ -510,6 +511,7 @@ export function Shell() {
 
         <DialogHost />
         <CommandPalette />
+        <QuickAddHost />
 
         {/* Every frontmatter block's controls, portalled into their CodeMirror
             widgets. Here, not in EditorPane: a widget does not know its pane,

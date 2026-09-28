@@ -6,7 +6,7 @@ test('open sets the active dialog; close clears it', () => {
   const store = createStore()
   expect(store.get(activeDialogAtom)).toBeNull()
 
-  store.set(openDialogAtom, { id: 'create-task', size: 'md', mode: 'quick' })
+  store.set(openDialogAtom, { id: 'create-task', size: 'md' })
   expect(store.get(activeDialogAtom)).toMatchObject({ id: 'create-task', size: 'md' })
 
   store.set(closeDialogAtom)
