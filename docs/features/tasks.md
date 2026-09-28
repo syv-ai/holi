@@ -18,7 +18,9 @@ Todo / Doing / Done, with one swim lane per folder.
   with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)).
 - **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
   vault root (always present, unlabelled), then folders alphabetically. A lane group with no cards in a column
-  rests hidden and springs open while a drag is on, so every cell can take a drop. Cards are
+  rests hidden and springs open while a drag is on, so every cell can take a drop. A folder's
+  name folds its group shut in that column alone, showing its count; a folded group still takes a
+  drop, at its top. The root lane has no name, so it does not fold. Cards are
   tinted (`--muted` on the column's `--card`, both faint), with no edge, and a title stays on one line; Done
   cards recede to flat rows. Each
   column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
@@ -45,8 +47,6 @@ Todo / Doing / Done, with one swim lane per folder.
   drop below one ranks the unranked cards above it too, in the order shown: that happens once per
   cell. The gap holds until the writes land, then the card unfolds into it. A no-op drop writes
   nothing.
-- **Creating.** A column header's `+` grows into a new card in that column's first lane; Tab
-  moves it to the next lane, Enter adds and stays open.
 - **Quick add (⌘T)** is the card it will make: a tall field (the first line is the title, the
   rest the description) and a token bar for lane, column, due, priority and tags. On the board it
   grows out of the dock and the new card flies to its cell; anywhere else it opens centred at the

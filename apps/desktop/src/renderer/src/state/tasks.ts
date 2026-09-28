@@ -107,6 +107,10 @@ export type Filter = {
 export const EMPTY_FILTER: Filter = { search: '', tags: [], hideDone: false }
 export const filterAtom = atom<Filter>(EMPTY_FILTER)
 
+/** Lane groups folded shut on the board, by cell key (`status:lane`): one
+ *  column's lane folds without the others. A view convenience, so memory only. */
+export const collapsedLanesAtom = atom<ReadonlySet<string>>(new Set<string>())
+
 /** The board's only narrowing. Three controls, deliberately: the bar is a
  * search-and-narrow aid, not a second configuration surface.
  *

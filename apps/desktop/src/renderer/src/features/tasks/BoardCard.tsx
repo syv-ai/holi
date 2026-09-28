@@ -1,6 +1,5 @@
 /**
- * A card on the board (docs/features/tasks.md), and the new-card field a
- * column's `+` grows into.
+ * A card on the board (docs/features/tasks.md).
  *
  * **Tinted, borderless.** The column is `--card`, a card `--muted` a step
  * lighter; nothing draws an edge. A done card recedes to a flat row, so
@@ -23,7 +22,6 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-  Input,
   StrikeText,
   TaskCheck,
   instant,
@@ -115,7 +113,7 @@ export function BoardCard({
       className={cn(
         // A title never wraps, so a long one never makes a card taller; a card
         // with no due date or tags is one row shorter.
-        'group/card cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
+        'group/card cursor-grab rounded-xl px-2.5 py-3 text-xs motion-respond active:cursor-grabbing',
         done ? 'hover:bg-accent' : 'bg-muted/40 hover:bg-muted/70',
         arrival?.className,
       )}
@@ -134,7 +132,9 @@ export function BoardCard({
           className="mt-px"
         />
         <div className="min-w-0 flex-1">
-          <div className="truncate leading-4">
+          {/* A px down: the line box centres on the orb, but mixed-case text reads
+              high in it. */}
+          <div className="relative top-px truncate leading-4">
             <StrikeText text={task.title} struck={sequence.struck} onStruck={sequence.onStruck} />
           </div>
           <TaskMeta task={task} />
@@ -178,74 +178,6 @@ export function BoardCard({
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-    </motion.div>
-  )
-}
-
-/**
- * The column's new card. It shares a `layoutId` with the column's `+`, so it
- * grows out of the button into the column's first lane; Tab and Shift+Tab move
- * it to the next lane as the same element. Enter adds and stays open for the
- * next; Escape, or leaving it empty, folds it back into the `+`.
- */
-export function NewCard({
-  status,
-  lane,
-  layoutId,
-  title,
-  onTitle,
-  onSubmit,
-  onLane,
-  onClose,
-}: {
-  status: TaskStatus
-  lane: string
-  layoutId: string
-  /** Held by the board: Tab remounts the card in the next lane, and what was
-   *  typed goes with it. */
-  title: string
-  onTitle: (title: string) => void
-  onSubmit: (title: string) => void
-  onLane: (step: 1 | -1) => void
-  onClose: () => void
-}): React.JSX.Element {
-  const reduced = useReducedMotion() ?? false
-  return (
-    <motion.div
-      layoutId={reduced ? undefined : layoutId}
-      transition={reduced ? instant : settle}
-      style={{ borderRadius: 12 }}
-      data-new-card={status}
-      className="bg-muted/40 px-2.5 py-2"
-    >
-      <Input
-        variant="bare"
-        autoFocus
-        value={title}
-        placeholder={`New task in ${lane || 'the vault root'}`}
-        aria-label={`New ${status} task`}
-        onChange={(event) => onTitle(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && title.trim()) {
-            event.preventDefault()
-            onSubmit(title.trim())
-            onTitle('')
-          }
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            onClose()
-          }
-          if (event.key === 'Tab') {
-            event.preventDefault()
-            onLane(event.shiftKey ? -1 : 1)
-          }
-        }}
-        onBlur={() => title === '' && onClose()}
-        className="text-xs"
-      />
-      <p className="mt-1 text-[10px] text-muted-foreground">
-        Enter adds · Tab moves lane · Esc closes
-      </p>
     </motion.div>
   )
 }

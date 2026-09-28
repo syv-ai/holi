@@ -17,7 +17,7 @@
  * matches".
  */
 import type { Task, TaskStatus } from '@holi/shared'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import {
   AnimatePresence,
   LayoutGroup,
@@ -27,16 +27,16 @@ import {
   useReducedMotion,
   type MotionValue,
 } from 'motion/react'
-import { Plus } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { useLayoutEffect, useRef, useState } from 'react'
-import { IconButton, RollingCount, instant, settle } from '@/primitives'
+import { Button, Icon, RollingCount, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
 import { rankAt, sortCell } from '@/lib/board-order'
 import {
   ROOT_LANE,
   brokenTasksAtom,
-  createTaskAtom,
+  collapsedLanesAtom,
   filterAtom,
   laneOf,
   laneOrder,
@@ -47,10 +47,10 @@ import {
   tasksAtom,
 } from '@/state/tasks'
 import { nowAtom } from '@/state/clock'
-import { BoardCard, NewCard } from './BoardCard'
+import { BoardCard } from './BoardCard'
 import { BoardDock } from './BoardDock'
 import type { Parking } from './use-check-sequence'
-import { useBoardDrag, withGap } from './use-board-drag'
+import { cellKey, useBoardDrag, withGap } from './use-board-drag'
 
 const COLUMNS: { status: TaskStatus; label: string }[] = [
   { status: 'todo', label: 'Todo' },
@@ -146,7 +146,6 @@ export function BoardView(): React.JSX.Element {
   const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
   const rankAll = useSetAtom(rankTasksAtom)
-  const create = useSetAtom(createTaskAtom)
   const filter = useAtomValue(filterAtom)
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
@@ -165,12 +164,13 @@ export function BoardView(): React.JSX.Element {
         return next
       }),
   }
-  /** Which column's new card is open, and in which lane (an index). */
-  const [adding, setAdding] = useState<{
-    status: TaskStatus
-    lane: number
-    title: string
-  } | null>(null)
+  const [collapsed, setCollapsed] = useAtom(collapsedLanesAtom)
+  const toggleLane = (key: string) =>
+    setCollapsed((current) => {
+      const next = new Set(current)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
 
   const everything = [...tasks.values()]
   const shown = (t: Task) => parked.get(t.path) ?? t.status
@@ -228,7 +228,7 @@ export function BoardView(): React.JSX.Element {
                   transition={reduced ? instant : settle}
                   // Each surface runs to the foot of the board, full or not.
                   // The foot keeps clear of the dock that floats over it.
-                  className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card/40 p-2 pb-16"
+                  className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card/25 p-2 pb-16"
                 >
                   <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
                     {column.label}
@@ -236,28 +236,14 @@ export function BoardView(): React.JSX.Element {
                       value={all.filter((t) => shown(t) === column.status).length}
                       className="font-normal text-muted-foreground"
                     />
-                    {adding?.status !== column.status && (
-                      <motion.div
-                        layoutId={reduced ? undefined : `new-${column.status}`}
-                        transition={reduced ? instant : settle}
-                        style={{ borderRadius: 999 }}
-                        className="ml-auto"
-                      >
-                        <IconButton
-                          icon={Plus}
-                          label={`Add to ${column.label}`}
-                          shape="round"
-                          data-add-column={column.status}
-                          onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
-                        />
-                      </motion.div>
-                    )}
                   </h2>
 
-                  {lanes.map((lane, laneIndex) => {
+                  {lanes.map((lane) => {
                     const cards = cell(lane, column.status)
                     const gap = drag.gap(lane, column.status)
-                    const addingHere = adding?.status === column.status && adding.lane === laneIndex
+                    const key = cellKey(column.status, lane)
+                    // The root lane has no name, so nothing to fold it by.
+                    const open = !lane || !collapsed.has(key)
                     // A lane group with cards is laid out plainly. An empty one is
                     // not there at rest, and springs open only while a drag is on,
                     // so every cell can take the drop. (Animating every group's
@@ -265,64 +251,75 @@ export function BoardView(): React.JSX.Element {
                     const group = (
                       <div {...drag.target(lane, column.status)} className="mb-1.5 p-1">
                         {/* The vault root's lane has no name to show. The lane a
-                          drag aims at lights its name, not its surface. */}
+                          drag aims at lights its name, not its surface. A
+                          folded lane still takes a drop, at its top. */}
                         {lane ? (
-                          <p
-                            className={cn(
-                              'px-1.5 pt-3 pb-2 text-xs font-medium break-words motion-respond',
-                              gap ? 'text-foreground' : 'text-muted-foreground',
-                            )}
-                          >
-                            {lane}
-                          </p>
+                          <div className="pt-2 pb-1">
+                            <Button
+                              variant="ghost"
+                              size="xs"
+                              aria-expanded={open}
+                              data-lane-toggle={key}
+                              onClick={() => toggleLane(key)}
+                              className={cn(
+                                'group/lane h-6 max-w-full justify-start gap-1 px-1.5 font-medium active:scale-100 hover:bg-transparent dark:hover:bg-transparent',
+                                gap ? 'text-foreground' : 'text-muted-foreground',
+                              )}
+                            >
+                              <span className="truncate">{lane}</span>
+                              {!open && <span className="font-normal">{cards.length}</span>}
+                              <Icon
+                                icon={ChevronRight}
+                                size="sm"
+                                className={cn(
+                                  'motion-respond',
+                                  open && 'rotate-90 opacity-0 group-hover/lane:opacity-100',
+                                )}
+                              />
+                            </Button>
+                          </div>
                         ) : (
                           <div className="h-2" />
                         )}
-                        <div className="flex min-h-6 flex-col gap-2.5">
-                          <AnimatePresence initial={false}>
-                            {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
-                              item.kind === 'gap' ? (
-                                <Gap key="gap" height={gap!.height} />
-                              ) : (
-                                <BoardCard
-                                  key={item.task.path}
-                                  task={item.task}
-                                  shown={shown(item.task)}
-                                  drag={drag}
-                                  parking={parking}
-                                  arrival={
-                                    drag.isFolded(item.task.path)
-                                      ? undefined
-                                      : arrivalProps(item.task.path)
-                                  }
-                                />
-                              ),
-                            )}
-                          </AnimatePresence>
-                          {addingHere && (
-                            <NewCard
-                              status={column.status}
-                              lane={lane}
-                              layoutId={`new-${column.status}`}
-                              title={adding.title}
-                              onTitle={(title) => setAdding({ ...adding, title })}
-                              onSubmit={(title) =>
-                                void create({ title, status: column.status, folder: lane })
-                              }
-                              onLane={(step) =>
-                                setAdding({
-                                  ...adding,
-                                  lane: (laneIndex + step + lanes.length) % lanes.length,
-                                })
-                              }
-                              onClose={() => setAdding(null)}
-                            />
+                        <AnimatePresence initial={false}>
+                          {open && (
+                            <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              transition={reduced ? instant : settle}
+                              // Clip only what spills well past the cell, so a
+                              // card's flick is not cut while the lane folds.
+                              className="overflow-clip [overflow-clip-margin:8px]"
+                            >
+                              <div className="flex min-h-6 flex-col gap-2.5 pt-1">
+                                <AnimatePresence initial={false}>
+                                  {withGap(cards, drag.isFolded, gap?.index ?? null).map((item) =>
+                                    item.kind === 'gap' ? (
+                                      <Gap key="gap" height={gap!.height} />
+                                    ) : (
+                                      <BoardCard
+                                        key={item.task.path}
+                                        task={item.task}
+                                        shown={shown(item.task)}
+                                        drag={drag}
+                                        parking={parking}
+                                        arrival={
+                                          drag.isFolded(item.task.path)
+                                            ? undefined
+                                            : arrivalProps(item.task.path)
+                                        }
+                                      />
+                                    ),
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            </motion.div>
                           )}
-                        </div>
+                        </AnimatePresence>
                       </div>
                     )
-                    if (cards.length > 0 || addingHere)
-                      return <div key={lane || ROOT_LANE}>{group}</div>
+                    if (cards.length > 0) return <div key={lane || ROOT_LANE}>{group}</div>
                     return (
                       <AnimatePresence key={lane || ROOT_LANE} initial={false}>
                         {drag.active && (
