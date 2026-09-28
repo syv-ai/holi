@@ -611,17 +611,6 @@
   }
 }
 
-/* ── Solo note column ─────────────────────────────────────────────────
- * A note alone in the window (`data-solo-column`, set by `EditorPane`)
- * centres its column; otherwise it is anchored left (see `editor/theme.ts`).
- * No motion: inside CodeMirror only paint may move.
- *
- * The child combinators are load-bearing: the frontmatter widget nests a whole
- * CodeMirror inside the note, and its `.cm-content` must not centre too. */
-[data-solo-column] > .cm-editor > .cm-scroller > .cm-content {
-  margin-inline: auto;
-}
-
 /* ── K · acknowledge ──────────────────────────────────────────────────
  * One beat, once, for a discrete act the reader committed. Applied and
  * cleaned up by `lib/use-ack.ts`, which also handles the replay-on-retrigger

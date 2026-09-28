@@ -201,21 +201,3 @@ test('a note tab beside a session keeps the session’s terminal alive', () => {
 
   expect(document.querySelector('[data-terminal="a"]')?.getAttribute('data-visible')).toBe('false')
 })
-
-/** A real note, so the body is the notes editor. No vault is open in these
- *  tests, so it renders its host and never builds a CodeMirror view. */
-const markdown: Tab = { kind: 'note', path: 'notes/plan.md' }
-
-test('a solo note’s editor is told to centre its column', () => {
-  // The workspace decides solo (`isSoloNote`); the pane carries it to the
-  // editor host, which `index.css` centres under.
-  pane({ pane: { tabs: [markdown], active: 0 }, solo: true })
-
-  expect(document.querySelector('[data-solo-column]')).not.toBeNull()
-})
-
-test('a note that is not solo keeps its column anchored left', () => {
-  pane({ pane: { tabs: [markdown], active: 0 } })
-
-  expect(document.querySelector('[data-solo-column]')).toBeNull()
-})

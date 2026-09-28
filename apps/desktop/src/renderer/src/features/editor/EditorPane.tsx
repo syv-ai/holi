@@ -68,7 +68,6 @@ export function EditorPane({
   onEdit,
   plain = false,
   readOnly = false,
-  centred = false,
 }: {
   path: string | null
   onOpenNote: (path: string) => void
@@ -84,11 +83,6 @@ export function EditorPane({
    *  document opens locked: a keystroke between the agent's read and its write
    *  would build a resolution on a file that moved. */
   readOnly?: boolean
-  /** The note is alone in the window (`isSoloNote`), so its column centres
-   *  (CSS keyed on the attribute: `index.css` §Solo note column). It changes
-   *  only on a split or unsplit, which also changes the editor's width, so
-   *  CodeMirror re-measures and redraws its caret. */
-  centred?: boolean
 }) {
   const remote = useAtomValue(activeRemoteAtom)
   const snapshot = useAtomValue(snapshotAtom)
@@ -331,11 +325,5 @@ export function EditorPane({
       </div>
     )
   }
-  return (
-    <div
-      ref={hostRef}
-      className="min-w-0 flex-1 overflow-hidden"
-      data-solo-column={centred || undefined}
-    />
-  )
+  return <div ref={hostRef} className="min-w-0 flex-1 overflow-hidden" />
 }

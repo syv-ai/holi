@@ -42,7 +42,6 @@ import {
   activeTab,
   dropZones,
   focusPane,
-  isSoloNote,
   moveTab,
   moveTabToNewPane,
   openApp,
@@ -436,7 +435,6 @@ export function Shell() {
                     pane={p}
                     focused={i === workspace.active}
                     leaving={leavingPane === i}
-                    solo={isSoloNote(workspace)}
                     onFocus={() => setWorkspace((w) => focusPane(w, i))}
                     // Every action focuses this pane first, then acts on the
                     // active pane.

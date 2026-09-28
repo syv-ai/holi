@@ -33,12 +33,21 @@ import { colorModeAware } from './color-mode'
 import { codeHighlighting, editorTheme, markdownHighlighting, notesFontTheme } from './theme'
 
 /**
+ * A note's column, and a task's, is centred in the pane it is in, whatever is
+ * beside it. The child combinators keep it to the editor's own column: the
+ * properties widget nests a whole CodeMirror, whose column must not centre.
+ */
+const noteColumn = EditorView.theme({
+  '& > .cm-scroller > .cm-content': { marginInline: 'auto' },
+})
+
+/**
  * A task's body is a narrower column than a note's: as wide as its properties
  * widget (`.cm-fm`, 24rem), so a task reads as a card's back rather than a
- * page. The lines keep their side inset around it.
+ * page, with wider gutters either side. The lines keep their inset inside it.
  */
 const taskColumn = EditorView.theme({
-  '.cm-content': { maxWidth: 'calc(24rem + 2 * var(--editor-inset))' },
+  '& > .cm-scroller > .cm-content': { maxWidth: 'calc(24rem + 2 * var(--editor-inset))' },
 })
 
 /** Live seams the editor pulls on demand: closures over the renderer's state,
@@ -153,6 +162,7 @@ export function baseEditorExtensions(deps: EditorDeps): Extension[] {
     colorModeAware(),
     // Notes only; the other stacks stay mono (see `notesFontTheme`).
     notesFontTheme,
+    noteColumn,
     isTaskFilePath(deps.notePath) ? taskColumn : [],
   ]
 }

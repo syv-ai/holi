@@ -179,10 +179,9 @@ export const editorTheme = EditorView.baseTheme({
   // composer, `DiffView`). Only the notes editor overrides it (`notesFontTheme`).
   '.cm-scroller': { fontFamily: MONO, lineHeight: '1.6' },
   /**
-   * Left-aligned, not centred: a centred column shifts the text under the caret
-   * whenever the pane resizes (opening the right sidebar), where the editor
-   * should only get narrower. A note alone in the window does centre
-   * (`index.css` §Solo note column), and that is kept out of this base.
+   * Left-aligned in this base, which the code editor, the mail composer and
+   * `DiffView` share. The notes stack centres its column in its pane
+   * (`noteColumn` in `extensions.ts`).
    */
   '.cm-content': { padding: '16px 0', maxWidth: '48rem', caretColor: '#e5e5e5' },
   /**

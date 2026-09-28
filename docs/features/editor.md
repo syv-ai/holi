@@ -24,7 +24,7 @@ Every note is a `.md` file, edited in CodeMirror 6 with live preview: markdown r
 
 **External writes.** `base` is the text last loaded or saved. `decideReload`: disk equal to base is nothing; a clean buffer reloads; a dirty one takes `merge3`; an overlap raises the conflict banner (Keep mine, Use the file on disk, Dismiss). Disk equal to `normalizeText(base)` is the pre-commit tidy: base catches up, the buffer is kept. A reload is a minimal diff with `addToHistory: false`, so the caret stays and ⌘Z unwinds only your keystrokes.
 
-**The column** is left-anchored at 48rem, centred only when one markdown tab is alone in one pane (`isSoloNote`).
+**The column** is at most 48rem, centred in whatever pane it is in; a task file's is 24rem, as wide as its properties widget.
 
 ## Rules
 

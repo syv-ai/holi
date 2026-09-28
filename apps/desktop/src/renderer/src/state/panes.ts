@@ -412,23 +412,6 @@ export function activeTab(workspace: Workspace): Tab | null {
   return pane.tabs[pane.active] ?? null
 }
 
-/**
- * Whether a note is alone in the window: one pane, and the tab it is showing a
- * markdown file (a note or a task file, which open in the same editor, D96).
- *
- * This is when the notes editor centres its column. `editor/theme.ts` explains why the
- * column is otherwise anchored left: a panel appearing beside you should narrow
- * the text, not slide it. With one pane nothing can appear beside the note on
- * its own, so only a split ends it; the explorer and sidebars only change width
- * because the user dragged them.
- */
-export function isSoloNote(workspace: Workspace): boolean {
-  if (workspace.panes.length !== 1) return false
-  const pane = workspace.panes[0]!
-  const tab = pane.tabs[pane.active]
-  return tab?.kind === 'note' && fileKind(tab.path) === 'markdown'
-}
-
 function updatePane(workspace: Workspace, fn: (pane: Pane) => Pane): Workspace {
   return {
     ...workspace,

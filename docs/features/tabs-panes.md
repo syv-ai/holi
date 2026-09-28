@@ -50,7 +50,7 @@ The workspace is one or more side-by-side panes, each with its own tab strip. Ta
 
 ## Code
 
-- `apps/desktop/src/renderer/src/state/panes.ts`: workspace, tabs, moves, `dropZones`, `isSoloNote`
+- `apps/desktop/src/renderer/src/state/panes.ts`: workspace, tabs, moves, `dropZones`
 - `apps/desktop/src/renderer/src/components/TabStrip.tsx`, `PaneView.tsx`, `Shell.tsx`
 - `apps/desktop/src/renderer/src/lib/tab-drop.ts`, `tab-reorder.ts`, `tab-overflow.ts`
 - `apps/desktop/src/renderer/src/features/vault/VaultPicker.tsx`

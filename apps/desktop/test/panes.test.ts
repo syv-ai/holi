@@ -13,7 +13,6 @@ import {
   closingTabRemovesPane,
   closeTabsForPaths,
   emptyWorkspace,
-  isSoloNote,
   openApp,
   openBoard,
   openBeside,
@@ -344,48 +343,6 @@ describe('splitPane', () => {
     expect(w.panes).toHaveLength(3)
     expect(layout(w)).toEqual([['a.md', 'b.md'], [], ['c.md']])
     expect(w.active).toBe(1)
-  })
-})
-
-describe('isSoloNote', () => {
-  // Issue #13: a note alone in the window centres its column. The rule is
-  // "centre only when nothing can open beside it on its own", so a split ends
-  // it, and nothing else does: other tabs in the same pane sit behind the one
-  // showing and take no width from it.
-  it('is one pane showing a note, preview or pinned', () => {
-    expect(isSoloNote(openPreview(emptyWorkspace(), 'a.md'))).toBe(true)
-    expect(isSoloNote(openPinned(emptyWorkspace(), 'a.md'))).toBe(true)
-  })
-
-  it('counts a task file, which opens in the same editor (D96)', () => {
-    expect(isSoloNote(openPreview(emptyWorkspace(), 'projects/task.fix-login.md'))).toBe(true)
-  })
-
-  it('is not an empty workspace', () => {
-    expect(isSoloNote(emptyWorkspace())).toBe(false)
-  })
-
-  it('survives other tabs in the pane, of any kind, while the note is the one showing', () => {
-    const one = openPinned(emptyWorkspace(), 'a.md')
-    expect(isSoloNote(openPinned(one, 'b.md'))).toBe(true)
-    // The board opens active; switching back to the note is what shows it.
-    const withBoard = openBoard(one)
-    expect(isSoloNote(withBoard)).toBe(false)
-    expect(isSoloNote(openPinned(withBoard, 'a.md'))).toBe(true)
-  })
-
-  it('ends with a split, even while the new pane is still empty', () => {
-    expect(isSoloNote(splitPane(openPreview(emptyWorkspace(), 'a.md')))).toBe(false)
-  })
-
-  it('is only a markdown note: a PDF, an image or a plain text file is not one', () => {
-    for (const path of ['a.pdf', 'b.png', 'c.json', 'd.docx']) {
-      expect(isSoloNote(openPreview(emptyWorkspace(), path))).toBe(false)
-    }
-  })
-
-  it('is not a singleton tab', () => {
-    expect(isSoloNote(openBoard(emptyWorkspace()))).toBe(false)
   })
 })
 
