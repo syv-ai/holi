@@ -28,7 +28,7 @@ import {
   type MotionValue,
 } from 'motion/react'
 import { ChevronRight } from 'lucide-react'
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, ConfirmInPlace, Icon, RollingCount, instant, settle } from '@/primitives'
 import { cn } from '@/lib/cn'
 import { useArrivals } from '@/lib/use-arrivals'
@@ -139,6 +139,25 @@ function useBoardWidth(
   return measured ? width : undefined
 }
 
+/**
+ * Which cards a filter or search is showing again: tasks the board already
+ * had, that it did not show last time. A card that only moved cells was shown,
+ * and a new task was not had. The last render's sets are committed in an
+ * effect, as `useArrivals` does, so StrictMode's second render compares
+ * against the real previous one.
+ */
+function useReveals(
+  tasks: ReadonlyMap<string, Task>,
+  visible: ReadonlySet<string>,
+): (path: string) => boolean {
+  const last = useRef<{ had: ReadonlySet<string>; shown: ReadonlySet<string> } | null>(null)
+  useEffect(() => {
+    last.current = { had: new Set(tasks.keys()), shown: visible }
+  })
+  const previous = last.current
+  return (path) => previous !== null && previous.had.has(path) && !previous.shown.has(path)
+}
+
 /** How a column comes and goes (Hide done): it grows from nothing beside its
  *  neighbours, which give it room, rather than appearing in one frame. The
  *  negative margin takes back the flex gap it would leave behind. */
@@ -215,11 +234,19 @@ export function BoardView(): React.JSX.Element {
   const drag = useBoardDrag(commit)
 
   /**
-   * Cards new to the board animate in. Keyed by PATH and computed board-wide
-   * rather than per cell, so a card moving between columns keeps its path and
-   * does not replay an entrance.
+   * Tasks new to the vault fade in (sync, the agent, quick add). Keyed by PATH
+   * over every task, not only the shown ones, so a card moving between
+   * columns, or one a filter shows again, does not replay it.
    */
-  const { arrivalProps } = useArrivals(all.map((t) => t.path))
+  const { arrivalProps } = useArrivals(everything.map((t) => t.path))
+  /**
+   * A filter or search moves the board on one spring, all at once: a card it
+   * shows again opens (`reveal`), a card it hides folds away, and a lane that
+   * comes or goes carries its cards with it. No stagger.
+   */
+  const visible = new Set(all.map((t) => t.path))
+  const revealed = useReveals(tasks, visible)
+  const hiddenByFilter = (path: string) => tasks.has(path) && !visible.has(path)
 
   return (
     <div data-morph-stage="" className="relative flex min-h-0 flex-1 flex-col">
@@ -329,7 +356,7 @@ export function BoardView(): React.JSX.Element {
                                   className="overflow-clip [overflow-clip-margin:8px]"
                                 >
                                   <div className="flex min-h-6 flex-col pt-1">
-                                    <AnimatePresence initial={false}>
+                                    <AnimatePresence initial={false} custom={hiddenByFilter}>
                                       {withGap(cards, drag.isFolded, gap?.index ?? null).map(
                                         (item) =>
                                           item.kind === 'gap' ? (
@@ -346,6 +373,7 @@ export function BoardView(): React.JSX.Element {
                                                   ? undefined
                                                   : arrivalProps(item.task.path)
                                               }
+                                              reveal={!reduced && revealed(item.task.path)}
                                             />
                                           ),
                                       )}

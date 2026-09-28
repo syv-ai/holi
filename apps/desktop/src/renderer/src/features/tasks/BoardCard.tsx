@@ -126,6 +126,7 @@ export function BoardCard({
   drag,
   parking,
   arrival,
+  reveal = false,
 }: {
   task: Task
   /** The column the card is drawn in: its status, or where it is parked
@@ -133,8 +134,11 @@ export function BoardCard({
   shown: TaskStatus
   drag: Drag
   parking: Parking
-  /** Set only while this card is new to the board (`useArrivals`). */
+  /** Set only while this card is new to the vault (`useArrivals`). */
   arrival?: { className?: string; style?: { animationDelay: string } }
+  /** A filter or search is showing this card again: it opens on the lane
+   *  groups' spring, as they do. */
+  reveal?: boolean
 }): React.JSX.Element {
   const today = useAtomValue(todayAtom)
   const setStatus = useSetAtom(setTaskStatusAtom)
@@ -207,8 +211,18 @@ export function BoardCard({
       // is the gap closing, not a flight from where it was picked up.
       layoutId={folded || reduced ? undefined : task.path}
       transition={reduced ? instant : settle}
-      initial={false}
+      initial={reveal ? { height: 0, opacity: 0 } : false}
       animate={{ height: folded ? 0 : 'auto', opacity: folded ? 0 : 1 }}
+      // A card a filter hides folds away as it would open; any other leaving
+      // (a delete, a move whose new cell's card flies in) is at once. The
+      // presence says which (`hiddenByFilter` in `BoardView`).
+      variants={{
+        gone: (hiddenByFilter?: (path: string) => boolean) =>
+          hiddenByFilter?.(task.path)
+            ? { height: 0, opacity: 0 }
+            : { opacity: 1, transition: { duration: 0 } },
+      }}
+      exit="gone"
       className={cn('overflow-hidden', folded && 'pointer-events-none')}
     >
       {/* The space below a card is inside its fold, not a list gap: a gap
