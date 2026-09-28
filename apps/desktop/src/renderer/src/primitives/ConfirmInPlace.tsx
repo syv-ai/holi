@@ -88,7 +88,10 @@ export function ConfirmInPlace({
         fold()
       }}
       className={cn(
-        'relative flex items-center overflow-hidden',
+        // The md pill clips its own shade; left unclipped here, it can fade
+        // out where it stood while the bin comes back.
+        'relative flex items-center',
+        !md && 'overflow-hidden',
         asking && !md && 'bg-destructive text-destructive-foreground',
         className,
       )}
@@ -99,7 +102,14 @@ export function ConfirmInPlace({
             key="ask"
             type="button"
             autoFocus
-            {...fade}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            // Leaving is a slow fade, not a snap: the question lets go.
+            exit={{
+              opacity: 0,
+              scale: 0.96,
+              transition: reduced ? instant : { duration: 0.35, ease: 'easeOut' },
+            }}
             onClick={confirm}
             className="relative h-8 overflow-hidden rounded-full bg-destructive px-5 text-xs font-medium whitespace-nowrap text-destructive-foreground outline-none motion-respond hover:bg-destructive/90 focus-visible:ring-1 focus-visible:ring-ring"
           >
