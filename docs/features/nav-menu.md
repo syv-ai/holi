@@ -31,8 +31,9 @@ hidden, the same menu runs down the rail.
   with a spring (a squeeze, then the grow), with the rows cascading in. Open, it is pinned
   `position: fixed` at the dock's corner so it can grow out of the drawer and the 44px rail over
   the panes; it returns to the dock's box once the collapse lands. The dock at rest has no surface,
-  only its icons; the open menu floats, so it takes `--popover` and its shadow, from when it pins
-  until the collapse lands. A top-right menu grows leftward from its corner, unless that would
+  only its icons (or `--background` with `surface`, for a toolbar over rows); the open menu floats,
+  so it takes `--popover` and its shadow while open, fading back as soon as the collapse starts
+  rather than when it lands. A top-right menu grows leftward from its corner, unless that would
   cross the window's left edge (a narrow sidebar): then it grows rightward from the dock's left
   edge.
 - **The active surface** reads as current (`aria-current`, the accent background), and an app's

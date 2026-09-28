@@ -15,9 +15,11 @@
  * shortcuts that fit along its height, and only when some do not is there a
  * More: its list holds just those, so nothing is offered twice.
  *
- * **No surface at rest.** The dock is bare icons on whatever it sits on; the
- * popover surface and its shadow belong to the open menu, from the moment it
- * pins until its collapse lands.
+ * **No surface at rest, unless asked.** The dock is bare icons on whatever it
+ * sits on, or on the page's own background with `surface`, for a toolbar
+ * that floats over rows. The popover surface and its shadow belong to the open
+ * menu: they come with the open and fade back the moment the collapse starts,
+ * not when it lands, so a finished interaction never lingers lighter.
  *
  * **One surface, pinned while open.** The shell is a single element that
  * resizes from the bar into a panel. Collapsed it sits in the menu's own box;
@@ -72,6 +74,9 @@ export type MorphingMenuProps = {
   label: string
   moreLabel?: string
   backLabel?: string
+  /** Rest on the page's background rather than bare, so rows under a floating
+   *  toolbar do not show through it. */
+  surface?: boolean
   className?: string
 }
 
@@ -115,6 +120,7 @@ export function MorphingMenu({
   label,
   moreLabel = 'More',
   backLabel = 'Back',
+  surface = false,
   className,
 }: MorphingMenuProps): React.JSX.Element {
   const id = useId()
@@ -240,8 +246,8 @@ export function MorphingMenu({
       shell.dataset.pinned = ''
     }
     // Raised only while pinned: collapsed, the shell must stay under whatever
-    // covers its box, as the rail covers the hidden nav's dock. The surface
-    // goes with it (`data-pinned`), so the dock at rest is bare.
+    // covers its box, as the rail covers the hidden nav's dock. The surface is
+    // not the pin's: it follows the open state (`data-open`).
     const unpin = () => {
       Object.assign(shell.style, {
         position: '',
@@ -497,8 +503,11 @@ export function MorphingMenu({
         className={cn(
           'group/morph absolute overflow-hidden rounded-[1.25rem]',
           top ? 'top-0 right-0' : 'bottom-0 left-0',
-          'text-muted-foreground data-pinned:bg-popover data-pinned:text-popover-foreground data-pinned:shadow-popover',
+          'motion-respond text-muted-foreground',
+          surface && 'bg-background',
+          'data-open:bg-popover data-open:text-popover-foreground data-open:shadow-popover',
         )}
+        data-open={expanded ? '' : undefined}
         style={barSize}
       >
         <div

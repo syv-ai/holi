@@ -127,9 +127,12 @@ test('Back from a group opened in the list returns to the list', async () => {
 test('the dock has no surface at rest; the open menu does', async () => {
   render(<MorphingMenu label="Go to" orientation="vertical" items={items()} />)
   const shell = screen.getByRole('navigation').firstElementChild as HTMLElement
-  expect(shell).not.toHaveAttribute('data-pinned')
+  expect(shell).not.toHaveAttribute('data-open')
   await userEvent.click(screen.getByRole('button', { name: 'More' }))
-  expect(shell).toHaveAttribute('data-pinned')
+  expect(shell).toHaveAttribute('data-open')
+  // The surface goes as the collapse starts, not when it lands.
+  await userEvent.keyboard('{Escape}')
+  expect(shell).not.toHaveAttribute('data-open')
 })
 
 test('Escape steps back a level, then collapses, restoring keyboard focus', async () => {

@@ -18,8 +18,9 @@ export type NewKind = 'task' | 'file' | 'folder' | 'app'
 /**
  * The explorer's toolbar: the nav menu's morphing menu, anchored at the tree's
  * top-right and opening downward. "+" unfolds into what can be made; Collapse
- * All and the two filters are shortcuts, the filters pressed while on. Bare
- * icons, shown while the tree is hovered or anything in the menu has focus,
+ * All and the two filters are shortcuts, the filters pressed while on. Icons
+ * on the page's background, so the rows under them do not show through, shown
+ * while the tree is hovered or anything in the menu has focus,
  * and kept while the menu is open. The parent FileTree carries `group/explorer`.
  */
 export function ExplorerHeader({
@@ -98,7 +99,7 @@ export function ExplorerHeader({
 
   return (
     <div className="motion-respond pointer-events-none absolute top-1 right-3 left-3 z-10 opacity-0 focus-within:pointer-events-auto focus-within:opacity-100 group-hover/explorer:pointer-events-auto group-hover/explorer:opacity-100 has-[nav:not([data-view=collapsed])]:pointer-events-auto has-[nav:not([data-view=collapsed])]:opacity-100">
-      <MorphingMenu label="Explorer" anchor="top-right" items={items} />
+      <MorphingMenu label="Explorer" anchor="top-right" surface items={items} />
     </div>
   )
 }

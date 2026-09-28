@@ -22,7 +22,8 @@ The sidebar explorer shows the vault as the folders and files on disk. It reads 
 **Keyboard.** The tree is one tab stop. ↑/↓, Home and End move it, and the selection with it. → opens a folder and then steps into it; ← closes it and then steps out to the parent. Enter opens a file or toggles a folder. Letters typed in quick succession jump to the next row whose name begins with them. Escape collapses the selection to the focused row. F2, ⌫ and ⌘X/C/V/D do what the menu says.
 
 **Toolbar.** The tree's top-right holds the [nav menu](nav-menu.md)'s morphing menu, anchored at
-that corner and opening downward: bare icons while the tree is hovered or the menu has focus, kept
+that corner and opening downward: icons on the sidebar's own background, so rows scrolled under
+them do not show through, while the tree is hovered or the menu has focus, kept
 while it is open. **+** unfolds into New Task, New File, New Folder and New App; Collapse All, Show
 task files and Show hidden files are shortcuts, the two filters pressed while on. Every item has a
 shortcut, so there is no More. In a sidebar too narrow for the open menu, it grows rightward over
