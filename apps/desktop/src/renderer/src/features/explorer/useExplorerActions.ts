@@ -31,6 +31,9 @@ type DeletePreview = {
   /** The vault FILES this affects — what the backrefs were computed over, and
    *  what a delete removes. */
   paths: string[]
+  /** The targets as picked: a folder among them is pruned once its files are
+   *  gone. Main ignores a target that is not a directory. */
+  targets: string[]
   refs: { path: string; count: number }[]
   /**
    * Set when this is a move OUT of the vault: the targets as picked (a folder
@@ -147,14 +150,17 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
     (targets: string[], isFolder: boolean) => {
       const files = filesUnder(docPathsRef.current, targets)
       if (files.length === 0) {
-        // Nothing on disk — a transient (empty) folder; just drop it from pending.
+        // No documents: a transient folder, which leaves pending, or one on
+        // disk holding only its `.gitkeep` or empty folders, which goes with
+        // no confirmation because nothing in it is anyone's writing.
         setPendingFolders((f) => f.filter((x) => !targets.includes(x)))
+        void deleteMany({ paths: [], folders: targets })
         return
       }
       const label = deleteLabel(targets, files.length, isFolder)
-      void getBackrefs(files).then((refs) => setConfirming({ label, paths: files, refs }))
+      void getBackrefs(files).then((refs) => setConfirming({ label, paths: files, targets, refs }))
     },
-    [getBackrefs],
+    [getBackrefs, deleteMany],
   )
 
   const cancelDelete = useCallback(() => setConfirming(null), [])
@@ -182,7 +188,7 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
         if (files.length === 0) return
         const label = deleteLabel(targets, files.length, isFolder)
         const refs = await getBackrefs(files)
-        setConfirming({ label, paths: files, refs, move: { targets, dest } })
+        setConfirming({ label, paths: files, targets, refs, move: { targets, dest } })
       })()
     },
     // No `exportFiles` here on purpose: this only STAGES the move. The copy
@@ -195,7 +201,7 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
     if (!preview) return
     setConfirming(null)
     if (!preview.move) {
-      void deleteMany({ paths: preview.paths })
+      void deleteMany({ paths: preview.paths, folders: preview.targets })
       return
     }
     const { targets, dest } = preview.move
@@ -205,11 +211,9 @@ export function useExplorerActions(docPaths: string[]): ExplorerActions {
       // ONLY what landed. A target that could not be written is still the only
       // copy there is, and deleting it here would destroy it.
       const survived = new Set(landed.map((l) => l.from))
-      const toDelete = filesUnder(
-        docPathsRef.current,
-        targets.filter((t) => survived.has(t)),
-      )
-      if (toDelete.length > 0) await deleteMany({ paths: toDelete })
+      const moved = targets.filter((t) => survived.has(t))
+      const toDelete = filesUnder(docPathsRef.current, moved)
+      if (toDelete.length > 0) await deleteMany({ paths: toDelete, folders: moved })
     })()
   }, [deleteMany, exportFiles])
 

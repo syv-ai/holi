@@ -365,20 +365,24 @@ export const exportFilesAtom = atom(
 /**
  * Batch delete (file, folder, multi-selection). Clears the editor if the open
  * note is among them and closes every deleted tab. One commit-pair, like the
- * others.
+ * others. `folders` are what a folder delete was aimed at, pruned once their
+ * documents are gone (`deleteMany` in main).
  */
-export const deleteManyAtom = atom(null, async (get, set, { paths }: { paths: string[] }) => {
-  const remote = get(activeRemoteAtom)
-  if (!remote || paths.length === 0) return
-  await flushAllBuffers()
-  await trpc.sync.commitNow.mutate()
-  await trpc.notes.deleteMany.mutate({ remote, paths })
-  const gone = new Set(paths)
-  if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
-  set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
-  await set(loadSnapshotAtom)
-  await trpc.sync.commitNow.mutate()
-})
+export const deleteManyAtom = atom(
+  null,
+  async (get, set, { paths, folders = [] }: { paths: string[]; folders?: string[] }) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || (paths.length === 0 && folders.length === 0)) return
+    await flushAllBuffers()
+    await trpc.sync.commitNow.mutate()
+    await trpc.notes.deleteMany.mutate({ remote, paths, folders })
+    const gone = new Set(paths)
+    if (gone.has(get(activeDocAtom)?.path ?? '')) set(activeDocAtom, null)
+    set(workspaceAtom, closeTabsForPaths(get(workspaceAtom), paths))
+    await set(loadSnapshotAtom)
+    await trpc.sync.commitNow.mutate()
+  },
+)
 
 /** What links into a set: the folder / multi-selection delete preview. Empty,
  *  and no call, for an empty set. */

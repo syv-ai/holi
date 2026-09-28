@@ -81,7 +81,7 @@ import type { SignatureStore } from './pdf/signatures'
 import { listContacts } from './google/people'
 import type { ActiveVault, SyncState, VaultHost } from './vault/active-vault'
 import { ensureClone } from './vault/clone'
-import { removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
+import { pruneEmptiedFolder, removeDocFile, writeAtomic, absPathFor } from './vault/vault-files'
 import { renameNote } from './vault/rename'
 import { scanVault, type VaultSnapshot } from './vault/vault-store'
 import { migrateVaultLayout } from './vault/migrate-layout'
@@ -414,11 +414,24 @@ function stringsOrThrow(value: unknown): string[] {
 
 function pathsInput(raw: unknown): { remote: string; paths: string[] } {
   const { remote } = fields({ remote: 'string' })(raw)
-  const paths = (raw as Record<string, unknown>).paths
-  if (!Array.isArray(paths) || paths.some((p) => typeof p !== 'string')) {
-    throw new Error('paths must be an array of strings')
+  return { remote, paths: stringList(raw, 'paths') }
+}
+
+function stringList(raw: unknown, key: string): string[] {
+  const list = (raw as Record<string, unknown>)[key]
+  if (!Array.isArray(list) || list.some((p) => typeof p !== 'string')) {
+    throw new Error(`${key} must be an array of strings`)
   }
-  return { remote, paths: paths as string[] }
+  return list as string[]
+}
+
+/** `pathsInput`, plus the folders the delete was aimed at (optional). */
+function deleteManyInput(raw: unknown): { remote: string; paths: string[]; folders: string[] } {
+  const folders = (raw as Record<string, unknown>).folders
+  return {
+    ...pathsInput(raw),
+    folders: folders === undefined ? [] : stringList(raw, 'folders'),
+  }
 }
 
 /** The Convert-to-PDF render input. `meta` (the template's declared fields to
@@ -1447,10 +1460,13 @@ export function createRouter(deps: RouterDeps) {
 
     // Batch delete: file, folder (expanded by the renderer) or multi-selection.
     // Lands as one commit-pair (the renderer wraps it); a missing path is not an
-    // error, matching single delete.
-    deleteMany: vaultMutation.input(pathsInput).mutation(async ({ input }) => {
+    // error, matching single delete. `folders` are what the delete was aimed
+    // at: once their documents are gone, what that emptied goes too, or the
+    // folder would stay on its `.gitkeep` with nothing left to delete.
+    deleteMany: vaultMutation.input(deleteManyInput).mutation(async ({ input }) => {
       const root = await rootFor(input.remote)
       for (const p of input.paths) await removeDocFile(root, safe(p))
+      for (const f of input.folders) await pruneEmptiedFolder(root, safe(f))
       return { ok: true as const }
     }),
 

@@ -43,6 +43,9 @@ the editor rather than past the window's edge.
 - Copy, paste and Duplicate make new files and leave links pointing at the originals. Duplicate appends ` copy`.
 - Create, move and copy refuse to overwrite an existing path.
 - Delete previews inbound links from outside the deleted set; they are left dangling, not cascaded.
+- A deleted folder goes with its documents: its `.gitkeep` and the folders left empty go too.
+  A file the preview never listed (a `.local.` file) stays, and so does the folder holding it. A
+  folder with no documents left goes without a preview.
 - The name field opens in place: a rename in the row, a new file or folder from the row menu as the first row of the folder it lands in. Enter commits; Escape or leaving the field cancels. A note is renamed without its `.md`, which is added back, and New File appends `.md` when no extension is typed.
 
 **Drag and drop.** One mechanism. A row's drag is a native OS drag of the target files, so they can be dropped into other apps. Everything dropped on the tree arrives as files, and the path decides: a source inside this vault is a move through the move path, anything else is copied in. The destination is the folder under the pointer, a file's folder, or the root for empty space. The target folder is tinted while a drag is over it, and a closed folder opens after a short hover. A name clash is refused per file with an exclusive copy, and the skipped names stay listed until dismissed. A cloud placeholder that is not downloaded (`ETIMEDOUT`) is refused by name, and a folder from Finder is refused with a sentence. Dropping a row into Finder does not work, which is why Copy to Folder and Move to Folder exist; both auto-rename at the destination, and a move warns about dangling links and removes only the files whose copy landed.

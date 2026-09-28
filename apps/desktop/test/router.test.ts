@@ -1,6 +1,6 @@
 import { parse as parseYaml } from 'yaml'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -527,6 +527,27 @@ describe('notes', () => {
     await expect(caller.notes.read({ remote: REMOTE, path: 'a.md' })).rejects.toThrow()
     await expect(caller.notes.read({ remote: REMOTE, path: 'b.md' })).rejects.toThrow()
     expect(await caller.notes.read({ remote: REMOTE, path: 'c.md' })).toBe('C')
+  })
+
+  it('deleteMany takes a deleted folder with it, keeping what it never listed', async () => {
+    // A folder's `.gitkeep` and empty subfolders are not documents, so the
+    // delete never listed them; they held the folder on the tree with nothing
+    // left to delete. A local file is not the delete's to take.
+    const { caller, root } = await rig({
+      'gone/.gitkeep': '',
+      'gone/a.md': 'A',
+      'gone/app.app/.gitkeep': '',
+      'kept/b.md': 'B',
+      'kept/notes.local.md': 'mine',
+    })
+    await mkdir(join(root, 'gone/empty'), { recursive: true })
+    await caller.notes.deleteMany({
+      remote: REMOTE,
+      paths: ['gone/a.md', 'kept/b.md'],
+      folders: ['gone', 'kept'],
+    })
+    await expect(stat(join(root, 'gone'))).rejects.toThrow()
+    expect(await readFile(join(root, 'kept/notes.local.md'), 'utf8')).toBe('mine')
   })
 
   it('backrefsMany names external referrers and excludes links inside the set', async () => {

@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdir, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, relative, sep } from 'node:path'
-import { isLocalOnlyPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
+import { GITKEEP, isLocalOnlyPath, vaultRelPath, type VaultRelPath } from '@holi/shared'
 
 export const TMP_MARKER = '.holi-tmp-'
 const JUNK = new Set(['.DS_Store', 'Thumbs.db'])
@@ -74,7 +74,35 @@ export async function removeDocFile(root: string, rel: VaultRelPath): Promise<vo
   await rm(absPathFor(root, rel), { force: true })
 }
 
-export async function moveDocFile(root: string, from: VaultRelPath, to: VaultRelPath): Promise<void> {
+/**
+ * What a folder's delete leaves once its documents are gone: `.gitkeep` files
+ * (a folder's marker, never a document) and the directories that are then
+ * empty, deepest first. Anything else stays, and so does every directory
+ * above it: a machine-local file the delete's confirmation never listed is
+ * not the delete's to take. Not a directory, or gone already: nothing.
+ */
+export async function pruneEmptiedFolder(root: string, rel: VaultRelPath): Promise<void> {
+  const prune = async (dir: string): Promise<boolean> => {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => null)
+    if (entries === null) return false
+    let empty = true
+    for (const e of entries) {
+      const path = join(dir, e.name)
+      if (e.isDirectory()) empty = (await prune(path)) && empty
+      else if (e.name === GITKEEP) await rm(path, { force: true })
+      else empty = false
+    }
+    if (empty) await rm(dir, { recursive: true, force: true })
+    return empty
+  }
+  await prune(absPathFor(root, rel))
+}
+
+export async function moveDocFile(
+  root: string,
+  from: VaultRelPath,
+  to: VaultRelPath,
+): Promise<void> {
   const dest = absPathFor(root, to)
   await mkdir(dirname(dest), { recursive: true })
   await rename(absPathFor(root, from), dest)
