@@ -16,15 +16,31 @@ Todo / Doing / Done, with one swim lane per folder.
   optional on `due` and `reminder`, and its absence means "that day", not midnight.
 - **Editing a task is editing its file.** A card click opens it beside the board as a preview,
   with frontmatter drawn as typed rows ([frontmatter](frontmatter.md)).
-- **Board.** Lanes are the vault root (always present), then folders alphabetically. The filter
-  bar has three controls: text, tags, hide done. `overdue` and `p1`–`p3` are chips computed at
-  render and filter like tags. A timed due is late after its minute; a timeless one once its day
-  has passed. Task files that fail to parse show in a "could not be read" strip.
-- **Dragging.** Between columns rewrites `status` (into Done means complete). Between lanes moves
-  the file through the rename that rewrites inbound [wiki-links](wiki-links.md). A diagonal is one
-  call. Within a cell, the card gets a sparse `order` rank between its neighbours, so one drag
-  writes one file; unranked cards sort last, ties break by title, a no-op drop writes nothing.
-- **Creating.** A column header's `+` adds into that cell. ⌘T is quick create, ⌘⇧T shows every
+- **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
+  vault root (always present), then folders alphabetically. A lane group with no cards in a column
+  rests hidden and springs open while a drag is on, so every cell can take a drop. Cards are
+  tinted (`--muted` on the column's `--card`), with no edge; Done cards recede to flat rows. Each
+  column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
+  coloured text and filtered like tags. A timed due is late after its minute; a timeless one once
+  its day has passed. Task files that fail to parse show in a "could not be read" strip.
+- **The dock.** One dock floats at the board's foot (the [nav menu](nav-menu.md)'s morph): Search,
+  Tags and Hide done, still the only three narrowing controls, each growing the dock into its
+  panel, and quick add.
+- **Completing plays before it moves.** The check fills and ticks, the strike runs across the
+  title, the card flicks, and then it flies to Done. The write goes out as the tick starts; the
+  card is parked in its column until the sequence and the write are both done. A recurring task
+  ticks and strikes, then unwinds in place with its next due date. Unticking runs it backwards.
+- **Deleting** is the card's bin, which grows into Delete / ✕ before anything is removed, or the
+  card's context menu.
+- **Dragging.** The card folds out of its cell and a gap springs open where it would land, in any
+  cell. Between columns rewrites `status` (into Done means complete). Between lanes moves the file
+  through the rename that rewrites inbound [wiki-links](wiki-links.md). **The drop lands at the
+  gap**: the card takes a sparse `order` rank between its new neighbours, and the rank rides with
+  the status or the move, so every drag writes one file. The gap holds until the write lands, then
+  the card unfolds into it. Unranked cards sort last, ties break by title, a no-op drop writes
+  nothing.
+- **Creating.** A column header's `+` grows into a new card in that column's first lane; Tab
+  moves it to the next lane, Enter adds and stays open. ⌘T is quick create, ⌘⇧T shows every
   field and opens the result; both default to the active note's folder. The agent writes the file.
 - **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
   row; `completeTask` in `packages/shared` says what that writes. A
@@ -68,6 +84,9 @@ Todo / Doing / Done, with one swim lane per folder.
 - Time-bucket views, per-user columns, assignees, presence, task ids, `related[]`.
 - Collapsing lanes by depth: a collapsed lane has no single folder to drop into.
 - Syncing note checkboxes with tasks: it couples notes to tasks again.
+- A cross-cell drop that keeps the card's old rank: the gap would show one place and the card land
+  in another.
+- Moving the card to Done as the check is pressed: the reader never sees it complete.
 
 ## Code
 
@@ -77,6 +96,10 @@ Todo / Doing / Done, with one swim lane per folder.
 - `apps/desktop/src/main/reminders/`, `main/tray.ts`: the sweep, tick, watermark, notifications.
 - `apps/desktop/src/renderer/src/state/tasks.ts`: task set, filter, drops, writes.
 - `apps/desktop/src/renderer/src/state/clock.ts`: `nowAtom` and `todayAtom`, the minute the overdue labels and the daily note read.
-- `apps/desktop/src/renderer/src/features/tasks/`, `lib/board-order.ts`, `lib/date-presets.ts`,
+- `apps/desktop/src/renderer/src/features/tasks/`: the board (`BoardView`, `BoardCard`,
+  `BoardDock`), the completion sequence (`use-check-sequence.ts`) and the drag
+  (`use-board-drag.ts`); `lib/board-order.ts`, `lib/date-presets.ts`,
   `composites/DateTimePicker.tsx`, `composites/RecurrenceField.tsx`.
+- `apps/desktop/src/renderer/src/primitives/TaskCheck.tsx`, `StrikeText.tsx`, `ConfirmInPlace.tsx`,
+  `RollingCount.tsx`, `Choice.tsx`, and the board's springs in `springs.ts`.
 - `apps/desktop/src/main/agent/skills/using-tasks/SKILL.md`: the seeded agent skill.

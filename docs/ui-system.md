@@ -100,12 +100,15 @@ One place decides how an icon looks, so every icon in the app agrees.
   images, the table widget and frontmatter rows respond; text does not. Inside CodeMirror all of it
   is paint only (see [editor](features/editor.md)).
 - **Reduced motion reduces, not removes:** F stops, A becomes instant, R and painting K survive.
-- **Overshoot belongs to springs.** `--ease-spring` and spring keyframes exist only in
-  `features/onboarding/onboarding-ritual.css`; the one other spring is the morph shared by the
-  [nav menu](features/nav-menu.md), the [command palette](features/command-palette.md) and every
-  select and dropdown menu (`primitives/morph-popup.tsx`: the list grows out of its trigger and
-  shrinks back into it), on `motion` (`primitives/springs.ts`), which keeps its bounce. The vocabulary's curves stay
-  overshoot-free.
+- **Springs live in `primitives/springs.ts`**, on `motion`, and nowhere else (besides the
+  onboarding ritual's `--ease-spring` in `features/onboarding/onboarding-ritual.css`). Two
+  families: the morph shared by the [nav menu](features/nav-menu.md), the
+  [command palette](features/command-palette.md) and every select and dropdown menu
+  (`primitives/morph-popup.tsx`: the list grows out of its trigger and shrinks back into it),
+  which keeps its bounce; and the [board](features/tasks.md)'s `settle` (a card taking its place,
+  a drag's gap, a lane group opening), restrained to a hint of bounce because it runs all day,
+  with the completion beats ported from rare-ui (`check`). A spring may overshoot; the CSS
+  vocabulary's curves stay overshoot-free.
 
 ## Drawers
 
@@ -156,7 +159,7 @@ DOM: they copy width, motion, header and edge through the injected stylesheet an
   surface, and "no layout" becomes best effort.
 - A theme in `localStorage`: the agent cannot write it and it does not travel with the vault.
 - Motion by convention without a lint rule: that is how the unchosen `transition-all` pile arose.
-- Overshoot or springs in the daily app, beyond the morph above.
+- Springs beyond the two families above, or stated at a call site instead of `springs.ts`.
 - Theming the titlebar: needs a custom titlebar, which is a layout change.
 
 ## Code

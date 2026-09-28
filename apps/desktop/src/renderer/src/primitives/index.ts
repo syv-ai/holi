@@ -1,5 +1,6 @@
 export { Button, buttonVariants } from './Button'
 export { Checkbox } from './Checkbox'
+export { MorphRow, PillGroup, type PillOption } from './Choice'
 export {
   Combobox,
   ComboboxChip,
@@ -62,8 +63,13 @@ export { IconButton, type IconButtonProps } from './IconButton'
 export { Input } from './Input'
 export { Kbd } from './Kbd'
 export { Label } from './Label'
-export { MorphingMenu, type MorphingMenuAction, type MorphingMenuItem } from './MorphingMenu'
-export { spring } from './springs'
+export {
+  MorphingMenu,
+  type MorphingMenuAction,
+  type MorphingMenuHandle,
+  type MorphingMenuItem,
+} from './MorphingMenu'
+export { check, instant, rowFromMotion, settle, spring } from './springs'
 export { ConfirmInPlace } from './ConfirmInPlace'
 export { RollingCount } from './RollingCount'
 export { StrikeText } from './StrikeText'
