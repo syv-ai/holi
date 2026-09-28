@@ -8,7 +8,7 @@ A vault's history is its git history, and the autosave commits give it fine reso
 
 **Restore.** "Restore this version" asks for confirmation in a dialog, flushes open buffers, writes that commit's content to the file and commits it through the ordinary autosave, so it lands as `Update <path>` and pushes like any edit. The version you left stays in the log, and the drawer returns to it.
 
-**The vault tab.** A singleton tab, opened from the sync item's panel in the nav menu or from the command palette. The left side lists every commit in the vault (newest first, 200). Picking one shows one collapsible per changed file, expanded, each with that file's diff. Each file fetches its own diff when first opened, so a large commit loads in parallel and reopening a file costs nothing.
+**The vault tab.** A singleton tab, opened from the sync item's panel in the nav menu or from the command palette. The left side is a tree in the file tree's system (`composites/tree.tsx`): days are its headings (Today, Yesterday, then dates), every day open to start, each hanging its commits (newest first, 200) with their times. Picking a commit is expansion: it opens to its changed files, its day wears the tree's bar, and the right side shows the commit's message, author, date, churn and short sha (which opens it on GitHub), then one collapsible per changed file, expanded, each with that file's diff. Picking one of its files narrows the right side to that diff; the commit's row widens it again. Each file fetches its own diff when first opened, so a large commit loads in parallel and reopening a file costs nothing. A floating dock at the foot, like the board's, searches messages and authors, opening every day that matches.
 
 ## Rules
 

@@ -56,8 +56,8 @@ function setup(remote: string | null = 'syv-ai/vault') {
 
 test('lists the vault’s commits', async () => {
   setup()
-  expect(await screen.findByRole('button', { name: /Update 2 files/ })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: /Update plan\.md/ })).toBeInTheDocument()
+  expect(await screen.findByRole('treeitem', { name: /Update 2 files/ })).toBeInTheDocument()
+  expect(screen.getByRole('treeitem', { name: /Update plan\.md/ })).toBeInTheDocument()
 })
 
 test('says what to do before a commit is picked', async () => {
@@ -68,7 +68,7 @@ test('says what to do before a commit is picked', async () => {
 test('a picked commit opens every file it changed, expanded', async () => {
   // A commit is one act, read as one.
   setup()
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
   const plan = await screen.findByRole('button', { name: /notes\/plan\.md/ })
   const other = await screen.findByRole('button', { name: /notes\/other\.md/ })
   expect(plan).toHaveAttribute('aria-expanded', 'true')
@@ -81,7 +81,7 @@ test('a picked commit opens every file it changed, expanded', async () => {
 
 test('collapsing a file hides its diff and keeps its answer', async () => {
   setup()
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
   await waitFor(() => expect(fileDiff).toHaveBeenCalledTimes(2))
 
   const plan = await screen.findByRole('button', { name: /notes\/plan\.md/ })
@@ -97,11 +97,11 @@ test('collapsing a file hides its diff and keeps its answer', async () => {
 
 test('picking another commit drops the first one’s files', async () => {
   setup()
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
   await screen.findByRole('button', { name: /notes\/plan\.md/ })
 
   changed.mockResolvedValue(['only.md'])
-  await userEvent.click(screen.getByRole('button', { name: /Update plan\.md/ }))
+  await userEvent.click(screen.getByRole('treeitem', { name: /Update plan\.md/ }))
   await waitFor(() => expect(screen.queryByRole('button', { name: /notes\/plan\.md/ })).toBeNull())
   expect(await screen.findByRole('button', { name: /only\.md/ })).toBeInTheDocument()
 })
@@ -109,7 +109,7 @@ test('picking another commit drops the first one’s files', async () => {
 test('a commit that changed no files says so', async () => {
   setup()
   changed.mockResolvedValue([])
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
   expect(await screen.findByText(/changed no files/)).toBeInTheDocument()
 })
 
@@ -118,15 +118,15 @@ test('a file the commit did not touch reads as that, not as an empty diff', asyn
   setup()
   changed.mockResolvedValue(['ghost.md'])
   fileDiff.mockResolvedValue({ before: '', after: '' })
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
   expect(await screen.findByText(/did not change this file/)).toBeInTheDocument()
 })
 
 test('a vault switch does not leave the last vault’s commits up', async () => {
   const { store } = setup()
-  await screen.findByRole('button', { name: /Update 2 files/ })
+  await screen.findByRole('treeitem', { name: /Update 2 files/ })
   log.mockResolvedValue([])
-  await userEvent.click(await screen.findByRole('button', { name: /Update 2 files/ }))
+  await userEvent.click(await screen.findByRole('treeitem', { name: /Update 2 files/ }))
 
   store.set(activeRemoteAtom, 'syv-ai/other')
   await waitFor(() => expect(screen.queryByRole('button', { name: /Update 2 files/ })).toBeNull())
