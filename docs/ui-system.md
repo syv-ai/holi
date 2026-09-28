@@ -76,8 +76,9 @@ component pasted from shadcn upstream with the 3px halo fails before it is mount
 - **Reduced motion reduces, not removes:** F stops, A becomes instant, R and painting K survive.
 - **Overshoot belongs to springs.** `--ease-spring` and spring keyframes exist only in
   `features/onboarding/onboarding-ritual.css`; the one other spring is the morph shared by the
-  [nav menu](features/nav-menu.md) and the [command palette](features/command-palette.md), on
-  `motion` (`primitives/springs.ts`), which keeps its bounce. The vocabulary's curves stay
+  [nav menu](features/nav-menu.md), the [command palette](features/command-palette.md) and every
+  select and dropdown menu (`primitives/morph-popup.tsx`: the list grows out of its trigger and
+  shrinks back into it), on `motion` (`primitives/springs.ts`), which keeps its bounce. The vocabulary's curves stay
   overshoot-free.
 
 ## Drawers

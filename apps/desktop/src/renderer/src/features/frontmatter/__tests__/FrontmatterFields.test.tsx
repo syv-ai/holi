@@ -1,4 +1,4 @@
-import { render, screen } from '@/test/render'
+import { render, screen, waitFor } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { Provider, createStore } from 'jotai'
@@ -223,6 +223,8 @@ test("a field's title opens a select", async () => {
   // Twice: once the trigger has seen a mouse, Radix no longer opens on a click,
   // which is all a label gives it.
   await user.click(screen.getByRole('combobox', { name: 'status' }))
+  // The list shrinks back into its trigger before it is gone.
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
   await user.keyboard('{Escape}')
   await user.click(screen.getByText('status'))
   expect(screen.getByRole('listbox')).toBeInTheDocument()

@@ -3,9 +3,35 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from 'lucide-react'
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui'
 
 import { cn } from '@/lib/cn'
+import {
+  MORPH_POPUP,
+  MORPH_ROW_LOOK,
+  MORPH_SURFACE,
+  useMorphPopup,
+  useMorphRoot,
+  useMorphTrigger,
+} from './morph-popup'
 
-function DropdownMenu({ ...props }: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
-  return <DropdownMenuPrimitive.Root data-slot="dropdown-menu" {...props} />
+/** An item's own classes beyond the row look: its icons. */
+const ITEM_ICONS =
+  "[&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+
+/** Opens as the nav menu's family does: out of its trigger (`morph-popup.tsx`). */
+function DropdownMenu({
+  open,
+  defaultOpen,
+  onOpenChange,
+  ...props
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Root>) {
+  const morph = useMorphRoot({ open, defaultOpen, onOpenChange })
+  return morph.provide(
+    <DropdownMenuPrimitive.Root
+      data-slot="dropdown-menu"
+      open={morph.open}
+      onOpenChange={morph.onOpenChange}
+      {...props}
+    />,
+  )
 }
 
 function DropdownMenuPortal({
@@ -15,27 +41,44 @@ function DropdownMenuPortal({
 }
 
 function DropdownMenuTrigger({
+  ref,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Trigger>) {
-  return <DropdownMenuPrimitive.Trigger data-slot="dropdown-menu-trigger" {...props} />
+  const triggerRef = useMorphTrigger(ref)
+  return (
+    <DropdownMenuPrimitive.Trigger ref={triggerRef} data-slot="dropdown-menu-trigger" {...props} />
+  )
 }
 
+/** The menu, laid over its trigger and grown out of its corner. The rows
+ *  scroll inside the surface, so the surface itself never scrolls away. */
 function DropdownMenuContent({
   className,
-  sideOffset = 4,
+  children,
+  align = 'start',
+  sideOffset,
+  style,
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  const morph = useMorphPopup()
+  const force = morph.mounted || undefined
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal forceMount={force}>
       <DropdownMenuPrimitive.Content
+        ref={morph.contentRef}
+        forceMount={force}
         data-slot="dropdown-menu-content"
-        sideOffset={sideOffset}
-        className={cn(
-          'z-50 max-h-(--radix-dropdown-menu-content-available-height) min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-md bg-popover p-1 text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
-          className,
-        )}
+        align={align}
+        sideOffset={sideOffset ?? morph.sideOffset}
+        style={{ ...morph.style, ...style }}
+        className={cn(MORPH_POPUP, 'flex flex-col', className)}
         {...props}
-      />
+      >
+        <div ref={morph.surfaceRef} aria-hidden="true" className={MORPH_SURFACE} />
+        <div className="max-h-(--radix-dropdown-menu-content-available-height) overflow-x-hidden overflow-y-auto overscroll-contain p-1.5">
+          {children}
+        </div>
+      </DropdownMenuPrimitive.Content>
     </DropdownMenuPrimitive.Portal>
   )
 }
@@ -56,10 +99,13 @@ function DropdownMenuItem({
   return (
     <DropdownMenuPrimitive.Item
       data-slot="dropdown-menu-item"
+      data-morph-row=""
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive!",
+        MORPH_ROW_LOOK,
+        ITEM_ICONS,
+        "data-[inset]:pl-8 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 [&_svg:not([class*='text-'])]:text-muted-foreground data-[variant=destructive]:*:[svg]:text-destructive!",
         className,
       )}
       {...props}
@@ -76,14 +122,12 @@ function DropdownMenuCheckboxItem({
   return (
     <DropdownMenuPrimitive.CheckboxItem
       data-slot="dropdown-menu-checkbox-item"
-      className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        className,
-      )}
+      data-morph-row=""
+      className={cn(MORPH_ROW_LOOK, ITEM_ICONS, 'pl-8', className)}
       checked={checked}
       {...props}
     >
-      <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
+      <span className="pointer-events-none absolute left-2.5 flex size-3.5 items-center justify-center">
         <DropdownMenuPrimitive.ItemIndicator>
           <CheckIcon className="size-4" />
         </DropdownMenuPrimitive.ItemIndicator>
@@ -107,13 +151,11 @@ function DropdownMenuRadioItem({
   return (
     <DropdownMenuPrimitive.RadioItem
       data-slot="dropdown-menu-radio-item"
-      className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm py-1.5 pr-2 pl-8 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
-        className,
-      )}
+      data-morph-row=""
+      className={cn(MORPH_ROW_LOOK, ITEM_ICONS, 'pl-8', className)}
       {...props}
     >
-      <span className="pointer-events-none absolute left-2 flex size-3.5 items-center justify-center">
+      <span className="pointer-events-none absolute left-2.5 flex size-3.5 items-center justify-center">
         <DropdownMenuPrimitive.ItemIndicator>
           <CircleIcon className="size-2 fill-current" />
         </DropdownMenuPrimitive.ItemIndicator>
@@ -133,8 +175,9 @@ function DropdownMenuLabel({
   return (
     <DropdownMenuPrimitive.Label
       data-slot="dropdown-menu-label"
+      data-morph-row=""
       data-inset={inset}
-      className={cn('px-2 py-1.5 text-sm font-medium data-[inset]:pl-8', className)}
+      className={cn('px-2.5 py-1.5 text-xs text-muted-foreground data-[inset]:pl-8', className)}
       {...props}
     />
   )
@@ -147,7 +190,8 @@ function DropdownMenuSeparator({
   return (
     <DropdownMenuPrimitive.Separator
       data-slot="dropdown-menu-separator"
-      className={cn('-mx-1 my-1 h-px bg-border', className)}
+      data-morph-row=""
+      className={cn('mx-2.5 my-1 h-px bg-border', className)}
       {...props}
     />
   )
@@ -178,9 +222,12 @@ function DropdownMenuSubTrigger({
   return (
     <DropdownMenuPrimitive.SubTrigger
       data-slot="dropdown-menu-sub-trigger"
+      data-morph-row=""
       data-inset={inset}
       className={cn(
-        "motion-respond flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        MORPH_ROW_LOOK,
+        ITEM_ICONS,
+        "data-[inset]:pl-8 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground [&_svg:not([class*='text-'])]:text-muted-foreground",
         className,
       )}
       {...props}
@@ -199,7 +246,7 @@ function DropdownMenuSubContent({
     <DropdownMenuPrimitive.SubContent
       data-slot="dropdown-menu-sub-content"
       className={cn(
-        'z-50 min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md bg-popover p-1 text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
+        'z-50 min-w-[8rem] origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-[1.25rem] bg-popover p-1.5 text-popover-foreground shadow-popover data-[state=open]:motion-in-origin data-[state=closed]:motion-out-origin',
         className,
       )}
       {...props}

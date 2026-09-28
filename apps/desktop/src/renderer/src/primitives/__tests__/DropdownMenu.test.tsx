@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createRef } from 'react'
 import { expect, test, vi } from 'vitest'
@@ -28,7 +28,9 @@ test('keeps the content hidden until the trigger is clicked', () => {
 test('reveals its items when the trigger is clicked', async () => {
   render(<Menu />)
   await userEvent.click(screen.getByText('open'))
-  expect(await screen.findByRole('menuitem', { name: 'pick me' })).toBeVisible()
+  // The rows cascade in after the surface grows out of the trigger.
+  const item = await screen.findByRole('menuitem', { name: 'pick me' })
+  await waitFor(() => expect(item).toBeVisible())
 })
 
 test('reports selection through the item onSelect', async () => {

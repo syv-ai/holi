@@ -40,10 +40,7 @@ export function VaultPicker({
         </DropdownMenuTrigger>
       </Tooltip>
 
-      <DropdownMenuContent
-        align="start"
-        className="min-w-(--radix-dropdown-menu-trigger-width)"
-      >
+      <DropdownMenuContent>
         {vaults.length === 0 && (
           <DropdownMenuItem disabled>no vaults yet</DropdownMenuItem>
         )}

@@ -130,6 +130,8 @@ async function chooseMailbox(
 ): Promise<void> {
   await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: label }))
+  // The menu shrinks back into its trigger before the page is reachable again.
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 }
 
 /** Mount, open the one thread, and hand back the reader pane. */
@@ -253,6 +255,8 @@ test('a search is not narrowed by the category, as in Gmail itself', async () =>
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+  // The menu shrinks back into its trigger before the page is reachable again.
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
   await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
 
   // Search is an icon until asked for; opening it focuses the field.
@@ -271,6 +275,8 @@ test('says which tab is empty, rather than implying the inbox is', async () => {
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+  // The menu shrinks back into its trigger before the page is reachable again.
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 
   // An empty tab and an empty mailbox look identical otherwise.
   expect(await screen.findByText(/nothing in promotions/i)).toBeInTheDocument()
@@ -283,6 +289,8 @@ test('lets the user look at Promotions', async () => {
   render(<MailView />)
   await user.click(await screen.findByRole('button', { name: /choose a mailbox/i }))
   await user.click(await screen.findByRole('menuitem', { name: /promotions/i }))
+  // The menu shrinks back into its trigger before the page is reachable again.
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull())
 
   await waitFor(() => expect(queryOf(1)).toMatchObject({ category: 'promotions' }))
 })
