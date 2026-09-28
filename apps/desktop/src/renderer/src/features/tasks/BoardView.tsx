@@ -158,53 +158,51 @@ export function BoardView(): React.JSX.Element {
     <div className="relative flex min-h-0 flex-1 flex-col">
       <BrokenStrip />
       <LayoutGroup>
-        <div className="flex min-h-0 flex-1 gap-3 overflow-auto p-4">
-          {columns.map((column) => (
-            <section
-              key={column.status}
-              data-column={column.status}
-              // Each surface runs to the foot of the board, full or not.
-              // The foot keeps clear of the dock that floats over it.
-              className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card p-2 pb-16"
-            >
-              <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
-                {column.label}
-                <RollingCount
-                  value={all.filter((t) => shown(t) === column.status).length}
-                  className="font-normal text-muted-foreground"
-                />
-                {adding?.status !== column.status && (
-                  <motion.div
-                    layoutId={reduced ? undefined : `new-${column.status}`}
-                    transition={reduced ? instant : settle}
-                    style={{ borderRadius: 999 }}
-                    className="ml-auto"
-                  >
-                    <IconButton
-                      icon={Plus}
-                      label={`Add to ${column.label}`}
-                      shape="round"
-                      data-add-column={column.status}
-                      onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
-                    />
-                  </motion.div>
-                )}
-              </h2>
+        <div className="min-h-0 flex-1 overflow-auto">
+          {/* At least the board's height, and as tall as its tallest column:
+              the surfaces stretch to whichever is more. */}
+          <div className="flex min-h-full gap-3 p-4">
+            {columns.map((column) => (
+              <section
+                key={column.status}
+                data-column={column.status}
+                // Each surface runs to the foot of the board, full or not.
+                // The foot keeps clear of the dock that floats over it.
+                className="flex min-w-0 flex-1 flex-col rounded-[1.25rem] bg-card p-2 pb-16"
+              >
+                <h2 className="flex h-8 items-center gap-2 px-2 pb-1 text-xs font-semibold">
+                  {column.label}
+                  <RollingCount
+                    value={all.filter((t) => shown(t) === column.status).length}
+                    className="font-normal text-muted-foreground"
+                  />
+                  {adding?.status !== column.status && (
+                    <motion.div
+                      layoutId={reduced ? undefined : `new-${column.status}`}
+                      transition={reduced ? instant : settle}
+                      style={{ borderRadius: 999 }}
+                      className="ml-auto"
+                    >
+                      <IconButton
+                        icon={Plus}
+                        label={`Add to ${column.label}`}
+                        shape="round"
+                        data-add-column={column.status}
+                        onClick={() => setAdding({ status: column.status, lane: 0, title: '' })}
+                      />
+                    </motion.div>
+                  )}
+                </h2>
 
-              {lanes.map((lane, laneIndex) => {
-                const cards = cell(lane, column.status)
-                const gap = drag.gap(lane, column.status)
-                const addingHere = adding?.status === column.status && adding.lane === laneIndex
-                const open = cards.length > 0 || drag.active || addingHere
-                return (
-                  <motion.div
-                    key={lane || ROOT_LANE}
-                    initial={false}
-                    animate={{ height: open ? 'auto' : 0, opacity: open ? 1 : 0 }}
-                    transition={reduced ? instant : settle}
-                    className="overflow-hidden"
-                    aria-hidden={!open}
-                  >
+                {lanes.map((lane, laneIndex) => {
+                  const cards = cell(lane, column.status)
+                  const gap = drag.gap(lane, column.status)
+                  const addingHere = adding?.status === column.status && adding.lane === laneIndex
+                  // A lane group with cards is laid out plainly. An empty one is
+                  // not there at rest, and springs open only while a drag is on,
+                  // so every cell can take the drop. (Animating every group's
+                  // height left stale pixel heights that clipped cards.)
+                  const group = (
                     <div
                       {...drag.target(lane, column.status)}
                       className={cn('mb-1.5 rounded-2xl p-1 motion-respond', gap && 'bg-accent/40')}
@@ -254,11 +252,28 @@ export function BoardView(): React.JSX.Element {
                         )}
                       </div>
                     </div>
-                  </motion.div>
-                )
-              })}
-            </section>
-          ))}
+                  )
+                  if (cards.length > 0 || addingHere)
+                    return <div key={lane || ROOT_LANE}>{group}</div>
+                  return (
+                    <AnimatePresence key={lane || ROOT_LANE} initial={false}>
+                      {drag.active && (
+                        <motion.div
+                          initial={{ height: 0, opacity: 0 }}
+                          animate={{ height: 'auto', opacity: 1 }}
+                          exit={{ height: 0, opacity: 0 }}
+                          transition={reduced ? instant : settle}
+                          className="overflow-hidden"
+                        >
+                          {group}
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  )
+                })}
+              </section>
+            ))}
+          </div>
         </div>
       </LayoutGroup>
 
