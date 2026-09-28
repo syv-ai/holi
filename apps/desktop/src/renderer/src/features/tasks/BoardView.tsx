@@ -251,7 +251,7 @@ export function BoardView(): React.JSX.Element {
                       // unanswered, the question folds away. Git keeps them.
                       <ConfirmInPlace
                         label="Delete every done task"
-                        confirmLabel={`Delete ${finished.length}`}
+                        confirmLabel="Delete"
                         fuse={4000}
                         size="md"
                         onConfirm={() => void removeAll(finished.map((t) => t.path))}

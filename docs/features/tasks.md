@@ -41,8 +41,9 @@ Todo / Doing / Done, with one swim lane per folder.
   ticks and strikes, then unwinds in place with its next due date. Unticking runs it backwards.
 - **Deleting** is the card's bin, which grows into Delete / ✕ before anything is removed, or the
   card's context menu. Done's header has a bin of its own that empties the column: it grows
-  into "Delete N" / ✕ over a four-second fuse, and nothing is deleted unless that is pressed
-  before the fuse runs out. It deletes every done task the column shows. Git keeps them.
+  into a solid Delete pill, a shade crossing it from the right over four seconds. Nothing is
+  deleted unless the pill is pressed; when the shade reaches the end it folds back, or waits
+  while the pointer is on it. It deletes every done task the column shows. Git keeps them.
 - **Dragging.** The card folds out of its cell and a gap springs open where it would land, in any
   cell. Between columns rewrites `status` (into Done means complete). Between lanes moves the file
   through the rename that rewrites inbound [wiki-links](wiki-links.md). **The drop lands at the
