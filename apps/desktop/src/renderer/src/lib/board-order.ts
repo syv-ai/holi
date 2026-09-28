@@ -23,29 +23,40 @@ export function sortCell(tasks: Task[]): Task[] {
   })
 }
 
+/** One card's new rank. */
+export type Rank = { path: string; order: number }
+
 /**
- * The rank for a card dropped into `cell` at `index`, counted among the cell's
- * cards **without** the dragged one: where the gap opened. **Null** when the
- * drop would not move it.
+ * The writes that put a card dropped into `cell` at `index`, counted among the
+ * cell's cards **without** the dragged one: where the gap opened. The dragged
+ * card's rank is last. **Null** when the drop would not move it.
  *
  * `cell` is the target cell, which holds the dragged card only on a same-cell
  * drop. That is also the only drop that can be a no-op, and the test is
  * positional, not numeric: a no-op can compute a different rank (`1.5`
  * between `1` and `3` gives `2`), but re-inserting at its old index
  * reproduces the old sequence, and no other index does.
+ *
+ * **Unranked cards above the gap are ranked too, in the order shown.** They
+ * sort last and by title, so no rank of the dragged card alone can put it
+ * below one of them: it would jump up to the last ranked card. Ranking them
+ * pins the order the person was looking at, so this happens once per cell;
+ * after that a drop is one write.
  */
-export function rankAt(cell: Task[], draggedPath: string, index: number): number | null {
+export function rankAt(cell: Task[], draggedPath: string, index: number): Rank[] | null {
   const sorted = sortCell(cell)
   const without = sorted.filter((t) => t.path !== draggedPath)
   const at = Math.max(0, Math.min(index, without.length))
   if (sorted.findIndex((t) => t.path === draggedPath) === at) return null
-  // Unranked cards sort last, so a gap among them sits just below the last
-  // ranked card above it: rank from that one, or the drop would jump to the
-  // top of the cell.
-  const previous = without
-    .slice(0, at)
-    .filter((t) => t.order !== undefined)
-    .at(-1)
-  const next = without[at]
-  return rankBetween(previous?.order ?? null, next?.order ?? null)
+  const writes: Rank[] = []
+  let previous: number | null = null
+  for (const t of without.slice(0, at)) {
+    if (t.order !== undefined) previous = t.order
+    else {
+      previous = rankBetween(previous, null)
+      writes.push({ path: t.path, order: previous })
+    }
+  }
+  writes.push({ path: draggedPath, order: rankBetween(previous, without[at]?.order ?? null) })
+  return writes
 }

@@ -36,6 +36,7 @@ import {
   matchesFilter,
   moveTaskAtom,
   patchTaskAtom,
+  rankTasksAtom,
   tasksAtom,
 } from '@/state/tasks'
 import { nowAtom } from '@/state/clock'
@@ -94,6 +95,7 @@ export function BoardView(): React.JSX.Element {
   const tasks = useAtomValue(tasksAtom)
   const patch = useSetAtom(patchTaskAtom)
   const move = useSetAtom(moveTaskAtom)
+  const rankAll = useSetAtom(rankTasksAtom)
   const create = useSetAtom(createTaskAtom)
   const filter = useAtomValue(filterAtom)
   const now = useAtomValue(nowAtom)
@@ -129,14 +131,17 @@ export function BoardView(): React.JSX.Element {
   // column that can never fill reads as a layout bug.
   const columns = filter.hideDone ? COLUMNS.filter((c) => c.status !== 'done') : COLUMNS
 
-  /** A drop's one write: status and rank in place, or a move carrying both. */
+  /** A drop's write: status and rank in place, or a move carrying both. The
+   *  first drop below unranked cards ranks them first (`rankAt`). */
   const commit = async (path: string, lane: string, status: TaskStatus, index: number) => {
     const task = tasks.get(path)
     if (!task) return
-    const rank = rankAt(cell(lane, status), path, index)
+    const ranks = rankAt(cell(lane, status), path, index)
+    const rank = ranks?.at(-1)?.order ?? null
     const newStatus = status !== task.status ? status : undefined
+    if (laneOf(task) === lane && newStatus === undefined && rank === null) return
+    if (ranks && ranks.length > 1) await rankAll(ranks.slice(0, -1))
     if (laneOf(task) === lane) {
-      if (newStatus === undefined && rank === null) return
       await patch(path, {
         ...(newStatus ? { status: newStatus } : {}),
         ...(rank !== null ? { order: rank } : {}),

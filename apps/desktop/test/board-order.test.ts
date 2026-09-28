@@ -34,17 +34,23 @@ describe('sortCell', () => {
 
 describe('rankAt', () => {
   const cell = [task('a', 1), task('b', 2), task('c', 3)]
+  /** The dragged card's rank: the last write. */
+  const rank = (...args: Parameters<typeof rankAt>) => rankAt(...args)!.at(-1)!.order
 
   it('ranks a card dropped into an empty cell', () => {
-    expect(rankAt([], 'task.x.md', 0)).not.toBeNull()
+    expect(rankAt([], 'task.x.md', 0)).toEqual([{ path: 'task.x.md', order: 1 }])
   })
 
   it('ranks above the head, between neighbours, and below the tail of another cell', () => {
-    expect(rankAt(cell, 'task.x.md', 0)!).toBeLessThan(1)
-    const middle = rankAt(cell, 'task.x.md', 1)!
+    expect(rank(cell, 'task.x.md', 0)).toBeLessThan(1)
+    const middle = rank(cell, 'task.x.md', 1)
     expect(middle).toBeGreaterThan(1)
     expect(middle).toBeLessThan(2)
-    expect(rankAt(cell, 'task.x.md', 3)!).toBeGreaterThan(3)
+    expect(rank(cell, 'task.x.md', 3)).toBeGreaterThan(3)
+  })
+
+  it('writes one file when the cell is ranked', () => {
+    expect(rankAt(cell, 'task.x.md', 1)).toHaveLength(1)
   })
 
   it('writes nothing for a same-cell drop back into its own place', () => {
@@ -52,17 +58,24 @@ describe('rankAt', () => {
     expect(rankAt(cell, 'task.b.md', 1)).toBeNull()
   })
 
-  it('ranks a drop among unranked cards below the ranked ones, not above them', () => {
-    // a is ranked; b and c are not, so they sort after it. A gap between b and
-    // c must not produce a rank that jumps above a.
+  it('lands between two unranked cards by ranking the ones above it', () => {
+    // a is ranked; b and c are not, so they sort after it by title. A rank for
+    // x alone would put it above b, so b is ranked too.
     const mixed = [task('a', 5), task('b'), task('c')]
-    expect(rankAt(mixed, 'task.x.md', 2)!).toBeGreaterThan(5)
+    const writes = rankAt(mixed, 'task.x.md', 2)!
+    const after = sortCell(
+      [...mixed, task('x')].map((t) => {
+        const w = writes.find((r) => r.path === t.path)
+        return w ? { ...t, order: w.order } : t
+      }),
+    )
+    expect(after.map((t) => t.title)).toEqual(['a', 'b', 'x', 'c'])
+    expect(writes.map((w) => w.path)).toEqual(['task.b.md', 'task.x.md'])
   })
 
   it('moves a same-cell card between its new neighbours', () => {
-    const rank = rankAt(cell, 'task.a.md', 2)! // below c
-    expect(rank).toBeGreaterThan(3)
-    const up = rankAt(cell, 'task.c.md', 1)! // between a and b
+    expect(rank(cell, 'task.a.md', 2)).toBeGreaterThan(3) // below c
+    const up = rank(cell, 'task.c.md', 1) // between a and b
     expect(up).toBeGreaterThan(1)
     expect(up).toBeLessThan(2)
   })

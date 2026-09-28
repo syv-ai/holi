@@ -216,6 +216,20 @@ export const patchTaskAtom = atom(
   },
 )
 
+/** Ranks several cards in one pass and one re-read: the unranked cards a drop
+ * pins above itself (`rankAt`). */
+export const rankTasksAtom = atom(
+  null,
+  async (get, set, ranks: { path: string; order: number }[]) => {
+    const remote = get(activeRemoteAtom)
+    if (!remote || ranks.length === 0) return
+    await Promise.all(
+      ranks.map(({ path, order }) => trpc.tasks.update.mutate({ remote, path, patch: { order } })),
+    )
+    await set(loadSnapshotAtom)
+  },
+)
+
 /** Moves a card between columns: the vertical axis, and the card's checkbox.
  * Done is completion, which main applies to any status write, so a recurring
  * task rolls to its next occurrence (`completeTask`). The horizontal axis is

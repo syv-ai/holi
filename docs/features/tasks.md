@@ -37,8 +37,9 @@ Todo / Doing / Done, with one swim lane per folder.
   cell. Between columns rewrites `status` (into Done means complete). Between lanes moves the file
   through the rename that rewrites inbound [wiki-links](wiki-links.md). **The drop lands at the
   gap**: the card takes a sparse `order` rank between its new neighbours, and the rank rides with
-  the status or the move, so every drag writes one file. The gap holds until the write lands, then
-  the card unfolds into it. Unranked cards sort last, ties break by title, a no-op drop writes
+  the status or the move, so a drag writes one file. Unranked cards sort last and by title, so a
+  drop below one ranks the unranked cards above it too, in the order shown: that happens once per
+  cell. The gap holds until the writes land, then the card unfolds into it. A no-op drop writes
   nothing.
 - **Creating.** A column header's `+` grows into a new card in that column's first lane; Tab
   moves it to the next lane, Enter adds and stays open.
