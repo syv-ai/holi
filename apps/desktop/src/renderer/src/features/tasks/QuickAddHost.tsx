@@ -28,7 +28,7 @@ export function QuickAddHost(): React.JSX.Element {
           event.preventDefault()
       }}
     >
-      <QuickAdd />
+      <QuickAdd onAdded={() => setQuickAdd(null)} />
     </MorphDialog>
   )
 }

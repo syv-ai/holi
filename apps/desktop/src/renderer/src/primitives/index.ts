@@ -66,6 +66,7 @@ export { Kbd } from './Kbd'
 export { Label } from './Label'
 export {
   MorphingMenu,
+  MORPH_OWNED,
   type MorphingMenuAction,
   type MorphingMenuHandle,
   type MorphingMenuItem,

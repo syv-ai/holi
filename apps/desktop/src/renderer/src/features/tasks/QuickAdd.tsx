@@ -17,8 +17,8 @@
  *   open, whose Enter picks.
  * - Everything is created in Todo. **Lane is any folder**, not only a board
  *   lane, as the full create allows; it defaults to the active note's folder.
- * - After an add the text clears and the lane stays: the next task usually
- *   goes to the same place. On the board, the card flies from the dock to its
+ * - An add closes quick add (`onAdded`); the text clears and the lane stays,
+ *   since the next task usually goes to the same place. On the board, the card flies from the dock to its
  *   cell (a shared `layoutId`, the path it will have).
  */
 import type { Priority } from '@holi/shared'
@@ -27,13 +27,22 @@ import { completionStatus } from '@codemirror/autocomplete'
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
 import { Prec } from '@codemirror/state'
-import { Decoration, EditorView, keymap } from '@codemirror/view'
+import { Decoration, EditorView, keymap, tooltips } from '@codemirror/view'
 import { useAtomValue, useSetAtom } from 'jotai'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { CalendarDays, Check, Flag, Folder, Hash, PenLine } from 'lucide-react'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { duePresets, shortStamp } from '@/lib/date-presets'
-import { Icon, MorphRow, TaskCheck, Token, instant, settle, type IconGlyph } from '@/primitives'
+import {
+  Icon,
+  MORPH_OWNED,
+  MorphRow,
+  TaskCheck,
+  Token,
+  instant,
+  settle,
+  type IconGlyph,
+} from '@/primitives'
 import { nowAtom } from '@/state/clock'
 import {
   ROOT_LANE,
@@ -54,11 +63,12 @@ const PRIORITIES: { value: Priority; label: string }[] = [
 const FOLDERS_SHOWN = 40
 
 /** The body's heights, in px: the title's one line; the text once it has a
- *  description, and the most a step's list takes; a step's heading and a row. */
+ *  description, and the most a step's list takes; a step's heading and a row
+ *  with the gap that keeps two rows' backgrounds apart. */
 const TITLE_ONLY = 48
 const FULL = 240
 const STEP_HEADING = 38
-const ROW = 32
+const ROW = 34
 
 type Step = 'text' | 'lane' | 'due' | 'priority' | 'tags'
 const STEPS: readonly Step[] = ['text', 'lane', 'due', 'priority', 'tags']
@@ -108,8 +118,11 @@ type QuickKeys = { add: () => void; tab: (by: 1 | -1) => void }
  * completion keeps its Enter. Shift+Enter continues a list as Enter would in a
  * note. The first line is the title, drawn larger.
  */
-function quickKeys(keys: React.RefObject<QuickKeys>) {
+function quickKeys(keys: React.RefObject<QuickKeys>, floats: HTMLElement) {
   return [
+    // The completion lists (`@`, `/`) float over the page, not inside the
+    // panel, which would clip them.
+    tooltips({ parent: floats }),
     Prec.highest(
       keymap.of([
         {
@@ -144,8 +157,11 @@ function quickKeys(keys: React.RefObject<QuickKeys>) {
 export function QuickAdd({
   flight = false,
   open = true,
+  onAdded,
 }: {
   flight?: boolean
+  /** An add is done with quick add: its host folds or closes it. */
+  onAdded?: () => void
   /** The dock keeps its panel mounted while folded; folding it resets the wizard. */
   open?: boolean
 }): React.JSX.Element {
@@ -229,6 +245,7 @@ export function QuickAdd({
     setText('')
     set({ due: undefined, priority: undefined, tags: [] })
     go('text')
+    onAdded?.()
     try {
       await create({
         title,
@@ -253,7 +270,21 @@ export function QuickAdd({
   // The editor binds its keys once; they call whatever this render made.
   const keys = useRef<QuickKeys>({ add: () => {}, tab: () => {} })
   keys.current = { add: () => void submit(), tab: walk }
-  const extensions = useMemo(() => quickKeys(keys), [])
+  /** Where the editor's completion lists float: above the panel, the dialog
+   *  and the board, and still counted as inside them (`MORPH_OWNED`). */
+  const floats = useMemo(() => {
+    const layer = document.createElement('div')
+    layer.setAttribute(MORPH_OWNED, '')
+    // Above the dialog's layer; clickable though a modal dialog turns the
+    // page's pointer events off.
+    Object.assign(layer.style, { position: 'relative', zIndex: '60', pointerEvents: 'auto' })
+    return layer
+  }, [])
+  useEffect(() => {
+    document.body.append(floats)
+    return () => floats.remove()
+  }, [floats])
+  const extensions = useMemo(() => quickKeys(keys, floats), [floats])
 
   const toggleTag = (tag: string) =>
     set({
@@ -539,7 +570,7 @@ export function QuickAdd({
                 aria-label={STEP_NAMES[step]}
                 aria-multiselectable={step === 'tags' || undefined}
                 tabIndex={-1}
-                className="min-h-0 flex-1 overflow-y-auto overscroll-contain outline-none"
+                className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain outline-none"
               >
                 {step === 'tags' && choices.length === 0 && (
                   <p className="px-2.5 py-1.5 text-sm text-muted-foreground">
@@ -581,7 +612,7 @@ export function QuickAdd({
         data-morph-row=""
         role="toolbar"
         aria-label="Task fields"
-        className="flex flex-wrap items-center justify-center gap-0.5 pt-1.5"
+        className="flex items-center justify-center gap-0.5 pt-1.5"
       >
         {stepToken('text', PenLine, undefined)}
         {stepToken('lane', Folder, draft.folder === ROOT_LANE ? undefined : draft.folder)}

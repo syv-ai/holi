@@ -15,6 +15,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import { useLayoutEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { MOTION_STAGGER_CAP } from '@/lib/motion'
+import { isMorphOwned } from './MorphingMenu'
 import { PILL, rowAt, rowArrive, rowFrom, rowGone, rowLeave, spring } from './springs'
 
 export type MorphDialogProps = {
@@ -236,6 +237,10 @@ function MorphingShell({
       data-slot="morph-dialog"
       onCloseAutoFocus={onCloseAutoFocus}
       onEscapeKeyDown={onEscapeKeyDown}
+      // A layer its content floats outside it is still inside (`MORPH_OWNED`).
+      onInteractOutside={(event) => {
+        if (isMorphOwned(event.target)) event.preventDefault()
+      }}
       className={cn(
         'fixed inset-x-0 top-[12vh] z-50 mx-auto w-fit overflow-hidden rounded-[1.25rem] p-0',
         'bg-popover text-sm text-popover-foreground shadow-popover outline-none',

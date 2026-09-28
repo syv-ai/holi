@@ -138,6 +138,16 @@ const MARGIN = 8
  *  panel stops: near the middle, not on it. */
 const RISE_SHORT = 0.25
 
+/**
+ * A floating layer that belongs to something inside a morphing surface but
+ * has to live outside it to show in full (quick add's completion list, which
+ * the surface would clip). Marked with this attribute, a press in it counts as
+ * inside: the menu and `MorphDialog` stay open.
+ */
+export const MORPH_OWNED = 'data-morph-owned'
+export const isMorphOwned = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest(`[${MORPH_OWNED}]`) !== null
+
 /** How many of `total` shortcuts the vertical dock, which does not wrap, shows
  *  along a main axis `size` px long. All of them when they fit; otherwise one
  *  slot goes to More. */
@@ -489,7 +499,12 @@ export function MorphingMenu({
   useEffect(() => {
     if (!expanded) return
     const outside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) close(false)
+      if (
+        event.target instanceof Node &&
+        !rootRef.current?.contains(event.target) &&
+        !isMorphOwned(event.target)
+      )
+        close(false)
     }
     document.addEventListener('pointerdown', outside)
     return () => document.removeEventListener('pointerdown', outside)

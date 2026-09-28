@@ -192,7 +192,8 @@ function TokenValue({ label, still }: { label: ReactNode; still: boolean }) {
       initial={{ width: 0, opacity: 0 }}
       animate={{ width: width ?? 'auto', opacity: 1 }}
       exit={{ width: 0, opacity: 0 }}
-      transition={still ? instant : settle}
+      // No bounce: the row it sits in has no room to overshoot into.
+      transition={still ? instant : { ...settle, bounce: 0 }}
       className="min-w-0 overflow-hidden whitespace-nowrap"
     >
       <span ref={text} className="inline-block max-w-40 truncate pl-1.5 align-top">

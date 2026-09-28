@@ -63,9 +63,9 @@ Todo / Doing / Done, with one swim lane per folder.
   adds; Shift+Enter is a new line. Escape on a field returns to the text, then closes. The bar at
   the foot is the fields as icons, centred, each opening out to show its value once set. Everything
   is created in Todo. Lane is any folder, defaulting to the active note's; typing on lane or tags
-  narrows the list or names a new one; after an add the text clears and the lane stays. ⌘⇧T is the
-  full-create dialog, which opens the result. Both write the whole task in one create. The agent
-  writes the file.
+  narrows the list or names a new one; an add closes quick add, the text clears and the lane stays.
+  ⌘⇧T is the full-create dialog, which opens the result. Both write the whole task in one create.
+  The agent writes the file.
 - **Completing** is setting status to done, from the checkbox, a drop into Done, or the status
   row; `completeTask` in `packages/shared` says what that writes. A
   recurring task with a `due` rolls forward: `due` advances to on-or-after today via
