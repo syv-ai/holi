@@ -9,7 +9,7 @@
  * a section that does not exist renders NOWHERE, and a declared heading the
  * section never renders is a jump that scrolls to nothing.
  */
-import { render, screen, waitFor, within } from '@/test/render'
+import { fireEvent, render, screen, waitFor, within } from '@/test/render'
 import userEvent from '@testing-library/user-event'
 import { Provider, createStore } from 'jotai'
 import { beforeEach, expect, test, vi } from 'vitest'
@@ -121,7 +121,9 @@ test('every setting renders, across the sections', async () => {
   const seen: string[] = []
   for (const section of SETTINGS_SECTIONS) {
     await go(section.label)
-    const rows = screen.queryAllByRole('group')
+    // The rail's tree has groups of its own.
+    const rail = screen.getByRole('navigation', { name: 'Settings sections' })
+    const rows = screen.queryAllByRole('group').filter((r) => !rail.contains(r))
     expect(rows.map((r) => r.getAttribute('data-setting'))).toEqual(
       descriptorsIn(section.id).map((d) => d.key),
     )
@@ -171,6 +173,10 @@ test('the section you are in is the one expanded in the rail', async () => {
   expect(within(rail).getByRole('button', { name: 'Surfaces' })).toBeInTheDocument()
 
   await go('Commits')
+  // A group closes by sliding shut, and leaves once the slide has ended.
+  for (const closing of rail.querySelectorAll('[data-slot="disclose"][data-state="closed"]')) {
+    fireEvent.transitionEnd(closing)
+  }
   expect(within(rail).queryByRole('button', { name: 'Surfaces' })).not.toBeInTheDocument()
 })
 

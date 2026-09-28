@@ -68,7 +68,7 @@ export function SettingsView(): React.JSX.Element {
     // never match.
     <div className="@container h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col @min-[560px]:flex-row">
-        <div className="hidden w-44 shrink-0 overflow-y-auto border-r border-divider @min-[560px]:block">
+        <div className="hidden w-56 shrink-0 overflow-y-auto @min-[560px]:block">
           <SettingsRail
             sections={SETTINGS_SECTIONS}
             activeId={section.id}

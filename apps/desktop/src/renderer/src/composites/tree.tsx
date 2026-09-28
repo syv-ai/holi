@@ -172,8 +172,22 @@ export function TreeBar({
 }): React.JSX.Element | null {
   const [bar, setBar] = useState<{ top: number; height: number } | null>(null)
   useLayoutEffect(() => {
-    const row = selector ? container.current?.querySelector<HTMLElement>(selector) : null
-    setBar(row ? { top: row.offsetTop, height: row.offsetHeight } : null)
+    const measure = () => {
+      const row = selector ? container.current?.querySelector<HTMLElement>(selector) : null
+      setBar((was) => {
+        if (!row) return null
+        const next = { top: row.offsetTop, height: row.offsetHeight }
+        return was && was.top === next.top && was.height === next.height ? was : next
+      })
+    }
+    measure()
+    // Again as the tree resizes: a group above closing slides the row up
+    // after this first measure, and the bar should arrive where it ends.
+    const el = container.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selector, container, ...deps])
   if (bar === null) return null
