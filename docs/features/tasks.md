@@ -19,7 +19,8 @@ Todo / Doing / Done, with one swim lane per folder.
 - **Board.** Todo, Doing and Done are three column surfaces; lanes are groups inside each: the
   vault root (always present), then folders alphabetically. A lane group with no cards in a column
   rests hidden and springs open while a drag is on, so every cell can take a drop. Cards are
-  tinted (`--muted` on the column's `--card`), with no edge; Done cards recede to flat rows. Each
+  tinted (`--muted` on the column's `--card`), with no edge, and a title stays on one line; Done
+  cards recede to flat rows. Each
   column counts its cards. `overdue` and `p1`–`p3` are labels computed at render, drawn as
   coloured text and filtered like tags. A timed due is late after its minute; a timeless one once
   its day has passed. Task files that fail to parse show in a "could not be read" strip.

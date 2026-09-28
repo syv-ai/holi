@@ -51,9 +51,7 @@ export function TaskMeta({ task }: { task: Task }): React.JSX.Element | null {
   const now = useAtomValue(nowAtom)
   const reduced = useReducedMotion() ?? false
   const labels = virtualLabels(task, now)
-  // An empty meta line still takes its row, so every card is one height.
-  if (!task.due && labels.length === 0 && task.tags.length === 0)
-    return <div aria-hidden className="mt-1 h-4" />
+  if (!task.due && labels.length === 0 && task.tags.length === 0) return null
   return (
     <div className="mt-1 flex h-4 items-center gap-x-2 overflow-hidden text-[11px] whitespace-nowrap text-muted-foreground">
       {task.due && (
@@ -115,9 +113,9 @@ export function BoardCard({
       // A task IS its file: a click opens it beside the board as a preview.
       onClick={() => open(task.path)}
       className={cn(
-        // One height for every card, one line of title or five: the title
-        // truncates, and the meta line keeps its row even when empty.
-        'group/card h-14 cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
+        // A title never wraps, so a long one never makes a card taller; a card
+        // with no due date or tags is one row shorter.
+        'group/card cursor-grab rounded-xl px-2.5 py-2 text-xs motion-respond active:cursor-grabbing',
         done ? 'hover:bg-accent' : 'bg-muted hover:brightness-110',
         arrival?.className,
       )}
