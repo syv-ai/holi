@@ -54,3 +54,23 @@ export function reorderRank(
   const next = without[at] ?? null
   return rankBetween(previous?.order ?? null, next?.order ?? null)
 }
+
+/**
+ * The rank for a card dropped into `cell` at `index`, counted among the cell's
+ * cards **without** the dragged one: where the gap opened. **Null** when the
+ * drop would not move it.
+ *
+ * `cell` is the target cell, which holds the dragged card only on a same-cell
+ * drop. That is also the only drop that can be a no-op, by the positional test
+ * `reorderRank` explains: re-inserting at its old index reproduces the old
+ * sequence, and no other index does.
+ */
+export function rankAt(cell: Task[], draggedPath: string, index: number): number | null {
+  const sorted = sortCell(cell)
+  const without = sorted.filter((t) => t.path !== draggedPath)
+  const at = Math.max(0, Math.min(index, without.length))
+  if (sorted.findIndex((t) => t.path === draggedPath) === at) return null
+  const previous = without[at - 1] ?? null
+  const next = without[at] ?? null
+  return rankBetween(previous?.order ?? null, next?.order ?? null)
+}

@@ -811,6 +811,26 @@ describe('tasks.update: done is completion', () => {
   })
 })
 
+describe('tasks.create with fields', () => {
+  it('writes due, priority and tags into the new file', async () => {
+    const { caller } = await rig({})
+    const { path } = await caller.tasks.create({
+      remote: REMOTE,
+      title: 'Book the venue',
+      extra: { due: '2026-10-01', priority: 'high', tags: ['team'] },
+    })
+    const task = await caller.tasks.move({ remote: REMOTE, path, folder: '' })
+    expect(task).toMatchObject({ due: '2026-10-01', priority: 'high', tags: ['team'] })
+  })
+
+  it('refuses a field the board could not read back', async () => {
+    const { caller } = await rig({})
+    await expect(
+      caller.tasks.create({ remote: REMOTE, title: 'Bad', extra: { priority: 'urgent' } }),
+    ).rejects.toThrow()
+  })
+})
+
 describe('tasks.move', () => {
   it('moves the file to the target lane and rewrites inbound links, status unchanged', async () => {
     const { caller, root } = await rig({
@@ -872,6 +892,22 @@ describe('tasks.move', () => {
     expect(task.path).toBe('archive/task.standup.md')
     expect(task.status).toBe('todo')
     expect(task.due).toBe('2026-07-27')
+  })
+
+  it('lands the card at its aimed rank in the same write as the lane and status', async () => {
+    // A drop lands where the gap opened: the rank rides along with the diagonal.
+    const { caller, root } = await rig({ 'task.foo.md': '---\ntitle: Foo\nstatus: todo\n---\n' })
+    const task = await caller.tasks.move({
+      remote: REMOTE,
+      path: 'task.foo.md',
+      folder: 'personal',
+      status: 'doing',
+      order: 1536,
+    })
+    expect(task.path).toBe('personal/task.foo.md')
+    expect(task.status).toBe('doing')
+    expect(task.order).toBe(1536)
+    expect(await readFile(join(root, 'personal/task.foo.md'), 'utf8')).toContain('order: 1536')
   })
 
   it('refuses to clobber a task already in the target lane', async () => {

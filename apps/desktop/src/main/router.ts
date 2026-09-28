@@ -1066,27 +1066,40 @@ export function createRouter(deps: RouterDeps) {
 
   const tasks = t.router({
     create: vaultMutation
-      .input(
-        fields({
+      .input((raw: unknown) => {
+        const base = fields({
           remote: 'string',
           folder: 'string?',
           title: 'string',
           status: 'string?',
           description: 'string?',
-        }),
-      )
+        })(raw)
+        // Quick add sets due, priority and tags before the task exists, so they
+        // go in with the create: one file, one write. Validated by
+        // `patchOrThrow` below; typed here for the client.
+        const extra = (raw as { extra?: { due?: string; priority?: string; tags?: string[] } })
+          .extra
+        return extra === undefined ? base : { ...base, extra }
+      })
       .mutation(async ({ input }): Promise<{ path: string }> => {
         const root = await rootFor(input.remote)
-        // The status rides through the same validator a field edit does, so the
+        // Everything rides through the same validator a field edit does, so the
         // board cannot create a file it would then refuse to parse.
-        const patch = patchOrThrow({ status: input.status ?? 'todo' })
+        const extra: Record<string, unknown> = ('extra' in input && input.extra) || {}
+        const patch = patchOrThrow({
+          ...Object.fromEntries(
+            Object.entries(extra).filter(([key]) => ['due', 'priority', 'tags'].includes(key)),
+          ),
+          status: input.status ?? 'todo',
+        })
         const rel = await freeTaskPath(root, input.folder ?? '', input.title)
         await writeAtomic(
           root,
           rel,
           serializeTaskFile({
+            ...patch,
             status: patch.status ?? 'todo',
-            tags: [],
+            tags: patch.tags ?? [],
             // The title goes in as the body's first heading, because that is
             // where the format keeps it.
             //
@@ -1131,21 +1144,38 @@ export function createRouter(deps: RouterDeps) {
      * silently suffixed, which would change an existing task's identity.
      */
     move: vaultMutation
-      .input(fields({ remote: 'string', path: 'string', folder: 'string', status: 'string?' }))
+      .input((raw: unknown) => {
+        const base = fields({
+          remote: 'string',
+          path: 'string',
+          folder: 'string',
+          status: 'string?',
+        })(raw)
+        // Validated by `patchOrThrow` with the status.
+        const order = (raw as { order?: number }).order
+        return order === undefined ? base : { ...base, order }
+      })
       .mutation(async ({ input }): Promise<Task> => {
         const root = await rootFor(input.remote)
         const from = safe(input.path)
         const basename = from.slice(from.lastIndexOf('/') + 1)
         const to = safe(input.folder ? `${input.folder}/${basename}` : basename)
+        // The card's place in its new cell rides along like the status: a drop
+        // lands where it was aimed, and is still one write.
+        const fieldPatch = {
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...('order' in input ? { order: input.order } : {}),
+        }
+        const hasPatch = Object.keys(fieldPatch).length > 0
 
-        if (to === from && input.status === undefined) return readTask(root, to)
+        if (to === from && !hasPatch) return readTask(root, to)
         if (to !== from && (await exists(root, to))) {
           throw new TRPCError({ code: 'CONFLICT', message: `already exists: ${to}` })
         }
 
-        if (input.status !== undefined) {
+        if (hasPatch) {
           const task = await readTask(root, from)
-          const next = patched(task, patchOrThrow({ status: input.status }))
+          const next = patched(task, patchOrThrow(fieldPatch))
           await writeAtomic(root, from, serializeTaskFile(next))
         }
 

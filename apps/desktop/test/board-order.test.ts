@@ -3,7 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import type { Task } from '@holi/shared'
-import { reorderRank, sortCell } from '../src/renderer/src/lib/board-order'
+import { rankAt, reorderRank, sortCell } from '../src/renderer/src/lib/board-order'
 
 const task = (title: string, order?: number): Task =>
   ({ path: `task.${title}.md`, title, status: 'todo', tags: [], description: '', order }) as Task
@@ -64,5 +64,34 @@ describe('reorderRank', () => {
   it('ignores a card dropped on itself', () => {
     const cell = [task('a', 1), task('b', 2)]
     expect(reorderRank(cell, 'task.a.md', 'task.a.md', true)).toBeNull()
+  })
+})
+
+describe('rankAt', () => {
+  const cell = [task('a', 1), task('b', 2), task('c', 3)]
+
+  it('ranks a card dropped into an empty cell', () => {
+    expect(rankAt([], 'task.x.md', 0)).not.toBeNull()
+  })
+
+  it('ranks above the head, between neighbours, and below the tail of another cell', () => {
+    expect(rankAt(cell, 'task.x.md', 0)!).toBeLessThan(1)
+    const middle = rankAt(cell, 'task.x.md', 1)!
+    expect(middle).toBeGreaterThan(1)
+    expect(middle).toBeLessThan(2)
+    expect(rankAt(cell, 'task.x.md', 3)!).toBeGreaterThan(3)
+  })
+
+  it('writes nothing for a same-cell drop back into its own place', () => {
+    // `b` sits at index 1; without it the gap at index 1 is between a and c.
+    expect(rankAt(cell, 'task.b.md', 1)).toBeNull()
+  })
+
+  it('moves a same-cell card between its new neighbours', () => {
+    const rank = rankAt(cell, 'task.a.md', 2)! // below c
+    expect(rank).toBeGreaterThan(3)
+    const up = rankAt(cell, 'task.c.md', 1)! // between a and b
+    expect(up).toBeGreaterThan(1)
+    expect(up).toBeLessThan(2)
   })
 })

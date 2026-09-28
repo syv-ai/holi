@@ -175,7 +175,14 @@ export const createTaskAtom = atom(
   async (
     get,
     set,
-    input: { title: string; status: TaskStatus; folder: string; description?: string },
+    input: {
+      title: string
+      status: TaskStatus
+      folder: string
+      description?: string
+      /** Set before the task exists (quick add): written with the create. */
+      extra?: { due?: string; priority?: Task['priority']; tags?: string[] }
+    },
   ) => {
     const remote = get(activeRemoteAtom)
     if (!remote) return null
@@ -208,14 +215,24 @@ export const setTaskStatusAtom = atom(null, (_get, set, path: string, status: Ta
 
 /** The horizontal axis: moves a card to another lane, which moves the file into
  * that folder and rewrites inbound wiki-links in one pass (`tasks.move`). A
- * `status` rides along for a diagonal drop, so it is never half-dropped. */
+ * `status` rides along for a diagonal drop, so it is never half-dropped, and
+ * `order` for where in the cell it was dropped. Returns the moved path. */
 export const moveTaskAtom = atom(
   null,
-  async (get, set, path: string, folder: string, status?: TaskStatus) => {
+  async (
+    get,
+    set,
+    path: string,
+    folder: string,
+    status?: TaskStatus,
+    order?: number,
+  ): Promise<string | null> => {
     const remote = get(activeRemoteAtom)
-    if (!remote) return
-    await trpc.tasks.move.mutate({ remote, path, folder, status })
+    if (!remote) return null
+    // The rank rides along too, so a drop lands where it was aimed in one write.
+    const moved = await trpc.tasks.move.mutate({ remote, path, folder, status, order })
     await set(loadSnapshotAtom)
+    return moved.path
   },
 )
 
