@@ -1,7 +1,6 @@
 import {
   Fragment,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,7 +13,22 @@ import {
 import { ChevronRight } from 'lucide-react'
 import { APP_SUFFIX } from '@holi/shared'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { DeleteConfirm } from '@/composites'
+import {
+  DeleteConfirm,
+  TREE_LABEL,
+  TREE_NESTED_HANG,
+  TREE_NESTED_ROW,
+  TREE_ROOT_HANG,
+  TREE_ROOT_ROW,
+  TREE_ROW,
+  TREE_ROW_RESET,
+  TreeBar,
+  TreeBranch,
+  TreeDisclose,
+  treeLead,
+  treeNestedTone,
+  treeRootTone,
+} from '@/composites'
 import { fileIconFor, pathGlyph, pathLabel } from '@/composites/file-icons'
 import { cn } from '@/lib/cn'
 import {
@@ -69,29 +83,11 @@ import { useTreeProjection } from './useTreeProjection'
 /** `single` keeps one path open, as the reference does; `multi` lets folders stay open. */
 export type TreeExpansion = 'single' | 'multi'
 
-const ROW = 22
-const MID = ROW / 2
-const RADIUS = 6
-/** The elbow's run from the rail to where the icon starts. */
-const ELBOW = 20
 /** How long a drag hovers on a closed folder before it opens. */
 const SPRING_OPEN_MS = 600
 /** How long typed letters keep adding to one typeahead query. */
 const TYPEAHEAD_MS = 700
 
-/**
- * A row's name, boxed from its x-height to its baseline (`text-box`), so the
- * row's centring puts the icon on the middle of the letters rather than of
- * the line, which sits a couple of pixels higher. It clips sideways only: a
- * vertical clip would cut the ascenders the trim leaves outside the box.
- */
-const LABEL =
-  'min-w-0 overflow-x-clip text-ellipsis whitespace-nowrap [text-box:trim-both_ex_alphabetic]'
-/**
- * A tree row is a Button with none of a button's chrome: no fill, no press.
- * Block-level `flex`, not the Button's `inline-flex`: an inline row sits on a
- * line box, whose baseline strut adds a few pixels under a row with no glyph.
- */
 /** The new item's field says what it is naming. */
 const PLACEHOLDERS: Record<NewKind, string> = {
   task: 'task title',
@@ -102,39 +98,6 @@ const PLACEHOLDERS: Record<NewKind, string> = {
 
 /** A folder for grouping: an app sits with the files, as it sorts. */
 const isGroupFolder = (node: TreeItemData | undefined) => node?.isFolder === true && !node.isApp
-
-const ROW_RESET =
-  'flex h-auto w-full justify-start rounded-none px-0 font-normal active:scale-100 hover:bg-transparent dark:hover:bg-transparent'
-
-/** A folder's contents, rendered while open and through the closing transition.
- *  Also the slide that makes room for a new item's name field, which is not a
- *  group of rows (`group={false}`). */
-function Disclose({
-  open,
-  group = true,
-  children,
-}: {
-  open: boolean
-  group?: boolean
-  children: ReactNode
-}) {
-  const [mounted, setMounted] = useState(open)
-  useEffect(() => {
-    if (open) setMounted(true)
-  }, [open])
-  if (!mounted) return null
-  return (
-    <div
-      data-slot="disclose"
-      data-state={open ? 'open' : 'closed'}
-      onTransitionEnd={(e) => {
-        if (e.target === e.currentTarget && !open) setMounted(false)
-      }}
-    >
-      <div role={group ? 'group' : undefined}>{children}</div>
-    </div>
-  )
-}
 
 /**
  * The inline name field, for a rename and for a new file, folder, task or app. Enter
@@ -182,36 +145,6 @@ function NameInput({
 }
 
 /** One child's slice of its group's connector: the rail past it and its elbow. */
-function Connector({
-  last,
-  lit,
-  litThrough,
-}: {
-  last: boolean
-  lit: boolean
-  litThrough: boolean
-}) {
-  const elbow = `M 0.5 0 L 0.5 ${MID - RADIUS} Q 0.5 ${MID} ${RADIUS + 0.5} ${MID} L ${ELBOW - 4} ${MID}`
-  return (
-    <>
-      {!last && <span aria-hidden className="absolute bottom-0 left-0 top-0 w-px bg-divider" />}
-      <svg
-        aria-hidden
-        className="pointer-events-none absolute left-0 top-0"
-        width={ELBOW}
-        height={ROW}
-        fill="none"
-        strokeWidth={1}
-        strokeLinecap="round"
-      >
-        <path d={elbow} className={lit ? 'stroke-brand' : 'stroke-divider'} />
-      </svg>
-      {/* Last, so no grey elbow above paints over the lit rail. */}
-      {litThrough && <span aria-hidden className="absolute bottom-0 left-0 top-0 w-px bg-brand" />}
-    </>
-  )
-}
-
 export function FileTree({
   activePath,
   onOpenPreview,
@@ -548,18 +481,6 @@ export function FileTree({
     if (theirs.length > 0) void importFiles(theirs, dest).then(setSkipped)
   }
 
-  // The bar slides to the focused root row; measured, since rows above it may
-  // be open and of any height.
-  const [bar, setBar] = useState<{ top: number; height: number } | null>(null)
-  useLayoutEffect(() => {
-    const row = focusRoot
-      ? navRef.current?.querySelector<HTMLElement>(
-          `:scope > div > [data-path="${CSS.escape(focusRoot)}"]`,
-        )
-      : null
-    setBar(row ? { top: row.offsetTop, height: row.offsetHeight } : null)
-  }, [focusRoot, data, open])
-
   /**
    * A note is the default row: no `.md` and no glyph (its slot stays, so names
    * line up). Everything else keeps its extension and type glyph. The rule is
@@ -575,11 +496,7 @@ export function FileTree({
    * the way down alongside the connector.
    */
   const lead = (id: string, node: TreeItemData, isOpen: boolean) => {
-    const slot = cn(
-      'motion-respond flex w-3.5 shrink-0 justify-center',
-      onPath(id) ? 'text-brand' : 'text-muted-foreground group-hover:text-foreground',
-      ignored.has(id) && 'opacity-50',
-    )
+    const slot = cn(treeLead(onPath(id)), ignored.has(id) && 'opacity-50')
     const emoji = iconByPath.get(id)
     // An app leads with its glyph, as a file does; the chevron joins it only
     // while its contents are shown, which is when there is something to close.
@@ -668,7 +585,7 @@ export function FileTree({
               if (rowKey(e, id, node)) e.preventDefault()
             }}
             className={cn(
-              ROW_RESET,
+              TREE_ROW_RESET,
               className,
               // Hover-proof: ROW_RESET clears the ghost hover fill, which would
               // otherwise wipe these under the pointer.
@@ -685,7 +602,7 @@ export function FileTree({
             <span
               data-slot="row-name"
               className={cn(
-                LABEL,
+                TREE_LABEL,
                 taskByPath.get(id)?.status === 'done' && 'line-through',
                 (ignored.has(id) || unfinished.includes(id)) && 'opacity-50',
               )}
@@ -720,7 +637,7 @@ export function FileTree({
    *  slides in, making room, with a folder's disclose motion. */
   const pendingInput = (className: string, style?: CSSProperties) =>
     pending && (
-      <Disclose open group={false}>
+      <TreeDisclose open group={false}>
         <div className={cn(className, 'flex items-center')} style={style}>
           <span className="flex w-3.5 shrink-0 justify-center">
             {pending.kind === 'folder' && <Icon icon={ChevronRight} size="sm" tone="muted" />}
@@ -732,7 +649,7 @@ export function FileTree({
             onCancel={() => setPending(null)}
           />
         </div>
-      </Disclose>
+      </TreeDisclose>
     )
 
   /** A folder's children, hung from its connector; a new name's input first. */
@@ -740,21 +657,13 @@ export function FileTree({
     const children = data[parent]?.children ?? []
     const litIndex = children.findIndex(onPath)
     const nested = (id: string) =>
-      cn(
-        'group gap-2 pr-3 text-[13px]',
-        id === activePath
-          ? 'font-semibold text-foreground'
-          : onPath(id)
-            ? 'text-foreground'
-            : 'text-muted-foreground hover:text-foreground',
-      )
+      cn(TREE_NESTED_ROW, treeNestedTone(id === activePath, onPath(id)))
     const here = pending?.parent === parent ? pending : null
     /** The new item's field as a child of this group: first, or under `after`. */
     const field = (last: boolean, litThrough: boolean) => (
-      <div className="relative" style={{ paddingLeft: ELBOW }}>
-        <Connector last={last} lit={false} litThrough={litThrough} />
-        {pendingInput('gap-2 pr-3', { height: ROW })}
-      </div>
+      <TreeBranch last={last} lit={false} litThrough={litThrough}>
+        {pendingInput('gap-2 pr-3', { height: TREE_ROW })}
+      </TreeBranch>
     )
     return (
       <div className="relative py-1">
@@ -765,20 +674,19 @@ export function FileTree({
           const fieldAfter = here?.after === id
           return (
             <Fragment key={id}>
-              <div className="relative" style={{ paddingLeft: ELBOW }}>
-                <Connector
-                  last={i === children.length - 1 && !fieldAfter}
-                  lit={i === litIndex}
-                  litThrough={litIndex > i}
-                />
-                {row(id, node, nested(id), { height: ROW })}
+              <TreeBranch
+                last={i === children.length - 1 && !fieldAfter}
+                lit={i === litIndex}
+                litThrough={litIndex > i}
+              >
+                {row(id, node, nested(id), { height: TREE_ROW })}
                 {node.isFolder && (
                   // Hangs from the centre of the chevron above it.
-                  <div style={{ marginLeft: 7 }}>
-                    <Disclose open={open.has(id)}>{group(id)}</Disclose>
+                  <div style={{ marginLeft: TREE_NESTED_HANG }}>
+                    <TreeDisclose open={open.has(id)}>{group(id)}</TreeDisclose>
                   </div>
                 )}
-              </div>
+              </TreeBranch>
               {fieldAfter && field(i === children.length - 1, litIndex > i)}
             </Fragment>
           )
@@ -835,17 +743,12 @@ export function FileTree({
           aria-multiselectable
           className="relative flex flex-col"
         >
-          {bar && (
-            <span
-              aria-hidden
-              className="motion-respond absolute top-0 w-0.5 rounded-full bg-brand"
-              style={{
-                left: 11.5,
-                transform: `translateY(${bar.top + 6}px)`,
-                height: bar.height - 12,
-              }}
-            />
-          )}
+          {/* The bar slides to the focused root row. */}
+          <TreeBar
+            container={navRef}
+            selector={focusRoot ? `:scope > div > [data-path="${CSS.escape(focusRoot)}"]` : null}
+            deps={[data, open]}
+          />
           {pending?.parent === '' &&
             pending.after === null &&
             pendingInput('h-7 gap-2 pl-6 pr-3 text-[15px]')}
@@ -861,20 +764,11 @@ export function FileTree({
                     !isGroupFolder(node) && i > 0 && isGroupFolder(data[roots[i - 1]!]) && 'mt-3',
                   )}
                 >
-                  {row(
-                    id,
-                    node,
-                    cn(
-                      'group h-7 gap-2 pl-6 pr-3 text-[15px] font-medium tracking-tight',
-                      focusRoot === id || onPath(id)
-                        ? 'text-foreground'
-                        : 'text-muted-foreground/70 hover:text-foreground',
-                    ),
-                  )}
+                  {row(id, node, cn(TREE_ROOT_ROW, treeRootTone(focusRoot === id || onPath(id))))}
                   {node.isFolder && (
                     // Hangs from the centre of the heading's chevron.
-                    <div style={{ marginLeft: 31 }}>
-                      <Disclose open={open.has(id)}>{group(id)}</Disclose>
+                    <div style={{ marginLeft: TREE_ROOT_HANG }}>
+                      <TreeDisclose open={open.has(id)}>{group(id)}</TreeDisclose>
                     </div>
                   )}
                 </div>
