@@ -359,7 +359,22 @@ export function withoutMovedTools(items: readonly PdfToolbarItem[]): PdfToolbarI
  * it flipped. The viewer's own spacers are empty on purpose, so the rule names
  * only Holi's items.
  */
-export const PDF_TOOLBAR_CSS = `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`
+const TOOLBAR = '[data-epdf-i$="-toolbar"]'
+export const PDF_TOOLBAR_CSS = [
+  `:is(${[...HOLI_BUTTONS, ...ASK_BUTTONS].map((b) => `[data-epdf-i="${b.id}"]`).join(', ')}):empty { display: none; }`,
+  // One cluster in the middle of the bar, not three groups pushed to its ends
+  // by the viewer's spacers, which keep only a little room between groups.
+  `${TOOLBAR} { justify-content: center; }`,
+  `${TOOLBAR} > [data-epdf-i^="spacer-"] { flex: 0 0 0.5rem; }`,
+  // Its icons are Holi's icons (`primitives/Icon.tsx`): the toolbar size and
+  // stroke, muted at rest and the foreground under the pointer or while on.
+  `${TOOLBAR} button svg:is(.h-5, .h-4) { width: var(--icon-md); height: var(--icon-md); stroke-width: var(--icon-stroke); }`,
+  `${TOOLBAR} button svg { color: ${v('muted-foreground')}; }`,
+  // A tool that is on sits on the neutral fill a pressed IconButton does, not
+  // the selection blue the palette gives a selected row.
+  `${TOOLBAR} button.bg-interactive-selected { background-color: ${v('accent')}; }`,
+  `${TOOLBAR} button:is(:hover, .bg-interactive-selected, [aria-pressed="true"], [data-state="open"]) svg { color: ${v('foreground')}; }`,
+].join('\n')
 
 /** Every sidebar the viewer's schema declares, left and right. */
 const PDF_SIDEBAR_IDS = [
